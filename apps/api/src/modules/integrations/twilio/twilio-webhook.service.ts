@@ -1,0 +1,1863 @@
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import { ConfigService } from '@nestjs/config';
+import { AgentResolutionService, type ResolvedAgentContext } from './agent-resolution.service';
+import { CallsService } from '../../calls/calls.service';
+import { CallEventsService } from '../../analytics/call-events.service';
+import { CallEventType, CallStatus } from '@prisma/client';
+import { buildFallbackTwiML } from './twiml/conversation-relay.twiml';
+import {
+  buildDeferredVoiceKickoffTwiML,
+  buildDeferredVoiceMomentPleaseTwiML,
+  buildDeferredVoicePollPauseTwiML,
+  buildInboundGatherMvpTwiML,
+  buildVoiceTerminalTwiml,
+} from './twiml/gather-mvp.twiml';
+import { VoiceRuntimeService } from '../../calls/runtime/voice-runtime.service';
+import { SessionContextService } from '../../calls/runtime/session-context.service';
+import { TranscriptBufferService } from '../../calls/runtime/transcript-buffer.service';
+import { ElevenLabsService } from '../elevenlabs/elevenlabs.service';
+import { TwilioTtsCacheService } from './twilio-tts-cache.service';
+import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
+import { normalizeLanguageForTwilio } from '../../calls/runtime/language-intelligence.util';
+import { normalizePhoneNumber } from './utils/normalize-phone';
+import { PrismaService } from '../../../database/prisma.service';
+import { EncryptionService } from '../../../common/encryption.service';
+import {
+  openAiKeyLayerPresence,
+  resolveElevenLabsKeyChain,
+  resolveOpenAiKeyChain,
+  type VoiceCredentialSource,
+} from '../../calls/runtime/voice-config-resolution.util';
+import { fingerprintApiKey } from '../../../common/logging/api-key-fingerprint';
+import {
+  shortenReplyForVoiceTts,
+  VOICE_REPLY_TTS_MAX_CHARS,
+  VOICE_TTS_MAX_AUDIO_BYTES,
+} from './voice-reply-tts-shorten.util';
+import { VoicePromptAudioService } from './voice-prompt-audio.service';
+import { classifyUserIntent } from '../../calls/runtime/user-intent-classifier.util';
+import { buildInstantAckMetadataPatch, selectInstantAcknowledgement } from './instant-acknowledgement.util';
+
+export interface InboundCallPayload {
+  CallSid: string;
+  From: string;
+  To: string;
+}
+
+export interface InboundWebhookResult {
+  twiml: string;
+  callSessionId?: string;
+  agentResolved: boolean;
+}
+
+export interface GatherMvpInboundPayload {
+  CallSid: string;
+  From: string;
+  To: string;
+  SpeechResult?: string;
+  /** Some Twilio regions / configs send stable transcript in this field. */
+  StableSpeechResult?: string;
+  Confidence?: string;
+  /**
+   * Provided via the Gather action URL query string.
+   * Step 3 reads this first, but falls back to looking up by `CallSid`.
+   */
+  callSessionId?: string;
+}
+
+export interface GatherMvpWebhookResult {
+  twiml: string;
+  callSessionId?: string;
+  agentResolved: boolean;
+}
+
+export interface DeferredPollInboundPayload {
+  CallSid: string;
+  From: string;
+  To: string;
+  callSessionId?: string;
+}
+
+type DeferredVoiceJobMetadata =
+  | {
+      jobId: string;
+      phase: 'processing';
+      startedAtMs: number;
+      momentPromptPlayed: boolean;
+    }
+  | {
+      jobId: string;
+      phase: 'ready';
+      startedAtMs: number;
+      momentPromptPlayed: boolean;
+      assistantResponse: string;
+      playbackUrl?: string;
+      usedElevenLabs: boolean;
+      audioBytes?: number;
+      ttsGenerationTimeMs: number;
+    }
+  | {
+      jobId: string;
+      phase: 'failed';
+      startedAtMs: number;
+      errorMessage: string;
+    };
+
+function maskPhoneForLog(value: string): string {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length < 4) return '***';
+  return `****${digits.slice(-4)}`;
+}
+
+/** Minimum time for background OpenAI + Shopify + ElevenLabs; below this causes false timeouts (e.g. EL alone often 8–15s). */
+const VOICE_DEFERRED_JOB_TIMEOUT_MS_MIN = 50_000;
+
+@Injectable()
+export class TwilioWebhookService implements OnModuleInit {
+  private readonly logger = new Logger(TwilioWebhookService.name);
+
+  constructor(
+    private readonly config: ConfigService,
+    private readonly agentResolution: AgentResolutionService,
+    private readonly callsService: CallsService,
+    private readonly callEvents: CallEventsService,
+    private readonly voiceRuntime: VoiceRuntimeService,
+    private readonly sessionContext: SessionContextService,
+    private readonly transcriptBuffer: TranscriptBufferService,
+    private readonly elevenLabs: ElevenLabsService,
+    private readonly ttsCache: TwilioTtsCacheService,
+    private readonly voicePromptAudio: VoicePromptAudioService,
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+  ) {}
+
+  onModuleInit(): void {
+    const gatherDebug = this.isGatherHearingDebugMode();
+    const forceEl = this.isForceElevenLabsOnly();
+    if (gatherDebug) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'twilio.voice.config_warning',
+          TWILIO_GATHER_HEARING_DEBUG: true,
+          FORCE_ELEVENLABS_ONLY: forceEl,
+          effect: forceEl
+            ? 'TWILIO_GATHER_HEARING_DEBUG is set, but FORCE_ELEVENLABS_ONLY wins: short scripted prompts still use ElevenLabs <Play> (Twilio <Say> is only used if ElevenLabs fails, voice ID is missing, or PUBLIC_WEBHOOK_BASE_URL is not HTTPS).'
+            : 'TWILIO_GATHER_HEARING_DEBUG disables ElevenLabs for short scripted prompts; those lines use Twilio <Say> instead. This helps STT debugging but sounds like a second voice in production—unset it or set FORCE_ELEVENLABS_ONLY=true to keep ElevenLabs.',
+        }),
+      );
+    }
+  }
+
+  private isGatherHearingDebugMode(): boolean {
+    const v = `${this.config.get<string>('TWILIO_GATHER_HEARING_DEBUG') ?? process.env.TWILIO_GATHER_HEARING_DEBUG ?? ''}`.trim();
+    return v === '1' || v.toLowerCase() === 'true';
+  }
+
+  private isForceElevenLabsOnly(): boolean {
+    const v = `${this.config.get<string>('FORCE_ELEVENLABS_ONLY') ?? process.env.FORCE_ELEVENLABS_ONLY ?? ''}`.trim();
+    return v === '1' || v.toLowerCase() === 'true';
+  }
+
+  /**
+   * Hard lock to ElevenLabs playback only.
+   * Default is enabled to prevent Twilio <Say> voice drift.
+   */
+  private isStrictElevenLabsOnly(): boolean {
+    const v = `${this.config.get<string>('STRICT_ELEVENLABS_ONLY') ?? process.env.STRICT_ELEVENLABS_ONLY ?? 'true'}`.trim();
+    return !(v === '0' || v.toLowerCase() === 'false');
+  }
+
+  /** When true, short prompts use Twilio Say unless FORCE_ELEVENLABS_ONLY overrides. */
+  private resolveGatherHearingDebugEffective(): boolean {
+    return this.isGatherHearingDebugMode() && !this.isForceElevenLabsOnly() && !this.isStrictElevenLabsOnly();
+  }
+
+  /**
+   * Short scripted prompts: ElevenLabs via phrase cache when TWILIO_GATHER_HEARING_DEBUG is off; Twilio Say when debug or EL fails.
+   */
+  private async resolveShortPhrasePlayUrl(params: {
+    origin: string;
+    hearingDebugEffective: boolean;
+    text: string;
+    tenantId: string;
+    callSessionId: string;
+    agent: {
+      voiceProvider?: string | null;
+      voiceId?: string | null;
+      elevenlabsApiKey?: string | null;
+      elevenlabsModel?: string | null;
+      voiceStyle?: string | null;
+    };
+    logLabel: string;
+  }): Promise<{ playbackUrl?: string; voiceProviderActuallyUsed: 'elevenlabs' | 'twilio_say_fallback' }> {
+    const voiceId = this.resolveElevenLabsVoiceId(params.agent);
+    const voiceProviderRequested = 'elevenlabs';
+    const forceElOnly = this.isForceElevenLabsOnly();
+
+    if (params.hearingDebugEffective) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'twilio.voice.phrase_audio',
+          callSessionId: params.callSessionId,
+          tenantId: params.tenantId,
+          phrase: params.logLabel,
+          voiceProviderRequested,
+          voiceIdUsed: voiceId ?? null,
+          voiceProviderActuallyUsed: 'twilio_say_fallback',
+          twimlVerbUsed: 'Say',
+          voiceFallbackToTwilioSay: true,
+          fallbackReason: 'twilio_gather_hearing_debug',
+          emergencyTwilioSayFallback: forceElOnly,
+        }),
+      );
+      return { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+    }
+    if (!voiceId || !/^https:\/\//i.test(params.origin)) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'twilio.voice.phrase_audio',
+          callSessionId: params.callSessionId,
+          phrase: params.logLabel,
+          voiceProviderRequested,
+          voiceIdUsed: voiceId ?? null,
+          voiceProviderActuallyUsed: 'twilio_say_fallback',
+          twimlVerbUsed: 'Say',
+          voiceFallbackToTwilioSay: true,
+          fallbackReason: !voiceId ? 'no_elevenlabs_voice_id' : 'webhook_base_not_https',
+          emergencyTwilioSayFallback: forceElOnly,
+        }),
+      );
+      return { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+    }
+    const r = await this.voicePromptAudio.createPhrasePlaybackUrl(params.origin, {
+      text: params.text,
+      voiceId,
+      apiKey: params.agent.elevenlabsApiKey ?? undefined,
+      modelId: params.agent.elevenlabsModel ?? undefined,
+      styleNotes: params.agent.voiceStyle ?? undefined,
+    });
+    if (!r.playbackUrl) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'twilio.voice.phrase_audio',
+          callSessionId: params.callSessionId,
+          phrase: params.logLabel,
+          voiceProviderRequested,
+          voiceIdUsed: voiceId,
+          voiceProviderActuallyUsed: 'twilio_say_fallback',
+          twimlVerbUsed: 'Say',
+          voiceFallbackToTwilioSay: true,
+          fallbackReason: 'elevenlabs_phrase_failed',
+          emergencyTwilioSayFallback: forceElOnly,
+        }),
+      );
+      return { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+    }
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.phrase_audio',
+        callSessionId: params.callSessionId,
+        phrase: params.logLabel,
+        voiceProviderRequested,
+        voiceIdUsed: voiceId,
+        voiceProviderActuallyUsed: 'elevenlabs',
+        twimlVerbUsed: 'Play',
+        fromPhraseCache: r.fromPhraseCache,
+      }),
+    );
+    return { playbackUrl: r.playbackUrl, voiceProviderActuallyUsed: 'elevenlabs' };
+  }
+
+  /**
+   * OpenAI key resolution for gather-turn logs + parity with GET /api/voice/config-check.
+   */
+  private async auditOpenAiKeyForGather(
+    tenantId: string,
+    secretsEnc: string | null | undefined,
+  ): Promise<{
+    openaiKeySource: VoiceCredentialSource;
+    openaiKeyFingerprint: string | null;
+    agentKeyPresent: boolean;
+    tenantKeyPresent: boolean;
+    envKeyPresent: boolean;
+    agentOverridesWorkspaceOpenai: boolean;
+  }> {
+    let agentOpenaiPlain: string | null = null;
+    if (secretsEnc && this.encryption.isAvailable()) {
+      const dec = this.encryption.decryptFromStorage(secretsEnc);
+      if (dec) {
+        try {
+          const secrets = JSON.parse(dec) as { openaiApiKey?: string };
+          agentOpenaiPlain = typeof secrets.openaiApiKey === 'string' ? secrets.openaiApiKey : null;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    const ti = this.encryption.isAvailable()
+      ? await this.prisma.tenantIntegration.findUnique({
+          where: { tenantId },
+          select: { openaiApiKeyEnc: true },
+        })
+      : null;
+
+    const encAvail = this.encryption.isAvailable();
+    const openaiR = resolveOpenAiKeyChain({
+      agentSecretPlain: agentOpenaiPlain,
+      tenantEnc: ti?.openaiApiKeyEnc ?? null,
+      decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
+      envPlain: this.config.get<string>('OPENAI_API_KEY'),
+      encryptionAvailable: encAvail,
+    });
+
+    const layers = openAiKeyLayerPresence({
+      agentSecretPlain: agentOpenaiPlain,
+      tenantEnc: ti?.openaiApiKeyEnc ?? null,
+      envPlain: this.config.get<string>('OPENAI_API_KEY'),
+    });
+
+    return {
+      openaiKeySource: openaiR.source,
+      openaiKeyFingerprint: fingerprintApiKey(openaiR.value),
+      agentKeyPresent: layers.agentKeyPresent,
+      tenantKeyPresent: layers.tenantKeyPresent,
+      envKeyPresent: layers.envKeyPresent,
+      agentOverridesWorkspaceOpenai: layers.agentKeyPresent && layers.tenantKeyPresent,
+    };
+  }
+
+  private getSessionLanguage(ctx: Awaited<ReturnType<SessionContextService['load']>>): string {
+    const metadataLanguage =
+      typeof ctx?.metadata?.language === 'string' ? ctx.metadata.language.trim().toLowerCase() : '';
+    if (metadataLanguage) return normalizeLanguageForTwilio(metadataLanguage);
+    return normalizeLanguageForTwilio(ctx?.agent.language ?? 'en');
+  }
+
+  async handleInboundVoice(payload: InboundCallPayload): Promise<InboundWebhookResult> {
+    const normalizedTo = normalizePhoneNumber(payload.To);
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.inbound_received',
+        callSid: payload.CallSid,
+        from: maskPhoneForLog(payload.From),
+        to: maskPhoneForLog(payload.To),
+        toNormalizedLast4: normalizedTo.replace(/\D/g, '').slice(-4),
+      }),
+    );
+
+    const context = await this.agentResolution.resolveByPhoneNumber(payload.To);
+    if (!context) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'twilio.voice.agent_not_resolved',
+          callSid: payload.CallSid,
+          to: maskPhoneForLog(payload.To),
+          toNormalizedLast4: normalizedTo.replace(/\D/g, '').slice(-4),
+          mappingFound: false,
+        }),
+      );
+      const twiml = buildFallbackTwiML();
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.twiml_returned',
+          route: 'inbound',
+          agentResolved: false,
+          twimlChars: twiml.length,
+          playback: 'fallback_twiml',
+          ttsFallbackUsed: true,
+          playbackChannel: 'twilio_say',
+        }),
+      );
+      return { twiml, agentResolved: false };
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.agent_resolved',
+        callSid: payload.CallSid,
+        agentId: context.agentId,
+        tenantId: context.tenantId,
+        storeId: context.storeId,
+        phoneNumberId: context.phoneNumberId,
+        to: maskPhoneForLog(payload.To),
+        toNormalizedLast4: normalizedTo.replace(/\D/g, '').slice(-4),
+        mappingFound: true,
+      }),
+    );
+
+    const session = await this.callsService.createSession({
+      tenantId: context.tenantId,
+      storeId: context.storeId,
+      agentId: context.agentId,
+      phoneNumberId: context.phoneNumberId,
+      twilioCallSid: payload.CallSid,
+      fromNumber: payload.From,
+      toNumber: payload.To,
+      direction: 'inbound',
+    });
+
+    await this.callEvents.log(context.tenantId, session.id, CallEventType.INBOUND_CALL_RECEIVED, {
+      from: payload.From,
+      to: payload.To,
+      twilioCallSid: payload.CallSid,
+    });
+    await this.callEvents.log(context.tenantId, session.id, CallEventType.CALL_SESSION_CREATED, {
+      agentId: context.agentId,
+      storeId: context.storeId,
+    });
+    await this.callEvents.log(context.tenantId, session.id, CallEventType.AGENT_RESOLVED, {
+      agentId: context.agentId,
+      to: payload.To,
+    });
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.journey.call_session_created',
+        callSessionId: session.id,
+        tenantId: context.tenantId,
+        agentId: context.agentId,
+        storeId: context.storeId,
+        twilioCallSid: payload.CallSid,
+      }),
+    );
+
+    const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(
+      session.id,
+    )}`;
+
+    const hearingDebug = this.isGatherHearingDebugMode();
+    const hearingDebugEffective = this.resolveGatherHearingDebugEffective();
+    const forceElOnly = this.isForceElevenLabsOnly();
+    const strictElevenLabsOnly = this.isStrictElevenLabsOnly();
+    const debugOpeningText = 'Please say your question after the beep.';
+    const elOptsInbound = await this.loadElevenLabsTtsOptions(context);
+    const greetingText =
+      context.agent.greetingMessage ??
+      `Hello, you've reached ${context.store.name}. How can I help you today?`;
+    const fallbackText =
+      context.agent.fallbackMessage?.trim() ??
+      "We're having trouble hearing you. Please call again later. Goodbye.";
+
+    let greetingPlaybackUrl: string | undefined;
+    let greetingVoice: 'elevenlabs' | 'twilio_say_fallback' = 'twilio_say_fallback';
+    let finalFallbackAudioUrl: string | undefined;
+    let finalFallbackVoice: 'elevenlabs' | 'twilio_say_fallback' = 'twilio_say_fallback';
+
+    const shouldTryElGreeting =
+      (!hearingDebug || forceElOnly) && elOptsInbound.voiceId && /^https:\/\//i.test(origin);
+    if (shouldTryElGreeting) {
+      const inboundVoiceId = elOptsInbound.voiceId as string;
+      const openingForTts = hearingDebug && forceElOnly ? debugOpeningText : greetingText;
+      const gPlay = await this.voicePromptAudio.createPhrasePlaybackUrl(origin, {
+        text: openingForTts,
+        voiceId: inboundVoiceId,
+        apiKey: elOptsInbound.apiKey,
+        modelId: elOptsInbound.model,
+      });
+      if (gPlay.playbackUrl) {
+        greetingPlaybackUrl = gPlay.playbackUrl;
+        greetingVoice = 'elevenlabs';
+      }
+      const fPlay = await this.voicePromptAudio.createPhrasePlaybackUrl(origin, {
+        text: fallbackText,
+        voiceId: inboundVoiceId,
+        apiKey: elOptsInbound.apiKey,
+        modelId: elOptsInbound.model,
+      });
+      if (fPlay.playbackUrl) {
+        finalFallbackAudioUrl = fPlay.playbackUrl;
+        finalFallbackVoice = 'elevenlabs';
+      }
+    }
+
+    const greetingReplyVerb: 'Play' | 'Say' = greetingPlaybackUrl && !hearingDebugEffective ? 'Play' : 'Say';
+    const providerUsed = greetingVoice === 'elevenlabs' ? 'elevenlabs' : 'twilio_say';
+    const voiceIdUsedInbound = elOptsInbound.voiceId ?? null;
+    console.log(
+      JSON.stringify({
+        event: 'twilio.voice.inbound_voice_summary',
+        loadedAgentId: context.agentId,
+        dialedTo: maskPhoneForLog(payload.To),
+        voiceProvider: context.agent.voiceProvider ?? null,
+        voiceProviderRequested: 'elevenlabs',
+        voiceIdUsed: voiceIdUsedInbound,
+        voiceIdPresent: Boolean(context.agent.voiceId?.trim() || elOptsInbound.voiceId),
+        voiceIdForElevenLabsTts: elOptsInbound.voiceId ? 'present' : 'missing',
+        elevenLabsKeySource: elOptsInbound.keySource,
+        providerUsed,
+        voiceProviderActuallyUsed: greetingReplyVerb === 'Play' ? 'elevenlabs' : 'twilio_say_fallback',
+        twimlVerbUsed: greetingReplyVerb,
+        voiceProviderActuallyUsedOpening: hearingDebugEffective ? 'twilio_say_fallback' : greetingVoice,
+        voiceProviderActuallyUsedFinalFallback: hearingDebugEffective ? 'twilio_say_fallback' : finalFallbackVoice,
+        callSessionId: session.id,
+        gatherActionUrlIncludesCallSessionId: gatherActionUrl.includes('callSessionId='),
+        gatherActionUrlFull: gatherActionUrl,
+        gatherActionUrlHost: (() => {
+          try {
+            return new URL(gatherActionUrl).host;
+          } catch {
+            return 'invalid_url';
+          }
+        })(),
+        greetingReplyVerb,
+        greetingUsedElevenLabsAudio: Boolean(greetingPlaybackUrl),
+        gatherHearingDebugSayOnly: hearingDebugEffective,
+        FORCE_ELEVENLABS_ONLY: forceElOnly,
+      }),
+    );
+
+    const twiml = buildInboundGatherMvpTwiML({
+      gatherActionUrl,
+      language: hearingDebug ? 'en-US' : normalizeLanguageForTwilio(context.agent.language ?? 'en'),
+      playbackAudioUrl: hearingDebugEffective ? undefined : greetingPlaybackUrl,
+      openingSayText: strictElevenLabsOnly
+        ? undefined
+        : hearingDebugEffective
+        ? debugOpeningText
+        : greetingPlaybackUrl
+          ? undefined
+          : greetingText,
+      finalFallbackAudioUrl: hearingDebugEffective ? undefined : finalFallbackAudioUrl,
+      finalFallbackSayText:
+        strictElevenLabsOnly || hearingDebugEffective || finalFallbackAudioUrl ? undefined : fallbackText,
+      timeoutSeconds: hearingDebug ? 12 : 10,
+      speechTimeout: hearingDebug ? '3' : '2',
+      pauseBeforeListenSeconds: 0,
+    });
+
+    const greetingSeq = await this.transcriptBuffer.getNextSequence(session.id);
+    await this.transcriptBuffer.append(
+      session.id,
+      'system',
+      `Inbound call received from ${payload.From} to ${payload.To}.`,
+      greetingSeq,
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.twiml_returned',
+        route: 'inbound',
+        callSessionId: session.id,
+        agentResolved: true,
+        twimlChars: twiml.length,
+        playback: greetingPlaybackUrl ? 'elevenlabs_audio' : 'twilio_say',
+        ttsFallbackUsed: !greetingPlaybackUrl,
+        playbackChannel: greetingPlaybackUrl ? 'elevenlabs' : 'twilio_say',
+        voiceProviderActuallyUsedOpening: hearingDebugEffective ? 'twilio_say_fallback' : greetingVoice,
+        voiceProviderActuallyUsedFinalFallback: hearingDebugEffective ? 'twilio_say_fallback' : finalFallbackVoice,
+        voiceProviderActuallyUsed: greetingReplyVerb === 'Play' ? 'elevenlabs' : 'twilio_say_fallback',
+        twimlVerbUsed: greetingReplyVerb,
+      }),
+    );
+
+    return {
+      twiml,
+      callSessionId: session.id,
+      agentResolved: true,
+    };
+  }
+
+  async handleGatherMvpVoice(payload: GatherMvpInboundPayload): Promise<GatherMvpWebhookResult> {
+    const handlerStartedAt = Date.now();
+    console.log('Gather body (keys):', Object.keys(payload as object).join(','));
+    console.log(
+      'Gather speech:',
+      JSON.stringify({
+        SpeechResult: (payload.SpeechResult ?? '').slice(0, 200),
+        StableSpeechResult: (payload.StableSpeechResult ?? '').slice(0, 200),
+        Confidence: payload.Confidence ?? '',
+        CallSid: payload.CallSid ?? '',
+      }),
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.gather_received',
+        callSid: payload.CallSid,
+        callSessionId: payload.callSessionId?.trim() || undefined,
+        from: maskPhoneForLog(payload.From),
+        to: maskPhoneForLog(payload.To),
+        hasSpeechResult: Boolean(
+          ((payload.SpeechResult ?? '').trim() || (payload.StableSpeechResult ?? '').trim()).length,
+        ),
+        confidence: payload.Confidence ?? undefined,
+      }),
+    );
+
+    let callSessionId = payload.callSessionId?.trim() ?? '';
+    if (!callSessionId && payload.CallSid) {
+      const session = await this.callsService.findOneByTwilioCallSid(payload.CallSid);
+      callSessionId = session?.id ?? '';
+    }
+
+    if (!callSessionId) {
+      const twiml = buildFallbackTwiML("I'm sorry, I couldn't resume your call. Please try again.");
+      this.logger.warn(JSON.stringify({ event: 'twilio.voice.gather_missing_session', callSid: payload.CallSid }));
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.twiml_returned',
+          route: 'gather',
+          agentResolved: false,
+          twimlChars: twiml.length,
+          playback: 'fallback_twiml',
+          ttsFallbackUsed: true,
+          playbackChannel: 'twilio_say',
+        }),
+      );
+      return {
+        twiml,
+        agentResolved: false,
+      };
+    }
+
+    const ctx = await this.sessionContext.load(callSessionId);
+    if (!ctx) {
+      const twiml = buildFallbackTwiML("I'm sorry, I couldn't load your call session. Please try again.");
+      this.logger.warn(JSON.stringify({ event: 'twilio.voice.gather_context_missing', callSessionId }));
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.twiml_returned',
+          route: 'gather',
+          agentResolved: false,
+          twimlChars: twiml.length,
+          playback: 'fallback_twiml',
+          ttsFallbackUsed: true,
+          playbackChannel: 'twilio_say',
+        }),
+      );
+      return {
+        twiml,
+        agentResolved: false,
+      };
+    }
+
+    const gatherSecretsRow = await this.prisma.agent.findUnique({
+      where: { id: ctx.agentId },
+      select: { secretsEnc: true },
+    });
+    const openAiKeyAudit = await this.auditOpenAiKeyForGather(ctx.tenantId, gatherSecretsRow?.secretsEnc);
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.gather_openai_key_proof',
+        callSessionId,
+        callSid: payload.CallSid,
+        ...openAiKeyAudit,
+      }),
+    );
+
+    const { keySource: gatherElevenLabsKeySource } = await this.resolveElevenLabsApiKeyAndSource(
+      ctx.tenantId,
+      gatherSecretsRow?.secretsEnc,
+    );
+
+    const session = await this.callsService.findOneById(callSessionId);
+    if (session.status !== CallStatus.IN_PROGRESS) {
+      await this.voiceRuntime.onRuntimeConnected(callSessionId);
+    }
+
+    const hearingDebug = this.isGatherHearingDebugMode();
+    const hearingDebugEffective = this.resolveGatherHearingDebugEffective();
+    const strictElevenLabsOnly = this.isStrictElevenLabsOnly();
+
+    const speechText = (
+      (payload.SpeechResult ?? '').trim() ||
+      (payload.StableSpeechResult ?? '').trim()
+    ).trim();
+    if (!speechText) {
+      console.log(
+        JSON.stringify({
+          event: 'twilio.gather.empty_speech_diagnosis',
+          callSid: payload.CallSid,
+          callSessionId: payload.callSessionId?.trim() || null,
+          checks: {
+            spokeDuringPromptAudio:
+              'Twilio only starts recognition after inner Play/Say/Pause finish; speech during greeting is dropped.',
+            timeoutTooShort: 'Gather uses timeout=10s (start speaking) and speechTimeout=2 (end of utterance).',
+            languageMismatch: 'Gather language is derived from agent/session; wrong code hurts recognition.',
+            enhancedOrSpeechModel: 'enhanced and speechModel removed from TwiML for compatibility.',
+            twilioPostedToGather:
+              'This log line confirms Twilio reached your /api/twilio/voice/gather handler for this turn.',
+          },
+        }),
+      );
+    }
+    // Twilio often omits Confidence. Number('') === 0 would wrongly mark all speech as low-confidence.
+    const confidenceStr = (payload.Confidence ?? '').trim();
+    const confidenceParsed = confidenceStr === '' ? NaN : Number(confidenceStr);
+    const confidence = Number.isFinite(confidenceParsed) ? confidenceParsed : null;
+    const lowConfidence = confidence !== null && confidence < 0.25;
+    const hasUsableSpeech = speechText.length >= 2 && !lowConfidence;
+    let assistantResponse: string;
+    const metadata =
+      ctx.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
+        ? (ctx.metadata as Record<string, unknown>)
+        : {};
+    const gatherRetryCount = Number(metadata.gatherRetryCount ?? 0);
+
+    console.log(
+      JSON.stringify({
+        event: 'twilio.voice.gather_speech_gate',
+        callSessionId,
+        callSessionIdFromQuery: payload.callSessionId?.trim() || null,
+        speechResultRaw: (payload.SpeechResult ?? '').slice(0, 300),
+        stableSpeechRaw: (payload.StableSpeechResult ?? '').slice(0, 300),
+        speechTextMerged: speechText.slice(0, 300),
+        confidenceRawField: confidenceStr || null,
+        confidenceParsed: confidence,
+        lowConfidence,
+        hasUsableSpeech,
+        willCallVoiceRuntime: false,
+        voiceDeferredKickoff: hasUsableSpeech,
+        openaiKeySource: openAiKeyAudit.openaiKeySource,
+        openaiKeyFingerprint: openAiKeyAudit.openaiKeyFingerprint,
+        agentKeyPresent: openAiKeyAudit.agentKeyPresent,
+        tenantKeyPresent: openAiKeyAudit.tenantKeyPresent,
+        envKeyPresent: openAiKeyAudit.envKeyPresent,
+        agentOverridesWorkspaceOpenai: openAiKeyAudit.agentOverridesWorkspaceOpenai,
+      }),
+    );
+
+    if (!speechText.trim()) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.gather_twilio_speech_empty',
+          callSessionId,
+          callSid: payload.CallSid,
+          diagnosis:
+            'OpenAI key is not the cause. Twilio did not capture speech.',
+        }),
+      );
+    }
+
+    if (!hasUsableSpeech) {
+      const nextRetry = gatherRetryCount + 1;
+      await this.callsService.mergeSessionMetadata(callSessionId, { gatherRetryCount: nextRetry });
+
+      const seq = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(
+        callSessionId,
+        'system',
+        !speechText
+          ? 'No speech captured from Twilio Gather.'
+          : `Low-confidence speech from Twilio Gather (confidence=${confidence ?? 'unknown'}).`,
+        seq,
+      );
+
+      if (nextRetry >= 2) {
+        const finalMsg =
+          ctx.agent.fallbackMessage?.trim() ??
+          'I am having trouble hearing you. Please call again or wait for a human assistant.';
+        const seqA = await this.transcriptBuffer.getNextSequence(callSessionId);
+        await this.transcriptBuffer.append(callSessionId, 'agent', finalMsg, seqA);
+
+        const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+        const { playbackUrl: finalPlay } = await this.buildElevenLabsPlaybackUrl(origin, finalMsg, {
+          callSessionId,
+          tenantId: ctx.tenantId,
+          phase: 'gather_reply',
+          voiceId: this.resolveElevenLabsVoiceId(ctx.agent),
+          elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
+          elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
+          voiceStyle: ctx.agent.voiceStyle ?? undefined,
+        });
+        const twiml = buildVoiceTerminalTwiml({
+          playbackAudioUrl: finalPlay,
+          sayText: finalPlay ? undefined : finalMsg,
+          language: this.getSessionLanguage(ctx),
+        });
+
+        console.log(
+          JSON.stringify({
+            event: 'twilio.voice.gather_terminal_empty_speech',
+            callSessionId,
+            emptyAttempts: nextRetry,
+            loadedAgentId: ctx.agentId,
+            dialedTo: maskPhoneForLog(payload.To),
+            voiceProvider: ctx.agent.voiceProvider ?? null,
+            voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+            elevenLabsKeySource: gatherElevenLabsKeySource,
+            replyVerb: finalPlay ? 'Play' : 'Say',
+            voiceProviderActuallyUsed: finalPlay ? 'elevenlabs' : 'twilio_say_fallback',
+            SpeechResult: speechText.slice(0, 200),
+            StableSpeechResult: (payload.StableSpeechResult ?? '').slice(0, 200),
+            Confidence: payload.Confidence ?? '',
+          }),
+        );
+        this.logger.log(
+          JSON.stringify({
+            event: 'twilio.voice.twiml_returned',
+            route: 'gather',
+            callSessionId,
+            agentResolved: true,
+            twimlChars: twiml.length,
+            playback: finalPlay ? 'elevenlabs_audio' : 'twilio_say',
+            terminal: true,
+            voiceProviderActuallyUsed: finalPlay ? 'elevenlabs' : 'twilio_say_fallback',
+            'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+          }),
+        );
+        return { twiml, callSessionId, agentResolved: true };
+      }
+
+      assistantResponse = 'Please speak after the beep.';
+      const seq2 = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(callSessionId, 'agent', assistantResponse, seq2);
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.llm_reply_skipped',
+          callSessionId,
+          reason: !speechText ? 'empty_gather_speech' : 'low_confidence_gather_speech',
+          confidence,
+          replyChars: assistantResponse.length,
+          retryAttempt: nextRetry,
+        }),
+      );
+    } else {
+      await this.callsService.mergeSessionMetadata(callSessionId, { gatherRetryCount: 0 });
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.journey.twilio_speech_received',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          speechCharCount: speechText.length,
+          voicePipeline: 'deferred_async',
+        }),
+      );
+
+      const originEarly = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+      const orderStateForAck =
+        typeof metadata.orderState === 'string' && metadata.orderState.trim()
+          ? metadata.orderState.trim()
+          : 'IDLE';
+      const userIntent = classifyUserIntent(speechText);
+      const ackSelection = selectInstantAcknowledgement({
+        intent: userIntent,
+        speechText,
+        callState: orderStateForAck,
+        metadata,
+      });
+      const letMeCheckUsedBefore = metadata.letMeCheckUsed === true;
+
+      if (ackSelection.mode === 'sync_full_reply') {
+        const utter = await this.voiceRuntime.processUtterance(callSessionId, speechText, []);
+        const syncPatch = buildInstantAckMetadataPatch({
+          selection: ackSelection,
+          intent: userIntent,
+          letMeCheckUsedBefore,
+          instantPhraseForLog: null,
+          syncReplyText: utter.reply,
+        });
+        await this.callsService.mergeSessionMetadata(callSessionId, syncPatch);
+
+        this.logger.log(
+          JSON.stringify({
+            event: 'twilio.voice.instant_ack_selected',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            instantAckSelected: utter.reply.slice(0, 160),
+            ackReason: ackSelection.ackReason,
+            letMeCheckUsedBefore,
+            letMeCheckUsedAfter: syncPatch.letMeCheckUsed,
+            intentDetected: userIntent,
+            pipeline: 'sync_full_reply_no_deferred',
+          }),
+        );
+
+        const gatherActionUrlSync = `${originEarly}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(
+          callSessionId,
+        )}`;
+        const gatherFallbackTextSync =
+          ctx.agent.fallbackMessage?.trim() ?? "We're having trouble hearing you. Please call again later. Goodbye.";
+        const hearingDebugEffectiveSync = this.resolveGatherHearingDebugEffective();
+        const syncTtsBudgetMs = Math.max(400, 2000 - (Date.now() - handlerStartedAt));
+        const mainPlay = await this.withTimeout(
+          this.buildElevenLabsPlaybackUrl(originEarly, utter.reply, {
+            callSessionId,
+            tenantId: ctx.tenantId,
+            phase: 'gather_reply',
+            voiceId: this.resolveElevenLabsVoiceId(ctx.agent),
+            elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
+            elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
+            voiceStyle: ctx.agent.voiceStyle ?? undefined,
+          }),
+          syncTtsBudgetMs,
+          {},
+        );
+        const finalFbSync = await this.resolveShortPhrasePlayUrl({
+          origin: originEarly,
+          hearingDebugEffective: hearingDebugEffectiveSync,
+          text: gatherFallbackTextSync,
+          tenantId: ctx.tenantId,
+          callSessionId,
+          agent: ctx.agent,
+          logLabel: 'gather_sync_social_final_fallback',
+        });
+        const twimlSync = buildInboundGatherMvpTwiML({
+          gatherActionUrl: gatherActionUrlSync,
+          language: this.getSessionLanguage(ctx),
+          playbackAudioUrl: mainPlay.playbackUrl,
+          finalFallbackAudioUrl: finalFbSync.playbackUrl,
+          openingSayText: strictElevenLabsOnly || mainPlay.playbackUrl ? undefined : utter.reply,
+          finalFallbackSayText:
+            strictElevenLabsOnly || finalFbSync.playbackUrl ? undefined : gatherFallbackTextSync,
+          timeoutSeconds: 10,
+          speechTimeout: '2',
+          pauseBeforeListenSeconds: 0,
+        });
+
+        this.logTwilioResponseMetrics('gather_sync_social_reply', callSessionId, handlerStartedAt);
+        this.logger.log(
+          JSON.stringify({
+            event: 'twilio.voice.twiml_returned',
+            route: 'gather_sync_social_reply',
+            callSessionId,
+            agentResolved: true,
+            twimlChars: twimlSync.length,
+            playback: mainPlay.playbackUrl ? 'elevenlabs_audio' : 'twilio_say',
+            intentDetected: userIntent,
+            voiceProviderActuallyUsedMain: mainPlay.playbackUrl ? 'elevenlabs' : 'twilio_say_fallback',
+            responseDelayMs: Date.now() - handlerStartedAt,
+            slowHandlerWarning: Date.now() - handlerStartedAt > 2000,
+            'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+          }),
+        );
+        return {
+          twiml: twimlSync,
+          callSessionId,
+          agentResolved: true,
+        };
+      }
+
+      const instantPhrase =
+        ackSelection.mode === 'deferred_kickoff' ? ackSelection.instantPhrase : null;
+      const kickText = instantPhrase?.trim() ?? '';
+      const deferredPatch = buildInstantAckMetadataPatch({
+        selection: ackSelection,
+        intent: userIntent,
+        letMeCheckUsedBefore,
+        instantPhraseForLog: instantPhrase,
+      });
+      const letMeCheckUsedAfter = deferredPatch.letMeCheckUsed;
+
+      const jobId = randomUUID();
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        ...deferredPatch,
+        deferredVoiceJob: {
+          jobId,
+          phase: 'processing',
+          startedAtMs: Date.now(),
+          momentPromptPlayed: false,
+        },
+      });
+      this.kickDeferredVoiceProcessing(callSessionId, speechText, jobId);
+
+      const deferPollUrl = `${originEarly}/api/twilio/voice/deferred-poll?callSessionId=${encodeURIComponent(
+        callSessionId,
+      )}`;
+
+      let kickPhrase: { playbackUrl?: string; voiceProviderActuallyUsed: 'elevenlabs' | 'twilio_say_fallback' } = {
+        voiceProviderActuallyUsed: 'twilio_say_fallback',
+      };
+      if (kickText.length > 0) {
+        const kickBudgetMs = Math.max(300, 2000 - (Date.now() - handlerStartedAt));
+        kickPhrase = await this.withTimeout(
+          this.resolveShortPhrasePlayUrl({
+            origin: originEarly,
+            hearingDebugEffective,
+            text: kickText,
+            tenantId: ctx.tenantId,
+            callSessionId,
+            agent: ctx.agent,
+            logLabel: 'deferred_kickoff',
+          }),
+          kickBudgetMs,
+          { voiceProviderActuallyUsed: 'twilio_say_fallback' as const },
+        );
+      }
+
+      const allowKickSayFallback =
+        !strictElevenLabsOnly && (hearingDebugEffective || (!kickPhrase.playbackUrl && kickText.length > 0));
+      const twimlKickoff = buildDeferredVoiceKickoffTwiML({
+        deferPollUrl,
+        instantPlaybackUrl: kickPhrase.playbackUrl,
+        allowTwilioSayFallback: allowKickSayFallback,
+        instantSayText: !kickPhrase.playbackUrl && kickText.length > 0 ? kickText : undefined,
+        language: this.getSessionLanguage(ctx),
+      });
+
+      this.logTwilioResponseMetrics('gather_deferred_kickoff', callSessionId, handlerStartedAt);
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.instant_ack_selected',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          instantAckSelected: kickText.length > 0 ? kickText : '(silent)',
+          ackReason: ackSelection.ackReason,
+          letMeCheckUsedBefore,
+          letMeCheckUsedAfter,
+          intentDetected: userIntent,
+        }),
+      );
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.gather_deferred_kickoff',
+          callSessionId,
+          agentId: ctx.agentId,
+          tenantId: ctx.tenantId,
+          jobId,
+          speechPreview: speechText.slice(0, 200),
+          voiceProviderActuallyUsed: kickPhrase.voiceProviderActuallyUsed,
+          deferredKickoffPhrase: kickText.length > 0 ? kickText : null,
+          responseDelayMs: Date.now() - handlerStartedAt,
+          slowHandlerWarning: Date.now() - handlerStartedAt > 2000,
+          'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+        }),
+      );
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.twiml_returned',
+          route: 'gather_deferred_kickoff',
+          callSessionId,
+          agentResolved: true,
+          twimlChars: twimlKickoff.length,
+          playback: kickPhrase.playbackUrl ? 'elevenlabs_audio' : 'silent_or_twilio_say',
+          ttsFallbackUsed: !kickPhrase.playbackUrl && kickText.length > 0,
+          playbackChannel: kickPhrase.playbackUrl ? 'elevenlabs' : kickText.length > 0 ? 'twilio_say' : 'silent_redirect',
+          replyVerb: kickPhrase.playbackUrl ? 'Play' : kickText.length > 0 ? 'Say' : 'Redirect',
+          deferredPipeline: true,
+          voiceProviderActuallyUsed: kickPhrase.voiceProviderActuallyUsed,
+          'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+        }),
+      );
+
+      return {
+        twiml: twimlKickoff,
+        callSessionId,
+        agentResolved: true,
+      };
+    }
+
+    const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(
+      callSessionId,
+    )}`;
+
+    const gatherFallbackText =
+      ctx.agent.fallbackMessage?.trim() ?? "We're having trouble hearing you. Please call again later. Goodbye.";
+
+    const retryOpen = await this.resolveShortPhrasePlayUrl({
+      origin,
+      hearingDebugEffective,
+      text: assistantResponse,
+      tenantId: ctx.tenantId,
+      callSessionId,
+      agent: ctx.agent,
+      logLabel: 'gather_retry_opening',
+    });
+    const retryFinal = await this.resolveShortPhrasePlayUrl({
+      origin,
+      hearingDebugEffective,
+      text: gatherFallbackText,
+      tenantId: ctx.tenantId,
+      callSessionId,
+      agent: ctx.agent,
+      logLabel: 'gather_retry_final_fallback',
+    });
+
+    const twiml = buildInboundGatherMvpTwiML({
+      gatherActionUrl,
+      language: this.getSessionLanguage(ctx),
+      playbackAudioUrl: retryOpen.playbackUrl,
+      finalFallbackAudioUrl: retryFinal.playbackUrl,
+      openingSayText: strictElevenLabsOnly || retryOpen.playbackUrl ? undefined : assistantResponse,
+      finalFallbackSayText: strictElevenLabsOnly || retryFinal.playbackUrl ? undefined : gatherFallbackText,
+      timeoutSeconds: 10,
+      speechTimeout: '2',
+      pauseBeforeListenSeconds: 0,
+    });
+
+    const replyVerb: 'Play' | 'Say' = retryOpen.playbackUrl ? 'Play' : 'Say';
+
+    this.logTwilioResponseMetrics('gather_retry_prompt', callSessionId, handlerStartedAt);
+
+    console.log({
+      speechResult: speechText.slice(0, 500),
+      confidence,
+      callSessionId,
+      agentId: ctx.agentId,
+      tenantId: ctx.tenantId,
+      openaiCalled: false,
+      openaiReply: assistantResponse.slice(0, 500),
+      elevenLabsAudioCreated: Boolean(retryOpen.playbackUrl),
+      replyVerb,
+      twimlReplyVerb: replyVerb,
+      ttsProviderUsed: retryOpen.playbackUrl ? 'elevenlabs' : 'twilio_say',
+      voiceProviderActuallyUsedOpening: retryOpen.voiceProviderActuallyUsed,
+      voiceProviderActuallyUsedFinalFallback: retryFinal.voiceProviderActuallyUsed,
+      gatherRetrySayOnly: !retryOpen.playbackUrl,
+    });
+
+    console.log(
+      JSON.stringify({
+        event: 'twilio.voice.gather_reply_summary',
+        loadedAgentId: ctx.agentId,
+        dialedTo: maskPhoneForLog(payload.To),
+        voiceProvider: ctx.agent.voiceProvider ?? null,
+        voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+        resolvedVoiceIdForElevenLabs: this.resolveElevenLabsVoiceId(ctx.agent) ? 'present' : 'missing',
+        elevenLabsKeySource: gatherElevenLabsKeySource,
+        providerUsed: retryOpen.playbackUrl ? 'elevenlabs' : 'twilio_say',
+        callSessionId,
+        nextGatherUrlIncludesCallSessionId: gatherActionUrl.includes('callSessionId='),
+        SpeechResult: speechText.slice(0, 200),
+        StableSpeechResult: (payload.StableSpeechResult ?? '').slice(0, 200),
+        Confidence: payload.Confidence ?? '',
+        replyVerb,
+        replyUsedElevenLabsAudio: Boolean(retryOpen.playbackUrl),
+        twimlHasRedirectToInbound: /<\s*Redirect/i.test(twiml),
+      }),
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.twiml_returned',
+        route: 'gather',
+        callSessionId,
+        agentResolved: true,
+        twimlChars: twiml.length,
+        playback: retryOpen.playbackUrl ? 'elevenlabs_audio' : 'twilio_say',
+        ttsFallbackUsed: !retryOpen.playbackUrl,
+        playbackChannel: retryOpen.playbackUrl ? 'elevenlabs' : 'twilio_say',
+        replyVerb,
+        voiceProviderActuallyUsedOpening: retryOpen.voiceProviderActuallyUsed,
+        voiceProviderActuallyUsedFinalFallback: retryFinal.voiceProviderActuallyUsed,
+        'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+      }),
+    );
+
+    return {
+      twiml,
+      callSessionId,
+      agentResolved: true,
+    };
+  }
+
+  /**
+   * Poll endpoint after deferred kickoff: cheap TwiML only until async OpenAI + (optional) ElevenLabs finish.
+   */
+  async handleDeferredVoicePoll(payload: DeferredPollInboundPayload): Promise<GatherMvpWebhookResult> {
+    const handlerStartedAt = Date.now();
+
+    let callSessionId = payload.callSessionId?.trim() ?? '';
+    if (!callSessionId && payload.CallSid) {
+      const session = await this.callsService.findOneByTwilioCallSid(payload.CallSid);
+      callSessionId = session?.id ?? '';
+    }
+
+    const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    const deferPollUrl = `${origin}/api/twilio/voice/deferred-poll?callSessionId=${encodeURIComponent(
+      callSessionId || 'missing',
+    )}`;
+
+    if (!callSessionId) {
+      const twiml = buildFallbackTwiML("I'm sorry, I couldn't resume your call. Please try again.");
+      this.logTwilioResponseMetrics('deferred_poll', undefined, handlerStartedAt);
+      return { twiml, agentResolved: false };
+    }
+
+    const ctx = await this.sessionContext.load(callSessionId);
+    if (!ctx) {
+      const twiml = buildFallbackTwiML("I'm sorry, I couldn't load your call session. Please try again.");
+      this.logTwilioResponseMetrics('deferred_poll', callSessionId, handlerStartedAt);
+      return { twiml, agentResolved: false };
+    }
+
+    const row = await this.callsService.findOneById(callSessionId);
+    if (row.twilioCallSid && payload.CallSid !== row.twilioCallSid) {
+      const twiml = buildFallbackTwiML('Sorry, this call could not be verified. Please try again.');
+      this.logger.warn(
+        JSON.stringify({
+          event: 'twilio.voice.deferred_poll_call_sid_mismatch',
+          callSessionId,
+        }),
+      );
+      this.logTwilioResponseMetrics('deferred_poll_sid_mismatch', callSessionId, handlerStartedAt);
+      return { twiml, callSessionId, agentResolved: false };
+    }
+    const meta =
+      row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const jobRaw = meta.deferredVoiceJob;
+    const job = jobRaw && typeof jobRaw === 'object' && !Array.isArray(jobRaw) ? (jobRaw as DeferredVoiceJobMetadata) : null;
+
+    const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(callSessionId)}`;
+    const gatherFallbackText =
+      ctx.agent.fallbackMessage?.trim() ?? "We're having trouble hearing you. Please call again later. Goodbye.";
+    const hearingDebug = this.isGatherHearingDebugMode();
+    const hearingDebugEffective = this.resolveGatherHearingDebugEffective();
+    const strictElevenLabsOnly = this.isStrictElevenLabsOnly();
+
+    if (!job || !('phase' in job)) {
+      const missOpen = "I didn't catch that. Could you repeat your question?";
+      const missA = await this.resolveShortPhrasePlayUrl({
+        origin,
+        hearingDebugEffective,
+        text: missOpen,
+        tenantId: ctx.tenantId,
+        callSessionId,
+        agent: ctx.agent,
+        logLabel: 'deferred_poll_missing_opening',
+      });
+      const missB = await this.resolveShortPhrasePlayUrl({
+        origin,
+        hearingDebugEffective,
+        text: gatherFallbackText,
+        tenantId: ctx.tenantId,
+        callSessionId,
+        agent: ctx.agent,
+        logLabel: 'deferred_poll_missing_fallback',
+      });
+      const twiml = buildInboundGatherMvpTwiML({
+        gatherActionUrl,
+        language: this.getSessionLanguage(ctx),
+        playbackAudioUrl: missA.playbackUrl,
+        finalFallbackAudioUrl: missB.playbackUrl,
+        openingSayText: strictElevenLabsOnly || missA.playbackUrl ? undefined : missOpen,
+        finalFallbackSayText: strictElevenLabsOnly || missB.playbackUrl ? undefined : gatherFallbackText,
+        timeoutSeconds: 10,
+        speechTimeout: '2',
+        pauseBeforeListenSeconds: 0,
+      });
+      this.logTwilioResponseMetrics('deferred_poll_recover', callSessionId, handlerStartedAt);
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.deferred_poll_missing_job',
+          callSessionId,
+          voiceProviderActuallyUsedOpening: missA.voiceProviderActuallyUsed,
+          voiceProviderActuallyUsedFinalFallback: missB.voiceProviderActuallyUsed,
+          'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+        }),
+      );
+      return { twiml, callSessionId, agentResolved: true };
+    }
+
+    if (job.phase === 'processing') {
+      const elapsed = Date.now() - job.startedAtMs;
+      if (elapsed > 120_000) {
+        await this.callsService.mergeSessionMetadata(callSessionId, { deferredVoiceJob: null });
+        const timeoutOpen =
+          ctx.agent.fallbackMessage?.trim() ?? "I'm sorry, that took too long. Please try your question again.";
+        const toA = await this.resolveShortPhrasePlayUrl({
+          origin,
+          hearingDebugEffective,
+          text: timeoutOpen,
+          tenantId: ctx.tenantId,
+          callSessionId,
+          agent: ctx.agent,
+          logLabel: 'deferred_poll_timeout_opening',
+        });
+        const toB = await this.resolveShortPhrasePlayUrl({
+          origin,
+          hearingDebugEffective,
+          text: gatherFallbackText,
+          tenantId: ctx.tenantId,
+          callSessionId,
+          agent: ctx.agent,
+          logLabel: 'deferred_poll_timeout_fallback',
+        });
+        const twiml = buildInboundGatherMvpTwiML({
+          gatherActionUrl,
+          language: this.getSessionLanguage(ctx),
+          playbackAudioUrl: toA.playbackUrl,
+          finalFallbackAudioUrl: toB.playbackUrl,
+          openingSayText: strictElevenLabsOnly || toA.playbackUrl ? undefined : timeoutOpen,
+          finalFallbackSayText: strictElevenLabsOnly || toB.playbackUrl ? undefined : gatherFallbackText,
+          timeoutSeconds: 10,
+          speechTimeout: '2',
+          pauseBeforeListenSeconds: 0,
+        });
+        this.logTwilioResponseMetrics('deferred_poll_timeout', callSessionId, handlerStartedAt);
+        return { twiml, callSessionId, agentResolved: true };
+      }
+      if (elapsed > 1500 && !job.momentPromptPlayed) {
+        const fillerAlready = meta.fillerUsed === true;
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+          deferredVoiceJob: { ...job, momentPromptPlayed: true },
+          ...(fillerAlready ? {} : { fillerUsed: true }),
+        });
+        if (fillerAlready) {
+          const twiml = buildDeferredVoicePollPauseTwiML({ deferPollUrl, pauseSeconds: 1 });
+          this.logTwilioResponseMetrics('deferred_poll_pause_skip_filler', callSessionId, handlerStartedAt);
+          this.logger.log(
+            JSON.stringify({
+              event: 'twilio.voice.deferred_poll',
+              sub: 'pause_filler_already_used',
+              callSessionId,
+              elapsedMs: elapsed,
+              fillerUsed: true,
+              'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+            }),
+          );
+          return { twiml, callSessionId, agentResolved: true };
+        }
+        const moment = await this.withTimeout(
+          this.resolveShortPhrasePlayUrl({
+            origin,
+            hearingDebugEffective,
+            text: 'Just a moment.',
+            tenantId: ctx.tenantId,
+            callSessionId,
+            agent: ctx.agent,
+            logLabel: 'deferred_poll_processing_filler',
+          }),
+          900,
+          { voiceProviderActuallyUsed: 'twilio_say_fallback' as const },
+        );
+        const twiml = buildDeferredVoiceMomentPleaseTwiML({
+          deferPollUrl,
+          playbackUrl: moment.playbackUrl,
+          sayFallbackText: 'Just a moment.',
+          allowTwilioSayFallback: !strictElevenLabsOnly,
+          language: this.getSessionLanguage(ctx),
+        });
+        this.logTwilioResponseMetrics('deferred_poll_moment', callSessionId, handlerStartedAt);
+        this.logger.log(
+          JSON.stringify({
+            event: 'twilio.voice.deferred_poll',
+            sub: 'processing_filler',
+            callSessionId,
+            voiceProviderActuallyUsed: moment.voiceProviderActuallyUsed,
+            fillerUsed: true,
+            responseDelayMs: elapsed,
+            'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+          }),
+        );
+        return { twiml, callSessionId, agentResolved: true };
+      }
+      const twiml = buildDeferredVoicePollPauseTwiML({ deferPollUrl, pauseSeconds: 1 });
+      this.logTwilioResponseMetrics('deferred_poll_pause', callSessionId, handlerStartedAt);
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.deferred_poll',
+          sub: 'pause',
+          callSessionId,
+          elapsedMs: elapsed,
+          'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+        }),
+      );
+      return { twiml, callSessionId, agentResolved: true };
+    }
+
+    if (job.phase === 'failed') {
+      await this.callsService.mergeSessionMetadata(callSessionId, { deferredVoiceJob: null });
+      const msg = ctx.agent.fallbackMessage ?? "I'm having trouble right now. Please call back later.";
+      const failA = await this.resolveShortPhrasePlayUrl({
+        origin,
+        hearingDebugEffective,
+        text: msg,
+        tenantId: ctx.tenantId,
+        callSessionId,
+        agent: ctx.agent,
+        logLabel: 'deferred_poll_failed_opening',
+      });
+      const failB = await this.resolveShortPhrasePlayUrl({
+        origin,
+        hearingDebugEffective,
+        text: gatherFallbackText,
+        tenantId: ctx.tenantId,
+        callSessionId,
+        agent: ctx.agent,
+        logLabel: 'deferred_poll_failed_fallback',
+      });
+      const twiml = buildInboundGatherMvpTwiML({
+        gatherActionUrl,
+        language: this.getSessionLanguage(ctx),
+        playbackAudioUrl: failA.playbackUrl,
+        finalFallbackAudioUrl: failB.playbackUrl,
+        openingSayText: strictElevenLabsOnly || failA.playbackUrl ? undefined : msg,
+        finalFallbackSayText: strictElevenLabsOnly || failB.playbackUrl ? undefined : gatherFallbackText,
+        timeoutSeconds: 10,
+        speechTimeout: '2',
+        pauseBeforeListenSeconds: 0,
+      });
+      this.logTwilioResponseMetrics('deferred_poll_failed', callSessionId, handlerStartedAt);
+      return { twiml, callSessionId, agentResolved: true };
+    }
+
+    // ready
+    await this.callsService.mergeSessionMetadata(callSessionId, { deferredVoiceJob: null });
+    const playbackAudioUrl = job.playbackUrl?.trim() || undefined;
+    const readyFall = await this.resolveShortPhrasePlayUrl({
+      origin,
+      hearingDebugEffective,
+      text: gatherFallbackText,
+      tenantId: ctx.tenantId,
+      callSessionId,
+      agent: ctx.agent,
+      logLabel: 'deferred_poll_ready_final_fallback',
+    });
+    const twiml = buildInboundGatherMvpTwiML({
+      gatherActionUrl,
+      language: this.getSessionLanguage(ctx),
+      playbackAudioUrl,
+      finalFallbackAudioUrl: readyFall.playbackUrl,
+      openingSayText: strictElevenLabsOnly || playbackAudioUrl ? undefined : job.assistantResponse,
+      finalFallbackSayText: strictElevenLabsOnly || readyFall.playbackUrl ? undefined : gatherFallbackText,
+      timeoutSeconds: 10,
+      speechTimeout: '2',
+      pauseBeforeListenSeconds: 0,
+    });
+
+    this.logTwilioResponseMetrics('deferred_poll_ready', callSessionId, handlerStartedAt);
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.deferred_poll',
+        sub: 'ready',
+        callSessionId,
+        playback: playbackAudioUrl ? 'elevenlabs_audio' : 'twilio_say',
+        usedElevenLabs: job.usedElevenLabs,
+        tts_generation_time_ms: job.ttsGenerationTimeMs,
+        audioBytes: job.audioBytes ?? null,
+        voiceProviderActuallyUsedMain: playbackAudioUrl ? 'elevenlabs' : 'twilio_say_fallback',
+        voiceProviderActuallyUsedFinalFallback: readyFall.voiceProviderActuallyUsed,
+        'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+      }),
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.twiml_returned',
+        route: 'deferred_poll_ready',
+        callSessionId,
+        agentResolved: true,
+        twimlChars: twiml.length,
+        playback: playbackAudioUrl ? 'elevenlabs_audio' : 'twilio_say',
+        replyVerb: playbackAudioUrl ? 'Play' : 'Say',
+        voiceProviderActuallyUsedFinalFallback: readyFall.voiceProviderActuallyUsed,
+        'twilio.response_latency_ms': Date.now() - handlerStartedAt,
+      }),
+    );
+
+    return {
+      twiml,
+      callSessionId,
+      agentResolved: true,
+    };
+  }
+
+  private logTwilioResponseMetrics(route: string, callSessionId: string | undefined, startedAt: number): void {
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.response_metrics',
+        route,
+        callSessionId: callSessionId ?? null,
+        'twilio.response_latency_ms': Date.now() - startedAt,
+      }),
+    );
+  }
+
+  private kickDeferredVoiceProcessing(callSessionId: string, speechText: string, jobId: string): void {
+    void this.runDeferredVoiceJob(callSessionId, speechText, jobId).catch((err) => {
+      this.logger.error(
+        JSON.stringify({
+          event: 'voice.deferred.job_unhandled',
+          callSessionId,
+          jobId,
+          message: err instanceof Error ? err.message.slice(0, 300) : 'unknown_error',
+        }),
+      );
+      void this.failDeferredVoiceJobIfCurrent(
+        callSessionId,
+        jobId,
+        err instanceof Error ? err.message.slice(0, 300) : 'unknown_error',
+      );
+    });
+  }
+
+  private async failDeferredVoiceJobIfCurrent(
+    callSessionId: string,
+    jobId: string,
+    errorMessage: string,
+  ): Promise<void> {
+    const row = await this.callsService.findOneById(callSessionId);
+    const meta =
+      row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : {};
+    const cur = meta.deferredVoiceJob as DeferredVoiceJobMetadata | undefined;
+    if (!cur || cur.jobId !== jobId || cur.phase !== 'processing') {
+      return;
+    }
+    await this.callsService.mergeSessionMetadata(callSessionId, {
+      deferredVoiceJob: {
+        jobId,
+        phase: 'failed',
+        startedAtMs: cur.startedAtMs,
+        errorMessage,
+      },
+    });
+  }
+
+  private async runDeferredVoiceJob(callSessionId: string, speechText: string, jobId: string): Promise<void> {
+    const budgetRaw =
+      this.config.get<string>('VOICE_DEFERRED_JOB_TIMEOUT_MS') ?? process.env.VOICE_DEFERRED_JOB_TIMEOUT_MS ?? '';
+    const parsed = Number(budgetRaw.trim());
+    const budgetMs = Number.isFinite(parsed)
+      ? Math.min(120_000, Math.max(VOICE_DEFERRED_JOB_TIMEOUT_MS_MIN, parsed))
+      : 55_000;
+
+    try {
+      await Promise.race([
+        this.executeDeferredVoiceJobBody(callSessionId, speechText, jobId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('VOICE_DEFERRED_JOB_TIMEOUT')), budgetMs),
+        ),
+      ]);
+    } catch (err) {
+      if (err instanceof Error && err.message === 'VOICE_DEFERRED_JOB_TIMEOUT') {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.deferred.job_timeout',
+            callSessionId,
+            jobId,
+            budgetMs,
+            note: 'OpenAI or Shopify tools exceeded budget; failing job so deferred-poll can recover.',
+          }),
+        );
+        await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'processing_timeout');
+        return;
+      }
+      const message = err instanceof Error ? err.message.slice(0, 300) : 'unknown_error';
+      this.logger.error(
+        JSON.stringify({
+          event: 'voice.deferred.job_fatal',
+          callSessionId,
+          jobId,
+          message,
+        }),
+      );
+      await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, message);
+    }
+  }
+
+  private async executeDeferredVoiceJobBody(
+    callSessionId: string,
+    speechText: string,
+    jobId: string,
+  ): Promise<void> {
+    const ctx = await this.sessionContext.load(callSessionId);
+    if (!ctx) {
+      await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'session_context_missing');
+      return;
+    }
+
+    try {
+      const utter = await this.voiceRuntime.processUtterance(callSessionId, speechText, []);
+      const assistantResponse = utter.reply;
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.llm_reply_generated',
+          eventJourney: 'voice.journey.twilio_llm_reply_ready',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          replyChars: assistantResponse.length,
+          turnProof: utter.turnProof ?? null,
+          deferredJobId: jobId,
+        }),
+      );
+
+      const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+      const ttsStart = Date.now();
+      const tts = await this.buildElevenLabsPlaybackUrl(origin, assistantResponse, {
+        callSessionId,
+        tenantId: ctx.tenantId,
+        phase: 'gather_reply',
+        voiceId: this.resolveElevenLabsVoiceId(ctx.agent),
+        elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
+        elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
+        voiceStyle: ctx.agent.voiceStyle ?? undefined,
+      });
+      const ttsGenerationTimeMs = tts.tts_generation_time_ms ?? Date.now() - ttsStart;
+
+      const row = await this.callsService.findOneById(callSessionId);
+      const meta =
+        row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+          ? (row.metadata as Record<string, unknown>)
+          : {};
+      const cur = meta.deferredVoiceJob as DeferredVoiceJobMetadata | undefined;
+      if (!cur || cur.jobId !== jobId || cur.phase !== 'processing') {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.deferred.stale_completion',
+            callSessionId,
+            jobId,
+          }),
+        );
+        return;
+      }
+
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        deferredVoiceJob: {
+          jobId,
+          phase: 'ready',
+          startedAtMs: cur.startedAtMs,
+          momentPromptPlayed: cur.momentPromptPlayed,
+          assistantResponse,
+          playbackUrl: tts.playbackUrl,
+          usedElevenLabs: Boolean(tts.playbackUrl),
+          audioBytes: tts.audioBytes,
+          ttsGenerationTimeMs,
+        },
+      });
+
+      const responseDelayMs = Date.now() - cur.startedAtMs;
+      const fillerUsedLog = meta.fillerUsed === true;
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.deferred.job_ready',
+          callSessionId,
+          jobId,
+          tts_generation_time_ms: ttsGenerationTimeMs,
+          usedElevenLabs: Boolean(tts.playbackUrl),
+          audioBytes: tts.audioBytes ?? null,
+          responseDelayMs,
+          fillerUsed: fillerUsedLog,
+        }),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message.slice(0, 300) : 'unknown_error';
+      this.logger.error(
+        JSON.stringify({
+          event: 'twilio.voice.llm_reply_failed',
+          callSessionId,
+          jobId,
+          message,
+          deferred: true,
+        }),
+      );
+      await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, message);
+    }
+  }
+
+  private resolveElevenLabsVoiceId(agent: {
+    voiceProvider?: string | null;
+    voiceId?: string | null;
+  }): string | undefined {
+    void agent.voiceProvider;
+    const vid = agent.voiceId?.trim();
+    if (!vid) return undefined;
+    return vid;
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+    return new Promise((resolve) => {
+      const t = setTimeout(() => resolve(fallback), ms);
+      promise
+        .then((v) => {
+          clearTimeout(t);
+          resolve(v);
+        })
+        .catch(() => {
+          clearTimeout(t);
+          resolve(fallback);
+        });
+    });
+  }
+
+  /**
+   * ElevenLabs API key: same precedence as SessionContextService (agent → tenant → env).
+   */
+  private async resolveElevenLabsApiKeyAndSource(
+    tenantId: string,
+    secretsEnc: string | null | undefined,
+  ): Promise<{
+    apiKey?: string;
+    keySource: 'agent' | 'tenant' | 'env' | 'none';
+  }> {
+    let agentPlain: string | null = null;
+    if (secretsEnc && this.encryption.isAvailable()) {
+      const dec = this.encryption.decryptFromStorage(secretsEnc);
+      if (dec) {
+        try {
+          const secrets = JSON.parse(dec) as { elevenlabsApiKey?: string };
+          agentPlain = typeof secrets.elevenlabsApiKey === 'string' ? secrets.elevenlabsApiKey : null;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    const ti = this.encryption.isAvailable()
+      ? await this.prisma.tenantIntegration.findUnique({
+          where: { tenantId },
+          select: { elevenlabsApiKeyEnc: true },
+        })
+      : null;
+
+    const r = resolveElevenLabsKeyChain({
+      agentSecretPlain: agentPlain,
+      tenantEnc: ti?.elevenlabsApiKeyEnc ?? null,
+      decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
+      envPlain: this.config.get<string>('ELEVENLABS_API_KEY'),
+      encryptionAvailable: this.encryption.isAvailable(),
+    });
+
+    return { apiKey: r.value ?? undefined, keySource: r.source };
+  }
+
+  /** Resolve ElevenLabs key/model/voice for inbound greeting (before CallSession context exists). */
+  private async loadElevenLabsTtsOptions(context: ResolvedAgentContext): Promise<{
+    apiKey?: string;
+    model?: string;
+    voiceId?: string;
+    keySource: 'agent' | 'tenant' | 'env' | 'none';
+  }> {
+    let model: string | undefined;
+    let workspaceDefaultVoiceId: string | null = null;
+
+    const row = await this.prisma.agent.findUnique({
+      where: { id: context.agentId },
+      select: {
+        secretsEnc: true,
+        voiceId: true,
+        voiceProvider: true,
+        voiceProfile: { select: { providerConfig: true } },
+      },
+    });
+
+    const { apiKey: elevenlabsApiKey, keySource } = await this.resolveElevenLabsApiKeyAndSource(
+      context.tenantId,
+      row?.secretsEnc,
+    );
+
+    if (this.encryption.isAvailable()) {
+      const ti = await this.prisma.tenantIntegration.findUnique({
+        where: { tenantId: context.tenantId },
+        select: {
+          elevenlabsDefaultModel: true,
+          elevenlabsDefaultVoiceId: true,
+        },
+      });
+      workspaceDefaultVoiceId = ti?.elevenlabsDefaultVoiceId?.trim() || null;
+      if (ti?.elevenlabsDefaultModel?.trim()) model = ti.elevenlabsDefaultModel.trim();
+    }
+
+    const pc = row?.voiceProfile?.providerConfig as { elevenlabsModel?: string } | null;
+    if (pc?.elevenlabsModel?.trim()) model = pc.elevenlabsModel.trim();
+
+    const voiceIdMerged = row?.voiceId?.trim() || workspaceDefaultVoiceId || undefined;
+    const voiceId = voiceIdMerged || undefined;
+
+    return { apiKey: elevenlabsApiKey, model, voiceId, keySource };
+  }
+
+  private async buildElevenLabsPlaybackUrl(
+    publicOrigin: string,
+    text: string,
+    opts: {
+      callSessionId: string;
+      tenantId: string;
+      phase: 'inbound_greeting' | 'gather_reply';
+      voiceId?: string;
+      elevenlabsApiKey?: string;
+      elevenlabsModel?: string;
+      voiceStyle?: string;
+    },
+  ): Promise<{
+    playbackUrl?: string;
+    audioBytes?: number;
+    tts_generation_time_ms?: number;
+  }> {
+    const hasBaseUrl = /^https:\/\//i.test(publicOrigin);
+    const elevenLabsApiKeySet = Boolean((opts.elevenlabsApiKey ?? this.config.get<string>('ELEVENLABS_API_KEY') ?? '').trim());
+    if (!hasBaseUrl || !elevenLabsApiKeySet) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.tts_fallback',
+          phase: opts.phase,
+          callSessionId: opts.callSessionId,
+          reason: !hasBaseUrl ? 'public_webhook_base_url_not_https' : 'elevenlabs_api_key_missing',
+        }),
+      );
+      return {};
+    }
+
+    const ttsStart = Date.now();
+    try {
+      const prep = shortenReplyForVoiceTts(text, VOICE_REPLY_TTS_MAX_CHARS);
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.tts_text_prepared',
+          phase: opts.phase,
+          callSessionId: opts.callSessionId,
+          'voice.reply_shortened': prep.reply_shortened,
+          originalChars: prep.originalChars,
+          finalChars: prep.finalChars,
+        }),
+      );
+      const audio = await this.elevenLabs.textToSpeech(prep.text, opts.voiceId, {
+        apiKey: opts.elevenlabsApiKey,
+        modelId: opts.elevenlabsModel,
+        styleNotes: opts.voiceStyle,
+      });
+      const tts_generation_time_ms = Date.now() - ttsStart;
+      if (audio.length > VOICE_TTS_MAX_AUDIO_BYTES) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'twilio.voice.tts_oversize_discarded',
+            phase: opts.phase,
+            callSessionId: opts.callSessionId,
+            audioBytes: audio.length,
+            maxBytes: VOICE_TTS_MAX_AUDIO_BYTES,
+            tts_generation_time_ms,
+          }),
+        );
+        return { audioBytes: audio.length, tts_generation_time_ms };
+      }
+      const token = this.ttsCache.put(audio);
+      const playbackUrl = `${publicOrigin}/api/twilio/voice/tts/${encodeURIComponent(token)}`;
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.elevenlabs_audio_generated',
+          phase: opts.phase,
+          callSessionId: opts.callSessionId,
+          audioBytes: audio.length,
+          'voice.reply_shortened': prep.reply_shortened,
+          ttsInputChars: prep.finalChars,
+          tts_generation_time_ms,
+        }),
+      );
+      return { playbackUrl, audioBytes: audio.length, tts_generation_time_ms };
+    } catch (err) {
+      const tts_generation_time_ms = Date.now() - ttsStart;
+      const message = err instanceof Error ? err.message.slice(0, 300) : 'unknown_error';
+      this.logger.warn(
+        JSON.stringify({
+          event: 'twilio.voice.tts_fallback',
+          phase: opts.phase,
+          callSessionId: opts.callSessionId,
+          reason: 'elevenlabs_request_failed',
+          message,
+          nextPlayback: 'openai_voice_or_safe_default',
+          tts_generation_time_ms,
+        }),
+      );
+      await this.callEvents.log(opts.tenantId, opts.callSessionId, CallEventType.FALLBACK_USED, {
+        reason: 'elevenlabs_tts_failed',
+        phase: opts.phase,
+        message,
+      });
+      return { tts_generation_time_ms };
+    }
+  }
+}

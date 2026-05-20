@@ -1,0 +1,725 @@
+
+
+===== apps/api/src/modules/integrations/shopify/shopify.service.ts =====
+
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { PrismaService } from '../../../database/prisma.service';
+import { EncryptionService } from '../../../common/encryption.service';
+import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
+
+const SHOPIFY_ADMIN_API_VERSION = '2024-10';
+const WEBHOOK_TOPICS = [
+  'orders/create',
+  'carts/create',
+  'orders/updated',
+  'products/create',
+  'products/update',
+  'customers/create',
+  'customers/update',
+] as const;
+
+interface OAuthStatePayload {
+  tenantId: string;
+  agentId: string;
+  issuedAt: number;
+}
+
+interface ShopifyWebhookResource {
+  id: number;
+  topic: string;
+  address: string;
+}
+
+@Injectable()
+export class ShopifyService {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+  ) {}
+
+  private stateSecret(): string {
+    return (
+      this.config.get<string>('JWT_SECRET')?.trim() ||
+      this.config.get<string>('SHOPIFY_API_SECRET')?.trim() ||
+      'dev-shopify-state-secret'
+    );
+  }
+
+  private appKey(): string {
+    const key = this.config.get<string>('SHOPIFY_API_KEY')?.trim();
+    if (!key) throw new BadRequestException('SHOPIFY_API_KEY is not configured.');
+    return key;
+  }
+
+  private appSecret(): string {
+    const secret = this.config.get<string>('SHOPIFY_API_SECRET')?.trim();
+    if (!secret) throw new BadRequestException('SHOPIFY_API_SECRET is not configured.');
+    const lower = secret.toLowerCase();
+    if (lower.startsWith('shpat_')) {
+      throw new BadRequestException(
+        'SHOPIFY_API_SECRET is set to an Admin API access token (shpat_). Use the app API secret key from Shopify (OAuth client secret), not the admin token.',
+      );
+    }
+    if (lower.startsWith('shpss_')) {
+      throw new BadRequestException(
+        'SHOPIFY_API_SECRET looks like a Storefront access token (shpss_). Use the app API secret key from Shopify Admin → your app → API credentials → API secret key (reveal).',
+      );
+    }
+    return secret;
+  }
+
+  private callbackUrl(): string {
+    const base = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    if (!base) {
+      throw new BadRequestException('PUBLIC_WEBHOOK_BASE_URL must be configured for Shopify OAuth callback.');
+    }
+    return `${base}/api/integrations/shopify/oauth/callback`;
+  }
+
+  private webhookAddress(): string {
+    const base = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    if (!base) {
+      throw new BadRequestException('PUBLIC_WEBHOOK_BASE_URL must be configured for Shopify webhook registration.');
+    }
+    return `${base}/api/integrations/shopify/webhooks`;
+  }
+
+  private normalizeShopDomain(input: string): string {
+    const raw = input.trim().toLowerCase();
+    const withoutProtocol = raw.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (!withoutProtocol.endsWith('.myshopify.com')) {
+      throw new BadRequestException('Use a valid Shopify domain (e.g. your-store.myshopify.com).');
+    }
+    return withoutProtocol;
+  }
+
+  /**
+   * Canonical URL candidates used for strict shop matching in DB queries.
+   * Prevents tenant overlap from loose `contains` checks.
+   */
+  private shopUrlCandidates(shopDomain: string): string[] {
+    const d = this.normalizeShopDomain(shopDomain);
+    return [
+      d,
+      `https://${d}`,
+      `https://${d}/`,
+      `http://${d}`,
+      `http://${d}/`,
+    ];
+  }
+
+  private encodeState(payload: OAuthStatePayload): string {
+    const json = JSON.stringify(payload);
+    const b64 = Buffer.from(json, 'utf8').toString('base64url');
+    const sig = createHmac('sha256', this.stateSecret()).update(b64).digest('base64url');
+    return `${b64}.${sig}`;
+  }
+
+  private decodeState(state: string): OAuthStatePayload {
+    const [b64, sig] = state.split('.');
+    if (!b64 || !sig) throw new UnauthorizedException('Invalid OAuth state.');
+    const expected = createHmac('sha256', this.stateSecret()).update(b64).digest('base64url');
+    if (!timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+      throw new UnauthorizedException('Invalid OAuth state signature.');
+    }
+    const payload = JSON.parse(Buffer.from(b64, 'base64url').toString('utf8')) as OAuthStatePayload;
+    if (!payload?.tenantId || !payload?.agentId || !payload?.issuedAt) {
+      throw new UnauthorizedException('Invalid OAuth state payload.');
+    }
+    // 10 min validity
+    if (Date.now() - payload.issuedAt > 10 * 60 * 1000) {
+      throw new UnauthorizedException('OAuth state expired. Please try connecting again.');
+    }
+    return payload;
+  }
+
+  private verifyOAuthHmac(query: URLSearchParams): boolean {
+    const hmac = query.get('hmac') ?? '';
+    if (!hmac) return false;
+    const msg = [...query.entries()]
+      .filter(([k]) => k !== 'hmac' && k !== 'signature')
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('&');
+    const digest = createHmac('sha256', this.appSecret()).update(msg).digest('hex');
+    try {
+      return timingSafeEqual(Buffer.from(digest), Buffer.from(hmac));
+    } catch {
+      return false;
+    }
+  }
+
+  buildInstallUrl(tenantId: string, agentId: string, shop: string): string {
+    const shopDomain = this.normalizeShopDomain(shop);
+    const scopes =
+      this.config.get<string>('SHOPIFY_SCOPES')?.trim() ||
+      'read_products,read_orders,read_customers';
+    const state = this.encodeState({ tenantId, agentId, issuedAt: Date.now() });
+    const params = new URLSearchParams({
+      client_id: this.appKey(),
+      scope: scopes,
+      redirect_uri: this.callbackUrl(),
+      state,
+    });
+    return `https://${shopDomain}/admin/oauth/authorize?${params.toString()}`;
+  }
+
+  private async fetchShopifyRest<T>(
+    shopDomain: string,
+    accessToken: string,
+    path: string,
+    init?: RequestInit,
+  ): Promise<T> {
+    const url = `https://${shopDomain}/admin/api/${SHOPIFY_ADMIN_API_VERSION}/${path.replace(/^\//, '')}`;
+    const res = await fetch(url, {
+      ...init,
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+        ...(init?.headers ?? {}),
+      },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new BadRequestException(`Shopify API ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return (text ? (JSON.parse(text) as T) : ({} as T));
+  }
+
+  private async listWebhooks(shopDomain: string, accessToken: string): Promise<ShopifyWebhookResource[]> {
+    const data = await this.fetchShopifyRest<{ webhooks?: ShopifyWebhookResource[] }>(
+      shopDomain,
+      accessToken,
+      'webhooks.json',
+      { method: 'GET' },
+    );
+    return data.webhooks ?? [];
+  }
+
+  private async ensureWebhooksRegistered(shopDomain: string, accessToken: string): Promise<string[]> {
+    const existing = await this.listWebhooks(shopDomain, accessToken);
+    const address = this.webhookAddress();
+    const existingSet = new Set(existing.map((w) => `${w.topic}|${w.address}`));
+    const created: string[] = [];
+
+    for (const topic of WEBHOOK_TOPICS) {
+      const key = `${topic}|${address}`;
+      if (existingSet.has(key)) continue;
+      await this.fetchShopifyRest(
+        shopDomain,
+        accessToken,
+        'webhooks.json',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            webhook: {
+              topic,
+              address,
+              format: 'json',
+            },
+          }),
+        },
+      );
+      created.push(topic);
+    }
+
+    return created;
+  }
+
+  async handleOAuthCallback(query: URLSearchParams): Promise<{ redirectUrl: string }> {
+    if (!this.verifyOAuthHmac(query)) {
+      throw new UnauthorizedException('Invalid Shopify OAuth callback signature.');
+    }
+    const shop = this.normalizeShopDomain(query.get('shop') ?? '');
+    const code = query.get('code')?.trim();
+    const state = query.get('state')?.trim();
+    if (!code || !state) throw new BadRequestException('Missing Shopify OAuth callback parameters.');
+
+    const statePayload = this.decodeState(state);
+
+    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: this.appKey(),
+        client_secret: this.appSecret(),
+        code,
+      }),
+    });
+    const tokenJson = (await tokenRes.json().catch(() => ({}))) as { access_token?: string; scope?: string };
+    if (!tokenRes.ok || !tokenJson.access_token) {
+      throw new BadRequestException('Failed to exchange Shopify OAuth code for access token.');
+    }
+
+    const token = tokenJson.access_token.trim();
+    const accessTokenEnc = this.encryption.encryptToStorage(token);
+    if (!accessTokenEnc) throw new BadRequestException('Encryption key is not configured; cannot store Shopify token.');
+
+    const storeUrl = `https://${shop}`;
+    const existing = await this.prisma.agent.findFirst({
+      where: { id: statePayload.agentId, tenantId: statePayload.tenantId, deletedAt: null },
+      select: { id: true, secretsEnc: true },
+    });
+    if (!existing) throw new BadRequestException('Agent not found for this OAuth session.');
+
+    let mergedSecrets: Record<string, string> = {
+      shopifyAdminToken: token,
+      shopifyApiKey: this.appKey(),
+      shopifyApiSecret: this.appSecret(),
+    };
+    if (existing.secretsEnc && this.encryption.isAvailable()) {
+      const dec = this.encryption.decryptFromStorage(existing.secretsEnc);
+      if (dec) {
+        try {
+          mergedSecrets = { ...(JSON.parse(dec) as Record<string, string>), ...mergedSecrets };
+        } catch {
+          // ignore malformed old payload and continue with fresh secrets
+        }
+      }
+    }
+    const mergedEnc = this.encryption.encryptToStorage(JSON.stringify(mergedSecrets));
+    if (!mergedEnc) throw new BadRequestException('Failed to encrypt Shopify credentials for storage.');
+
+    await this.prisma.agent.update({
+      where: { id: statePayload.agentId },
+      data: {
+        shopifyStoreUrl: storeUrl,
+        shopifyConnectionStatus: 'OK',
+        lastConnectionTestAt: new Date(),
+        secretsEnc: mergedEnc,
+      },
+    });
+
+    // Optional store-level record for future sync/webhooks by shop+tenant.
+    const maybeStore = await this.prisma.store.findFirst({
+      where: { tenantId: statePayload.tenantId, slug: shop.replace('.myshopify.com', ''), deletedAt: null },
+      select: { id: true },
+    });
+    if (maybeStore) {
+      await this.prisma.shopifyConnection.upsert({
+        where: { storeId: maybeStore.id },
+        create: {
+          tenantId: statePayload.tenantId,
+          storeId: maybeStore.id,
+          shopDomain: shop,
+          accessTokenEnc,
+          scopes: tokenJson.scope ?? null,
+          apiVersion: SHOPIFY_ADMIN_API_VERSION,
+          connectedAt: new Date(),
+        },
+        update: {
+          shopDomain: shop,
+          accessTokenEnc,
+          scopes: tokenJson.scope ?? null,
+          apiVersion: SHOPIFY_ADMIN_API_VERSION,
+          connectedAt: new Date(),
+          lastSyncedAt: new Date(),
+        },
+      });
+    }
+
+    const createdWebhooks = await this.ensureWebhooksRegistered(shop, token).catch(() => []);
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: statePayload.tenantId,
+        action: 'SHOPIFY_OAUTH_CONNECTED',
+        entityType: 'SHOPIFY_CONNECTION',
+        entityId: shop,
+        metadata: {
+          shop,
+          agentId: statePayload.agentId,
+          webhookAddress: this.webhookAddress(),
+          createdWebhooks,
+          connectedAt: new Date().toISOString(),
+        } as never,
+      },
+    });
+
+    const appUrl = this.config.get<string>('CORS_ORIGIN')?.split(',')[0]?.trim() || 'http://localhost:3000';
+    return {
+      redirectUrl: `${appUrl.replace(/\/$/, '')}/dashboard/agents/${statePayload.agentId}?shopify=connected`,
+    };
+  }
+
+  verifyWebhookSignature(rawBody: Buffer, signatureB64: string): boolean {
+    const secret = this.appSecret();
+    if (!signatureB64) return false;
+    const digest = createHmac('sha256', secret).update(rawBody).digest('base64');
+    try {
+      return timingSafeEqual(Buffer.from(digest), Buffer.from(signatureB64));
+    } catch {
+      return false;
+    }
+  }
+
+  async getConnectionStatus(tenantId: string, agentId: string) {
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        shopifyStoreUrl: true,
+        shopifyConnectionStatus: true,
+        lastConnectionTestAt: true,
+        secretsEnc: true,
+      },
+    });
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    let token: string | null = null;
+    if (agent.secretsEnc && this.encryption.isAvailable()) {
+      const dec = this.encryption.decryptFromStorage(agent.secretsEnc);
+      if (dec) {
+        try {
+          const secrets = JSON.parse(dec) as { shopifyAdminToken?: string };
+          token = secrets.shopifyAdminToken ?? null;
+        } catch {
+          token = null;
+        }
+      }
+    }
+    const shopDomain = agent.shopifyStoreUrl?.replace(/^https?:\/\//, '').replace(/\/$/, '') ?? null;
+
+    let webhookTopics: string[] = [];
+    if (shopDomain && token) {
+      webhookTopics = (await this.listWebhooks(shopDomain, token).catch(() => []))
+        .filter((w) => w.address === this.webhookAddress())
+        .map((w) => w.topic)
+        .sort();
+    }
+
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      connected: Boolean(shopDomain && token),
+      shopDomain,
+      status: agent.shopifyConnectionStatus,
+      lastConnectionTestAt: agent.lastConnectionTestAt,
+      webhookTopics,
+    };
+  }
+
+  private actionFromTopic(topic: string): string {
+    return `SHOPIFY_${topic.replace(/[/.]/g, '_').toUpperCase()}`;
+  }
+
+  private failureActionFromTopic(topic: string): string {
+    return `SHOPIFY_WEBHOOK_FAILED_${topic.replace(/[/.]/g, '_').toUpperCase()}`;
+  }
+
+  private async tenantIdsForShopDomain(shopDomain: string): Promise<string[]> {
+    const candidates = this.shopUrlCandidates(shopDomain);
+    const [agents, connections] = await Promise.all([
+      this.prisma.agent.findMany({
+        where: { deletedAt: null, shopifyStoreUrl: { in: candidates } },
+        select: { tenantId: true },
+      }),
+      this.prisma.shopifyConnection.findMany({
+        where: { shopDomain: this.normalizeShopDomain(shopDomain) },
+        select: { tenantId: true },
+      }),
+    ]);
+    return [...new Set([...agents.map((a) => a.tenantId), ...connections.map((c) => c.tenantId)])];
+  }
+
+  async recordWebhookFailure(
+    topic: string,
+    shopDomain: string,
+    reason: string,
+    payload?: unknown,
+  ): Promise<void> {
+    const domain = shopDomain.trim().toLowerCase();
+    const tenantIds = await this.tenantIdsForShopDomain(domain);
+    await Promise.all(
+      tenantIds.map((tenantId) =>
+        this.prisma.auditLog.create({
+          data: {
+            tenantId,
+            action: this.failureActionFromTopic(topic || 'unknown'),
+            entityType: 'SHOPIFY_WEBHOOK_FAILURE',
+            entityId: domain || 'unknown',
+            metadata: {
+              topic,
+              shopDomain: domain,
+              reason,
+              payload,
+              receivedAt: new Date().toISOString(),
+            } as never,
+          },
+        }),
+      ),
+    );
+  }
+
+  async getWebhookHealth(tenantId: string, agentId: string) {
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: { shopifyStoreUrl: true, secretsEnc: true },
+    });
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    const shopDomain = agent.shopifyStoreUrl?.replace(/^https?:\/\//, '').replace(/\/$/, '') ?? null;
+    if (!shopDomain) {
+      return {
+        agentId,
+        connected: false,
+        shopDomain: null,
+        lastSyncedAt: null,
+        lastReceivedAtByTopic: Object.fromEntries(WEBHOOK_TOPICS.map((t) => [t, null])) as Record<string, string | null>,
+        lastFailureAtByTopic: Object.fromEntries(WEBHOOK_TOPICS.map((t) => [t, null])) as Record<string, string | null>,
+        failureCount24hByTopic: Object.fromEntries(WEBHOOK_TOPICS.map((t) => [t, 0])) as Record<string, number>,
+        totalFailures24h: 0,
+        freshness: 'disconnected' as const,
+      };
+    }
+
+    const conn = await this.prisma.shopifyConnection.findFirst({
+      where: { shopDomain: shopDomain.toLowerCase() },
+      select: { lastSyncedAt: true },
+    });
+
+    const successActions = WEBHOOK_TOPICS.map((t) => this.actionFromTopic(t));
+    const failureActions = WEBHOOK_TOPICS.map((t) => this.failureActionFromTopic(t));
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [recentSuccess, recentFailure] = await Promise.all([
+      this.prisma.auditLog.findMany({
+      where: { tenantId, action: { in: successActions } },
+      orderBy: { createdAt: 'desc' },
+      take: 60,
+      select: { action: true, createdAt: true, metadata: true },
+      }),
+      this.prisma.auditLog.findMany({
+        where: { tenantId, action: { in: failureActions }, createdAt: { gte: since24h } },
+        orderBy: { createdAt: 'desc' },
+        take: 120,
+        select: { action: true, createdAt: true, metadata: true },
+      }),
+    ]);
+
+    const lastReceivedAtByTopic: Record<string, string | null> = {};
+    const lastFailureAtByTopic: Record<string, string | null> = {};
+    const failureCount24hByTopic: Record<string, number> = {};
+    for (const t of WEBHOOK_TOPICS) lastReceivedAtByTopic[t] = null;
+    for (const t of WEBHOOK_TOPICS) lastFailureAtByTopic[t] = null;
+    for (const t of WEBHOOK_TOPICS) failureCount24hByTopic[t] = 0;
+
+    // Find the most recent entry per topic for this shop by scanning recent audit logs.
+    for (const row of recentSuccess) {
+      const meta = row.metadata as unknown as { shopDomain?: unknown } | null;
+      const metaShop = typeof meta?.shopDomain === 'string' ? meta.shopDomain.toLowerCase() : null;
+      if (metaShop !== shopDomain.toLowerCase()) continue;
+
+      const topicKey = WEBHOOK_TOPICS.find((t) => this.actionFromTopic(t) === row.action) ?? null;
+      if (!topicKey) continue;
+
+      if (!lastReceivedAtByTopic[topicKey]) {
+        lastReceivedAtByTopic[topicKey] = row.createdAt.toISOString();
+      }
+    }
+
+    for (const row of recentFailure) {
+      const meta = row.metadata as unknown as { shopDomain?: unknown } | null;
+      const metaShop = typeof meta?.shopDomain === 'string' ? meta.shopDomain.toLowerCase() : null;
+      if (metaShop !== shopDomain.toLowerCase()) continue;
+      const topicKey = WEBHOOK_TOPICS.find((t) => this.failureActionFromTopic(t) === row.action) ?? null;
+      if (!topicKey) continue;
+      failureCount24hByTopic[topicKey] += 1;
+      if (!lastFailureAtByTopic[topicKey]) {
+        lastFailureAtByTopic[topicKey] = row.createdAt.toISOString();
+      }
+    }
+
+    const latest = Object.values(lastReceivedAtByTopic)
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
+
+    const freshness = (() => {
+      if (!latest) return 'stale';
+      const ageMs = Date.now() - new Date(latest).getTime();
+      const ageHours = ageMs / (1000 * 60 * 60);
+      if (ageHours <= 6) return 'fresh';
+      if (ageHours <= 24) return 'ok';
+      return 'stale';
+    })();
+
+    return {
+      agentId,
+      connected: true,
+      shopDomain,
+      lastSyncedAt: conn?.lastSyncedAt?.toISOString() ?? null,
+      lastReceivedAtByTopic,
+      lastFailureAtByTopic,
+      failureCount24hByTopic,
+      totalFailures24h: Object.values(failureCount24hByTopic).reduce((a, b) => a + b, 0),
+      freshness,
+      latestReceivedAt: latest,
+    };
+  }
+
+  async disconnect(tenantId: string, agentId: string) {
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: { id: true, secretsEnc: true },
+    });
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    let updatedSecretsEnc: string | null = null;
+    if (agent.secretsEnc && this.encryption.isAvailable()) {
+      const dec = this.encryption.decryptFromStorage(agent.secretsEnc);
+      if (dec) {
+        try {
+          const secrets = JSON.parse(dec) as Record<string, string>;
+          delete secrets.shopifyAdminToken;
+          delete secrets.shopifyApiKey;
+          delete secrets.shopifyApiSecret;
+          delete secrets.webhookSecret;
+          updatedSecretsEnc = Object.keys(secrets).length > 0
+            ? this.encryption.encryptToStorage(JSON.stringify(secrets))
+            : null;
+        } catch {
+          updatedSecretsEnc = null;
+        }
+      }
+    }
+
+    await this.prisma.agent.update({
+      where: { id: agentId },
+      data: {
+        shopifyStoreUrl: null,
+        shopifyConnectionStatus: 'UNKNOWN',
+        lastConnectionTestAt: new Date(),
+        secretsEnc: updatedSecretsEnc,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        action: 'SHOPIFY_OAUTH_DISCONNECTED',
+        entityType: 'SHOPIFY_CONNECTION',
+        entityId: agentId,
+        metadata: { agentId, disconnectedAt: new Date().toISOString() } as never,
+      },
+    });
+
+    return { disconnected: true };
+  }
+
+  private parseTopicEntity(topic: string, payload: unknown): { entityType: string; entityId: string; summary: Record<string, unknown> } {
+    if (topic.startsWith('orders/')) {
+      const p = payload as { id?: number | string; name?: string; financial_status?: string; fulfillment_status?: string; total_price?: string };
+      return {
+        entityType: 'SHOPIFY_ORDER',
+        entityId: String(p.id ?? 'unknown'),
+        summary: {
+          orderName: p.name,
+          financialStatus: p.financial_status,
+          fulfillmentStatus: p.fulfillment_status,
+          totalPrice: p.total_price,
+        },
+      };
+    }
+
+    if (topic.startsWith('carts/')) {
+      const p = payload as { id?: string; token?: string; currency?: string; total_price?: string; item_count?: number };
+      return {
+        entityType: 'SHOPIFY_CART',
+        entityId: String(p.id ?? p.token ?? 'unknown'),
+        summary: {
+          token: p.token,
+          currency: p.currency,
+          totalPrice: p.total_price,
+          itemCount: p.item_count,
+        },
+      };
+    }
+
+    if (topic.startsWith('products/')) {
+      const p = payload as { id?: number | string; title?: string; status?: string; vendor?: string };
+      return {
+        entityType: 'SHOPIFY_PRODUCT',
+        entityId: String(p.id ?? 'unknown'),
+        summary: {
+          title: p.title,
+          status: p.status,
+          vendor: p.vendor,
+        },
+      };
+    }
+
+    if (topic.startsWith('customers/')) {
+      const p = payload as { id?: number | string; email?: string; phone?: string; first_name?: string; last_name?: string };
+      return {
+        entityType: 'SHOPIFY_CUSTOMER',
+        entityId: String(p.id ?? 'unknown'),
+        summary: {
+          email: p.email,
+          phone: p.phone,
+          name: [p.first_name, p.last_name].filter(Boolean).join(' ').trim() || undefined,
+        },
+      };
+    }
+
+    return {
+      entityType: 'SHOPIFY_WEBHOOK',
+      entityId: 'unknown',
+      summary: {},
+    };
+  }
+
+  async handleWebhook(topic: string, shopDomain: string, payload: unknown): Promise<void> {
+    const domain = shopDomain.trim().toLowerCase();
+    const candidates = this.shopUrlCandidates(domain);
+    const [agents, connections] = await Promise.all([
+      this.prisma.agent.findMany({
+        where: {
+          deletedAt: null,
+          shopifyStoreUrl: { in: candidates },
+        },
+        select: { tenantId: true, id: true },
+      }),
+      this.prisma.shopifyConnection.findMany({
+        where: { shopDomain: this.normalizeShopDomain(domain) },
+        select: { tenantId: true, storeId: true, id: true },
+      }),
+    ]);
+
+    const entity = this.parseTopicEntity(topic, payload);
+    const tenantIds = new Set<string>([
+      ...agents.map((a) => a.tenantId),
+      ...connections.map((c) => c.tenantId),
+    ]);
+
+    await Promise.all(
+      [...tenantIds].map((tenantId) =>
+        this.prisma.auditLog.create({
+          data: {
+            tenantId,
+            action: `SHOPIFY_${topic.replace(/[/.]/g, '_').toUpperCase()}`,
+            entityType: entity.entityType,
+            entityId: entity.entityId,
+            metadata: {
+              topic,
+              shopDomain: domain,
+              summary: entity.summary,
+              payload,
+              receivedAt: new Date().toISOString(),
+            } as never,
+          },
+        }),
+      ),
+    );
+
+    // Mark store connections as synced for this webhook event.
+    if (connections.length > 0) {
+      await this.prisma.shopifyConnection.updateMany({
+        where: { id: { in: connections.map((c) => c.id) } },
+        data: { lastSyncedAt: new Date() },
+      });
+    }
+  }
+}
+

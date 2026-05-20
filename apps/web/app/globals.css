@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --muted: #eef2ff;
+  --muted-foreground: #475569;
+  --border: #dbe2f2;
+  --input: #dbe2f2;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #090d1a;
+    --foreground: #e5e7eb;
+    --muted: #121a33;
+    --muted-foreground: #a7b0c4;
+    --border: #2a3658;
+    --input: #2a3658;
+    --card: #0f172a;
+    --card-foreground: #e5e7eb;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background:
+    radial-gradient(1200px 800px at -10% -20%, rgba(99, 102, 241, 0.10), transparent 60%),
+    radial-gradient(1000px 700px at 120% 0%, rgba(14, 165, 233, 0.10), transparent 55%),
+    var(--background);
+}

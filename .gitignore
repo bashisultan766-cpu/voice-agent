@@ -1,0 +1,21 @@
+# Node modules
+node_modules/
+**/node_modules/
+node_modules_old/
+apps/web/node_modules/
+packages/voice-db/node_modules/
+packages/types/node_modules/
+packages/config/node_modules/
+
+# Generated files
+packages/voice-db/generated/
+
+# Environment files
+.env
+.env.local
+
+# Next.js and build folders
+.next/
+dist/
+build/
+.turbo/

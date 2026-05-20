@@ -1,0 +1,951 @@
+
+
+===== apps/api/src/scripts/dev-script-context.ts =====
+
+import { PrismaService } from '../database/prisma.service';
+
+export type DevScriptContext = {
+  tenantId: string;
+  agentId: string;
+  callSessionId?: string;
+};
+
+export function requireEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is required.`);
+  }
+  return value;
+}
+
+export function optionalEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
+export async function assertTenantAgentContext(
+  prisma: PrismaService,
+  tenantId: string,
+  agentId: string,
+): Promise<void> {
+  const agent = await prisma.agent.findFirst({
+    where: { id: agentId, tenantId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!agent) {
+    throw new Error('DEV_TENANT_ID / DEV_AGENT_ID do not map to a live agent in this database.');
+  }
+}
+
+
+
+===== apps/api/src/scripts/simulate-tool-call.ts =====
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from '../app.module';
+import { OpsService } from '../modules/ops/ops.service';
+import { PrismaService } from '../database/prisma.service';
+import { assertTenantAgentContext, optionalEnv, requireEnv } from './dev-script-context';
+
+function parseArgs(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // no-op
+  }
+  return {};
+}
+
+async function run() {
+  const tenantId = requireEnv('DEV_TENANT_ID');
+  const agentId = requireEnv('DEV_AGENT_ID');
+  const toolName = optionalEnv('DEV_TOOL_NAME') || 'searchProducts';
+  const callSessionId = optionalEnv('DEV_CALL_SESSION_ID');
+  const args = parseArgs(process.env.DEV_TOOL_ARGS);
+
+  const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn', 'log'] });
+  try {
+    const prisma = app.get(PrismaService);
+    await assertTenantAgentContext(prisma, tenantId, agentId);
+    const ops = app.get(OpsService);
+    const result = await ops.simulateToolCall(tenantId, agentId, {
+      toolName,
+      args,
+      callSessionId,
+    });
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    await app.close();
+  }
+}
+
+run().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});
+
+
+===== apps/api/src/scripts/manual-shopify-sync.ts =====
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from '../app.module';
+import { ShopifyProductSyncService } from '../modules/integrations/shopify/product-sync';
+import { PrismaService } from '../database/prisma.service';
+import { assertTenantAgentContext, requireEnv } from './dev-script-context';
+
+async function run() {
+  const tenantId = requireEnv('DEV_TENANT_ID');
+  const agentId = requireEnv('DEV_AGENT_ID');
+
+  const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn', 'log'] });
+  try {
+    const prisma = app.get(PrismaService);
+    await assertTenantAgentContext(prisma, tenantId, agentId);
+    const startedAt = Date.now();
+    const sync = app.get(ShopifyProductSyncService);
+    const result = await sync.syncProducts(tenantId, agentId);
+    console.log(
+      JSON.stringify({
+        ok: true,
+        tenantId,
+        agentId,
+        elapsedMs: Date.now() - startedAt,
+        ...result,
+      }),
+    );
+  } finally {
+    await app.close();
+  }
+}
+
+run().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});
+
+
+===== apps/api/src/scripts/simulate-voice-flow.ts =====
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from '../app.module';
+import { OpsService } from '../modules/ops/ops.service';
+import { PrismaService } from '../database/prisma.service';
+import {
+  assertTenantAgentContext,
+  optionalEnv,
+  requireEnv,
+} from './dev-script-context';
+
+type ToolResultEnvelope = {
+  callSessionId: string;
+  toolName: string;
+  result: {
+    ok: boolean;
+    data?: unknown;
+    error?: { code?: string; message?: string };
+  };
+};
+
+function readDataObject(result: ToolResultEnvelope['result']): Record<string, unknown> {
+  return result.data && typeof result.data === 'object' && !Array.isArray(result.data)
+    ? (result.data as Record<string, unknown>)
+    : {};
+}
+
+async function run() {
+  const tenantId = requireEnv('DEV_TENANT_ID');
+  const agentId = requireEnv('DEV_AGENT_ID');
+  const productQuery = optionalEnv('DEV_FLOW_QUERY') || 'demo';
+  const customerEmail = optionalEnv('DEV_TEST_CUSTOMER_EMAIL') || 'demo.customer@example.com';
+  const sendEmail = process.env.DEV_FLOW_SEND_EMAIL !== 'false';
+  const callSessionId = optionalEnv('DEV_CALL_SESSION_ID');
+  const checkoutMode = optionalEnv('DEV_TEST_CHECKOUT_MODE');
+
+  const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn', 'log'] });
+  try {
+    const prisma = app.get(PrismaService);
+    await assertTenantAgentContext(prisma, tenantId, agentId);
+    const ops = app.get(OpsService);
+    const steps: Array<{ step: string; output: unknown }> = [];
+
+    const search = (await ops.simulateToolCall(tenantId, agentId, {
+      callSessionId,
+      toolName: 'searchProducts',
+      args: { query: productQuery, limit: 5 },
+    })) as ToolResultEnvelope;
+    steps.push({ step: 'searchProducts', output: search });
+    if (!search.result.ok) {
+      console.log(JSON.stringify({ ok: false, reason: 'search failed', steps }, null, 2));
+      return;
+    }
+
+    const searchData = readDataObject(search.result);
+    const results = Array.isArray(searchData.results) ? (searchData.results as Array<Record<string, unknown>>) : [];
+    const first = results[0];
+    if (!first) {
+      console.log(JSON.stringify({ ok: false, reason: 'no products found', steps }, null, 2));
+      return;
+    }
+    const productId = typeof first.id === 'string' ? first.id : '';
+    const variants = Array.isArray(first.variants) ? (first.variants as Array<Record<string, unknown>>) : [];
+    const firstVariantId = typeof variants[0]?.id === 'string' ? (variants[0].id as string) : '';
+
+    const details = (await ops.simulateToolCall(tenantId, agentId, {
+      callSessionId: search.callSessionId,
+      toolName: 'getProductDetails',
+      args: { productId, variantId: firstVariantId || undefined },
+    })) as ToolResultEnvelope;
+    steps.push({ step: 'getProductDetails', output: details });
+    if (!details.result.ok) {
+      console.log(JSON.stringify({ ok: false, reason: 'details failed', steps }, null, 2));
+      return;
+    }
+
+    const checkoutArgs: Record<string, unknown> = {
+      email: customerEmail,
+      items: [{ variantId: firstVariantId || productId, quantity: 1 }],
+      forceNewCheckout: false,
+    };
+    if (checkoutMode) checkoutArgs.mode = checkoutMode;
+
+    const checkout = (await ops.simulateToolCall(tenantId, agentId, {
+      callSessionId: search.callSessionId,
+      toolName: 'createCheckoutLink',
+      args: checkoutArgs,
+    })) as ToolResultEnvelope;
+    steps.push({ step: 'createCheckoutLink', output: checkout });
+    if (!checkout.result.ok || !sendEmail) {
+      console.log(JSON.stringify({ ok: checkout.result.ok, steps }, null, 2));
+      return;
+    }
+
+    const checkoutData = readDataObject(checkout.result);
+    const checkoutLinkId =
+      typeof checkoutData.checkoutLinkId === 'string' ? checkoutData.checkoutLinkId : '';
+    if (!checkoutLinkId) {
+      console.log(JSON.stringify({ ok: false, reason: 'checkoutLinkId missing', steps }, null, 2));
+      return;
+    }
+
+    const email = (await ops.simulateToolCall(tenantId, agentId, {
+      callSessionId: search.callSessionId,
+      toolName: 'sendPaymentEmail',
+      args: { email: customerEmail, checkoutLinkId },
+    })) as ToolResultEnvelope;
+    steps.push({ step: 'sendPaymentEmail', output: email });
+
+    console.log(JSON.stringify({ ok: email.result.ok, callSessionId: search.callSessionId, steps }, null, 2));
+  } finally {
+    await app.close();
+  }
+}
+
+run().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});
+
+
+===== apps/api/src/scripts/test-checkout-link.ts =====
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from '../app.module';
+import { OpsService } from '../modules/ops/ops.service';
+import { PrismaService } from '../database/prisma.service';
+import {
+  assertTenantAgentContext,
+  optionalEnv,
+  requireEnv,
+} from './dev-script-context';
+
+function parseItems(raw: string | undefined): Array<{ variantId?: string; productId?: string; title?: string; quantity: number }> {
+  if (raw?.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((row) => {
+            if (!row || typeof row !== 'object') return null;
+            const r = row as Record<string, unknown>;
+            return {
+              variantId: typeof r.variantId === 'string' ? r.variantId : undefined,
+              productId: typeof r.productId === 'string' ? r.productId : undefined,
+              title: typeof r.title === 'string' ? r.title : undefined,
+              quantity: Math.max(1, Number(r.quantity ?? 1) || 1),
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+      }
+    } catch {
+      // Ignore and fall back to defaults.
+    }
+  }
+  return [];
+}
+
+async function run() {
+  const tenantId = requireEnv('DEV_TENANT_ID');
+  const agentId = requireEnv('DEV_AGENT_ID');
+  const email = optionalEnv('DEV_TEST_CUSTOMER_EMAIL') || 'demo.checkout@example.com';
+  const mode = optionalEnv('DEV_TEST_CHECKOUT_MODE') || '';
+  const forceNewCheckout = process.env.DEV_TEST_FORCE_NEW_CHECKOUT === 'true';
+  const callSessionId = optionalEnv('DEV_CALL_SESSION_ID');
+
+  const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn', 'log'] });
+  try {
+    const prisma = app.get(PrismaService);
+    await assertTenantAgentContext(prisma, tenantId, agentId);
+    const ops = app.get(OpsService);
+    let items = parseItems(process.env.DEV_TEST_CHECKOUT_ITEMS);
+    if (items.length === 0) {
+      const first = await prisma.variantCache.findFirst({
+        where: { tenantId },
+        orderBy: { updatedAt: 'desc' },
+        select: { shopifyVariantId: true, title: true },
+      });
+      if (!first) {
+        throw new Error(
+          'No cached variants found. Set DEV_TEST_CHECKOUT_ITEMS JSON or run product sync first.',
+        );
+      }
+      items = [{ variantId: first.shopifyVariantId, title: first.title ?? 'Selected item', quantity: 1 }];
+    }
+
+    const args: Record<string, unknown> = {
+      email,
+      items,
+      forceNewCheckout,
+    };
+    if (mode) args.mode = mode;
+
+    const result = await ops.simulateToolCall(tenantId, agentId, {
+      callSessionId,
+      toolName: 'createCheckoutLink',
+      args,
+    });
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    await app.close();
+  }
+}
+
+run().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});
+
+
+===== apps/api/src/scripts/test-email-send.ts =====
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from '../app.module';
+import { OpsService } from '../modules/ops/ops.service';
+import { PrismaService } from '../database/prisma.service';
+import {
+  assertTenantAgentContext,
+  optionalEnv,
+  requireEnv,
+} from './dev-script-context';
+
+async function run() {
+  const tenantId = requireEnv('DEV_TENANT_ID');
+  const agentId = requireEnv('DEV_AGENT_ID');
+  const toEmail = requireEnv('DEV_TEST_EMAIL_TO');
+  const checkoutUrl = optionalEnv('DEV_TEST_CHECKOUT_URL');
+  const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn', 'log'] });
+  try {
+    const prisma = app.get(PrismaService);
+    await assertTenantAgentContext(prisma, tenantId, agentId);
+    const ops = app.get(OpsService);
+    const result = await ops.sendDevelopmentTestEmail(tenantId, agentId, {
+      toEmail,
+      checkoutUrl: checkoutUrl || undefined,
+    });
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    await app.close();
+  }
+}
+
+run().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});
+
+
+===== apps/api/src/modules/ops/ops.service.ts =====
+
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { PrismaService } from '../../database/prisma.service';
+import { CallsService } from '../calls/calls.service';
+import { SessionContextService } from '../calls/runtime/session-context.service';
+import { ToolOrchestratorService } from '../calls/runtime/tool-orchestrator.service';
+import { ShopifyProductSyncService } from '../integrations/shopify/product-sync';
+import { ResendEmailService } from '../integrations/email/resend-email.service';
+import { Prisma } from '@prisma/client';
+import { paymentEmailIdempotencyKey } from '../../common/payment-email-idempotency';
+
+@Injectable()
+export class OpsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly callsService: CallsService,
+    private readonly sessionContext: SessionContextService,
+    private readonly toolOrchestrator: ToolOrchestratorService,
+    private readonly shopifySync: ShopifyProductSyncService,
+    private readonly resendEmail: ResendEmailService,
+  ) {}
+
+  getAgentsOverview(tenantId: string) {
+    return this.prisma.agent.findMany({
+      where: { tenantId, deletedAt: null },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        updatedAt: true,
+        shopifyConnectionStatus: true,
+        twilioConnectionStatus: true,
+        openaiConnectionStatus: true,
+        voiceProfile: true,
+      },
+    });
+  }
+
+  getCalls(tenantId: string) {
+    return this.prisma.callSession.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: { agent: { select: { id: true, name: true } } },
+    });
+  }
+
+  getTranscripts(tenantId: string, callSessionId: string) {
+    return this.prisma.callTranscript.findMany({
+      where: { callSession: { tenantId, id: callSessionId } },
+      orderBy: { sequenceNumber: 'asc' },
+    });
+  }
+
+  getCheckoutLinks(tenantId: string) {
+    return this.prisma.checkoutLink.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      include: { agent: { select: { id: true, name: true } } },
+      take: 200,
+    });
+  }
+
+  getLeads(tenantId: string) {
+    return this.prisma.leadCapture.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      include: { agent: { select: { id: true, name: true } } },
+      take: 200,
+    });
+  }
+
+  getEmailEvents(tenantId: string) {
+    return this.prisma.emailEvent.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      include: { agent: { select: { id: true, name: true } } },
+      take: 200,
+    });
+  }
+
+  async simulateToolCall(
+    tenantId: string,
+    agentId: string,
+    input: { toolName: string; args?: Record<string, unknown>; callSessionId?: string },
+  ) {
+    this.assertDevOpsEndpointsAllowed();
+    const toolName = input.toolName?.trim();
+    if (!toolName) throw new BadRequestException('toolName is required.');
+
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: { id: true, storeId: true, twilioPhoneNumber: true },
+    });
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    let callSessionId = input.callSessionId?.trim() || '';
+    if (!callSessionId) {
+      const now = Date.now();
+      const session = await this.callsService.createSession({
+        tenantId,
+        agentId: agent.id,
+        storeId: agent.storeId ?? null,
+        twilioCallSid: `dev-sim-${now}-${Math.floor(Math.random() * 10000)}`,
+        fromNumber: '+15550000001',
+        toNumber: agent.twilioPhoneNumber ?? '+15550000002',
+        direction: 'inbound',
+      });
+      callSessionId = session.id;
+    }
+
+    const ctx = await this.sessionContext.load(callSessionId);
+    if (!ctx || ctx.tenantId !== tenantId || ctx.agentId !== agent.id) {
+      throw new BadRequestException('callSessionId does not match tenant/agent context.');
+    }
+
+    const result = await this.toolOrchestrator.execute(
+      ctx,
+      toolName,
+      input.args ?? {},
+      callSessionId,
+      `dev-sim-${Date.now()}`,
+    );
+    return { ok: true, callSessionId, toolName, result };
+  }
+
+  async syncProductsManual(tenantId: string, agentId: string) {
+    this.assertDevOpsEndpointsAllowed();
+    await this.prisma.agent.findFirstOrThrow({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: { id: true },
+    });
+    const result = await this.shopifySync.syncProducts(tenantId, agentId);
+    return { ok: true, agentId, ...result };
+  }
+
+  async sendDevelopmentTestEmail(
+    tenantId: string,
+    agentId: string,
+    body: { toEmail: string; checkoutUrl?: string },
+  ) {
+    this.assertDevOpsEndpointsAllowed();
+    const toEmail = body.toEmail?.trim().toLowerCase();
+    if (!toEmail) throw new BadRequestException('toEmail is required.');
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      include: { agentConfig: true },
+    });
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    const customCheckout = body.checkoutUrl?.trim();
+    const fallback = process.env.DEV_TEST_CHECKOUT_URL?.trim();
+    const resolvedUrl = customCheckout || fallback;
+    if (!resolvedUrl) {
+      throw new BadRequestException(
+        'Set DEV_TEST_CHECKOUT_URL in the API environment, or pass checkoutUrl (HTTPS, matching the agent store host).',
+      );
+    }
+    if (customCheckout) {
+      this.assertHttpsCheckoutUrlMatchesAgentShop(resolvedUrl, agent.shopifyStoreUrl);
+    }
+
+    const checkoutFingerprint = createHash('sha256')
+      .update(`ops_dev_test_email|${tenantId}|${agentId}|${toEmail}|${resolvedUrl}`)
+      .digest('hex');
+    const existing = await this.prisma.checkoutLink.findFirst({
+      where: {
+        tenantId,
+        agentId,
+        checkoutFingerprint,
+        status: { in: ['CREATED', 'SENT', 'OPENED'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const checkout =
+      existing ??
+      (await this.prisma.checkoutLink.create({
+        data: {
+          tenantId,
+          agentId,
+          mode: 'STOREFRONT_CART',
+          checkoutUrl: resolvedUrl,
+          customerEmail: toEmail,
+          checkoutFingerprint,
+          status: 'CREATED',
+          itemsJson: [{ title: 'Developer test item', quantity: 1 }] as Prisma.InputJsonValue,
+          metadata: {
+            source: 'dev_test_email_route',
+            reusedFromFingerprint: existing ? true : false,
+          } as Prisma.InputJsonValue,
+        },
+      }));
+
+    const email = await this.resendEmail.sendPaymentEmail({
+      tenantId,
+      agentId,
+      checkoutLinkId: checkout.id,
+      idempotencyKey: paymentEmailIdempotencyKey({
+        tenantId,
+        agentId,
+        checkoutLinkId: checkout.id,
+        recipientEmail: toEmail,
+        purpose: 'ops_dev_test_email',
+      }),
+      to: toEmail,
+      businessName: agent.agentConfig?.businessName?.trim() || agent.name,
+      supportEmail: agent.agentConfig?.supportEmail,
+      supportPhone: agent.agentConfig?.supportPhone,
+      checkoutUrl: checkout.checkoutUrl,
+      items: [{ title: 'Developer test item', quantity: 1 }],
+    });
+
+    if (!email.deduplicated) {
+      await this.prisma.checkoutLink.update({
+        where: { id: checkout.id },
+        data: { status: 'SENT', sentAt: new Date() },
+      });
+    }
+    return {
+      ok: true,
+      checkoutLinkId: checkout.id,
+      emailEventId: email.emailEventId,
+      reusedCheckout: existing ? true : false,
+      deduplicatedEmail: email.deduplicated === true,
+    };
+  }
+
+  /**
+   * Blocks simulate-tool, sync-products, and test-email in production unless explicitly enabled.
+   * Keeps accidental exposure out of client-facing deployments.
+   */
+  private assertDevOpsEndpointsAllowed(): void {
+    if (process.env.NODE_ENV === 'production' && process.env.ENABLE_DEV_OPS_ENDPOINTS !== 'true') {
+      throw new ForbiddenException(
+        'Development ops endpoints are disabled in production. Set ENABLE_DEV_OPS_ENDPOINTS=true only for controlled staging.',
+      );
+    }
+  }
+
+  /** Host-only match: prevents arbitrary open redirects in the dev test-email route. */
+  private normalizeShopHost(raw: string): string {
+    return raw
+      .replace(/^https?:\/\//i, '')
+      .replace(/\/$/, '')
+      .split('/')[0]
+      .toLowerCase();
+  }
+
+  private assertHttpsCheckoutUrlMatchesAgentShop(checkoutUrl: string, shopifyStoreUrl: string | null): void {
+    let url: URL;
+    try {
+      url = new URL(checkoutUrl);
+    } catch {
+      throw new BadRequestException('Invalid checkout URL.');
+    }
+    if (url.protocol !== 'https:') {
+      throw new BadRequestException('Checkout URL must use HTTPS.');
+    }
+    const shop = shopifyStoreUrl?.trim();
+    if (!shop) {
+      throw new BadRequestException('Configure Shopify store URL on the agent before using a custom checkout URL.');
+    }
+    const allowed = this.normalizeShopHost(shop);
+    const host = url.hostname.toLowerCase();
+    if (host !== allowed && !host.endsWith('.' + allowed)) {
+      throw new BadRequestException("Checkout URL host must match this agent's Shopify store domain.");
+    }
+  }
+}
+
+
+
+===== package.json =====
+
+{
+  "name": "bookstore-voice-agents",
+  "private": true,
+  "packageManager": "pnpm@9.14.2",
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:local": "concurrently -k -n api,web -c blue,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
+    "dev:web": "pnpm --filter web run dev",
+    "dev:api": "pnpm --filter api run dev",
+    "dev:simulate-tool": "pnpm --filter api run dev:simulate-tool",
+    "dev:simulate-voice-flow": "pnpm --filter api run dev:simulate-voice-flow",
+    "dev:sync-shopify": "pnpm --filter api run dev:sync-shopify",
+    "dev:test-checkout-link": "pnpm --filter api run dev:test-checkout-link",
+    "dev:test-email-send": "pnpm --filter api run dev:test-email-send",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "clean": "turbo clean && rm -rf node_modules",
+    "db:generate": "pnpm --filter api exec prisma generate",
+    "db:migrate": "pnpm --filter api exec prisma migrate dev",
+    "db:reset": "pnpm --filter api exec prisma migrate reset --force",
+    "db:studio": "pnpm --filter api exec prisma studio",
+    "db:voice:generate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run generate",
+    "db:voice:migrate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run migrate",
+    "db:voice:seed": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run seed"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "concurrently": "^9.1.2",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+
+
+===== README.md =====
+
+# Multi-tenant Shopify voice agents
+
+Production-oriented monorepo: **Next.js** admin dashboard + **NestJS** API for AI voice agents tied to **Shopify** (product sync, search, checkout links, draft-order invoices) and **Twilio** inbound calls. Tenants manage multiple agents, operational dashboards, transcripts, leads, checkout links, and email events.
+
+## What is included (core product)
+
+- Multi-tenant auth (JWT), roles, encrypted agent secrets
+- Agent CRUD, Shopify voice agent wizard, connection tests (live API where implemented)
+- Shopify product sync, search, cart / draft-order checkout flows, checkout + email audit trail
+- Twilio inbound webhooks, call sessions, tool orchestration, transcript storage, escalation hooks
+- Ops dashboard: agents, calls, transcripts, leads, checkout links, email events, health
+- Rate limits, Twilio signature validation, production env validation, dev ops endpoints gated in production
+
+For third-party systems you must provision separately, see **[docs/EXTERNAL-DEPENDENCIES.md](docs/EXTERNAL-DEPENDENCIES.md)**.
+
+## Stack
+
+| Layer | Technology |
+|-------|------------|
+| Monorepo | pnpm workspaces, Turborepo |
+| Web | Next.js 15 (App Router), TypeScript, Tailwind |
+| API | NestJS, Prisma, PostgreSQL |
+| Optional | Redis (queues), Resend (email), Twilio, OpenAI, ElevenLabs, Shopify |
+
+## Repository layout
+
+```
+├── apps/
+│   ├── web/                 # Next.js dashboard
+│   └── api/                 # NestJS + Prisma (primary app DB)
+├── packages/
+│   ├── types/               # Shared TypeScript types
+│   ├── config/              # Shared config helpers
+│   └── voice-db/            # Optional / legacy Prisma package (separate DB URL if used)
+├── infra/docker/            # Local Postgres + Redis Compose
+├── docs/                    # PRD, architecture, deployment, external deps
+├── .env.example             # Monorepo env template
+└── apps/api/.env.example    # API-focused template
+```
+
+## Prerequisites
+
+- Node.js **20+**
+- pnpm **9+**
+- Docker (recommended for local Postgres + Redis)
+
+## Local development
+
+### 1. Install
+
+```bash
+pnpm install
+```
+
+### 2. Infrastructure
+
+```bash
+docker compose -f infra/docker/docker-compose.yml up -d
+```
+
+### 3. Environment
+
+```bash
+cp .env.example .env
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env.local
+```
+
+Edit values: at minimum `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, and web/API URLs. See comments in each `.env.example`.
+
+### 4. Database
+
+```bash
+pnpm db:generate
+pnpm db:migrate
+```
+
+### 5. Run
+
+```bash
+pnpm dev
+```
+
+- Dashboard: http://localhost:3000  
+- API: http://localhost:3001  
+- Health: http://localhost:3001/api/health  
+
+## Production deployment
+
+Summary:
+
+1. Build API and web; run `prisma migrate deploy` against production Postgres.
+2. Configure env from `apps/api/.env.example` and `apps/web/.env.example` (never commit secrets).
+3. Set `PUBLIC_WEBHOOK_BASE_URL`, Twilio webhooks, `CORS_ORIGIN`, `TRUST_PROXY` as appropriate.
+4. Keep `ALLOW_HEADER_TENANT_FALLBACK=false` and leave `ENABLE_DEV_OPS_ENDPOINTS` unset/false unless staging explicitly needs dev HTTP tools.
+
+Full steps: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+
+## Post-deployment verification checklist
+
+Use this after first deploy or any infra change.
+
+- [ ] `GET /api/health` returns OK on the public API host.
+- [ ] Dashboard loads, login works, tenant-scoped data does not leak across accounts (spot-check two users if applicable).
+- [ ] `PUBLIC_WEBHOOK_BASE_URL` matches the URL Twilio calls; `TRUST_PROXY` correct behind load balancer.
+- [ ] Place test call to Twilio number: call session appears in ops/calls; signature errors absent in logs when `VALIDATE_TWILIO_SIGNATURES=true`.
+- [ ] Shopify: agent store URL + token saved; connection test succeeds; product sync returns data (or queue completes).
+- [ ] Checkout path: tool flow creates `CheckoutLink`; URL is HTTPS and opens Shopify checkout.
+- [ ] Email: `RESEND_API_KEY` + verified `RESEND_FROM_EMAIL`; test payment email delivers (staging only if prod inbox restricted).
+- [ ] Production: `NODE_ENV=production`, strong `JWT_SECRET` / `ENCRYPTION_KEY`, no demo seed on prod DB.
+- [ ] Production: `ENABLE_DEV_OPS_ENDPOINTS` not true unless intentionally staging; POST `/api/ops/...` dev routes return 403 when disabled.
+- [ ] Backups: Postgres snapshot/restore documented and tested once.
+
+## Root scripts
+
+| Script | Description |
+|--------|-------------|
+| `pnpm dev` | All apps via Turborepo |
+| `pnpm dev:local` | API + web with concurrent local runners |
+| `pnpm build` / `lint` / `typecheck` | Monorepo-wide |
+| `pnpm db:generate` | Prisma client (API app) |
+| `pnpm db:migrate` | Migrations (dev workflow) |
+| `pnpm db:studio` | Prisma Studio (API DB) |
+
+## Security notes (high level)
+
+- Twilio webhook signatures validated when enabled; require `TWILIO_AUTH_TOKEN` in production checks.
+- Tenant header fallback is **development-only**; production boot fails if misconfigured (see `env-validation.ts`).
+- Dev ops POST routes require **ADMIN**/**OWNER** JWT and are **forbidden in production** unless `ENABLE_DEV_OPS_ENDPOINTS=true`.
+- Agent credentials stored encrypted (`ENCRYPTION_KEY`); do not log tokens or raw PII in application logs.
+
+## Developer testing (non-production)
+
+### 1) Seed demo tenant/client/agent/config
+
+```bash
+pnpm --filter api db:seed
+```
+
+Seed creates:
+- Demo tenant + OWNER user
+- Demo client + Shopify voice agent
+- Demo agent config (policies, escalation rules, checkout mode)
+- Demo product + variants in `ProductCache`/`VariantCache` for local tool flow tests
+
+Use the IDs printed by seed output to populate `apps/api/.env`:
+- `DEV_TENANT_ID`
+- `DEV_AGENT_ID`
+
+### 2) Simulate tools and voice flow locally (no live Twilio required)
+
+Single-tool simulation:
+
+```bash
+pnpm --filter api dev:simulate-tool
+# or from repo root:
+pnpm dev:simulate-tool
+```
+
+Tool is controlled via env:
+- `DEV_TOOL_NAME`
+- `DEV_TOOL_ARGS`
+- optional `DEV_CALL_SESSION_ID`
+
+End-to-end local voice commerce flow (search -> details -> checkout -> optional email):
+
+```bash
+pnpm --filter api dev:simulate-voice-flow
+# or from repo root:
+pnpm dev:simulate-voice-flow
+```
+
+Flow controls:
+- `DEV_FLOW_QUERY`
+- `DEV_TEST_CUSTOMER_EMAIL`
+- `DEV_TEST_CHECKOUT_MODE`
+- `DEV_FLOW_SEND_EMAIL` (`false` to avoid actual send)
+
+### 3) Manual Shopify catalog sync script
+
+```bash
+pnpm --filter api dev:sync-shopify
+# or from repo root:
+pnpm dev:sync-shopify
+```
+
+Requires a real Shopify connection for the selected agent.
+
+### 4) Test checkout-link generation script
+
+```bash
+pnpm --filter api dev:test-checkout-link
+# or from repo root:
+pnpm dev:test-checkout-link
+```
+
+Inputs:
+- `DEV_TEST_CUSTOMER_EMAIL`
+- `DEV_TEST_CHECKOUT_MODE`
+- `DEV_TEST_FORCE_NEW_CHECKOUT`
+- `DEV_TEST_CHECKOUT_ITEMS` (JSON array, optional; auto-falls back to latest cached variant)
+
+### 5) Test email send script / development route
+
+Script:
+
+```bash
+pnpm --filter api dev:test-email-send
+# or from repo root:
+pnpm dev:test-email-send
+```
+
+Requires:
+- `DEV_TEST_EMAIL_TO`
+- optional `DEV_TEST_CHECKOUT_URL` (HTTPS)
+
+Development HTTP route (for dashboard/manual API calls):
+- `POST /api/ops/agents/:agentId/test-email`
+- `POST /api/ops/agents/:agentId/simulate-tool`
+- `POST /api/ops/agents/:agentId/sync-products`
+
+Route guards:
+- Require JWT with **ADMIN** or **OWNER**
+- In production, blocked unless `ENABLE_DEV_OPS_ENDPOINTS=true` (staging-only switch)
+
+Example simulate-tool call:
+
+```bash
+curl -X POST "http://localhost:3001/api/ops/agents/<agentId>/simulate-tool" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt>" \
+  -d "{\"toolName\":\"searchProducts\",\"args\":{\"query\":\"demo book\",\"limit\":5}}"
+```
+
+## Documentation index
+
+| Document | Content |
+|----------|---------|
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Build, migrate, run, proxy, secrets |
+| [docs/EXTERNAL-DEPENDENCIES.md](docs/EXTERNAL-DEPENDENCIES.md) | Twilio, Shopify, OpenAI, Resend, etc. |
+| [docs/PRD-Multi-Tenant-AI-Voice-Agent-Platform.md](docs/PRD-Multi-Tenant-AI-Voice-Agent-Platform.md) | Product requirements |
+| [docs/ARCHITECTURE-Multi-Tenant-AI-Voice-Platform.md](docs/ARCHITECTURE-Multi-Tenant-AI-Voice-Platform.md) | Technical architecture |
+| [docs/ENV-CONFIG-Checklist-Step1.md](docs/ENV-CONFIG-Checklist-Step1.md) | Environment checklist |
+| [docs/IMPLEMENTATION-MODULES.md](docs/IMPLEMENTATION-MODULES.md) | Module map |
+
+## License / support
+
+Private client delivery; refer to your commercial agreement for support and SLAs.

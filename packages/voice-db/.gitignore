@@ -1,0 +1,2 @@
+generated/client/**
+!generated/client/.gitkeep

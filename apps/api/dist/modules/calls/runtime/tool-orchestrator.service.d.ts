@@ -1,0 +1,65 @@
+import { PrismaService } from '../../../database/prisma.service';
+import { OpenAIToolRegistryService } from '../../integrations/openai/openai-tool-registry.service';
+import { RetrievalService } from '../../knowledge/retrieval.service';
+import { CallEventsService } from '../../analytics/call-events.service';
+import { ShopifyAgentService } from '../../agents/shopify-agent.service';
+import { OrderBookingService } from '../../agents/order-booking.service';
+import { VoiceSessionContext } from './session-context.service';
+import { CallbackRequestsService } from '../callback-requests.service';
+import { ShopifyCheckoutService } from '../../integrations/shopify/shopify-checkout.service';
+import { TwilioSmsService } from '../../integrations/twilio/twilio-sms.service';
+import { AgentsService } from '../../agents/agents.service';
+import { ShopifyProductSearchService } from '../../integrations/shopify/product-search';
+import { ResendEmailService } from '../../integrations/email/resend-email.service';
+import { TranscriptBufferService } from './transcript-buffer.service';
+export interface ToolResult {
+    ok: boolean;
+    toolName: string;
+    storeId: string | null;
+    data?: unknown;
+    error?: {
+        code: string;
+        message: string;
+        retryable: boolean;
+    };
+    meta?: {
+        source: string;
+        latencyMs?: number;
+    };
+}
+export declare class ToolOrchestratorService {
+    private readonly prisma;
+    private readonly toolRegistry;
+    private readonly retrieval;
+    private readonly callEvents;
+    private readonly shopifyAgent;
+    private readonly callbacks;
+    private readonly booking;
+    private readonly checkout;
+    private readonly twilioSms;
+    private readonly agentsService;
+    private readonly productSearch;
+    private readonly resendEmail;
+    private readonly transcriptBuffer;
+    private readonly logger;
+    private static readonly ORDER_STATE_SEQUENCE;
+    private static readonly SENSITIVE_PAYMENT_KEYS;
+    private static readonly SENSITIVE_PAYMENT_PATTERN;
+    constructor(prisma: PrismaService, toolRegistry: OpenAIToolRegistryService, retrieval: RetrievalService, callEvents: CallEventsService, shopifyAgent: ShopifyAgentService, callbacks: CallbackRequestsService, booking: OrderBookingService, checkout: ShopifyCheckoutService, twilioSms: TwilioSmsService, agentsService: AgentsService, productSearch: ShopifyProductSearchService, resendEmail: ResendEmailService, transcriptBuffer: TranscriptBufferService);
+    private mapLiveSummaryToDetailsProduct;
+    private getStringArg;
+    private getBooleanArg;
+    private normalizeProductQueryText;
+    private hasSpecificProductSignal;
+    private getSearchToolPolicy;
+    private maskEmailForLog;
+    private normalizeItems;
+    private normalizeEmail;
+    private getSessionMetadata;
+    private updateOrderStateMetadata;
+    private hasSensitivePaymentInput;
+    execute(ctx: VoiceSessionContext, toolName: string, args: Record<string, unknown>, callSessionId: string, requestId?: string): Promise<ToolResult>;
+    private runTool;
+    private logAndReturn;
+    getMaxToolCallsPerCall(): number;
+}

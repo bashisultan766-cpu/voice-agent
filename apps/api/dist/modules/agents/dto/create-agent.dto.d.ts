@@ -1,0 +1,69 @@
+export declare enum AgentStatusDto {
+    DRAFT = "draft",
+    ACTIVE = "active",
+    PAUSED = "paused"
+}
+export declare class CreateAgentDto {
+    clientId?: string;
+    storeId?: string;
+    agentName: string;
+    storeName: string;
+    storeUrl?: string;
+    storeEmail?: string;
+    agentStatus?: AgentStatusDto;
+    language?: string;
+    timezone?: string;
+    voiceProvider?: string;
+    voiceId?: string;
+    voiceStyle?: string;
+    elevenlabsModel?: string;
+    languageMode?: 'auto' | 'fixed';
+    fixedLanguage?: string;
+    supportedLanguages?: string[];
+    greetingMessage?: string;
+    fallbackMessage?: string;
+    shopifyStoreUrl?: string;
+    shopifyStoreNumber?: string;
+    shopifyAdminToken?: string;
+    shopifyApiKey?: string;
+    shopifyApiSecret?: string;
+    webhookSecret?: string;
+    databaseProvider?: string;
+    databaseUrl?: string;
+    databaseAccessToken?: string;
+    knowledgeBaseSource?: string;
+    knowledgeSyncEnabled?: boolean;
+    twilioAccountSid?: string;
+    twilioAuthToken?: string;
+    twilioPhoneNumber?: string;
+    openaiApiKey?: string;
+    elevenlabsApiKey?: string;
+    callRoutingMode?: string;
+    incomingCallHandling?: string;
+    systemPrompt?: string;
+    agentGoal?: string;
+    agentRole?: string;
+    toneOfVoice?: string;
+    allowedActions?: string;
+    restrictedActions?: string;
+    escalationInstructions?: string;
+    returnRefundBehavior?: string;
+    orderStatusHandling?: string;
+    outOfStockHandling?: string;
+    transferToHumanEnabled?: boolean;
+    escalationPhone?: string;
+    escalationEmail?: string;
+    businessName?: string;
+    supportEmail?: string;
+    supportPhone?: string;
+    askEmailBeforePaymentLink?: boolean;
+    checkoutMode?: 'STOREFRONT_CART' | 'DRAFT_ORDER_INVOICE' | 'cart' | 'draft_order';
+    humanHandoffRules?: string;
+    shippingPolicy?: string;
+    returnPolicy?: string;
+    exchangePolicy?: string;
+    deliveryNotes?: string;
+    forbiddenBehaviors?: string;
+    escalationRules?: string[];
+    useWorkspaceDefaults?: boolean;
+}

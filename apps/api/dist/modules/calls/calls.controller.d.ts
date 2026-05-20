@@ -1,0 +1,85 @@
+import { CallsService } from './calls.service';
+export declare class CallsController {
+    private readonly callsService;
+    constructor(callsService: CallsService);
+    findAll(tenantId: string): Promise<{
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
+        agentId: string;
+        metadata: import("@prisma/client/runtime/library").JsonValue | null;
+        phoneNumberId: string | null;
+        twilioCallSid: string | null;
+        twilioStreamSid: string | null;
+        fromNumber: string | null;
+        toNumber: string | null;
+        direction: string | null;
+        startedAt: Date | null;
+        answeredAt: Date | null;
+        endedAt: Date | null;
+        durationSeconds: number | null;
+        transcriptText: string | null;
+        summary: string | null;
+        sentiment: string | null;
+        escalated: boolean;
+        recordingUrl: string | null;
+        lastEventAt: Date | null;
+        openaiSessionId: string | null;
+        endedReason: string | null;
+    }[]>;
+    findOne(tenantId: string, id: string): Promise<{
+        toolExecutions: {
+            id: string;
+            tenantId: string;
+            createdAt: Date;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            agentId: string;
+            callSessionId: string | null;
+            errorMessage: string | null;
+            toolName: string;
+            requestId: string | null;
+            inputJson: import("@prisma/client/runtime/library").JsonValue;
+            outputJson: import("@prisma/client/runtime/library").JsonValue | null;
+            latencyMs: number | null;
+        }[];
+        transcripts: {
+            id: string;
+            role: string;
+            createdAt: Date;
+            callSessionId: string;
+            content: string;
+            sequenceNumber: number;
+            timestampMs: number | null;
+        }[];
+    } & {
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
+        agentId: string;
+        metadata: import("@prisma/client/runtime/library").JsonValue | null;
+        phoneNumberId: string | null;
+        twilioCallSid: string | null;
+        twilioStreamSid: string | null;
+        fromNumber: string | null;
+        toNumber: string | null;
+        direction: string | null;
+        startedAt: Date | null;
+        answeredAt: Date | null;
+        endedAt: Date | null;
+        durationSeconds: number | null;
+        transcriptText: string | null;
+        summary: string | null;
+        sentiment: string | null;
+        escalated: boolean;
+        recordingUrl: string | null;
+        lastEventAt: Date | null;
+        openaiSessionId: string | null;
+        endedReason: string | null;
+    }>;
+}

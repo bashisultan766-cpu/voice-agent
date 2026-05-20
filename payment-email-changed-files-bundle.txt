@@ -1,0 +1,1850 @@
+
+
+===== payment-email-templates.ts =====
+
+/**
+ * Branded transactional templates for secure checkout / payment-link emails.
+ * HTML uses tables + inline styles for broad client support; text is always included for accessibility.
+ */
+
+export type PaymentEmailItem = { title: string; quantity: number };
+
+export type PaymentEmailBranding = {
+  businessName: string;
+  supportEmail?: string | null;
+  supportPhone?: string | null;
+  /** Public HTTPS checkout URL */
+  checkoutUrl: string;
+  items: PaymentEmailItem[];
+};
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Plain-text safe (no HTML entities). */
+function escapeText(s: string): string {
+  return s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function formatItemsText(items: PaymentEmailItem[]): string {
+  if (!items.length) return '• Items selected during your call (see checkout for details)';
+  return items.map((i) => `• ${escapeText(i.title)} × ${i.quantity}`).join('\n');
+}
+
+function formatItemsHtmlRows(items: PaymentEmailItem[]): string {
+  if (!items.length) {
+    return `<tr><td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:14px;">Items from your call — full details at checkout.</td></tr>`;
+  }
+  return items
+    .map(
+      (i) => `
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;">${escapeHtml(i.title)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;text-align:right;white-space:nowrap;">× ${i.quantity}</td>
+    </tr>`,
+    )
+    .join('');
+}
+
+function supportBlockText(supportEmail?: string | null, supportPhone?: string | null): string {
+  const lines: string[] = [];
+  if (supportEmail?.trim()) lines.push(`Email: ${supportEmail.trim()}`);
+  if (supportPhone?.trim()) lines.push(`Phone: ${supportPhone.trim()}`);
+  if (!lines.length) return 'Use the contact information from our website if you need help.';
+  return lines.join('\n');
+}
+
+function supportBlockHtml(supportEmail?: string | null, supportPhone?: string | null): string {
+  const parts: string[] = [];
+  if (supportEmail?.trim()) {
+    const e = escapeHtml(supportEmail.trim());
+    parts.push(`<a href="mailto:${e}" style="color:#2563eb;text-decoration:none;">${e}</a>`);
+  }
+  if (supportPhone?.trim()) {
+    const p = escapeHtml(supportPhone.trim());
+    const tel = supportPhone.trim().replace(/[^\d+]/g, '');
+    parts.push(`<a href="tel:${escapeHtml(tel)}" style="color:#2563eb;text-decoration:none;">${p}</a>`);
+  }
+  if (!parts.length) {
+    return '<p style="margin:0;font-size:13px;color:#6b7280;">Need help? Visit our store site or reply if your mail client allows.</p>';
+  }
+  return `<p style="margin:0;font-size:14px;color:#374151;line-height:1.6;">${parts.join(' · ')}</p>`;
+}
+
+export function buildPaymentEmailContent(branding: PaymentEmailBranding): {
+  subject: string;
+  html: string;
+  text: string;
+  bodyPreview: string;
+} {
+  const name = branding.businessName.trim() || 'Our store';
+  const safeName = escapeHtml(name);
+  const url = branding.checkoutUrl.trim();
+  const safeUrlAttr = escapeHtml(url);
+  const itemsText = formatItemsText(branding.items);
+  const itemsRows = formatItemsHtmlRows(branding.items);
+  const supportTxt = supportBlockText(branding.supportEmail, branding.supportPhone);
+  const supportHtml = supportBlockHtml(branding.supportEmail, branding.supportPhone);
+
+  const subject = `${name} — Complete your secure checkout`;
+
+  const text = `${name}
+Secure checkout
+${'─'.repeat(Math.min(name.length + 16, 48))}
+
+Hello,
+
+Thank you for your order by phone. Complete payment on Shopify's secure checkout using the link below.
+
+YOUR ITEMS
+${itemsText}
+
+COMPLETE PAYMENT (secure link):
+${url}
+
+If the link above does not open, copy and paste it into your browser address bar.
+
+QUESTIONS?
+${supportTxt}
+
+We never ask for full card numbers on the phone — you'll enter payment details only on the secure checkout page.
+
+— ${escapeText(name)}
+
+This message was sent because you requested a payment link during a call with ${escapeText(name)}.
+`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${safeName} — Checkout</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3f4f6;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width:560px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background:linear-gradient(135deg,#111827 0%,#1f2937 100%);padding:24px 28px;">
+              <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#9ca3af;">Secure checkout</p>
+              <h1 style="margin:8px 0 0;font-size:22px;font-weight:700;color:#ffffff;line-height:1.25;">${safeName}</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 28px 8px;">
+              <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Hello,</p>
+              <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Thank you for your order by phone. Use the button below to pay securely on Shopify — the same trusted checkout millions of stores use.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 28px 20px;">
+              <p style="margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6b7280;">Your items</p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+                ${itemsRows}
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:8px 28px 24px;" align="center">
+              <table role="presentation" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td style="border-radius:8px;background-color:#111827;">
+                    <a href="${safeUrlAttr}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Complete secure payment</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:20px 0 0;font-size:13px;color:#6b7280;line-height:1.5;">Prefer to copy the link? Use this plain address:</p>
+              <p style="margin:8px 0 0;word-break:break-all;font-size:13px;color:#2563eb;"><a href="${safeUrlAttr}" style="color:#2563eb;">${safeUrlAttr}</a></p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 28px 24px;border-top:1px solid #e5e7eb;">
+              <p style="margin:20px 0 8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6b7280;">Support</p>
+              ${supportHtml}
+              <p style="margin:16px 0 0;font-size:12px;color:#9ca3af;line-height:1.5;">For your security, we never collect full card numbers or CVV codes on the phone. Enter payment details only on the checkout page.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 28px;background-color:#f9fafb;border-top:1px solid #e5e7eb;">
+              <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.5;">This email was sent because you asked for a payment link during a call with ${safeName}.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+  const bodyPreview = text.split('\n').slice(0, 4).join(' ').slice(0, 220);
+
+  return { subject, html, text, bodyPreview };
+}
+
+
+===== resend-email.service.ts =====
+
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../../../database/prisma.service';
+import { Prisma } from '@prisma/client';
+import { buildPaymentEmailContent } from './payment-email-templates';
+
+function assertHttpsCheckoutUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('Invalid checkout URL.');
+  }
+  if (url.protocol !== 'https:') {
+    throw new Error('Checkout URL must use HTTPS.');
+  }
+  return url.toString();
+}
+
+const RESEND_MAX_ATTEMPTS = Math.min(Math.max(Number(process.env.RESEND_MAX_ATTEMPTS) || 5, 1), 10);
+const RESEND_RETRY_BASE_MS = Math.max(Number(process.env.RESEND_RETRY_BASE_MS) || 500, 100);
+
+const SUCCESS_STATUSES = new Set(['SENT', 'DELIVERED', 'OPENED', 'CLICKED']);
+const STALE_QUEUED_MS = Math.max(Number(process.env.PAYMENT_EMAIL_STALE_QUEUED_MS) || 10 * 60 * 1000, 60_000);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isTransientSendFailure(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function appendSendAttempt(metadata: unknown, attempt: Record<string, unknown>): Prisma.InputJsonValue {
+  const base =
+    metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? { ...(metadata as Record<string, unknown>) }
+      : {};
+  const prev = base.attempts;
+  const attempts = Array.isArray(prev) ? [...prev] : [];
+  attempts.push(attempt);
+  return { ...base, attempts } as Prisma.InputJsonValue;
+}
+
+type SendPaymentEmailResult = {
+  emailEventId: string;
+  providerMessageId: string | null;
+  deduplicated?: boolean;
+};
+
+@Injectable()
+export class ResendEmailService {
+  private readonly logger = new Logger(ResendEmailService.name);
+
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  private apiKey(): string {
+    const key = this.config.get<string>('RESEND_API_KEY')?.trim();
+    if (!key) throw new Error('RESEND_API_KEY is not configured.');
+    return key;
+  }
+
+  async sendPaymentEmail(input: {
+    tenantId: string;
+    agentId: string;
+    callSessionId?: string;
+    checkoutLinkId: string;
+    /** Successful sends dedupe; FAILED / QUEUED / BOUNCED rows retry in-place with the same key. */
+    idempotencyKey?: string;
+    to: string;
+    businessName: string;
+    supportEmail?: string | null;
+    supportPhone?: string | null;
+    checkoutUrl: string;
+    items: Array<{ title: string; quantity: number }>;
+  }): Promise<SendPaymentEmailResult> {
+    const safeCheckoutUrl = assertHttpsCheckoutUrl(input.checkoutUrl.trim());
+    const cleanTo = input.to.trim().toLowerCase();
+    if (!cleanTo.includes('@')) {
+      throw new Error('A valid customer email is required.');
+    }
+
+    const tmpl = buildPaymentEmailContent({
+      businessName: input.businessName.trim() || 'Our store',
+      supportEmail: input.supportEmail,
+      supportPhone: input.supportPhone,
+      checkoutUrl: safeCheckoutUrl,
+      items: input.items,
+    });
+
+    const idemKey = input.idempotencyKey?.trim() || null;
+
+    const txResult = await this.prisma.$transaction(
+      async (tx) => {
+        if (idemKey) {
+          const existing = await tx.emailEvent.findFirst({
+            where: { tenantId: input.tenantId, idempotencyKey: idemKey },
+          });
+          if (existing) {
+            if (SUCCESS_STATUSES.has(existing.status)) {
+              return {
+                kind: 'dedup' as const,
+                duplicate: existing,
+                dedupReason: 'idempotency_key' as const,
+              };
+            }
+            if (existing.status === 'FAILED' || existing.status === 'BOUNCED') {
+              const row = await tx.emailEvent.update({
+                where: { id: existing.id },
+                data: {
+                  status: 'QUEUED',
+                  checkoutLinkId: input.checkoutLinkId,
+                  callSessionId: input.callSessionId ?? null,
+                  agentId: input.agentId,
+                  recipientEmail: cleanTo,
+                  subject: tmpl.subject,
+                  bodyPreview: tmpl.bodyPreview,
+                },
+              });
+              return { kind: 'send' as const, row };
+            }
+            if (existing.status === 'QUEUED') {
+              const age = Date.now() - existing.updatedAt.getTime();
+              if (age <= STALE_QUEUED_MS) {
+                return { kind: 'in_flight' as const, existing };
+              }
+              const row = await tx.emailEvent.update({
+                where: { id: existing.id },
+                data: {
+                  checkoutLinkId: input.checkoutLinkId,
+                  callSessionId: input.callSessionId ?? null,
+                  agentId: input.agentId,
+                  recipientEmail: cleanTo,
+                  subject: tmpl.subject,
+                  bodyPreview: tmpl.bodyPreview,
+                },
+              });
+              return { kind: 'send' as const, row };
+            }
+          }
+        }
+
+        const duplicate = await tx.emailEvent.findFirst({
+          where: {
+            tenantId: input.tenantId,
+            agentId: input.agentId,
+            checkoutLinkId: input.checkoutLinkId,
+            recipientEmail: cleanTo,
+            status: { in: ['SENT', 'DELIVERED', 'OPENED', 'CLICKED'] },
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (duplicate) {
+          return { kind: 'dedup' as const, duplicate, dedupReason: 'checkout_recipient' as const };
+        }
+
+        const row = await tx.emailEvent.create({
+          data: {
+            tenantId: input.tenantId,
+            agentId: input.agentId,
+            callSessionId: input.callSessionId ?? null,
+            checkoutLinkId: input.checkoutLinkId,
+            idempotencyKey: idemKey,
+            recipientEmail: cleanTo,
+            subject: tmpl.subject,
+            provider: 'resend',
+            status: 'QUEUED',
+            bodyPreview: tmpl.bodyPreview,
+          },
+        });
+        return { kind: 'send' as const, row };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5000,
+        timeout: 20000,
+      },
+    );
+
+    if (txResult.kind === 'in_flight') {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'payment_email.in_flight',
+          tenantId: input.tenantId,
+          checkoutLinkId: input.checkoutLinkId,
+          emailEventId: txResult.existing.id,
+        }),
+      );
+      throw new Error(
+        'A payment email is already being sent for this checkout. Please wait a few seconds and try again.',
+      );
+    }
+
+    if (txResult.kind === 'dedup') {
+      this.logger.log(
+        JSON.stringify({
+          event: 'payment_email.deduplicated',
+          tenantId: input.tenantId,
+          agentId: input.agentId,
+          checkoutLinkId: input.checkoutLinkId,
+          emailEventId: txResult.duplicate.id,
+          reason: txResult.dedupReason,
+          recipientEmailMasked: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
+        }),
+      );
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId: input.tenantId,
+          action: 'CHECKOUT_EMAIL_DEDUPLICATED',
+          entityType: 'CHECKOUT_LINK',
+          entityId: input.checkoutLinkId,
+          metadata: {
+            emailEventId: txResult.duplicate.id,
+            reason: txResult.dedupReason,
+            recipientEmail: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
+          } as Prisma.InputJsonValue,
+        },
+      });
+      return {
+        emailEventId: txResult.duplicate.id,
+        providerMessageId: txResult.duplicate.providerMessageId ?? null,
+        deduplicated: true,
+      };
+    }
+
+    const emailRow = txResult.row;
+    const emailEventId = emailRow.id;
+
+    const from = this.config.get<string>('RESEND_FROM_EMAIL')?.trim();
+    if (!from) {
+      await this.prisma.emailEvent.update({
+        where: { id: emailEventId },
+        data: {
+          status: 'FAILED',
+          metadata: appendSendAttempt(emailRow.metadata, {
+            at: new Date().toISOString(),
+            outcome: 'config_error',
+            message: 'RESEND_FROM_EMAIL is not configured.',
+          }),
+        },
+      });
+      throw new Error('RESEND_FROM_EMAIL is not configured.');
+    }
+
+    let lastPayload: { id?: string; message?: string } = {};
+    let lastStatus = 0;
+
+    for (let attempt = 1; attempt <= RESEND_MAX_ATTEMPTS; attempt++) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'payment_email.send_attempt',
+          tenantId: input.tenantId,
+          agentId: input.agentId,
+          checkoutLinkId: input.checkoutLinkId,
+          emailEventId,
+          attempt,
+          maxAttempts: RESEND_MAX_ATTEMPTS,
+          recipientEmailMasked: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
+        }),
+      );
+
+      try {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from,
+            to: [cleanTo],
+            subject: tmpl.subject,
+            html: tmpl.html,
+            text: tmpl.text,
+          }),
+        });
+        lastStatus = response.status;
+        lastPayload = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
+
+        if (response.ok) {
+          const metaRow = await this.prisma.emailEvent.findUniqueOrThrow({ where: { id: emailEventId } });
+          this.logger.log(
+            JSON.stringify({
+              event: 'payment_email.send_success',
+              tenantId: input.tenantId,
+              agentId: input.agentId,
+              checkoutLinkId: input.checkoutLinkId,
+              emailEventId,
+              attempt,
+              providerMessageId: lastPayload.id ?? null,
+            }),
+          );
+          await this.prisma.emailEvent.update({
+            where: { id: emailEventId },
+            data: {
+              status: 'SENT',
+              providerMessageId: lastPayload.id ?? null,
+              metadata: appendSendAttempt(metaRow.metadata, {
+                at: new Date().toISOString(),
+                attempt,
+                outcome: 'sent',
+                httpStatus: response.status,
+                providerMessageId: lastPayload.id ?? null,
+              }),
+              sentAt: new Date(),
+            },
+          });
+          await this.prisma.auditLog.create({
+            data: {
+              tenantId: input.tenantId,
+              action: 'CHECKOUT_EMAIL_SENT',
+              entityType: 'CHECKOUT_LINK',
+              entityId: input.checkoutLinkId,
+              metadata: {
+                emailEventId,
+                attempt,
+                recipientEmail: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
+              } as Prisma.InputJsonValue,
+            },
+          });
+          return { emailEventId, providerMessageId: lastPayload.id ?? null };
+        }
+
+        const transient = isTransientSendFailure(response.status);
+        const metaRow = await this.prisma.emailEvent.findUniqueOrThrow({ where: { id: emailEventId } });
+        await this.prisma.emailEvent.update({
+          where: { id: emailEventId },
+          data: {
+            metadata: appendSendAttempt(metaRow.metadata, {
+              at: new Date().toISOString(),
+              attempt,
+              outcome: transient ? 'error_transient' : 'error_terminal',
+              httpStatus: response.status,
+              message: (lastPayload.message || `HTTP ${response.status}`).slice(0, 500),
+            }),
+          },
+        });
+
+        this.logger.warn(
+          JSON.stringify({
+            event: 'payment_email.send_attempt_failed',
+            tenantId: input.tenantId,
+            agentId: input.agentId,
+            checkoutLinkId: input.checkoutLinkId,
+            emailEventId,
+            attempt,
+            httpStatus: response.status,
+            transient,
+            message: (lastPayload.message || '').slice(0, 200),
+          }),
+        );
+
+        if (!transient || attempt === RESEND_MAX_ATTEMPTS) {
+          break;
+        }
+        const jitter = Math.floor(Math.random() * 150);
+        await sleep(RESEND_RETRY_BASE_MS * 2 ** (attempt - 1) + jitter);
+      } catch (err) {
+        const message = err instanceof Error ? err.message.slice(0, 400) : 'network_error';
+        const metaRow = await this.prisma.emailEvent.findUniqueOrThrow({ where: { id: emailEventId } });
+        await this.prisma.emailEvent.update({
+          where: { id: emailEventId },
+          data: {
+            metadata: appendSendAttempt(metaRow.metadata, {
+              at: new Date().toISOString(),
+              attempt,
+              outcome: 'network_error',
+              message,
+            }),
+          },
+        });
+        this.logger.warn(
+          JSON.stringify({
+            event: 'payment_email.send_network_error',
+            tenantId: input.tenantId,
+            agentId: input.agentId,
+            checkoutLinkId: input.checkoutLinkId,
+            emailEventId,
+            attempt,
+            message: message.slice(0, 200),
+          }),
+        );
+        if (attempt === RESEND_MAX_ATTEMPTS) break;
+        const jitter = Math.floor(Math.random() * 150);
+        await sleep(RESEND_RETRY_BASE_MS * 2 ** (attempt - 1) + jitter);
+      }
+    }
+
+    const failMessage = lastPayload.message || `Failed to send payment email (HTTP ${lastStatus || 'n/a'}).`;
+    const metaFinal = await this.prisma.emailEvent.findUniqueOrThrow({ where: { id: emailEventId } });
+    await this.prisma.emailEvent.update({
+      where: { id: emailEventId },
+      data: {
+        status: 'FAILED',
+        metadata: appendSendAttempt(metaFinal.metadata, {
+          at: new Date().toISOString(),
+          outcome: 'failed_final',
+          message: failMessage.slice(0, 500),
+        }),
+      },
+    });
+
+    this.logger.error(
+      JSON.stringify({
+        event: 'payment_email.send_failed_final',
+        tenantId: input.tenantId,
+        agentId: input.agentId,
+        checkoutLinkId: input.checkoutLinkId,
+        emailEventId,
+        httpStatus: lastStatus,
+        message: failMessage.slice(0, 300),
+      }),
+    );
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: input.tenantId,
+        action: 'CHECKOUT_EMAIL_FAILED',
+        entityType: 'CHECKOUT_LINK',
+        entityId: input.checkoutLinkId,
+        metadata: {
+          emailEventId,
+          recipientEmail: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
+          httpStatus: lastStatus,
+          message: failMessage.slice(0, 300),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    throw new Error(failMessage);
+  }
+}
+
+
+===== tool-orchestrator.service.ts =====
+
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../../../database/prisma.service';
+import { Prisma } from '@prisma/client';
+import { OpenAIToolRegistryService } from '../../integrations/openai/openai-tool-registry.service';
+import { RetrievalService } from '../../knowledge/retrieval.service';
+import { CallEventsService } from '../../analytics/call-events.service';
+import { ShopifyAgentService } from '../../agents/shopify-agent.service';
+import { OrderBookingService } from '../../agents/order-booking.service';
+import { VoiceSessionContext } from './session-context.service';
+import { ToolExecutionStatus, KnowledgeDocType, CallEventType } from '@prisma/client';
+import { CallbackRequestsService } from '../callback-requests.service';
+import { ShopifyCheckoutService } from '../../integrations/shopify/shopify-checkout.service';
+import { TwilioSmsService } from '../../integrations/twilio/twilio-sms.service';
+import { AgentsService } from '../../agents/agents.service';
+import { ShopifyProductSearchService } from '../../integrations/shopify/product-search';
+import { ResendEmailService } from '../../integrations/email/resend-email.service';
+import { paymentEmailIdempotencyKey } from '../../../common/payment-email-idempotency';
+import { TranscriptBufferService } from './transcript-buffer.service';
+import { parseVoiceToolArgs } from '../../integrations/openai/voice-tool-args';
+import {
+  formatShopifyErrorForCaller,
+  ShopifyCheckoutValidationError,
+  ShopifyGraphqlError,
+} from '../../integrations/shopify/shopify-errors';
+
+const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
+
+export interface ToolResult {
+  ok: boolean;
+  toolName: string;
+  storeId: string | null;
+  data?: unknown;
+  error?: { code: string; message: string; retryable: boolean };
+  meta?: { source: string; latencyMs?: number };
+}
+
+@Injectable()
+export class ToolOrchestratorService {
+  private readonly logger = new Logger(ToolOrchestratorService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly toolRegistry: OpenAIToolRegistryService,
+    private readonly retrieval: RetrievalService,
+    private readonly callEvents: CallEventsService,
+    private readonly shopifyAgent: ShopifyAgentService,
+    private readonly callbacks: CallbackRequestsService,
+    private readonly booking: OrderBookingService,
+    private readonly checkout: ShopifyCheckoutService,
+    private readonly twilioSms: TwilioSmsService,
+    private readonly agentsService: AgentsService,
+    private readonly productSearch: ShopifyProductSearchService,
+    private readonly resendEmail: ResendEmailService,
+    private readonly transcriptBuffer: TranscriptBufferService,
+  ) {}
+
+  private getStringArg(input: Record<string, unknown>, ...keys: string[]): string {
+    for (const key of keys) {
+      const value = input[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return '';
+  }
+
+  private getBooleanArg(input: Record<string, unknown>, ...keys: string[]): boolean | null {
+    for (const key of keys) {
+      const value = input[key];
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        if (value.toLowerCase() === 'true') return true;
+        if (value.toLowerCase() === 'false') return false;
+      }
+    }
+    return null;
+  }
+
+  private maskEmailForLog(email: string): string {
+    const t = email.trim().toLowerCase();
+    const at = t.indexOf('@');
+    if (at < 1) return '***';
+    return `${t[0]}***${t.slice(at)}`;
+  }
+
+  private normalizeItems(raw: unknown): Array<{ productId: string; variantId?: string; title?: string; quantity: number }> {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const row = item as Record<string, unknown>;
+        const productId = this.getStringArg(row, 'productId', 'product_id');
+        const variantId = this.getStringArg(row, 'variantId', 'variant_id');
+        const title = this.getStringArg(row, 'title');
+        const quantityRaw = row.quantity;
+        const quantity = typeof quantityRaw === 'number' ? quantityRaw : Number(quantityRaw ?? 1);
+        if (!productId && !variantId && !title) return null;
+        return {
+          productId: productId || variantId || title,
+          variantId: variantId || undefined,
+          title: title || undefined,
+          quantity: Math.max(1, Number.isFinite(quantity) ? Math.trunc(quantity) : 1),
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }
+
+  /**
+   * Execute one tool call. Injects tenantId, storeId from context.
+   * Logs to ToolExecution. Returns normalized result for model.
+   */
+  async execute(
+    ctx: VoiceSessionContext,
+    toolName: string,
+    args: Record<string, unknown>,
+    callSessionId: string,
+    requestId?: string,
+  ): Promise<ToolResult> {
+    const summaryInput = JSON.stringify(args ?? {}).slice(0, 400);
+    const startSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
+    await this.transcriptBuffer.append(
+      callSessionId,
+      'tool',
+      `Tool call started: ${toolName}(${summaryInput})`,
+      startSeq,
+    );
+    const start = Date.now();
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.tool.execute_start',
+        callSessionId,
+        toolName,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+      }),
+    );
+    const allowed = this.toolRegistry.isToolAllowed(toolName, ctx.agent.enabledTools);
+    if (!allowed) {
+      const blocked = await this.logAndReturn(ctx, callSessionId, toolName, args, requestId, start, {
+        ok: false,
+        error: { code: 'TOOL_NOT_ALLOWED', message: 'Tool not enabled for this agent', retryable: false },
+        data: {
+          voiceSummary:
+            'That action is not available on this line right now. I can still answer from our catalog with a quick search, or we can arrange a callback.',
+        },
+      });
+      const blockedSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(
+        callSessionId,
+        'tool',
+        `Tool call blocked: ${toolName} (${blocked.error?.message ?? 'not allowed'})`,
+        blockedSeq,
+      );
+      return blocked;
+    }
+
+    const handoffTools = new Set(['escalateToHuman', 'handoff_to_human', 'create_callback_request']);
+    if (handoffTools.has(toolName)) {
+      const transfersOk = ctx.agent.handoffEnabled !== false && ctx.agent.transferToHumanEnabled !== false;
+      if (!transfersOk) {
+        return await this.logAndReturn(ctx, callSessionId, toolName, args, requestId, start, {
+          ok: false,
+          error: { code: 'HANDOFF_DISABLED', message: 'Human transfer disabled for this agent', retryable: false },
+          data: {
+            voiceSummary:
+              'I am not able to transfer this call from here, but I can take your details and have the right person follow up, or answer what I can from our store information.',
+          },
+        });
+      }
+    }
+
+    const parsedArgs = parseVoiceToolArgs(toolName, args);
+    if (!parsedArgs.ok) {
+      return await this.logAndReturn(ctx, callSessionId, toolName, args, requestId, start, {
+        ok: false,
+        error: {
+          code: 'INVALID_ARGS',
+          message: parsedArgs.message,
+          retryable: false,
+        },
+        data: {
+          voiceSummary: `I could not run that step—the ${parsedArgs.field ? `${parsedArgs.field.replace(/_/g, ' ')} was` : 'information was'} not quite right. Let me ask for that again, or I can connect you with the team.`,
+        },
+      });
+    }
+
+    const fullInput = { ...parsedArgs.args, storeId: ctx.storeId, tenantId: ctx.tenantId };
+    try {
+      const result = await this.runTool(ctx, toolName, fullInput, callSessionId);
+      const logged = await this.logAndReturn(ctx, callSessionId, toolName, fullInput, requestId, start, result);
+      const okSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(
+        callSessionId,
+        'tool',
+        `Tool call completed: ${toolName} (${logged.ok ? 'success' : 'failed'})`,
+        okSeq,
+      );
+      return logged;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Tool execution failed';
+      this.logger.error(
+        JSON.stringify({
+          event: 'voice.tool.execute_error',
+          callSessionId,
+          toolName,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          message: message.slice(0, 300),
+        }),
+      );
+      const failed = await this.logAndReturn(ctx, callSessionId, toolName, fullInput, requestId, start, {
+        ok: false,
+        error: { code: 'TOOL_ERROR', message, retryable: true },
+        data: {
+          voiceSummary:
+            'I hit a temporary issue while checking that. I can try again, suggest an alternative, or connect you to support.',
+        },
+      });
+      const failSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(
+        callSessionId,
+        'tool',
+        `Tool call failed: ${toolName} (${message.slice(0, 240)})`,
+        failSeq,
+      );
+      return failed;
+    }
+  }
+
+  private async runTool(
+    ctx: VoiceSessionContext,
+    toolName: string,
+    input: Record<string, unknown>,
+    callSessionId: string,
+  ): Promise<Omit<ToolResult, 'toolName' | 'storeId'>> {
+    const noStore = (msg: string) => ({ ok: true, data: { items: [], voiceSummary: msg }, meta: { source: 'stub' } as const });
+    const storeDependent = ['get_store_locations', 'get_store_hours', 'search_store_faqs', 'get_shipping_policy', 'get_return_policy', 'get_promotion_details'];
+    if (!ctx.storeId && storeDependent.includes(toolName)) {
+      return noStore('Store information is not set up for this agent.');
+    }
+
+    switch (toolName) {
+      case 'searchProducts': {
+        const query = this.getStringArg(input, 'query');
+        if (!query) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need query before searching products.', retryable: true } };
+        }
+        const shopDomain = ctx.agent.shopify?.shopDomain?.trim() || null;
+        const items = await this.productSearch.search(
+          ctx.tenantId,
+          query,
+          Number(input.limit ?? 8),
+          shopDomain,
+        );
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.tool.search_products',
+            eventJourney: 'voice.journey.product_search',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            shopDomain: ctx.agent.shopify?.shopDomain ?? null,
+            query,
+            resultCount: items.length,
+          }),
+        );
+        return {
+          ok: true,
+          data: {
+            results: items.map((product) => ({
+              id: product.productId,
+              title: product.title,
+              handle: product.handle,
+              variants: product.variants.map((v) => ({
+                id: v.variantId,
+                title: v.title,
+                sku: v.sku,
+                price: v.price,
+                inventoryQuantity: v.inventoryQuantity,
+              })),
+            })),
+            voiceSummary:
+              items.length > 0
+                ? `I found ${items.length} matching products. Top result: ${items[0].title}.`
+                : 'I could not find a matching product in the catalog right now. I can try different keywords, or inventory may still be syncing.',
+          },
+          meta: { source: 'product_cache' },
+        };
+      }
+      case 'getProductDetails': {
+        const shopDomain = ctx.agent.shopify?.shopDomain?.trim() || null;
+        const product = await this.productSearch.getDetails(
+          ctx.tenantId,
+          {
+            productId: this.getStringArg(input, 'productId'),
+            variantId: this.getStringArg(input, 'variantId'),
+            title: this.getStringArg(input, 'title'),
+          },
+          shopDomain,
+        );
+        if (!product) {
+          return { ok: true, data: { product: null, voiceSummary: 'I could not find that product.' }, meta: { source: 'product_cache' } };
+        }
+        const selectedId = 'selectedVariantId' in product ? product.selectedVariantId : null;
+        return {
+          ok: true,
+          data: {
+            product: {
+              id: product.productId,
+              title: product.title,
+              handle: product.handle,
+              selectedVariantId: selectedId ?? undefined,
+              variants: product.variants.map((v) => ({
+                id: v.variantId,
+                title: v.title,
+                sku: v.sku,
+                price: v.price,
+                inventoryQuantity: v.inventoryQuantity,
+                availableForSale: v.availableForSale,
+              })),
+            },
+            voiceSummary: selectedId
+              ? `${product.title}. The variant you asked about is listed first; ${product.variants.length} options in total.`
+              : `${product.title}. ${product.variants.length} variants available.`,
+          },
+          meta: { source: 'product_cache' },
+        };
+      }
+      case 'createCheckoutLink': {
+        const email = this.getStringArg(input, 'email');
+        if (!email) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need customer email before creating checkout.', retryable: true } };
+        }
+        const itemsRaw = this.normalizeItems(input.items);
+        const checkoutMode = this.getStringArg(input, 'mode').toLowerCase();
+        const items = itemsRaw.map((item) => ({
+          variantId: item.variantId ?? item.productId,
+          quantity: item.quantity,
+        }));
+        if (items.length === 0) {
+          return {
+            ok: false,
+            error: {
+              code: 'MISSING_INPUT',
+              message:
+                'Need at least one line item with a Shopify variant or product id and quantity. Use getProductDetails first.',
+              retryable: true,
+            },
+            data: {
+              voiceSummary:
+                'I need the exact product variant from our catalog before I can build checkout. Let me look that up again.',
+            },
+          };
+        }
+        const configuredMode =
+          checkoutMode === 'draft_order'
+            ? 'DRAFT_ORDER_INVOICE'
+            : checkoutMode === 'cart'
+              ? 'STOREFRONT_CART'
+              : undefined;
+        const forceNewCheckout =
+          this.getBooleanArg(input as Record<string, unknown>, 'forceNewCheckout', 'force_new_checkout') === true;
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.journey.checkout_create_start',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            itemCount: items.length,
+            modeHint: configuredMode ?? 'agent_default',
+            forceNewCheckout,
+          }),
+        );
+        let checkout: Awaited<ReturnType<ShopifyCheckoutService['createCheckoutLink']>>;
+        try {
+          checkout = await this.checkout.createCheckoutLink(ctx.tenantId, ctx.agentId, {
+            callSessionId,
+            customer: { email },
+            items,
+            mode: configuredMode,
+            forceNewCheckout,
+          });
+        } catch (err) {
+          const msg = formatShopifyErrorForCaller(err);
+          const retryable =
+            err instanceof ShopifyGraphqlError ? err.retryable : !(err instanceof ShopifyCheckoutValidationError);
+          return {
+            ok: false,
+            error: { code: 'CHECKOUT_FAILED', message: msg, retryable },
+            data: { voiceSummary: msg },
+          };
+        }
+        const link = await this.prisma.checkoutLink.findUniqueOrThrow({
+          where: { id: checkout.checkoutLinkId },
+        });
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.tool.checkout_link_created',
+            eventJourney: 'voice.journey.checkout_link_created',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            checkoutLinkId: link.id,
+            mode: link.mode,
+            itemCount: items.length,
+            reusedExisting: checkout.reusedExisting === true,
+          }),
+        );
+        return {
+          ok: true,
+          data: {
+            checkoutLinkId: link.id,
+            checkoutUrl: link.checkoutUrl,
+            mode: link.mode,
+            reusedExisting: checkout.reusedExisting === true,
+            voiceSummary:
+              checkout.reusedExisting === true
+                ? `You already have an open checkout for this cart; I'm using that same secure link for ${email}.`
+                : `I created a secure payment link and can send it to ${email}.`,
+          },
+          meta: { source: 'shopify_checkout' },
+        };
+      }
+      case 'sendPaymentEmail': {
+        const email = this.getStringArg(input, 'email');
+        const checkoutLinkId = this.getStringArg(input, 'checkoutLinkId');
+        if (!email || !checkoutLinkId) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need email and checkoutLinkId to send payment email.', retryable: true } };
+        }
+        const link = await this.prisma.checkoutLink.findFirst({
+          where: { id: checkoutLinkId, tenantId: ctx.tenantId, agentId: ctx.agentId },
+          include: { agent: { include: { agentConfig: true } } },
+        });
+        if (!link) return { ok: false, error: { code: 'NOT_FOUND', message: 'Checkout link not found.', retryable: false } };
+        const items = Array.isArray(link.itemsJson)
+          ? (link.itemsJson as Array<{ title?: string; quantity?: number }>).map((row) => ({
+              title: row.title || 'Selected item',
+              quantity: Math.max(1, Number(row.quantity ?? 1)),
+            }))
+          : [];
+        let sendResult: {
+          emailEventId: string;
+          providerMessageId: string | null;
+          deduplicated?: boolean;
+        };
+        try {
+          sendResult = await this.resendEmail.sendPaymentEmail({
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            callSessionId,
+            checkoutLinkId: link.id,
+            idempotencyKey: paymentEmailIdempotencyKey({
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              checkoutLinkId: link.id,
+              recipientEmail: email,
+              purpose: 'voice_tool_send_payment_email',
+            }),
+            to: email,
+            businessName: link.agent.agentConfig?.businessName || ctx.store.name,
+            supportEmail: link.agent.agentConfig?.supportEmail,
+            supportPhone: link.agent.agentConfig?.supportPhone,
+            checkoutUrl: link.checkoutUrl,
+            items,
+          });
+          await this.prisma.checkoutLink.update({
+            where: { id: link.id },
+            data: { status: 'SENT', sentAt: new Date() },
+          });
+        } catch (err) {
+          const inFlight =
+            err instanceof Error && err.message.includes('already being sent for this checkout');
+          if (inFlight) {
+            return {
+              ok: false,
+              error: {
+                code: 'EMAIL_IN_FLIGHT',
+                message: err instanceof Error ? err.message : 'Email send in progress',
+                retryable: true,
+              },
+              data: {
+                voiceSummary:
+                  'The payment email is still being sent. Please wait a few seconds, check your inbox, or ask me to try again.',
+              },
+            };
+          }
+          await this.prisma.checkoutLink.update({
+            where: { id: link.id },
+            data: {
+              status: 'FAILED',
+              metadata: {
+                emailSendError:
+                  err instanceof Error ? err.message.slice(0, 300) : 'unknown_error',
+              },
+            },
+          });
+          throw err;
+        }
+        if (!sendResult.deduplicated) {
+          await this.prisma.leadCapture.create({
+            data: {
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              callSessionId,
+              customerEmail: email,
+              intent: 'purchase_checkout',
+              interestedItems:
+                (link.itemsJson as Prisma.InputJsonValue | undefined) ?? Prisma.JsonNull,
+              metadata: {
+                checkoutLinkId: link.id,
+                checkoutMode: link.mode,
+                emailSent: true,
+              } as Prisma.InputJsonValue,
+            },
+          });
+        }
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.tool.payment_email_sent',
+            eventJourney: 'voice.journey.payment_email_sent',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            checkoutLinkId: link.id,
+            recipientEmailMasked: this.maskEmailForLog(email),
+            deduplicated: sendResult.deduplicated === true,
+          }),
+        );
+        return {
+          ok: true,
+          data: {
+            deduplicated: sendResult.deduplicated === true,
+            voiceSummary:
+              sendResult.deduplicated === true
+                ? `That secure checkout link was already sent to ${email}. Please check your inbox and spam folder.`
+                : `I emailed your secure payment link to ${email}.`,
+          },
+          meta: { source: 'resend' },
+        };
+      }
+      case 'captureLead': {
+        await this.prisma.leadCapture.create({
+          data: {
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            callSessionId,
+            customerName: this.getStringArg(input, 'customerName') || null,
+            customerEmail: this.getStringArg(input, 'customerEmail') || null,
+            customerPhone: this.getStringArg(input, 'customerPhone') || null,
+            intent: this.getStringArg(input, 'intent') || null,
+            interestedItems:
+              (input.interestedItems as unknown as Prisma.InputJsonValue | undefined) ??
+              Prisma.JsonNull,
+            metadata: input as unknown as Prisma.InputJsonValue,
+          },
+        });
+        return { ok: true, data: { voiceSummary: 'I captured your details and will share them with the team.' }, meta: { source: 'database' } };
+      }
+      case 'escalateToHuman': {
+        const reason = this.getStringArg(input, 'reason') || 'customer_requested_human';
+        const phone = ctx.fromNumber || this.getStringArg(input, 'phone');
+        if (phone) {
+          await this.callbacks.create({
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            callSessionId,
+            phone,
+            reason,
+            priority: 'high',
+            notes: 'Escalation requested through new tool.',
+          });
+          await this.callbacks.markRequestedOnSession(callSessionId);
+        }
+        const msg = 'I can connect you with a human support teammate.';
+        return {
+          ok: true,
+          data: { queued: true, reason, message: msg, voiceSummary: msg },
+          meta: { source: 'system' },
+        };
+      }
+      case 'get_order_status': {
+        const orderNumber = this.getStringArg(input, 'orderNumber', 'order_number');
+        const phone = this.getStringArg(input, 'phone');
+        if (!orderNumber) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need orderNumber before calling get_order_status.', retryable: true } };
+        }
+        if (!phone) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need phone for verification before order lookup.', retryable: true } };
+        }
+        const result = await this.shopifyAgent.getOrderStatus(ctx.tenantId, ctx.agentId, orderNumber);
+        if (!result.ok) return { ok: false, error: { code: 'SHOPIFY_ERROR', message: result.error ?? 'Order lookup failed.', retryable: true } };
+        return { ok: true, data: { verifiedWithPhone: phone.slice(-4), orders: result.orders, voiceSummary: result.voiceSummary }, meta: { source: 'shopify' } };
+      }
+      case 'search_books': {
+        const query = (input.query as string) || (input.title as string) || '';
+        const result = await this.shopifyAgent.searchProducts(ctx.tenantId, ctx.agentId, query, 5);
+        if (!result.ok) return { ok: false, error: { code: 'SHOPIFY_ERROR', message: result.error ?? 'Product search failed.', retryable: true } };
+        return { ok: true, data: { results: result.products, voiceSummary: result.voiceSummary }, meta: { source: 'shopify' } };
+      }
+      case 'get_book_details': {
+        const query = this.getStringArg(input, 'productId', 'product_id', 'title');
+        if (!query) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need productId to fetch product details.', retryable: true } };
+        }
+        const result = await this.shopifyAgent.searchProducts(ctx.tenantId, ctx.agentId, query, 1);
+        if (!result.ok) return { ok: false, error: { code: 'SHOPIFY_ERROR', message: result.error ?? 'Product details failed.', retryable: true } };
+        const product = result.products?.[0];
+        const voiceSummary = product ? `${product.title}. Variants: ${product.variants?.length ?? 0}. ${product.variants?.some((v) => v.inventory_quantity > 0) ? 'In stock.' : 'Out of stock.'}` : 'Product not found.';
+        return { ok: true, data: { product, voiceSummary }, meta: { source: 'shopify' } };
+      }
+      case 'check_book_inventory': {
+        const query = this.getStringArg(input, 'productId', 'product_id', 'title', 'query');
+        if (!query) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need productId to check inventory.', retryable: true } };
+        }
+        const result = await this.shopifyAgent.searchProducts(ctx.tenantId, ctx.agentId, query, 1);
+        if (!result.ok) return { ok: false, error: { code: 'SHOPIFY_ERROR', message: result.error ?? 'Inventory check failed.', retryable: true } };
+        const product = result.products?.[0];
+        const inStock = product?.variants?.some((v) => v.inventory_quantity > 0) ?? false;
+        const voiceSummary = product ? `${product.title}: ${inStock ? 'In stock.' : 'Currently out of stock.'}` : 'Product not found.';
+        return { ok: true, data: { inStock, product, voiceSummary }, meta: { source: 'shopify' } };
+      }
+      case 'get_store_locations': {
+        const locs = await this.retrieval.getBranchProfiles(ctx.tenantId, ctx.storeId!, input.branchId as string | undefined, input.city as string | undefined);
+        return { ok: true, data: { items: locs.items, voiceSummary: locs.voiceSummary, storeName: ctx.store.name }, meta: { source: locs.source } };
+      }
+      case 'get_store_hours': {
+        const hours = await this.retrieval.getStoreHours(ctx.tenantId, ctx.storeId!, input.branchId as string | undefined);
+        return { ok: true, data: { items: hours.items, voiceSummary: hours.voiceSummary }, meta: { source: hours.source } };
+      }
+      case 'search_store_faqs': {
+        const faqs = await this.retrieval.searchFaqs(ctx.tenantId, ctx.storeId!, (input.query as string) || '', input.branchProfileId as string | undefined, 5);
+        return { ok: true, data: { items: faqs.items, voiceSummary: faqs.voiceSummary }, meta: { source: faqs.source } };
+      }
+      case 'get_shipping_policy': {
+        const ship = await this.retrieval.getPolicy(ctx.tenantId, ctx.storeId!, KnowledgeDocType.SHIPPING_POLICY, input.branchProfileId as string | undefined);
+        return { ok: true, data: { items: ship.items, voiceSummary: ship.voiceSummary }, meta: { source: ship.source } };
+      }
+      case 'get_return_policy': {
+        const ret = await this.retrieval.getPolicy(ctx.tenantId, ctx.storeId!, KnowledgeDocType.RETURN_POLICY, input.branchProfileId as string | undefined);
+        return { ok: true, data: { items: ret.items, voiceSummary: ret.voiceSummary }, meta: { source: ret.source } };
+      }
+      case 'get_promotion_details': {
+        const prom = await this.retrieval.getPromotionDetails(ctx.tenantId, ctx.storeId!, input.branchProfileId as string | undefined);
+        return { ok: true, data: { items: prom.items, voiceSummary: prom.voiceSummary }, meta: { source: prom.source } };
+      }
+      case 'start_order_booking': {
+        const items = this.normalizeItems(input.items);
+        if (items.length === 0) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need at least one item to start booking.', retryable: true } };
+        }
+        const draft = await this.booking.startBooking(callSessionId, ctx.tenantId, ctx.agentId, items);
+        return { ok: true, data: { bookingId: draft.id, itemCount: items.length, voiceSummary: `Added ${items.length} item(s) to your order draft.` }, meta: { source: 'database' } };
+      }
+      case 'set_customer_details': {
+        const name = this.getStringArg(input, 'name');
+        const phone = this.getStringArg(input, 'phone');
+        const email = this.getStringArg(input, 'email');
+        if (!name || !phone) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need both name and phone for customer details.', retryable: true } };
+        }
+        await this.booking.setCustomerDetails(callSessionId, ctx.tenantId, ctx.agentId, { name, phone, email: email || undefined });
+        return { ok: true, data: { voiceSummary: 'Saved customer details for this order.' }, meta: { source: 'database' } };
+      }
+      case 'set_delivery_details': {
+        const addressLine1 = this.getStringArg(input, 'addressLine1', 'address_line1', 'address');
+        const city = this.getStringArg(input, 'city');
+        const postalCode = this.getStringArg(input, 'postalCode', 'postal_code', 'zip');
+        const country = this.getStringArg(input, 'country');
+        if (!addressLine1 || !city) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need addressLine1 and city for delivery details.', retryable: true } };
+        }
+        await this.booking.setDeliveryDetails(callSessionId, ctx.tenantId, ctx.agentId, { addressLine1, city, postalCode: postalCode || undefined, country: country || undefined });
+        return { ok: true, data: { voiceSummary: 'Saved delivery details.' }, meta: { source: 'database' } };
+      }
+      case 'confirm_order_summary': {
+        const confirmed = this.getBooleanArg(input, 'confirmed', 'isConfirmed');
+        if (confirmed === null) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need confirmed=true or confirmed=false.', retryable: true } };
+        }
+        await this.booking.confirmOrderSummary(callSessionId, ctx.tenantId, ctx.agentId, confirmed);
+        return {
+          ok: true,
+          data: {
+            confirmed,
+            voiceSummary: confirmed
+              ? 'Order summary confirmed. I can now generate your secure payment link.'
+              : 'No problem. I will keep your order as draft until you confirm.',
+          },
+          meta: { source: 'database' },
+        };
+      }
+      case 'create_payment_checkout_link': {
+        const draft = await this.booking.getDraft(callSessionId);
+        if (!draft || draft.status !== 'READY_FOR_PAYMENT') {
+          return { ok: false, error: { code: 'PRECONDITION_FAILED', message: 'Order must be confirmed before creating checkout link.', retryable: true } };
+        }
+        const channelRaw = this.getStringArg(input, 'channel').toLowerCase();
+        const channel = channelRaw === 'email' ? 'email' : 'sms';
+        const destination = this.getStringArg(
+          input,
+          'destination',
+          channel === 'email' ? 'email' : 'phone',
+          channel === 'email' ? 'phone' : 'email',
+        );
+        if (!destination) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need destination phone/email for checkout link delivery.', retryable: true } };
+        }
+
+        const itemsRaw = Array.isArray(draft.itemsJson) ? (draft.itemsJson as unknown[]) : [];
+        const items = itemsRaw
+          .map((row) => {
+            if (!row || typeof row !== 'object') return null;
+            const r = row as Record<string, unknown>;
+            return {
+              productId: this.getStringArg(r, 'productId', 'product_id'),
+              variantId: this.getStringArg(r, 'variantId', 'variant_id'),
+              title: this.getStringArg(r, 'title'),
+              quantity: typeof r.quantity === 'number' ? r.quantity : Number(r.quantity ?? 1),
+            };
+          })
+          .filter((i): i is NonNullable<typeof i> => Boolean(i && (i.productId || i.variantId || i.title)));
+        const customer = (draft.customerJson as Record<string, unknown> | null) ?? {};
+        const deliveryAddress = (draft.deliveryAddressJson as Record<string, unknown> | null) ?? {};
+
+        let checkout: Awaited<ReturnType<ShopifyCheckoutService['createCheckoutLink']>>;
+        try {
+          checkout = await this.checkout.createCheckoutLink(ctx.tenantId, ctx.agentId, {
+            callSessionId,
+            items,
+            customer: {
+              name: this.getStringArg(customer, 'name') || undefined,
+              phone: this.getStringArg(customer, 'phone') || undefined,
+              email: this.getStringArg(customer, 'email') || undefined,
+            },
+            deliveryAddress: {
+              addressLine1: this.getStringArg(deliveryAddress, 'addressLine1', 'address_line1', 'address') || undefined,
+              city: this.getStringArg(deliveryAddress, 'city') || undefined,
+              postalCode: this.getStringArg(deliveryAddress, 'postalCode', 'postal_code', 'zip') || undefined,
+              country: this.getStringArg(deliveryAddress, 'country') || undefined,
+            },
+          });
+        } catch (err) {
+          const msg = formatShopifyErrorForCaller(err);
+          const retryable =
+            err instanceof ShopifyGraphqlError ? err.retryable : !(err instanceof ShopifyCheckoutValidationError);
+          return {
+            ok: false,
+            error: { code: 'CHECKOUT_FAILED', message: msg, retryable },
+            data: { voiceSummary: msg },
+          };
+        }
+
+        await this.booking.attachCheckoutLink(callSessionId, checkout.checkoutUrl, channel, destination);
+        const maskedDestination =
+          channel === 'email'
+            ? destination.replace(/^(.).+(@.*)$/, '$1***$2')
+            : destination.replace(/.(?=.{4})/g, '*');
+
+        let channelDeliveryStatus = 'generated';
+        let bookingEmailDeduped = false;
+        if (channel === 'sms') {
+          const twilioCfg = await this.agentsService.getTwilioConfig(ctx.tenantId, ctx.agentId);
+          const fromNumber = twilioCfg?.messagingFrom?.trim() || this.twilioSms.defaultMessagingFrom();
+          if (!twilioCfg || !fromNumber) {
+            channelDeliveryStatus = 'sms_not_configured';
+          } else {
+            try {
+              await this.twilioSms.sendSms({
+                accountSid: twilioCfg.accountSid,
+                authToken: twilioCfg.authToken,
+                from: fromNumber,
+                to: destination,
+                body: `Secure checkout for ${ctx.store.name}: ${checkout.checkoutUrl}`,
+              });
+              channelDeliveryStatus = 'sms_sent';
+            } catch {
+              channelDeliveryStatus = 'sms_failed';
+            }
+          }
+        } else {
+          const agentCfg = ctx.agent.config;
+          const businessName = agentCfg?.businessName?.trim() || ctx.store.name;
+          const itemsForEmail = items
+            .map((row) => {
+              if (!row || typeof row !== 'object') return null;
+              const r = row as Record<string, unknown>;
+              const title = this.getStringArg(r, 'title') || 'Selected item';
+              const quantity = typeof r.quantity === 'number' ? r.quantity : Number(r.quantity ?? 1);
+              return { title, quantity: Math.max(1, Number.isFinite(quantity) ? Math.trunc(quantity) : 1) };
+            })
+            .filter((i): i is { title: string; quantity: number } => i !== null);
+          try {
+            const bookingSend = await this.resendEmail.sendPaymentEmail({
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              callSessionId,
+              checkoutLinkId: checkout.checkoutLinkId,
+              idempotencyKey: paymentEmailIdempotencyKey({
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                checkoutLinkId: checkout.checkoutLinkId,
+                recipientEmail: destination,
+                purpose: 'voice_tool_booking_checkout_email',
+              }),
+              to: destination,
+              businessName,
+              supportEmail: agentCfg?.supportEmail,
+              supportPhone: agentCfg?.supportPhone,
+              checkoutUrl: checkout.checkoutUrl,
+              items: itemsForEmail.length > 0 ? itemsForEmail : [{ title: 'Items from your order', quantity: 1 }],
+            });
+            bookingEmailDeduped = bookingSend.deduplicated === true;
+            await this.prisma.checkoutLink.update({
+              where: { id: checkout.checkoutLinkId },
+              data: { status: 'SENT', sentAt: new Date() },
+            });
+            channelDeliveryStatus = 'email_sent';
+            if (!bookingSend.deduplicated) {
+              await this.prisma.leadCapture.create({
+                data: {
+                  tenantId: ctx.tenantId,
+                  agentId: ctx.agentId,
+                  callSessionId,
+                  customerEmail: destination.trim().toLowerCase(),
+                  intent: 'purchase_checkout_booking',
+                  interestedItems: (draft.itemsJson as Prisma.InputJsonValue | undefined) ?? Prisma.JsonNull,
+                  metadata: {
+                    checkoutLinkId: checkout.checkoutLinkId,
+                    channel: 'email',
+                  } as Prisma.InputJsonValue,
+                },
+              });
+            }
+          } catch (err) {
+            const inFlight =
+              err instanceof Error && err.message.includes('already being sent for this checkout');
+            if (inFlight) {
+              channelDeliveryStatus = 'email_in_progress';
+            } else {
+              channelDeliveryStatus = 'email_failed';
+              await this.prisma.checkoutLink.update({
+                where: { id: checkout.checkoutLinkId },
+                data: { status: 'FAILED' },
+              });
+            }
+          }
+        }
+
+        return {
+          ok: true,
+          data: {
+            checkoutUrl: checkout.checkoutUrl,
+            channelDeliveryStatus,
+            maskedDestination,
+            voiceSummary:
+              channel === 'sms' && channelDeliveryStatus === 'sms_sent'
+                ? `I texted your secure Shopify checkout link to ${maskedDestination}. Please complete payment there.`
+                : channel === 'sms' && channelDeliveryStatus === 'sms_not_configured'
+                  ? `I generated your secure checkout link, but SMS is not configured yet. I can read the link aloud or email it if you prefer.`
+                  : channel === 'email' && channelDeliveryStatus === 'email_sent' && bookingEmailDeduped
+                    ? `That checkout link was already emailed to ${maskedDestination}. Check your inbox or spam folder.`
+                    : channel === 'email' && channelDeliveryStatus === 'email_sent'
+                      ? `I emailed your secure checkout link to ${maskedDestination}.`
+                      : channel === 'email' && channelDeliveryStatus === 'email_in_progress'
+                        ? `Your checkout email is still sending — please wait a few seconds and check ${maskedDestination}.`
+                        : channel === 'email' && channelDeliveryStatus === 'email_failed'
+                          ? `I created your checkout link but could not send email. I can text the link or read it aloud.`
+                          : `I generated your secure Shopify checkout link.`,
+          },
+          meta: { source: 'shopify' },
+        };
+      }
+      case 'create_callback_request':
+      {
+        const phone = this.getStringArg(input, 'phone') || ctx.fromNumber || '';
+        const reason = this.getStringArg(input, 'reason') || 'Caller requested callback';
+        if (!phone) return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need callback phone to create callback request.', retryable: true } };
+        await this.callbacks.create({
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          callSessionId,
+          phone,
+          reason,
+          priority: this.getStringArg(input, 'priority') as 'low' | 'normal' | 'high',
+          notes: this.getStringArg(input, 'notes') || undefined,
+        });
+        await this.callbacks.markRequestedOnSession(callSessionId);
+        return {
+          ok: true,
+          data: {
+            queued: true,
+            message: 'Callback request registered. We will call you back shortly.',
+            voiceSummary: 'I have queued a callback with your number. Someone from the team should reach you soon.',
+          },
+          meta: { source: 'database' },
+        };
+      }
+      case 'handoff_to_human': {
+        const reason = this.getStringArg(input, 'reason') || 'handoff';
+        const phone = ctx.fromNumber || this.getStringArg(input, 'phone');
+        if (phone) {
+          await this.callbacks.create({
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            callSessionId,
+            phone,
+            reason,
+            priority: 'high',
+            notes: 'Escalation requested during live call.',
+          });
+          await this.callbacks.markRequestedOnSession(callSessionId);
+        }
+        const msg = ctx.agent.escalationMessage || 'I will connect you with a team member and arrange a callback.';
+        return {
+          ok: true,
+          data: { queued: true, reason, message: msg, voiceSummary: msg },
+          meta: { source: 'system' },
+        };
+      }
+      default:
+        return {
+          ok: false,
+          error: { code: 'UNKNOWN_TOOL', message: `Unknown tool: ${toolName}`, retryable: false },
+          data: {
+            voiceSummary:
+              'That specific action is not available on this assistant. I can help with catalog search, checkout by email, order status, or arrange a callback.',
+          },
+        };
+    }
+  }
+
+  private async logAndReturn(
+    ctx: VoiceSessionContext,
+    callSessionId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    requestId: string | undefined,
+    start: number,
+    result: ToolResult | Omit<ToolResult, 'toolName' | 'storeId'>,
+  ): Promise<ToolResult> {
+    const latencyMs = Date.now() - start;
+    let fullResult: ToolResult = 'storeId' in result ? result : { ...result, toolName, storeId: ctx.storeId ?? null };
+    if (!fullResult.ok) {
+      const prev =
+        fullResult.data && typeof fullResult.data === 'object' && fullResult.data !== null
+          ? (fullResult.data as Record<string, unknown>)
+          : {};
+      const vs = prev.voiceSummary;
+      if (typeof vs !== 'string' || !vs.trim()) {
+        fullResult = {
+          ...fullResult,
+          data: {
+            ...prev,
+            voiceSummary:
+              'I hit a snag while checking that. I can try once more with corrected details, arrange a callback, or connect you with support.',
+          },
+        };
+      }
+    }
+    const status = fullResult.ok ? ToolExecutionStatus.SUCCESS : ToolExecutionStatus.FAILED;
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.tool.execute_finish',
+        eventJourney: fullResult.ok ? 'voice.journey.tool_success' : 'voice.journey.tool_failed',
+        callSessionId,
+        toolName,
+        ok: fullResult.ok,
+        status,
+        latencyMs,
+        errorCode: fullResult.error?.code,
+      }),
+    );
+    await this.prisma.toolExecution.create({
+      data: {
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        callSessionId,
+        requestId,
+        toolName,
+        inputJson: input as object,
+        outputJson: fullResult as object,
+        status,
+        errorMessage: fullResult.error?.message,
+        latencyMs,
+      },
+    });
+    await this.callEvents.log(
+      ctx.tenantId,
+      callSessionId,
+      fullResult.ok ? CallEventType.TOOL_SUCCEEDED : CallEventType.TOOL_FAILED,
+      { toolName, latencyMs, error: fullResult.error?.message },
+    );
+    return {
+      ...fullResult,
+      meta: { source: fullResult.meta?.source ?? 'unknown', ...fullResult.meta, latencyMs },
+    };
+  }
+
+  getMaxToolCallsPerCall(): number {
+    return MAX_TOOL_CALLS_PER_CALL;
+  }
+}
+
+
+===== openai-prompt-builder.service.ts =====
+
+import { Injectable } from '@nestjs/common';
+import { checkoutModeDescription } from '@bookstore-voice-agents/types';
+import { VoiceSessionContext } from '../../calls/runtime/session-context.service';
+
+/** Commerce voice: lower variance reduces invented SKUs and policy drift. */
+const DEFAULT_MODEL_TEMPERATURE_HINT = 0.35;
+
+@Injectable()
+export class OpenAIPromptBuilderService {
+  /**
+   * Build final system prompt for the voice agent.
+   * Grounds the model on Shopify-backed tools, configured policies, and safe checkout behavior.
+   */
+  build(ctx: VoiceSessionContext): string {
+    const cfg = ctx.agent.config;
+    const lang = (ctx.agent.language || 'en').trim();
+    const businessName = cfg?.businessName?.trim() || ctx.store.name;
+    const tone = ctx.agent.toneOfVoice?.trim() || 'Warm, concise, and professional.';
+    const checkoutMode = cfg?.checkoutMode ?? 'STOREFRONT_CART';
+    const askEmailBeforePayment = cfg?.askEmailBeforePaymentLink ?? true;
+    const shopDomain = ctx.agent.shopify?.shopDomain?.trim() || '';
+    const shopifyConnected = Boolean(shopDomain && ctx.agent.shopify?.hasAdminToken !== false);
+
+    const escalationRulesText = this.formatEscalationRules(
+      cfg?.escalationRules,
+      ctx.agent.escalationInstructions,
+    );
+    const forbiddenBehaviors = cfg?.forbiddenBehaviors?.trim() || '';
+    const humanHandoffRules = cfg?.humanHandoffRules?.trim() || '';
+    const customOrBase =
+      cfg?.customSystemPrompt?.trim() || ctx.agent.baseSystemPrompt?.trim() || '';
+
+    const policyLines = this.buildPolicyLines(ctx);
+    const playbooks = this.buildPlaybooks(ctx);
+    const escalationContacts = this.buildEscalationContacts(ctx);
+    const transfersAllowed =
+      ctx.agent.handoffEnabled !== false && ctx.agent.transferToHumanEnabled !== false;
+
+    const sections: string[] = [];
+
+    sections.push(
+      `You are the live phone assistant for **${businessName}**.`,
+      '',
+      '## Language',
+      `- Primary language code for this session: **${lang}**. Stay in this language unless the caller clearly switches.`,
+      '',
+      '## Tone',
+      `- ${tone}`,
+      `- Spoken style: short clauses, no long lists over voice. One idea per sentence when possible.`,
+      '',
+      '## Data you may use (anti-hallucination)',
+      `- **Product facts (titles, prices, variants, inventory):** ONLY from tool results \`searchProducts\`, \`getProductDetails\`, or legacy \`search_books\` / \`get_book_details\` / \`check_book_inventory\` that return Shopify-backed data.`,
+      `- **Orders:** ONLY from \`get_order_status\` tool results—never guess order state.`,
+      `- **Policies (shipping, returns, FAQs, promotions, hours, branches):** ONLY from configured policy text below OR tools \`get_shipping_policy\`, \`get_return_policy\`, \`search_store_faqs\`, \`get_store_hours\`, \`get_store_locations\`, \`get_promotion_details\` when those tools return content.`,
+      `- If tools return empty results or \`ok:false\`, say you could not verify the fact—**do not invent** names, prices, stock counts, delivery dates, or policy details.`,
+      shopifyConnected
+        ? `- **Catalog sync:** Shopify domain **${shopDomain}**. Treat tool output as the catalog of record for this store.`
+        : `- **Catalog sync:** Shopify context may be incomplete—still **never** invent products; offer to rephrase the search, capture a lead, or connect to the team.`,
+      '',
+      '## Checkout mode',
+      `- Mode: **${checkoutMode}**`,
+      `- ${checkoutModeDescription(checkoutMode)}`,
+      askEmailBeforePayment
+        ? '- **Always** collect and spell-check the customer email **before** calling `createCheckoutLink` or `sendPaymentEmail`.'
+        : '- Confirm how the customer wants the checkout link delivered before creating it.',
+      '',
+      '## Business & store policies (verbatim when quoting)',
+      ...policyLines,
+      '',
+    );
+
+    if (playbooks.length) {
+      sections.push('## Call scripts & playbooks (follow when relevant)', ...playbooks, '');
+    }
+
+    if (customOrBase) {
+      sections.push('## Store-specific instructions (from merchant)', customOrBase, '');
+    }
+
+    sections.push(
+      '## Your job on the phone',
+      '- Sound natural and helpful.',
+      '- Guide shoppers using **only** verified data paths above.',
+      '- For purchases: confirm variant(s) and quantity, then email (never card data on the call).',
+      '- After `sendPaymentEmail` returns **ok:true**, you may confirm delivery wording from `data.voiceSummary` (it distinguishes a fresh send vs. an already-delivered duplicate). Never claim the email was sent if the tool returns **ok:false** or an error.',
+      '',
+      '## Payment & PCI safety (hard rules)',
+      '- **Never** ask for or repeat full card numbers, CVV/CVC, or card expiry on the phone.',
+      '- If the caller tries to dictate card details: refuse politely and explain they will pay on the secure Shopify checkout page from the link.',
+      '- **Never** store or echo payment credentials in chat or voice summaries.',
+      '',
+      '## Tool failures & recovery',
+      '- Every tool result includes `ok`, and often `error` and/or `data.voiceSummary`. **Always** read `voiceSummary` aloud when present—it is written for the caller.',
+      '- If `ok` is false or a tool errors: apologize once, use `voiceSummary` if provided, otherwise say the lookup failed briefly.',
+      '- **At most one** automatic retry with corrected inputs; if it fails again, offer a human or callback—do not loop endlessly.',
+      '- Do **not** pretend a tool succeeded when `ok` is false.',
+      '',
+    );
+
+    sections.push(
+      '## Customer frustration & escalation',
+      '- Treat as **high priority** when the caller: repeats dissatisfaction, uses profanity toward the service, says they already tried several times, or explicitly asks for a human.',
+      '- In those cases: stay calm, acknowledge frustration briefly, then offer transfer or callback using `escalateToHuman` or `handoff_to_human` (if allowed) with a clear `reason`.',
+      `- Escalation policy from merchant: ${escalationRulesText}`,
+      ...(escalationContacts.length ? ['- **Escalation contacts (use when offering follow-up):**', ...escalationContacts.map((c) => `  - ${c}`)] : []),
+      transfersAllowed
+        ? '- Human transfer tools are **enabled** for this agent when appropriate.'
+        : '- **Human transfers are disabled** for this agent configuration—still be kind, capture leads with `captureLead`, and offer email or web support paths from policy text.',
+      '',
+    );
+
+    if (forbiddenBehaviors) {
+      sections.push('## Additional forbidden behaviors (merchant)', forbiddenBehaviors, '');
+    }
+    if (humanHandoffRules) {
+      sections.push('## Human handoff rules (merchant)', humanHandoffRules, '');
+    }
+
+    if (ctx.agent.greetingMessage?.trim()) {
+      sections.push(
+        '## Opening greeting',
+        `- First turn: greet in a way consistent with: "${ctx.agent.greetingMessage.trim()}"`,
+        '',
+      );
+    }
+
+    const roleGoal: string[] = [];
+    if (ctx.agent.agentRole?.trim()) roleGoal.push(`Role: ${ctx.agent.agentRole.trim()}`);
+    if (ctx.agent.agentGoal?.trim()) roleGoal.push(`Goal: ${ctx.agent.agentGoal.trim()}`);
+    if (roleGoal.length) {
+      sections.push('## Positioning', ...roleGoal, '');
+    }
+
+    sections.push(
+      '## Canonical purchase flow (Shopify checkout tools)',
+      '1) `searchProducts` / `getProductDetails` (or legacy book tools) so every price/stock claim is grounded.',
+      '2) Confirm variant + quantity in plain language.',
+      '3) Collect email only—spell it back.',
+      '4) `createCheckoutLink` with confirmed email + line items (variant IDs from tool output).',
+      '5) `sendPaymentEmail` with `checkoutLinkId` from step 4.',
+      '6) Confirm email sent only after step 5 succeeds.',
+      '',
+      '## Available tools (names only—schemas are enforced server-side)',
+      '`searchProducts`, `getProductDetails`, `createCheckoutLink`, `sendPaymentEmail`, `captureLead`, `escalateToHuman`, `search_books`, `get_book_details`, `check_book_inventory`, `get_order_status`, booking tools, FAQ/policy/branch tools, `create_callback_request`, `handoff_to_human`.',
+      '',
+      `## Runtime hint: target temperature ≈ ${DEFAULT_MODEL_TEMPERATURE_HINT} for factual, non-speculative answers.`,
+    );
+
+    if (ctx.agent.fallbackMessage?.trim()) {
+      sections.push('', '## Default fallback line (when stuck)', `"${ctx.agent.fallbackMessage.trim()}"`);
+    }
+    if (ctx.agent.escalationMessage?.trim()) {
+      sections.push('', '## Escalation reassurance line', `"${ctx.agent.escalationMessage.trim()}"`);
+    }
+
+    return sections.join('\n');
+  }
+
+  private formatEscalationRules(
+    fromConfig: string | string[] | null | undefined,
+    fromAgent: string | null | undefined,
+  ): string {
+    if (Array.isArray(fromConfig) && fromConfig.length) {
+      return fromConfig.map((r) => r.trim()).filter(Boolean).join(' | ');
+    }
+    const s = typeof fromConfig === 'string' ? fromConfig.trim() : '';
+    if (s) return s;
+    const a = fromAgent?.trim();
+    if (a) return a;
+    return 'Escalate when the caller requests a human, shows strong frustration, or when tools cannot verify facts after a retry.';
+  }
+
+  private buildPolicyLines(ctx: VoiceSessionContext): string[] {
+    const cfg = ctx.agent.config;
+    const lines: string[] = [];
+    if (cfg?.shippingPolicy?.trim()) lines.push(`- **Shipping:** ${cfg.shippingPolicy.trim()}`);
+    if (cfg?.returnPolicy?.trim()) lines.push(`- **Returns / refunds:** ${cfg.returnPolicy.trim()}`);
+    if (cfg?.exchangePolicy?.trim()) lines.push(`- **Exchanges:** ${cfg.exchangePolicy.trim()}`);
+    if (cfg?.deliveryNotes?.trim()) lines.push(`- **Delivery notes:** ${cfg.deliveryNotes.trim()}`);
+    if (ctx.agent.allowedActions?.trim()) lines.push(`- **Allowed actions (merchant):** ${ctx.agent.allowedActions.trim()}`);
+    if (ctx.agent.restrictedActions?.trim()) lines.push(`- **Restricted actions (merchant):** ${ctx.agent.restrictedActions.trim()}`);
+    if (!lines.length) {
+      lines.push('- No long-form policies were pasted into config—use FAQ/policy tools or offer human follow-up instead of guessing.');
+    }
+    return lines;
+  }
+
+  private buildPlaybooks(ctx: VoiceSessionContext): string[] {
+    const lines: string[] = [];
+    if (ctx.agent.returnRefundBehavior?.trim()) {
+      lines.push(`- **Returns & refunds:** ${ctx.agent.returnRefundBehavior.trim()}`);
+    }
+    if (ctx.agent.orderStatusHandling?.trim()) {
+      lines.push(`- **Order tracking (“where is my order?”):** ${ctx.agent.orderStatusHandling.trim()}`);
+    }
+    if (ctx.agent.outOfStockHandling?.trim()) {
+      lines.push(`- **Out of stock:** ${ctx.agent.outOfStockHandling.trim()}`);
+    }
+    return lines;
+  }
+
+  private buildEscalationContacts(ctx: VoiceSessionContext): string[] {
+    const lines: string[] = [];
+    const cfg = ctx.agent.config;
+    if (cfg?.supportPhone?.trim()) lines.push(`Support phone: ${cfg.supportPhone.trim()}`);
+    if (cfg?.supportEmail?.trim()) lines.push(`Support email: ${cfg.supportEmail.trim()}`);
+    if (ctx.agent.escalationPhone?.trim()) lines.push(`Escalation phone: ${ctx.agent.escalationPhone.trim()}`);
+    if (ctx.agent.escalationEmail?.trim()) lines.push(`Escalation email: ${ctx.agent.escalationEmail.trim()}`);
+    if (cfg?.fallbackHumanContact?.trim()) lines.push(`Fallback human contact: ${cfg.fallbackHumanContact.trim()}`);
+    return lines;
+  }
+}

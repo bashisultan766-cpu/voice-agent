@@ -1,0 +1,2 @@
+export type UserUtteranceIntent = 'store_identity_question' | 'store_category_question' | 'capability_question' | 'general_business_question' | 'greeting' | 'small_talk' | 'product_search' | 'product_question' | 'payment_question' | 'purchase_confirmation' | 'email_provided' | 'correction' | 'unclear' | 'unknown';
+export declare function classifyUserIntent(text: string): UserUtteranceIntent;

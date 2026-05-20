@@ -1,0 +1,41 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TwilioModule = void 0;
+const common_1 = require("@nestjs/common");
+const twilio_controller_1 = require("./twilio.controller");
+const twilio_signature_service_1 = require("./twilio-signature.service");
+const twilio_webhook_service_1 = require("./twilio-webhook.service");
+const twilio_status_callback_service_1 = require("./twilio-status-callback.service");
+const agent_resolution_service_1 = require("./agent-resolution.service");
+const twilio_sms_service_1 = require("./twilio-sms.service");
+const calls_module_1 = require("../../calls/calls.module");
+const analytics_module_1 = require("../../analytics/analytics.module");
+const elevenlabs_module_1 = require("../elevenlabs/elevenlabs.module");
+const twilio_tts_cache_service_1 = require("./twilio-tts-cache.service");
+const voice_prompt_audio_service_1 = require("./voice-prompt-audio.service");
+let TwilioModule = class TwilioModule {
+};
+exports.TwilioModule = TwilioModule;
+exports.TwilioModule = TwilioModule = __decorate([
+    (0, common_1.Module)({
+        imports: [(0, common_1.forwardRef)(() => calls_module_1.CallsModule), analytics_module_1.AnalyticsModule, elevenlabs_module_1.ElevenLabsModule],
+        controllers: [twilio_controller_1.TwilioVoiceController],
+        providers: [
+            twilio_signature_service_1.TwilioSignatureService,
+            twilio_webhook_service_1.TwilioWebhookService,
+            twilio_status_callback_service_1.TwilioStatusCallbackService,
+            twilio_sms_service_1.TwilioSmsService,
+            agent_resolution_service_1.AgentResolutionService,
+            twilio_tts_cache_service_1.TwilioTtsCacheService,
+            voice_prompt_audio_service_1.VoicePromptAudioService,
+        ],
+        exports: [agent_resolution_service_1.AgentResolutionService, twilio_sms_service_1.TwilioSmsService],
+    })
+], TwilioModule);
+//# sourceMappingURL=twilio.module.js.map

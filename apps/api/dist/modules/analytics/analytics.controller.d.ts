@@ -1,0 +1,242 @@
+import { AnalyticsService } from './analytics.service';
+import { CallEventsService } from './call-events.service';
+import { CallOutcomeService } from './call-outcome.service';
+import { QaReviewService } from './qa-review.service';
+import { UpdateCallOutcomeDto } from './dto/update-call-outcome.dto';
+import { CreateQaReviewDto } from './dto/create-qa-review.dto';
+import { analyticsFilterQuerySchema, qaCallsListQuerySchema } from './analytics-query.schema';
+import type { z } from 'zod';
+export declare class AnalyticsController {
+    private readonly analytics;
+    private readonly callEvents;
+    private readonly callOutcome;
+    private readonly qaReview;
+    constructor(analytics: AnalyticsService, callEvents: CallEventsService, callOutcome: CallOutcomeService, qaReview: QaReviewService);
+    private parseDates;
+    getOverview(tenantId: string, query: z.infer<typeof analyticsFilterQuerySchema>): Promise<{
+        totalCalls: number;
+        resolutionRate: number;
+        escalationRate: number;
+        avgDurationSeconds: number;
+        callbackRequestCount: number;
+    }>;
+    getAgentMetrics(tenantId: string, query: z.infer<typeof analyticsFilterQuerySchema>): Promise<{
+        resolutionRate: number;
+        escalationRate: number;
+        avgDurationSeconds: number;
+        avgToolCalls: number;
+        agentId: string;
+        agentName: string;
+        total: number;
+        resolved: number;
+        escalated: number;
+        totalDuration: number;
+        totalToolCalls: number;
+        toolFailures: number;
+    }[]>;
+    getStoreMetrics(tenantId: string, query: z.infer<typeof analyticsFilterQuerySchema>): Promise<{
+        resolutionRate: number;
+        escalationRate: number;
+        storeId: string;
+        storeName: string;
+        total: number;
+        resolved: number;
+        escalated: number;
+    }[]>;
+    getToolMetrics(tenantId: string, query: z.infer<typeof analyticsFilterQuerySchema>): Promise<{
+        toolName: string;
+        totalCalls: number;
+        successCount: number;
+        failureCount: number;
+        successRate: number;
+        avgLatencyMs: number;
+    }[]>;
+    getCallEvents(tenantId: string, id: string): Promise<{
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        type: import("@prisma/client").$Enums.CallEventType;
+        callSessionId: string;
+        timestamp: Date;
+        payload: import("@prisma/client/runtime/library").JsonValue | null;
+    }[]>;
+    updateCallOutcome(tenantId: string, id: string, body: UpdateCallOutcomeDto): Promise<{
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        summary: string | null;
+        escalated: boolean;
+        callSessionId: string;
+        callbackRequested: boolean;
+        resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
+        primaryIntent: string | null;
+        secondaryIntent: string | null;
+        customerVerified: boolean;
+        toolsUsedCount: number;
+        toolFailuresCount: number;
+        fallbackCount: number;
+        qaScore: number | null;
+    } | null>;
+    listQaCalls(tenantId: string, query: z.infer<typeof qaCallsListQuerySchema>): Promise<({
+        store: {
+            id: string;
+            name: string;
+        } | null;
+        agent: {
+            id: string;
+            name: string;
+        };
+        callOutcome: {
+            id: string;
+            tenantId: string;
+            createdAt: Date;
+            updatedAt: Date;
+            summary: string | null;
+            escalated: boolean;
+            callSessionId: string;
+            callbackRequested: boolean;
+            resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
+            primaryIntent: string | null;
+            secondaryIntent: string | null;
+            customerVerified: boolean;
+            toolsUsedCount: number;
+            toolFailuresCount: number;
+            fallbackCount: number;
+            qaScore: number | null;
+        } | null;
+        _count: {
+            toolExecutions: number;
+        };
+    } & {
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
+        agentId: string;
+        metadata: import("@prisma/client/runtime/library").JsonValue | null;
+        phoneNumberId: string | null;
+        twilioCallSid: string | null;
+        twilioStreamSid: string | null;
+        fromNumber: string | null;
+        toNumber: string | null;
+        direction: string | null;
+        startedAt: Date | null;
+        answeredAt: Date | null;
+        endedAt: Date | null;
+        durationSeconds: number | null;
+        transcriptText: string | null;
+        summary: string | null;
+        sentiment: string | null;
+        escalated: boolean;
+        recordingUrl: string | null;
+        lastEventAt: Date | null;
+        openaiSessionId: string | null;
+        endedReason: string | null;
+    })[]>;
+    getQaCallDetail(tenantId: string, id: string): Promise<{
+        store: {
+            id: string;
+            name: string;
+        } | null;
+        agent: {
+            id: string;
+            name: string;
+            baseSystemPrompt: string;
+        };
+        callOutcome: {
+            id: string;
+            tenantId: string;
+            createdAt: Date;
+            updatedAt: Date;
+            summary: string | null;
+            escalated: boolean;
+            callSessionId: string;
+            callbackRequested: boolean;
+            resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
+            primaryIntent: string | null;
+            secondaryIntent: string | null;
+            customerVerified: boolean;
+            toolsUsedCount: number;
+            toolFailuresCount: number;
+            fallbackCount: number;
+            qaScore: number | null;
+        } | null;
+        toolExecutions: {
+            id: string;
+            tenantId: string;
+            createdAt: Date;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            agentId: string;
+            callSessionId: string | null;
+            errorMessage: string | null;
+            toolName: string;
+            requestId: string | null;
+            inputJson: import("@prisma/client/runtime/library").JsonValue;
+            outputJson: import("@prisma/client/runtime/library").JsonValue | null;
+            latencyMs: number | null;
+        }[];
+        transcripts: {
+            id: string;
+            role: string;
+            createdAt: Date;
+            callSessionId: string;
+            content: string;
+            sequenceNumber: number;
+            timestampMs: number | null;
+        }[];
+        callEvents: {
+            id: string;
+            tenantId: string;
+            createdAt: Date;
+            type: import("@prisma/client").$Enums.CallEventType;
+            callSessionId: string;
+            timestamp: Date;
+            payload: import("@prisma/client/runtime/library").JsonValue | null;
+        }[];
+    } & {
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
+        agentId: string;
+        metadata: import("@prisma/client/runtime/library").JsonValue | null;
+        phoneNumberId: string | null;
+        twilioCallSid: string | null;
+        twilioStreamSid: string | null;
+        fromNumber: string | null;
+        toNumber: string | null;
+        direction: string | null;
+        startedAt: Date | null;
+        answeredAt: Date | null;
+        endedAt: Date | null;
+        durationSeconds: number | null;
+        transcriptText: string | null;
+        summary: string | null;
+        sentiment: string | null;
+        escalated: boolean;
+        recordingUrl: string | null;
+        lastEventAt: Date | null;
+        openaiSessionId: string | null;
+        endedReason: string | null;
+    }>;
+    submitQaReview(tenantId: string, id: string, body: CreateQaReviewDto): Promise<{
+        id: string;
+        tenantId: string;
+        createdAt: Date;
+        agentId: string;
+        callSessionId: string;
+        notes: string | null;
+        reviewerUserId: string | null;
+        accuracyScore: number | null;
+        toneScore: number | null;
+        policyComplianceScore: number | null;
+        brevityScore: number | null;
+        needsPromptUpdate: boolean;
+        needsFaqUpdate: boolean;
+    }>;
+}

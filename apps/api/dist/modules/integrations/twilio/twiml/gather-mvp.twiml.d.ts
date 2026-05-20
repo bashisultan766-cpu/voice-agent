@@ -1,0 +1,35 @@
+export interface InboundGatherMvpTwiMLOptions {
+    gatherActionUrl: string;
+    language?: string;
+    speechTimeout?: string;
+    timeoutSeconds?: number;
+    pauseBeforeListenSeconds?: number;
+    playbackAudioUrl?: string;
+    finalFallbackAudioUrl?: string;
+    openingSayText?: string;
+    finalFallbackSayText?: string;
+}
+export declare function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions): string;
+export declare function buildDeferredVoiceKickoffTwiML(options: {
+    deferPollUrl: string;
+    instantPlaybackUrl?: string;
+    instantSayText?: string;
+    allowTwilioSayFallback?: boolean;
+    language?: string;
+}): string;
+export declare function buildDeferredVoicePollPauseTwiML(options: {
+    deferPollUrl: string;
+    pauseSeconds?: number;
+}): string;
+export declare function buildDeferredVoiceMomentPleaseTwiML(options: {
+    deferPollUrl: string;
+    playbackUrl?: string;
+    sayFallbackText?: string;
+    allowTwilioSayFallback?: boolean;
+    language?: string;
+}): string;
+export declare function buildVoiceTerminalTwiml(options: {
+    playbackAudioUrl?: string;
+    sayText?: string;
+    language?: string;
+}): string;
