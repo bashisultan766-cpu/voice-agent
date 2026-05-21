@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
 import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
-import { Prisma } from '@prisma/client';
+import { ConnectionStatus, Prisma } from '@prisma/client';
 import {
   buildPaymentWebhookEventKey,
   maskEmail as maskEmailValue,
@@ -289,7 +289,7 @@ export class ShopifyService {
       where: { id: statePayload.agentId, tenantId: statePayload.tenantId, deletedAt: null },
       data: {
         shopifyStoreUrl: storeUrl,
-        shopifyConnectionStatus: 'OK',
+        shopifyConnectionStatus: ConnectionStatus.OK,
         lastConnectionTestAt: new Date(),
         secretsEnc: mergedEnc,
       },
@@ -592,7 +592,7 @@ export class ShopifyService {
       where: { id: agentId, tenantId, deletedAt: null },
       data: {
         shopifyStoreUrl: null,
-        shopifyConnectionStatus: 'UNKNOWN',
+        shopifyConnectionStatus: ConnectionStatus.UNKNOWN,
         lastConnectionTestAt: new Date(),
         secretsEnc: updatedSecretsEnc,
       },

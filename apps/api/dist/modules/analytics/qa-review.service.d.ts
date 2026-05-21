@@ -7,22 +7,21 @@ export declare class QaReviewService {
         hasOutcome?: boolean;
     }): Promise<({
         store: {
-            id: string;
             name: string;
+            id: string;
         } | null;
         agent: {
-            id: string;
             name: string;
+            id: string;
         };
         callOutcome: {
             id: string;
-            tenantId: string;
             createdAt: Date;
             updatedAt: Date;
+            tenantId: string;
             summary: string | null;
             escalated: boolean;
             callSessionId: string;
-            callbackRequested: boolean;
             resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
             primaryIntent: string | null;
             secondaryIntent: string | null;
@@ -30,17 +29,18 @@ export declare class QaReviewService {
             toolsUsedCount: number;
             toolFailuresCount: number;
             fallbackCount: number;
+            callbackRequested: boolean;
             qaScore: number | null;
         } | null;
         _count: {
             toolExecutions: number;
         };
     } & {
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
@@ -65,23 +65,22 @@ export declare class QaReviewService {
     })[]>;
     getQaDetail(callSessionId: string, tenantId: string): Promise<{
         store: {
-            id: string;
             name: string;
+            id: string;
         } | null;
         agent: {
-            id: string;
             name: string;
+            id: string;
             baseSystemPrompt: string;
         };
         callOutcome: {
             id: string;
-            tenantId: string;
             createdAt: Date;
             updatedAt: Date;
+            tenantId: string;
             summary: string | null;
             escalated: boolean;
             callSessionId: string;
-            callbackRequested: boolean;
             resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
             primaryIntent: string | null;
             secondaryIntent: string | null;
@@ -89,46 +88,47 @@ export declare class QaReviewService {
             toolsUsedCount: number;
             toolFailuresCount: number;
             fallbackCount: number;
+            callbackRequested: boolean;
             qaScore: number | null;
         } | null;
         toolExecutions: {
-            id: string;
-            tenantId: string;
-            createdAt: Date;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            id: string;
+            createdAt: Date;
+            tenantId: string;
             agentId: string;
             callSessionId: string | null;
-            errorMessage: string | null;
             toolName: string;
             requestId: string | null;
             inputJson: import("@prisma/client/runtime/library").JsonValue;
             outputJson: import("@prisma/client/runtime/library").JsonValue | null;
+            errorMessage: string | null;
             latencyMs: number | null;
         }[];
         transcripts: {
             id: string;
-            role: string;
             createdAt: Date;
             callSessionId: string;
-            content: string;
             sequenceNumber: number;
+            role: string;
+            content: string;
             timestampMs: number | null;
         }[];
         callEvents: {
-            id: string;
-            tenantId: string;
-            createdAt: Date;
             type: import("@prisma/client").$Enums.CallEventType;
+            id: string;
+            createdAt: Date;
+            tenantId: string;
             callSessionId: string;
             timestamp: Date;
             payload: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
     } & {
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
@@ -162,16 +162,16 @@ export declare class QaReviewService {
         needsFaqUpdate?: boolean;
     }): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
+        tenantId: string;
         agentId: string;
         callSessionId: string;
-        notes: string | null;
         reviewerUserId: string | null;
         accuracyScore: number | null;
         toneScore: number | null;
         policyComplianceScore: number | null;
         brevityScore: number | null;
+        notes: string | null;
         needsPromptUpdate: boolean;
         needsFaqUpdate: boolean;
     }>;

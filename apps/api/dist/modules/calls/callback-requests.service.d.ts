@@ -13,46 +13,46 @@ export declare class CallbackRequestsService {
     private readonly prisma;
     constructor(prisma: PrismaService);
     create(input: CreateCallbackRequestInput): Promise<{
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        reason: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        tenantId: string;
         phone: string;
         agentId: string;
         callSessionId: string | null;
-        priority: string | null;
         notes: string | null;
+        reason: string;
+        priority: string | null;
     }>;
     listForTenant(tenantId: string, options?: {
         status?: CallbackRequestStatus;
         limit?: number;
     }): Promise<{
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        reason: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        tenantId: string;
         phone: string;
         agentId: string;
         callSessionId: string | null;
-        priority: string | null;
         notes: string | null;
+        reason: string;
+        priority: string | null;
     }[]>;
     updateStatus(tenantId: string, id: string, status: CallbackRequestStatus): Promise<{
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        reason: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        tenantId: string;
         phone: string;
         agentId: string;
         callSessionId: string | null;
-        priority: string | null;
         notes: string | null;
+        reason: string;
+        priority: string | null;
     } | null>;
     markRequestedOnSession(callSessionId: string): Promise<void>;
 }

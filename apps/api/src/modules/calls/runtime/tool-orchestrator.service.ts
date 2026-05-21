@@ -11,7 +11,12 @@ import {
 } from '../../agents/shopify-product-relevance.util';
 import { OrderBookingService } from '../../agents/order-booking.service';
 import { VoiceSessionContext } from './session-context.service';
-import { ToolExecutionStatus, KnowledgeDocType, CallEventType } from '@prisma/client';
+import {
+  CheckoutLinkStatus,
+  ToolExecutionStatus,
+  KnowledgeDocType,
+  CallEventType,
+} from '@prisma/client';
 import { CallbackRequestsService } from '../callback-requests.service';
 import { ShopifyCheckoutService } from '../../integrations/shopify/shopify-checkout.service';
 import { TwilioSmsService } from '../../integrations/twilio/twilio-sms.service';
@@ -1114,7 +1119,7 @@ export class ToolOrchestratorService {
           await this.prisma.checkoutLink.updateMany({
             where: { id: link.id, tenantId: ctx.tenantId, agentId: ctx.agentId },
             data: {
-              status: 'FAILED',
+              status: CheckoutLinkStatus.FAILED,
               metadata: {
                 emailSendError:
                   err instanceof Error ? err.message.slice(0, 300) : 'unknown_error',
@@ -1540,7 +1545,7 @@ export class ToolOrchestratorService {
                   tenantId: ctx.tenantId,
                   agentId: ctx.agentId,
                 },
-                data: { status: 'FAILED' },
+                data: { status: CheckoutLinkStatus.FAILED },
               });
             }
           }

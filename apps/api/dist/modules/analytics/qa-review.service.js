@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.QaReviewService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../database/prisma.service");
+const prisma_types_1 = require("../../database/prisma.types");
 let QaReviewService = class QaReviewService {
     constructor(prisma) {
         this.prisma = prisma;
@@ -21,7 +22,7 @@ let QaReviewService = class QaReviewService {
         const sessions = await this.prisma.callSession.findMany({
             where: {
                 tenantId,
-                status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] },
+                status: { in: prisma_types_1.TERMINAL_CALL_STATUSES },
                 ...(options?.hasOutcome !== undefined && {
                     callOutcome: options.hasOutcome ? { isNot: null } : { is: null },
                 }),

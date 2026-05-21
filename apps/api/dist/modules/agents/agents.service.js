@@ -15,7 +15,7 @@ exports.resolveCredentialPriority = resolveCredentialPriority;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../database/prisma.service");
 const encryption_service_1 = require("../../common/encryption.service");
-const client_1 = require("@prisma/client");
+const prisma_types_1 = require("../../database/prisma.types");
 const create_agent_dto_1 = require("./dto/create-agent.dto");
 const shopify_connection_test_service_1 = require("./connection-test/shopify-connection-test.service");
 const database_connection_test_service_1 = require("./connection-test/database-connection-test.service");
@@ -53,14 +53,14 @@ function resolveCredentialPriority(agentValue, workspaceValue, envValue) {
 }
 function statusDtoToPrisma(s) {
     if (!s)
-        return client_1.AgentStatus.DRAFT;
+        return prisma_types_1.AgentStatus.DRAFT;
     switch (s) {
         case create_agent_dto_1.AgentStatusDto.ACTIVE:
-            return client_1.AgentStatus.ACTIVE;
+            return prisma_types_1.AgentStatus.ACTIVE;
         case create_agent_dto_1.AgentStatusDto.PAUSED:
-            return client_1.AgentStatus.PAUSED;
+            return prisma_types_1.AgentStatus.PAUSED;
         default:
-            return client_1.AgentStatus.DRAFT;
+            return prisma_types_1.AgentStatus.DRAFT;
     }
 }
 function slugFromName(name) {
@@ -400,13 +400,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
         if (!readiness.ready) {
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
-                data: { status: client_1.AgentStatus.PAUSED },
+                data: { status: prisma_types_1.AgentStatus.PAUSED },
             });
             return { status: 'CONFIG_REQUIRED', ready: false, failures: readiness.failures, readiness };
         }
         await this.prisma.agent.updateMany({
             where: { id: agentId, tenantId, deletedAt: null },
-            data: { status: client_1.AgentStatus.ACTIVE },
+            data: { status: prisma_types_1.AgentStatus.ACTIVE },
         });
         await this.prisma.auditLog.create({
             data: {
@@ -563,10 +563,10 @@ let AgentsService = AgentsService_1 = class AgentsService {
             throw new common_1.BadRequestException('Encryption is not configured; cannot store secrets.');
         }
         const secretsEnc = this.encryptSecrets(secrets);
-        let shopifyConnectionStatus = client_1.ConnectionStatus.UNKNOWN;
-        let twilioConnectionStatus = client_1.ConnectionStatus.UNKNOWN;
-        let openaiConnectionStatus = client_1.ConnectionStatus.UNKNOWN;
-        let elevenlabsConnectionStatus = client_1.ConnectionStatus.UNKNOWN;
+        let shopifyConnectionStatus = prisma_types_1.ConnectionStatus.UNKNOWN;
+        let twilioConnectionStatus = prisma_types_1.ConnectionStatus.UNKNOWN;
+        let openaiConnectionStatus = prisma_types_1.ConnectionStatus.UNKNOWN;
+        let elevenlabsConnectionStatus = prisma_types_1.ConnectionStatus.UNKNOWN;
         let anyConnectionValidated = false;
         if (dto.shopifyStoreUrl?.trim() && dto.shopifyAdminToken?.trim()) {
             const r = await this.shopifyTest.testConnection({
@@ -575,7 +575,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'Shopify connection test failed.');
-            shopifyConnectionStatus = client_1.ConnectionStatus.OK;
+            shopifyConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (dto.twilioAccountSid?.trim() && dto.twilioAuthToken?.trim()) {
@@ -585,21 +585,21 @@ let AgentsService = AgentsService_1 = class AgentsService {
             });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'Twilio connection test failed.');
-            twilioConnectionStatus = client_1.ConnectionStatus.OK;
+            twilioConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (dto.openaiApiKey?.trim()) {
             const r = await this.openaiTest.testConnection({ openaiApiKey: dto.openaiApiKey });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'OpenAI connection test failed.');
-            openaiConnectionStatus = client_1.ConnectionStatus.OK;
+            openaiConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (dto.elevenlabsApiKey?.trim()) {
             const r = await this.elevenlabsTest.testConnection({ elevenlabsApiKey: dto.elevenlabsApiKey, voiceId: dto.voiceId });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'ElevenLabs connection test failed.');
-            elevenlabsConnectionStatus = client_1.ConnectionStatus.OK;
+            elevenlabsConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (dto.voiceProvider === 'elevenlabs' && !dto.voiceId?.trim()) {
@@ -654,7 +654,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     incomingCallHandling: dto.incomingCallHandling?.trim() || null,
                     databaseProvider: dto.databaseProvider?.trim() || null,
                     shopifyConnectionStatus,
-                    databaseConnectionStatus: client_1.ConnectionStatus.UNKNOWN,
+                    databaseConnectionStatus: prisma_types_1.ConnectionStatus.UNKNOWN,
                     twilioConnectionStatus,
                     openaiConnectionStatus,
                     elevenlabsConnectionStatus,
@@ -728,7 +728,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             }
             return created;
         });
-        if (shopifyConnectionStatus === client_1.ConnectionStatus.OK) {
+        if (shopifyConnectionStatus === prisma_types_1.ConnectionStatus.OK) {
             try {
                 await this.productSyncQueue.enqueue(tenantId, agent.id);
             }
@@ -915,7 +915,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             name: agent.name,
             storeName: agent.storeName,
             status: agent.status,
-            isActive: agent.status === client_1.AgentStatus.ACTIVE,
+            isActive: agent.status === prisma_types_1.AgentStatus.ACTIVE,
             language: agent.language,
             phone: agent.twilioPhoneNumber,
             greeting: agent.greetingMessage,
@@ -1014,7 +1014,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'Shopify connection test failed.');
-            shopifyConnectionStatus = client_1.ConnectionStatus.OK;
+            shopifyConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (shouldValidateTwilio) {
@@ -1033,14 +1033,14 @@ let AgentsService = AgentsService_1 = class AgentsService {
             });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'Twilio connection test failed.');
-            twilioConnectionStatus = client_1.ConnectionStatus.OK;
+            twilioConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (newSecrets.openaiApiKey !== undefined) {
             const r = await this.openaiTest.testConnection({ openaiApiKey: newSecrets.openaiApiKey });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'OpenAI connection test failed.');
-            openaiConnectionStatus = client_1.ConnectionStatus.OK;
+            openaiConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (newSecrets.elevenlabsApiKey !== undefined) {
@@ -1050,7 +1050,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'ElevenLabs connection test failed.');
-            elevenlabsConnectionStatus = client_1.ConnectionStatus.OK;
+            elevenlabsConnectionStatus = prisma_types_1.ConnectionStatus.OK;
             anyConnectionValidated = true;
         }
         if (dto.voiceProvider === 'elevenlabs') {
@@ -1514,7 +1514,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             shopifyAdminToken: tokenResolved.value ?? null,
         };
         const result = await this.shopifyTest.testConnection(config);
-        const status = result.success ? client_1.ConnectionStatus.OK : client_1.ConnectionStatus.FAILED;
+        const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId && result.success !== undefined) {
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
@@ -1546,7 +1546,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             };
         }
         const result = await this.databaseTest.testConnection(config);
-        const status = result.success ? client_1.ConnectionStatus.OK : client_1.ConnectionStatus.FAILED;
+        const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId) {
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
@@ -1568,7 +1568,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             twilioPhoneNumber: dto?.twilioPhoneNumber?.trim() || workspace?.twilioPhoneNumber || null,
         };
         const result = await this.twilioTest.testConnection(config);
-        const status = result.success ? client_1.ConnectionStatus.OK : client_1.ConnectionStatus.FAILED;
+        const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId) {
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
@@ -1592,13 +1592,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
             return {
                 success: false,
                 message: 'OpenAI test failed: no API key found (agent, workspace, or OPENAI_API_KEY).',
-                status: agentId ? client_1.ConnectionStatus.FAILED : undefined,
+                status: agentId ? prisma_types_1.ConnectionStatus.FAILED : undefined,
                 provider: 'openai',
                 source: 'missing',
             };
         }
         const result = await this.openaiTest.testConnection({ openaiApiKey: resolved.value });
-        const status = result.success ? client_1.ConnectionStatus.OK : client_1.ConnectionStatus.FAILED;
+        const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId) {
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
@@ -1625,7 +1625,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             return {
                 success: false,
                 message: 'ElevenLabs test failed: no API key found (agent or workspace).',
-                status: agentId ? client_1.ConnectionStatus.FAILED : undefined,
+                status: agentId ? prisma_types_1.ConnectionStatus.FAILED : undefined,
                 provider: 'elevenlabs',
                 source: 'missing',
             };
@@ -1640,7 +1640,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             source: 'test',
             tenantId,
         });
-        const status = result.success ? client_1.ConnectionStatus.OK : client_1.ConnectionStatus.FAILED;
+        const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId) {
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },

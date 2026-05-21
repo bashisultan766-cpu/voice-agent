@@ -3,11 +3,11 @@ export declare class CallsController {
     private readonly callsService;
     constructor(callsService: CallsService);
     findAll(tenantId: string): Promise<{
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
@@ -32,34 +32,34 @@ export declare class CallsController {
     }[]>;
     findOne(tenantId: string, id: string): Promise<{
         toolExecutions: {
-            id: string;
-            tenantId: string;
-            createdAt: Date;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            id: string;
+            createdAt: Date;
+            tenantId: string;
             agentId: string;
             callSessionId: string | null;
-            errorMessage: string | null;
             toolName: string;
             requestId: string | null;
             inputJson: import("@prisma/client/runtime/library").JsonValue;
             outputJson: import("@prisma/client/runtime/library").JsonValue | null;
+            errorMessage: string | null;
             latencyMs: number | null;
         }[];
         transcripts: {
             id: string;
-            role: string;
             createdAt: Date;
             callSessionId: string;
-            content: string;
             sequenceNumber: number;
+            role: string;
+            content: string;
             timestampMs: number | null;
         }[];
     } & {
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;

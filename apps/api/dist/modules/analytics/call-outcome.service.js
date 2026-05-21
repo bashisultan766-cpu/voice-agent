@@ -27,12 +27,12 @@ let CallOutcomeService = class CallOutcomeService {
         if (!session)
             return;
         const toolsUsed = session.toolExecutions.length;
-        const toolFailures = session.toolExecutions.filter((t) => t.status === 'FAILED').length;
+        const toolFailures = session.toolExecutions.filter((t) => t.status === client_1.ToolExecutionStatus.FAILED).length;
         const escalated = session.escalated ?? false;
         const metadata = session.metadata ?? {};
         const callbackRequested = Boolean(metadata.callbackRequested);
         let resolutionStatus;
-        if (session.status === 'ABANDONED' || session.endedReason === 'abandoned') {
+        if (session.status === client_1.CallStatus.ABANDONED || session.endedReason === 'abandoned') {
             resolutionStatus = client_1.CallResolutionStatus.ABANDONED;
         }
         else if (escalated || callbackRequested) {

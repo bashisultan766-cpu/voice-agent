@@ -16,6 +16,7 @@ const crypto_1 = require("crypto");
 const prisma_service_1 = require("../../../database/prisma.service");
 const encryption_service_1 = require("../../../common/encryption.service");
 const public_webhook_base_url_1 = require("../../../common/public-webhook-base-url");
+const client_1 = require("@prisma/client");
 const webhook_reconciliation_util_1 = require("./webhook-reconciliation.util");
 const SHOPIFY_ADMIN_API_VERSION = '2024-10';
 const WEBHOOK_TOPICS = [
@@ -241,7 +242,7 @@ let ShopifyService = class ShopifyService {
             where: { id: statePayload.agentId, tenantId: statePayload.tenantId, deletedAt: null },
             data: {
                 shopifyStoreUrl: storeUrl,
-                shopifyConnectionStatus: 'OK',
+                shopifyConnectionStatus: client_1.ConnectionStatus.OK,
                 lastConnectionTestAt: new Date(),
                 secretsEnc: mergedEnc,
             },
@@ -523,7 +524,7 @@ let ShopifyService = class ShopifyService {
             where: { id: agentId, tenantId, deletedAt: null },
             data: {
                 shopifyStoreUrl: null,
-                shopifyConnectionStatus: 'UNKNOWN',
+                shopifyConnectionStatus: client_1.ConnectionStatus.UNKNOWN,
                 lastConnectionTestAt: new Date(),
                 secretsEnc: updatedSecretsEnc,
             },

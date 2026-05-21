@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { CallResolutionStatus, ToolExecutionStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { TERMINAL_CALL_STATUSES } from '../../database/prisma.types';
 
 @Injectable()
 export class AnalyticsService {
@@ -8,14 +10,14 @@ export class AnalyticsService {
   async getOverview(tenantId: string, from?: Date, to?: Date) {
     const sessionWhere = { tenantId, ...dateRange(from, to) };
     const [totalCalls, outcomes, escalated] = await Promise.all([
-      this.prisma.callSession.count({ where: { ...sessionWhere, status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] } } }),
+      this.prisma.callSession.count({ where: { ...sessionWhere, status: { in: TERMINAL_CALL_STATUSES } } }),
       this.prisma.callOutcome.findMany({
         where: { tenantId, callSession: dateRangeSession(from, to) },
         select: { resolutionStatus: true },
       }),
       this.prisma.callSession.count({ where: { ...sessionWhere, escalated: true } }),
     ]);
-    const resolved = outcomes.filter((o) => o.resolutionStatus === 'RESOLVED').length;
+    const resolved = outcomes.filter((o) => o.resolutionStatus === CallResolutionStatus.RESOLVED).length;
     const resolutionRate = totalCalls > 0 ? (resolved / totalCalls) * 100 : 0;
     const escalationRate = totalCalls > 0 ? (escalated / totalCalls) * 100 : 0;
     const avgDuration = await this.prisma.callSession.aggregate({
@@ -36,7 +38,7 @@ export class AnalyticsService {
 
   async getAgentMetrics(tenantId: string, from?: Date, to?: Date) {
     const sessions = await this.prisma.callSession.findMany({
-      where: { tenantId, ...dateRange(from, to), status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] } },
+      where: { tenantId, ...dateRange(from, to), status: { in: TERMINAL_CALL_STATUSES } },
       include: { callOutcome: true, agent: { select: { id: true, name: true } } },
     });
     const sessionIds = sessions.map((s) => s.id);
@@ -48,7 +50,7 @@ export class AnalyticsService {
       }),
       this.prisma.toolExecution.groupBy({
         by: ['callSessionId'],
-        where: { callSessionId: { in: sessionIds }, status: 'FAILED' },
+        where: { callSessionId: { in: sessionIds }, status: ToolExecutionStatus.FAILED },
         _count: { _all: true },
       }),
     ]);
@@ -74,7 +76,7 @@ export class AnalyticsService {
       }
       const row = byAgent.get(key)!;
       row.total += 1;
-      if (s.callOutcome?.resolutionStatus === 'RESOLVED') row.resolved += 1;
+      if (s.callOutcome?.resolutionStatus === CallResolutionStatus.RESOLVED) row.resolved += 1;
       if (s.escalated) row.escalated += 1;
       row.totalDuration += s.durationSeconds ?? 0;
       const tools = toolTotalBySession.get(s.id) ?? 0;
@@ -93,7 +95,7 @@ export class AnalyticsService {
 
   async getStoreMetrics(tenantId: string, from?: Date, to?: Date) {
     const sessions = await this.prisma.callSession.findMany({
-      where: { tenantId, ...dateRange(from, to), status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] } },
+      where: { tenantId, ...dateRange(from, to), status: { in: TERMINAL_CALL_STATUSES } },
       include: { callOutcome: true, store: { select: { id: true, name: true } } },
     });
     const byStore = new Map<
@@ -109,7 +111,7 @@ export class AnalyticsService {
       }
       const row = byStore.get(key)!;
       row.total += 1;
-      if (s.callOutcome?.resolutionStatus === 'RESOLVED') row.resolved += 1;
+      if (s.callOutcome?.resolutionStatus === CallResolutionStatus.RESOLVED) row.resolved += 1;
       if (s.escalated) row.escalated += 1;
     }
     return Array.from(byStore.values()).map((r) => ({
@@ -139,7 +141,7 @@ export class AnalyticsService {
       }
       const row = byTool.get(e.toolName)!;
       row.total += 1;
-      if (e.status === 'SUCCESS') row.success += 1;
+      if (e.status === ToolExecutionStatus.SUCCESS) row.success += 1;
       else row.failed += 1;
       row.totalLatency += e.latencyMs ?? 0;
     }

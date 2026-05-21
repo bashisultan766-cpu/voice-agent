@@ -984,7 +984,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     await this.prisma.checkoutLink.updateMany({
                         where: { id: link.id, tenantId: ctx.tenantId, agentId: ctx.agentId },
                         data: {
-                            status: 'FAILED',
+                            status: client_2.CheckoutLinkStatus.FAILED,
                             metadata: {
                                 emailSendError: err instanceof Error ? err.message.slice(0, 300) : 'unknown_error',
                             },
@@ -1401,7 +1401,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                                     tenantId: ctx.tenantId,
                                     agentId: ctx.agentId,
                                 },
-                                data: { status: 'FAILED' },
+                                data: { status: client_2.CheckoutLinkStatus.FAILED },
                             });
                         }
                     }

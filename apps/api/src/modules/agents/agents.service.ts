@@ -7,7 +7,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { EncryptionService } from '../../common/encryption.service';
-import { AgentStatus, ConnectionStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { AgentStatus, ConnectionStatus } from '../../database/prisma.types';
 import { CreateAgentDto, AgentStatusDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { ShopifyConnectionTestService } from './connection-test/shopify-connection-test.service';

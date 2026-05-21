@@ -11,7 +11,9 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AnalyticsService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../../database/prisma.service");
+const prisma_types_1 = require("../../database/prisma.types");
 let AnalyticsService = class AnalyticsService {
     constructor(prisma) {
         this.prisma = prisma;
@@ -19,14 +21,14 @@ let AnalyticsService = class AnalyticsService {
     async getOverview(tenantId, from, to) {
         const sessionWhere = { tenantId, ...dateRange(from, to) };
         const [totalCalls, outcomes, escalated] = await Promise.all([
-            this.prisma.callSession.count({ where: { ...sessionWhere, status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] } } }),
+            this.prisma.callSession.count({ where: { ...sessionWhere, status: { in: prisma_types_1.TERMINAL_CALL_STATUSES } } }),
             this.prisma.callOutcome.findMany({
                 where: { tenantId, callSession: dateRangeSession(from, to) },
                 select: { resolutionStatus: true },
             }),
             this.prisma.callSession.count({ where: { ...sessionWhere, escalated: true } }),
         ]);
-        const resolved = outcomes.filter((o) => o.resolutionStatus === 'RESOLVED').length;
+        const resolved = outcomes.filter((o) => o.resolutionStatus === client_1.CallResolutionStatus.RESOLVED).length;
         const resolutionRate = totalCalls > 0 ? (resolved / totalCalls) * 100 : 0;
         const escalationRate = totalCalls > 0 ? (escalated / totalCalls) * 100 : 0;
         const avgDuration = await this.prisma.callSession.aggregate({
@@ -46,7 +48,7 @@ let AnalyticsService = class AnalyticsService {
     }
     async getAgentMetrics(tenantId, from, to) {
         const sessions = await this.prisma.callSession.findMany({
-            where: { tenantId, ...dateRange(from, to), status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] } },
+            where: { tenantId, ...dateRange(from, to), status: { in: prisma_types_1.TERMINAL_CALL_STATUSES } },
             include: { callOutcome: true, agent: { select: { id: true, name: true } } },
         });
         const sessionIds = sessions.map((s) => s.id);
@@ -58,7 +60,7 @@ let AnalyticsService = class AnalyticsService {
             }),
             this.prisma.toolExecution.groupBy({
                 by: ['callSessionId'],
-                where: { callSessionId: { in: sessionIds }, status: 'FAILED' },
+                where: { callSessionId: { in: sessionIds }, status: client_1.ToolExecutionStatus.FAILED },
                 _count: { _all: true },
             }),
         ]);
@@ -81,7 +83,7 @@ let AnalyticsService = class AnalyticsService {
             }
             const row = byAgent.get(key);
             row.total += 1;
-            if (s.callOutcome?.resolutionStatus === 'RESOLVED')
+            if (s.callOutcome?.resolutionStatus === client_1.CallResolutionStatus.RESOLVED)
                 row.resolved += 1;
             if (s.escalated)
                 row.escalated += 1;
@@ -101,7 +103,7 @@ let AnalyticsService = class AnalyticsService {
     }
     async getStoreMetrics(tenantId, from, to) {
         const sessions = await this.prisma.callSession.findMany({
-            where: { tenantId, ...dateRange(from, to), status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] } },
+            where: { tenantId, ...dateRange(from, to), status: { in: prisma_types_1.TERMINAL_CALL_STATUSES } },
             include: { callOutcome: true, store: { select: { id: true, name: true } } },
         });
         const byStore = new Map();
@@ -115,7 +117,7 @@ let AnalyticsService = class AnalyticsService {
             }
             const row = byStore.get(key);
             row.total += 1;
-            if (s.callOutcome?.resolutionStatus === 'RESOLVED')
+            if (s.callOutcome?.resolutionStatus === client_1.CallResolutionStatus.RESOLVED)
                 row.resolved += 1;
             if (s.escalated)
                 row.escalated += 1;
@@ -146,7 +148,7 @@ let AnalyticsService = class AnalyticsService {
             }
             const row = byTool.get(e.toolName);
             row.total += 1;
-            if (e.status === 'SUCCESS')
+            if (e.status === client_1.ToolExecutionStatus.SUCCESS)
                 row.success += 1;
             else
                 row.failed += 1;

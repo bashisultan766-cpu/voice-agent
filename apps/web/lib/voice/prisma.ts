@@ -1,12 +1,12 @@
-type VoicePrismaClient = any;
+import type { PrismaClient } from '@bookstore-voice-agents/voice-db';
 
-const globalForPrisma = globalThis as unknown as { voicePrisma?: VoicePrismaClient };
+const globalForPrisma = globalThis as unknown as { voicePrisma?: PrismaClient };
 
-export function getVoicePrisma(): VoicePrismaClient {
+export function getVoicePrisma(): PrismaClient {
   if (!globalForPrisma.voicePrisma) {
-    // Lazy-load voice-db Prisma only when a route actually needs it.
+    // Lazy-load voice-db Prisma only on server routes that need it.
     const { PrismaClient } = require('@bookstore-voice-agents/voice-db') as {
-      PrismaClient: new (args: { log: Array<'error' | 'warn'> }) => VoicePrismaClient;
+      PrismaClient: typeof import('@bookstore-voice-agents/voice-db').PrismaClient;
     };
     globalForPrisma.voicePrisma = new PrismaClient({
       log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],

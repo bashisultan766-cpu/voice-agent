@@ -14,11 +14,11 @@ export declare class CallsService {
     private readonly prisma;
     constructor(prisma: PrismaService);
     createSession(input: CreateCallSessionInput): Promise<{
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
@@ -51,11 +51,11 @@ export declare class CallsService {
         escalated?: boolean;
         metadata?: Record<string, unknown>;
     }): Promise<{
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
@@ -84,11 +84,11 @@ export declare class CallsService {
         durationSeconds?: number;
     }): Promise<Prisma.BatchPayload>;
     findAllForTenant(tenantId: string): Promise<{
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
@@ -113,34 +113,34 @@ export declare class CallsService {
     }[]>;
     findOneForTenant(tenantId: string, id: string): Promise<{
         toolExecutions: {
-            id: string;
-            tenantId: string;
-            createdAt: Date;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            id: string;
+            createdAt: Date;
+            tenantId: string;
             agentId: string;
             callSessionId: string | null;
-            errorMessage: string | null;
             toolName: string;
             requestId: string | null;
             inputJson: Prisma.JsonValue;
             outputJson: Prisma.JsonValue | null;
+            errorMessage: string | null;
             latencyMs: number | null;
         }[];
         transcripts: {
             id: string;
-            role: string;
             createdAt: Date;
             callSessionId: string;
-            content: string;
             sequenceNumber: number;
+            role: string;
+            content: string;
             timestampMs: number | null;
         }[];
     } & {
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
@@ -165,34 +165,34 @@ export declare class CallsService {
     }>;
     findOneById(id: string): Promise<{
         toolExecutions: {
-            id: string;
-            tenantId: string;
-            createdAt: Date;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            id: string;
+            createdAt: Date;
+            tenantId: string;
             agentId: string;
             callSessionId: string | null;
-            errorMessage: string | null;
             toolName: string;
             requestId: string | null;
             inputJson: Prisma.JsonValue;
             outputJson: Prisma.JsonValue | null;
+            errorMessage: string | null;
             latencyMs: number | null;
         }[];
         transcripts: {
             id: string;
-            role: string;
             createdAt: Date;
             callSessionId: string;
-            content: string;
             sequenceNumber: number;
+            role: string;
+            content: string;
             timestampMs: number | null;
         }[];
     } & {
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
@@ -216,11 +216,11 @@ export declare class CallsService {
         endedReason: string | null;
     }>;
     findOneByTwilioCallSid(twilioCallSid: string): Promise<{
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
@@ -244,11 +244,11 @@ export declare class CallsService {
         endedReason: string | null;
     } | null>;
     mergeSessionMetadata(callSessionId: string, patch: Record<string, unknown>): Promise<{
+        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;

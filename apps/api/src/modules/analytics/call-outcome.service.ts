@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { CallResolutionStatus } from '@prisma/client';
+import { CallResolutionStatus, CallStatus, ToolExecutionStatus } from '@prisma/client';
 
 @Injectable()
 export class CallOutcomeService {
@@ -20,13 +20,13 @@ export class CallOutcomeService {
     if (!session) return;
 
     const toolsUsed = session.toolExecutions.length;
-    const toolFailures = session.toolExecutions.filter((t) => t.status === 'FAILED').length;
+    const toolFailures = session.toolExecutions.filter((t) => t.status === ToolExecutionStatus.FAILED).length;
     const escalated = session.escalated ?? false;
     const metadata = (session.metadata as Record<string, unknown>) ?? {};
     const callbackRequested = Boolean(metadata.callbackRequested);
 
     let resolutionStatus: CallResolutionStatus;
-    if (session.status === 'ABANDONED' || session.endedReason === 'abandoned') {
+    if (session.status === CallStatus.ABANDONED || session.endedReason === 'abandoned') {
       resolutionStatus = CallResolutionStatus.ABANDONED;
     } else if (escalated || callbackRequested) {
       resolutionStatus = CallResolutionStatus.ESCALATED;

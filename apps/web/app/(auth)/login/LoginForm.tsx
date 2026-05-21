@@ -2,18 +2,21 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { clearClientSession, persistClientSession } from '@/lib/auth/browser-session';
 
-export function LoginForm() {
+export type LoginFormProps = {
+  /** Set from server `searchParams` on the login page (Next.js 15). */
+  sessionExpired?: boolean;
+};
+
+export function LoginForm({ sessionExpired = false }: LoginFormProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [tenantSlug, setTenantSlug] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const sessionExpired = searchParams.get('reason') === 'session-expired';
 
   useEffect(() => {
     if (!sessionExpired) return;

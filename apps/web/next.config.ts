@@ -2,8 +2,9 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Avoid dev startup stalls by not transpiling the DB workspace package in the browser app.
   transpilePackages: ['@bookstore-voice-agents/types'],
+  // Keep Prisma / voice-db on the server bundle only (API routes + custom server).
+  serverExternalPackages: ['@bookstore-voice-agents/voice-db', '@prisma/client', 'prisma'],
 };
 
 export default nextConfig;

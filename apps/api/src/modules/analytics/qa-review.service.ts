@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { TERMINAL_CALL_STATUSES } from '../../database/prisma.types';
 
 @Injectable()
 export class QaReviewService {
@@ -13,7 +14,7 @@ export class QaReviewService {
     const sessions = await this.prisma.callSession.findMany({
       where: {
         tenantId,
-        status: { in: ['COMPLETED', 'FAILED', 'ESCALATED', 'ABANDONED'] },
+        status: { in: TERMINAL_CALL_STATUSES },
         ...(options?.hasOutcome !== undefined && {
           callOutcome: options.hasOutcome ? { isNot: null } : { is: null },
         }),

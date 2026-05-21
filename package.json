@@ -29,6 +29,7 @@
     "db:studio": "pnpm --filter api exec prisma studio",
     "db:voice:generate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run generate",
     "db:voice:migrate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run migrate",
+    "db:voice:migrate:deploy": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run migrate:deploy",
     "db:voice:seed": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run seed"
   },
   "devDependencies": {
