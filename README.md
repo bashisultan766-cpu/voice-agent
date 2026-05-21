@@ -43,7 +43,7 @@ For third-party systems you must provision separately, see **[docs/EXTERNAL-DEPE
 ├── packages/
 │   ├── types/               # Shared TypeScript types
 │   ├── config/              # Shared config helpers
-│   └── voice-db/            # Optional / legacy Prisma package (separate DB URL if used)
+│   └── voice-db/            # Voice Prisma schema (VOICE_AGENT_DATABASE_URL; call_logs, store_settings)
 ├── infra/docker/            # Local Postgres + Redis Compose
 ├── docs/                    # PRD, architecture, deployment, external deps
 ├── .env.example             # Monorepo env template
@@ -82,9 +82,30 @@ Edit values: at minimum `DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, and web/
 
 ### 4. Database
 
+**API (tenants, agents, CallSession, Shopify ops):**
+
 ```bash
 pnpm db:generate
 pnpm db:migrate
+```
+
+**Voice module (Twilio relay: `store_settings`, `call_logs`, FAQs, callbacks):**
+
+Uses a separate Postgres database and Prisma project under `packages/voice-db`. Set `VOICE_AGENT_DATABASE_URL` in `apps/web/.env.local` (see `apps/web/.env.example`).
+
+```bash
+# Create DB once, e.g. voice_agent on local Postgres
+pnpm db:voice:generate
+pnpm db:voice:migrate
+pnpm db:voice:seed
+```
+
+Production: run `pnpm db:voice:migrate:deploy` against the voice DB before deploying web voice routes. Migration `20260521120000_drop_call_sessions` removes the legacy experimental `call_sessions` table; the schema uses **`call_logs`** only.
+
+Generate both clients before a full monorepo build:
+
+```bash
+pnpm db:generate:all
 ```
 
 ### 5. Run
@@ -154,8 +175,13 @@ Use this after first deploy or any infra change.
 | `pnpm dev:local` | API + web with concurrent local runners |
 | `pnpm build` / `lint` / `typecheck` | Monorepo-wide |
 | `pnpm db:generate` | Prisma client (API app) |
+| `pnpm db:generate:all` | API + voice-db Prisma clients |
 | `pnpm db:migrate` | Migrations (dev workflow) |
 | `pnpm db:studio` | Prisma Studio (API DB) |
+| `pnpm db:voice:generate` | Voice Prisma client (`packages/voice-db/generated`) |
+| `pnpm db:voice:migrate` | Voice DB migrations (dev) |
+| `pnpm db:voice:migrate:deploy` | Voice DB migrations (production) |
+| `pnpm db:voice:seed` | Sample store + FAQs for voice module |
 
 ## Security notes (high level)
 

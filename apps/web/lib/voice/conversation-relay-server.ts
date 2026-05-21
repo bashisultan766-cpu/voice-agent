@@ -6,6 +6,7 @@ import { getPublicWebSocketUrlFromRequest, validateTwilioWebSocketRequest } from
 import { VOICE_WS_PATH } from '@/lib/voice/constants';
 import { FALLBACK_SPEECH } from '@/lib/voice/constants';
 import { getVoicePrisma } from '@/lib/voice/prisma';
+import { isPrismaUniqueViolation } from '@/lib/voice/prisma-errors';
 import { runVoiceAssistantTurn } from '@/lib/voice/orchestrator';
 import { chunkTextForRelay } from '@/lib/voice/chunk-text';
 
@@ -103,16 +104,28 @@ export async function handleConversationRelayConnection(ws: WebSocket, req: Inco
           }
           settingsLoaded = true;
 
-          const log = await prisma.callLog.create({
-            data: {
-              storeKey,
-              twilioCallSid: s.callSid,
-              twilioSessionId: s.sessionId,
-              fromNumber: s.from,
-              toNumber: s.to,
-            },
-          });
-          callLogId = log.id;
+          try {
+            const log = await prisma.callLog.create({
+              data: {
+                storeKey,
+                twilioCallSid: s.callSid,
+                twilioSessionId: s.sessionId,
+                fromNumber: s.from,
+                toNumber: s.to,
+              },
+            });
+            callLogId = log.id;
+          } catch (err) {
+            if (isPrismaUniqueViolation(err) && s.callSid) {
+              const existing = await prisma.callLog.findUnique({
+                where: { twilioCallSid: s.callSid },
+                select: { id: true },
+              });
+              if (existing) callLogId = existing.id;
+            } else {
+              throw err;
+            }
+          }
           return;
         }
 

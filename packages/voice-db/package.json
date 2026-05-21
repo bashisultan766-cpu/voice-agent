@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "prebuild": "prisma generate",
     "build": "prisma generate",
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",

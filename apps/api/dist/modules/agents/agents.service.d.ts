@@ -174,6 +174,11 @@ export declare class AgentsService {
     private mergeWorkspaceDefaultsIfRequested;
     create(tenantId: string, dto: CreateAgentDto, createdById?: string): Promise<{
         name: string;
+        shopifyStoreUrl: string | null;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -197,11 +202,6 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        shopifyStoreUrl: string | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
-        databaseProvider: string | null;
-        twilioPhoneNumber: string | null;
-        voiceId: string | null;
         id: string;
         slug: string;
         description: string | null;
@@ -262,6 +262,11 @@ export declare class AgentsService {
     }[]>;
     findOne(tenantId: string, id: string): Promise<{
         name: string;
+        shopifyStoreUrl: string | null;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -285,11 +290,6 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        shopifyStoreUrl: string | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
-        databaseProvider: string | null;
-        twilioPhoneNumber: string | null;
-        voiceId: string | null;
         id: string;
         slug: string;
         description: string | null;
@@ -354,6 +354,11 @@ export declare class AgentsService {
     update(tenantId: string, id: string, dto: UpdateAgentDto, actorUserId?: string): Promise<{
         updatedSecrets: Record<"shopifyAdminToken" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret", boolean>;
         name: string;
+        shopifyStoreUrl: string | null;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -377,11 +382,6 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        shopifyStoreUrl: string | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
-        databaseProvider: string | null;
-        twilioPhoneNumber: string | null;
-        voiceId: string | null;
         id: string;
         slug: string;
         description: string | null;
@@ -437,6 +437,11 @@ export declare class AgentsService {
     syncSecretsFromWorkspace(tenantId: string, id: string, actorUserId?: string): Promise<{
         updatedSecrets: Record<"shopifyAdminToken" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret", boolean>;
         name: string;
+        shopifyStoreUrl: string | null;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -460,11 +465,6 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        shopifyStoreUrl: string | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
-        databaseProvider: string | null;
-        twilioPhoneNumber: string | null;
-        voiceId: string | null;
         id: string;
         slug: string;
         description: string | null;

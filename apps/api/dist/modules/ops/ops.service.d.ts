@@ -25,6 +25,7 @@ export declare class OpsService {
     private normalizeUrlNoSlash;
     getAgentsOverview(tenantId: string): Prisma.PrismaPromise<{
         name: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
         voiceProfile: {
             id: string;
             language: string;
@@ -38,7 +39,6 @@ export declare class OpsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue | null;
         } | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         id: string;
         shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
@@ -82,9 +82,9 @@ export declare class OpsService {
         id: string;
         createdAt: Date;
         callSessionId: string;
-        sequenceNumber: number;
         role: string;
         content: string;
+        sequenceNumber: number;
         timestampMs: number | null;
     }[]>;
     getCheckoutLinks(tenantId: string): Prisma.PrismaPromise<({
@@ -101,16 +101,16 @@ export declare class OpsService {
         agentId: string;
         metadata: Prisma.JsonValue | null;
         callSessionId: string | null;
-        itemsJson: Prisma.JsonValue | null;
-        checkoutUrl: string;
-        completedAt: Date | null;
         mode: import("@prisma/client").$Enums.CheckoutMode;
         checkoutFingerprint: string | null;
         shopifyConnectionId: string | null;
+        checkoutUrl: string;
         customerEmail: string | null;
+        itemsJson: Prisma.JsonValue | null;
         providerRef: string | null;
         expiresAt: Date | null;
         sentAt: Date | null;
+        completedAt: Date | null;
     })[]>;
     getLeads(tenantId: string): Prisma.PrismaPromise<({
         agent: {
@@ -125,12 +125,12 @@ export declare class OpsService {
         agentId: string;
         metadata: Prisma.JsonValue | null;
         callSessionId: string | null;
-        notes: string | null;
         customerName: string | null;
         customerEmail: string | null;
         customerPhone: string | null;
         intent: string | null;
         interestedItems: Prisma.JsonValue | null;
+        notes: string | null;
     })[]>;
     getEmailEvents(tenantId: string): Prisma.PrismaPromise<({
         agent: {

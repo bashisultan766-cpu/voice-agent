@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "db:generate (API + voice)",
+      "type": "shell",
+      "command": "pnpm db:generate:all",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "db:migrate (API)",
+      "type": "shell",
+      "command": "pnpm db:migrate",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "db:voice:migrate",
+      "type": "shell",
+      "command": "pnpm db:voice:migrate",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "monorepo build",
+      "type": "shell",
+      "command": "pnpm build",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "dependsOn": ["db:generate (API + voice)"],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@bookstore-voice-agents/voice-db';
 import { getVoicePrisma } from '@/lib/voice/prisma';
+import { isPrismaUniqueViolation, prismaConflictMessage } from '@/lib/voice/prisma-errors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -70,7 +71,9 @@ export async function POST(request: NextRequest) {
   const prisma = getVoicePrisma();
   const storeKey = body.storeKey.trim();
 
-  const saved = await prisma.storeSetting.upsert({
+  let saved;
+  try {
+    saved = await prisma.storeSetting.upsert({
     where: { storeKey },
     create: {
       storeKey,
@@ -104,7 +107,13 @@ export async function POST(request: NextRequest) {
       shopifyAdminToken:
         body.shopifyAdminToken === undefined ? undefined : body.shopifyAdminToken?.trim() || null,
     },
-  });
+    });
+  } catch (err) {
+    if (isPrismaUniqueViolation(err)) {
+      return NextResponse.json({ message: prismaConflictMessage(err) }, { status: 409 });
+    }
+    throw err;
+  }
 
   if (Array.isArray(body.faqs)) {
     await prisma.faqItem.deleteMany({ where: { storeKey } });

@@ -1,4 +1,5 @@
 import type { PrismaClient, StoreSetting } from '@bookstore-voice-agents/voice-db';
+import { isPrismaUniqueViolation } from '@/lib/voice/prisma-errors';
 
 export type ToolContext = {
   prisma: PrismaClient;
@@ -104,15 +105,22 @@ export async function toolBookCallback(
   ctx: ToolContext,
   args: { name: string; phone: string; preferredTime: string },
 ): Promise<Record<string, unknown>> {
-  const row = await ctx.prisma.callbackBooking.create({
-    data: {
-      storeKey: ctx.storeKey,
-      name: args.name.trim(),
-      phone: args.phone.trim(),
-      preferredTime: args.preferredTime.trim(),
-    },
-  });
-  return { ok: true, id: row.id, message: 'Callback booked.' };
+  try {
+    const row = await ctx.prisma.callbackBooking.create({
+      data: {
+        storeKey: ctx.storeKey,
+        name: args.name.trim(),
+        phone: args.phone.trim(),
+        preferredTime: args.preferredTime.trim(),
+      },
+    });
+    return { ok: true, id: row.id, message: 'Callback booked.' };
+  } catch (err) {
+    if (isPrismaUniqueViolation(err)) {
+      return { ok: false, message: 'We already have a callback request with those details.' };
+    }
+    throw err;
+  }
 }
 
 export async function toolSearchFaq(
