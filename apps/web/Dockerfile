@@ -10,11 +10,13 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/api/package.json apps/api/package.json
 COPY packages/types/package.json packages/types/package.json
 COPY packages/config/package.json packages/config/package.json
+COPY packages/voice-db/package.json packages/voice-db/package.json
 
 RUN pnpm install --frozen-lockfile
 
 COPY . .
 
+RUN pnpm --filter @bookstore-voice-agents/voice-db run generate
 RUN pnpm --filter web build
 
 EXPOSE 3000

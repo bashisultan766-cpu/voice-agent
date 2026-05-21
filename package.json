@@ -17,6 +17,7 @@
     "dev:sync-shopify": "pnpm --filter api run dev:sync-shopify",
     "dev:test-checkout-link": "pnpm --filter api run dev:test-checkout-link",
     "dev:test-email-send": "pnpm --filter api run dev:test-email-send",
+    "prebuild": "pnpm db:generate && pnpm db:voice:generate",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
@@ -29,7 +30,9 @@
     "db:studio": "pnpm --filter api exec prisma studio",
     "db:voice:generate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run generate",
     "db:voice:migrate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run migrate",
-    "db:voice:seed": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run seed"
+    "db:voice:migrate:deploy": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run migrate:deploy",
+    "db:voice:seed": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run seed",
+    "deploy:vps": "bash scripts/vps-deploy.sh"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

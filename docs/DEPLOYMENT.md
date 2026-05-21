@@ -7,9 +7,22 @@ Guidance for shipping **apps/api** (NestJS + Prisma) and **apps/web** (Next.js) 
 - **Node.js 20+** and **pnpm 9+** on the build machine.
 - Run from repo root:
   - `pnpm install`
-  - `pnpm --filter api exec prisma generate` (or your root `db:generate` script)
-  - `pnpm --filter api build`
-  - `pnpm --filter web build`
+  - Copy env files (`.env` at root and/or `apps/api/.env`, `apps/web/.env.local`) with at least `DATABASE_URL` and `VOICE_AGENT_DATABASE_URL`
+  - `pnpm build` (runs Prisma generate for **both** `apps/api` and `packages/voice-db`, then builds API + web)
+  - Or manually: `pnpm db:generate && pnpm db:voice:generate && pnpm --filter api build && pnpm --filter web build`
+
+**VPS note:** `packages/voice-db/generated/` is not in git. If you skip `db:voice:generate`, Next.js fails with `Can't resolve '../generated/client'`. If you skip `db:generate`, the API build reports hundreds of missing Prisma model errors.
+
+**VPS schema drift:** If `pnpm db:voice:generate` fails with `CallSession` / `callLog` relation errors, the server copy of `packages/voice-db/prisma/schema.prisma` was edited locally and no longer matches git (this repo uses `CallLog` only, not `CallSession`). Restore it:
+
+```bash
+git checkout -- packages/voice-db/prisma/schema.prisma
+# or: git pull && git checkout origin/main -- packages/voice-db/prisma/schema.prisma
+pnpm db:voice:generate
+pnpm db:voice:migrate:deploy   # production — not db:voice:migrate (migrate dev)
+```
+
+On production, use `pnpm db:voice:migrate:deploy`, not `pnpm db:voice:migrate` (`migrate dev` is for local development only).
 - Ensure `DATABASE_URL` and other env vars needed at build time for Next.js are available if your Next config reads them (public vars use `NEXT_PUBLIC_*`).
 
 ## 2. Database
