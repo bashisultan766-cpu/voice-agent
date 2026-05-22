@@ -32,7 +32,8 @@
     "db:voice:generate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run generate",
     "db:voice:migrate": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run migrate",
     "db:voice:migrate:deploy": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run migrate:deploy",
-    "db:voice:seed": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run seed"
+    "db:voice:seed": "cross-env VOICE_AGENT_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent pnpm --filter @bookstore-voice-agents/voice-db run seed",
+    "deploy:vps": "bash scripts/vps-deploy.sh"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

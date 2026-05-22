@@ -10,7 +10,7 @@
 module.exports = {
   apps: [
     {
-      name: 'voice-web',
+      name: 'voice-agent-web',
       cwd: __dirname,
       script: 'node_modules/.bin/tsx',
       args: 'server.ts',
@@ -19,9 +19,10 @@ module.exports = {
       instances: 1,
       env: {
         NODE_ENV: 'production',
-        PORT: '3005',
+        PORT: '3000',
         HOSTNAME: '0.0.0.0',
       },
+      env_file: '.env.local',
       autorestart: true,
       max_restarts: 10,
       min_uptime: '10s',
