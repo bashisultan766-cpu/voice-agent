@@ -39,8 +39,8 @@ module.exports = {
     {
       name: 'voice-agent-web',
       cwd: webDir,
-      script: path.join(webDir, 'node_modules', '.bin', 'tsx'),
-      args: 'server.ts',
+      script: 'pnpm',
+      args: 'start',
       interpreter: 'none',
       exec_mode: 'fork',
       instances: 1,

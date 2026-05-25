@@ -12,8 +12,8 @@ module.exports = {
     {
       name: 'voice-agent-web',
       cwd: __dirname,
-      script: 'node_modules/.bin/tsx',
-      args: 'server.ts',
+      script: 'pnpm',
+      args: 'start',
       interpreter: 'none',
       exec_mode: 'fork',
       instances: 1,

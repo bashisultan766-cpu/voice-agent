@@ -12,7 +12,7 @@ export type LoginFormProps = {
 
 export function LoginForm({ sessionExpired = false }: LoginFormProps) {
   const router = useRouter();
-  const [tenantSlug, setTenantSlug] = useState('');
+  const [workspaceSlug, setWorkspaceSlug] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export function LoginForm({ sessionExpired = false }: LoginFormProps) {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantSlug, email, password }),
+        body: JSON.stringify({ workspaceSlug, email, password }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -68,17 +68,17 @@ export function LoginForm({ sessionExpired = false }: LoginFormProps) {
       ) : null}
       <form onSubmit={onSubmit} className="mt-6 space-y-4">
         <div>
-          <label htmlFor="tenantSlug" className="block text-sm font-medium">
+          <label htmlFor="workspaceSlug" className="block text-sm font-medium">
             Workspace slug
           </label>
           <input
-            id="tenantSlug"
-            name="tenantSlug"
+            id="workspaceSlug"
+            name="workspaceSlug"
             autoComplete="organization"
             className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
             placeholder="e.g. my-store-brand"
-            value={tenantSlug}
-            onChange={(e) => setTenantSlug(e.target.value)}
+            value={workspaceSlug}
+            onChange={(e) => setWorkspaceSlug(e.target.value)}
             required
           />
         </div>

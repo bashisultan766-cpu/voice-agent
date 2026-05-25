@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../database/prisma.service';
 import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
+import { LoginDto, resolveLoginWorkspaceSlug } from './dto/login.dto';
 
 function slugify(s: string): string {
   const x = s
@@ -90,36 +90,28 @@ export class AuthService {
     }
   }
 
+  /**
+   * Login succeeds only when workspace slug, email, and password all match the same user.
+   * A correct email/password for another workspace must not authenticate.
+   */
   async login(dto: LoginDto) {
     const email = dto.email.trim().toLowerCase();
-    const requestedSlug = dto.tenantSlug.trim().toLowerCase();
-    let tenant = await this.prisma.tenant.findFirst({
-      where: { slug: requestedSlug, deletedAt: null },
+    const workspaceSlug = resolveLoginWorkspaceSlug(dto);
+    const invalid = () =>
+      new UnauthorizedException('Invalid workspace, email, or password');
+
+    const tenant = await this.prisma.tenant.findFirst({
+      where: { slug: workspaceSlug, deletedAt: null },
     });
-    let user = tenant
-      ? await this.prisma.user.findFirst({
-          where: { tenantId: tenant.id, email, deletedAt: null },
-        })
-      : null;
+    if (!tenant) throw invalid();
 
-    // Fallback: recover login when workspace slug changed or user forgot it.
-    // We only allow this when exactly one active account matches the email.
-    if (!user) {
-      const candidates = await this.prisma.user.findMany({
-        where: { email, deletedAt: null, tenant: { deletedAt: null } },
-        include: { tenant: true },
-        take: 2,
-      });
-      if (candidates.length === 1) {
-        user = candidates[0];
-        tenant = candidates[0].tenant;
-      }
-    }
+    const user = await this.prisma.user.findFirst({
+      where: { tenantId: tenant.id, email, deletedAt: null },
+    });
+    if (!user?.passwordHash) throw invalid();
 
-    if (!tenant || !user) throw new UnauthorizedException('Unknown workspace or invalid credentials');
-    if (!user?.passwordHash) throw new UnauthorizedException('Invalid credentials');
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('Invalid credentials');
+    if (!ok) throw invalid();
     const accessToken = this.jwt.sign({ sub: user.id });
     return {
       accessToken,
