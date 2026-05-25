@@ -43,6 +43,8 @@ import {
 } from '../../integrations/shopify/shopify-errors';
 import {
   rankProductRecommendations,
+  buildRecommendationQueryFromSignals,
+  extractInterestSignalsFromText,
   extractGenrePreferencesFromText,
   type RecommendableProduct,
 } from './product-recommendation.util';
@@ -209,6 +211,7 @@ export class ToolOrchestratorService {
       'store_category_question',
       'capability_question',
       'general_business_question',
+      'store_policy_question',
       'unclear',
       'unknown',
     ]);
@@ -667,9 +670,16 @@ export class ToolOrchestratorService {
           };
         }
         const mem = await this.callMemory.load(callSessionId);
+        const interestSignals = [
+          ...new Set([
+            ...(mem.interestSignals ?? []),
+            ...extractInterestSignalsFromText(query),
+          ]),
+        ];
+        const enrichedQuery = buildRecommendationQueryFromSignals(query, interestSignals);
         const genres = [
           ...(mem.preferredGenres ?? []),
-          ...extractGenrePreferencesFromText(query),
+          ...extractGenrePreferencesFromText(enrichedQuery),
         ];
         const recommendable: RecommendableProduct[] = items.map((p) => ({
           productId: p.productId,
@@ -692,7 +702,9 @@ export class ToolOrchestratorService {
                 preferredGenres: [...new Set(genres)],
                 rejectedTitles: (mem.rejectedProducts ?? []).map((r) => r.title),
                 mentionedTitles: (mem.discussedProducts ?? mem.mentionedProducts ?? []).map((m) => m.title),
-                queryTokens: query.split(/\s+/).filter((t) => t.length > 1),
+                queryTokens: enrichedQuery.split(/\s+/).filter((t) => t.length > 1),
+                interestSignals,
+                priceSensitivity: mem.priceSensitivity ?? undefined,
               })
             : recommendable;
         const topLive = items.find((i) => i.productId === ranked[0]?.productId) ?? items[0];

@@ -1,0 +1,81 @@
+# PM2 / systemd + Nginx (ports 3000 / 3001)
+
+Use this when the **Next.js** app and **Nest API** run on the host (not Docker), behind Nginx on `agent.mailcallcommunication.com`.
+
+## Port map (matches repo defaults)
+
+| Service | Port | Env |
+|---------|------|-----|
+| Next.js (`apps/web`) | **3000** | `PORT=3000` in `apps/web` (see `package.json` / `server.ts`) |
+| Nest API (`apps/api`) | **3001** | `PORT=3001` in `apps/api/.env` |
+
+Verify on the VPS:
+
+```bash
+ss -tlnp | grep -E ':3000|:3001'
+curl -sS http://127.0.0.1:3001/api/health
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/
+```
+
+## Nginx config
+
+Copy the site file from the repo:
+
+```bash
+sudo cp /opt/shopify-agent/infra/nginx/voice-agent.mailcallcommunication.com.conf \
+  /etc/nginx/sites-available/voice-agent.conf
+sudo ln -sf /etc/nginx/sites-available/voice-agent.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Default in `infra/nginx/voice-agent.mailcallcommunication.com.conf`:** split upstreams:
+
+- `location /api/` → `127.0.0.1:3001` (**no trailing slash** on `proxy_pass`, so `/api/agents` stays `/api/agents`)
+- `location /` → `127.0.0.1:3000`
+
+Do **not** use `proxy_pass http://127.0.0.1:3001/;` — the trailing slash strips `/api/` and Nest returns 404.
+
+The dashboard sends `Authorization: Bearer` from the browser (localStorage after login), so `/api/*` can hit Nest directly. Set `TRUST_PROXY=true` on the API for Twilio `X-Forwarded-*` headers.
+
+## Production `.env` (minimum)
+
+Root or `apps/api/.env` + `apps/web/.env.local`:
+
+```bash
+NODE_ENV=production
+PORT=3001
+TRUST_PROXY=true
+CORS_ORIGIN=https://agent.mailcallcommunication.com
+PUBLIC_WEBHOOK_BASE_URL=https://agent.mailcallcommunication.com
+
+NEXT_PUBLIC_APP_URL=https://agent.mailcallcommunication.com
+NEXT_PUBLIC_API_URL=http://127.0.0.1:3001
+# Server-side Next → API (same host)
+INTERNAL_API_URL=http://127.0.0.1:3001
+```
+
+Twilio webhooks in the console must use:
+
+- `https://agent.mailcallcommunication.com/api/twilio/voice/inbound`
+- `https://agent.mailcallcommunication.com/api/twilio/voice/gather`
+- `https://agent.mailcallcommunication.com/api/twilio/voice/status`
+
+With the **split** config, those URLs go straight to Nest; Nginx must send `X-Forwarded-Proto` and `X-Forwarded-Host` (included in the site file).
+
+## Start processes (example)
+
+```bash
+cd /opt/shopify-agent/apps/api && PORT=3001 NODE_ENV=production node dist/main.js
+cd /opt/shopify-agent/apps/web && PORT=3000 HOSTNAME=127.0.0.1 NODE_ENV=production node server.js
+```
+
+Use PM2/ecosystem files in your own ops layer; the repo does not ship PM2 configs yet.
+
+## Smoke test through Nginx
+
+```bash
+curl -sS https://agent.mailcallcommunication.com/api/health
+curl -sS -o /dev/null -w "%{http_code}\n" https://agent.mailcallcommunication.com/
+```
+
+Login in the browser and open **Dashboard → Agents** to confirm `/api/agents` works end-to-end.

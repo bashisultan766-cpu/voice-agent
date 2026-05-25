@@ -64,8 +64,8 @@ test('runtime prompt includes production guardrails', () => {
     storeName: 'S',
     language: 'en',
   });
-  assert.match(prompt, /Never invent Shopify product/);
+  assert.match(prompt, /Never invent product names/);
   assert.match(prompt, /Never ask for card number/);
-  assert.match(prompt, /escalate to human support instead of guessing/);
+  assert.match(prompt, /retrieve knowledge or escalate; never guess/);
   assert.match(prompt, /email sending is not configured/);
 });

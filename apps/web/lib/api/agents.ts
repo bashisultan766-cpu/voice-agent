@@ -597,6 +597,13 @@ export interface RuntimePromptPreview {
   greetingMessage: string | null;
   prompt: string;
   promptLength: number;
+  promptBudget?: {
+    estimatedTokens: number;
+    status: string;
+    warnings: string[];
+    recommendKnowledgeBase: boolean;
+  };
+  promptLayers?: Record<string, string>;
 }
 
 export async function getAgentRuntimePromptPreview(agentId: string): Promise<RuntimePromptPreview> {

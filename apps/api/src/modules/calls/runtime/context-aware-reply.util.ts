@@ -6,6 +6,11 @@ import {
   classifyConversationalObjection,
   objectionReplyFromMatch,
 } from './objection-patterns.util';
+import {
+  detectCheckoutAbandonReason,
+  checkoutRecoveryReplySeed,
+} from './checkout-recovery.util';
+import type { CallConversationMemory } from '@bookstore-voice-agents/types';
 
 type ConversationTurn = { role: 'user' | 'assistant'; content: string };
 
@@ -78,6 +83,7 @@ export function buildContextAwareReply(args: {
   lastToneLeadUsed: string | null;
   allowPaymentSuggestion: boolean;
   followUpOfferedProductKey?: string | null;
+  conversationMemory?: CallConversationMemory;
 }): {
   text: string;
   source: 'template' | 'openai';
@@ -124,6 +130,28 @@ export function buildContextAwareReply(args: {
         questionAnsweredFirst: true,
         interruptionHandled: false,
         toneLeadUsed: null,
+        paymentSuggestionUsed: false,
+        followUpTriggered: false,
+      };
+    }
+  }
+
+  const abandonReason = detectCheckoutAbandonReason(args.lastUserMessage, args.state);
+  if (abandonReason && args.conversationMemory) {
+    const seed = checkoutRecoveryReplySeed(abandonReason, args.conversationMemory);
+    if (seed) {
+      const { lead, toneLeadUsed } = resolveToneLead({
+        slot: 'objection',
+        conversationTone: args.conversationTone,
+        lastToneLeadUsed: args.lastToneLeadUsed,
+      });
+      return {
+        text: lead ? `${lead} ${seed}` : seed,
+        source: 'openai',
+        templateKey: `checkout_recovery_${abandonReason}`,
+        questionAnsweredFirst: true,
+        interruptionHandled: true,
+        toneLeadUsed,
         paymentSuggestionUsed: false,
         followUpTriggered: false,
       };

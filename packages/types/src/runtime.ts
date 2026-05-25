@@ -81,6 +81,16 @@ export interface CallConversationMemory {
   lastIntent?: string;
   lastToolCalls?: Array<{ toolName: string; ok: boolean; at: string }>;
   turnCount?: number;
+  /** Sales intelligence: budget sensitivity inferred from objections/language. */
+  priceSensitivity?: 'low' | 'medium' | 'high';
+  /** Sales intelligence: time pressure (gift, deadline, today). */
+  purchaseUrgency?: 'low' | 'medium' | 'high';
+  preferredTone?: 'direct' | 'friendly' | 'neutral' | string;
+  recommendationAccepted?: number;
+  recommendationDeclined?: number;
+  /** e.g. motivational, religious, street-lit, easy-reading, inmates-popular */
+  interestSignals?: string[];
+  lastDiscoveryQuestion?: string | null;
 }
 
 /** Real-time voice pipeline metrics (CallSession.metadata.voiceStreamMetrics). */
@@ -120,6 +130,7 @@ export interface CallRuntimeAnalytics {
   checkoutAttempts?: number;
   checkoutConverted?: boolean;
   abandonedAtStage?: string | null;
+  abandonedCheckoutReasons?: string[];
   toolLatencyMs?: Array<{ toolName: string; ms: number; at: string }>;
   hallucinationAttempts?: number;
   refusalTriggers?: number;
@@ -127,6 +138,22 @@ export interface CallRuntimeAnalytics {
   lastStage?: string;
   lastUserIntent?: string;
   objectionCounts?: Record<string, number>;
+  /** Catalog offers surfaced to the caller */
+  recommendationOffers?: number;
+  recommendationAccepted?: number;
+  recommendationDeclined?: number;
+  /** Sum of cart line prices when known (rough AOV signal) */
+  estimatedOrderValue?: number;
+  conversionEvents?: number;
+}
+
+/** Per-turn or rolling scores in CallSession.metadata.runtimeScores */
+export interface RuntimeConversationScores {
+  conversationQuality: number;
+  salesEffectiveness: number;
+  hallucinationRisk: number;
+  empathy: number;
+  updatedAt: string;
 }
 
 /** Unified runtime context passed to every tool handler. */

@@ -99,7 +99,53 @@ export class ConversationAnalyticsService {
     tenantId: string,
     callSessionId: string,
     stage: string,
+    reason?: string,
   ): Promise<void> {
-    await this.merge(callSessionId, tenantId, { abandonedAtStage: stage });
+    const cur = await this.load(callSessionId);
+    const reasons = [...(cur.abandonedCheckoutReasons ?? [])];
+    if (reason?.trim()) reasons.push(reason.trim());
+    await this.merge(callSessionId, tenantId, {
+      abandonedAtStage: stage,
+      abandonedCheckoutReasons: reasons.slice(-10),
+    });
+  }
+
+  async recordRecommendationOffer(tenantId: string, callSessionId: string): Promise<void> {
+    const cur = await this.load(callSessionId);
+    await this.merge(callSessionId, tenantId, {
+      recommendationOffers: (cur.recommendationOffers ?? 0) + 1,
+    });
+  }
+
+  async recordRecommendationOutcome(
+    tenantId: string,
+    callSessionId: string,
+    accepted: boolean,
+  ): Promise<void> {
+    const cur = await this.load(callSessionId);
+    await this.merge(callSessionId, tenantId, {
+      recommendationAccepted: (cur.recommendationAccepted ?? 0) + (accepted ? 1 : 0),
+      recommendationDeclined: (cur.recommendationDeclined ?? 0) + (accepted ? 0 : 1),
+    });
+  }
+
+  async recordCheckoutConverted(tenantId: string, callSessionId: string): Promise<void> {
+    const cur = await this.load(callSessionId);
+    await this.merge(callSessionId, tenantId, {
+      checkoutConverted: true,
+      conversionEvents: (cur.conversionEvents ?? 0) + 1,
+    });
+  }
+
+  async recordEstimatedOrderValue(
+    tenantId: string,
+    callSessionId: string,
+    amount: number,
+  ): Promise<void> {
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const cur = await this.load(callSessionId);
+    await this.merge(callSessionId, tenantId, {
+      estimatedOrderValue: (cur.estimatedOrderValue ?? 0) + amount,
+    });
   }
 }

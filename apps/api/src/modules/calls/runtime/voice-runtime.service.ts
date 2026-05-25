@@ -22,6 +22,15 @@ import { normalizeConversationStage } from './conversation-stage.util';
 import { resolveAdaptiveVoiceBehavior } from './adaptive-voice-behavior.util';
 import { applyTimingToChunkText } from './voice-timing.util';
 import { classifyUserIntent, type UserUtteranceIntent } from './user-intent-classifier.util';
+import { classifyPolicyTopic } from './policy-intent.util';
+import { PolicyContextPrefetchService } from './policy-context-prefetch.service';
+import {
+  detectCheckoutAbandonReason,
+  buildCheckoutRecoveryGuidance,
+  checkoutRecoveryReplySeed,
+} from './checkout-recovery.util';
+import { applyHumanSalesBehavior, confidenceReinforcementPhrase } from './sales-behavior.util';
+import { computeRuntimeScores } from './runtime-scoring.util';
 import { normalizeOrderState, type OrderState } from './order-state-machine.util';
 import type { ToolResult } from './tool-orchestrator.service';
 import { buildProfessionalResponse } from './professional-voice-response.util';
@@ -57,6 +66,7 @@ export class VoiceRuntimeService {
     private readonly conversationFlow: ConversationFlowEngineService,
     private readonly conversationAnalytics: ConversationAnalyticsService,
     private readonly callMemory: CallMemoryService,
+    private readonly policyPrefetch: PolicyContextPrefetchService,
   ) {}
 
   private deterministicFallbackEnabled(): boolean {
@@ -191,6 +201,13 @@ export class VoiceRuntimeService {
       return {
         toolCallAllowed: false,
         toolCallBlockedReason: 'general_category_question',
+        customerQuestionType,
+      };
+    }
+    if (intent === 'store_policy_question') {
+      return {
+        toolCallAllowed: true,
+        toolCallBlockedReason: null,
         customerQuestionType,
       };
     }
@@ -899,6 +916,21 @@ export class VoiceRuntimeService {
       paymentLinkSent,
     });
     userIntent = turnPlan.userIntent;
+
+    const policyTopic =
+      userIntent === 'store_policy_question' ? classifyPolicyTopic(safeText) : null;
+    let policyRetrievalSnapshot: string | null = null;
+    if (userIntent === 'store_policy_question' && ctx.storeId) {
+      policyRetrievalSnapshot = await this.policyPrefetch.prefetch({
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        customerText: safeText,
+        topic: policyTopic,
+        config: ctx.agent.config ?? null,
+        returnRefundBehavior: ctx.agent.returnRefundBehavior ?? null,
+      });
+    }
+
     await this.conversationAnalytics.merge(callSessionId, ctx.tenantId, {
       ...turnPlan.analyticsPatch,
       lastStage: turnPlan.stage,
@@ -912,6 +944,10 @@ export class VoiceRuntimeService {
       conversationTone,
       conversationStage: turnPlan.stage,
       conversationStageGuidance: turnPlan.stageGuidance,
+      salesGuidance: turnPlan.salesGuidance,
+      policyTopic: policyTopic ?? undefined,
+      policyRetrievalRequired: userIntent === 'store_policy_question',
+      policyRetrievalSnapshot: policyRetrievalSnapshot ?? undefined,
       ...(cls.extracted?.quantity != null ? { quantity: cls.extracted.quantity } : {}),
       ...(cls.extracted?.email ? { lastProvidedEmail: cls.extracted.email } : {}),
     });
@@ -1151,6 +1187,19 @@ export class VoiceRuntimeService {
         : null;
     const fillerUsedSession = metaAfterLlm.fillerUsed === true;
 
+    const abandonReason = detectCheckoutAbandonReason(safeText, stateForLogOpenAi);
+    if (abandonReason) {
+      await this.conversationAnalytics.recordAbandonedStage(
+        ctx.tenantId,
+        callSessionId,
+        turnPlan.stage,
+        abandonReason,
+      );
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        checkoutRecoveryGuidance: buildCheckoutRecoveryGuidance(abandonReason, turnPlan.memory),
+      });
+    }
+
     const resolved = this.resolveSpokenReplyAfterOpenAI({
       toolTrace: result.toolTrace,
       orderStateAfter: stateForLogOpenAi,
@@ -1168,6 +1217,7 @@ export class VoiceRuntimeService {
         orderState: stateForLogOpenAi,
       }),
       followUpOfferedProductKey: followUpOfferedProductKeyForResolve,
+      conversationMemory: turnPlan.memory,
     });
     const memTitles = (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? [])
       .map((p) => p.title)
@@ -1185,14 +1235,55 @@ export class VoiceRuntimeService {
     }
     if (result.toolTrace?.searchProducts?.ok && result.toolTrace.searchProducts.found) {
       await this.conversationAnalytics.recordRecommendation(ctx.tenantId, callSessionId, true);
+      await this.conversationAnalytics.recordRecommendationOffer(ctx.tenantId, callSessionId);
+      if (userIntent === 'purchase_confirmation') {
+        await this.conversationAnalytics.recordRecommendationOutcome(ctx.tenantId, callSessionId, true);
+        await this.callMemory.merge(callSessionId, {
+          recommendationAccepted: (turnPlan.memory.recommendationAccepted ?? 0) + 1,
+        });
+      }
     }
+    if (result.toolTrace?.sendPaymentEmail?.ok) {
+      await this.conversationAnalytics.recordCheckoutConverted(ctx.tenantId, callSessionId);
+    }
+    const cartItems = turnPlan.memory.cart?.items ?? [];
+    let cartValue = 0;
+    for (const item of cartItems) {
+      const p = parseFloat(String(item.price ?? '').replace(/[^0-9.]/g, ''));
+      if (!Number.isNaN(p)) cartValue += p * (item.quantity ?? 1);
+    }
+    if (cartValue > 0) {
+      await this.conversationAnalytics.recordEstimatedOrderValue(ctx.tenantId, callSessionId, cartValue);
+    }
+
+    const salesShapedReply = applyHumanSalesBehavior({
+      reply: hallucinationGuard.reply,
+      adaptive: adaptiveBehavior,
+      stage: turnPlan.stage,
+      reassurance: confidenceReinforcementPhrase(turnPlan.stage),
+    });
+
     const polishedReply = polishVoiceReply(
-      applyTimingToChunkText(hallucinationGuard.reply, adaptiveBehavior),
+      applyTimingToChunkText(salesShapedReply, adaptiveBehavior),
       {
         maxSentences: adaptiveBehavior.maxSentences,
         stage: turnPlan.stage,
       },
     );
+
+    const analyticsSnap = await this.conversationAnalytics.load(callSessionId);
+    const runtimeScores = computeRuntimeScores({
+      stage: turnPlan.stage,
+      memory: turnPlan.memory,
+      analytics: analyticsSnap,
+      hallucinationAttempt: hallucinationGuard.hallucinationAttempt,
+      toolCallsCount: result.toolCallsCount,
+      searchSucceeded: Boolean(result.toolTrace?.searchProducts?.ok && result.toolTrace.searchProducts.found),
+      replyChars: polishedReply.length,
+      adaptiveMood: adaptiveBehavior.mood,
+      objectionHandled: Boolean(turnPlan.objectionType && resolved.contextAware),
+    });
+    await this.callsService.mergeSessionMetadata(callSessionId, { runtimeScores });
 
     const repeatChecked = this.applyRepeatGuard({
       currentReply: polishedReply,

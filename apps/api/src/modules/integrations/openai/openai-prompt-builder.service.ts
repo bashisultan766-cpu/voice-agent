@@ -5,6 +5,7 @@ import {
   buildAgentRuntimePrompt,
   promptInputFromVoiceSessionContext,
 } from '../../calls/runtime/build-agent-runtime-prompt';
+import type { PolicyTopic } from '../../calls/runtime/policy-intent.util';
 import { RuntimeToolRegistryService } from '../../tools/runtime-tool-registry.service';
 
 @Injectable()
@@ -42,6 +43,15 @@ export class OpenAIPromptBuilderService {
       enabledTools: ctx.agent.enabledTools,
       toolPermissions: ctx.agent.toolPermissions,
     });
+
+    const policyTopic =
+      typeof meta.policyTopic === 'string' ? (meta.policyTopic as PolicyTopic) : null;
+    const knowledgeRetrievalSnapshot =
+      typeof meta.policyRetrievalSnapshot === 'string' ? meta.policyRetrievalSnapshot : null;
+    const policyRetrievalRequired = meta.policyRetrievalRequired === true;
+    const salesGuidance =
+      typeof meta.salesGuidance === 'string' ? meta.salesGuidance : null;
+
     return buildAgentRuntimePrompt(promptInputFromVoiceSessionContext(ctx), {
       checkoutStep,
       conversationStage,
@@ -49,6 +59,10 @@ export class OpenAIPromptBuilderService {
       memorySummary,
       personality,
       enabledTools,
+      policyTopic,
+      knowledgeRetrievalSnapshot,
+      policyRetrievalRequired,
+      salesGuidance,
     });
   }
 
@@ -67,7 +81,7 @@ export class OpenAIPromptBuilderService {
         .map((p) => (p && typeof p === 'object' && 'title' in p ? String((p as { title: string }).title) : ''))
         .filter(Boolean)
         .slice(-4);
-      if (titles.length) parts.push(`Discussed: ${titles.join('; ')}`);
+      if (titles.length) parts.push(`Discussed product titles (verify via Shopify if quoting): ${titles.join('; ')}`);
     }
     return parts.length ? parts.join('. ') : null;
   }

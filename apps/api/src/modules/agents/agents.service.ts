@@ -33,6 +33,7 @@ import { ConfigService } from '@nestjs/config';
 import { normalizePublicWebhookBaseUrl } from '../../common/public-webhook-base-url';
 import {
   buildAgentRuntimePrompt,
+  buildEnterpriseRuntimePromptLayers,
   buildRuntimePromptLayers,
   type AgentRuntimePromptInput,
 } from '../calls/runtime/build-agent-runtime-prompt';
@@ -1450,14 +1451,24 @@ export class AgentsService {
     if (!agent) throw new NotFoundException('Agent not found.');
     const input = this.agentRowToRuntimePromptInput(agent);
     if (!input) throw new NotFoundException('Agent not found.');
-    const prompt = buildAgentRuntimePrompt(input);
+    const layers = buildEnterpriseRuntimePromptLayers(input);
     return {
       agentId: agent.id,
       agentName: agent.name,
       updatedAt: agent.updatedAt.toISOString(),
       greetingMessage: agent.greetingMessage,
-      prompt,
-      promptLength: prompt.length,
+      prompt: layers.combined,
+      promptLength: layers.combined.length,
+      promptBudget: layers.budget,
+      promptLayers: {
+        platform: layers.platform,
+        agentIdentity: layers.agentIdentity,
+        storePolicyKnowledge: layers.storePolicyKnowledge,
+        runtimeTools: layers.runtimeTools,
+        shopifyTruth: layers.shopifyTruth,
+        knowledgeRetrieval: layers.knowledgeRetrieval,
+        runtimeContext: layers.runtimeContext,
+      },
     };
   }
 
@@ -2704,8 +2715,11 @@ export class AgentsService {
       toneOfVoice: agent.toneOfVoice as string | null,
       config: agent.agentConfig as AgentRuntimePromptInput['config'],
     };
-    const promptLayers = buildRuntimePromptLayers(promptInput, { personality, enabledTools });
-    const livePrompt = promptLayers.combined;
+    const enterpriseLayers = buildEnterpriseRuntimePromptLayers(promptInput, {
+      personality,
+      enabledTools,
+    });
+    const livePrompt = enterpriseLayers.combined;
 
     let lastToolCalls: Array<Record<string, unknown>> = [];
     let runtimeContextPreview: Record<string, unknown> | null = null;
@@ -2763,6 +2777,8 @@ export class AgentsService {
             voiceCostMetrics: m.voiceCostMetrics ?? null,
             deferredJobPhase: (m.deferredVoiceJob as { phase?: string } | undefined)?.phase ?? null,
             bargeInRequested: m.bargeInRequested === true,
+            runtimeScores: m.runtimeScores ?? null,
+            runtimeAnalytics: m.runtimeAnalytics ?? null,
           };
         }
       } catch {
@@ -2776,11 +2792,15 @@ export class AgentsService {
       toolPermissions: perms,
       personality,
       livePromptPreview: livePrompt.slice(0, 8000),
+      promptBudget: enterpriseLayers.budget,
       promptLayers: {
-        platformSafety: promptLayers.platformSafety,
-        platformCommerce: promptLayers.platformCommerce,
-        agentCustom: promptLayers.agentCustom,
-        runtimeContext: promptLayers.runtimeContext,
+        platform: enterpriseLayers.platform,
+        agentIdentity: enterpriseLayers.agentIdentity,
+        storePolicyKnowledge: enterpriseLayers.storePolicyKnowledge,
+        runtimeTools: enterpriseLayers.runtimeTools,
+        shopifyTruth: enterpriseLayers.shopifyTruth,
+        knowledgeRetrieval: enterpriseLayers.knowledgeRetrieval,
+        runtimeContext: enterpriseLayers.runtimeContext,
       },
       activeRestrictions: {
         blockedTopics: agentRow.restrictedActions ?? null,

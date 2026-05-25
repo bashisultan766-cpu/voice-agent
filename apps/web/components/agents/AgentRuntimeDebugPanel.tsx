@@ -37,11 +37,24 @@ interface RuntimeDebugPayload {
   toolPermissions: Record<string, boolean>;
   personality: Record<string, number> | null;
   livePromptPreview: string;
+  promptBudget?: {
+    estimatedTokens: number;
+    status: string;
+    warnings: string[];
+    recommendKnowledgeBase: boolean;
+  };
   promptLayers?: {
-    platformSafety: string;
-    platformCommerce: string;
-    agentCustom: string;
-    runtimeContext: string;
+    platform?: string;
+    agentIdentity?: string;
+    storePolicyKnowledge?: string;
+    runtimeTools?: string;
+    shopifyTruth?: string;
+    knowledgeRetrieval?: string;
+    runtimeContext?: string;
+    /** @deprecated legacy shape */
+    platformSafety?: string;
+    platformCommerce?: string;
+    agentCustom?: string;
   };
   activeRestrictions?: {
     blockedTopics: string | null;
@@ -214,6 +227,14 @@ export function AgentRuntimeDebugPanel({
                   : '—'}
               </dd>
             </div>
+            {(live as { runtimeScores?: { salesEffectiveness?: number } })?.runtimeScores ? (
+              <div className="col-span-2">
+                <dt className="text-muted-foreground">Runtime scores</dt>
+                <dd className="font-medium font-mono text-xs">
+                  {JSON.stringify((live as { runtimeScores?: Record<string, number> }).runtimeScores)}
+                </dd>
+              </div>
+            ) : null}
           </dl>
           <p className="mt-2 text-xs text-muted-foreground">
             Latency: STT {live?.latency?.sttMs ?? '—'}ms · LLM {live?.latency?.llmMs ?? '—'}ms · TTS{' '}
@@ -323,22 +344,51 @@ export function AgentRuntimeDebugPanel({
             </button>
           </div>
         </div>
+        {data.promptBudget ? (
+          <div className="mt-2 rounded border border-border/60 bg-muted/30 p-2 text-xs">
+            <p className="font-medium text-foreground">
+              Prompt budget: ~{data.promptBudget.estimatedTokens} tokens ({data.promptBudget.status})
+            </p>
+            {data.promptBudget.recommendKnowledgeBase ? (
+              <p className="mt-1 text-amber-700 dark:text-amber-400">
+                Consider moving long FAQs and policies to the Knowledge Base.
+              </p>
+            ) : null}
+            {data.promptBudget.warnings.map((w) => (
+              <p key={w} className="mt-1 text-muted-foreground">
+                {w}
+              </p>
+            ))}
+          </div>
+        ) : null}
         {promptTab === 'layers' && layers ? (
           <div className="mt-3 space-y-3 text-xs font-mono text-muted-foreground max-h-96 overflow-y-auto">
             <div>
-              <p className="font-sans font-semibold text-foreground mb-1">A — Platform safety (mandatory)</p>
-              <pre className="whitespace-pre-wrap">{layers.platformSafety}</pre>
+              <p className="font-sans font-semibold text-foreground mb-1">1 — Platform (non-editable)</p>
+              <pre className="whitespace-pre-wrap">{layers.platform ?? layers.platformSafety}</pre>
             </div>
             <div>
-              <p className="font-sans font-semibold text-foreground mb-1">B — Platform commerce rules</p>
-              <pre className="whitespace-pre-wrap">{layers.platformCommerce}</pre>
+              <p className="font-sans font-semibold text-foreground mb-1">2 — Agent identity (editable)</p>
+              <pre className="whitespace-pre-wrap">{layers.agentIdentity ?? layers.agentCustom}</pre>
             </div>
             <div>
-              <p className="font-sans font-semibold text-foreground mb-1">C — Agent custom (form system prompt)</p>
-              <pre className="whitespace-pre-wrap">{layers.agentCustom}</pre>
+              <p className="font-sans font-semibold text-foreground mb-1">3 — Store policy knowledge (retrieval)</p>
+              <pre className="whitespace-pre-wrap">{layers.storePolicyKnowledge ?? '(see combined)'}</pre>
             </div>
             <div>
-              <p className="font-sans font-semibold text-foreground mb-1">D — Runtime context</p>
+              <p className="font-sans font-semibold text-foreground mb-1">4 — Runtime tools & permissions</p>
+              <pre className="whitespace-pre-wrap">{layers.runtimeTools ?? '(see combined)'}</pre>
+            </div>
+            <div>
+              <p className="font-sans font-semibold text-foreground mb-1">5 — Shopify truth (tools only)</p>
+              <pre className="whitespace-pre-wrap">{layers.shopifyTruth ?? layers.platformCommerce}</pre>
+            </div>
+            <div>
+              <p className="font-sans font-semibold text-foreground mb-1">6 — Knowledge retrieval (per turn)</p>
+              <pre className="whitespace-pre-wrap">{layers.knowledgeRetrieval ?? '(empty until live call)'}</pre>
+            </div>
+            <div>
+              <p className="font-sans font-semibold text-foreground mb-1">7 — Runtime orchestration context</p>
               <pre className="whitespace-pre-wrap">{layers.runtimeContext || '(empty)'}</pre>
             </div>
           </div>

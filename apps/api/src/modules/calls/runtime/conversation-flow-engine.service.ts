@@ -9,6 +9,7 @@ import {
 } from './conversation-stage.util';
 import { classifyConversationalObjection } from './objection-patterns.util';
 import { extractGenrePreferencesFromText } from './product-recommendation.util';
+import { buildSalesTurnPlan } from './sales-conversation-engine.util';
 import { classifyUserIntent, type UserUtteranceIntent } from './user-intent-classifier.util';
 import { normalizeOrderState, type OrderState } from './order-state-machine.util';
 import type { OrderTurnIntent } from './order-intent-classifier.util';
@@ -25,6 +26,7 @@ export type ConversationTurnContext = {
 export type ConversationTurnPlan = {
   stage: ConversationStage;
   stageGuidance: string;
+  salesGuidance: string;
   userIntent: UserUtteranceIntent;
   objectionType: string | null;
   memory: CallConversationMemory;
@@ -85,7 +87,20 @@ export class ConversationFlowEngineService {
       memPatch.emailConfirmationState = 'pending';
     }
 
-    const merged = await this.callMemory.merge(ctx.callSessionId, memPatch);
+    const salesPlan = buildSalesTurnPlan({
+      userText: ctx.userText,
+      stage: nextStage,
+      userIntent,
+      orderState,
+      objectionType: objection?.type ?? null,
+      memory: { ...memory, ...memPatch },
+      hasProductDiscussed: discussed,
+    });
+
+    const merged = await this.callMemory.merge(ctx.callSessionId, {
+      ...memPatch,
+      ...salesPlan.memoryPatch,
+    });
     const useFast = shouldUseFastVoicePath(userIntent, nextStage, ctx.toolCallAllowed);
 
     const analyticsPatch: Partial<CallRuntimeAnalytics> = {
@@ -94,9 +109,12 @@ export class ConversationFlowEngineService {
       ...(objection ? { objectionCounts: { [objection.type]: 1 } } : {}),
     };
 
+    const combinedGuidance = [guidance, salesPlan.salesGuidance].filter(Boolean).join('\n');
+
     return {
       stage: nextStage,
-      stageGuidance: guidance,
+      stageGuidance: combinedGuidance,
+      salesGuidance: salesPlan.salesGuidance,
       userIntent,
       objectionType: objection?.type ?? null,
       memory: merged,

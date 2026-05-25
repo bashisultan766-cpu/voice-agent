@@ -1,21 +1,37 @@
 import type { VoiceAgentRuntimeConfig, VoicePersonalityTraits } from '@bookstore-voice-agents/types';
 import { checkoutModeDescription, toCheckoutModeApi } from '@bookstore-voice-agents/types';
 import type { VoiceSessionContext } from './session-context.service';
+import { policyTopicGuidance, type PolicyTopic } from './policy-intent.util';
+import { analyzePromptBudget, type PromptBudgetReport } from './prompt-budget.util';
 import {
-  PLATFORM_ANTI_HALLUCINATION_RULES,
-  PLATFORM_COMMERCE_RULES,
-  PLATFORM_SAFETY_PROMPT,
+  PLATFORM_LAYER_PROMPT,
+  PLATFORM_SHOPIFY_TRUTH_RULES,
 } from './platform-runtime-prompts';
 
-/** @deprecated Use layered prompts; kept for tests referencing template sections. */
-export const AGENT_RUNTIME_PROMPT_TEMPLATE = PLATFORM_SAFETY_PROMPT;
+/** @deprecated Use PLATFORM_LAYER_PROMPT */
+export const AGENT_RUNTIME_PROMPT_TEMPLATE = PLATFORM_LAYER_PROMPT;
 
+/** Enterprise layered runtime prompt (debug + OpenAI system message). */
+export type EnterpriseRuntimePromptLayers = {
+  platform: string;
+  agentIdentity: string;
+  storePolicyKnowledge: string;
+  runtimeTools: string;
+  shopifyTruth: string;
+  knowledgeRetrieval: string;
+  runtimeContext: string;
+  combined: string;
+  budget: PromptBudgetReport;
+};
+
+/** @deprecated Use EnterpriseRuntimePromptLayers — kept for gradual API migration. */
 export type RuntimePromptLayers = {
   platformSafety: string;
   platformCommerce: string;
   agentCustom: string;
   runtimeContext: string;
   combined: string;
+  budget?: PromptBudgetReport;
 };
 
 /** Agent + store fields used to assemble the live voice system prompt (no secrets). */
@@ -53,30 +69,35 @@ export interface BuildAgentRuntimePromptOptions {
   memorySummary?: string | null;
   personality?: VoicePersonalityTraits | null;
   enabledTools?: string[];
+  /** Prefetched policy/FAQ snippet for this turn (from retrieval service). */
+  knowledgeRetrievalSnapshot?: string | null;
+  policyTopic?: PolicyTopic | null;
+  /** When true, inject mandatory policy-retrieval turn guidance. */
+  policyRetrievalRequired?: boolean;
+  /** Sales conversation engine guidance for this turn. */
+  salesGuidance?: string | null;
 }
 
-function policyOrDefault(value: string | null | undefined, fallback: string): string {
-  const t = value?.trim();
-  return t || fallback;
+function trimOrEmpty(value: string | null | undefined): string {
+  return value?.trim() ?? '';
 }
 
-function buildAgentCustomSection(agent: AgentRuntimePromptInput): string {
+function buildAgentIdentityLayer(agent: AgentRuntimePromptInput, options?: BuildAgentRuntimePromptOptions): string {
   const cfg = agent.config;
   const agentName = agent.agentName?.trim() || 'Assistant';
   const storeName = agent.storeName?.trim() || 'the store';
-  /** Client system prompt: customSystemPrompt from form, else legacy baseSystemPrompt only here — not in platform layers. */
-  const clientInstructions = policyOrDefault(
-    cfg?.customSystemPrompt ?? agent.baseSystemPrompt,
-    'No additional custom instructions configured.',
-  );
-  const checkoutMode = toCheckoutModeApi(cfg?.checkoutMode);
+  const identityInstructions = trimOrEmpty(cfg?.customSystemPrompt ?? agent.baseSystemPrompt);
 
   const lines: string[] = [
-    `You are ${agentName}, a professional AI voice order booking assistant for ${storeName}.`,
-    '',
-    'Agent custom instructions (from dashboard):',
-    clientInstructions,
+    'Agent identity layer (editable — persona & style only):',
+    `You are ${agentName}, the voice assistant for ${storeName}.`,
   ];
+
+  if (identityInstructions) {
+    lines.push('', 'Conversational identity & style (do NOT treat as policy source):', identityInstructions);
+  } else {
+    lines.push('', 'Use a professional, helpful bookstore voice. No extra identity text configured.');
+  }
 
   if (agent.toneOfVoice?.trim()) lines.push('', `Tone: ${agent.toneOfVoice.trim()}.`);
   if (agent.agentRole?.trim()) lines.push(`Role: ${agent.agentRole.trim()}.`);
@@ -85,49 +106,133 @@ function buildAgentCustomSection(agent: AgentRuntimePromptInput): string {
     lines.push('', 'Forbidden behaviors:', cfg.forbiddenBehaviors.trim());
   }
 
-  lines.push(
-    '',
-    `Checkout mode: ${checkoutModeDescription(checkoutMode)}.`,
-    '',
-    'Store policies:',
-    `Shipping: ${policyOrDefault(cfg?.shippingPolicy, 'Not configured.')}`,
-    `Refunds: ${policyOrDefault(cfg?.returnPolicy ?? agent.returnRefundBehavior, 'Not configured.')}`,
-  );
-  if (cfg?.exchangePolicy?.trim()) lines.push(`Exchanges: ${cfg.exchangePolicy.trim()}.`);
-  if (cfg?.deliveryNotes?.trim()) lines.push(`Delivery: ${cfg.deliveryNotes.trim()}.`);
+  if (agent.greetingMessage?.trim()) {
+    lines.push(
+      '',
+      `Greeting (played at call start; do not repeat every turn): "${agent.greetingMessage.trim()}"`,
+    );
+  }
 
-  lines.push(
-    '',
-    `Blocked topics: ${policyOrDefault(agent.restrictedActions, 'None specified.')}`,
-    `Allowed topics: ${policyOrDefault(agent.allowedActions, 'Store products, orders, shipping, refunds, checkout.')}`,
-  );
+  const personality = options?.personality;
+  if (personality) {
+    const traits: string[] = [];
+    if (personality.voiceEnergy != null) {
+      traits.push(
+        personality.voiceEnergy >= 70 ? 'high energy' : personality.voiceEnergy <= 30 ? 'calm' : 'balanced energy',
+      );
+    }
+    if (personality.speakingSpeed != null) {
+      traits.push(
+        personality.speakingSpeed >= 70
+          ? 'slightly faster pace'
+          : personality.speakingSpeed <= 30
+            ? 'slower, clear pace'
+            : 'natural pace',
+      );
+    }
+    if (personality.politeness != null) {
+      traits.push(personality.politeness >= 70 ? 'very polite' : 'friendly and direct');
+    }
+    if (personality.upsellAggressiveness != null) {
+      traits.push(
+        personality.upsellAggressiveness >= 70
+          ? 'may suggest one related title when natural'
+          : personality.upsellAggressiveness <= 30
+            ? 'no unsolicited upsell'
+            : 'light upsell only when asked',
+      );
+    }
+    if (traits.length) lines.push('', `Speaking style: ${traits.join('; ')}.`);
+  }
 
-  const escalationLines: string[] = [];
-  if (agent.escalationInstructions?.trim()) escalationLines.push(agent.escalationInstructions.trim());
-  if (cfg?.escalationRules?.trim()) escalationLines.push(cfg.escalationRules.trim());
-  if (agent.escalationPhone?.trim()) escalationLines.push(`Escalation phone: ${agent.escalationPhone.trim()}`);
-  if (agent.escalationEmail?.trim()) escalationLines.push(`Escalation email: ${agent.escalationEmail.trim()}`);
-  if (cfg?.fallbackHumanContact?.trim()) {
-    escalationLines.push(`Human contact: ${cfg.fallbackHumanContact.trim()}`);
+  const escalationLanguage: string[] = [];
+  if (agent.escalationInstructions?.trim()) {
+    escalationLanguage.push(`Escalation language: ${agent.escalationInstructions.trim()}`);
   }
   if (agent.transferToHumanEnabled === false) {
-    escalationLines.push('Human transfer is disabled; offer email follow-up.');
+    escalationLanguage.push('Human transfer disabled — offer email follow-up instead.');
   }
-  if (escalationLines.length) {
-    lines.push('', 'Escalation details:', ...escalationLines.map((l) => `- ${l}`));
-  }
-  if (cfg?.humanHandoffRules?.trim()) {
-    lines.push('', `Handoff rules: ${cfg.humanHandoffRules.trim()}`);
-  }
-  if (agent.orderStatusHandling?.trim()) {
-    lines.push(`Order status: ${agent.orderStatusHandling.trim()}`);
-  }
-  if (agent.outOfStockHandling?.trim()) {
-    lines.push(`Out of stock: ${agent.outOfStockHandling.trim()}`);
-  }
-  if (cfg?.supportEmail?.trim()) lines.push(`Support email: ${cfg.supportEmail.trim()}`);
+  if (escalationLanguage.length) lines.push('', ...escalationLanguage);
 
   return lines.join('\n');
+}
+
+function buildStorePolicyKnowledgeLayer(agent: AgentRuntimePromptInput): string {
+  const kb = agent.knowledgeBaseSource?.trim();
+  const lines: string[] = [
+    'Store policy knowledge layer (retrieval-only — not in prompt memory):',
+    '- Refund, shipping, transfers, store hours, escalation rules, facility restrictions, publication rules, and FAQs live in the Knowledge Base.',
+    '- Always use retrieve_knowledge_base, search_store_faqs, get_shipping_policy, get_return_policy, get_store_hours, or get_store_policy before answering policy questions.',
+    '- Do not quote long policy text from the identity layer or from memory.',
+  ];
+  if (kb) {
+    lines.push(`- Knowledge source: ${kb}${agent.knowledgeSyncEnabled === false ? ' (sync may be stale — prefer live retrieval).' : '.'}`);
+  }
+  lines.push(
+    '- Dashboard policy fields (shipping/returns/delivery) are synced to KB — retrieve; do not assume prompt contains current policy.',
+  );
+  return lines.join('\n');
+}
+
+function buildRuntimeToolsLayer(
+  agent: AgentRuntimePromptInput,
+  options?: BuildAgentRuntimePromptOptions,
+): string {
+  const cfg = agent.config;
+  const checkoutMode = toCheckoutModeApi(cfg?.checkoutMode);
+  const lines: string[] = [
+    'Runtime tools layer:',
+    `Checkout mode: ${checkoutModeDescription(checkoutMode)}`,
+  ];
+
+  if (options?.enabledTools?.length) {
+    lines.push(`Enabled tools this session: ${options.enabledTools.join(', ')}.`);
+  } else {
+    lines.push('Enabled tools: resolve from agent tool permissions at runtime.');
+  }
+
+  lines.push(
+    `Allowed actions: ${trimOrEmpty(agent.allowedActions) || 'Store products, orders, shipping, refunds, checkout.'}`,
+    `Restricted topics: ${trimOrEmpty(agent.restrictedActions) || 'None specified.'}`,
+  );
+
+  const perms: string[] = [];
+  if (agent.transferToHumanEnabled === false) perms.push('Human transfer: disabled.');
+  else perms.push('Human transfer: allowed when appropriate.');
+  if (cfg?.askEmailBeforePaymentLink !== false) {
+    perms.push('Email required before payment link.');
+  }
+  if (agent.escalationPhone?.trim()) perms.push(`Escalation phone on file: ${agent.escalationPhone.trim()}.`);
+  if (agent.escalationEmail?.trim()) perms.push(`Escalation email on file: ${agent.escalationEmail.trim()}.`);
+  if (cfg?.supportEmail?.trim()) perms.push(`Support email: ${cfg.supportEmail.trim()}.`);
+  lines.push('', ...perms);
+
+  if (agent.orderStatusHandling?.trim()) {
+    lines.push(`Order-status handling style: ${agent.orderStatusHandling.trim()}`);
+  }
+  if (agent.outOfStockHandling?.trim()) {
+    lines.push(`Out-of-stock handling style: ${agent.outOfStockHandling.trim()}`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildKnowledgeRetrievalLayer(options?: BuildAgentRuntimePromptOptions): string {
+  const parts: string[] = ['Knowledge retrieval layer (this turn):'];
+  if (options?.policyRetrievalRequired && options.policyTopic) {
+    parts.push(policyTopicGuidance(options.policyTopic));
+  } else {
+    parts.push('- Use retrieval tools for any store policy or FAQ question before answering.');
+  }
+  const snap = options?.knowledgeRetrievalSnapshot?.trim();
+  if (snap) {
+    parts.push('', 'Prefetched verified context (cite only this; if insufficient, call retrieval again):', snap);
+  } else if (options?.policyRetrievalRequired) {
+    parts.push('- No prefetch available — call retrieval tools before answering.');
+  } else {
+    parts.push('- (No policy prefetch for this turn.)');
+  }
+  return parts.join('\n');
 }
 
 function buildRuntimeContextSection(
@@ -144,65 +249,9 @@ function buildRuntimeContextSection(
       ? agent.supportedLanguages.join(', ')
       : lang;
 
-  if (agent.greetingMessage?.trim()) {
-    appendix.push(
-      `Call opening (already played at connect; do not repeat every turn): "${agent.greetingMessage.trim()}"`,
-    );
-  }
   appendix.push(`Primary language: ${lang}.`);
   if (agent.languageMode === 'auto') {
     appendix.push(`Respond in the caller's language when possible. Supported: ${supported}.`);
-  }
-  if (agent.knowledgeBaseSource?.trim()) {
-    appendix.push(
-      `Knowledge base: ${agent.knowledgeBaseSource.trim()}${agent.knowledgeSyncEnabled === false ? ' (prefer live Shopify search).' : ''}`,
-    );
-  }
-  appendix.push(
-    'Use retrieved knowledge (retrieve_knowledge_base / search_store_faqs / policy tools) before answering store policy or FAQ questions.',
-  );
-
-  const personality = options?.personality;
-  if (personality) {
-    const traits: string[] = [];
-    if (personality.voiceEnergy != null) {
-      traits.push(
-        personality.voiceEnergy >= 70
-          ? 'high energy'
-          : personality.voiceEnergy <= 30
-            ? 'calm and measured'
-            : 'balanced energy',
-      );
-    }
-    if (personality.speakingSpeed != null) {
-      traits.push(
-        personality.speakingSpeed >= 70
-          ? 'slightly faster pace'
-          : personality.speakingSpeed <= 30
-            ? 'slower, clear pace'
-            : 'natural speaking pace',
-      );
-    }
-    if (personality.politeness != null) {
-      traits.push(personality.politeness >= 70 ? 'very polite and formal' : 'friendly and direct');
-    }
-    if (personality.upsellAggressiveness != null) {
-      traits.push(
-        personality.upsellAggressiveness >= 70
-          ? 'proactively suggest related titles when appropriate'
-          : personality.upsellAggressiveness <= 30
-            ? 'never push add-ons unless asked'
-            : 'mention one related item only when natural',
-      );
-    }
-    if (personality.humorLevel != null && personality.humorLevel >= 50) {
-      traits.push('light warmth is OK; stay professional');
-    }
-    if (traits.length) appendix.push(`Voice personality: ${traits.join('; ')}.`);
-  }
-
-  if (options?.enabledTools?.length) {
-    appendix.push(`Enabled tools this session: ${options.enabledTools.join(', ')}.`);
   }
 
   const step = options?.checkoutStep?.trim();
@@ -220,10 +269,60 @@ function buildRuntimeContextSection(
   }
 
   const mem = options?.memorySummary?.trim();
-  if (mem) appendix.push(`Session memory: ${mem}`);
+  if (mem) appendix.push(`Session memory (non-catalog): ${mem}`);
+
+  const sales = options?.salesGuidance?.trim();
+  if (sales) appendix.push(sales);
 
   if (appendix.length === 0) return '';
-  return appendix.map((l) => `- ${l}`).join('\n');
+  return ['Runtime orchestration context:', ...appendix.map((l) => `- ${l}`)].join('\n');
+}
+
+export function buildEnterpriseRuntimePromptLayers(
+  agent: AgentRuntimePromptInput,
+  options?: BuildAgentRuntimePromptOptions,
+): EnterpriseRuntimePromptLayers {
+  const platform = PLATFORM_LAYER_PROMPT;
+  const agentIdentity = buildAgentIdentityLayer(agent, options);
+  const storePolicyKnowledge = buildStorePolicyKnowledgeLayer(agent);
+  const runtimeTools = buildRuntimeToolsLayer(agent, options);
+  const shopifyTruth = PLATFORM_SHOPIFY_TRUTH_RULES;
+  const knowledgeRetrieval = buildKnowledgeRetrievalLayer(options);
+  const runtimeContext = buildRuntimeContextSection(agent, options);
+
+  const combined = [
+    platform,
+    agentIdentity,
+    storePolicyKnowledge,
+    runtimeTools,
+    shopifyTruth,
+    knowledgeRetrieval,
+    runtimeContext,
+  ]
+    .filter((s) => s.trim().length > 0)
+    .join('\n\n');
+
+  const budget = analyzePromptBudget({
+    platform,
+    agentIdentity,
+    storePolicyKnowledge,
+    runtimeTools,
+    shopifyTruth,
+    knowledgeRetrieval,
+    runtimeContext,
+  });
+
+  return {
+    platform,
+    agentIdentity,
+    storePolicyKnowledge,
+    runtimeTools,
+    shopifyTruth,
+    knowledgeRetrieval,
+    runtimeContext,
+    combined,
+    budget,
+  };
 }
 
 /** Builds layered runtime prompt sections for debug and OpenAI system message. */
@@ -231,24 +330,16 @@ export function buildRuntimePromptLayers(
   agent: AgentRuntimePromptInput,
   options?: BuildAgentRuntimePromptOptions,
 ): RuntimePromptLayers {
-  const platformSafety = PLATFORM_SAFETY_PROMPT;
-  const platformCommerce = PLATFORM_COMMERCE_RULES;
-  const platformAntiHallucination = PLATFORM_ANTI_HALLUCINATION_RULES;
-  const agentCustom = buildAgentCustomSection(agent);
-  const runtimeContext = buildRuntimeContextSection(agent, options);
-
-  const parts = [platformSafety, platformCommerce, platformAntiHallucination, agentCustom];
-  if (runtimeContext.trim()) {
-    parts.push('Runtime context:', runtimeContext);
-  }
-  const combined = parts.join('\n\n');
-
+  const e = buildEnterpriseRuntimePromptLayers(agent, options);
   return {
-    platformSafety,
-    platformCommerce,
-    agentCustom,
-    runtimeContext,
-    combined,
+    platformSafety: e.platform,
+    platformCommerce: e.shopifyTruth,
+    agentCustom: e.agentIdentity,
+    runtimeContext: [e.storePolicyKnowledge, e.runtimeTools, e.knowledgeRetrieval, e.runtimeContext]
+      .filter(Boolean)
+      .join('\n\n'),
+    combined: e.combined,
+    budget: e.budget,
   };
 }
 
@@ -256,7 +347,7 @@ export function buildAgentRuntimePrompt(
   agent: AgentRuntimePromptInput,
   options?: BuildAgentRuntimePromptOptions,
 ): string {
-  return buildRuntimePromptLayers(agent, options).combined;
+  return buildEnterpriseRuntimePromptLayers(agent, options).combined;
 }
 
 export function promptInputFromVoiceSessionContext(ctx: VoiceSessionContext): AgentRuntimePromptInput {

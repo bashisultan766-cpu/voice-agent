@@ -1,3 +1,5 @@
+import { isStorePolicyQuestion } from './policy-intent.util';
+
 /**
  * High-level conversational intent for voice routing (before tools / LLM).
  * Keeps greetings and small talk from being treated as catalog searches.
@@ -7,6 +9,7 @@ export type UserUtteranceIntent =
   | 'store_category_question'
   | 'capability_question'
   | 'general_business_question'
+  | 'store_policy_question'
   | 'greeting'
   | 'small_talk'
   | 'product_search'
@@ -141,6 +144,10 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
     return 'purchase_confirmation';
   }
 
+  if (isStorePolicyQuestion(t)) {
+    return 'store_policy_question';
+  }
+
   // Product search
   if (
     hasProductOrCatalogSignal(t) &&
@@ -157,8 +164,12 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
     return 'product_search';
   }
 
-  // Longer utterances are often titles or descriptions — treat as search
-  if (words.length >= 5 && !/^(yes|no|ok|okay|sure|uh|um)\b/i.test(t)) {
+  // Longer utterances are often titles — but not policy/FAQ questions
+  if (
+    words.length >= 5 &&
+    !/^(yes|no|ok|okay|sure|uh|um)\b/i.test(t) &&
+    !isStorePolicyQuestion(t)
+  ) {
     return 'product_search';
   }
 

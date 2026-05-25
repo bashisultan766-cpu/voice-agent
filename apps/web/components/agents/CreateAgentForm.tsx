@@ -2646,7 +2646,7 @@ function StepAIInstructions({
       <FormField id="promptTemplate" label="Prompt template" optional helperText="Choose a starting point or start from scratch.">
         <FormSelect id="promptTemplate" value={data.promptTemplate} onChange={(v) => { update('promptTemplate', v); const t = PROMPT_TEMPLATES.find((x) => x.value === v); if (t?.prompt) update('systemPrompt', t.prompt); }} options={PROMPT_TEMPLATES.map((t) => ({ value: t.value, label: t.label }))} />
       </FormField>
-      <FormField id="systemPrompt" label="Main instructions (system prompt)" optional helperText="Describe what this agent should do." error={errors.systemPrompt}>
+      <FormField id="systemPrompt" label="Main instructions (identity & style)" optional helperText="Persona, tone, and how to speak — not long policies. Put refunds, shipping, hours, and FAQs in Knowledge Base; the agent retrieves them on calls." error={errors.systemPrompt}>
         <FormTextarea id="systemPrompt" value={data.systemPrompt} onChange={(v) => update('systemPrompt', v)} placeholder="You are a helpful voice assistant for the store. Answer questions about hours, orders, and products. Be polite and brief." rows={8} className="min-h-[180px] font-sans" />
       </FormField>
       <FormField id="agentRole" label="Agent role" optional helperText="e.g. Customer support agent for [Store Name].">

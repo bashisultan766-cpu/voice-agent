@@ -13,6 +13,7 @@ import { RuntimeSafetyService } from './runtime/runtime-safety.service';
 import { CallMemoryService } from './runtime/call-memory.service';
 import { ConversationFlowEngineService } from './runtime/conversation-flow-engine.service';
 import { ConversationAnalyticsService } from './runtime/conversation-analytics.service';
+import { PolicyContextPrefetchService } from './runtime/policy-context-prefetch.service';
 import { VoiceStreamMetricsService } from './runtime/voice-stream-metrics.service';
 import { VoiceCostAnalyticsService } from './runtime/voice-cost-analytics.service';
 import { VoiceStreamingSessionService } from './runtime/voice-streaming-session.service';
@@ -54,6 +55,7 @@ import { ToolsModule } from '../tools/tools.module';
     CallMemoryService,
     ConversationFlowEngineService,
     ConversationAnalyticsService,
+    PolicyContextPrefetchService,
     VoiceStreamMetricsService,
     VoiceCostAnalyticsService,
     VoiceStreamingSessionService,

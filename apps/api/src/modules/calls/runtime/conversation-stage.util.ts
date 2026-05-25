@@ -49,11 +49,11 @@ export function stageGuidance(stage: ConversationStage): string {
     case 'GREETING':
       return 'Greet warmly in one short sentence, then ask what they are looking for.';
     case 'DISCOVERY':
-      return 'Ask one clarifying question: genre, author, ISBN, or occasion. Do not list products without searching.';
+      return 'Ask one discovery question (genre, author, interest, budget). Do not list products without searching.';
     case 'RECOMMENDATION':
-      return 'Offer at most two options from search results. Mention price only if returned by tools.';
+      return 'Recommend at most two in-stock titles from tools; highlight why it fits; soft upsell only if natural.';
     case 'OBJECTION_HANDLING':
-      return 'Acknowledge concern briefly, answer with store policy or catalog facts, then one gentle next step.';
+      return 'Acknowledge concern; use retrieval or catalog tools; guide toward one confident next step to purchase.';
     case 'CHECKOUT_CONFIRMATION':
       return 'Confirm title, quantity, and variant before asking for email. One confirmation at a time.';
     case 'PAYMENT_LINK_CONFIRMATION':

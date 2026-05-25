@@ -5,7 +5,10 @@
 
 export type ObjectionType =
   | 'too_expensive'
+  | 'need_cheaper'
   | 'unsure'
+  | 'let_me_think'
+  | 'call_later'
   | 'wants_recommendation'
   | 'comparing_products'
   | 'shipping_concern'
@@ -27,15 +30,33 @@ function norm(text: string): string {
 const PATTERNS: Array<{ type: ObjectionType; re: RegExp; hint: string; seed?: string }> = [
   {
     type: 'too_expensive',
-    re: /\b(too expensive|too much|cheaper|lower price|can't afford|costs? too much|pricey)\b/i,
+    re: /\b(too expensive|too much|can't afford|costs? too much|pricey)\b/i,
     hint: 'Acknowledge budget; offer one in-stock alternative from search only, or confirm current title price from tools.',
     seed: 'I hear you on price. Would you like a similar title, or should I confirm the exact price for this one?',
   },
   {
+    type: 'need_cheaper',
+    re: /\b(need cheaper|something cheaper|less expensive|budget|affordable|lower cost)\b/i,
+    hint: 'Search for lower-priced in-stock alternatives in same genre; cite tool prices only.',
+    seed: 'I can look for a lower-priced option in stock. What genre should I search?',
+  },
+  {
     type: 'unsure',
-    re: /\b(not sure|don't know|unsure|maybe|thinking about it|still deciding|can't decide)\b/i,
+    re: /\b(not sure|don't know|unsure|maybe|still deciding|can't decide)\b/i,
     hint: 'Ask one narrowing question (genre, author, gift recipient). Do not pressure checkout.',
     seed: 'No rush. What genre or author should I narrow down for you?',
+  },
+  {
+    type: 'let_me_think',
+    re: /\b(let me think|i'll think|need to think|give me a minute|sleep on it)\b/i,
+    hint: 'Respect pause; offer to hold one title in mind or send checkout link when ready — no pressure.',
+    seed: 'Take your time. I can keep this title ready, or send a checkout link when you are set.',
+  },
+  {
+    type: 'call_later',
+    re: /\b(call (you )?later|call back|i'll call|phone later|not now|maybe later)\b/i,
+    hint: 'Recover checkout gracefully: offer email link, callback, or one alternative title.',
+    seed: 'No problem. I can email a secure checkout link, or we can pick this up when you call back.',
   },
   {
     type: 'wants_recommendation',
