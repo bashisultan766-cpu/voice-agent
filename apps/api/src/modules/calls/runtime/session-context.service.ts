@@ -3,17 +3,16 @@ import type { VoiceAgentRuntimeConfig } from '@bookstore-voice-agents/types';
 import { normalizeShopifyDomain } from '@bookstore-voice-agents/types';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
-import {
-  openAiKeyLayerPresence,
-  resolveElevenLabsKeyChain,
-  resolveOpenAiKeyChain,
-  type VoiceCredentialSource,
-} from './voice-config-resolution.util';
+import type { VoiceCredentialSource } from './voice-config-resolution.util';
+import { allowProviderEnvFallback } from '../../../common/provider-env-fallback.util';
 import {
   buildCredentialSourcesSummary,
+  resolveElevenLabsConfig,
+  resolveOpenAiConfig,
   resolveShopifyConfig,
   type AgentSecretsSlice,
   type CredentialSource,
+  type WorkspaceIntegrationSlice,
 } from '../../../common/credential-resolver.util';
 
 export interface VoiceSessionContext {
@@ -117,15 +116,16 @@ export class SessionContextService {
     const storeCity = store?.city ?? null;
     const storeTimezone = store?.timezone ?? session.agent.timezone ?? null;
 
-    let agentOpenaiPlain: string | null = null;
-    let agentElevenPlain: string | null = null;
     let agentSecrets: AgentSecretsSlice = {};
-    let useWorkspaceShopify = false;
-    let shopifyApiVersion: string | null = null;
+    const cfg = session.agent.agentConfig;
+    const useWorkspaceShopify = cfg?.useWorkspaceShopify === true;
+    const useWorkspaceOpenai = cfg?.useWorkspaceOpenai === true;
+    const useWorkspaceElevenlabs = cfg?.useWorkspaceElevenlabs === true;
+    const useWorkspaceEmail = cfg?.useWorkspaceEmail === true;
+    const shopifyApiVersion = cfg?.shopifyApiVersion ?? null;
+    let workspace: WorkspaceIntegrationSlice | null = null;
     let workspaceElevenlabsDefaultVoiceId: string | null = null;
     let workspaceElevenlabsDefaultModel: string | null = null;
-    let tiOpenaiEnc: string | null = null;
-    let tiElevenEnc: string | null = null;
 
     if (session.agent.secretsEnc && this.encryption.isAvailable()) {
       const dec = this.encryption.decryptFromStorage(session.agent.secretsEnc);
@@ -136,18 +136,12 @@ export class SessionContextService {
             elevenlabsApiKey?: string;
           };
           agentSecrets = secrets;
-          agentOpenaiPlain = typeof secrets.openaiApiKey === 'string' ? secrets.openaiApiKey : null;
-          agentElevenPlain = typeof secrets.elevenlabsApiKey === 'string' ? secrets.elevenlabsApiKey : null;
         } catch {
           /* ignore - keep keys null */
         }
       }
     }
 
-    useWorkspaceShopify = session.agent.agentConfig?.useWorkspaceShopify === true;
-    shopifyApiVersion = session.agent.agentConfig?.shopifyApiVersion ?? null;
-
-    let workspaceShopify: { shopifyStoreUrl?: string; shopifyAdminToken?: string } | null = null;
     if (this.encryption.isAvailable()) {
       const ti = await this.prisma.tenantIntegration.findUnique({
         where: { tenantId: session.tenantId },
@@ -162,18 +156,33 @@ export class SessionContextService {
       });
       workspaceElevenlabsDefaultVoiceId = ti?.elevenlabsDefaultVoiceId?.trim() || null;
       workspaceElevenlabsDefaultModel = ti?.elevenlabsDefaultModel?.trim() || null;
-      tiOpenaiEnc = ti?.openaiApiKeyEnc ?? null;
-      tiElevenEnc = ti?.elevenlabsApiKeyEnc ?? null;
-      if (ti?.shopifyShopDomain?.trim()) {
-        const host = ti.shopifyShopDomain.trim();
-        workspaceShopify = {
-          shopifyStoreUrl: host.startsWith('http') ? host : `https://${host}`,
+      if (ti) {
+        const host = ti.shopifyShopDomain?.trim();
+        workspace = {
+          shopifyStoreUrl: host ? (host.startsWith('http') ? host : `https://${host}`) : undefined,
           shopifyAdminToken: ti.shopifyAdminTokenEnc
             ? (this.encryption.decryptFromStorage(ti.shopifyAdminTokenEnc) ?? undefined)
             : undefined,
+          openaiApiKey: ti.openaiApiKeyEnc
+            ? (this.encryption.decryptFromStorage(ti.openaiApiKeyEnc) ?? undefined)
+            : undefined,
+          elevenlabsApiKey: ti.elevenlabsApiKeyEnc
+            ? (this.encryption.decryptFromStorage(ti.elevenlabsApiKeyEnc) ?? undefined)
+            : undefined,
+          elevenlabsDefaultVoiceId: workspaceElevenlabsDefaultVoiceId ?? undefined,
+          elevenlabsDefaultModel: workspaceElevenlabsDefaultModel ?? undefined,
         };
       }
     }
+
+    const envSlice = allowProviderEnvFallback()
+      ? {
+          shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
+          shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
+          openaiApiKey: process.env.OPENAI_API_KEY,
+          elevenlabsApiKey: process.env.ELEVENLABS_API_KEY,
+        }
+      : undefined;
 
     const shopifyResolved = resolveShopifyConfig({
       agent: {
@@ -182,11 +191,8 @@ export class SessionContextService {
         useWorkspaceShopify,
         shopifyApiVersion,
       },
-      workspace: workspaceShopify,
-      env: {
-        shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-        shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-      },
+      workspace,
+      env: envSlice,
     });
     const shopifyAdminToken = shopifyResolved?.shopifyAdminToken ?? null;
     const credentialSources = buildCredentialSourcesSummary({
@@ -194,49 +200,47 @@ export class SessionContextService {
         shopifyStoreUrl: session.agent.shopifyStoreUrl,
         secrets: agentSecrets,
         useWorkspaceShopify,
-        useWorkspaceEmail: session.agent.agentConfig?.useWorkspaceEmail !== false,
+        useWorkspaceEmail,
+        useWorkspaceOpenai,
+        useWorkspaceElevenlabs,
         voiceId: session.agent.voiceId,
       },
-      workspace: workspaceShopify ?? undefined,
-      env: {
-        openaiApiKey: process.env.OPENAI_API_KEY,
-        elevenlabsApiKey: process.env.ELEVENLABS_API_KEY,
-      },
+      workspace: workspace ?? undefined,
+      env: envSlice,
     });
 
-    const encAvail = this.encryption.isAvailable();
-    const openaiResolved = resolveOpenAiKeyChain({
-      agentSecretPlain: agentOpenaiPlain,
-      tenantEnc: tiOpenaiEnc,
-      decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-      envPlain: process.env.OPENAI_API_KEY,
-      encryptionAvailable: encAvail,
+    const openaiResolved = resolveOpenAiConfig({
+      agentSecrets,
+      workspace,
+      useWorkspaceOpenai,
+      envApiKey: envSlice?.openaiApiKey,
     });
-    const openaiLayers = openAiKeyLayerPresence({
-      agentSecretPlain: agentOpenaiPlain,
-      tenantEnc: tiOpenaiEnc,
-      envPlain: process.env.OPENAI_API_KEY,
+    const openaiKeySource: VoiceCredentialSource =
+      openaiResolved?.source === 'workspace'
+        ? 'tenant'
+        : openaiResolved?.source === 'env'
+          ? 'env'
+          : openaiResolved?.source === 'agent'
+            ? 'agent'
+            : 'none';
+    const elevenResolved = resolveElevenLabsConfig({
+      agentSecrets,
+      workspace,
+      useWorkspaceElevenlabs,
+      envApiKey: envSlice?.elevenlabsApiKey,
+      agentVoiceId: session.agent.voiceId,
     });
-    const openaiKeySource = openaiResolved.source;
-    console.log({
-      openaiKeySource,
-      agentKeyPresent: openaiLayers.agentKeyPresent,
-      tenantKeyPresent: openaiLayers.tenantKeyPresent,
-      envKeyPresent: openaiLayers.envKeyPresent,
-      callSessionId: session.id,
-      agentId: session.agentId,
-      tenantId: session.tenantId,
-    });
-    const elevenResolved = resolveElevenLabsKeyChain({
-      agentSecretPlain: agentElevenPlain,
-      tenantEnc: tiElevenEnc,
-      decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-      envPlain: process.env.ELEVENLABS_API_KEY,
-      encryptionAvailable: encAvail,
-    });
+    const elevenLabsKeySource: VoiceCredentialSource =
+      elevenResolved?.source === 'workspace'
+        ? 'tenant'
+        : elevenResolved?.source === 'env'
+          ? 'env'
+          : elevenResolved?.source === 'agent'
+            ? 'agent'
+            : 'none';
 
-    const openaiApiKey = openaiResolved.value;
-    const elevenlabsApiKey = elevenResolved.value;
+    const openaiApiKey = openaiResolved?.apiKey ?? null;
+    const elevenlabsApiKey = elevenResolved?.apiKey ?? null;
 
     const shopDomain =
       normalizeShopifyDomain(shopifyResolved?.shopifyStoreUrl ?? session.agent.shopifyStoreUrl) ||
@@ -255,15 +259,15 @@ export class SessionContextService {
         voiceProvider: session.agent.voiceProvider ?? null,
         voiceIdPresent: Boolean(voiceIdEffective?.trim()),
         openaiKeySource,
-        elevenLabsKeySource: elevenResolved.source,
+        elevenLabsKeySource,
         openaiKeyPresent: Boolean(openaiApiKey?.trim()),
         elevenLabsKeyPresent: Boolean(elevenlabsApiKey?.trim()),
         configUpdatedAt,
         fieldsUpdated: null,
         /** If both agent and tenant carry OpenAI keys, agent wins; log helps debug “Settings ignored” reports. */
         precedenceNote:
-          openaiKeySource === 'agent' && tiOpenaiEnc
-            ? 'active_openai_from_agent_secrets_tenant_key_present_but_not_used'
+          openaiKeySource === 'agent' && workspace?.openaiApiKey
+            ? 'active_openai_from_agent_secrets_workspace_key_present_but_not_used'
             : null,
       }),
     );
@@ -358,7 +362,7 @@ export class SessionContextService {
         },
         runtimeCredentialHints: {
           openaiKeySource,
-          elevenLabsKeySource: elevenResolved.source,
+          elevenLabsKeySource,
           shopifySource: credentialSources.shopify.source,
           shopifyConfigured: credentialSources.shopify.configured,
           resendSource: credentialSources.resend.source,

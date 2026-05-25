@@ -38,6 +38,16 @@ import {
 import { VoicePromptAudioService } from './voice-prompt-audio.service';
 import { classifyUserIntent } from '../../calls/runtime/user-intent-classifier.util';
 import { buildInstantAckMetadataPatch, selectInstantAcknowledgement } from './instant-acknowledgement.util';
+import {
+  buildMediaStreamConnectTwiML,
+  isMediaStreamInboundEnabled,
+} from './twiml/media-stream.twiml';
+import { VoiceStreamMetricsService } from '../../calls/runtime/voice-stream-metrics.service';
+import { VoiceCostAnalyticsService } from '../../calls/runtime/voice-cost-analytics.service';
+import { VoiceStreamingSessionService } from '../../calls/runtime/voice-streaming-session.service';
+import { ElevenLabsStreamingService } from '../elevenlabs/elevenlabs-streaming.service';
+import { firstSpeakableChunk } from '../../calls/runtime/voice-response-chunker.util';
+import { stallAcknowledgement } from '../../calls/runtime/streaming-fallback.util';
 
 export interface InboundCallPayload {
   CallSid: string;
@@ -96,6 +106,8 @@ type DeferredVoiceJobMetadata =
       usedElevenLabs: boolean;
       audioBytes?: number;
       ttsGenerationTimeMs: number;
+      firstChunkPlaybackUrl?: string;
+      streamingEnabled?: boolean;
     }
   | {
       jobId: string;
@@ -130,6 +142,10 @@ export class TwilioWebhookService implements OnModuleInit {
     private readonly voicePromptAudio: VoicePromptAudioService,
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly streamMetrics: VoiceStreamMetricsService,
+    private readonly voiceCost: VoiceCostAnalyticsService,
+    private readonly streamingSession: VoiceStreamingSessionService,
+    private readonly elevenStreaming: ElevenLabsStreamingService,
   ) {}
 
   onModuleInit(): void {
@@ -407,6 +423,7 @@ export class TwilioWebhookService implements OnModuleInit {
       agentId: context.agentId,
       storeId: context.storeId,
     });
+
     await this.callEvents.log(context.tenantId, session.id, CallEventType.AGENT_RESOLVED, {
       agentId: context.agentId,
       to: payload.To,
@@ -432,6 +449,24 @@ export class TwilioWebhookService implements OnModuleInit {
     );
 
     const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+
+    if (isMediaStreamInboundEnabled()) {
+      const wsBase = origin.replace(/^http/i, 'wss');
+      const streamUrl = `${wsBase}/api/twilio/voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
+      const twimlStream = buildMediaStreamConnectTwiML(streamUrl, session.id);
+      await this.streamMetrics.merge(session.id, {
+        streamingMode: 'media_stream',
+        streamingStatus: 'listening',
+      });
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.inbound_media_stream',
+          callSessionId: session.id,
+        }),
+      );
+      return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };
+    }
+
     const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(
       session.id,
     )}`;
@@ -620,6 +655,19 @@ export class TwilioWebhookService implements OnModuleInit {
         agentResolved: false,
       };
     }
+
+    const unstablePartial =
+      typeof (payload as { UnstableSpeechResult?: string }).UnstableSpeechResult === 'string'
+        ? (payload as { UnstableSpeechResult?: string }).UnstableSpeechResult!.trim()
+        : '';
+    if (unstablePartial) {
+      await this.streamMetrics.recordPartialTranscript(callSessionId, unstablePartial);
+    }
+    await this.streamingSession.cancelDeferredJobForBargeIn(callSessionId);
+    await this.streamMetrics.merge(callSessionId, {
+      sttLatencyMs: Date.now() - handlerStartedAt,
+      streamingMode: 'gather_deferred',
+    });
 
     const ctx = await this.sessionContext.load(callSessionId);
     if (!ctx) {
@@ -1570,9 +1618,29 @@ export class TwilioWebhookService implements OnModuleInit {
       return;
     }
 
+    if (await this.streamingSession.isBargeInRequested(callSessionId)) {
+      await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'barge_in_interrupted');
+      return;
+    }
+
     try {
+      const llmStarted = Date.now();
       const utter = await this.voiceRuntime.processUtterance(callSessionId, speechText, []);
+      const llmLatencyMs = Date.now() - llmStarted;
       const assistantResponse = utter.reply;
+      const proof = utter.turnProof as Record<string, unknown> | undefined;
+      await this.streamMetrics.merge(callSessionId, {
+        llmLatencyMs,
+        streamingStatus: 'processing',
+        toolLatencyMs:
+          typeof proof?.responseDelayMs === 'number' ? (proof.responseDelayMs as number) : llmLatencyMs,
+      });
+      if (typeof proof?.openaiUsed === 'boolean') {
+        await this.voiceCost.recordOpenAiUsage(callSessionId, {
+          promptTokens: 800,
+          completionTokens: Math.ceil(assistantResponse.length / 4),
+        });
+      }
       this.logger.log(
         JSON.stringify({
           event: 'twilio.voice.llm_reply_generated',
@@ -1585,18 +1653,37 @@ export class TwilioWebhookService implements OnModuleInit {
         }),
       );
 
+      if (await this.streamingSession.isBargeInRequested(callSessionId)) {
+        await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'barge_in_interrupted');
+        return;
+      }
+
       const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
-      const ttsStart = Date.now();
-      const tts = await this.buildElevenLabsPlaybackUrl(origin, assistantResponse, {
+      const voiceOpts = {
         callSessionId,
         tenantId: ctx.tenantId,
-        phase: 'gather_reply',
+        phase: 'gather_reply' as const,
         voiceId: this.resolveElevenLabsVoiceId(ctx.agent),
         elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
         elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
         voiceStyle: ctx.agent.voiceStyle ?? undefined,
-      });
+      };
+      const firstChunkText = firstSpeakableChunk(assistantResponse);
+      const ttsStart = Date.now();
+      const [firstChunkTts, tts] = await Promise.all([
+        firstChunkText.length < assistantResponse.length
+          ? this.buildElevenLabsPlaybackUrl(origin, firstChunkText, voiceOpts)
+          : Promise.resolve({ playbackUrl: undefined as string | undefined }),
+        this.buildElevenLabsPlaybackUrl(origin, assistantResponse, voiceOpts),
+      ]);
       const ttsGenerationTimeMs = tts.tts_generation_time_ms ?? Date.now() - ttsStart;
+      await this.voiceCost.recordElevenLabsUsage(callSessionId, assistantResponse.length);
+      await this.streamMetrics.merge(callSessionId, {
+        ttsLatencyMs: ttsGenerationTimeMs,
+        chunksEmitted: Math.max(1, firstChunkText.length < assistantResponse.length ? 2 : 1),
+        streamingStatus: 'speaking',
+        agentSpeaking: true,
+      });
 
       const row = await this.callsService.findOneById(callSessionId);
       const meta =
@@ -1623,11 +1710,15 @@ export class TwilioWebhookService implements OnModuleInit {
           momentPromptPlayed: cur.momentPromptPlayed,
           assistantResponse,
           playbackUrl: tts.playbackUrl,
+          firstChunkPlaybackUrl:
+            'playbackUrl' in firstChunkTts ? firstChunkTts.playbackUrl : undefined,
           usedElevenLabs: Boolean(tts.playbackUrl),
           audioBytes: tts.audioBytes,
           ttsGenerationTimeMs,
+          streamingEnabled: true,
         },
       });
+      await this.streamingSession.clearBargeIn(callSessionId);
 
       const responseDelayMs = Date.now() - cur.startedAtMs;
       const fillerUsedLog = meta.fillerUsed === true;
@@ -1654,6 +1745,12 @@ export class TwilioWebhookService implements OnModuleInit {
           deferred: true,
         }),
       );
+      const stall = stallAcknowledgement(
+        message.includes('timeout') ? 'processing_timeout' : 'openai_slow',
+      );
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        lastStallPhrase: stall,
+      });
       await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, message);
     }
   }

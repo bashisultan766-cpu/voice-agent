@@ -1,6 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { PrismaModule } from '../../../database/prisma.module';
 import { TwilioVoiceController } from './twilio.controller';
 import { TwilioSignatureService } from './twilio-signature.service';
+import { TwilioAuthTokenResolverService } from './twilio-auth-token-resolver.service';
 import { TwilioWebhookService } from './twilio-webhook.service';
 import { TwilioStatusCallbackService } from './twilio-status-callback.service';
 import { AgentResolutionService } from './agent-resolution.service';
@@ -10,11 +12,13 @@ import { AnalyticsModule } from '../../analytics/analytics.module';
 import { ElevenLabsModule } from '../elevenlabs/elevenlabs.module';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
 import { VoicePromptAudioService } from './voice-prompt-audio.service';
+import { TwilioMediaStreamService } from './twilio-media-stream.service';
 
 @Module({
-  imports: [forwardRef(() => CallsModule), AnalyticsModule, ElevenLabsModule],
+  imports: [PrismaModule, forwardRef(() => CallsModule), AnalyticsModule, ElevenLabsModule],
   controllers: [TwilioVoiceController],
   providers: [
+    TwilioAuthTokenResolverService,
     TwilioSignatureService,
     TwilioWebhookService,
     TwilioStatusCallbackService,
@@ -22,6 +26,7 @@ import { VoicePromptAudioService } from './voice-prompt-audio.service';
     AgentResolutionService,
     TwilioTtsCacheService,
     VoicePromptAudioService,
+    TwilioMediaStreamService,
   ],
   exports: [AgentResolutionService, TwilioSmsService],
 })

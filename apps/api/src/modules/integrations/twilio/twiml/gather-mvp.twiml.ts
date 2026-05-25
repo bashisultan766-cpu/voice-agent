@@ -200,7 +200,7 @@ ${lines.join('\n')}
 /**
  * Escape text node content for TwiML body elements.
  */
-function escapeXml(text: string): string {
+export function escapeXml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -212,6 +212,6 @@ function escapeXml(text: string): string {
 /**
  * Escape attribute values (URLs, timeouts, language codes).
  */
-function escapeXmlAttribute(value: string): string {
+export function escapeXmlAttribute(value: string): string {
   return escapeXml(value);
 }

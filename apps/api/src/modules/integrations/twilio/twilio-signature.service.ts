@@ -3,15 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import type { Request } from 'express';
 import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
+import { TwilioAuthTokenResolverService } from './twilio-auth-token-resolver.service';
 
 /**
  * Validates Twilio request signature (HMAC-SHA1 of URL + sorted POST params, Base64).
- * Production: set VALIDATE_TWILIO_SIGNATURES=true and TWILIO_AUTH_TOKEN.
- * @see https://www.twilio.com/docs/usage/security#validating-requests
+ * Uses per-agent Twilio credentials when the called number maps to an agent.
  */
 @Injectable()
 export class TwilioSignatureService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly authTokenResolver: TwilioAuthTokenResolverService,
+  ) {}
 
   private isTrustedProxyUrlHeader(req: Request): boolean {
     const expected = this.config.get<string>('TWILIO_PROXY_SHARED_SECRET')?.trim();
@@ -28,14 +31,10 @@ export class TwilioSignatureService {
     return this.config.get<string>('VALIDATE_TWILIO_SIGNATURES') !== 'false';
   }
 
-  validate(url: string, params: Record<string, string>, signature: string): boolean {
-    const authToken = this.config.get<string>('TWILIO_AUTH_TOKEN');
+  validateWithToken(url: string, params: Record<string, string>, signature: string, authToken: string): boolean {
     if (!authToken || !signature) return false;
     const payload = url + this.sortedParams(params);
-    const expected = crypto
-      .createHmac('sha1', authToken)
-      .update(payload)
-      .digest('base64');
+    const expected = crypto.createHmac('sha1', authToken).update(payload).digest('base64');
     try {
       const sigBuf = Buffer.from(signature, 'base64');
       const expBuf = Buffer.from(expected, 'base64');
@@ -44,6 +43,27 @@ export class TwilioSignatureService {
     } catch {
       return false;
     }
+  }
+
+  /** @deprecated Use validateInbound; kept for callers passing a single token. */
+  validate(url: string, params: Record<string, string>, signature: string): boolean {
+    const authToken = this.config.get<string>('TWILIO_AUTH_TOKEN');
+    if (!authToken) return false;
+    return this.validateWithToken(url, params, signature, authToken);
+  }
+
+  /** Validate signature using agent/workspace token for To, then optional global fallback. */
+  async validateInbound(
+    url: string,
+    params: Record<string, string>,
+    signature: string,
+  ): Promise<boolean> {
+    const to = params.To ?? params.to;
+    const candidates = await this.authTokenResolver.resolveValidationTokens(to);
+    for (const { token } of candidates) {
+      if (this.validateWithToken(url, params, signature, token)) return true;
+    }
+    return false;
   }
 
   resolveValidationUrl(req: Request): string {

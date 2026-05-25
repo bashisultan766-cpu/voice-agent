@@ -764,7 +764,7 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
             label="Resend key"
             value={(agent.resendApiKeyConfigured as boolean) ? 'Configured (encrypted)' : 'Not set on agent'}
           />
-          <DetailRow label="Use workspace email" value={agent.useWorkspaceEmail !== false ? 'Yes' : 'No'} />
+          <DetailRow label="Use workspace email" value={agent.useWorkspaceEmail === true ? 'Yes' : 'No'} />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button

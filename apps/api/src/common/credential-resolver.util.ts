@@ -3,6 +3,7 @@ import {
   type CredentialSource,
   type ResolvedCredential,
 } from './credential-priority.util';
+import { allowProviderEnvFallback } from './provider-env-fallback.util';
 
 export type { CredentialSource, ResolvedCredential };
 export { resolveCredentialPriority };
@@ -14,6 +15,15 @@ export type AgentSecretsSlice = {
   twilioAccountSid?: string;
   twilioAuthToken?: string;
   resendApiKey?: string;
+};
+
+/** Per-agent workspace opt-in flags (all default false in DB). */
+export type AgentWorkspaceFlags = {
+  useWorkspaceShopify?: boolean;
+  useWorkspaceOpenai?: boolean;
+  useWorkspaceElevenlabs?: boolean;
+  useWorkspaceTwilio?: boolean;
+  useWorkspaceEmail?: boolean;
 };
 
 export type WorkspaceIntegrationSlice = {
@@ -70,10 +80,10 @@ export type ShopifyCredentialSummary = {
 
 export type CredentialSourcesSummary = {
   shopify: ShopifyCredentialSummary;
-  openai: { source: CredentialSource; configured: boolean };
-  elevenlabs: { source: CredentialSource; configured: boolean };
-  twilio: { authSource: CredentialSource; configured: boolean };
-  resend: { source: CredentialSource; configured: boolean };
+  openai: { source: CredentialSource; configured: boolean; useWorkspaceOpenai: boolean };
+  elevenlabs: { source: CredentialSource; configured: boolean; useWorkspaceElevenlabs: boolean };
+  twilio: { authSource: CredentialSource; configured: boolean; useWorkspaceTwilio: boolean };
+  resend: { source: CredentialSource; configured: boolean; useWorkspaceEmail: boolean };
 };
 
 const DEFAULT_SHOPIFY_API_VERSION = '2024-10';
@@ -92,6 +102,11 @@ function agentHasOwnShopify(agent: {
   return Boolean(url && token);
 }
 
+function envOrUndef(key: string | undefined): string | undefined {
+  if (!allowProviderEnvFallback()) return undefined;
+  return trimOrUndef(key);
+}
+
 /** Last 4 chars for safe logs only. */
 export function maskSecretTail(value: string | undefined): string | null {
   const t = value?.trim();
@@ -102,7 +117,6 @@ export function maskSecretTail(value: string | undefined): string | null {
 
 /**
  * Shopify: agent store + token win. Workspace/env only when useWorkspaceShopify is true.
- * Never use workspace/env when the agent has its own Shopify credentials.
  */
 export function resolveShopifyConfig(args: {
   agent: {
@@ -122,7 +136,7 @@ export function resolveShopifyConfig(args: {
   const apiVersion =
     trimOrUndef(args.agent.shopifyApiVersion) ||
     trimOrUndef(args.workspace?.shopifyApiVersion) ||
-    trimOrUndef(args.env?.shopifyApiVersion) ||
+    envOrUndef(args.env?.shopifyApiVersion) ||
     DEFAULT_SHOPIFY_API_VERSION;
 
   if (agentHasOwnShopify(args.agent)) {
@@ -139,19 +153,17 @@ export function resolveShopifyConfig(args: {
   const urlResolved = resolveCredentialPriority(
     undefined,
     trimOrUndef(args.workspace?.shopifyStoreUrl),
-    trimOrUndef(args.env?.shopifyStoreUrl),
+    envOrUndef(args.env?.shopifyStoreUrl),
   );
   const tokenResolved = resolveCredentialPriority(
     undefined,
     trimOrUndef(args.workspace?.shopifyAdminToken),
-    trimOrUndef(args.env?.shopifyAdminToken),
+    envOrUndef(args.env?.shopifyAdminToken),
   );
   if (!urlResolved.value || !tokenResolved.value) return null;
 
   const source: CredentialSource =
-    tokenResolved.source === 'env' || urlResolved.source === 'env'
-      ? 'env'
-      : 'workspace';
+    tokenResolved.source === 'env' || urlResolved.source === 'env' ? 'env' : 'workspace';
 
   return {
     shopifyStoreUrl: urlResolved.value,
@@ -172,12 +184,18 @@ export function resolveShopifyConfigOrThrow(args: Parameters<typeof resolveShopi
 export function resolveOpenAiConfig(args: {
   agentSecrets?: AgentSecretsSlice;
   workspace?: WorkspaceIntegrationSlice | null;
+  useWorkspaceOpenai?: boolean;
   envApiKey?: string;
 }): ResolvedOpenAiConfig | null {
+  const agentKey = trimOrUndef(args.agentSecrets?.openaiApiKey);
+  if (agentKey) return { apiKey: agentKey, source: 'agent' };
+
+  if (args.useWorkspaceOpenai !== true) return null;
+
   const resolved = resolveCredentialPriority(
-    trimOrUndef(args.agentSecrets?.openaiApiKey),
+    undefined,
     trimOrUndef(args.workspace?.openaiApiKey),
-    trimOrUndef(args.envApiKey),
+    envOrUndef(args.envApiKey),
   );
   if (!resolved.value || resolved.source === 'missing') return null;
   return { apiKey: resolved.value, source: resolved.source };
@@ -186,13 +204,23 @@ export function resolveOpenAiConfig(args: {
 export function resolveElevenLabsConfig(args: {
   agentSecrets?: AgentSecretsSlice;
   workspace?: WorkspaceIntegrationSlice | null;
+  useWorkspaceElevenlabs?: boolean;
   envApiKey?: string;
   agentVoiceId?: string | null;
 }): ResolvedElevenLabsConfig | null {
+  const agentKey = trimOrUndef(args.agentSecrets?.elevenlabsApiKey);
+  if (agentKey) {
+    const voiceId =
+      trimOrUndef(args.agentVoiceId) || trimOrUndef(args.workspace?.elevenlabsDefaultVoiceId);
+    return { apiKey: agentKey, source: 'agent', voiceId };
+  }
+
+  if (args.useWorkspaceElevenlabs !== true) return null;
+
   const keyResolved = resolveCredentialPriority(
-    trimOrUndef(args.agentSecrets?.elevenlabsApiKey),
+    undefined,
     trimOrUndef(args.workspace?.elevenlabsApiKey),
-    trimOrUndef(args.envApiKey),
+    envOrUndef(args.envApiKey),
   );
   if (!keyResolved.value || keyResolved.source === 'missing') return null;
   const voiceId =
@@ -207,16 +235,26 @@ export function resolveElevenLabsConfig(args: {
 export function resolveTwilioConfig(args: {
   agentSecrets?: AgentSecretsSlice;
   workspace?: WorkspaceIntegrationSlice | null;
+  useWorkspaceTwilio?: boolean;
   agentPhoneNumber?: string | null;
 }): ResolvedTwilioConfig | null {
-  const sidResolved = resolveCredentialPriority(
-    trimOrUndef(args.agentSecrets?.twilioAccountSid),
-    trimOrUndef(args.workspace?.twilioAccountSid),
-  );
-  const authResolved = resolveCredentialPriority(
-    trimOrUndef(args.agentSecrets?.twilioAuthToken),
-    trimOrUndef(args.workspace?.twilioAuthToken),
-  );
+  const agentSid = trimOrUndef(args.agentSecrets?.twilioAccountSid);
+  const agentAuth = trimOrUndef(args.agentSecrets?.twilioAuthToken);
+  if (agentSid && agentAuth) {
+    const phone = trimOrUndef(args.agentPhoneNumber) || trimOrUndef(args.workspace?.twilioPhoneNumber);
+    return {
+      accountSid: agentSid,
+      authToken: agentAuth,
+      phoneNumber: phone,
+      sidSource: 'agent',
+      authSource: 'agent',
+    };
+  }
+
+  if (args.useWorkspaceTwilio !== true) return null;
+
+  const sidResolved = resolveCredentialPriority(undefined, trimOrUndef(args.workspace?.twilioAccountSid));
+  const authResolved = resolveCredentialPriority(undefined, trimOrUndef(args.workspace?.twilioAuthToken));
   if (!sidResolved.value || !authResolved.value) return null;
   const phone =
     trimOrUndef(args.agentPhoneNumber) || trimOrUndef(args.workspace?.twilioPhoneNumber);
@@ -224,52 +262,71 @@ export function resolveTwilioConfig(args: {
     accountSid: sidResolved.value,
     authToken: authResolved.value,
     phoneNumber: phone,
-    sidSource: sidResolved.source,
-    authSource: authResolved.source,
+    sidSource: 'workspace',
+    authSource: 'workspace',
   };
+}
+
+/** Resolve Twilio auth token only (webhook signature validation). */
+export function resolveTwilioAuthToken(args: {
+  agentSecrets?: AgentSecretsSlice;
+  workspace?: WorkspaceIntegrationSlice | null;
+  useWorkspaceTwilio?: boolean;
+}): { token: string; source: CredentialSource } | null {
+  const cfg = resolveTwilioConfig({
+    agentSecrets: args.agentSecrets,
+    workspace: args.workspace,
+    useWorkspaceTwilio: args.useWorkspaceTwilio,
+  });
+  if (!cfg) return null;
+  return { token: cfg.authToken, source: cfg.authSource };
 }
 
 export function resolveEmailKeyConfig(args: {
   agentSecrets?: AgentSecretsSlice;
   workspace?: WorkspaceIntegrationSlice | null;
-  envApiKey?: string;
   useWorkspaceEmail?: boolean;
-  /** When false, RESEND_API_KEY env is never used (production default). */
-  allowEnvFallback?: boolean;
+  envApiKey?: string;
 }): ResolvedEmailKeyConfig | null {
   const agentKey = trimOrUndef(args.agentSecrets?.resendApiKey);
-  if (agentKey) {
-    return { apiKey: agentKey, source: 'agent' };
-  }
+  if (agentKey) return { apiKey: agentKey, source: 'agent' };
 
-  const allowEnv =
-    args.allowEnvFallback ?? (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production');
-  const envKey = allowEnv ? trimOrUndef(args.envApiKey) : undefined;
-  const useWorkspace = args.useWorkspaceEmail !== false;
+  if (args.useWorkspaceEmail !== true) return null;
 
-  if (useWorkspace) {
-    const keyResolved = resolveCredentialPriority(
-      undefined,
-      trimOrUndef(args.workspace?.resendApiKey),
-      envKey,
-    );
-    if (!keyResolved.value || keyResolved.source === 'missing') return null;
-    return { apiKey: keyResolved.value, source: keyResolved.source };
-  }
+  const keyResolved = resolveCredentialPriority(
+    undefined,
+    trimOrUndef(args.workspace?.resendApiKey),
+    envOrUndef(args.envApiKey),
+  );
+  if (!keyResolved.value || keyResolved.source === 'missing') return null;
+  return { apiKey: keyResolved.value, source: keyResolved.source };
+}
 
-  if (envKey) {
-    return { apiKey: envKey, source: 'env' };
-  }
-  return null;
+export function resolveEmailFromAddress(args: {
+  agentSenderAddress?: string | null;
+  workspaceFromEmail?: string | null;
+  envFromEmail?: string | null;
+  useWorkspaceEmail?: boolean;
+}): { address: string; source: CredentialSource } | null {
+  const agentAddr = trimOrUndef(args.agentSenderAddress);
+  if (agentAddr) return { address: agentAddr, source: 'agent' };
+
+  if (args.useWorkspaceEmail !== true) return null;
+
+  const resolved = resolveCredentialPriority(
+    undefined,
+    trimOrUndef(args.workspaceFromEmail),
+    envOrUndef(args.envFromEmail),
+  );
+  if (!resolved.value || resolved.source === 'missing') return null;
+  return { address: resolved.value, source: resolved.source };
 }
 
 /** Non-secret credential source summary for API/readiness/debug. */
 export function buildCredentialSourcesSummary(args: {
-  agent: {
+  agent: AgentWorkspaceFlags & {
     shopifyStoreUrl?: string | null;
     secrets?: AgentSecretsSlice;
-    useWorkspaceShopify?: boolean;
-    useWorkspaceEmail?: boolean;
     voiceId?: string | null;
   };
   workspace?: WorkspaceIntegrationSlice | null;
@@ -279,10 +336,12 @@ export function buildCredentialSourcesSummary(args: {
     resendApiKey?: string;
     shopifyStoreUrl?: string;
     shopifyAdminToken?: string;
+    resendFromEmail?: string;
   };
 }): CredentialSourcesSummary {
+  const flags = args.agent;
   const shopifyResolved = resolveShopifyConfig({
-    agent: args.agent,
+    agent: flags,
     workspace: args.workspace,
     env: args.env,
   });
@@ -292,58 +351,61 @@ export function buildCredentialSourcesSummary(args: {
   let shopifySource: CredentialSource = 'missing';
   if (shopifyResolved) {
     shopifySource = shopifyResolved.source;
-  } else if (workspaceHasShopify && args.agent.useWorkspaceShopify !== true) {
-    /** Workspace has Shopify but agent did not opt in — report as workspace (blocked) for readiness UI. */
+  } else if (workspaceHasShopify && flags.useWorkspaceShopify !== true) {
     shopifySource = 'workspace';
   }
 
   const openai = resolveOpenAiConfig({
-    agentSecrets: args.agent.secrets,
+    agentSecrets: flags.secrets,
     workspace: args.workspace,
+    useWorkspaceOpenai: flags.useWorkspaceOpenai,
     envApiKey: args.env?.openaiApiKey,
   });
   const eleven = resolveElevenLabsConfig({
-    agentSecrets: args.agent.secrets,
+    agentSecrets: flags.secrets,
     workspace: args.workspace,
+    useWorkspaceElevenlabs: flags.useWorkspaceElevenlabs,
     envApiKey: args.env?.elevenlabsApiKey,
-    agentVoiceId: args.agent.voiceId,
+    agentVoiceId: flags.voiceId,
   });
   const twilio = resolveTwilioConfig({
-    agentSecrets: args.agent.secrets,
+    agentSecrets: flags.secrets,
     workspace: args.workspace,
+    useWorkspaceTwilio: flags.useWorkspaceTwilio,
   });
-  const allowEnvResend =
-    typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
   const resend = resolveEmailKeyConfig({
-    agentSecrets: args.agent.secrets,
+    agentSecrets: flags.secrets,
     workspace: args.workspace,
+    useWorkspaceEmail: flags.useWorkspaceEmail,
     envApiKey: args.env?.resendApiKey,
-    useWorkspaceEmail: args.agent.useWorkspaceEmail,
-    allowEnvFallback: allowEnvResend,
   });
 
   return {
     shopify: {
       configured: Boolean(shopifyResolved),
       source: shopifySource,
-      useWorkspaceShopify: args.agent.useWorkspaceShopify === true,
-      shopifyStoreUrlPresent: Boolean(trimOrUndef(args.agent.shopifyStoreUrl)),
+      useWorkspaceShopify: flags.useWorkspaceShopify === true,
+      shopifyStoreUrlPresent: Boolean(trimOrUndef(flags.shopifyStoreUrl)),
     },
     openai: {
       source: openai?.source ?? 'missing',
       configured: Boolean(openai),
+      useWorkspaceOpenai: flags.useWorkspaceOpenai === true,
     },
     elevenlabs: {
       source: eleven?.source ?? 'missing',
       configured: Boolean(eleven),
+      useWorkspaceElevenlabs: flags.useWorkspaceElevenlabs === true,
     },
     twilio: {
       authSource: twilio?.authSource ?? 'missing',
       configured: Boolean(twilio),
+      useWorkspaceTwilio: flags.useWorkspaceTwilio === true,
     },
     resend: {
       source: resend?.source ?? 'missing',
       configured: Boolean(resend),
+      useWorkspaceEmail: flags.useWorkspaceEmail === true,
     },
   };
 }

@@ -431,6 +431,18 @@ export class CreateAgentDto {
   @IsBoolean()
   useWorkspaceEmail?: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  useWorkspaceOpenai?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  useWorkspaceElevenlabs?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  useWorkspaceTwilio?: boolean;
+
   /** When true, runtime uses workspace Shopify integration instead of per-agent store credentials. */
   @IsOptional()
   @IsBoolean()

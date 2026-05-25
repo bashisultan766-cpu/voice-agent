@@ -13,6 +13,14 @@ import { classifyOrderTurn } from './order-intent-classifier.util';
 import { applyTurnToOrderState, recoveryPromptText } from './order-turn-state-manager.util';
 import { ToolOrchestratorService } from './tool-orchestrator.service';
 import { RuntimeSafetyService } from './runtime-safety.service';
+import { ConversationFlowEngineService } from './conversation-flow-engine.service';
+import { ConversationAnalyticsService } from './conversation-analytics.service';
+import { CallMemoryService } from './call-memory.service';
+import { applyAntiHallucinationGuard } from './anti-hallucination.util';
+import { polishVoiceReply } from './voice-speaking.util';
+import { normalizeConversationStage } from './conversation-stage.util';
+import { resolveAdaptiveVoiceBehavior } from './adaptive-voice-behavior.util';
+import { applyTimingToChunkText } from './voice-timing.util';
 import { classifyUserIntent, type UserUtteranceIntent } from './user-intent-classifier.util';
 import { normalizeOrderState, type OrderState } from './order-state-machine.util';
 import type { ToolResult } from './tool-orchestrator.service';
@@ -46,6 +54,9 @@ export class VoiceRuntimeService {
     private readonly transcriptBuffer: TranscriptBufferService,
     private readonly promptBuilder: OpenAIPromptBuilderService,
     private readonly runtimeSafety: RuntimeSafetyService,
+    private readonly conversationFlow: ConversationFlowEngineService,
+    private readonly conversationAnalytics: ConversationAnalyticsService,
+    private readonly callMemory: CallMemoryService,
   ) {}
 
   private deterministicFallbackEnabled(): boolean {
@@ -118,7 +129,34 @@ export class VoiceRuntimeService {
     if (!t) return t;
     void userIntent;
     void orderState;
-    return t;
+    return polishVoiceReply(t, { maxSentences: 3 });
+  }
+
+  private buildFastVoiceReply(args: {
+    userIntent: UserUtteranceIntent;
+    turnPlan: Awaited<ReturnType<ConversationFlowEngineService['planTurn']>>;
+    ctx: NonNullable<Awaited<ReturnType<SessionContextService['load']>>>;
+    langCode: string;
+  }): string | null {
+    const greeting =
+      args.ctx.agent.greetingMessage?.trim() ??
+      `Hello, you've reached ${args.ctx.store.name}. How can I help you today?`;
+    if (args.userIntent === 'greeting') {
+      return greeting;
+    }
+    if (args.userIntent === 'small_talk') {
+      return "I'm doing well, thanks. What book or topic can I help you find?";
+    }
+    const identity = this.buildConciseIdentityOrCapabilityReply(
+      args.userIntent,
+      args.turnPlan.memory.lastIntent ?? '',
+    );
+    if (identity) return identity;
+    if (normalizeConversationStage(args.turnPlan.stage) === 'GREETING') {
+      return greeting;
+    }
+    void args.langCode;
+    return null;
   }
 
   private normalizeForRepeatCheck(text: string): string {
@@ -723,6 +761,17 @@ export class VoiceRuntimeService {
       durationSeconds,
       escalated: session.escalated,
     });
+    const metaEnd = (session.metadata ?? {}) as Record<string, unknown>;
+    const memEnd = metaEnd.conversationMemory as Record<string, unknown> | undefined;
+    const stage =
+      typeof memEnd?.conversationStage === 'string'
+        ? memEnd.conversationStage
+        : typeof metaEnd.conversationStage === 'string'
+          ? metaEnd.conversationStage
+          : 'unknown';
+    if (session.status === CallStatus.COMPLETED || session.status === CallStatus.ABANDONED) {
+      await this.conversationAnalytics.recordAbandonedStage(session.tenantId, callSessionId, stage);
+    }
     await this.callOutcome.deriveAndUpsert(callSessionId);
     this.logger.log(
       JSON.stringify({
@@ -751,6 +800,14 @@ export class VoiceRuntimeService {
     const safety = this.runtimeSafety.checkUserInput(safeText);
     if (safety.blocked) {
       const reply = this.runtimeSafety.refusalReply(safety.category);
+      const ctxEarly = await this.sessionContext.load(callSessionId);
+      if (ctxEarly) {
+        await this.conversationAnalytics.recordRefusal(
+          ctxEarly.tenantId,
+          callSessionId,
+          safety.category,
+        );
+      }
       return { reply };
     }
     if (safeText !== text) {
@@ -820,7 +877,7 @@ export class VoiceRuntimeService {
     }
 
     const cls = classifyOrderTurn(safeText);
-    const userIntent = classifyUserIntent(safeText);
+    let userIntent = classifyUserIntent(safeText);
     const toolPolicy = this.evaluateSearchToolPolicy(userIntent, safeText);
     const conversationTone = detectConversationTone(safeText);
     const initialLastToneLeadUsed =
@@ -831,6 +888,21 @@ export class VoiceRuntimeService {
         ? ((metadata.language as string) || 'en')
         : 'en';
     const update = applyTurnToOrderState(beforeState, cls.intent, cls);
+    const memBefore = await this.callMemory.load(callSessionId);
+    const paymentLinkSent = memBefore.checkoutState === 'link_sent';
+    const turnPlan = await this.conversationFlow.planTurn({
+      callSessionId,
+      userText: safeText,
+      orderState: update.nextState,
+      orderIntent: cls.intent,
+      toolCallAllowed: toolPolicy.toolCallAllowed,
+      paymentLinkSent,
+    });
+    userIntent = turnPlan.userIntent;
+    await this.conversationAnalytics.merge(callSessionId, ctx.tenantId, {
+      ...turnPlan.analyticsPatch,
+      lastStage: turnPlan.stage,
+    });
     await this.callsService.mergeSessionMetadata(callSessionId, {
       orderState: update.nextState,
       lastUserIntent: userIntent,
@@ -838,21 +910,41 @@ export class VoiceRuntimeService {
       lastTurnIntent: cls.intent,
       lastTurnIntentConfidence: cls.confidence,
       conversationTone,
+      conversationStage: turnPlan.stage,
+      conversationStageGuidance: turnPlan.stageGuidance,
       ...(cls.extracted?.quantity != null ? { quantity: cls.extracted.quantity } : {}),
       ...(cls.extracted?.email ? { lastProvidedEmail: cls.extracted.email } : {}),
     });
+    if (cls.extracted?.email) {
+      await this.callMemory.setEmailState(callSessionId, cls.extracted.email, 'pending');
+    }
+    if (cls.extracted?.quantity != null && memBefore.cart?.items?.length) {
+      const last = memBefore.cart.items[memBefore.cart.items.length - 1];
+      if (last) {
+        await this.callMemory.updateCart(callSessionId, {
+          ...last,
+          quantity: cls.extracted.quantity,
+        });
+      }
+    }
 
     if (
       userIntent === 'purchase_confirmation' &&
       (beforeState === 'IDLE' || beforeState === 'PRODUCT_DISCOVERY')
     ) {
       await this.callsService.mergeSessionMetadata(callSessionId, { orderState: 'EMAIL_COLLECTION' });
+      await this.conversationAnalytics.recordCheckoutAttempt(ctx.tenantId, callSessionId);
     }
 
     const historyFromDb =
       conversationHistory.length > 0
         ? conversationHistory
         : await this.transcriptBuffer.getConversationHistory(callSessionId, 24);
+    const adaptiveBehavior = resolveAdaptiveVoiceBehavior(safeText, historyFromDb.length);
+    await this.callsService.mergeSessionMetadata(callSessionId, {
+      adaptiveCallerMood: adaptiveBehavior.mood,
+      adaptiveToneHint: adaptiveBehavior.toneHint,
+    });
 
     this.logger.log(
       JSON.stringify({
@@ -873,6 +965,49 @@ export class VoiceRuntimeService {
 
     const userSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
     await this.transcriptBuffer.append(callSessionId, 'user', safeText, userSeq);
+
+    if (turnPlan.useFastVoicePath) {
+      const fastReply = this.buildFastVoiceReply({
+        userIntent,
+        turnPlan,
+        ctx,
+        langCode,
+      });
+      if (fastReply) {
+        const polished = polishVoiceReply(fastReply, {
+          maxSentences: 2,
+          stage: turnPlan.stage,
+        });
+        const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
+        await this.transcriptBuffer.append(callSessionId, 'agent', polished, agentSeq);
+        this.logTurnProof({
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          userSpeechText: safeText.slice(0, 500),
+          openaiKeySource: ctx.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
+          modelUsed: ctx.agent.model ?? 'n/a',
+          openaiCalled: false,
+          openaiSuccess: true,
+          replyPreview: polished.slice(0, 240),
+          voiceProvider: ctx.agent.voiceProvider ?? null,
+          voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+          ttsProviderUsed: null,
+          intentDetected: userIntent,
+          toolCalled: false,
+          flowStep: 'fast_voice_path',
+          state: update.nextState,
+          finalResponseText: polished,
+          responseMode: 'template',
+          responseSource: 'template',
+          responseTemplateUsed: 'fast_voice_path',
+          templateUsed: 'fast_voice_path',
+          openaiUsed: false,
+          templateSuppressedBecauseRepeated: false,
+        });
+        return { reply: polished };
+      }
+    }
 
     if (update.recoveryPrompt) {
       const reply = recoveryPromptText(langCode, update.recoveryPrompt.key);
@@ -923,6 +1058,14 @@ export class VoiceRuntimeService {
     const llmStartedAt = Date.now();
     const result = await this.openaiVoice.processTurn(callSessionId, safeText, historyFromDb);
     const responseDelayMs = Date.now() - llmStartedAt;
+    if (result.toolCallsCount > 0) {
+      await this.conversationAnalytics.recordToolLatency(
+        ctx.tenantId,
+        callSessionId,
+        responseDelayMs,
+        'voice_tool_loop',
+      );
+    }
     const deterministicFallbackActive = this.deterministicFallbackEnabled();
     if (deterministicFallbackActive && result.error?.code === 'OPENAI_429') {
       const preserveOrderState = update.nextState;
@@ -1026,8 +1169,33 @@ export class VoiceRuntimeService {
       }),
       followUpOfferedProductKey: followUpOfferedProductKeyForResolve,
     });
+    const memTitles = (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? [])
+      .map((p) => p.title)
+      .filter(Boolean);
+    const hallucinationGuard = applyAntiHallucinationGuard(
+      resolved.reply,
+      result.toolTrace,
+      memTitles,
+    );
+    if (hallucinationGuard.hallucinationAttempt) {
+      const prior = await this.conversationAnalytics.load(callSessionId);
+      await this.conversationAnalytics.merge(callSessionId, ctx.tenantId, {
+        hallucinationAttempts: (prior.hallucinationAttempts ?? 0) + 1,
+      });
+    }
+    if (result.toolTrace?.searchProducts?.ok && result.toolTrace.searchProducts.found) {
+      await this.conversationAnalytics.recordRecommendation(ctx.tenantId, callSessionId, true);
+    }
+    const polishedReply = polishVoiceReply(
+      applyTimingToChunkText(hallucinationGuard.reply, adaptiveBehavior),
+      {
+        maxSentences: adaptiveBehavior.maxSentences,
+        stage: turnPlan.stage,
+      },
+    );
+
     const repeatChecked = this.applyRepeatGuard({
-      currentReply: resolved.reply,
+      currentReply: polishedReply,
       responseMode: resolved.responseMode,
       responseSource: resolved.responseSource,
       responseTemplateUsed: resolved.responseTemplateUsed,

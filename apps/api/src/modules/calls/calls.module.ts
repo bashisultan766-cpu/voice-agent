@@ -11,8 +11,15 @@ import { ToolOrchestratorService } from './runtime/tool-orchestrator.service';
 import { VoiceRuntimeContextService } from './runtime/voice-runtime-context.service';
 import { RuntimeSafetyService } from './runtime/runtime-safety.service';
 import { CallMemoryService } from './runtime/call-memory.service';
+import { ConversationFlowEngineService } from './runtime/conversation-flow-engine.service';
+import { ConversationAnalyticsService } from './runtime/conversation-analytics.service';
+import { VoiceStreamMetricsService } from './runtime/voice-stream-metrics.service';
+import { VoiceCostAnalyticsService } from './runtime/voice-cost-analytics.service';
+import { VoiceStreamingSessionService } from './runtime/voice-streaming-session.service';
+import { VoiceLiveMonitorService } from './runtime/voice-live-monitor.service';
 import { OpenAIModule } from '../integrations/openai/openai.module';
 import { OpenAIVoiceService } from '../integrations/openai/openai-voice.service';
+import { OpenAIStreamingVoiceService } from '../integrations/openai/openai-streaming-voice.service';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { AgentsModule } from '../agents/agents.module';
@@ -45,7 +52,14 @@ import { ToolsModule } from '../tools/tools.module';
     VoiceRuntimeContextService,
     RuntimeSafetyService,
     CallMemoryService,
+    ConversationFlowEngineService,
+    ConversationAnalyticsService,
+    VoiceStreamMetricsService,
+    VoiceCostAnalyticsService,
+    VoiceStreamingSessionService,
+    VoiceLiveMonitorService,
     OpenAIVoiceService,
+    OpenAIStreamingVoiceService,
     CallbackRequestsService,
   ],
   exports: [
@@ -55,6 +69,10 @@ import { ToolsModule } from '../tools/tools.module';
     CallbackRequestsService,
     TranscriptBufferService,
     ToolOrchestratorService,
+    VoiceStreamMetricsService,
+    VoiceCostAnalyticsService,
+    VoiceStreamingSessionService,
+    VoiceLiveMonitorService,
   ],
 })
 export class CallsModule {}

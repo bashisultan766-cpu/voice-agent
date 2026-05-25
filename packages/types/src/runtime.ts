@@ -48,14 +48,85 @@ export const DEFAULT_VOICE_PERSONALITY: VoicePersonalityTraits = {
 
 /** Per-call short-term memory persisted in CallSession.metadata.conversationMemory */
 export interface CallConversationMemory {
-  mentionedProducts?: Array<{ productId?: string; title: string; variantId?: string }>;
+  mentionedProducts?: Array<{ productId?: string; title: string; variantId?: string; price?: string }>;
+  /** Richer discussion history (includes price when known from tools). */
+  discussedProducts?: Array<{ productId?: string; title: string; variantId?: string; price?: string }>;
+  rejectedProducts?: Array<{ title: string; reason?: string }>;
+  customerName?: string | null;
+  preferredGenres?: string[];
   customerPreferences?: Record<string, string>;
+  cart?: {
+    items: Array<{
+      productId?: string;
+      title: string;
+      variantId?: string;
+      quantity: number;
+      price?: string;
+    }>;
+  };
+  checkoutState?: 'none' | 'confirming' | 'email_pending' | 'link_sent' | 'completed';
+  emailConfirmationState?: 'none' | 'pending' | 'confirmed';
+  conversationStage?:
+    | 'GREETING'
+    | 'DISCOVERY'
+    | 'RECOMMENDATION'
+    | 'OBJECTION_HANDLING'
+    | 'CHECKOUT_CONFIRMATION'
+    | 'PAYMENT_LINK_CONFIRMATION'
+    | 'FOLLOW_UP';
+  lastObjection?: string | null;
   collectedEmail?: string | null;
   emailCollected?: boolean;
   checkoutStage?: string;
   lastIntent?: string;
   lastToolCalls?: Array<{ toolName: string; ok: boolean; at: string }>;
   turnCount?: number;
+}
+
+/** Real-time voice pipeline metrics (CallSession.metadata.voiceStreamMetrics). */
+export interface VoiceStreamMetrics {
+  streamingMode?: 'gather_deferred' | 'media_stream' | 'sync';
+  streamingStatus?: 'idle' | 'listening' | 'processing' | 'speaking' | 'interrupted';
+  sttLatencyMs?: number | null;
+  llmLatencyMs?: number | null;
+  llmTimeToFirstTokenMs?: number | null;
+  ttsLatencyMs?: number | null;
+  toolLatencyMs?: number | null;
+  silenceDurationMs?: number | null;
+  interruptionCount?: number;
+  partialTranscript?: string | null;
+  lastBargeInAt?: string | null;
+  agentSpeaking?: boolean;
+  chunksEmitted?: number;
+  chunksPlayed?: number;
+  lastUpdatedAt?: string;
+}
+
+/** Estimated provider costs per call (CallSession.metadata.voiceCostMetrics). */
+export interface VoiceCostMetrics {
+  openaiInputTokens?: number;
+  openaiOutputTokens?: number;
+  openaiEstimatedUsd?: number;
+  elevenlabsCharacters?: number;
+  elevenlabsEstimatedUsd?: number;
+  totalEstimatedUsd?: number;
+  costPerCheckoutUsd?: number | null;
+  turns?: number;
+}
+
+/** Per-call analytics in CallSession.metadata.runtimeAnalytics */
+export interface CallRuntimeAnalytics {
+  successfulRecommendations?: number;
+  checkoutAttempts?: number;
+  checkoutConverted?: boolean;
+  abandonedAtStage?: string | null;
+  toolLatencyMs?: Array<{ toolName: string; ms: number; at: string }>;
+  hallucinationAttempts?: number;
+  refusalTriggers?: number;
+  lastRefusalCategory?: string | null;
+  lastStage?: string;
+  lastUserIntent?: string;
+  objectionCounts?: Record<string, number>;
 }
 
 /** Unified runtime context passed to every tool handler. */

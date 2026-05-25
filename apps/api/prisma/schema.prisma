@@ -424,6 +424,7 @@ model Agent {
   checkoutLinks      CheckoutLink[]
   emailEvents        EmailEvent[]
   paymentRecords     PaymentRecord[]
+  productCaches      ProductCache[]
   client             Client?              @relation(fields: [clientId], references: [id])
   agentType          AgentType?           @relation(fields: [agentTypeId], references: [id])
 
@@ -459,9 +460,12 @@ model AgentConfig {
   emailSubjectTemplate      String?
   paymentLinkEmailIntro     String?
   emailTestRecipient        String?
-  useWorkspaceEmail         Boolean      @default(true)
+  useWorkspaceEmail         Boolean      @default(false)
   /** When true, Shopify Admin API uses workspace integration instead of per-agent credentials. */
   useWorkspaceShopify       Boolean      @default(false)
+  useWorkspaceOpenai        Boolean      @default(false)
+  useWorkspaceElevenlabs    Boolean      @default(false)
+  useWorkspaceTwilio        Boolean      @default(false)
   shopifyApiVersion         String?
   metadata                  Json?
   createdAt                 DateTime     @default(now())
@@ -998,6 +1002,7 @@ model EmailEvent {
 model ProductCache {
   id              String   @id @default(cuid())
   tenantId        String
+  agentId         String
   shopDomain      String
   shopifyProductId String
   handle          String?
@@ -1013,11 +1018,14 @@ model ProductCache {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  tenant Tenant         @relation(fields: [tenantId], references: [id])
+  agent  Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
   variants VariantCache[]
 
-  @@unique([tenantId, shopifyProductId])
+  @@unique([tenantId, agentId, shopifyProductId])
   @@index([tenantId])
+  @@index([agentId])
+  @@index([tenantId, agentId, shopDomain])
   @@index([shopDomain])
   @@index([title])
 }

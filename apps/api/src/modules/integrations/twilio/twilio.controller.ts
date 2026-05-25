@@ -201,7 +201,7 @@ export class TwilioVoiceController {
       const url = this.signature.resolveValidationUrl(req);
       if (this.signature.isValidationEnabled()) {
         if (!signature) throw new BadRequestException('Missing Twilio signature');
-        const valid = this.signature.validate(url, body as Record<string, string>, signature);
+        const valid = await this.signature.validateInbound(url, body as Record<string, string>, signature);
         if (!valid) {
           this.logger.warn(
             JSON.stringify({
@@ -248,7 +248,7 @@ export class TwilioVoiceController {
     const url = this.signature.resolveValidationUrl(req);
     if (this.signature.isValidationEnabled()) {
       if (!signature) throw new BadRequestException('Missing Twilio signature');
-      const valid = this.signature.validate(url, body as Record<string, string>, signature);
+      const valid = await this.signature.validateInbound(url, body as Record<string, string>, signature);
       if (!valid) {
         this.logger.warn(
           JSON.stringify({
@@ -292,7 +292,7 @@ export class TwilioVoiceController {
       const url = this.signature.resolveValidationUrl(req);
       if (this.signature.isValidationEnabled()) {
         if (!signature) throw new BadRequestException('Missing Twilio signature');
-        const valid = this.signature.validate(url, body as Record<string, string>, signature);
+        const valid = await this.signature.validateInbound(url, body as Record<string, string>, signature);
         if (!valid) {
           this.logger.warn(
             JSON.stringify({
@@ -386,7 +386,7 @@ export class TwilioVoiceController {
       const url = this.signature.resolveValidationUrl(req);
       if (this.signature.isValidationEnabled()) {
         if (!signature) throw new BadRequestException('Missing Twilio signature');
-        const valid = this.signature.validate(url, body as Record<string, string>, signature);
+        const valid = await this.signature.validateInbound(url, body as Record<string, string>, signature);
         if (!valid) {
           this.logger.warn(
             JSON.stringify({
@@ -439,7 +439,7 @@ export class TwilioVoiceController {
           this.logger.warn(JSON.stringify({ event: 'twilio.voice.status_missing_signature' }));
           return res.status(200).send('OK');
         }
-        const valid = this.signature.validate(url, body as Record<string, string>, signature);
+        const valid = await this.signature.validateInbound(url, body as Record<string, string>, signature);
         if (!valid) {
           this.logger.warn(
             JSON.stringify({

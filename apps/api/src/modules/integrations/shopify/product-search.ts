@@ -36,14 +36,20 @@ export class ShopifyProductSearchService {
    * Tokenized search: every whitespace-separated token must match at least one
    * field (title, handle, tags, vendor, type, SKU, variant title).
    */
-  async search(tenantId: string, query: string, limit = 8, shopDomain?: string | null) {
+  async search(
+    tenantId: string,
+    agentId: string,
+    query: string,
+    limit = 8,
+    shopDomain?: string | null,
+  ) {
     const q = query.trim();
     if (!q) return [];
     const tokens = [...new Set(q.split(/\s+/).filter((t) => t.length > 0))];
     if (tokens.length === 0) return [];
 
     const domain = shopDomain?.trim().toLowerCase() || null;
-    const tenantScope: Prisma.ProductCacheWhereInput = { tenantId };
+    const tenantScope: Prisma.ProductCacheWhereInput = { tenantId, agentId };
     if (domain) {
       tenantScope.shopDomain = domain;
     }
@@ -73,13 +79,19 @@ export class ShopifyProductSearchService {
     return results.map((product) => this.mapProduct(product));
   }
 
-  async fuzzySearch(tenantId: string, query: string, limit = 8, shopDomain?: string | null) {
+  async fuzzySearch(
+    tenantId: string,
+    agentId: string,
+    query: string,
+    limit = 8,
+    shopDomain?: string | null,
+  ) {
     const normalized = this.normalizeProductQuery(query);
     if (!normalized) return { confidence: 0, results: [] as ProductCandidate[], normalizedQuery: normalized };
     const tokens = [...new Set(normalized.split(/\s+/).filter(Boolean))];
     const expanded = [...new Set(tokens.flatMap((t) => [t, ...this.synonymsForToken(t)]))];
     const domain = shopDomain?.trim().toLowerCase() || null;
-    const tenantScope: Prisma.ProductCacheWhereInput = { tenantId };
+    const tenantScope: Prisma.ProductCacheWhereInput = { tenantId, agentId };
     if (domain) tenantScope.shopDomain = domain;
 
     const tokenClauses: Prisma.ProductCacheWhereInput[] = expanded.map((token) => ({
@@ -126,12 +138,14 @@ export class ShopifyProductSearchService {
    */
   async getDetails(
     tenantId: string,
+    agentId: string,
     lookup: { productId?: string; variantId?: string; title?: string },
     shopDomain?: string | null,
   ) {
     const domain = shopDomain?.trim().toLowerCase() || null;
     const baseWhere: Prisma.ProductCacheWhereInput = {
       tenantId,
+      agentId,
       ...(domain ? { shopDomain: domain } : {}),
     };
 

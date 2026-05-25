@@ -2,6 +2,10 @@ import type { OrderState } from './order-state-machine.util';
 import type { UserUtteranceIntent } from './user-intent-classifier.util';
 import type { VoiceTurnToolTrace } from './voice-turn-tool-trace.util';
 import { resolveToneLead, type ConversationTone } from './conversation-tone.util';
+import {
+  classifyConversationalObjection,
+  objectionReplyFromMatch,
+} from './objection-patterns.util';
 
 type ConversationTurn = { role: 'user' | 'assistant'; content: string };
 
@@ -124,6 +128,28 @@ export function buildContextAwareReply(args: {
         followUpTriggered: false,
       };
     }
+  }
+
+  const objection = classifyConversationalObjection(args.lastUserMessage);
+  if (objection?.suggestedReplySeed) {
+    const seed =
+      objectionReplyFromMatch(objection, 'en') ?? objection.suggestedReplySeed;
+    const { lead, toneLeadUsed } = resolveToneLead({
+      slot: 'objection',
+      conversationTone: args.conversationTone,
+      lastToneLeadUsed: args.lastToneLeadUsed,
+    });
+    const text = lead ? `${lead} ${seed}` : seed;
+    return {
+      text,
+      source: 'openai',
+      templateKey: `objection_${objection.type}`,
+      questionAnsweredFirst: true,
+      interruptionHandled: true,
+      toneLeadUsed,
+      paymentSuggestionUsed: false,
+      followUpTriggered: false,
+    };
   }
 
   if (args.intent === 'correction') {

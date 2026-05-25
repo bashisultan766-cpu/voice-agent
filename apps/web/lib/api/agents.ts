@@ -111,10 +111,10 @@ export interface CredentialSourcesSummaryApi {
     useWorkspaceShopify: boolean;
     shopifyStoreUrlPresent: boolean;
   };
-  openai: { source: CredentialSourceApi; configured: boolean };
-  elevenlabs: { source: CredentialSourceApi; configured: boolean };
-  twilio: { authSource: CredentialSourceApi; configured: boolean };
-  resend: { source: CredentialSourceApi; configured: boolean };
+  openai: { source: CredentialSourceApi; configured: boolean; useWorkspaceOpenai: boolean };
+  elevenlabs: { source: CredentialSourceApi; configured: boolean; useWorkspaceElevenlabs: boolean };
+  twilio: { authSource: CredentialSourceApi; configured: boolean; useWorkspaceTwilio: boolean };
+  resend: { source: CredentialSourceApi; configured: boolean; useWorkspaceEmail: boolean };
 }
 
 export interface AgentReadinessResponse {
@@ -320,6 +320,9 @@ export interface CreateAgentPayload {
   emailTestRecipient?: string;
   useWorkspaceEmail?: boolean;
   useWorkspaceShopify?: boolean;
+  useWorkspaceOpenai?: boolean;
+  useWorkspaceElevenlabs?: boolean;
+  useWorkspaceTwilio?: boolean;
   shopifyApiVersion?: string;
   resendApiKey?: string;
   toolPermissions?: Record<string, boolean>;
@@ -795,7 +798,10 @@ export function agentToFormData(a: AgentApi): CreateAgentPayload {
       (a.emailSubjectTemplate as string) ?? '{{storeName}} — Complete your secure checkout',
     paymentLinkEmailIntro: (a.paymentLinkEmailIntro as string) ?? '',
     emailTestRecipient: (a.emailTestRecipient as string) ?? '',
-    useWorkspaceEmail: (a.useWorkspaceEmail as boolean) ?? true,
+    useWorkspaceEmail: (a.useWorkspaceEmail as boolean) ?? false,
+    useWorkspaceOpenai: (a.useWorkspaceOpenai as boolean) ?? false,
+    useWorkspaceElevenlabs: (a.useWorkspaceElevenlabs as boolean) ?? false,
+    useWorkspaceTwilio: (a.useWorkspaceTwilio as boolean) ?? false,
     resendApiKey: '',
     toolPermissions: {
       ...DEFAULT_TOOL_PERMISSIONS,

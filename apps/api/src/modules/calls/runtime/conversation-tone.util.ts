@@ -10,6 +10,7 @@ type ToneLeadSlot =
   | 'email'
   | 'price'
   | 'email_ack'
+  | 'objection'
   | 'none';
 
 const LEAD_YES = 'Yes,';
@@ -85,6 +86,10 @@ export function resolveToneLead(args: {
       return { lead: '', toneLeadUsed: null };
     }
     return pick([LEAD_ALRIGHT, LEAD_OKAY]);
+  }
+
+  if (args.slot === 'objection') {
+    return pick([LEAD_SURE, LEAD_GOT_IT, LEAD_ALRIGHT]);
   }
 
   return { lead: '', toneLeadUsed: null };

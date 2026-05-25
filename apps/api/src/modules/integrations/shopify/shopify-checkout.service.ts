@@ -108,7 +108,9 @@ export class ShopifyCheckoutService {
 
     const lines: ResolvedLine[] = [];
     for (const row of rawRows) {
-      lines.push(await this.resolveLineFromCache(tenantId, domain, row.variantKey || row.sku || row.title, row.quantity));
+      lines.push(
+        await this.resolveLineFromCache(tenantId, agentId, domain, row.variantKey || row.sku || row.title, row.quantity),
+      );
     }
     const aggregated = new Map<string, ResolvedLine>();
     for (const line of lines) {
@@ -240,16 +242,18 @@ export class ShopifyCheckoutService {
 
   private async resolveLineFromCache(
     tenantId: string,
+    agentId: string,
     shopDomain: string,
     rawKey: string,
     quantity: number,
   ): Promise<ResolvedLine> {
+    const productScope = { shopDomain, agentId };
     const variantKeys = variantIdLookupKeys(rawKey);
     let v = await this.prisma.variantCache.findFirst({
       where: {
         tenantId,
         shopifyVariantId: { in: variantKeys },
-        product: { shopDomain },
+        product: productScope,
       },
       include: { product: { select: { title: true, shopifyProductId: true } } },
     });
@@ -261,7 +265,7 @@ export class ShopifyCheckoutService {
           where: {
             tenantId,
             sku: { equals: skuKey, mode: 'insensitive' },
-            product: { shopDomain },
+            product: productScope,
           },
           include: { product: { select: { title: true, shopifyProductId: true } } },
           orderBy: { updatedAt: 'desc' },
@@ -276,7 +280,7 @@ export class ShopifyCheckoutService {
           where: {
             tenantId,
             title: { contains: titleKey, mode: 'insensitive' },
-            product: { shopDomain },
+            product: productScope,
           },
           include: { product: { select: { title: true, shopifyProductId: true } } },
           orderBy: { updatedAt: 'desc' },
@@ -290,7 +294,7 @@ export class ShopifyCheckoutService {
         where: {
           tenantId,
           product: {
-            shopDomain,
+            ...productScope,
             shopifyProductId: { in: productKeys },
           },
         },

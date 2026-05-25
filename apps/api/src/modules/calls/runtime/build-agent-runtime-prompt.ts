@@ -1,66 +1,22 @@
 import type { VoiceAgentRuntimeConfig, VoicePersonalityTraits } from '@bookstore-voice-agents/types';
 import { checkoutModeDescription, toCheckoutModeApi } from '@bookstore-voice-agents/types';
 import type { VoiceSessionContext } from './session-context.service';
+import {
+  PLATFORM_ANTI_HALLUCINATION_RULES,
+  PLATFORM_COMMERCE_RULES,
+  PLATFORM_SAFETY_PROMPT,
+} from './platform-runtime-prompts';
 
-/** Canonical voice runtime system prompt (placeholders filled from per-agent DB config). */
-export const AGENT_RUNTIME_PROMPT_TEMPLATE = `You are {{agentName}}, a professional AI voice order booking assistant for {{storeName}}.
+/** @deprecated Use layered prompts; kept for tests referencing template sections. */
+export const AGENT_RUNTIME_PROMPT_TEMPLATE = PLATFORM_SAFETY_PROMPT;
 
-Your job:
-Help customers on phone calls discover products, answer store-related questions, and guide them to complete an order through an official Shopify checkout/payment link.
-
-Speaking style:
-- Speak naturally, warmly, and briefly.
-- Sound like a professional human sales assistant.
-- Ask one question at a time.
-- Do not give long robotic answers.
-- Confirm important details before action.
-{{toneLine}}
-
-Scope and guardrails:
-- Only answer questions about this bookstore/store: products, catalog search, orders, shipping, refunds, exchanges, and checkout.
-- Refuse and redirect: politics, crime, illegal activity, medical advice, legal advice, financial advice, adult content, hacking, violence, or any topic unrelated to this store.
-- Never invent Shopify product names, prices, stock, ISBNs, or descriptions — use tool results from this agent's store only.
-- If a product is unavailable or not found in Shopify, say it is unavailable; do not suggest substitutes unless they appear in search results.
-- If price is unknown, fetch product details from Shopify before quoting.
-- If you are unsure, escalate to human support instead of guessing.
-{{forbiddenBehaviorsLine}}
-
-Order flow:
-1. Greet the customer.
-2. Ask what they are looking for.
-3. Recommend relevant Shopify products.
-4. Answer product questions using store data.
-5. Confirm product, quantity, customer name, and email.
-6. Create or prepare checkout/payment link.
-7. Send the payment link by email.
-8. Tell customer to complete payment using the secure link.
-{{checkoutModeLine}}
-
-Payment safety:
-- Never ask for card number, CVV, PIN, or banking details on the phone.
-- Only complete payment through the official Shopify checkout/payment link sent by email.
-- Confirm the customer's email before creating or sending a payment link.
-- If email sending is not configured for this agent, do not claim an email was sent — escalate to support instead.
-
-Escalation:
-If customer is angry, asks for human support, asks about a complex issue, or requests something outside your rules, politely escalate to support.
-{{escalationDetailsLine}}
-
-Custom store instructions:
-{{customSystemPrompt}}
-
-Store policies:
-Shipping policy:
-{{shippingPolicy}}
-
-Refund policy:
-{{refundPolicy}}
-
-Blocked topics:
-{{blockedTopics}}
-
-Allowed topics:
-{{allowedTopics}}`;
+export type RuntimePromptLayers = {
+  platformSafety: string;
+  platformCommerce: string;
+  agentCustom: string;
+  runtimeContext: string;
+  combined: string;
+};
 
 /** Agent + store fields used to assemble the live voice system prompt (no secrets). */
 export interface AgentRuntimePromptInput {
@@ -91,15 +47,12 @@ export interface AgentRuntimePromptInput {
 }
 
 export interface BuildAgentRuntimePromptOptions {
-  /** Internal checkout step from call session metadata. */
   checkoutStep?: string | null;
+  conversationStage?: string | null;
+  stageGuidance?: string | null;
+  memorySummary?: string | null;
   personality?: VoicePersonalityTraits | null;
-  /** Tool names exposed to the model this session. */
   enabledTools?: string[];
-}
-
-function fillTemplate(template: string, values: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => values[key] ?? '');
 }
 
 function policyOrDefault(value: string | null | undefined, fallback: string): string {
@@ -107,32 +60,50 @@ function policyOrDefault(value: string | null | undefined, fallback: string): st
   return t || fallback;
 }
 
-function optionalLine(prefix: string, value: string | null | undefined): string {
-  const t = value?.trim();
-  return t ? `${prefix}${t}` : '';
-}
-
-/**
- * Builds the full OpenAI system prompt for a single agent from dashboard configuration.
- * Never embeds secrets. Each call session must pass only its resolved agent's data.
- */
-export function buildAgentRuntimePrompt(
-  agent: AgentRuntimePromptInput,
-  options?: BuildAgentRuntimePromptOptions,
-): string {
+function buildAgentCustomSection(agent: AgentRuntimePromptInput): string {
   const cfg = agent.config;
   const agentName = agent.agentName?.trim() || 'Assistant';
   const storeName = agent.storeName?.trim() || 'the store';
-  const customSystemPrompt = policyOrDefault(
+  /** Client system prompt: customSystemPrompt from form, else legacy baseSystemPrompt only here — not in platform layers. */
+  const clientInstructions = policyOrDefault(
     cfg?.customSystemPrompt ?? agent.baseSystemPrompt,
     'No additional custom instructions configured.',
   );
   const checkoutMode = toCheckoutModeApi(cfg?.checkoutMode);
 
-  const escalationLines: string[] = [];
-  if (agent.escalationInstructions?.trim()) {
-    escalationLines.push(agent.escalationInstructions.trim());
+  const lines: string[] = [
+    `You are ${agentName}, a professional AI voice order booking assistant for ${storeName}.`,
+    '',
+    'Agent custom instructions (from dashboard):',
+    clientInstructions,
+  ];
+
+  if (agent.toneOfVoice?.trim()) lines.push('', `Tone: ${agent.toneOfVoice.trim()}.`);
+  if (agent.agentRole?.trim()) lines.push(`Role: ${agent.agentRole.trim()}.`);
+  if (agent.agentGoal?.trim()) lines.push(`Goal: ${agent.agentGoal.trim()}.`);
+  if (cfg?.forbiddenBehaviors?.trim()) {
+    lines.push('', 'Forbidden behaviors:', cfg.forbiddenBehaviors.trim());
   }
+
+  lines.push(
+    '',
+    `Checkout mode: ${checkoutModeDescription(checkoutMode)}.`,
+    '',
+    'Store policies:',
+    `Shipping: ${policyOrDefault(cfg?.shippingPolicy, 'Not configured.')}`,
+    `Refunds: ${policyOrDefault(cfg?.returnPolicy ?? agent.returnRefundBehavior, 'Not configured.')}`,
+  );
+  if (cfg?.exchangePolicy?.trim()) lines.push(`Exchanges: ${cfg.exchangePolicy.trim()}.`);
+  if (cfg?.deliveryNotes?.trim()) lines.push(`Delivery: ${cfg.deliveryNotes.trim()}.`);
+
+  lines.push(
+    '',
+    `Blocked topics: ${policyOrDefault(agent.restrictedActions, 'None specified.')}`,
+    `Allowed topics: ${policyOrDefault(agent.allowedActions, 'Store products, orders, shipping, refunds, checkout.')}`,
+  );
+
+  const escalationLines: string[] = [];
+  if (agent.escalationInstructions?.trim()) escalationLines.push(agent.escalationInstructions.trim());
   if (cfg?.escalationRules?.trim()) escalationLines.push(cfg.escalationRules.trim());
   if (agent.escalationPhone?.trim()) escalationLines.push(`Escalation phone: ${agent.escalationPhone.trim()}`);
   if (agent.escalationEmail?.trim()) escalationLines.push(`Escalation email: ${agent.escalationEmail.trim()}`);
@@ -142,7 +113,28 @@ export function buildAgentRuntimePrompt(
   if (agent.transferToHumanEnabled === false) {
     escalationLines.push('Human transfer is disabled; offer email follow-up.');
   }
+  if (escalationLines.length) {
+    lines.push('', 'Escalation details:', ...escalationLines.map((l) => `- ${l}`));
+  }
+  if (cfg?.humanHandoffRules?.trim()) {
+    lines.push('', `Handoff rules: ${cfg.humanHandoffRules.trim()}`);
+  }
+  if (agent.orderStatusHandling?.trim()) {
+    lines.push(`Order status: ${agent.orderStatusHandling.trim()}`);
+  }
+  if (agent.outOfStockHandling?.trim()) {
+    lines.push(`Out of stock: ${agent.outOfStockHandling.trim()}`);
+  }
+  if (cfg?.supportEmail?.trim()) lines.push(`Support email: ${cfg.supportEmail.trim()}`);
 
+  return lines.join('\n');
+}
+
+function buildRuntimeContextSection(
+  agent: AgentRuntimePromptInput,
+  options?: BuildAgentRuntimePromptOptions,
+): string {
+  const appendix: string[] = [];
   const lang =
     agent.languageMode === 'fixed' && agent.fixedLanguage?.trim()
       ? agent.fixedLanguage.trim()
@@ -152,46 +144,22 @@ export function buildAgentRuntimePrompt(
       ? agent.supportedLanguages.join(', ')
       : lang;
 
-  const filled = fillTemplate(AGENT_RUNTIME_PROMPT_TEMPLATE, {
-    agentName,
-    storeName,
-    toneLine: agent.toneOfVoice?.trim() ? `- Tone: ${agent.toneOfVoice.trim()}.` : '',
-    forbiddenBehaviorsLine: optionalLine('- ', cfg?.forbiddenBehaviors),
-    checkoutModeLine: `- ${checkoutModeDescription(checkoutMode)}`,
-    escalationDetailsLine: escalationLines.length > 0 ? escalationLines.map((l) => `- ${l}`).join('\n') : '',
-    customSystemPrompt,
-    shippingPolicy: policyOrDefault(cfg?.shippingPolicy, 'Not configured.'),
-    refundPolicy: policyOrDefault(
-      cfg?.returnPolicy ?? agent.returnRefundBehavior,
-      'Not configured.',
-    ),
-    blockedTopics: policyOrDefault(agent.restrictedActions, 'None specified.'),
-    allowedTopics: policyOrDefault(agent.allowedActions, 'Store products, orders, shipping, refunds, checkout.'),
-  });
-
-  const appendix: string[] = [];
-
-  if (agent.agentRole?.trim()) appendix.push(`Role focus: ${agent.agentRole.trim()}`);
-  if (agent.agentGoal?.trim()) appendix.push(`Goal: ${agent.agentGoal.trim()}`);
-
   if (agent.greetingMessage?.trim()) {
     appendix.push(
       `Call opening (already played at connect; do not repeat every turn): "${agent.greetingMessage.trim()}"`,
     );
   }
-
   appendix.push(`Primary language: ${lang}.`);
   if (agent.languageMode === 'auto') {
     appendix.push(`Respond in the caller's language when possible. Supported: ${supported}.`);
   }
-
   if (agent.knowledgeBaseSource?.trim()) {
     appendix.push(
       `Knowledge base: ${agent.knowledgeBaseSource.trim()}${agent.knowledgeSyncEnabled === false ? ' (prefer live Shopify search).' : ''}`,
     );
   }
   appendix.push(
-    'Use retrieved knowledge base context (retrieve_knowledge_base / search_store_faqs / policy tools) before answering store policy or FAQ questions.',
+    'Use retrieved knowledge (retrieve_knowledge_base / search_store_faqs / policy tools) before answering store policy or FAQ questions.',
   );
 
   const personality = options?.personality;
@@ -237,19 +205,6 @@ export function buildAgentRuntimePrompt(
     appendix.push(`Enabled tools this session: ${options.enabledTools.join(', ')}.`);
   }
 
-  if (cfg?.humanHandoffRules?.trim()) {
-    appendix.push(`Checkout/handoff: ${cfg.humanHandoffRules.trim()}`);
-  }
-  if (agent.orderStatusHandling?.trim()) {
-    appendix.push(`Order status handling: ${agent.orderStatusHandling.trim()}`);
-  }
-  if (agent.outOfStockHandling?.trim()) {
-    appendix.push(`Out of stock: ${agent.outOfStockHandling.trim()}`);
-  }
-  if (cfg?.exchangePolicy?.trim()) appendix.push(`Exchange policy: ${cfg.exchangePolicy.trim()}`);
-  if (cfg?.deliveryNotes?.trim()) appendix.push(`Delivery notes: ${cfg.deliveryNotes.trim()}`);
-  if (cfg?.supportEmail?.trim()) appendix.push(`Support email: ${cfg.supportEmail.trim()}`);
-
   const step = options?.checkoutStep?.trim();
   if (step) {
     appendix.push(
@@ -257,12 +212,53 @@ export function buildAgentRuntimePrompt(
     );
   }
 
-  if (appendix.length === 0) return filled.trim();
+  const stage = options?.conversationStage?.trim();
+  if (stage) {
+    appendix.push(`Conversation stage: ${stage}.`);
+    const guidance = options?.stageGuidance?.trim();
+    if (guidance) appendix.push(`Stage focus: ${guidance}`);
+  }
 
-  return `${filled.trim()}\n\n---\nRuntime context:\n${appendix.map((l) => `- ${l}`).join('\n')}`;
+  const mem = options?.memorySummary?.trim();
+  if (mem) appendix.push(`Session memory: ${mem}`);
+
+  if (appendix.length === 0) return '';
+  return appendix.map((l) => `- ${l}`).join('\n');
 }
 
-/** Map session context to prompt input (single agent per call). */
+/** Builds layered runtime prompt sections for debug and OpenAI system message. */
+export function buildRuntimePromptLayers(
+  agent: AgentRuntimePromptInput,
+  options?: BuildAgentRuntimePromptOptions,
+): RuntimePromptLayers {
+  const platformSafety = PLATFORM_SAFETY_PROMPT;
+  const platformCommerce = PLATFORM_COMMERCE_RULES;
+  const platformAntiHallucination = PLATFORM_ANTI_HALLUCINATION_RULES;
+  const agentCustom = buildAgentCustomSection(agent);
+  const runtimeContext = buildRuntimeContextSection(agent, options);
+
+  const parts = [platformSafety, platformCommerce, platformAntiHallucination, agentCustom];
+  if (runtimeContext.trim()) {
+    parts.push('Runtime context:', runtimeContext);
+  }
+  const combined = parts.join('\n\n');
+
+  return {
+    platformSafety,
+    platformCommerce,
+    agentCustom,
+    runtimeContext,
+    combined,
+  };
+}
+
+export function buildAgentRuntimePrompt(
+  agent: AgentRuntimePromptInput,
+  options?: BuildAgentRuntimePromptOptions,
+): string {
+  return buildRuntimePromptLayers(agent, options).combined;
+}
+
 export function promptInputFromVoiceSessionContext(ctx: VoiceSessionContext): AgentRuntimePromptInput {
   const a = ctx.agent;
   return {

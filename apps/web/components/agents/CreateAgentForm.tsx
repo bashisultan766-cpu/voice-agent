@@ -1377,7 +1377,7 @@ function StepBasicInfo({
             label="Use saved workspace credentials from Settings → Integrations"
             checked={data.useWorkspaceDefaults}
             onChange={(v) => update('useWorkspaceDefaults', v)}
-            helperText="When enabled, values you saved for Shopify, Twilio, and OpenAI are merged in when you launch (you can still type overrides in later steps)."
+            helperText="When enabled, workspace integration flags are turned on for providers saved under Settings — secrets are never copied into this agent; runtime resolves them dynamically."
           />
           {data.useWorkspaceDefaults && workspaceSummary ? (
             <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5">
@@ -1674,6 +1674,27 @@ function StepVoiceSettings({
           <p className="mt-1 text-xs">
             Use OpenAI for reasoning/tool-calling and ElevenLabs for voice playback quality. OpenAI voice remains available as a safe fallback/default.
           </p>
+        </div>
+        <div className="rounded-lg border border-amber-200/80 bg-amber-50/50 px-3 py-3 text-sm dark:border-amber-900/40 dark:bg-amber-950/20">
+          <p className="font-medium text-foreground">Credential source (per agent)</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Each toggle must be enabled to use workspace keys from Settings. Otherwise enter agent-specific API keys below.
+            Production agents never use server .env provider keys unless single-tenant mode is enabled.
+          </p>
+          <div className="mt-3 space-y-2">
+            <FormCheckbox
+              id="useWorkspaceOpenai"
+              label="Use workspace OpenAI API key"
+              checked={data.useWorkspaceOpenai}
+              onChange={(v) => update('useWorkspaceOpenai', v)}
+            />
+            <FormCheckbox
+              id="useWorkspaceElevenlabs"
+              label="Use workspace ElevenLabs API key"
+              checked={data.useWorkspaceElevenlabs}
+              onChange={(v) => update('useWorkspaceElevenlabs', v)}
+            />
+          </div>
         </div>
         <FormField
           id="voiceProvider"
@@ -2154,6 +2175,13 @@ function StepSalesBehavior({
             </div>
           </div>
         )}
+        <FormCheckbox
+          id="useWorkspaceTwilio"
+          label="Use workspace Twilio credentials (Settings → Integrations)"
+          checked={data.useWorkspaceTwilio}
+          onChange={(v) => update('useWorkspaceTwilio', v)}
+          helperText="When enabled and agent fields are empty, Account SID and Auth Token resolve from workspace at runtime."
+        />
         <PasswordField
           id="twilioAccountSid"
           label="Account SID"

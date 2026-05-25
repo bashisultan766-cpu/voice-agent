@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAgentRuntimePrompt, AGENT_RUNTIME_PROMPT_TEMPLATE } from './build-agent-runtime-prompt';
+import { buildAgentRuntimePrompt, buildRuntimePromptLayers } from './build-agent-runtime-prompt';
+import { PLATFORM_SAFETY_PROMPT } from './platform-runtime-prompts';
 
-test('template includes required sections', () => {
-  assert.match(AGENT_RUNTIME_PROMPT_TEMPLATE, /\{\{agentName\}\}/);
-  assert.match(AGENT_RUNTIME_PROMPT_TEMPLATE, /\{\{customSystemPrompt\}\}/);
-  assert.match(AGENT_RUNTIME_PROMPT_TEMPLATE, /Payment safety/);
+test('platform safety includes mandatory guardrails', () => {
+  assert.match(PLATFORM_SAFETY_PROMPT, /Never invent product names/);
+  assert.match(PLATFORM_SAFETY_PROMPT, /Never ask for card number/);
 });
 
 test('buildAgentRuntimePrompt fills agent and store names', () => {
@@ -41,8 +41,8 @@ test('buildAgentRuntimePrompt isolates greetings and blocked topics per agent', 
   });
   assert.match(a, /Hello from Agent A/);
   assert.match(b, /Hello from Agent B/);
-  assert.match(a, /Blocked topics:\npolitics/);
-  assert.match(b, /Blocked topics:\nreligion/);
+  assert.match(a, /Blocked topics: politics/);
+  assert.match(b, /Blocked topics: religion/);
 });
 
 test('buildAgentRuntimePrompt includes scope guardrails', () => {
@@ -53,8 +53,22 @@ test('buildAgentRuntimePrompt includes scope guardrails', () => {
     language: 'en',
   });
   assert.match(prompt, /Refuse and redirect/);
-  assert.match(prompt, /Never invent Shopify product/);
+  assert.match(prompt, /Never invent product names/);
   assert.match(prompt, /official Shopify checkout/);
+});
+
+test('client system prompt only appears in agent custom layer', () => {
+  const layers = buildRuntimePromptLayers({
+    agentId: '1',
+    agentName: 'A',
+    storeName: 'S',
+    language: 'en',
+    baseSystemPrompt: 'BASE_ONLY',
+    config: { customSystemPrompt: 'CLIENT_ONLY' },
+  });
+  assert.match(layers.agentCustom, /CLIENT_ONLY/);
+  assert.doesNotMatch(layers.platformSafety, /CLIENT_ONLY/);
+  assert.doesNotMatch(layers.platformCommerce, /BASE_ONLY/);
 });
 
 test('buildAgentRuntimePrompt maps policies from config', () => {

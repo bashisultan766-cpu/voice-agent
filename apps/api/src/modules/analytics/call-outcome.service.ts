@@ -25,6 +25,7 @@ export class CallOutcomeService {
     const metadata = (session.metadata as Record<string, unknown>) ?? {};
     const callbackRequested = Boolean(metadata.callbackRequested);
     const mem = (metadata.conversationMemory ?? {}) as Record<string, unknown>;
+    const analytics = (metadata.runtimeAnalytics ?? {}) as Record<string, unknown>;
     const productsRequested = Array.isArray(mem.mentionedProducts)
       ? (mem.mentionedProducts as Array<{ title?: string }>)
           .map((p) => p.title)
@@ -83,7 +84,10 @@ export class CallOutcomeService {
         analyticsMeta: {
           toolNames: session.toolExecutions.map((t) => t.toolName),
           durationSeconds: session.durationSeconds,
-        },
+          runtimeAnalytics: analytics as Prisma.InputJsonValue,
+          conversationStage:
+            (mem.conversationStage ?? metadata.conversationStage) as Prisma.InputJsonValue,
+        } as Prisma.InputJsonValue,
       },
       update: {
         resolutionStatus,
@@ -101,7 +105,10 @@ export class CallOutcomeService {
         analyticsMeta: {
           toolNames: session.toolExecutions.map((t) => t.toolName),
           durationSeconds: session.durationSeconds,
-        },
+          runtimeAnalytics: analytics as Prisma.InputJsonValue,
+          conversationStage:
+            (mem.conversationStage ?? metadata.conversationStage) as Prisma.InputJsonValue,
+        } as Prisma.InputJsonValue,
       },
     });
   }

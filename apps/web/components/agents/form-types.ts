@@ -56,6 +56,9 @@ export interface CreateAgentFormData {
   // 3. Shopify Integration
   /** When true, runtime uses workspace Shopify from Settings instead of per-agent credentials. */
   useWorkspaceShopify: boolean;
+  useWorkspaceOpenai: boolean;
+  useWorkspaceElevenlabs: boolean;
+  useWorkspaceTwilio: boolean;
   shopifyApiVersion: string;
   shopifyStoreUrl: string;
   shopifyStoreNumber: string;
@@ -122,7 +125,7 @@ export interface CreateAgentFormData {
 export const initialFormData: CreateAgentFormData = {
   clientId: '',
   storeId: '',
-  useWorkspaceDefaults: true,
+  useWorkspaceDefaults: false,
   storeName: '',
   storeUrl: '',
   storeEmail: '',
@@ -192,7 +195,10 @@ export const initialFormData: CreateAgentFormData = {
   emailSubjectTemplate: '{{storeName}} — Complete your secure checkout',
   paymentLinkEmailIntro: '',
   emailTestRecipient: '',
-  useWorkspaceEmail: true,
+  useWorkspaceEmail: false,
+  useWorkspaceOpenai: false,
+  useWorkspaceElevenlabs: false,
+  useWorkspaceTwilio: false,
   resendApiKey: '',
   toolPermissions: { ...DEFAULT_TOOL_PERMISSIONS },
   voicePersonality: { ...DEFAULT_VOICE_PERSONALITY },
