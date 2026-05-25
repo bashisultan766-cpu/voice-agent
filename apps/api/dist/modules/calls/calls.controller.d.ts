@@ -3,12 +3,12 @@ export declare class CallsController {
     private readonly callsService;
     constructor(callsService: CallsService);
     findAll(tenantId: string): Promise<{
-        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string | null;
+        status: import("@prisma/client").$Enums.CallStatus;
+        createdAt: Date;
+        updatedAt: Date;
         agentId: string;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
         phoneNumberId: string | null;
@@ -32,14 +32,14 @@ export declare class CallsController {
     }[]>;
     findOne(tenantId: string, id: string): Promise<{
         toolExecutions: {
-            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             id: string;
-            createdAt: Date;
             tenantId: string;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            createdAt: Date;
             agentId: string;
             callSessionId: string | null;
-            toolName: string;
             requestId: string | null;
+            toolName: string;
             inputJson: import("@prisma/client/runtime/library").JsonValue;
             outputJson: import("@prisma/client/runtime/library").JsonValue | null;
             errorMessage: string | null;
@@ -49,18 +49,18 @@ export declare class CallsController {
             id: string;
             createdAt: Date;
             callSessionId: string;
-            sequenceNumber: number;
             role: string;
             content: string;
+            sequenceNumber: number;
             timestampMs: number | null;
         }[];
     } & {
-        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string | null;
+        status: import("@prisma/client").$Enums.CallStatus;
+        createdAt: Date;
+        updatedAt: Date;
         agentId: string;
         metadata: import("@prisma/client/runtime/library").JsonValue | null;
         phoneNumberId: string | null;

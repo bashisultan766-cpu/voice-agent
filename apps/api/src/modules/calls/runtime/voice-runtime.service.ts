@@ -12,6 +12,7 @@ import { detectLanguageFromText } from './language-intelligence.util';
 import { classifyOrderTurn } from './order-intent-classifier.util';
 import { applyTurnToOrderState, recoveryPromptText } from './order-turn-state-manager.util';
 import { ToolOrchestratorService } from './tool-orchestrator.service';
+import { RuntimeSafetyService } from './runtime-safety.service';
 import { classifyUserIntent, type UserUtteranceIntent } from './user-intent-classifier.util';
 import { normalizeOrderState, type OrderState } from './order-state-machine.util';
 import type { ToolResult } from './tool-orchestrator.service';
@@ -44,6 +45,7 @@ export class VoiceRuntimeService {
     private readonly callOutcome: CallOutcomeService,
     private readonly transcriptBuffer: TranscriptBufferService,
     private readonly promptBuilder: OpenAIPromptBuilderService,
+    private readonly runtimeSafety: RuntimeSafetyService,
   ) {}
 
   private deterministicFallbackEnabled(): boolean {
@@ -746,6 +748,11 @@ export class VoiceRuntimeService {
     turnProof?: Record<string, unknown>;
   }> {
     const safeText = redactPaymentLikePatterns(text);
+    const safety = this.runtimeSafety.checkUserInput(safeText);
+    if (safety.blocked) {
+      const reply = this.runtimeSafety.refusalReply(safety.category);
+      return { reply };
+    }
     if (safeText !== text) {
       this.logger.warn(
         JSON.stringify({

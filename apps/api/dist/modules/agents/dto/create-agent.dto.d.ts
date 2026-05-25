@@ -40,7 +40,13 @@ export declare class CreateAgentDto {
     elevenlabsApiKey?: string;
     callRoutingMode?: string;
     incomingCallHandling?: string;
+    openAiModel?: string;
     systemPrompt?: string;
+    allowedTopics?: string;
+    blockedTopics?: string;
+    productGuidance?: string;
+    checkoutInstructions?: string;
+    refundPolicy?: string;
     agentGoal?: string;
     agentRole?: string;
     toneOfVoice?: string;
@@ -66,4 +72,16 @@ export declare class CreateAgentDto {
     forbiddenBehaviors?: string;
     escalationRules?: string[];
     useWorkspaceDefaults?: boolean;
+    voiceNameLabel?: string;
+    emailSenderName?: string;
+    emailSenderAddress?: string;
+    emailReplyTo?: string;
+    emailSubjectTemplate?: string;
+    paymentLinkEmailIntro?: string;
+    emailTestRecipient?: string;
+    useWorkspaceEmail?: boolean;
+    resendApiKey?: string;
+    toolPermissions?: Record<string, boolean>;
+    enabledTools?: string[];
+    voicePersonality?: Record<string, number>;
 }

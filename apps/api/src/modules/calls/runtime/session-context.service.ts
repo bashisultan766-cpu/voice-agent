@@ -44,6 +44,8 @@ export interface VoiceSessionContext {
     model?: string | null;
     temperature?: number | null;
     enabledTools?: string[] | null;
+    toolPermissions?: Record<string, unknown> | null;
+    personality?: Record<string, unknown> | null;
     maxToolCallsPerTurn?: number | null;
     handoffEnabled?: boolean | null;
     knowledgeBaseSource?: string | null;
@@ -254,6 +256,13 @@ export class SessionContextService {
         model: session.agent.model,
         temperature: session.agent.temperature,
         enabledTools: Array.isArray(session.agent.enabledTools) ? (session.agent.enabledTools as string[]) : null,
+        toolPermissions:
+          session.agent.toolPermissions && typeof session.agent.toolPermissions === 'object'
+            ? (session.agent.toolPermissions as Record<string, unknown>)
+            : null,
+        personality:
+          (session.agent.voiceProfile?.providerConfig as { personality?: Record<string, unknown> } | null)
+            ?.personality ?? null,
         maxToolCallsPerTurn: session.agent.maxToolCallsPerTurn ?? null,
         handoffEnabled: session.agent.handoffEnabled ?? null,
         knowledgeBaseSource: session.agent.knowledgeBaseSource ?? null,

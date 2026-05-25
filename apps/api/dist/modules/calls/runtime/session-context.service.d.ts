@@ -36,6 +36,8 @@ export interface VoiceSessionContext {
         model?: string | null;
         temperature?: number | null;
         enabledTools?: string[] | null;
+        toolPermissions?: Record<string, unknown> | null;
+        personality?: Record<string, unknown> | null;
         maxToolCallsPerTurn?: number | null;
         handoffEnabled?: boolean | null;
         knowledgeBaseSource?: string | null;

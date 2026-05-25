@@ -15,11 +15,14 @@ const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../../database/prisma.service");
 const normalize_phone_1 = require("./utils/normalize-phone");
 const client_1 = require("@prisma/client");
-const INBOUND_VOICE_AGENT_STATUSES = [
-    client_1.AgentStatus.ACTIVE,
-    client_1.AgentStatus.READY,
-    client_1.AgentStatus.DRAFT,
-];
+function inboundVoiceAgentStatuses() {
+    const allowDraft = process.env.VOICE_ALLOW_DRAFT_AGENTS === 'true' ||
+        process.env.ALLOW_DRAFT_VOICE_AGENTS === 'true' ||
+        process.env.NODE_ENV !== 'production';
+    return allowDraft
+        ? [client_1.AgentStatus.ACTIVE, client_1.AgentStatus.READY, client_1.AgentStatus.DRAFT]
+        : [client_1.AgentStatus.ACTIVE, client_1.AgentStatus.READY];
+}
 function digitsLast4(value) {
     const d = value.replace(/\D/g, '');
     return d.length >= 4 ? d.slice(-4) : '****';
@@ -47,7 +50,7 @@ let AgentResolutionService = AgentResolutionService_1 = class AgentResolutionSer
                 phoneNumber: normalized,
                 agent: {
                     deletedAt: null,
-                    status: { in: INBOUND_VOICE_AGENT_STATUSES },
+                    status: { in: inboundVoiceAgentStatuses() },
                 },
             },
             include: {
@@ -105,7 +108,7 @@ let AgentResolutionService = AgentResolutionService_1 = class AgentResolutionSer
                 agentId: { not: null },
                 agent: {
                     deletedAt: null,
-                    status: { in: INBOUND_VOICE_AGENT_STATUSES },
+                    status: { in: inboundVoiceAgentStatuses() },
                 },
             },
             include: {
@@ -153,25 +156,52 @@ let AgentResolutionService = AgentResolutionService_1 = class AgentResolutionSer
                     : { name: agent.storeName ?? 'Store', city: null, timezone: agent.timezone ?? null },
             };
         }
-        let agent = (await this.prisma.agent.findFirst({
+        const statuses = inboundVoiceAgentStatuses();
+        const byField = await this.prisma.agent.findMany({
             where: {
                 deletedAt: null,
-                status: { in: INBOUND_VOICE_AGENT_STATUSES },
+                status: { in: statuses },
                 twilioPhoneNumber: normalized,
             },
             include: { store: true },
-        })) ?? null;
+            orderBy: { updatedAt: 'desc' },
+            take: 5,
+        });
+        let agent = null;
+        if (byField.length > 0) {
+            const tenants = new Set(byField.map((a) => a.tenantId));
+            if (tenants.size > 1) {
+                this.log.warn(JSON.stringify({
+                    event: 'twilio.agent_resolution.ambiguous_tenant',
+                    normalizedLast4: digitsLast4(normalized),
+                    tenantCount: tenants.size,
+                }));
+                return null;
+            }
+            agent = byField[0];
+        }
         if (!agent) {
             const candidates = await this.prisma.agent.findMany({
                 where: {
                     deletedAt: null,
-                    status: { in: INBOUND_VOICE_AGENT_STATUSES },
+                    status: { in: statuses },
                     twilioPhoneNumber: { not: null },
                 },
                 include: { store: true },
             });
-            agent =
-                candidates.find((a) => a.twilioPhoneNumber && (0, normalize_phone_1.normalizePhoneNumber)(a.twilioPhoneNumber) === normalized) ?? null;
+            const matched = candidates.filter((a) => a.twilioPhoneNumber && (0, normalize_phone_1.normalizePhoneNumber)(a.twilioPhoneNumber) === normalized);
+            if (matched.length > 0) {
+                const tenants = new Set(matched.map((a) => a.tenantId));
+                if (tenants.size > 1) {
+                    this.log.warn(JSON.stringify({
+                        event: 'twilio.agent_resolution.ambiguous_tenant_normalized',
+                        normalizedLast4: digitsLast4(normalized),
+                        tenantCount: tenants.size,
+                    }));
+                    return null;
+                }
+                agent = matched.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+            }
         }
         if (!agent) {
             const mappingAnyStatus = await this.prisma.phoneNumberMapping.findFirst({
@@ -186,8 +216,8 @@ let AgentResolutionService = AgentResolutionService_1 = class AgentResolutionSer
             if (mappedAgent?.deletedAt != null) {
                 hint = 'Mapping points to a deleted agent.';
             }
-            else if (mappedAgent && !INBOUND_VOICE_AGENT_STATUSES.includes(mappedAgent.status)) {
-                hint = 'Phone is mapped but agent status is not ACTIVE, READY, or DRAFT.';
+            else if (mappedAgent && !inboundVoiceAgentStatuses().includes(mappedAgent.status)) {
+                hint = 'Phone is mapped but agent status is not ACTIVE or READY.';
             }
             else if (mappingRowCount === 0) {
                 hint = 'No PhoneNumberMapping for normalized To; save the agent phone number to create the link.';

@@ -19,13 +19,13 @@ export declare const testShopifyCredentialsSchema: z.ZodDefault<z.ZodObject<{
     shopifyStoreUrl: z.ZodOptional<z.ZodEffects<z.ZodOptional<z.ZodString>, string | undefined, string | undefined>>;
     shopifyAdminToken: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
-    useWorkspaceDefaults?: boolean | undefined;
     shopifyStoreUrl?: string | undefined;
     shopifyAdminToken?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }, {
-    useWorkspaceDefaults?: boolean | undefined;
     shopifyStoreUrl?: string | undefined;
     shopifyAdminToken?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }>>;
 export declare const testDatabaseCredentialsSchema: z.ZodDefault<z.ZodObject<{
     useWorkspaceDefaults: z.ZodOptional<z.ZodBoolean>;
@@ -33,15 +33,15 @@ export declare const testDatabaseCredentialsSchema: z.ZodDefault<z.ZodObject<{
     databaseAccessToken: z.ZodOptional<z.ZodString>;
     databaseProvider: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
-    useWorkspaceDefaults?: boolean | undefined;
+    databaseProvider?: string | undefined;
     databaseUrl?: string | undefined;
     databaseAccessToken?: string | undefined;
-    databaseProvider?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }, {
-    useWorkspaceDefaults?: boolean | undefined;
+    databaseProvider?: string | undefined;
     databaseUrl?: string | undefined;
     databaseAccessToken?: string | undefined;
-    databaseProvider?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }>>;
 export declare const testTwilioCredentialsSchema: z.ZodDefault<z.ZodObject<{
     useWorkspaceDefaults: z.ZodOptional<z.ZodBoolean>;
@@ -49,38 +49,48 @@ export declare const testTwilioCredentialsSchema: z.ZodDefault<z.ZodObject<{
     twilioAuthToken: z.ZodOptional<z.ZodString>;
     twilioPhoneNumber: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
-    useWorkspaceDefaults?: boolean | undefined;
+    twilioPhoneNumber?: string | undefined;
     twilioAccountSid?: string | undefined;
     twilioAuthToken?: string | undefined;
-    twilioPhoneNumber?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }, {
-    useWorkspaceDefaults?: boolean | undefined;
+    twilioPhoneNumber?: string | undefined;
     twilioAccountSid?: string | undefined;
     twilioAuthToken?: string | undefined;
-    twilioPhoneNumber?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }>>;
 export declare const testOpenAiCredentialsSchema: z.ZodDefault<z.ZodObject<{
     useWorkspaceDefaults: z.ZodOptional<z.ZodBoolean>;
     openaiApiKey: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
-    useWorkspaceDefaults?: boolean | undefined;
     openaiApiKey?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }, {
-    useWorkspaceDefaults?: boolean | undefined;
     openaiApiKey?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }>>;
 export declare const testElevenLabsCredentialsSchema: z.ZodDefault<z.ZodObject<{
     useWorkspaceDefaults: z.ZodOptional<z.ZodBoolean>;
     elevenlabsApiKey: z.ZodOptional<z.ZodString>;
     voiceId: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
-    useWorkspaceDefaults?: boolean | undefined;
-    elevenlabsApiKey?: string | undefined;
     voiceId?: string | undefined;
+    elevenlabsApiKey?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
 }, {
-    useWorkspaceDefaults?: boolean | undefined;
-    elevenlabsApiKey?: string | undefined;
     voiceId?: string | undefined;
+    elevenlabsApiKey?: string | undefined;
+    useWorkspaceDefaults?: boolean | undefined;
+}>>;
+export declare const testAgentEmailBodySchema: z.ZodDefault<z.ZodObject<{
+    toEmail: z.ZodOptional<z.ZodString>;
+    checkoutUrl: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+}, "strict", z.ZodTypeAny, {
+    toEmail?: string | undefined;
+    checkoutUrl?: string | undefined;
+}, {
+    toEmail?: string | undefined;
+    checkoutUrl?: string | undefined;
 }>>;
 export declare const configureTwilioWebhookBodySchema: z.ZodDefault<z.ZodObject<{
     force: z.ZodOptional<z.ZodBoolean>;
@@ -93,11 +103,11 @@ export declare const smokeTestBodySchema: z.ZodDefault<z.ZodObject<{
     dryRun: z.ZodOptional<z.ZodBoolean>;
     sampleSpeechResult: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
-    dryRun?: boolean | undefined;
     sampleSpeechResult?: string | undefined;
+    dryRun?: boolean | undefined;
 }, {
-    dryRun?: boolean | undefined;
     sampleSpeechResult?: string | undefined;
+    dryRun?: boolean | undefined;
 }>>;
 export declare const debugShopifySearchBodySchema: z.ZodObject<{
     query: z.ZodString;

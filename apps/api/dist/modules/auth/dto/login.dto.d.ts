@@ -1,5 +1,7 @@
 export declare class LoginDto {
-    tenantSlug: string;
+    workspaceSlug?: string;
+    tenantSlug?: string;
     email: string;
     password: string;
 }
+export declare function resolveLoginWorkspaceSlug(dto: LoginDto): string;

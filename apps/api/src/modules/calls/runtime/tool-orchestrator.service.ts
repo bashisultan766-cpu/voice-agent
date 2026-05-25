@@ -3,6 +3,8 @@ import { PrismaService } from '../../../database/prisma.service';
 import { Prisma } from '@prisma/client';
 import { OpenAIToolRegistryService } from '../../integrations/openai/openai-tool-registry.service';
 import { RetrievalService } from '../../knowledge/retrieval.service';
+import { RetrievalOrchestratorService } from '../../knowledge/retrieval-orchestrator.service';
+import { CallMemoryService } from './call-memory.service';
 import { CallEventsService } from '../../analytics/call-events.service';
 import { ShopifyAgentService } from '../../agents/shopify-agent.service';
 import {
@@ -23,6 +25,7 @@ import { TwilioSmsService } from '../../integrations/twilio/twilio-sms.service';
 import { AgentsService } from '../../agents/agents.service';
 import { ShopifyProductSearchService } from '../../integrations/shopify/product-search';
 import { ResendEmailService } from '../../integrations/email/resend-email.service';
+import { AgentEmailConfigService } from '../../integrations/email/agent-email-config.service';
 import { paymentEmailIdempotencyKey } from '../../../common/payment-email-idempotency';
 import { TranscriptBufferService } from './transcript-buffer.service';
 import { parseVoiceToolArgs } from '../../integrations/openai/voice-tool-args';
@@ -81,6 +84,8 @@ export class ToolOrchestratorService {
     private readonly prisma: PrismaService,
     private readonly toolRegistry: OpenAIToolRegistryService,
     private readonly retrieval: RetrievalService,
+    private readonly retrievalOrchestrator: RetrievalOrchestratorService,
+    private readonly callMemory: CallMemoryService,
     private readonly callEvents: CallEventsService,
     private readonly shopifyAgent: ShopifyAgentService,
     private readonly callbacks: CallbackRequestsService,
@@ -90,6 +95,7 @@ export class ToolOrchestratorService {
     private readonly agentsService: AgentsService,
     private readonly productSearch: ShopifyProductSearchService,
     private readonly resendEmail: ResendEmailService,
+    private readonly agentEmailConfig: AgentEmailConfigService,
     private readonly transcriptBuffer: TranscriptBufferService,
   ) {}
 
@@ -334,7 +340,10 @@ export class ToolOrchestratorService {
         agentId: ctx.agentId,
       }),
     );
-    const allowed = this.toolRegistry.isToolAllowed(toolName, ctx.agent.enabledTools);
+    const allowed = this.toolRegistry.isToolAllowed(toolName, {
+      enabledTools: ctx.agent.enabledTools,
+      toolPermissions: ctx.agent.toolPermissions,
+    });
     if (!allowed) {
       const blocked = await this.logAndReturn(ctx, callSessionId, toolName, args, requestId, start, {
         ok: false,
@@ -427,6 +436,7 @@ export class ToolOrchestratorService {
     try {
       const result = await this.runTool(ctx, toolName, fullInput, callSessionId);
       const logged = await this.logAndReturn(ctx, callSessionId, toolName, fullInput, requestId, start, result);
+      await this.callMemory.recordToolCall(callSessionId, toolName, logged.ok);
       const okSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
       await this.transcriptBuffer.append(
         callSessionId,
@@ -473,7 +483,18 @@ export class ToolOrchestratorService {
     callSessionId: string,
   ): Promise<Omit<ToolResult, 'toolName' | 'storeId'>> {
     const noStore = (msg: string) => ({ ok: true, data: { items: [], voiceSummary: msg }, meta: { source: 'system' } as const });
-    const storeDependent = ['get_store_locations', 'get_store_hours', 'search_store_faqs', 'get_shipping_policy', 'get_return_policy', 'get_promotion_details'];
+    const storeDependent = [
+      'get_store_locations',
+      'get_store_hours',
+      'search_store_faqs',
+      'retrieve_knowledge_base',
+      'get_shipping_policy',
+      'get_return_policy',
+      'get_promotion_details',
+      'estimate_shipping',
+      'get_store_policy',
+      'lookup_discount',
+    ];
     if (!ctx.storeId && storeDependent.includes(toolName)) {
       return noStore('Store information is not set up for this agent.');
     }
@@ -1068,6 +1089,22 @@ export class ToolOrchestratorService {
           link.agent.agentConfig?.supportEmail || link.agent.client?.contactEmail || null;
         const supportPhone =
           link.agent.agentConfig?.supportPhone || link.agent.client?.contactPhone || null;
+        const emailConfig = await this.agentEmailConfig.resolveForSend(ctx.tenantId, ctx.agentId);
+        if (!emailConfig) {
+          return {
+            ok: false,
+            error: {
+              code: 'EMAIL_NOT_CONFIGURED',
+              message: 'Payment email is not configured for this agent.',
+              retryable: false,
+            },
+            data: {
+              voiceSummary:
+                'I cannot send a payment email right now because email is not set up for this store. Let me connect you with support to complete your order.',
+              escalateRecommended: true,
+            },
+          };
+        }
         let sendResult: {
           emailEventId: string;
           providerMessageId: string | null;
@@ -1092,6 +1129,7 @@ export class ToolOrchestratorService {
             supportPhone,
             checkoutUrl: link.checkoutUrl,
             items,
+            emailConfig,
           });
           if (!sendResult.deduplicated) {
             await this.prisma.checkoutLink.updateMany({
@@ -1264,8 +1302,37 @@ export class ToolOrchestratorService {
         const hours = await this.retrieval.getStoreHours(ctx.tenantId, ctx.storeId!, input.branchId as string | undefined);
         return { ok: true, data: { items: hours.items, voiceSummary: hours.voiceSummary }, meta: { source: hours.source } };
       }
-      case 'search_store_faqs': {
-        const faqs = await this.retrieval.searchFaqs(ctx.tenantId, ctx.storeId!, (input.query as string) || '', input.branchProfileId as string | undefined, 5);
+      case 'search_store_faqs':
+      case 'retrieve_knowledge_base': {
+        const query = (input.query as string) || '';
+        if (!query.trim()) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'Query required.', retryable: true } };
+        }
+        try {
+          const rag = await this.retrievalOrchestrator.retrieve({
+            tenantId: ctx.tenantId,
+            storeId: ctx.storeId!,
+            query,
+            branchProfileId: input.branchProfileId as string | undefined,
+            topK: 5,
+          });
+          if (rag.ok && rag.items.length > 0) {
+            return {
+              ok: true,
+              data: { items: rag.items, voiceSummary: rag.voiceSummary, source: rag.source },
+              meta: { source: rag.source },
+            };
+          }
+        } catch {
+          /* fall through to keyword FAQ */
+        }
+        const faqs = await this.retrieval.searchFaqs(
+          ctx.tenantId,
+          ctx.storeId!,
+          query,
+          input.branchProfileId as string | undefined,
+          5,
+        );
         return { ok: true, data: { items: faqs.items, voiceSummary: faqs.voiceSummary }, meta: { source: faqs.source } };
       }
       case 'get_shipping_policy': {
@@ -1456,6 +1523,10 @@ export class ToolOrchestratorService {
             }
           }
         } else {
+          const bookingEmailCfg = await this.agentEmailConfig.resolveForSend(ctx.tenantId, ctx.agentId);
+          if (!bookingEmailCfg) {
+            channelDeliveryStatus = 'email_not_configured';
+          } else {
           const agentCfg = ctx.agent.config;
           let businessName: string | null = agentCfg?.businessName?.trim() || null;
           let supportEmail = agentCfg?.supportEmail ?? null;
@@ -1505,6 +1576,7 @@ export class ToolOrchestratorService {
               supportPhone,
               checkoutUrl: checkout.checkoutUrl,
               items: itemsForEmail.length > 0 ? itemsForEmail : [{ title: 'Items from your order', quantity: 1 }],
+              emailConfig: bookingEmailCfg,
             });
             bookingEmailDeduped = bookingSend.deduplicated === true;
             await this.prisma.checkoutLink.updateMany({
@@ -1548,6 +1620,7 @@ export class ToolOrchestratorService {
                 data: { status: CheckoutLinkStatus.FAILED },
               });
             }
+          }
           }
         }
 
@@ -1603,6 +1676,142 @@ export class ToolOrchestratorService {
           },
           meta: { source: 'database' },
         };
+      }
+      case 'search_collections': {
+        const query = this.getStringArg(input, 'query') || '';
+        const limit = Math.min(Number(input.limit) || 5, 10);
+        const shopDomain =
+          ctx.agent.shopify?.shopDomain?.trim() ||
+          normalizeShopifyDomain(ctx.agent.shopify?.storeUrl ?? null);
+        const products = await this.productSearch.search(ctx.tenantId, query, limit, shopDomain);
+        const collections = new Map<string, { title: string; count: number }>();
+        for (const p of products) {
+          const type = p.productType?.trim() || 'General';
+          const prev = collections.get(type) ?? { title: type, count: 0 };
+          prev.count += 1;
+          collections.set(type, prev);
+        }
+        const items = Array.from(collections.values());
+        const voiceSummary =
+          items.length > 0
+            ? `Found ${items.length} categories matching "${query}". Top: ${items[0].title} (${items[0].count} items).`
+            : `No categories found for "${query}" in our catalog.`;
+        return { ok: true, data: { items, voiceSummary }, meta: { source: 'shopify_cache' } };
+      }
+      case 'lookup_variant': {
+        const shopDomain =
+          ctx.agent.shopify?.shopDomain?.trim() ||
+          normalizeShopifyDomain(ctx.agent.shopify?.storeUrl ?? null);
+        const details = await this.productSearch.getDetails(
+          ctx.tenantId,
+          {
+            productId: this.getStringArg(input, 'productId') || undefined,
+            variantId: this.getStringArg(input, 'variantId') || undefined,
+            title: undefined,
+          },
+          shopDomain,
+        );
+        if (!details) {
+          return { ok: false, error: { code: 'NOT_FOUND', message: 'Variant not found.', retryable: false } };
+        }
+        const sku = this.getStringArg(input, 'sku');
+        const variant = sku
+          ? details.variants.find((v) => v.sku?.toLowerCase() === sku.toLowerCase()) ?? details.variants[0]
+          : details.variants[0];
+        return {
+          ok: true,
+          data: { product: details, variant, voiceSummary: variant ? `${details.title}, ${variant.title}: ${variant.price ?? 'price on request'}.` : details.title },
+          meta: { source: 'shopify_cache' },
+        };
+      }
+      case 'validate_price': {
+        const shopDomain =
+          ctx.agent.shopify?.shopDomain?.trim() ||
+          normalizeShopifyDomain(ctx.agent.shopify?.storeUrl ?? null);
+        const details = await this.productSearch.getDetails(
+          ctx.tenantId,
+          {
+            productId: this.getStringArg(input, 'productId') || undefined,
+            variantId: this.getStringArg(input, 'variantId') || undefined,
+          },
+          shopDomain,
+        );
+        if (!details) {
+          return { ok: false, error: { code: 'NOT_FOUND', message: 'Product not found.', retryable: false } };
+        }
+        const quoted = this.getStringArg(input, 'quotedPrice');
+        const variant = details.variants[0];
+        const actual = variant?.price ?? null;
+        const match = quoted && actual ? quoted.replace(/[^\d.]/g, '') === actual.replace(/[^\d.]/g, '') : null;
+        return {
+          ok: true,
+          data: {
+            actualPrice: actual,
+            quotedPrice: quoted,
+            priceMatches: match,
+            voiceSummary: actual
+              ? `The correct price is ${actual}${match === false ? ', which differs from what you mentioned.' : '.'}`
+              : 'Price is not available in catalog.',
+          },
+          meta: { source: 'shopify_cache' },
+        };
+      }
+      case 'check_live_inventory': {
+        const productId = this.getStringArg(input, 'productId');
+        if (!productId) {
+          return { ok: false, error: { code: 'MISSING_INPUT', message: 'productId required.', retryable: true } };
+        }
+        const live = await this.shopifyAgent.getProductLive(ctx.tenantId, ctx.agentId, {
+          productId,
+          variantId: this.getStringArg(input, 'variantId') || undefined,
+        });
+        if (!live) {
+          return { ok: false, error: { code: 'SHOPIFY_ERROR', message: 'Inventory check failed.', retryable: true } };
+        }
+        const variantId = this.getStringArg(input, 'variantId');
+        const variant = variantId
+          ? live.variants.find((v) => v.id === variantId) ?? live.variants[0]
+          : live.variants[0];
+        const qty = variant?.inventory_quantity ?? 0;
+        return {
+          ok: true,
+          data: {
+            inStock: qty > 0,
+            quantity: qty,
+            voiceSummary: qty > 0 ? `${live.title} has ${qty} in stock.` : `${live.title} is currently out of stock.`,
+          },
+          meta: { source: 'shopify_live' },
+        };
+      }
+      case 'lookup_discount': {
+        const prom = await this.retrieval.getPromotionDetails(ctx.tenantId, ctx.storeId!, undefined);
+        const code = this.getStringArg(input, 'code');
+        const voiceSummary =
+          prom.items.length > 0
+            ? prom.voiceSummary
+            : code
+              ? `No active promotion found for code "${code}".`
+              : 'No active promotions in our knowledge base right now.';
+        return { ok: true, data: { items: prom.items, code, voiceSummary }, meta: { source: prom.source } };
+      }
+      case 'estimate_shipping': {
+        const ship = await this.retrieval.getPolicy(ctx.tenantId, ctx.storeId!, KnowledgeDocType.SHIPPING_POLICY, undefined);
+        const city = this.getStringArg(input, 'city');
+        const voiceSummary = ship.voiceSummary?.trim()
+          ? `${ship.voiceSummary}${city ? ` (asked about ${city})` : ''}`
+          : 'Shipping estimates follow our store policy—exact rates appear at Shopify checkout.';
+        return { ok: true, data: { items: ship.items, city, voiceSummary }, meta: { source: ship.source } };
+      }
+      case 'get_store_policy': {
+        const topic = this.getStringArg(input, 'topic') || 'general';
+        const docType =
+          topic === 'shipping'
+            ? KnowledgeDocType.SHIPPING_POLICY
+            : topic === 'returns'
+              ? KnowledgeDocType.RETURN_POLICY
+              : KnowledgeDocType.CUSTOM;
+        const policy = await this.retrieval.getPolicy(ctx.tenantId, ctx.storeId!, docType, undefined);
+        return { ok: true, data: { topic, items: policy.items, voiceSummary: policy.voiceSummary }, meta: { source: policy.source } };
       }
       case 'handoff_to_human': {
         const reason = this.getStringArg(input, 'reason') || 'handoff';

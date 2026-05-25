@@ -1,6 +1,8 @@
 import { PrismaService } from '../../../database/prisma.service';
 import { OpenAIToolRegistryService } from '../../integrations/openai/openai-tool-registry.service';
 import { RetrievalService } from '../../knowledge/retrieval.service';
+import { RetrievalOrchestratorService } from '../../knowledge/retrieval-orchestrator.service';
+import { CallMemoryService } from './call-memory.service';
 import { CallEventsService } from '../../analytics/call-events.service';
 import { ShopifyAgentService } from '../../agents/shopify-agent.service';
 import { OrderBookingService } from '../../agents/order-booking.service';
@@ -11,6 +13,7 @@ import { TwilioSmsService } from '../../integrations/twilio/twilio-sms.service';
 import { AgentsService } from '../../agents/agents.service';
 import { ShopifyProductSearchService } from '../../integrations/shopify/product-search';
 import { ResendEmailService } from '../../integrations/email/resend-email.service';
+import { AgentEmailConfigService } from '../../integrations/email/agent-email-config.service';
 import { TranscriptBufferService } from './transcript-buffer.service';
 export interface ToolResult {
     ok: boolean;
@@ -31,6 +34,8 @@ export declare class ToolOrchestratorService {
     private readonly prisma;
     private readonly toolRegistry;
     private readonly retrieval;
+    private readonly retrievalOrchestrator;
+    private readonly callMemory;
     private readonly callEvents;
     private readonly shopifyAgent;
     private readonly callbacks;
@@ -40,12 +45,13 @@ export declare class ToolOrchestratorService {
     private readonly agentsService;
     private readonly productSearch;
     private readonly resendEmail;
+    private readonly agentEmailConfig;
     private readonly transcriptBuffer;
     private readonly logger;
     private static readonly ORDER_STATE_SEQUENCE;
     private static readonly SENSITIVE_PAYMENT_KEYS;
     private static readonly SENSITIVE_PAYMENT_PATTERN;
-    constructor(prisma: PrismaService, toolRegistry: OpenAIToolRegistryService, retrieval: RetrievalService, callEvents: CallEventsService, shopifyAgent: ShopifyAgentService, callbacks: CallbackRequestsService, booking: OrderBookingService, checkout: ShopifyCheckoutService, twilioSms: TwilioSmsService, agentsService: AgentsService, productSearch: ShopifyProductSearchService, resendEmail: ResendEmailService, transcriptBuffer: TranscriptBufferService);
+    constructor(prisma: PrismaService, toolRegistry: OpenAIToolRegistryService, retrieval: RetrievalService, retrievalOrchestrator: RetrievalOrchestratorService, callMemory: CallMemoryService, callEvents: CallEventsService, shopifyAgent: ShopifyAgentService, callbacks: CallbackRequestsService, booking: OrderBookingService, checkout: ShopifyCheckoutService, twilioSms: TwilioSmsService, agentsService: AgentsService, productSearch: ShopifyProductSearchService, resendEmail: ResendEmailService, agentEmailConfig: AgentEmailConfigService, transcriptBuffer: TranscriptBufferService);
     private mapLiveSummaryToDetailsProduct;
     private getStringArg;
     private getBooleanArg;

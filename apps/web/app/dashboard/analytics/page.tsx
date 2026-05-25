@@ -52,6 +52,14 @@ export default async function AnalyticsPage() {
           <p className="text-sm font-medium text-muted-foreground">Escalation rate</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{overview.escalationRate}%</p>
         </div>
+        {'conversionRate' in overview && (
+          <div className="rounded-lg border bg-card p-4 shadow-sm">
+            <p className="text-sm font-medium text-muted-foreground">Conversion rate</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">
+              {(overview as { conversionRate?: number }).conversionRate ?? 0}%
+            </p>
+          </div>
+        )}
         <div className="rounded-lg border bg-card p-4 shadow-sm">
           <p className="text-sm font-medium text-muted-foreground">Avg duration</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">

@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { EncryptionService } from '../../common/encryption.service';
 import { Prisma } from '@prisma/client';
@@ -34,6 +35,15 @@ import {
   buildAgentRuntimePrompt,
   type AgentRuntimePromptInput,
 } from '../calls/runtime/build-agent-runtime-prompt';
+import { AgentEmailConfigService } from '../integrations/email/agent-email-config.service';
+import { ResendEmailService } from '../integrations/email/resend-email.service';
+import { paymentEmailIdempotencyKey } from '../../common/payment-email-idempotency';
+import {
+  normalizeToolPermissions,
+  toolNamesFromPermissions,
+} from '../tools/tool-permissions.util';
+import { RuntimeToolRegistryService } from '../tools/runtime-tool-registry.service';
+import type { VoicePersonalityTraits } from '@bookstore-voice-agents/types';
 
 const SECRET_KEYS = [
   'shopifyAdminToken',
@@ -46,6 +56,7 @@ const SECRET_KEYS = [
   'twilioAuthToken',
   'openaiApiKey',
   'elevenlabsApiKey',
+  'resendApiKey',
 ] as const;
 
 /** Map dashboard alias field names onto persisted DTO fields before create/update. */
@@ -78,25 +89,16 @@ interface AgentSecrets {
   twilioAuthToken?: string;
   openaiApiKey?: string;
   elevenlabsApiKey?: string;
+  resendApiKey?: string;
 }
 
-type CredentialSource = 'agent' | 'workspace' | 'env' | 'missing';
+import {
+  resolveCredentialPriority,
+  type CredentialSource,
+  type ResolvedCredential,
+} from '../../common/credential-priority.util';
 
-type ResolvedCredential = {
-  value?: string;
-  source: CredentialSource;
-};
-
-export function resolveCredentialPriority(
-  agentValue: string | undefined,
-  workspaceValue: string | undefined,
-  envValue?: string | undefined,
-): ResolvedCredential {
-  if (agentValue?.trim()) return { value: agentValue.trim(), source: 'agent' };
-  if (workspaceValue?.trim()) return { value: workspaceValue.trim(), source: 'workspace' };
-  if (envValue?.trim()) return { value: envValue.trim(), source: 'env' };
-  return { source: 'missing' };
-}
+export { resolveCredentialPriority };
 
 function statusDtoToPrisma(s?: AgentStatusDto): AgentStatus {
   if (!s) return AgentStatus.DRAFT;
@@ -148,7 +150,37 @@ export class AgentsService {
     private readonly openaiTest: OpenAIConnectionTestService,
     private readonly elevenlabsTest: ElevenLabsConnectionTestService,
     private readonly productSyncQueue: ShopifyProductSyncQueueService,
+    private readonly agentEmailConfig: AgentEmailConfigService,
+    private readonly resendEmail: ResendEmailService,
+    private readonly toolRegistry: RuntimeToolRegistryService,
   ) {}
+
+  private resolveToolsFromDto(dto: CreateAgentDto | UpdateAgentDto): {
+    toolPermissions: Record<string, boolean>;
+    enabledTools: string[];
+  } | null {
+    if (dto.toolPermissions === undefined && dto.enabledTools === undefined) return null;
+    const perms = normalizeToolPermissions(dto.toolPermissions);
+    const enabled =
+      Array.isArray(dto.enabledTools) && dto.enabledTools.length > 0
+        ? dto.enabledTools
+        : toolNamesFromPermissions(perms);
+    return { toolPermissions: perms as Record<string, boolean>, enabledTools: enabled };
+  }
+
+  private buildVoiceProviderConfig(dto: CreateAgentDto | UpdateAgentDto): Record<string, unknown> {
+    return {
+      voiceStyle: dto.voiceStyle ?? null,
+      elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
+      languageMode: dto.languageMode ?? 'auto',
+      fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
+      supportedLanguages:
+        Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
+          ? dto.supportedLanguages
+          : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
+      ...(dto.voicePersonality ? { personality: dto.voicePersonality } : {}),
+    };
+  }
 
   private expectedTwilioWebhookUrls() {
     const base = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
@@ -261,23 +293,20 @@ export class AgentsService {
           voiceId: agent.voiceId?.trim() || workspace?.elevenlabsDefaultVoiceId?.trim(),
         })
       : null;
-    const tenantIntegration = await this.prisma.tenantIntegration.findUnique({
-      where: { tenantId },
-      select: {
-        resendApiKeyEnc: true,
-        resendFromEmail: true,
-        emailLastTestOk: true,
-      },
-    });
-    const emailReady = Boolean(
-      tenantIntegration?.resendApiKeyEnc &&
-        tenantIntegration?.resendFromEmail?.trim() &&
-        tenantIntegration?.emailLastTestOk,
-    );
-    const paymentWebhookConfigured = Boolean(cfg.webhookSecret?.trim());
+    const emailSummary = await this.agentEmailConfig.getSummary(tenantId, agentId);
+    const hasGreeting = Boolean(agent.greetingMessage?.trim());
     const hasSystemPrompt = Boolean(
       agent.baseSystemPrompt?.trim() || agent.agentConfig?.customSystemPrompt?.trim(),
     );
+    const hasElevenLabsVoiceId = !isElevenLabsSelected || Boolean(agent.voiceId?.trim());
+    const paymentWebhookConfigured = Boolean(cfg.webhookSecret?.trim());
+    let runtimePromptAvailable = false;
+    try {
+      const preview = await this.getRuntimePromptPreview(tenantId, agentId);
+      runtimePromptAvailable = Boolean(preview.prompt?.trim());
+    } catch {
+      runtimePromptAvailable = false;
+    }
     const checks = [
       {
         key: 'twilio_number_assigned',
@@ -335,11 +364,23 @@ export class AgentsService {
         fixAction: 'Provide a valid OpenAI key for this agent/workspace.',
       },
       {
+        key: 'greeting_configured',
+        label: 'Greeting message configured',
+        pass: hasGreeting,
+        fixAction: 'Add a greeting message in Voice settings.',
+      },
+      {
         key: 'system_prompt_configured',
         label: 'System prompt configured',
         pass: hasSystemPrompt,
         fixAction:
           'Add AI instructions in the agent form (Main instructions / system prompt) before going live.',
+      },
+      {
+        key: 'elevenlabs_voice_id',
+        label: 'ElevenLabs voice ID configured',
+        pass: hasElevenLabsVoiceId,
+        fixAction: 'Set an ElevenLabs voice ID for this agent.',
       },
       {
         key: 'elevenlabs_connected',
@@ -348,10 +389,34 @@ export class AgentsService {
         fixAction: 'Set a valid ElevenLabs key and voice that can generate test audio.',
       },
       {
+        key: 'email_sender_configured',
+        label: 'Email sender configured',
+        pass: emailSummary?.senderConfigured === true,
+        fixAction: 'Set sender name and from address on the agent, or configure workspace Resend from email.',
+      },
+      {
+        key: 'resend_key_configured',
+        label: 'Resend API key configured',
+        pass: emailSummary?.resendKeyConfigured === true,
+        fixAction: 'Add a Resend API key on the agent or in Settings → Integrations → Email.',
+      },
+      {
         key: 'email_connected',
-        label: 'Email connected',
-        pass: emailReady,
-        fixAction: 'Configure and test Resend API key + from address.',
+        label: 'Email ready to send payment links',
+        pass: emailSummary?.configured === true,
+        fixAction: 'Configure Resend API key and sender address, then send a test email.',
+      },
+      {
+        key: 'runtime_prompt_available',
+        label: 'Runtime prompt preview available',
+        pass: runtimePromptAvailable,
+        fixAction: 'Save agent identity and AI instructions so the runtime prompt can be built.',
+      },
+      {
+        key: 'checkout_link_ready',
+        label: 'Checkout link creation ready (Shopify)',
+        pass: shopify.success,
+        fixAction: 'Connect Shopify and verify product search works for this agent store.',
       },
       {
         key: 'payment_webhook_configured',
@@ -531,11 +596,39 @@ export class AgentsService {
       escalationRules: config?.escalationRules ?? null,
       fallbackHumanContact: config?.fallbackHumanContact ?? null,
       customSystemPrompt: config?.customSystemPrompt ?? null,
+      emailSenderName: config?.emailSenderName ?? null,
+      emailSenderAddress: config?.emailSenderAddress ?? null,
+      emailReplyTo: config?.emailReplyTo ?? null,
+      emailSubjectTemplate: config?.emailSubjectTemplate ?? null,
+      paymentLinkEmailIntro: config?.paymentLinkEmailIntro ?? null,
+      emailTestRecipient: config?.emailTestRecipient ?? null,
+      useWorkspaceEmail: config?.useWorkspaceEmail ?? true,
+      resendApiKeyConfigured: config?.resendApiKeyConfigured === true,
       voiceProfileProvider: voiceProfile?.provider ?? null,
       voiceProfileLanguage: voiceProfile?.language ?? null,
       voiceProfileTone: voiceProfile?.tone ?? null,
       voiceProfileGreetingMessage: voiceProfile?.greetingMessage ?? null,
     } as T;
+  }
+
+  private agentConfigEmailFieldsFromDto(dto: CreateAgentDto | UpdateAgentDto): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (dto.emailSenderName !== undefined) out.emailSenderName = dto.emailSenderName?.trim() || null;
+    if (dto.emailSenderAddress !== undefined) {
+      out.emailSenderAddress = dto.emailSenderAddress?.trim() || null;
+    }
+    if (dto.emailReplyTo !== undefined) out.emailReplyTo = dto.emailReplyTo?.trim() || null;
+    if (dto.emailSubjectTemplate !== undefined) {
+      out.emailSubjectTemplate = dto.emailSubjectTemplate?.trim() || null;
+    }
+    if (dto.paymentLinkEmailIntro !== undefined) {
+      out.paymentLinkEmailIntro = dto.paymentLinkEmailIntro?.trim() || null;
+    }
+    if (dto.emailTestRecipient !== undefined) {
+      out.emailTestRecipient = dto.emailTestRecipient?.trim() || null;
+    }
+    if (dto.useWorkspaceEmail !== undefined) out.useWorkspaceEmail = dto.useWorkspaceEmail;
+    return out;
   }
 
   private pickSecrets(dto: CreateAgentDto | UpdateAgentDto): AgentSecrets {
@@ -592,6 +685,11 @@ export class AgentsService {
     }
     if (row.elevenlabsDefaultVoiceId?.trim()) setIfEmpty('voiceId', row.elevenlabsDefaultVoiceId);
     if (row.elevenlabsDefaultModel?.trim()) setIfEmpty('elevenlabsModel', row.elevenlabsDefaultModel);
+    if (row.resendApiKeyEnc) {
+      const tok = this.encryption.decryptFromStorage(row.resendApiKeyEnc);
+      setIfEmpty('resendApiKey', tok ?? undefined);
+    }
+    if (row.resendFromEmail?.trim()) setIfEmpty('emailSenderAddress', row.resendFromEmail.trim());
   }
 
   async create(
@@ -706,6 +804,8 @@ export class AgentsService {
       throw new BadRequestException('Voice ID is required when ElevenLabs is selected.');
     }
 
+    const toolsResolved = this.resolveToolsFromDto(dto);
+
     const agent = await this.prisma.$transaction(async (tx) => {
       const created = await tx.agent.create({
         data: {
@@ -722,6 +822,7 @@ export class AgentsService {
         voice: dto.voiceId ?? null,
         voiceProvider: dto.voiceProvider ?? null,
         voiceId: dto.voiceId ?? null,
+        voiceNameLabel: dto.voiceNameLabel?.trim() || null,
         voiceStyle: dto.voiceStyle ?? null,
         greetingMessage: dto.greetingMessage?.trim() || null,
         fallbackMessage: dto.fallbackMessage?.trim() || null,
@@ -762,6 +863,10 @@ export class AgentsService {
         lastConnectionTestAt: anyConnectionValidated ? new Date() : null,
         secretsEnc,
         createdById: createdById ?? null,
+        ...(toolsResolved && {
+          toolPermissions: toolsResolved.toolPermissions,
+          enabledTools: toolsResolved.enabledTools,
+        }),
       },
       select: this.agentSelect(),
       });
@@ -784,6 +889,13 @@ export class AgentsService {
           escalationRules: normalizeEscalationRules(dto.escalationRules),
           fallbackHumanContact: dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
           customSystemPrompt: dto.systemPrompt?.trim() || null,
+          emailSenderName: dto.emailSenderName?.trim() || null,
+          emailSenderAddress: dto.emailSenderAddress?.trim() || null,
+          emailReplyTo: dto.emailReplyTo?.trim() || null,
+          emailSubjectTemplate: dto.emailSubjectTemplate?.trim() || null,
+          paymentLinkEmailIntro: dto.paymentLinkEmailIntro?.trim() || null,
+          emailTestRecipient: dto.emailTestRecipient?.trim() || null,
+          useWorkspaceEmail: dto.useWorkspaceEmail ?? true,
         },
       });
 
@@ -796,16 +908,7 @@ export class AgentsService {
           voice: dto.voiceId ?? null,
           tone: dto.toneOfVoice ?? dto.voiceStyle ?? null,
           greetingMessage: dto.greetingMessage?.trim() || null,
-          providerConfig: {
-            voiceStyle: dto.voiceStyle ?? null,
-            elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
-            languageMode: dto.languageMode ?? 'auto',
-            fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
-            supportedLanguages:
-              Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
-                ? dto.supportedLanguages
-                : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
-          },
+          providerConfig: this.buildVoiceProviderConfig(dto) as Prisma.InputJsonValue,
         },
       });
 
@@ -879,6 +982,7 @@ export class AgentsService {
       voice: true,
       voiceProvider: true,
       voiceId: true,
+      voiceNameLabel: true,
       voiceStyle: true,
       baseSystemPrompt: true,
       greetingMessage: true,
@@ -889,6 +993,7 @@ export class AgentsService {
       status: true,
       isPublished: true,
       enabledTools: true,
+      toolPermissions: true,
       maxToolCallsPerTurn: true,
       handoffEnabled: true,
       voiceResponseStyle: true,
@@ -940,6 +1045,13 @@ export class AgentsService {
           escalationRules: true,
           fallbackHumanContact: true,
           customSystemPrompt: true,
+          emailSenderName: true,
+          emailSenderAddress: true,
+          emailReplyTo: true,
+          emailSubjectTemplate: true,
+          paymentLinkEmailIntro: true,
+          emailTestRecipient: true,
+          useWorkspaceEmail: true,
         },
       },
       voiceProfile: {
@@ -1006,7 +1118,17 @@ export class AgentsService {
       select: this.agentSelect(),
     });
     if (!agent) throw new NotFoundException('Agent not found.');
-    return this.serializeAgent(agent);
+    const emailSummary = await this.agentEmailConfig.getSummary(tenantId, id);
+    const withEmailMeta = {
+      ...agent,
+      agentConfig: agent.agentConfig
+        ? {
+            ...agent.agentConfig,
+            resendApiKeyConfigured: emailSummary?.resendKeyConfigured === true,
+          }
+        : null,
+    };
+    return this.serializeAgent(withEmailMeta);
   }
 
   /** Tenant-scoped agent load for voice runtime and admin tools (never cross-tenant). */
@@ -1077,6 +1199,119 @@ export class AgentsService {
         store: { select: { name: true } },
       },
     });
+  }
+
+  /** Send a test payment-link email using this agent's Resend + sender configuration. */
+  async sendTestEmail(
+    tenantId: string,
+    agentId: string,
+    body: { toEmail?: string; checkoutUrl?: string },
+  ): Promise<{ success: boolean; message: string; emailEventId?: string }> {
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      include: { agentConfig: true },
+    });
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    const toEmail = (
+      body.toEmail?.trim() ||
+      agent.agentConfig?.emailTestRecipient?.trim() ||
+      ''
+    ).toLowerCase();
+    if (!toEmail.includes('@')) {
+      throw new BadRequestException(
+        'Provide a valid test recipient email or save one under Email settings for this agent.',
+      );
+    }
+
+    const emailConfig = await this.agentEmailConfig.resolveForSend(tenantId, agentId);
+    if (!emailConfig) {
+      throw new BadRequestException(
+        'Email is not configured for this agent. Add a Resend API key and sender address (agent or workspace).',
+      );
+    }
+
+    const customCheckout = body.checkoutUrl?.trim();
+    const fallback =
+      process.env.DEV_TEST_CHECKOUT_URL?.trim() ||
+      (agent.storeUrl?.trim() ? `${agent.storeUrl.replace(/\/+$/, '')}/checkout` : '');
+    const resolvedUrl = customCheckout || fallback;
+    if (!resolvedUrl || !resolvedUrl.startsWith('https://')) {
+      throw new BadRequestException(
+        'Pass an HTTPS checkoutUrl or set DEV_TEST_CHECKOUT_URL / agent store URL for the test link.',
+      );
+    }
+
+    const checkoutFingerprint = createHash('sha256')
+      .update(`agent_test_email|${tenantId}|${agentId}|${toEmail}|${resolvedUrl}`)
+      .digest('hex');
+    const existing = await this.prisma.checkoutLink.findFirst({
+      where: {
+        tenantId,
+        agentId,
+        checkoutFingerprint,
+        status: { in: ['CREATED', 'SENT', 'OPENED'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const checkout =
+      existing ??
+      (await this.prisma.checkoutLink.create({
+        data: {
+          tenantId,
+          agentId,
+          mode: 'STOREFRONT_CART',
+          checkoutUrl: resolvedUrl,
+          customerEmail: toEmail,
+          checkoutFingerprint,
+          status: 'CREATED',
+          itemsJson: [
+            { title: 'Test product', quantity: 1, price: '$0.00' },
+          ] as Prisma.InputJsonValue,
+          metadata: { source: 'agent_test_email' } as Prisma.InputJsonValue,
+        },
+      }));
+
+    try {
+      const sendResult = await this.resendEmail.sendPaymentEmail({
+        tenantId,
+        agentId,
+        checkoutLinkId: checkout.id,
+        idempotencyKey: paymentEmailIdempotencyKey({
+          tenantId,
+          agentId,
+          checkoutLinkId: checkout.id,
+          recipientEmail: toEmail,
+          purpose: 'agent_test_email',
+        }),
+        to: toEmail,
+        businessName:
+          agent.agentConfig?.businessName?.trim() ||
+          agent.storeName?.trim() ||
+          agent.name,
+        supportEmail: agent.agentConfig?.supportEmail,
+        supportPhone: agent.agentConfig?.supportPhone,
+        checkoutUrl: checkout.checkoutUrl,
+        items: [{ title: 'Test product', quantity: 1, price: '$0.00' }],
+        emailConfig,
+      });
+      if (!sendResult.deduplicated) {
+        await this.prisma.checkoutLink.updateMany({
+          where: { id: checkout.id, tenantId, agentId },
+          data: { status: 'SENT', sentAt: new Date() },
+        });
+      }
+      return {
+        success: true,
+        message: sendResult.deduplicated
+          ? `A test email was already sent to ${toEmail} for this checkout.`
+          : `Test payment email sent to ${toEmail}.`,
+        emailEventId: sendResult.emailEventId,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to send test email.';
+      return { success: false, message };
+    }
   }
 
   /** Exact system prompt used on live calls for this agent (admin/debug). */
@@ -1310,6 +1545,7 @@ export class AgentsService {
       ...(dto.timezone !== undefined && { timezone: dto.timezone || null }),
       ...(dto.voiceProvider !== undefined && { voiceProvider: dto.voiceProvider || null }),
       ...(dto.voiceId !== undefined && { voiceId: dto.voiceId || null, voice: dto.voiceId || null }),
+      ...(dto.voiceNameLabel !== undefined && { voiceNameLabel: dto.voiceNameLabel?.trim() || null }),
       ...(dto.voiceStyle !== undefined && { voiceStyle: dto.voiceStyle || null, voiceResponseStyle: dto.voiceStyle || null }),
       ...(dto.greetingMessage !== undefined && { greetingMessage: dto.greetingMessage?.trim() || null }),
       ...(dto.fallbackMessage !== undefined && { fallbackMessage: dto.fallbackMessage?.trim() || null }),
@@ -1344,6 +1580,11 @@ export class AgentsService {
       ...(anyConnectionValidated ? { lastConnectionTestAt: new Date() } : {}),
       ...(hasSecretChanges && this.encryption.isAvailable() && { secretsEnc: secretsEnc ?? null }),
     };
+    const toolsResolved = this.resolveToolsFromDto(dto);
+    if (toolsResolved) {
+      data.toolPermissions = toolsResolved.toolPermissions;
+      data.enabledTools = toolsResolved.enabledTools;
+    }
 
     if (dto.clientId !== undefined && dto.clientId?.trim()) {
       const client = await this.prisma.client.findFirst({
@@ -1395,6 +1636,13 @@ export class AgentsService {
         fallbackHumanContact:
           dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
         customSystemPrompt: dto.systemPrompt?.trim() || null,
+        emailSenderName: dto.emailSenderName?.trim() || null,
+        emailSenderAddress: dto.emailSenderAddress?.trim() || null,
+        emailReplyTo: dto.emailReplyTo?.trim() || null,
+        emailSubjectTemplate: dto.emailSubjectTemplate?.trim() || null,
+        paymentLinkEmailIntro: dto.paymentLinkEmailIntro?.trim() || null,
+        emailTestRecipient: dto.emailTestRecipient?.trim() || null,
+        useWorkspaceEmail: dto.useWorkspaceEmail ?? true,
       },
       update: {
         ...(dto.businessName !== undefined && { businessName: dto.businessName?.trim() || null }),
@@ -1414,6 +1662,7 @@ export class AgentsService {
             dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
         }),
         ...(dto.systemPrompt !== undefined && { customSystemPrompt: dto.systemPrompt.trim() || null }),
+        ...this.agentConfigEmailFieldsFromDto(dto),
       },
     });
     await this.prisma.voiceProfile.upsert({
@@ -1438,29 +1687,13 @@ export class AgentsService {
           tone: dto.toneOfVoice ?? dto.voiceStyle ?? null,
         }),
         ...(dto.greetingMessage !== undefined && { greetingMessage: dto.greetingMessage?.trim() || null }),
-        ...(dto.voiceStyle !== undefined && {
-          providerConfig: {
-            voiceStyle: dto.voiceStyle ?? null,
-            elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
-            languageMode: dto.languageMode ?? 'auto',
-            fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
-            supportedLanguages:
-              Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
-                ? dto.supportedLanguages
-                : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
-          },
-        }),
-        ...((dto.elevenlabsModel !== undefined || dto.languageMode !== undefined || dto.fixedLanguage !== undefined || dto.supportedLanguages !== undefined) && {
-          providerConfig: {
-            voiceStyle: dto.voiceStyle ?? null,
-            elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
-            languageMode: dto.languageMode ?? 'auto',
-            fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
-            supportedLanguages:
-              Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
-                ? dto.supportedLanguages
-                : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
-          },
+        ...((dto.voiceStyle !== undefined ||
+          dto.elevenlabsModel !== undefined ||
+          dto.languageMode !== undefined ||
+          dto.fixedLanguage !== undefined ||
+          dto.supportedLanguages !== undefined ||
+          dto.voicePersonality !== undefined) && {
+          providerConfig: this.buildVoiceProviderConfig(dto) as Prisma.InputJsonValue,
         }),
       },
     });
@@ -1557,6 +1790,7 @@ export class AgentsService {
       twilioAuthToken: workspace?.twilioAuthToken?.trim(),
       openaiApiKey: workspace?.openaiApiKey?.trim(),
       elevenlabsApiKey: workspace?.elevenlabsApiKey?.trim(),
+      resendApiKey: workspace?.resendApiKey?.trim(),
     };
     const updatedSecrets = Object.fromEntries(
       SECRET_KEYS.map((key) => [key, false]),
@@ -1741,6 +1975,8 @@ export class AgentsService {
         openaiApiKeyEnc: true,
         elevenlabsApiKeyEnc: true,
         elevenlabsDefaultVoiceId: true,
+        resendApiKeyEnc: true,
+        resendFromEmail: true,
       },
     });
     if (!row || !this.encryption.isAvailable()) return null;
@@ -1763,6 +1999,10 @@ export class AgentsService {
         ? (this.encryption.decryptFromStorage(row.elevenlabsApiKeyEnc) ?? undefined)
         : undefined,
       elevenlabsDefaultVoiceId: row.elevenlabsDefaultVoiceId?.trim() || undefined,
+      resendApiKey: row.resendApiKeyEnc
+        ? (this.encryption.decryptFromStorage(row.resendApiKeyEnc) ?? undefined)
+        : undefined,
+      resendFromEmail: row.resendFromEmail?.trim() || undefined,
     };
   }
 
@@ -2126,6 +2366,80 @@ export class AgentsService {
         ? 'AI behavior test completed successfully.'
         : 'AI behavior test completed but model returned no content.',
       suggestedResponse: responseText || undefined,
+    };
+  }
+
+  /** Runtime debug snapshot for dashboard (no secrets). */
+  async getRuntimeDebug(tenantId: string, agentId: string, callSessionId?: string) {
+    const agent = await this.findOne(tenantId, agentId);
+    const perms = normalizeToolPermissions(
+      (agent as { toolPermissions?: Record<string, unknown> }).toolPermissions,
+    );
+    const enabledTools = this.toolRegistry.resolveEnabledToolNames({
+      toolPermissions: perms,
+      enabledTools: Array.isArray((agent as { enabledTools?: string[] }).enabledTools)
+        ? (agent as { enabledTools: string[] }).enabledTools
+        : null,
+    });
+    const personality =
+      (agent as { voiceProfile?: { providerConfig?: { personality?: VoicePersonalityTraits } } })
+        .voiceProfile?.providerConfig?.personality ?? null;
+
+    const promptInput: AgentRuntimePromptInput = {
+      agentId: agent.id as string,
+      agentName: agent.name as string,
+      storeName: (agent.storeName as string) || 'Store',
+      language: (agent.language as string) || 'en',
+      baseSystemPrompt: agent.baseSystemPrompt as string,
+      agentRole: agent.agentRole as string | null,
+      agentGoal: agent.agentGoal as string | null,
+      toneOfVoice: agent.toneOfVoice as string | null,
+      config: agent.agentConfig as AgentRuntimePromptInput['config'],
+    };
+    const livePrompt = buildAgentRuntimePrompt(promptInput, { personality, enabledTools });
+
+    let lastToolCalls: Array<Record<string, unknown>> = [];
+    let runtimeContextPreview: Record<string, unknown> | null = null;
+    if (callSessionId) {
+      const session = await this.prisma.callSession.findFirst({
+        where: { id: callSessionId, tenantId, agentId },
+        include: {
+          toolExecutions: { orderBy: { createdAt: 'desc' }, take: 10 },
+          emailEvents: { orderBy: { createdAt: 'desc' }, take: 5 },
+        },
+      });
+      if (session) {
+        lastToolCalls = session.toolExecutions.map((t) => ({
+          toolName: t.toolName,
+          status: t.status,
+          latencyMs: t.latencyMs,
+          createdAt: t.createdAt,
+          inputPreview: JSON.stringify(t.inputJson).slice(0, 200),
+          outputPreview: JSON.stringify(t.outputJson).slice(0, 300),
+        }));
+        runtimeContextPreview = {
+          callSessionId: session.id,
+          metadata: session.metadata,
+          emailEvents: session.emailEvents.map((e) => ({
+            status: e.status,
+            createdAt: e.createdAt,
+          })),
+        };
+      }
+    }
+
+    return {
+      agentId,
+      toolsEnabled: enabledTools,
+      toolPermissions: perms,
+      personality,
+      livePromptPreview: livePrompt.slice(0, 8000),
+      lastToolCalls,
+      runtimeContextPreview,
+      toolCatalog: this.toolRegistry.getCatalog().map((t) => ({
+        name: t.name,
+        permissionGroups: t.permissionGroups,
+      })),
     };
   }
 }

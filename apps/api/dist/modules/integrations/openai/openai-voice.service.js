@@ -90,7 +90,10 @@ let OpenAIVoiceService = OpenAIVoiceService_1 = class OpenAIVoiceService {
             };
         }
         const systemPrompt = this.promptBuilder.build(ctx);
-        const tools = this.toolRegistry.getToolsForAgent(ctx.agent.enabledTools);
+        const tools = this.toolRegistry.getToolsForAgent({
+            enabledTools: ctx.agent.enabledTools,
+            toolPermissions: ctx.agent.toolPermissions,
+        });
         const model = (0, voice_tool_schema_util_1.normalizeOpenAiChatCompletionsModel)(ctx.agent.model ?? this.config.get('OPENAI_REALTIME_MODEL') ?? 'gpt-4o-mini');
         const client = new openai_1.default({ apiKey });
         const temperatureRaw = ctx.agent.temperature ?? VOICE_COMMERCE_TEMPERATURE_DEFAULT;

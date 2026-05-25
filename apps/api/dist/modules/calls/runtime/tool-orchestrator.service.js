@@ -16,6 +16,8 @@ const prisma_service_1 = require("../../../database/prisma.service");
 const client_1 = require("@prisma/client");
 const openai_tool_registry_service_1 = require("../../integrations/openai/openai-tool-registry.service");
 const retrieval_service_1 = require("../../knowledge/retrieval.service");
+const retrieval_orchestrator_service_1 = require("../../knowledge/retrieval-orchestrator.service");
+const call_memory_service_1 = require("./call-memory.service");
 const call_events_service_1 = require("../../analytics/call-events.service");
 const shopify_agent_service_1 = require("../../agents/shopify-agent.service");
 const shopify_product_relevance_util_1 = require("../../agents/shopify-product-relevance.util");
@@ -27,6 +29,7 @@ const twilio_sms_service_1 = require("../../integrations/twilio/twilio-sms.servi
 const agents_service_1 = require("../../agents/agents.service");
 const product_search_1 = require("../../integrations/shopify/product-search");
 const resend_email_service_1 = require("../../integrations/email/resend-email.service");
+const agent_email_config_service_1 = require("../../integrations/email/agent-email-config.service");
 const payment_email_idempotency_1 = require("../../../common/payment-email-idempotency");
 const transcript_buffer_service_1 = require("./transcript-buffer.service");
 const voice_tool_args_1 = require("../../integrations/openai/voice-tool-args");
@@ -39,10 +42,12 @@ const order_state_machine_util_1 = require("./order-state-machine.util");
 const shopify_errors_1 = require("../../integrations/shopify/shopify-errors");
 const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
 let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestratorService {
-    constructor(prisma, toolRegistry, retrieval, callEvents, shopifyAgent, callbacks, booking, checkout, twilioSms, agentsService, productSearch, resendEmail, transcriptBuffer) {
+    constructor(prisma, toolRegistry, retrieval, retrievalOrchestrator, callMemory, callEvents, shopifyAgent, callbacks, booking, checkout, twilioSms, agentsService, productSearch, resendEmail, agentEmailConfig, transcriptBuffer) {
         this.prisma = prisma;
         this.toolRegistry = toolRegistry;
         this.retrieval = retrieval;
+        this.retrievalOrchestrator = retrievalOrchestrator;
+        this.callMemory = callMemory;
         this.callEvents = callEvents;
         this.shopifyAgent = shopifyAgent;
         this.callbacks = callbacks;
@@ -52,6 +57,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
         this.agentsService = agentsService;
         this.productSearch = productSearch;
         this.resendEmail = resendEmail;
+        this.agentEmailConfig = agentEmailConfig;
         this.transcriptBuffer = transcriptBuffer;
         this.logger = new common_1.Logger(ToolOrchestratorService_1.name);
     }
@@ -260,7 +266,10 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
             tenantId: ctx.tenantId,
             agentId: ctx.agentId,
         }));
-        const allowed = this.toolRegistry.isToolAllowed(toolName, ctx.agent.enabledTools);
+        const allowed = this.toolRegistry.isToolAllowed(toolName, {
+            enabledTools: ctx.agent.enabledTools,
+            toolPermissions: ctx.agent.toolPermissions,
+        });
         if (!allowed) {
             const blocked = await this.logAndReturn(ctx, callSessionId, toolName, args, requestId, start, {
                 ok: false,
@@ -339,6 +348,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
         try {
             const result = await this.runTool(ctx, toolName, fullInput, callSessionId);
             const logged = await this.logAndReturn(ctx, callSessionId, toolName, fullInput, requestId, start, result);
+            await this.callMemory.recordToolCall(callSessionId, toolName, logged.ok);
             const okSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
             await this.transcriptBuffer.append(callSessionId, 'tool', `Tool call completed: ${toolName} (${logged.ok ? 'success' : 'failed'})`, okSeq);
             return logged;
@@ -367,7 +377,18 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
     }
     async runTool(ctx, toolName, input, callSessionId) {
         const noStore = (msg) => ({ ok: true, data: { items: [], voiceSummary: msg }, meta: { source: 'system' } });
-        const storeDependent = ['get_store_locations', 'get_store_hours', 'search_store_faqs', 'get_shipping_policy', 'get_return_policy', 'get_promotion_details'];
+        const storeDependent = [
+            'get_store_locations',
+            'get_store_hours',
+            'search_store_faqs',
+            'retrieve_knowledge_base',
+            'get_shipping_policy',
+            'get_return_policy',
+            'get_promotion_details',
+            'estimate_shipping',
+            'get_store_policy',
+            'lookup_discount',
+        ];
         if (!ctx.storeId && storeDependent.includes(toolName)) {
             return noStore('Store information is not set up for this agent.');
         }
@@ -938,6 +959,21 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     ctx.store.name;
                 const supportEmail = link.agent.agentConfig?.supportEmail || link.agent.client?.contactEmail || null;
                 const supportPhone = link.agent.agentConfig?.supportPhone || link.agent.client?.contactPhone || null;
+                const emailConfig = await this.agentEmailConfig.resolveForSend(ctx.tenantId, ctx.agentId);
+                if (!emailConfig) {
+                    return {
+                        ok: false,
+                        error: {
+                            code: 'EMAIL_NOT_CONFIGURED',
+                            message: 'Payment email is not configured for this agent.',
+                            retryable: false,
+                        },
+                        data: {
+                            voiceSummary: 'I cannot send a payment email right now because email is not set up for this store. Let me connect you with support to complete your order.',
+                            escalateRecommended: true,
+                        },
+                    };
+                }
                 let sendResult;
                 try {
                     sendResult = await this.resendEmail.sendPaymentEmail({
@@ -958,6 +994,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                         supportPhone,
                         checkoutUrl: link.checkoutUrl,
                         items,
+                        emailConfig,
                     });
                     if (!sendResult.deduplicated) {
                         await this.prisma.checkoutLink.updateMany({
@@ -1127,8 +1164,31 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 const hours = await this.retrieval.getStoreHours(ctx.tenantId, ctx.storeId, input.branchId);
                 return { ok: true, data: { items: hours.items, voiceSummary: hours.voiceSummary }, meta: { source: hours.source } };
             }
-            case 'search_store_faqs': {
-                const faqs = await this.retrieval.searchFaqs(ctx.tenantId, ctx.storeId, input.query || '', input.branchProfileId, 5);
+            case 'search_store_faqs':
+            case 'retrieve_knowledge_base': {
+                const query = input.query || '';
+                if (!query.trim()) {
+                    return { ok: false, error: { code: 'MISSING_INPUT', message: 'Query required.', retryable: true } };
+                }
+                try {
+                    const rag = await this.retrievalOrchestrator.retrieve({
+                        tenantId: ctx.tenantId,
+                        storeId: ctx.storeId,
+                        query,
+                        branchProfileId: input.branchProfileId,
+                        topK: 5,
+                    });
+                    if (rag.ok && rag.items.length > 0) {
+                        return {
+                            ok: true,
+                            data: { items: rag.items, voiceSummary: rag.voiceSummary, source: rag.source },
+                            meta: { source: rag.source },
+                        };
+                    }
+                }
+                catch {
+                }
+                const faqs = await this.retrieval.searchFaqs(ctx.tenantId, ctx.storeId, query, input.branchProfileId, 5);
                 return { ok: true, data: { items: faqs.items, voiceSummary: faqs.voiceSummary }, meta: { source: faqs.source } };
             }
             case 'get_shipping_policy': {
@@ -1310,99 +1370,106 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     }
                 }
                 else {
-                    const agentCfg = ctx.agent.config;
-                    let businessName = agentCfg?.businessName?.trim() || null;
-                    let supportEmail = agentCfg?.supportEmail ?? null;
-                    let supportPhone = agentCfg?.supportPhone ?? null;
-                    if (!agentCfg?.businessName || !supportEmail || !supportPhone) {
-                        const agentContact = await this.prisma.agent.findFirst({
-                            where: { id: ctx.agentId, tenantId: ctx.tenantId, deletedAt: null },
-                            select: {
-                                client: {
-                                    select: {
-                                        name: true,
-                                        contactEmail: true,
-                                        contactPhone: true,
-                                    },
-                                },
-                            },
-                        });
-                        businessName = businessName || agentContact?.client?.name?.trim() || null;
-                        supportEmail = supportEmail || agentContact?.client?.contactEmail || null;
-                        supportPhone = supportPhone || agentContact?.client?.contactPhone || null;
+                    const bookingEmailCfg = await this.agentEmailConfig.resolveForSend(ctx.tenantId, ctx.agentId);
+                    if (!bookingEmailCfg) {
+                        channelDeliveryStatus = 'email_not_configured';
                     }
-                    const itemsForEmail = items
-                        .map((row) => {
-                        if (!row || typeof row !== 'object')
-                            return null;
-                        const r = row;
-                        const title = this.getStringArg(r, 'title') || 'Selected item';
-                        const quantity = typeof r.quantity === 'number' ? r.quantity : Number(r.quantity ?? 1);
-                        return { title, quantity: Math.max(1, Number.isFinite(quantity) ? Math.trunc(quantity) : 1) };
-                    })
-                        .filter((i) => i !== null);
-                    try {
-                        const bookingSend = await this.resendEmail.sendPaymentEmail({
-                            tenantId: ctx.tenantId,
-                            agentId: ctx.agentId,
-                            callSessionId,
-                            checkoutLinkId: checkout.checkoutLinkId,
-                            idempotencyKey: (0, payment_email_idempotency_1.paymentEmailIdempotencyKey)({
-                                tenantId: ctx.tenantId,
-                                agentId: ctx.agentId,
-                                checkoutLinkId: checkout.checkoutLinkId,
-                                recipientEmail: destination,
-                                purpose: 'voice_tool_booking_checkout_email',
-                            }),
-                            to: destination,
-                            businessName: businessName || ctx.store.name,
-                            supportEmail,
-                            supportPhone,
-                            checkoutUrl: checkout.checkoutUrl,
-                            items: itemsForEmail.length > 0 ? itemsForEmail : [{ title: 'Items from your order', quantity: 1 }],
-                        });
-                        bookingEmailDeduped = bookingSend.deduplicated === true;
-                        await this.prisma.checkoutLink.updateMany({
-                            where: {
-                                id: checkout.checkoutLinkId,
-                                tenantId: ctx.tenantId,
-                                agentId: ctx.agentId,
-                            },
-                            data: { status: 'SENT', sentAt: new Date() },
-                        });
-                        channelDeliveryStatus = 'email_sent';
-                        if (!bookingSend.deduplicated) {
-                            await this.prisma.leadCapture.create({
-                                data: {
-                                    tenantId: ctx.tenantId,
-                                    agentId: ctx.agentId,
-                                    callSessionId,
-                                    customerEmail: destination.trim().toLowerCase(),
-                                    intent: 'purchase_checkout_booking',
-                                    interestedItems: draft.itemsJson ?? client_1.Prisma.JsonNull,
-                                    metadata: {
-                                        checkoutLinkId: checkout.checkoutLinkId,
-                                        channel: 'email',
+                    else {
+                        const agentCfg = ctx.agent.config;
+                        let businessName = agentCfg?.businessName?.trim() || null;
+                        let supportEmail = agentCfg?.supportEmail ?? null;
+                        let supportPhone = agentCfg?.supportPhone ?? null;
+                        if (!agentCfg?.businessName || !supportEmail || !supportPhone) {
+                            const agentContact = await this.prisma.agent.findFirst({
+                                where: { id: ctx.agentId, tenantId: ctx.tenantId, deletedAt: null },
+                                select: {
+                                    client: {
+                                        select: {
+                                            name: true,
+                                            contactEmail: true,
+                                            contactPhone: true,
+                                        },
                                     },
                                 },
                             });
+                            businessName = businessName || agentContact?.client?.name?.trim() || null;
+                            supportEmail = supportEmail || agentContact?.client?.contactEmail || null;
+                            supportPhone = supportPhone || agentContact?.client?.contactPhone || null;
                         }
-                    }
-                    catch (err) {
-                        const inFlight = err instanceof Error && err.message.includes('already being sent for this checkout');
-                        if (inFlight) {
-                            channelDeliveryStatus = 'email_in_progress';
-                        }
-                        else {
-                            channelDeliveryStatus = 'email_failed';
+                        const itemsForEmail = items
+                            .map((row) => {
+                            if (!row || typeof row !== 'object')
+                                return null;
+                            const r = row;
+                            const title = this.getStringArg(r, 'title') || 'Selected item';
+                            const quantity = typeof r.quantity === 'number' ? r.quantity : Number(r.quantity ?? 1);
+                            return { title, quantity: Math.max(1, Number.isFinite(quantity) ? Math.trunc(quantity) : 1) };
+                        })
+                            .filter((i) => i !== null);
+                        try {
+                            const bookingSend = await this.resendEmail.sendPaymentEmail({
+                                tenantId: ctx.tenantId,
+                                agentId: ctx.agentId,
+                                callSessionId,
+                                checkoutLinkId: checkout.checkoutLinkId,
+                                idempotencyKey: (0, payment_email_idempotency_1.paymentEmailIdempotencyKey)({
+                                    tenantId: ctx.tenantId,
+                                    agentId: ctx.agentId,
+                                    checkoutLinkId: checkout.checkoutLinkId,
+                                    recipientEmail: destination,
+                                    purpose: 'voice_tool_booking_checkout_email',
+                                }),
+                                to: destination,
+                                businessName: businessName || ctx.store.name,
+                                supportEmail,
+                                supportPhone,
+                                checkoutUrl: checkout.checkoutUrl,
+                                items: itemsForEmail.length > 0 ? itemsForEmail : [{ title: 'Items from your order', quantity: 1 }],
+                                emailConfig: bookingEmailCfg,
+                            });
+                            bookingEmailDeduped = bookingSend.deduplicated === true;
                             await this.prisma.checkoutLink.updateMany({
                                 where: {
                                     id: checkout.checkoutLinkId,
                                     tenantId: ctx.tenantId,
                                     agentId: ctx.agentId,
                                 },
-                                data: { status: client_2.CheckoutLinkStatus.FAILED },
+                                data: { status: 'SENT', sentAt: new Date() },
                             });
+                            channelDeliveryStatus = 'email_sent';
+                            if (!bookingSend.deduplicated) {
+                                await this.prisma.leadCapture.create({
+                                    data: {
+                                        tenantId: ctx.tenantId,
+                                        agentId: ctx.agentId,
+                                        callSessionId,
+                                        customerEmail: destination.trim().toLowerCase(),
+                                        intent: 'purchase_checkout_booking',
+                                        interestedItems: draft.itemsJson ?? client_1.Prisma.JsonNull,
+                                        metadata: {
+                                            checkoutLinkId: checkout.checkoutLinkId,
+                                            channel: 'email',
+                                        },
+                                    },
+                                });
+                            }
+                        }
+                        catch (err) {
+                            const inFlight = err instanceof Error && err.message.includes('already being sent for this checkout');
+                            if (inFlight) {
+                                channelDeliveryStatus = 'email_in_progress';
+                            }
+                            else {
+                                channelDeliveryStatus = 'email_failed';
+                                await this.prisma.checkoutLink.updateMany({
+                                    where: {
+                                        id: checkout.checkoutLinkId,
+                                        tenantId: ctx.tenantId,
+                                        agentId: ctx.agentId,
+                                    },
+                                    data: { status: client_2.CheckoutLinkStatus.FAILED },
+                                });
+                            }
                         }
                     }
                 }
@@ -1458,6 +1525,128 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                         meta: { source: 'database' },
                     };
                 }
+            case 'search_collections': {
+                const query = this.getStringArg(input, 'query') || '';
+                const limit = Math.min(Number(input.limit) || 5, 10);
+                const shopDomain = ctx.agent.shopify?.shopDomain?.trim() ||
+                    (0, types_2.normalizeShopifyDomain)(ctx.agent.shopify?.storeUrl ?? null);
+                const products = await this.productSearch.search(ctx.tenantId, query, limit, shopDomain);
+                const collections = new Map();
+                for (const p of products) {
+                    const type = p.productType?.trim() || 'General';
+                    const prev = collections.get(type) ?? { title: type, count: 0 };
+                    prev.count += 1;
+                    collections.set(type, prev);
+                }
+                const items = Array.from(collections.values());
+                const voiceSummary = items.length > 0
+                    ? `Found ${items.length} categories matching "${query}". Top: ${items[0].title} (${items[0].count} items).`
+                    : `No categories found for "${query}" in our catalog.`;
+                return { ok: true, data: { items, voiceSummary }, meta: { source: 'shopify_cache' } };
+            }
+            case 'lookup_variant': {
+                const shopDomain = ctx.agent.shopify?.shopDomain?.trim() ||
+                    (0, types_2.normalizeShopifyDomain)(ctx.agent.shopify?.storeUrl ?? null);
+                const details = await this.productSearch.getDetails(ctx.tenantId, {
+                    productId: this.getStringArg(input, 'productId') || undefined,
+                    variantId: this.getStringArg(input, 'variantId') || undefined,
+                    title: undefined,
+                }, shopDomain);
+                if (!details) {
+                    return { ok: false, error: { code: 'NOT_FOUND', message: 'Variant not found.', retryable: false } };
+                }
+                const sku = this.getStringArg(input, 'sku');
+                const variant = sku
+                    ? details.variants.find((v) => v.sku?.toLowerCase() === sku.toLowerCase()) ?? details.variants[0]
+                    : details.variants[0];
+                return {
+                    ok: true,
+                    data: { product: details, variant, voiceSummary: variant ? `${details.title}, ${variant.title}: ${variant.price ?? 'price on request'}.` : details.title },
+                    meta: { source: 'shopify_cache' },
+                };
+            }
+            case 'validate_price': {
+                const shopDomain = ctx.agent.shopify?.shopDomain?.trim() ||
+                    (0, types_2.normalizeShopifyDomain)(ctx.agent.shopify?.storeUrl ?? null);
+                const details = await this.productSearch.getDetails(ctx.tenantId, {
+                    productId: this.getStringArg(input, 'productId') || undefined,
+                    variantId: this.getStringArg(input, 'variantId') || undefined,
+                }, shopDomain);
+                if (!details) {
+                    return { ok: false, error: { code: 'NOT_FOUND', message: 'Product not found.', retryable: false } };
+                }
+                const quoted = this.getStringArg(input, 'quotedPrice');
+                const variant = details.variants[0];
+                const actual = variant?.price ?? null;
+                const match = quoted && actual ? quoted.replace(/[^\d.]/g, '') === actual.replace(/[^\d.]/g, '') : null;
+                return {
+                    ok: true,
+                    data: {
+                        actualPrice: actual,
+                        quotedPrice: quoted,
+                        priceMatches: match,
+                        voiceSummary: actual
+                            ? `The correct price is ${actual}${match === false ? ', which differs from what you mentioned.' : '.'}`
+                            : 'Price is not available in catalog.',
+                    },
+                    meta: { source: 'shopify_cache' },
+                };
+            }
+            case 'check_live_inventory': {
+                const productId = this.getStringArg(input, 'productId');
+                if (!productId) {
+                    return { ok: false, error: { code: 'MISSING_INPUT', message: 'productId required.', retryable: true } };
+                }
+                const live = await this.shopifyAgent.getProductLive(ctx.tenantId, ctx.agentId, {
+                    productId,
+                    variantId: this.getStringArg(input, 'variantId') || undefined,
+                });
+                if (!live) {
+                    return { ok: false, error: { code: 'SHOPIFY_ERROR', message: 'Inventory check failed.', retryable: true } };
+                }
+                const variantId = this.getStringArg(input, 'variantId');
+                const variant = variantId
+                    ? live.variants.find((v) => v.id === variantId) ?? live.variants[0]
+                    : live.variants[0];
+                const qty = variant?.inventory_quantity ?? 0;
+                return {
+                    ok: true,
+                    data: {
+                        inStock: qty > 0,
+                        quantity: qty,
+                        voiceSummary: qty > 0 ? `${live.title} has ${qty} in stock.` : `${live.title} is currently out of stock.`,
+                    },
+                    meta: { source: 'shopify_live' },
+                };
+            }
+            case 'lookup_discount': {
+                const prom = await this.retrieval.getPromotionDetails(ctx.tenantId, ctx.storeId, undefined);
+                const code = this.getStringArg(input, 'code');
+                const voiceSummary = prom.items.length > 0
+                    ? prom.voiceSummary
+                    : code
+                        ? `No active promotion found for code "${code}".`
+                        : 'No active promotions in our knowledge base right now.';
+                return { ok: true, data: { items: prom.items, code, voiceSummary }, meta: { source: prom.source } };
+            }
+            case 'estimate_shipping': {
+                const ship = await this.retrieval.getPolicy(ctx.tenantId, ctx.storeId, client_2.KnowledgeDocType.SHIPPING_POLICY, undefined);
+                const city = this.getStringArg(input, 'city');
+                const voiceSummary = ship.voiceSummary?.trim()
+                    ? `${ship.voiceSummary}${city ? ` (asked about ${city})` : ''}`
+                    : 'Shipping estimates follow our store policy—exact rates appear at Shopify checkout.';
+                return { ok: true, data: { items: ship.items, city, voiceSummary }, meta: { source: ship.source } };
+            }
+            case 'get_store_policy': {
+                const topic = this.getStringArg(input, 'topic') || 'general';
+                const docType = topic === 'shipping'
+                    ? client_2.KnowledgeDocType.SHIPPING_POLICY
+                    : topic === 'returns'
+                        ? client_2.KnowledgeDocType.RETURN_POLICY
+                        : client_2.KnowledgeDocType.CUSTOM;
+                const policy = await this.retrieval.getPolicy(ctx.tenantId, ctx.storeId, docType, undefined);
+                return { ok: true, data: { topic, items: policy.items, voiceSummary: policy.voiceSummary }, meta: { source: policy.source } };
+            }
             case 'handoff_to_human': {
                 const reason = this.getStringArg(input, 'reason') || 'handoff';
                 const phone = ctx.fromNumber || this.getStringArg(input, 'phone');
@@ -1570,6 +1759,8 @@ exports.ToolOrchestratorService = ToolOrchestratorService = ToolOrchestratorServ
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         openai_tool_registry_service_1.OpenAIToolRegistryService,
         retrieval_service_1.RetrievalService,
+        retrieval_orchestrator_service_1.RetrievalOrchestratorService,
+        call_memory_service_1.CallMemoryService,
         call_events_service_1.CallEventsService,
         shopify_agent_service_1.ShopifyAgentService,
         callback_requests_service_1.CallbackRequestsService,
@@ -1579,6 +1770,7 @@ exports.ToolOrchestratorService = ToolOrchestratorService = ToolOrchestratorServ
         agents_service_1.AgentsService,
         product_search_1.ShopifyProductSearchService,
         resend_email_service_1.ResendEmailService,
+        agent_email_config_service_1.AgentEmailConfigService,
         transcript_buffer_service_1.TranscriptBufferService])
 ], ToolOrchestratorService);
 //# sourceMappingURL=tool-orchestrator.service.js.map

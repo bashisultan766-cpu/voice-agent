@@ -9,6 +9,7 @@ import {
   updateAgent,
   testAgentConnection,
   testCredentials,
+  sendAgentTestEmail,
   type CreateAgentPayload,
   type UpdatedSecretsMeta,
 } from '@/lib/api/agents';
@@ -22,6 +23,8 @@ import {
 } from './FormField';
 import { PasswordField } from './PasswordField';
 import { CreateAgentStepper } from './CreateAgentStepper';
+import { ToolPermissionsSection } from './ToolPermissionsSection';
+import { VoicePersonalitySection } from './VoicePersonalitySection';
 import { useToast } from '@/components/ui/Toast';
 import { getClients, getStores, type ClientListItem, type StoreListItem } from '@/lib/api/ownership';
 import {
@@ -183,7 +186,7 @@ interface CreateAgentFormProps {
 const SECRET_KEYS: (keyof CreateAgentFormData)[] = [
   'shopifyAdminToken', 'shopifyApiKey', 'shopifyApiSecret', 'webhookSecret',
   'databaseUrl', 'databaseAccessToken', 'twilioAccountSid', 'twilioAuthToken',
-  'openaiApiKey', 'elevenlabsApiKey',
+  'openaiApiKey', 'elevenlabsApiKey', 'resendApiKey',
 ];
 
 function loadDraftFromStorage(): { data: CreateAgentFormData; step: CreateAgentStep; savedAt: string | null } | null {
@@ -1181,9 +1184,19 @@ export function CreateAgentForm({
             testWarning={testWarning}
             onTest={runTest}
             isEdit={!!agentId}
+            agentId={agentId}
             savedStatus={savedCredentials?.twilio}
+            resendSaved={Boolean((agentId && data.resendApiKey === '') || data.useWorkspaceEmail)}
+            workspaceEmailConfigured={Boolean(workspaceSummary?.email?.configured)}
             lastTestedAt={lastTestedAt}
             onValidate={() => setErrors(validateStepSalesBehavior(data) as Record<string, string>)}
+            onTestEmail={agentId ? async () => {
+              const result = await sendAgentTestEmail(agentId, {
+                toEmail: data.emailTestRecipient?.trim() || undefined,
+              });
+              if (result.success) addToast('success', result.message);
+              else addToast('error', result.message);
+            } : undefined}
           />
         )}
         {step === 5 && (
@@ -1671,11 +1684,19 @@ function StepVoiceSettings({
         </FormField>
         <FormField
           id="voiceId"
-          label="Voice name or ID"
-          helperText="Required for ElevenLabs. Use the exact voice ID or saved voice name from your ElevenLabs workspace."
+          label="ElevenLabs voice ID"
+          helperText="Required for ElevenLabs. Use the exact voice ID from your ElevenLabs workspace."
           error={errors.voiceId}
         >
-          <FormInput id="voiceId" value={data.voiceId} onChange={(v) => update('voiceId', v)} placeholder="e.g. 21m00Tcm4TlvDq8ikWAM or Rachel" />
+          <FormInput id="voiceId" value={data.voiceId} onChange={(v) => update('voiceId', v)} placeholder="e.g. 21m00Tcm4TlvDq8ikWAM" />
+        </FormField>
+        <FormField
+          id="voiceNameLabel"
+          label="Voice display label"
+          optional
+          helperText="Friendly name shown in the dashboard (does not affect synthesis)."
+        >
+          <FormInput id="voiceNameLabel" value={data.voiceNameLabel} onChange={(v) => update('voiceNameLabel', v)} placeholder="e.g. Rachel — warm sales" />
         </FormField>
         <FormField
           id="elevenlabsModel"
@@ -1872,6 +1893,10 @@ function StepVoiceSettings({
             rows={2}
           />
         </FormField>
+        <VoicePersonalitySection
+          value={data.voicePersonality}
+          onChange={(v) => update('voicePersonality', v)}
+        />
       </FormSection>
     </div>
   );
@@ -2048,9 +2073,13 @@ function StepSalesBehavior({
   testWarning,
   onTest,
   isEdit,
+  agentId,
   savedStatus,
+  resendSaved,
+  workspaceEmailConfigured,
   lastTestedAt,
   onValidate,
+  onTestEmail,
 }: {
   data: CreateAgentFormData;
   update: <K extends keyof CreateAgentFormData>(key: K, value: CreateAgentFormData[K]) => void;
@@ -2060,9 +2089,13 @@ function StepSalesBehavior({
   testWarning: Record<ConnectionTestTarget, string>;
   onTest: (target: ConnectionTestTarget) => void;
   isEdit?: boolean;
+  agentId?: string;
   savedStatus?: SavedCredentialStatus;
+  resendSaved?: boolean;
+  workspaceEmailConfigured?: boolean;
   lastTestedAt?: string | null;
   onValidate: () => void;
+  onTestEmail?: () => Promise<void>;
 }) {
   const hint = isEdit ? ' Leave blank to keep existing value.' : '';
   return (
@@ -2172,6 +2205,67 @@ function StepSalesBehavior({
           <p className="mt-2 text-sm text-amber-700 dark:text-amber-300" role="status">
             {testWarning.twilio}
           </p>
+        )}
+      </FormSection>
+
+      <FormSection
+        eyebrow="Email & payment links"
+        title="Resend checkout emails"
+        description="Payment links are emailed after the customer confirms their address. Keys are stored encrypted and never shown again."
+      >
+        <FormCheckbox
+          id="useWorkspaceEmail"
+          label="Use workspace Resend integration when agent key is empty"
+          checked={data.useWorkspaceEmail}
+          onChange={(v) => update('useWorkspaceEmail', v)}
+          helperText={
+            workspaceEmailConfigured
+              ? 'Workspace email is configured under Settings → Integrations → Email.'
+              : 'No workspace email yet — add a per-agent Resend key or configure workspace email.'
+          }
+        />
+        <PasswordField
+          id="resendApiKey"
+          label="Resend API key (this agent)"
+          value={data.resendApiKey}
+          onChange={(v) => update('resendApiKey', v)}
+          optional
+          helperText={
+            isEdit
+              ? 'Leave blank to keep the saved key. When workspace mode is on, an empty field uses workspace credentials.'
+              : 'Optional if workspace email is configured.'
+          }
+          statusBadge={isEdit && resendSaved ? <span className="text-xs text-emerald-600">Saved</span> : null}
+        />
+        <FormField id="emailSenderName" label="Sender name" optional>
+          <FormInput id="emailSenderName" value={data.emailSenderName} onChange={(v) => update('emailSenderName', v)} placeholder="e.g. Alpha Bookstore" />
+        </FormField>
+        <FormField id="emailSenderAddress" label="Sender email" error={errors.emailSenderAddress} helperText="Must be a verified domain in Resend.">
+          <FormInput id="emailSenderAddress" value={data.emailSenderAddress} onChange={(v) => update('emailSenderAddress', v)} placeholder="orders@yourstore.com" />
+        </FormField>
+        <FormField id="emailReplyTo" label="Reply-to email" optional error={errors.emailReplyTo}>
+          <FormInput id="emailReplyTo" value={data.emailReplyTo} onChange={(v) => update('emailReplyTo', v)} placeholder="support@yourstore.com" />
+        </FormField>
+        <FormField id="emailSubjectTemplate" label="Email subject template" optional helperText="Use {{storeName}} for the store name.">
+          <FormInput id="emailSubjectTemplate" value={data.emailSubjectTemplate} onChange={(v) => update('emailSubjectTemplate', v)} />
+        </FormField>
+        <FormField id="paymentLinkEmailIntro" label="Payment link email intro" optional>
+          <FormTextarea id="paymentLinkEmailIntro" value={data.paymentLinkEmailIntro} onChange={(v) => update('paymentLinkEmailIntro', v)} rows={3} placeholder="Optional opening paragraph before the standard checkout instructions." />
+        </FormField>
+        <FormField id="emailTestRecipient" label="Test email recipient" optional error={errors.emailTestRecipient}>
+          <FormInput id="emailTestRecipient" value={data.emailTestRecipient} onChange={(v) => update('emailTestRecipient', v)} placeholder="you@company.com" />
+        </FormField>
+        {agentId && onTestEmail && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => void onTestEmail()}
+              className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              Send test email
+            </button>
+            <span className="text-xs text-muted-foreground">Uses this agent&apos;s sender and Resend config.</span>
+          </div>
         )}
       </FormSection>
 
@@ -2519,6 +2613,10 @@ function StepAIInstructions({
       <FormField id="escalationRules" label="Escalation rules (advanced)" optional helperText="Additional escalation policy lines.">
         <FormTextarea id="escalationRules" value={data.escalationRules} onChange={(v) => update('escalationRules', v)} placeholder="If uncertain, connect to human support." rows={2} />
       </FormField>
+      <ToolPermissionsSection
+        value={data.toolPermissions}
+        onChange={(v) => update('toolPermissions', v)}
+      />
       <div className="rounded-xl border border-border bg-muted/20 p-5">
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Preview: final instruction</p>
         <pre className="mt-4 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-background p-4 text-sm text-foreground font-sans border border-border">{composePreview(data)}</pre>

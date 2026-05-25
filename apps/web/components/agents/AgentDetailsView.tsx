@@ -19,11 +19,13 @@ import {
   syncAgentSecretsFromSettings,
   runAgentSmokeTest,
   goLiveAgent,
+  sendAgentTestEmail,
 } from '@/lib/api/agents';
 import { updateAgent, deleteAgent, createAgent, agentToFormData, getAgent } from '@/lib/api/agents';
 import { useToast } from '@/components/ui/Toast';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { PublicAgentLinkShare } from './PublicAgentLinkShare';
+import { AgentRuntimeDebugPanel } from './AgentRuntimeDebugPanel';
 
 type TestTarget = 'shopify' | 'twilio' | 'openai' | 'elevenlabs';
 
@@ -550,7 +552,8 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
         <DetailSection title="Voice settings" description="Provider and messages">
           <div className="space-y-0 divide-y divide-border">
             <DetailRow label="Voice provider" value={(agent.voiceProvider as string) || '—'} />
-            <DetailRow label="Voice ID / name" value={(agent.voiceId as string) || '—'} />
+            <DetailRow label="ElevenLabs voice ID" value={(agent.voiceId as string) || '—'} />
+            <DetailRow label="Voice label" value={(agent.voiceNameLabel as string) || '—'} />
             <DetailRow label="Style" value={(agent.voiceStyle as string) || '—'} />
             <DetailRow
               label="Greeting"
@@ -721,6 +724,43 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
           <div className="rounded-xl border border-border bg-muted/20 p-5 max-h-[420px] overflow-y-auto">
             <pre className="whitespace-pre-wrap text-sm text-foreground font-sans">{runtimeDisplay}</pre>
           </div>
+        </div>
+      </DetailSection>
+
+      <DetailSection title="Runtime debug" description="Tools, orchestration trace, and live prompt preview">
+        <AgentRuntimeDebugPanel agentId={agent.id} />
+      </DetailSection>
+
+      <DetailSection title="Email & payment links" description="Resend sender for checkout emails (API keys are never shown)">
+        <div className="space-y-0 divide-y divide-border">
+          <DetailRow label="Sender name" value={(agent.emailSenderName as string) || '—'} />
+          <DetailRow label="Sender email" value={(agent.emailSenderAddress as string) || '—'} />
+          <DetailRow label="Reply-to" value={(agent.emailReplyTo as string) || '—'} />
+          <DetailRow label="Subject template" value={(agent.emailSubjectTemplate as string) || '—'} />
+          <DetailRow
+            label="Resend key"
+            value={(agent.resendApiKeyConfigured as boolean) ? 'Configured (encrypted)' : 'Not set on agent'}
+          />
+          <DetailRow label="Use workspace email" value={agent.useWorkspaceEmail !== false ? 'Yes' : 'No'} />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const result = await sendAgentTestEmail(agent.id, {
+                  toEmail: (agent.emailTestRecipient as string) || undefined,
+                });
+                if (result.success) addToast('success', result.message);
+                else addToast('error', result.message);
+              } catch (e) {
+                addToast('error', e instanceof Error ? e.message : 'Test email failed.');
+              }
+            }}
+            className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+          >
+            Send test email
+          </button>
         </div>
       </DetailSection>
 

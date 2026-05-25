@@ -32,6 +32,7 @@ import {
   configureTwilioWebhookBodySchema,
   smokeTestBodySchema,
   debugShopifySearchBodySchema,
+  testAgentEmailBodySchema,
 } from './agents-validation';
 import { z } from 'zod';
 
@@ -210,6 +211,15 @@ export class AgentsController {
     return this.agentsService.findOne(tenantId, id);
   }
 
+  @Get(':id/runtime-debug')
+  getRuntimeDebug(
+    @TenantId() tenantId: string,
+    @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
+    @Query('callSessionId') callSessionId?: string,
+  ) {
+    return this.agentsService.getRuntimeDebug(tenantId, id, callSessionId);
+  }
+
   @Roles(UserRole.SUPPORT)
   @Get(':id/readiness')
   getReadiness(
@@ -217,6 +227,18 @@ export class AgentsController {
     @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
   ) {
     return this.agentsService.getAgentReadiness(tenantId, id);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Roles(UserRole.MANAGER)
+  @Post(':id/test-email')
+  sendTestEmail(
+    @TenantId() tenantId: string,
+    @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
+    @Body(new ZodValidationPipe(testAgentEmailBodySchema))
+    body: z.infer<typeof testAgentEmailBodySchema>,
+  ) {
+    return this.agentsService.sendTestEmail(tenantId, id, body);
   }
 
   @Roles(UserRole.OWNER, UserRole.ADMIN)

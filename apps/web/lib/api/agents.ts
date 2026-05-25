@@ -2,7 +2,12 @@
  * Agents API client. Browser calls same-origin `/api/agents` (Next route forwards cookie → JWT).
  * For Server Components use `getAgentServer` from `@/lib/api/agents-server`.
  */
-import { toCheckoutModeForm, normalizePhoneNumber } from '@bookstore-voice-agents/types';
+import {
+  toCheckoutModeForm,
+  normalizePhoneNumber,
+  DEFAULT_TOOL_PERMISSIONS,
+  DEFAULT_VOICE_PERSONALITY,
+} from '@bookstore-voice-agents/types';
 import { clearClientSession, getBearerInit } from '@/lib/auth/browser-session';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
 
@@ -84,7 +89,8 @@ export type UpdatedSecretsMeta = Partial<
     | 'twilioAccountSid'
     | 'twilioAuthToken'
     | 'openaiApiKey'
-    | 'elevenlabsApiKey',
+    | 'elevenlabsApiKey'
+    | 'resendApiKey',
     boolean
   >
 >;
@@ -289,6 +295,18 @@ export interface CreateAgentPayload {
   transferToHumanEnabled?: boolean;
   escalationPhone?: string;
   escalationEmail?: string;
+  voiceNameLabel?: string;
+  emailSenderName?: string;
+  emailSenderAddress?: string;
+  emailReplyTo?: string;
+  emailSubjectTemplate?: string;
+  paymentLinkEmailIntro?: string;
+  emailTestRecipient?: string;
+  useWorkspaceEmail?: boolean;
+  resendApiKey?: string;
+  toolPermissions?: Record<string, boolean>;
+  voicePersonality?: Record<string, number>;
+  enabledTools?: string[];
 }
 
 export async function createAgent(payload: CreateAgentPayload): Promise<AgentApi> {
@@ -570,6 +588,20 @@ export async function getAgentRuntimePromptPreview(agentId: string): Promise<Run
   return res.json();
 }
 
+export async function sendAgentTestEmail(
+  agentId: string,
+  input?: { toEmail?: string; checkoutUrl?: string },
+): Promise<{ success: boolean; message: string; emailEventId?: string }> {
+  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/test-email`, {
+    method: 'POST',
+    headers: getHeaders(),
+    credentials: 'include',
+    body: JSON.stringify(input ?? {}),
+  });
+  if (!res.ok) throw new Error(await parseErrorResponse(res));
+  return res.json();
+}
+
 export async function getAgentReadiness(agentId: string): Promise<AgentReadinessResponse> {
   const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/readiness`, {
     headers: getHeaders(),
@@ -735,5 +767,23 @@ export function agentToFormData(a: AgentApi): CreateAgentPayload {
     transferToHumanEnabled: (a.transferToHumanEnabled as boolean) ?? true,
     escalationPhone: (a.escalationPhone as string) ?? '',
     escalationEmail: (a.escalationEmail as string) ?? '',
+    voiceNameLabel: (a.voiceNameLabel as string) ?? '',
+    emailSenderName: (a.emailSenderName as string) ?? '',
+    emailSenderAddress: (a.emailSenderAddress as string) ?? '',
+    emailReplyTo: (a.emailReplyTo as string) ?? '',
+    emailSubjectTemplate:
+      (a.emailSubjectTemplate as string) ?? '{{storeName}} — Complete your secure checkout',
+    paymentLinkEmailIntro: (a.paymentLinkEmailIntro as string) ?? '',
+    emailTestRecipient: (a.emailTestRecipient as string) ?? '',
+    useWorkspaceEmail: (a.useWorkspaceEmail as boolean) ?? true,
+    resendApiKey: '',
+    toolPermissions: {
+      ...DEFAULT_TOOL_PERMISSIONS,
+      ...((a.toolPermissions as Record<string, boolean> | undefined) ?? {}),
+    },
+    voicePersonality: {
+      ...DEFAULT_VOICE_PERSONALITY,
+      ...((voiceCfg?.personality as Record<string, number> | undefined) ?? {}),
+    },
   };
 }

@@ -1,4 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, Global } from '@nestjs/common';
+import { RuntimeToolRegistryService } from './runtime-tool-registry.service';
 
-@Module({})
+@Global()
+@Module({
+  providers: [RuntimeToolRegistryService],
+  exports: [RuntimeToolRegistryService],
+})
 export class ToolsModule {}

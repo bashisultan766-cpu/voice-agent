@@ -503,6 +503,106 @@ export const VOICE_AGENT_TOOLS: Array<{
       required: ['reason'],
     },
   },
+  {
+    name: 'retrieve_knowledge_base',
+    description:
+      'RAG retrieval across uploaded FAQs, policies, and store docs. Use retrieved snippets only—never invent policy text.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        query: { type: 'string', description: 'Caller question to match against knowledge base.' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'search_collections',
+    description: 'Search Shopify collections/categories for browsing—returns only synced catalog data.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        query: { type: 'string' },
+        limit: { type: 'integer', minimum: 1, maximum: 10 },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'lookup_variant',
+    description: 'Lookup a specific variant by SKU, barcode, or variant id from synced Shopify cache.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        sku: { type: 'string' },
+        variantId: { type: 'string' },
+        productId: { type: 'string' },
+      },
+    },
+  },
+  {
+    name: 'validate_price',
+    description: 'Validate quoted price against live Shopify catalog—never guess prices.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        productId: { type: 'string' },
+        variantId: { type: 'string' },
+        quotedPrice: { type: 'string', description: 'Price the caller mentioned.' },
+      },
+      required: ['productId'],
+    },
+  },
+  {
+    name: 'check_live_inventory',
+    description: 'Live inventory check via Shopify for a product/variant—authoritative stock only.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        productId: { type: 'string' },
+        variantId: { type: 'string' },
+      },
+      required: ['productId'],
+    },
+  },
+  {
+    name: 'lookup_discount',
+    description: 'Lookup active promotions/discounts from knowledge base—if none, say no discount data available.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        code: { type: 'string', description: 'Optional discount code mentioned by caller.' },
+      },
+    },
+  },
+  {
+    name: 'estimate_shipping',
+    description: 'Shipping estimate from store policy/docs and delivery notes—not invented rates.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        city: { type: 'string' },
+        country: { type: 'string' },
+      },
+    },
+  },
+  {
+    name: 'get_store_policy',
+    description: 'General store policy lookup (returns, shipping, exchanges) from knowledge base.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        topic: { type: 'string', enum: ['shipping', 'returns', 'exchange', 'general'] },
+      },
+    },
+  },
 ];
 
 export const ALL_TOOL_NAMES = VOICE_AGENT_TOOLS.map((t) => t.name);

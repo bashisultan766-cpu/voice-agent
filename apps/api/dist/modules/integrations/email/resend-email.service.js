@@ -55,10 +55,10 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
         this.prisma = prisma;
         this.logger = new common_1.Logger(ResendEmailService_1.name);
     }
-    apiKey() {
-        const key = this.config.get('RESEND_API_KEY')?.trim();
+    apiKey(override) {
+        const key = override?.trim() || this.config.get('RESEND_API_KEY')?.trim();
         if (!key)
-            throw new Error('RESEND_API_KEY is not configured.');
+            throw new Error('Resend API key is not configured for this agent or workspace.');
         return key;
     }
     async sendPaymentEmail(input) {
@@ -73,6 +73,8 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
             supportPhone: input.supportPhone,
             checkoutUrl: safeCheckoutUrl,
             items: input.items,
+            subjectTemplate: input.emailConfig?.subjectTemplate,
+            customIntro: input.emailConfig?.paymentLinkIntro,
         });
         const idemKey = input.idempotencyKey?.trim() ||
             (0, payment_email_idempotency_1.paymentEmailIdempotencyKey)({
@@ -230,15 +232,16 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
         }
         const emailRow = txResult.row;
         const emailEventId = emailRow.id;
-        const from = this.config.get('RESEND_FROM_EMAIL')?.trim();
+        const from = input.emailConfig?.from?.trim() || this.config.get('RESEND_FROM_EMAIL')?.trim();
         if (!from) {
+            const configMsg = 'Email sender address is not configured for this agent.';
             this.logger.error(JSON.stringify({
                 event: 'payment_email.send_config_error',
                 tenantId: input.tenantId,
                 agentId: input.agentId,
                 checkoutLinkId: input.checkoutLinkId,
                 emailEventId,
-                message: 'RESEND_FROM_EMAIL is not configured.',
+                message: configMsg,
             }));
             await this.prisma.emailEvent.update({
                 where: { id: emailEventId },
@@ -247,7 +250,7 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
                     metadata: appendSendAttempt(emailRow.metadata, {
                         at: new Date().toISOString(),
                         outcome: 'config_error',
-                        message: 'RESEND_FROM_EMAIL is not configured.',
+                        message: configMsg,
                     }),
                 },
             });
@@ -260,12 +263,13 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
                     metadata: {
                         emailEventId,
                         recipientEmail: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
-                        message: 'RESEND_FROM_EMAIL is not configured.',
+                        message: configMsg,
                     },
                 },
             });
-            throw new Error('RESEND_FROM_EMAIL is not configured.');
+            throw new Error(configMsg);
         }
+        const replyTo = input.emailConfig?.replyTo?.trim();
         let lastPayload = {};
         let lastStatus = 0;
         for (let attempt = 1; attempt <= RESEND_MAX_ATTEMPTS; attempt++) {
@@ -280,19 +284,22 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
                 recipientEmailMasked: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
             }));
             try {
+                const payload = {
+                    from,
+                    to: [cleanTo],
+                    subject: tmpl.subject,
+                    html: tmpl.html,
+                    text: tmpl.text,
+                };
+                if (replyTo)
+                    payload.reply_to = replyTo;
                 const response = await fetch('https://api.resend.com/emails', {
                     method: 'POST',
                     headers: {
-                        Authorization: `Bearer ${this.apiKey()}`,
+                        Authorization: `Bearer ${this.apiKey(input.emailConfig?.apiKey)}`,
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        from,
-                        to: [cleanTo],
-                        subject: tmpl.subject,
-                        html: tmpl.html,
-                        text: tmpl.text,
-                    }),
+                    body: JSON.stringify(payload),
                 });
                 lastStatus = response.status;
                 lastPayload = (await response.json().catch(() => ({})));

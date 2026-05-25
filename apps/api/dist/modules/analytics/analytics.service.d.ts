@@ -6,8 +6,13 @@ export declare class AnalyticsService {
         totalCalls: number;
         resolutionRate: number;
         escalationRate: number;
+        conversionRate: number;
         avgDurationSeconds: number;
         callbackRequestCount: number;
+        topProductsRequested: {
+            title: string;
+            count: number;
+        }[];
     }>;
     getAgentMetrics(tenantId: string, from?: Date, to?: Date): Promise<{
         resolutionRate: number;

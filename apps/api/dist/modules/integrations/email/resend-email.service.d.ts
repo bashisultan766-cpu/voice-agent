@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
+import type { ResolvedAgentEmailConfig } from './agent-email-config.service';
 type SendPaymentEmailResult = {
     emailEventId: string;
     providerMessageId: string | null;
@@ -27,6 +28,7 @@ export declare class ResendEmailService {
             quantity: number;
             price?: string | null;
         }>;
+        emailConfig?: ResolvedAgentEmailConfig | null;
     }): Promise<SendPaymentEmailResult>;
 }
 export {};

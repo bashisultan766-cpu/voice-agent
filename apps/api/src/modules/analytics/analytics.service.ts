@@ -27,12 +27,38 @@ export class AnalyticsService {
     const withCallback = await this.prisma.callOutcome.count({
       where: { tenantId, callbackRequested: true, callSession: dateRangeSession(from, to) },
     });
+    const outcomeMetrics = await this.prisma.callOutcome.findMany({
+      where: { tenantId, callSession: dateRangeSession(from, to) },
+      select: { conversionOutcome: true, productsRequested: true },
+    });
+    const converted = outcomeMetrics.filter((o) =>
+      ['payment_link_sent', 'order_completed'].includes(o.conversionOutcome ?? ''),
+    ).length;
+    const conversionRate = totalCalls > 0 ? (converted / totalCalls) * 100 : 0;
+
+    const productOutcomes = outcomeMetrics;
+    const productCounts = new Map<string, number>();
+    for (const row of productOutcomes) {
+      const list = Array.isArray(row.productsRequested) ? (row.productsRequested as string[]) : [];
+      for (const title of list) {
+        if (typeof title === 'string' && title.trim()) {
+          productCounts.set(title, (productCounts.get(title) ?? 0) + 1);
+        }
+      }
+    }
+    const topProductsRequested = Array.from(productCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([title, count]) => ({ title, count }));
+
     return {
       totalCalls,
       resolutionRate: Math.round(resolutionRate * 100) / 100,
       escalationRate: Math.round(escalationRate * 100) / 100,
+      conversionRate: Math.round(conversionRate * 100) / 100,
       avgDurationSeconds: avgDuration._avg.durationSeconds ?? 0,
       callbackRequestCount: withCallback,
+      topProductsRequested,
     };
   }
 

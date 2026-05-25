@@ -45,6 +45,18 @@ test('buildAgentRuntimePrompt isolates greetings and blocked topics per agent', 
   assert.match(b, /Blocked topics:\nreligion/);
 });
 
+test('buildAgentRuntimePrompt includes scope guardrails', () => {
+  const prompt = buildAgentRuntimePrompt({
+    agentId: '1',
+    agentName: 'A',
+    storeName: 'S',
+    language: 'en',
+  });
+  assert.match(prompt, /Refuse and redirect/);
+  assert.match(prompt, /Never invent Shopify product/);
+  assert.match(prompt, /official Shopify checkout/);
+});
+
 test('buildAgentRuntimePrompt maps policies from config', () => {
   const prompt = buildAgentRuntimePrompt({
     agentId: '1',

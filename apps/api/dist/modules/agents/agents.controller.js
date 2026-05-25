@@ -120,11 +120,20 @@ let AgentsController = class AgentsController {
     testAi(tenantId, id, dto) {
         return this.agentsService.testAiBehavior(tenantId, id, dto?.sampleQuery ?? 'Where is my order?');
     }
+    getRuntimePromptPreview(tenantId, id) {
+        return this.agentsService.getRuntimePromptPreview(tenantId, id);
+    }
     findOne(tenantId, id) {
         return this.agentsService.findOne(tenantId, id);
     }
+    getRuntimeDebug(tenantId, id, callSessionId) {
+        return this.agentsService.getRuntimeDebug(tenantId, id, callSessionId);
+    }
     getReadiness(tenantId, id) {
         return this.agentsService.getAgentReadiness(tenantId, id);
+    }
+    sendTestEmail(tenantId, id, body) {
+        return this.agentsService.sendTestEmail(tenantId, id, body);
     }
     configureTwilioWebhook(tenantId, id, _dto) {
         return this.agentsService.configureTwilioWebhook(tenantId, id);
@@ -279,6 +288,15 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AgentsController.prototype, "testAi", null);
 __decorate([
+    (0, roles_decorator_1.Roles)(client_1.UserRole.MANAGER),
+    (0, common_1.Get)(':id/runtime-prompt-preview'),
+    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(1, (0, common_1.Param)('id', new zod_validation_pipe_1.ZodValidationPipe(agents_validation_1.cuidParamSchema))),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], AgentsController.prototype, "getRuntimePromptPreview", null);
+__decorate([
     (0, roles_decorator_1.Roles)(client_1.UserRole.SUPPORT),
     (0, common_1.Get)(':id'),
     __param(0, (0, tenant_id_decorator_1.TenantId)()),
@@ -288,6 +306,15 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AgentsController.prototype, "findOne", null);
 __decorate([
+    (0, common_1.Get)(':id/runtime-debug'),
+    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(1, (0, common_1.Param)('id', new zod_validation_pipe_1.ZodValidationPipe(agents_validation_1.cuidParamSchema))),
+    __param(2, (0, common_1.Query)('callSessionId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", void 0)
+], AgentsController.prototype, "getRuntimeDebug", null);
+__decorate([
     (0, roles_decorator_1.Roles)(client_1.UserRole.SUPPORT),
     (0, common_1.Get)(':id/readiness'),
     __param(0, (0, tenant_id_decorator_1.TenantId)()),
@@ -296,6 +323,17 @@ __decorate([
     __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)
 ], AgentsController.prototype, "getReadiness", null);
+__decorate([
+    (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
+    (0, roles_decorator_1.Roles)(client_1.UserRole.MANAGER),
+    (0, common_1.Post)(':id/test-email'),
+    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(1, (0, common_1.Param)('id', new zod_validation_pipe_1.ZodValidationPipe(agents_validation_1.cuidParamSchema))),
+    __param(2, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(agents_validation_1.testAgentEmailBodySchema))),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, void 0]),
+    __metadata("design:returntype", void 0)
+], AgentsController.prototype, "sendTestEmail", null);
 __decorate([
     (0, roles_decorator_1.Roles)(client_1.UserRole.OWNER, client_1.UserRole.ADMIN),
     (0, common_1.Post)(':id/configure-twilio-webhook'),

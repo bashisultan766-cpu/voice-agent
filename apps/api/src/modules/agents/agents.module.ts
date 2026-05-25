@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { ToolsModule } from '../tools/tools.module';
+import { EmailModule } from '../integrations/email/email.module';
 import { AgentsController } from './agents.controller';
 import { PublicAgentsController } from './public-agents.controller';
 import { AgentsService } from './agents.service';
@@ -12,6 +14,7 @@ import { OrderBookingService } from './order-booking.service';
 import { ShopifyProductSyncQueueService } from '../integrations/shopify/product-sync.queue';
 
 @Module({
+  imports: [ToolsModule, EmailModule],
   controllers: [AgentsController, PublicAgentsController],
   providers: [
     AgentsService,

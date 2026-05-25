@@ -1,3 +1,6 @@
+import type { AgentToolPermissions, VoicePersonalityTraits } from '@bookstore-voice-agents/types';
+import { DEFAULT_TOOL_PERMISSIONS, DEFAULT_VOICE_PERSONALITY } from '@bookstore-voice-agents/types';
+
 export type AgentStatus = 'draft' | 'active' | 'paused';
 
 /** Field limits aligned with Nest `CreateAgentDto` where applicable. */
@@ -39,6 +42,7 @@ export interface CreateAgentFormData {
 
   voiceProvider: string;
   voiceId: string;
+  voiceNameLabel: string;
   elevenlabsModel: string;
   voiceStyle: string;
   languageMode: 'auto' | 'fixed';
@@ -97,6 +101,19 @@ export interface CreateAgentFormData {
   transferToHumanEnabled: boolean;
   escalationPhone: string;
   escalationEmail: string;
+
+  // Email / payment link (Resend)
+  emailSenderName: string;
+  emailSenderAddress: string;
+  emailReplyTo: string;
+  emailSubjectTemplate: string;
+  paymentLinkEmailIntro: string;
+  emailTestRecipient: string;
+  useWorkspaceEmail: boolean;
+  resendApiKey: string;
+
+  toolPermissions: AgentToolPermissions;
+  voicePersonality: VoicePersonalityTraits;
 }
 
 export const initialFormData: CreateAgentFormData = {
@@ -115,6 +132,7 @@ export const initialFormData: CreateAgentFormData = {
   timezone: 'UTC',
   voiceProvider: 'elevenlabs',
   voiceId: '',
+  voiceNameLabel: '',
   elevenlabsModel: 'eleven_multilingual_v2',
   voiceStyle: 'natural, warm, professional, slightly slow, human-like',
   languageMode: 'auto',
@@ -163,6 +181,16 @@ export const initialFormData: CreateAgentFormData = {
   transferToHumanEnabled: true,
   escalationPhone: '',
   escalationEmail: '',
+  emailSenderName: '',
+  emailSenderAddress: '',
+  emailReplyTo: '',
+  emailSubjectTemplate: '{{storeName}} — Complete your secure checkout',
+  paymentLinkEmailIntro: '',
+  emailTestRecipient: '',
+  useWorkspaceEmail: true,
+  resendApiKey: '',
+  toolPermissions: { ...DEFAULT_TOOL_PERMISSIONS },
+  voicePersonality: { ...DEFAULT_VOICE_PERSONALITY },
 };
 
 export interface FormErrors {
@@ -331,7 +359,16 @@ const FORM_FIELD_STEP: Partial<Record<string, CreateAgentStep>> = {
   knowledgeSyncEnabled: 2,
   voiceProvider: 3,
   voiceId: 3,
+  voiceNameLabel: 3,
   elevenlabsModel: 3,
+  emailSenderName: 4,
+  emailSenderAddress: 4,
+  emailReplyTo: 4,
+  emailSubjectTemplate: 4,
+  paymentLinkEmailIntro: 4,
+  emailTestRecipient: 4,
+  useWorkspaceEmail: 4,
+  resendApiKey: 4,
   voiceStyle: 3,
   languageMode: 3,
   fixedLanguage: 3,

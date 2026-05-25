@@ -8,10 +8,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ToolsModule = void 0;
 const common_1 = require("@nestjs/common");
+const runtime_tool_registry_service_1 = require("./runtime-tool-registry.service");
 let ToolsModule = class ToolsModule {
 };
 exports.ToolsModule = ToolsModule;
 exports.ToolsModule = ToolsModule = __decorate([
-    (0, common_1.Module)({})
+    (0, common_1.Global)(),
+    (0, common_1.Module)({
+        providers: [runtime_tool_registry_service_1.RuntimeToolRegistryService],
+        exports: [runtime_tool_registry_service_1.RuntimeToolRegistryService],
+    })
 ], ToolsModule);
 //# sourceMappingURL=tools.module.js.map

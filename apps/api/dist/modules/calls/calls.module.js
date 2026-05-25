@@ -17,6 +17,9 @@ const voice_runtime_service_1 = require("./runtime/voice-runtime.service");
 const session_context_service_1 = require("./runtime/session-context.service");
 const transcript_buffer_service_1 = require("./runtime/transcript-buffer.service");
 const tool_orchestrator_service_1 = require("./runtime/tool-orchestrator.service");
+const voice_runtime_context_service_1 = require("./runtime/voice-runtime-context.service");
+const runtime_safety_service_1 = require("./runtime/runtime-safety.service");
+const call_memory_service_1 = require("./runtime/call-memory.service");
 const openai_module_1 = require("../integrations/openai/openai.module");
 const openai_voice_service_1 = require("../integrations/openai/openai-voice.service");
 const knowledge_module_1 = require("../knowledge/knowledge.module");
@@ -27,12 +30,14 @@ const callback_requests_controller_1 = require("./callback-requests.controller")
 const twilio_module_1 = require("../integrations/twilio/twilio.module");
 const shopify_module_1 = require("../integrations/shopify/shopify.module");
 const email_module_1 = require("../integrations/email/email.module");
+const tools_module_1 = require("../tools/tools.module");
 let CallsModule = class CallsModule {
 };
 exports.CallsModule = CallsModule;
 exports.CallsModule = CallsModule = __decorate([
     (0, common_1.Module)({
         imports: [
+            tools_module_1.ToolsModule,
             openai_module_1.OpenAIModule,
             knowledge_module_1.KnowledgeModule,
             analytics_module_1.AnalyticsModule,
@@ -49,6 +54,9 @@ exports.CallsModule = CallsModule = __decorate([
             session_context_service_1.SessionContextService,
             transcript_buffer_service_1.TranscriptBufferService,
             tool_orchestrator_service_1.ToolOrchestratorService,
+            voice_runtime_context_service_1.VoiceRuntimeContextService,
+            runtime_safety_service_1.RuntimeSafetyService,
+            call_memory_service_1.CallMemoryService,
             openai_voice_service_1.OpenAIVoiceService,
             callback_requests_service_1.CallbackRequestsService,
         ],

@@ -263,6 +263,15 @@ export function parseVoiceToolArgs(toolName: string, raw: Record<string, unknown
     case 'get_shipping_policy':
     case 'get_return_policy':
       return run(policyArgs, raw);
+    case 'retrieve_knowledge_base':
+    case 'search_collections':
+    case 'lookup_variant':
+    case 'validate_price':
+    case 'check_live_inventory':
+    case 'lookup_discount':
+    case 'estimate_shipping':
+    case 'get_store_policy':
+      return { ok: true, args: raw };
     default:
       return { ok: false, message: `Unsupported tool: ${toolName}` };
   }

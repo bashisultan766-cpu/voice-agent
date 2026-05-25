@@ -9,13 +9,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.EmailModule = void 0;
 const common_1 = require("@nestjs/common");
 const resend_email_service_1 = require("./resend-email.service");
+const agent_email_config_service_1 = require("./agent-email-config.service");
 let EmailModule = class EmailModule {
 };
 exports.EmailModule = EmailModule;
 exports.EmailModule = EmailModule = __decorate([
     (0, common_1.Module)({
-        providers: [resend_email_service_1.ResendEmailService],
-        exports: [resend_email_service_1.ResendEmailService],
+        providers: [resend_email_service_1.ResendEmailService, agent_email_config_service_1.AgentEmailConfigService],
+        exports: [resend_email_service_1.ResendEmailService, agent_email_config_service_1.AgentEmailConfigService],
     })
 ], EmailModule);
 //# sourceMappingURL=email.module.js.map

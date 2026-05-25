@@ -268,13 +268,21 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             agentId: context.agentId,
             to: payload.To,
         });
+        console.log('[voice-runtime] loaded agent', context.agentId, context.agent.name);
+        const agentRow = await this.prisma.agent.findFirst({
+            where: { id: context.agentId, tenantId: context.tenantId, deletedAt: null },
+            select: { updatedAt: true },
+        });
+        console.log('[voice-runtime] using prompt version', agentRow?.updatedAt?.toISOString() ?? 'unknown');
         this.logger.log(JSON.stringify({
             event: 'voice.journey.call_session_created',
             callSessionId: session.id,
             tenantId: context.tenantId,
             agentId: context.agentId,
+            agentName: context.agent.name,
             storeId: context.storeId,
             twilioCallSid: payload.CallSid,
+            configUpdatedAt: agentRow?.updatedAt?.toISOString() ?? null,
         }));
         const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
         const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(session.id)}`;

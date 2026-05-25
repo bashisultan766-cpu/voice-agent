@@ -1,42 +1,30 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { VOICE_AGENT_TOOLS, ALL_TOOL_NAMES } from './types/tool-definitions';
-import { assertAllVoiceAgentToolSchemasValid } from './voice-tool-schema.util';
+import { Injectable } from '@nestjs/common';
+import type { AgentToolPermissions } from '@bookstore-voice-agents/types';
+import { RuntimeToolRegistryService, type ChatTool } from '../../tools/runtime-tool-registry.service';
 
-export interface ChatTool {
-  type: 'function';
-  function: { name: string; description: string; parameters: Record<string, unknown> };
+export type { ChatTool };
+
+export interface AgentToolFilter {
+  enabledTools?: string[] | null;
+  toolPermissions?: AgentToolPermissions | Record<string, unknown> | null;
 }
 
 @Injectable()
-export class OpenAIToolRegistryService implements OnModuleInit {
-  onModuleInit(): void {
-    assertAllVoiceAgentToolSchemasValid(VOICE_AGENT_TOOLS);
+export class OpenAIToolRegistryService {
+  constructor(private readonly runtimeRegistry: RuntimeToolRegistryService) {}
+
+  getToolsForAgent(filter: AgentToolFilter | string[] | null | undefined): ChatTool[] {
+    const params = Array.isArray(filter) ? { enabledTools: filter } : (filter ?? {});
+    return this.runtimeRegistry.getToolsForAgent(params);
   }
 
-  /**
-   * Return OpenAI chat tool format for allowed tools only.
-   * storeId is NOT in the schema; runtime injects it when executing.
-   */
-  getToolsForAgent(enabledTools: string[] | null | undefined): ChatTool[] {
-    const allowed = this.getAllowedToolNames(enabledTools);
-    return VOICE_AGENT_TOOLS.filter((t) => allowed.includes(t.name)).map((t) => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      },
-    }));
+  getAllowedToolNames(filter: AgentToolFilter | string[] | null | undefined): string[] {
+    const params = Array.isArray(filter) ? { enabledTools: filter } : (filter ?? {});
+    return this.runtimeRegistry.resolveEnabledToolNames(params);
   }
 
-  getAllowedToolNames(enabledTools: string[] | null | undefined): string[] {
-    if (Array.isArray(enabledTools) && enabledTools.length > 0) {
-      return enabledTools.filter((name) => ALL_TOOL_NAMES.includes(name));
-    }
-    return ALL_TOOL_NAMES;
-  }
-
-  isToolAllowed(toolName: string, enabledTools: string[] | null | undefined): boolean {
-    return this.getAllowedToolNames(enabledTools).includes(toolName);
+  isToolAllowed(toolName: string, filter: AgentToolFilter | string[] | null | undefined): boolean {
+    const params = Array.isArray(filter) ? { enabledTools: filter } : (filter ?? {});
+    return this.runtimeRegistry.isToolAllowed(toolName, params);
   }
 }

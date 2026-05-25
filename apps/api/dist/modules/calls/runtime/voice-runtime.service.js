@@ -25,6 +25,7 @@ const language_intelligence_util_1 = require("./language-intelligence.util");
 const order_intent_classifier_util_1 = require("./order-intent-classifier.util");
 const order_turn_state_manager_util_1 = require("./order-turn-state-manager.util");
 const tool_orchestrator_service_1 = require("./tool-orchestrator.service");
+const runtime_safety_service_1 = require("./runtime-safety.service");
 const user_intent_classifier_util_1 = require("./user-intent-classifier.util");
 const order_state_machine_util_1 = require("./order-state-machine.util");
 const professional_voice_response_util_1 = require("./professional-voice-response.util");
@@ -32,7 +33,7 @@ const response_mode_util_1 = require("./response-mode.util");
 const context_aware_reply_util_1 = require("./context-aware-reply.util");
 const conversation_tone_util_1 = require("./conversation-tone.util");
 let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
-    constructor(sessionContext, callsService, openaiVoice, tools, callEvents, callOutcome, transcriptBuffer, promptBuilder) {
+    constructor(sessionContext, callsService, openaiVoice, tools, callEvents, callOutcome, transcriptBuffer, promptBuilder, runtimeSafety) {
         this.sessionContext = sessionContext;
         this.callsService = callsService;
         this.openaiVoice = openaiVoice;
@@ -41,6 +42,7 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         this.callOutcome = callOutcome;
         this.transcriptBuffer = transcriptBuffer;
         this.promptBuilder = promptBuilder;
+        this.runtimeSafety = runtimeSafety;
         this.logger = new common_1.Logger(VoiceRuntimeService_1.name);
     }
     deterministicFallbackEnabled() {
@@ -206,11 +208,11 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         if (askedHowAreYou)
             parts.push("I'm doing well, thanks for asking.");
         if (askedName)
-            parts.push("I'm the bookstore assistant on this line.");
+            parts.push("I'm the voice assistant on this line.");
         if (askedStore)
-            parts.push("You're speaking with our bookstore.");
+            parts.push("You're speaking with our store.");
         if (askedHelp) {
-            parts.push('I can help with book availability, pricing, orders, and payment links.');
+            parts.push('I can help with product availability, pricing, orders, and payment links.');
         }
         return parts.join(' ').trim();
     }
@@ -506,7 +508,8 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         const ctx = await this.sessionContext.load(callSessionId);
         if (!ctx)
             return "Hello, I'm having trouble loading your session. Please try again.";
-        const greeting = ctx.agent.greetingMessage ?? 'Hi there—thanks for calling. What book can I help you find?';
+        const greeting = ctx.agent.greetingMessage?.trim() ??
+            `Hello, you've reached ${ctx.store.name}. How can I help you today?`;
         return greeting;
     }
     async buildSystemPrompt(callSessionId) {
@@ -527,6 +530,8 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             lastEventAt: new Date(),
         });
         if (ctx) {
+            console.log('[voice-runtime] loaded agent', ctx.agentId, ctx.agent.name);
+            console.log('[voice-runtime] using prompt version', ctx.configUpdatedAt ?? 'unknown');
             await this.callEvents.log(ctx.tenantId, callSessionId, client_1.CallEventType.TWILIO_CONNECTED);
             await this.callEvents.log(ctx.tenantId, callSessionId, client_1.CallEventType.OPENAI_SESSION_STARTED);
             this.logger.log(JSON.stringify({
@@ -534,6 +539,8 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
                 callSessionId,
                 tenantId: ctx.tenantId,
                 agentId: ctx.agentId,
+                agentName: ctx.agent.name,
+                configUpdatedAt: ctx.configUpdatedAt,
             }));
         }
     }
@@ -565,6 +572,11 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
     }
     async processUtterance(callSessionId, text, conversationHistory = []) {
         const safeText = (0, redact_voice_input_1.redactPaymentLikePatterns)(text);
+        const safety = this.runtimeSafety.checkUserInput(safeText);
+        if (safety.blocked) {
+            const reply = this.runtimeSafety.refusalReply(safety.category);
+            return { reply };
+        }
         if (safeText !== text) {
             this.logger.warn(JSON.stringify({
                 event: 'voice.journey.payment_data_blocked',
@@ -599,7 +611,18 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             return { reply };
         }
         const ctx = await this.sessionContext.load(callSessionId);
-        const metadata = ctx?.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
+        if (!ctx) {
+            this.logger.error(JSON.stringify({
+                event: 'voice.journey.session_missing',
+                callSessionId,
+            }));
+            return {
+                reply: "I'm sorry, this call session could not be loaded. Please hang up and call again, or contact store support.",
+            };
+        }
+        console.log('[voice-runtime] loaded agent', ctx.agentId, ctx.agent.name);
+        console.log('[voice-runtime] using prompt version', ctx.configUpdatedAt ?? 'unknown');
+        const metadata = ctx.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
             ? ctx.metadata
             : {};
         if (!metadata.orderState) {
@@ -981,6 +1004,7 @@ exports.VoiceRuntimeService = VoiceRuntimeService = VoiceRuntimeService_1 = __de
         call_events_service_1.CallEventsService,
         call_outcome_service_1.CallOutcomeService,
         transcript_buffer_service_1.TranscriptBufferService,
-        openai_prompt_builder_service_1.OpenAIPromptBuilderService])
+        openai_prompt_builder_service_1.OpenAIPromptBuilderService,
+        runtime_safety_service_1.RuntimeSafetyService])
 ], VoiceRuntimeService);
 //# sourceMappingURL=voice-runtime.service.js.map

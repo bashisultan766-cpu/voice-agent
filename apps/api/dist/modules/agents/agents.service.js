@@ -10,9 +10,9 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 var AgentsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AgentsService = void 0;
-exports.resolveCredentialPriority = resolveCredentialPriority;
+exports.AgentsService = exports.resolveCredentialPriority = void 0;
 const common_1 = require("@nestjs/common");
+const node_crypto_1 = require("node:crypto");
 const prisma_service_1 = require("../../database/prisma.service");
 const encryption_service_1 = require("../../common/encryption.service");
 const prisma_types_1 = require("../../database/prisma.types");
@@ -30,6 +30,12 @@ const types_2 = require("@bookstore-voice-agents/types");
 const ownership_linkage_1 = require("./ownership-linkage");
 const config_1 = require("@nestjs/config");
 const public_webhook_base_url_1 = require("../../common/public-webhook-base-url");
+const build_agent_runtime_prompt_1 = require("../calls/runtime/build-agent-runtime-prompt");
+const agent_email_config_service_1 = require("../integrations/email/agent-email-config.service");
+const resend_email_service_1 = require("../integrations/email/resend-email.service");
+const payment_email_idempotency_1 = require("../../common/payment-email-idempotency");
+const tool_permissions_util_1 = require("../tools/tool-permissions.util");
+const runtime_tool_registry_service_1 = require("../tools/runtime-tool-registry.service");
 const SECRET_KEYS = [
     'shopifyAdminToken',
     'shopifyApiKey',
@@ -41,16 +47,27 @@ const SECRET_KEYS = [
     'twilioAuthToken',
     'openaiApiKey',
     'elevenlabsApiKey',
+    'resendApiKey',
 ];
-function resolveCredentialPriority(agentValue, workspaceValue, envValue) {
-    if (agentValue?.trim())
-        return { value: agentValue.trim(), source: 'agent' };
-    if (workspaceValue?.trim())
-        return { value: workspaceValue.trim(), source: 'workspace' };
-    if (envValue?.trim())
-        return { value: envValue.trim(), source: 'env' };
-    return { source: 'missing' };
+function normalizeAgentDtoAliases(dto) {
+    if (dto.allowedTopics?.trim() && !dto.allowedActions?.trim()) {
+        dto.allowedActions = dto.allowedTopics.trim();
+    }
+    if (dto.blockedTopics?.trim() && !dto.restrictedActions?.trim()) {
+        dto.restrictedActions = dto.blockedTopics.trim();
+    }
+    if (dto.productGuidance?.trim() && !dto.agentGoal?.trim()) {
+        dto.agentGoal = dto.productGuidance.trim();
+    }
+    if (dto.checkoutInstructions?.trim() && !dto.humanHandoffRules?.trim()) {
+        dto.humanHandoffRules = dto.checkoutInstructions.trim();
+    }
+    if (dto.refundPolicy?.trim() && !dto.returnPolicy?.trim()) {
+        dto.returnPolicy = dto.refundPolicy.trim();
+    }
 }
+const credential_priority_util_1 = require("../../common/credential-priority.util");
+Object.defineProperty(exports, "resolveCredentialPriority", { enumerable: true, get: function () { return credential_priority_util_1.resolveCredentialPriority; } });
 function statusDtoToPrisma(s) {
     if (!s)
         return prisma_types_1.AgentStatus.DRAFT;
@@ -84,7 +101,7 @@ function normalizeEscalationRules(rules) {
     return null;
 }
 let AgentsService = AgentsService_1 = class AgentsService {
-    constructor(prisma, encryption, config, shopifyTest, databaseTest, twilioTest, openaiTest, elevenlabsTest, productSyncQueue) {
+    constructor(prisma, encryption, config, shopifyTest, databaseTest, twilioTest, openaiTest, elevenlabsTest, productSyncQueue, agentEmailConfig, resendEmail, toolRegistry) {
         this.prisma = prisma;
         this.encryption = encryption;
         this.config = config;
@@ -94,7 +111,31 @@ let AgentsService = AgentsService_1 = class AgentsService {
         this.openaiTest = openaiTest;
         this.elevenlabsTest = elevenlabsTest;
         this.productSyncQueue = productSyncQueue;
+        this.agentEmailConfig = agentEmailConfig;
+        this.resendEmail = resendEmail;
+        this.toolRegistry = toolRegistry;
         this.log = new common_1.Logger(AgentsService_1.name);
+    }
+    resolveToolsFromDto(dto) {
+        if (dto.toolPermissions === undefined && dto.enabledTools === undefined)
+            return null;
+        const perms = (0, tool_permissions_util_1.normalizeToolPermissions)(dto.toolPermissions);
+        const enabled = Array.isArray(dto.enabledTools) && dto.enabledTools.length > 0
+            ? dto.enabledTools
+            : (0, tool_permissions_util_1.toolNamesFromPermissions)(perms);
+        return { toolPermissions: perms, enabledTools: enabled };
+    }
+    buildVoiceProviderConfig(dto) {
+        return {
+            voiceStyle: dto.voiceStyle ?? null,
+            elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
+            languageMode: dto.languageMode ?? 'auto',
+            fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
+            supportedLanguages: Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
+                ? dto.supportedLanguages
+                : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
+            ...(dto.voicePersonality ? { personality: dto.voicePersonality } : {}),
+        };
     }
     expectedTwilioWebhookUrls() {
         const base = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
@@ -187,19 +228,19 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 voiceId: agent.voiceId?.trim() || workspace?.elevenlabsDefaultVoiceId?.trim(),
             })
             : null;
-        const tenantIntegration = await this.prisma.tenantIntegration.findUnique({
-            where: { tenantId },
-            select: {
-                resendApiKeyEnc: true,
-                resendFromEmail: true,
-                emailLastTestOk: true,
-            },
-        });
-        const emailReady = Boolean(tenantIntegration?.resendApiKeyEnc &&
-            tenantIntegration?.resendFromEmail?.trim() &&
-            tenantIntegration?.emailLastTestOk);
-        const paymentWebhookConfigured = Boolean(cfg.webhookSecret?.trim());
+        const emailSummary = await this.agentEmailConfig.getSummary(tenantId, agentId);
+        const hasGreeting = Boolean(agent.greetingMessage?.trim());
         const hasSystemPrompt = Boolean(agent.baseSystemPrompt?.trim() || agent.agentConfig?.customSystemPrompt?.trim());
+        const hasElevenLabsVoiceId = !isElevenLabsSelected || Boolean(agent.voiceId?.trim());
+        const paymentWebhookConfigured = Boolean(cfg.webhookSecret?.trim());
+        let runtimePromptAvailable = false;
+        try {
+            const preview = await this.getRuntimePromptPreview(tenantId, agentId);
+            runtimePromptAvailable = Boolean(preview.prompt?.trim());
+        }
+        catch {
+            runtimePromptAvailable = false;
+        }
         const checks = [
             {
                 key: 'twilio_number_assigned',
@@ -256,10 +297,22 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 fixAction: 'Provide a valid OpenAI key for this agent/workspace.',
             },
             {
+                key: 'greeting_configured',
+                label: 'Greeting message configured',
+                pass: hasGreeting,
+                fixAction: 'Add a greeting message in Voice settings.',
+            },
+            {
                 key: 'system_prompt_configured',
                 label: 'System prompt configured',
                 pass: hasSystemPrompt,
                 fixAction: 'Add AI instructions in the agent form (Main instructions / system prompt) before going live.',
+            },
+            {
+                key: 'elevenlabs_voice_id',
+                label: 'ElevenLabs voice ID configured',
+                pass: hasElevenLabsVoiceId,
+                fixAction: 'Set an ElevenLabs voice ID for this agent.',
             },
             {
                 key: 'elevenlabs_connected',
@@ -268,10 +321,34 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 fixAction: 'Set a valid ElevenLabs key and voice that can generate test audio.',
             },
             {
+                key: 'email_sender_configured',
+                label: 'Email sender configured',
+                pass: emailSummary?.senderConfigured === true,
+                fixAction: 'Set sender name and from address on the agent, or configure workspace Resend from email.',
+            },
+            {
+                key: 'resend_key_configured',
+                label: 'Resend API key configured',
+                pass: emailSummary?.resendKeyConfigured === true,
+                fixAction: 'Add a Resend API key on the agent or in Settings → Integrations → Email.',
+            },
+            {
                 key: 'email_connected',
-                label: 'Email connected',
-                pass: emailReady,
-                fixAction: 'Configure and test Resend API key + from address.',
+                label: 'Email ready to send payment links',
+                pass: emailSummary?.configured === true,
+                fixAction: 'Configure Resend API key and sender address, then send a test email.',
+            },
+            {
+                key: 'runtime_prompt_available',
+                label: 'Runtime prompt preview available',
+                pass: runtimePromptAvailable,
+                fixAction: 'Save agent identity and AI instructions so the runtime prompt can be built.',
+            },
+            {
+                key: 'checkout_link_ready',
+                label: 'Checkout link creation ready (Shopify)',
+                pass: shopify.success,
+                fixAction: 'Connect Shopify and verify product search works for this agent store.',
             },
             {
                 key: 'payment_webhook_configured',
@@ -439,11 +516,41 @@ let AgentsService = AgentsService_1 = class AgentsService {
             escalationRules: config?.escalationRules ?? null,
             fallbackHumanContact: config?.fallbackHumanContact ?? null,
             customSystemPrompt: config?.customSystemPrompt ?? null,
+            emailSenderName: config?.emailSenderName ?? null,
+            emailSenderAddress: config?.emailSenderAddress ?? null,
+            emailReplyTo: config?.emailReplyTo ?? null,
+            emailSubjectTemplate: config?.emailSubjectTemplate ?? null,
+            paymentLinkEmailIntro: config?.paymentLinkEmailIntro ?? null,
+            emailTestRecipient: config?.emailTestRecipient ?? null,
+            useWorkspaceEmail: config?.useWorkspaceEmail ?? true,
+            resendApiKeyConfigured: config?.resendApiKeyConfigured === true,
             voiceProfileProvider: voiceProfile?.provider ?? null,
             voiceProfileLanguage: voiceProfile?.language ?? null,
             voiceProfileTone: voiceProfile?.tone ?? null,
             voiceProfileGreetingMessage: voiceProfile?.greetingMessage ?? null,
         };
+    }
+    agentConfigEmailFieldsFromDto(dto) {
+        const out = {};
+        if (dto.emailSenderName !== undefined)
+            out.emailSenderName = dto.emailSenderName?.trim() || null;
+        if (dto.emailSenderAddress !== undefined) {
+            out.emailSenderAddress = dto.emailSenderAddress?.trim() || null;
+        }
+        if (dto.emailReplyTo !== undefined)
+            out.emailReplyTo = dto.emailReplyTo?.trim() || null;
+        if (dto.emailSubjectTemplate !== undefined) {
+            out.emailSubjectTemplate = dto.emailSubjectTemplate?.trim() || null;
+        }
+        if (dto.paymentLinkEmailIntro !== undefined) {
+            out.paymentLinkEmailIntro = dto.paymentLinkEmailIntro?.trim() || null;
+        }
+        if (dto.emailTestRecipient !== undefined) {
+            out.emailTestRecipient = dto.emailTestRecipient?.trim() || null;
+        }
+        if (dto.useWorkspaceEmail !== undefined)
+            out.useWorkspaceEmail = dto.useWorkspaceEmail;
+        return out;
     }
     pickSecrets(dto) {
         const out = {};
@@ -502,8 +609,15 @@ let AgentsService = AgentsService_1 = class AgentsService {
             setIfEmpty('voiceId', row.elevenlabsDefaultVoiceId);
         if (row.elevenlabsDefaultModel?.trim())
             setIfEmpty('elevenlabsModel', row.elevenlabsDefaultModel);
+        if (row.resendApiKeyEnc) {
+            const tok = this.encryption.decryptFromStorage(row.resendApiKeyEnc);
+            setIfEmpty('resendApiKey', tok ?? undefined);
+        }
+        if (row.resendFromEmail?.trim())
+            setIfEmpty('emailSenderAddress', row.resendFromEmail.trim());
     }
     async create(tenantId, dto, createdById) {
+        normalizeAgentDtoAliases(dto);
         if (dto.agentStatus === create_agent_dto_1.AgentStatusDto.ACTIVE) {
             throw new common_1.BadRequestException('Use Go Live to activate an agent after readiness checks pass.');
         }
@@ -605,6 +719,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
         if (dto.voiceProvider === 'elevenlabs' && !dto.voiceId?.trim()) {
             throw new common_1.BadRequestException('Voice ID is required when ElevenLabs is selected.');
         }
+        const toolsResolved = this.resolveToolsFromDto(dto);
         const agent = await this.prisma.$transaction(async (tx) => {
             const created = await tx.agent.create({
                 data: {
@@ -621,11 +736,12 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     voice: dto.voiceId ?? null,
                     voiceProvider: dto.voiceProvider ?? null,
                     voiceId: dto.voiceId ?? null,
+                    voiceNameLabel: dto.voiceNameLabel?.trim() || null,
                     voiceStyle: dto.voiceStyle ?? null,
                     greetingMessage: dto.greetingMessage?.trim() || null,
                     fallbackMessage: dto.fallbackMessage?.trim() || null,
                     escalationMessage: null,
-                    model: null,
+                    model: dto.openAiModel?.trim() || null,
                     temperature: null,
                     status: statusDtoToPrisma(dto.agentStatus),
                     handoffEnabled: dto.transferToHumanEnabled ?? true,
@@ -661,6 +777,10 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     lastConnectionTestAt: anyConnectionValidated ? new Date() : null,
                     secretsEnc,
                     createdById: createdById ?? null,
+                    ...(toolsResolved && {
+                        toolPermissions: toolsResolved.toolPermissions,
+                        enabledTools: toolsResolved.enabledTools,
+                    }),
                 },
                 select: this.agentSelect(),
             });
@@ -682,6 +802,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     escalationRules: normalizeEscalationRules(dto.escalationRules),
                     fallbackHumanContact: dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
                     customSystemPrompt: dto.systemPrompt?.trim() || null,
+                    emailSenderName: dto.emailSenderName?.trim() || null,
+                    emailSenderAddress: dto.emailSenderAddress?.trim() || null,
+                    emailReplyTo: dto.emailReplyTo?.trim() || null,
+                    emailSubjectTemplate: dto.emailSubjectTemplate?.trim() || null,
+                    paymentLinkEmailIntro: dto.paymentLinkEmailIntro?.trim() || null,
+                    emailTestRecipient: dto.emailTestRecipient?.trim() || null,
+                    useWorkspaceEmail: dto.useWorkspaceEmail ?? true,
                 },
             });
             await tx.voiceProfile.create({
@@ -693,15 +820,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     voice: dto.voiceId ?? null,
                     tone: dto.toneOfVoice ?? dto.voiceStyle ?? null,
                     greetingMessage: dto.greetingMessage?.trim() || null,
-                    providerConfig: {
-                        voiceStyle: dto.voiceStyle ?? null,
-                        elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
-                        languageMode: dto.languageMode ?? 'auto',
-                        fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
-                        supportedLanguages: Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
-                            ? dto.supportedLanguages
-                            : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
-                    },
+                    providerConfig: this.buildVoiceProviderConfig(dto),
                 },
             });
             if (dto.twilioPhoneNumber?.trim()) {
@@ -773,6 +892,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             voice: true,
             voiceProvider: true,
             voiceId: true,
+            voiceNameLabel: true,
             voiceStyle: true,
             baseSystemPrompt: true,
             greetingMessage: true,
@@ -783,6 +903,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             status: true,
             isPublished: true,
             enabledTools: true,
+            toolPermissions: true,
             maxToolCallsPerTurn: true,
             handoffEnabled: true,
             voiceResponseStyle: true,
@@ -834,6 +955,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     escalationRules: true,
                     fallbackHumanContact: true,
                     customSystemPrompt: true,
+                    emailSenderName: true,
+                    emailSenderAddress: true,
+                    emailReplyTo: true,
+                    emailSubjectTemplate: true,
+                    paymentLinkEmailIntro: true,
+                    emailTestRecipient: true,
+                    useWorkspaceEmail: true,
                 },
             },
             voiceProfile: {
@@ -895,7 +1023,188 @@ let AgentsService = AgentsService_1 = class AgentsService {
         });
         if (!agent)
             throw new common_1.NotFoundException('Agent not found.');
-        return this.serializeAgent(agent);
+        const emailSummary = await this.agentEmailConfig.getSummary(tenantId, id);
+        const withEmailMeta = {
+            ...agent,
+            agentConfig: agent.agentConfig
+                ? {
+                    ...agent.agentConfig,
+                    resendApiKeyConfigured: emailSummary?.resendKeyConfigured === true,
+                }
+                : null,
+        };
+        return this.serializeAgent(withEmailMeta);
+    }
+    async getAgentById(tenantId, agentId) {
+        return this.findOne(tenantId, agentId);
+    }
+    agentRowToRuntimePromptInput(agent) {
+        if (!agent)
+            return null;
+        const cfg = agent.agentConfig;
+        const voiceCfg = (agent.voiceProfile?.providerConfig ?? {});
+        return {
+            agentId: agent.id,
+            agentName: agent.name,
+            storeName: agent.storeName ?? agent.store?.name ?? 'Store',
+            language: agent.language,
+            baseSystemPrompt: agent.baseSystemPrompt,
+            agentRole: agent.agentRole,
+            agentGoal: agent.agentGoal,
+            toneOfVoice: agent.toneOfVoice,
+            allowedActions: agent.allowedActions,
+            restrictedActions: agent.restrictedActions,
+            escalationInstructions: agent.escalationInstructions,
+            returnRefundBehavior: agent.returnRefundBehavior,
+            orderStatusHandling: agent.orderStatusHandling,
+            outOfStockHandling: agent.outOfStockHandling,
+            transferToHumanEnabled: agent.transferToHumanEnabled,
+            escalationPhone: agent.escalationPhone,
+            escalationEmail: agent.escalationEmail,
+            knowledgeBaseSource: agent.knowledgeBaseSource,
+            knowledgeSyncEnabled: agent.knowledgeSyncEnabled,
+            greetingMessage: agent.greetingMessage,
+            languageMode: voiceCfg.languageMode ?? 'auto',
+            fixedLanguage: voiceCfg.fixedLanguage ?? agent.language,
+            supportedLanguages: voiceCfg.supportedLanguages,
+            config: cfg
+                ? {
+                    businessName: cfg.businessName,
+                    supportEmail: cfg.supportEmail,
+                    supportPhone: cfg.supportPhone,
+                    shippingPolicy: cfg.shippingPolicy,
+                    returnPolicy: cfg.returnPolicy,
+                    exchangePolicy: cfg.exchangePolicy,
+                    deliveryNotes: cfg.deliveryNotes,
+                    escalationRules: cfg.escalationRules,
+                    forbiddenBehaviors: cfg.forbiddenBehaviors,
+                    checkoutMode: cfg.checkoutMode,
+                    askEmailBeforePaymentLink: cfg.askEmailBeforePaymentLink,
+                    fallbackHumanContact: cfg.fallbackHumanContact,
+                    customSystemPrompt: cfg.customSystemPrompt,
+                    humanHandoffRules: cfg.humanHandoffRules,
+                }
+                : null,
+        };
+    }
+    async loadAgentRowForRuntime(tenantId, agentId) {
+        return this.prisma.agent.findFirst({
+            where: { id: agentId, tenantId, deletedAt: null },
+            select: {
+                ...this.agentSelect(),
+                store: { select: { name: true } },
+            },
+        });
+    }
+    async sendTestEmail(tenantId, agentId, body) {
+        const agent = await this.prisma.agent.findFirst({
+            where: { id: agentId, tenantId, deletedAt: null },
+            include: { agentConfig: true },
+        });
+        if (!agent)
+            throw new common_1.NotFoundException('Agent not found.');
+        const toEmail = (body.toEmail?.trim() ||
+            agent.agentConfig?.emailTestRecipient?.trim() ||
+            '').toLowerCase();
+        if (!toEmail.includes('@')) {
+            throw new common_1.BadRequestException('Provide a valid test recipient email or save one under Email settings for this agent.');
+        }
+        const emailConfig = await this.agentEmailConfig.resolveForSend(tenantId, agentId);
+        if (!emailConfig) {
+            throw new common_1.BadRequestException('Email is not configured for this agent. Add a Resend API key and sender address (agent or workspace).');
+        }
+        const customCheckout = body.checkoutUrl?.trim();
+        const fallback = process.env.DEV_TEST_CHECKOUT_URL?.trim() ||
+            (agent.storeUrl?.trim() ? `${agent.storeUrl.replace(/\/+$/, '')}/checkout` : '');
+        const resolvedUrl = customCheckout || fallback;
+        if (!resolvedUrl || !resolvedUrl.startsWith('https://')) {
+            throw new common_1.BadRequestException('Pass an HTTPS checkoutUrl or set DEV_TEST_CHECKOUT_URL / agent store URL for the test link.');
+        }
+        const checkoutFingerprint = (0, node_crypto_1.createHash)('sha256')
+            .update(`agent_test_email|${tenantId}|${agentId}|${toEmail}|${resolvedUrl}`)
+            .digest('hex');
+        const existing = await this.prisma.checkoutLink.findFirst({
+            where: {
+                tenantId,
+                agentId,
+                checkoutFingerprint,
+                status: { in: ['CREATED', 'SENT', 'OPENED'] },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+        const checkout = existing ??
+            (await this.prisma.checkoutLink.create({
+                data: {
+                    tenantId,
+                    agentId,
+                    mode: 'STOREFRONT_CART',
+                    checkoutUrl: resolvedUrl,
+                    customerEmail: toEmail,
+                    checkoutFingerprint,
+                    status: 'CREATED',
+                    itemsJson: [
+                        { title: 'Test product', quantity: 1, price: '$0.00' },
+                    ],
+                    metadata: { source: 'agent_test_email' },
+                },
+            }));
+        try {
+            const sendResult = await this.resendEmail.sendPaymentEmail({
+                tenantId,
+                agentId,
+                checkoutLinkId: checkout.id,
+                idempotencyKey: (0, payment_email_idempotency_1.paymentEmailIdempotencyKey)({
+                    tenantId,
+                    agentId,
+                    checkoutLinkId: checkout.id,
+                    recipientEmail: toEmail,
+                    purpose: 'agent_test_email',
+                }),
+                to: toEmail,
+                businessName: agent.agentConfig?.businessName?.trim() ||
+                    agent.storeName?.trim() ||
+                    agent.name,
+                supportEmail: agent.agentConfig?.supportEmail,
+                supportPhone: agent.agentConfig?.supportPhone,
+                checkoutUrl: checkout.checkoutUrl,
+                items: [{ title: 'Test product', quantity: 1, price: '$0.00' }],
+                emailConfig,
+            });
+            if (!sendResult.deduplicated) {
+                await this.prisma.checkoutLink.updateMany({
+                    where: { id: checkout.id, tenantId, agentId },
+                    data: { status: 'SENT', sentAt: new Date() },
+                });
+            }
+            return {
+                success: true,
+                message: sendResult.deduplicated
+                    ? `A test email was already sent to ${toEmail} for this checkout.`
+                    : `Test payment email sent to ${toEmail}.`,
+                emailEventId: sendResult.emailEventId,
+            };
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to send test email.';
+            return { success: false, message };
+        }
+    }
+    async getRuntimePromptPreview(tenantId, agentId) {
+        const agent = await this.loadAgentRowForRuntime(tenantId, agentId);
+        if (!agent)
+            throw new common_1.NotFoundException('Agent not found.');
+        const input = this.agentRowToRuntimePromptInput(agent);
+        if (!input)
+            throw new common_1.NotFoundException('Agent not found.');
+        const prompt = (0, build_agent_runtime_prompt_1.buildAgentRuntimePrompt)(input);
+        return {
+            agentId: agent.id,
+            agentName: agent.name,
+            updatedAt: agent.updatedAt.toISOString(),
+            greetingMessage: agent.greetingMessage,
+            prompt,
+            promptLength: prompt.length,
+        };
     }
     async getPublicLiveCard(id) {
         const agent = await this.prisma.agent.findFirst({
@@ -922,6 +1231,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
         };
     }
     async update(tenantId, id, dto, actorUserId) {
+        normalizeAgentDtoAliases(dto);
         const existing = await this.findOne(tenantId, id);
         const currentStatus = String(existing.status ?? '').toLowerCase();
         if (dto.agentStatus === create_agent_dto_1.AgentStatusDto.ACTIVE && currentStatus !== create_agent_dto_1.AgentStatusDto.ACTIVE) {
@@ -1079,6 +1389,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             ...(dto.timezone !== undefined && { timezone: dto.timezone || null }),
             ...(dto.voiceProvider !== undefined && { voiceProvider: dto.voiceProvider || null }),
             ...(dto.voiceId !== undefined && { voiceId: dto.voiceId || null, voice: dto.voiceId || null }),
+            ...(dto.voiceNameLabel !== undefined && { voiceNameLabel: dto.voiceNameLabel?.trim() || null }),
             ...(dto.voiceStyle !== undefined && { voiceStyle: dto.voiceStyle || null, voiceResponseStyle: dto.voiceStyle || null }),
             ...(dto.greetingMessage !== undefined && { greetingMessage: dto.greetingMessage?.trim() || null }),
             ...(dto.fallbackMessage !== undefined && { fallbackMessage: dto.fallbackMessage?.trim() || null }),
@@ -1093,6 +1404,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             ...(dto.incomingCallHandling !== undefined && { incomingCallHandling: dto.incomingCallHandling?.trim() || null }),
             ...(dto.databaseProvider !== undefined && { databaseProvider: dto.databaseProvider?.trim() || null }),
             ...(dto.systemPrompt !== undefined && { baseSystemPrompt: dto.systemPrompt.trim() || '' }),
+            ...(dto.openAiModel !== undefined && { model: dto.openAiModel?.trim() || null }),
             ...(dto.agentGoal !== undefined && { agentGoal: dto.agentGoal?.trim() || null }),
             ...(dto.agentRole !== undefined && { agentRole: dto.agentRole?.trim() || null }),
             ...(dto.toneOfVoice !== undefined && { toneOfVoice: dto.toneOfVoice?.trim() || null }),
@@ -1112,6 +1424,11 @@ let AgentsService = AgentsService_1 = class AgentsService {
             ...(anyConnectionValidated ? { lastConnectionTestAt: new Date() } : {}),
             ...(hasSecretChanges && this.encryption.isAvailable() && { secretsEnc: secretsEnc ?? null }),
         };
+        const toolsResolved = this.resolveToolsFromDto(dto);
+        if (toolsResolved) {
+            data.toolPermissions = toolsResolved.toolPermissions;
+            data.enabledTools = toolsResolved.enabledTools;
+        }
         if (dto.clientId !== undefined && dto.clientId?.trim()) {
             const client = await this.prisma.client.findFirst({
                 where: { id: dto.clientId.trim(), tenantId },
@@ -1163,6 +1480,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 escalationRules: normalizeEscalationRules(dto.escalationRules),
                 fallbackHumanContact: dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
                 customSystemPrompt: dto.systemPrompt?.trim() || null,
+                emailSenderName: dto.emailSenderName?.trim() || null,
+                emailSenderAddress: dto.emailSenderAddress?.trim() || null,
+                emailReplyTo: dto.emailReplyTo?.trim() || null,
+                emailSubjectTemplate: dto.emailSubjectTemplate?.trim() || null,
+                paymentLinkEmailIntro: dto.paymentLinkEmailIntro?.trim() || null,
+                emailTestRecipient: dto.emailTestRecipient?.trim() || null,
+                useWorkspaceEmail: dto.useWorkspaceEmail ?? true,
             },
             update: {
                 ...(dto.businessName !== undefined && { businessName: dto.businessName?.trim() || null }),
@@ -1181,6 +1505,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     fallbackHumanContact: dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
                 }),
                 ...(dto.systemPrompt !== undefined && { customSystemPrompt: dto.systemPrompt.trim() || null }),
+                ...this.agentConfigEmailFieldsFromDto(dto),
             },
         });
         await this.prisma.voiceProfile.upsert({
@@ -1205,27 +1530,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     tone: dto.toneOfVoice ?? dto.voiceStyle ?? null,
                 }),
                 ...(dto.greetingMessage !== undefined && { greetingMessage: dto.greetingMessage?.trim() || null }),
-                ...(dto.voiceStyle !== undefined && {
-                    providerConfig: {
-                        voiceStyle: dto.voiceStyle ?? null,
-                        elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
-                        languageMode: dto.languageMode ?? 'auto',
-                        fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
-                        supportedLanguages: Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
-                            ? dto.supportedLanguages
-                            : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
-                    },
-                }),
-                ...((dto.elevenlabsModel !== undefined || dto.languageMode !== undefined || dto.fixedLanguage !== undefined || dto.supportedLanguages !== undefined) && {
-                    providerConfig: {
-                        voiceStyle: dto.voiceStyle ?? null,
-                        elevenlabsModel: dto.elevenlabsModel ?? 'eleven_multilingual_v2',
-                        languageMode: dto.languageMode ?? 'auto',
-                        fixedLanguage: dto.fixedLanguage ?? dto.language ?? 'en',
-                        supportedLanguages: Array.isArray(dto.supportedLanguages) && dto.supportedLanguages.length > 0
-                            ? dto.supportedLanguages
-                            : ['en', 'ur', 'hi', 'ar', 'es', 'fr', 'de'],
-                    },
+                ...((dto.voiceStyle !== undefined ||
+                    dto.elevenlabsModel !== undefined ||
+                    dto.languageMode !== undefined ||
+                    dto.fixedLanguage !== undefined ||
+                    dto.supportedLanguages !== undefined ||
+                    dto.voicePersonality !== undefined) && {
+                    providerConfig: this.buildVoiceProviderConfig(dto),
                 }),
             },
         });
@@ -1313,6 +1624,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             twilioAuthToken: workspace?.twilioAuthToken?.trim(),
             openaiApiKey: workspace?.openaiApiKey?.trim(),
             elevenlabsApiKey: workspace?.elevenlabsApiKey?.trim(),
+            resendApiKey: workspace?.resendApiKey?.trim(),
         };
         const updatedSecrets = Object.fromEntries(SECRET_KEYS.map((key) => [key, false]));
         for (const [key, value] of Object.entries(workspaceToAgent)) {
@@ -1474,6 +1786,8 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 openaiApiKeyEnc: true,
                 elevenlabsApiKeyEnc: true,
                 elevenlabsDefaultVoiceId: true,
+                resendApiKeyEnc: true,
+                resendFromEmail: true,
             },
         });
         if (!row || !this.encryption.isAvailable())
@@ -1497,10 +1811,14 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 ? (this.encryption.decryptFromStorage(row.elevenlabsApiKeyEnc) ?? undefined)
                 : undefined,
             elevenlabsDefaultVoiceId: row.elevenlabsDefaultVoiceId?.trim() || undefined,
+            resendApiKey: row.resendApiKeyEnc
+                ? (this.encryption.decryptFromStorage(row.resendApiKeyEnc) ?? undefined)
+                : undefined,
+            resendFromEmail: row.resendFromEmail?.trim() || undefined,
         };
     }
     resolveCredential(agentValue, workspaceValue, envValue) {
-        return resolveCredentialPriority(agentValue, workspaceValue, envValue);
+        return (0, credential_priority_util_1.resolveCredentialPriority)(agentValue, workspaceValue, envValue);
     }
     async testShopifyConnection(tenantId, agentId, dto) {
         const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
@@ -1795,6 +2113,72 @@ let AgentsService = AgentsService_1 = class AgentsService {
             suggestedResponse: responseText || undefined,
         };
     }
+    async getRuntimeDebug(tenantId, agentId, callSessionId) {
+        const agent = await this.findOne(tenantId, agentId);
+        const perms = (0, tool_permissions_util_1.normalizeToolPermissions)(agent.toolPermissions);
+        const enabledTools = this.toolRegistry.resolveEnabledToolNames({
+            toolPermissions: perms,
+            enabledTools: Array.isArray(agent.enabledTools)
+                ? agent.enabledTools
+                : null,
+        });
+        const personality = agent
+            .voiceProfile?.providerConfig?.personality ?? null;
+        const promptInput = {
+            agentId: agent.id,
+            agentName: agent.name,
+            storeName: agent.storeName || 'Store',
+            language: agent.language || 'en',
+            baseSystemPrompt: agent.baseSystemPrompt,
+            agentRole: agent.agentRole,
+            agentGoal: agent.agentGoal,
+            toneOfVoice: agent.toneOfVoice,
+            config: agent.agentConfig,
+        };
+        const livePrompt = (0, build_agent_runtime_prompt_1.buildAgentRuntimePrompt)(promptInput, { personality, enabledTools });
+        let lastToolCalls = [];
+        let runtimeContextPreview = null;
+        if (callSessionId) {
+            const session = await this.prisma.callSession.findFirst({
+                where: { id: callSessionId, tenantId, agentId },
+                include: {
+                    toolExecutions: { orderBy: { createdAt: 'desc' }, take: 10 },
+                    emailEvents: { orderBy: { createdAt: 'desc' }, take: 5 },
+                },
+            });
+            if (session) {
+                lastToolCalls = session.toolExecutions.map((t) => ({
+                    toolName: t.toolName,
+                    status: t.status,
+                    latencyMs: t.latencyMs,
+                    createdAt: t.createdAt,
+                    inputPreview: JSON.stringify(t.inputJson).slice(0, 200),
+                    outputPreview: JSON.stringify(t.outputJson).slice(0, 300),
+                }));
+                runtimeContextPreview = {
+                    callSessionId: session.id,
+                    metadata: session.metadata,
+                    emailEvents: session.emailEvents.map((e) => ({
+                        status: e.status,
+                        createdAt: e.createdAt,
+                    })),
+                };
+            }
+        }
+        return {
+            agentId,
+            toolsEnabled: enabledTools,
+            toolPermissions: perms,
+            personality,
+            livePromptPreview: livePrompt.slice(0, 8000),
+            lastToolCalls,
+            runtimeContextPreview,
+            toolCatalog: this.toolRegistry.getCatalog().map((t) => ({
+                name: t.name,
+                permissionGroups: t.permissionGroups,
+            })),
+        };
+    }
 };
 exports.AgentsService = AgentsService;
 exports.AgentsService = AgentsService = AgentsService_1 = __decorate([
@@ -1807,6 +2191,9 @@ exports.AgentsService = AgentsService = AgentsService_1 = __decorate([
         twilio_connection_test_service_1.TwilioConnectionTestService,
         openai_connection_test_service_1.OpenAIConnectionTestService,
         elevenlabs_connection_test_service_1.ElevenLabsConnectionTestService,
-        product_sync_queue_1.ShopifyProductSyncQueueService])
+        product_sync_queue_1.ShopifyProductSyncQueueService,
+        agent_email_config_service_1.AgentEmailConfigService,
+        resend_email_service_1.ResendEmailService,
+        runtime_tool_registry_service_1.RuntimeToolRegistryService])
 ], AgentsService);
 //# sourceMappingURL=agents.service.js.map

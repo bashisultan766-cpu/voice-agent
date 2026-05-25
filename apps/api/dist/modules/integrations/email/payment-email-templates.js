@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildPaymentEmailContent = buildPaymentEmailContent;
+function applySubjectTemplate(template, storeName) {
+    return template.replace(/\{\{storeName\}\}/gi, storeName);
+}
 function normalizeItems(items) {
     return (items ?? [])
         .map((item) => ({
@@ -74,14 +77,19 @@ function buildPaymentEmailContent(branding) {
     const itemsRows = formatItemsHtmlRows(normalizedItems);
     const supportTxt = supportBlockText(branding.supportEmail, branding.supportPhone);
     const supportHtml = supportBlockHtml(branding.supportEmail, branding.supportPhone);
-    const subject = `${name} — Complete your secure checkout`;
+    const subject = branding.subjectTemplate?.trim()
+        ? applySubjectTemplate(branding.subjectTemplate.trim(), name)
+        : `${name} — Complete your secure checkout`;
+    const introBlock = branding.customIntro?.trim()
+        ? `${escapeText(branding.customIntro.trim())}\n\n`
+        : '';
     const text = `${name}
 Secure checkout
 ${'─'.repeat(Math.min(name.length + 16, 48))}
 
 Hello,
 
-Thank you for your order by phone. Complete payment on Shopify's secure checkout using the link below.
+${introBlock}Thank you for your order by phone. Complete payment on Shopify's secure checkout using the link below.
 
 YOUR ITEMS
 ${itemsText}
@@ -121,6 +129,9 @@ This message was sent because you requested a payment link during a call with ${
           <tr>
             <td style="padding:28px 28px 8px;">
               <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Hello,</p>
+              ${branding.customIntro?.trim()
+        ? `<p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">${escapeHtml(branding.customIntro.trim())}</p>`
+        : ''}
               <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Thank you for your order by phone. Use the button below to pay securely on Shopify — the same trusted checkout millions of stores use.</p>
             </td>
           </tr>

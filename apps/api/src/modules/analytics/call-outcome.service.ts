@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { CallResolutionStatus, CallStatus, ToolExecutionStatus } from '@prisma/client';
+import { CallResolutionStatus, CallStatus, Prisma, ToolExecutionStatus } from '@prisma/client';
 
 @Injectable()
 export class CallOutcomeService {
@@ -24,6 +24,31 @@ export class CallOutcomeService {
     const escalated = session.escalated ?? false;
     const metadata = (session.metadata as Record<string, unknown>) ?? {};
     const callbackRequested = Boolean(metadata.callbackRequested);
+    const mem = (metadata.conversationMemory ?? {}) as Record<string, unknown>;
+    const productsRequested = Array.isArray(mem.mentionedProducts)
+      ? (mem.mentionedProducts as Array<{ title?: string }>)
+          .map((p) => p.title)
+          .filter((t): t is string => typeof t === 'string' && t.length > 0)
+      : [];
+    const paymentTools = session.toolExecutions.filter((t) =>
+      ['sendPaymentEmail', 'createCheckoutLink', 'createCheckoutOrInvoicePaymentLink', 'create_payment_checkout_link'].includes(
+        t.toolName,
+      ),
+    );
+    const paymentLinkSent = paymentTools.some((t) => t.status === 'SUCCESS');
+    const orderCompleted = session.toolExecutions.some(
+      (t) => t.toolName === 'get_order_status' && t.status === 'SUCCESS',
+    );
+    const escalationReason =
+      typeof metadata.escalationReason === 'string'
+        ? metadata.escalationReason
+        : session.escalated
+          ? 'escalated'
+          : null;
+    let conversionOutcome = 'none';
+    if (orderCompleted) conversionOutcome = 'order_completed';
+    else if (paymentLinkSent) conversionOutcome = 'payment_link_sent';
+    else if (session.escalated || callbackRequested) conversionOutcome = 'escalated';
 
     let resolutionStatus: CallResolutionStatus;
     if (session.status === CallStatus.ABANDONED || session.endedReason === 'abandoned') {
@@ -49,6 +74,16 @@ export class CallOutcomeService {
         escalated,
         callbackRequested,
         summary: session.summary ?? undefined,
+        primaryIntent: typeof metadata.lastUserIntent === 'string' ? metadata.lastUserIntent : undefined,
+        productsRequested: productsRequested.length ? (productsRequested as Prisma.InputJsonValue) : undefined,
+        conversionOutcome,
+        paymentLinkSent,
+        orderCompleted,
+        escalationReason: escalationReason ?? undefined,
+        analyticsMeta: {
+          toolNames: session.toolExecutions.map((t) => t.toolName),
+          durationSeconds: session.durationSeconds,
+        },
       },
       update: {
         resolutionStatus,
@@ -57,6 +92,16 @@ export class CallOutcomeService {
         escalated,
         callbackRequested,
         summary: session.summary ?? undefined,
+        primaryIntent: typeof metadata.lastUserIntent === 'string' ? metadata.lastUserIntent : undefined,
+        productsRequested: productsRequested.length ? (productsRequested as Prisma.InputJsonValue) : undefined,
+        conversionOutcome,
+        paymentLinkSent,
+        orderCompleted,
+        escalationReason: escalationReason ?? undefined,
+        analyticsMeta: {
+          toolNames: session.toolExecutions.map((t) => t.toolName),
+          durationSeconds: session.durationSeconds,
+        },
       },
     });
   }

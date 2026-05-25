@@ -14,6 +14,7 @@ const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const bcrypt = require("bcrypt");
 const prisma_service_1 = require("../../database/prisma.service");
+const login_dto_1 = require("./dto/login.dto");
 function slugify(s) {
     const x = s
         .toLowerCase()
@@ -95,33 +96,21 @@ let AuthService = class AuthService {
     }
     async login(dto) {
         const email = dto.email.trim().toLowerCase();
-        const requestedSlug = dto.tenantSlug.trim().toLowerCase();
-        let tenant = await this.prisma.tenant.findFirst({
-            where: { slug: requestedSlug, deletedAt: null },
+        const workspaceSlug = (0, login_dto_1.resolveLoginWorkspaceSlug)(dto);
+        const invalid = () => new common_1.UnauthorizedException('Invalid workspace, email, or password');
+        const tenant = await this.prisma.tenant.findFirst({
+            where: { slug: workspaceSlug, deletedAt: null },
         });
-        let user = tenant
-            ? await this.prisma.user.findFirst({
-                where: { tenantId: tenant.id, email, deletedAt: null },
-            })
-            : null;
-        if (!user) {
-            const candidates = await this.prisma.user.findMany({
-                where: { email, deletedAt: null, tenant: { deletedAt: null } },
-                include: { tenant: true },
-                take: 2,
-            });
-            if (candidates.length === 1) {
-                user = candidates[0];
-                tenant = candidates[0].tenant;
-            }
-        }
-        if (!tenant || !user)
-            throw new common_1.UnauthorizedException('Unknown workspace or invalid credentials');
+        if (!tenant)
+            throw invalid();
+        const user = await this.prisma.user.findFirst({
+            where: { tenantId: tenant.id, email, deletedAt: null },
+        });
         if (!user?.passwordHash)
-            throw new common_1.UnauthorizedException('Invalid credentials');
+            throw invalid();
         const ok = await bcrypt.compare(dto.password, user.passwordHash);
         if (!ok)
-            throw new common_1.UnauthorizedException('Invalid credentials');
+            throw invalid();
         const accessToken = this.jwt.sign({ sub: user.id });
         return {
             accessToken,

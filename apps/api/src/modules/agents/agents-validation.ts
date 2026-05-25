@@ -72,6 +72,19 @@ export const testElevenLabsCredentialsSchema = z
   .strict()
   .default({});
 
+export const testAgentEmailBodySchema = z
+  .object({
+    toEmail: z.string().trim().email().optional(),
+    checkoutUrl: z
+      .string()
+      .trim()
+      .url()
+      .refine((u) => u.startsWith('https://'), { message: 'checkoutUrl must use HTTPS.' })
+      .optional(),
+  })
+  .strict()
+  .default({});
+
 export const configureTwilioWebhookBodySchema = z
   .object({
     force: z.boolean().optional(),

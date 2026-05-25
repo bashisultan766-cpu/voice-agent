@@ -131,7 +131,10 @@ export class OpenAIVoiceService {
     }
 
     const systemPrompt = this.promptBuilder.build(ctx);
-    const tools = this.toolRegistry.getToolsForAgent(ctx.agent.enabledTools);
+    const tools = this.toolRegistry.getToolsForAgent({
+      enabledTools: ctx.agent.enabledTools,
+      toolPermissions: ctx.agent.toolPermissions,
+    });
     const model = normalizeOpenAiChatCompletionsModel(
       ctx.agent.model ?? this.config.get<string>('OPENAI_REALTIME_MODEL') ?? 'gpt-4o-mini',
     );

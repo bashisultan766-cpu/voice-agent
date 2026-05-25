@@ -358,6 +358,7 @@ model Agent {
   voice                      String?
   voiceProvider              String?
   voiceId                    String?
+  voiceNameLabel             String?
   voiceStyle                 String?
   baseSystemPrompt           String           @default("")
   greetingMessage            String?
@@ -368,6 +369,8 @@ model Agent {
   status                     AgentStatus      @default(DRAFT)
   isPublished                Boolean          @default(false)
   enabledTools               Json?
+  /** Dashboard permission toggles; resolved to enabledTools at runtime when enabledTools is empty. */
+  toolPermissions            Json?
   maxToolCallsPerTurn        Int?             @default(2)
   handoffEnabled             Boolean          @default(true)
   voiceResponseStyle         String?
@@ -450,6 +453,13 @@ model AgentConfig {
   escalationRules           String?
   fallbackHumanContact      String?
   customSystemPrompt        String?
+  emailSenderName           String?
+  emailSenderAddress        String?
+  emailReplyTo              String?
+  emailSubjectTemplate      String?
+  paymentLinkEmailIntro     String?
+  emailTestRecipient        String?
+  useWorkspaceEmail         Boolean      @default(true)
   metadata                  Json?
   createdAt                 DateTime     @default(now())
   updatedAt                 DateTime     @updatedAt
@@ -715,6 +725,12 @@ model CallOutcome {
   callbackRequested Boolean              @default(false)
   summary           String?
   qaScore           Float?
+  productsRequested Json?
+  conversionOutcome String?
+  paymentLinkSent   Boolean              @default(false)
+  orderCompleted    Boolean              @default(false)
+  escalationReason  String?
+  analyticsMeta     Json?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 

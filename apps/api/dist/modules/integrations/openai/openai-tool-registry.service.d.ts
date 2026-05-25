@@ -1,15 +1,14 @@
-import { OnModuleInit } from '@nestjs/common';
-export interface ChatTool {
-    type: 'function';
-    function: {
-        name: string;
-        description: string;
-        parameters: Record<string, unknown>;
-    };
+import type { AgentToolPermissions } from '@bookstore-voice-agents/types';
+import { RuntimeToolRegistryService, type ChatTool } from '../../tools/runtime-tool-registry.service';
+export type { ChatTool };
+export interface AgentToolFilter {
+    enabledTools?: string[] | null;
+    toolPermissions?: AgentToolPermissions | Record<string, unknown> | null;
 }
-export declare class OpenAIToolRegistryService implements OnModuleInit {
-    onModuleInit(): void;
-    getToolsForAgent(enabledTools: string[] | null | undefined): ChatTool[];
-    getAllowedToolNames(enabledTools: string[] | null | undefined): string[];
-    isToolAllowed(toolName: string, enabledTools: string[] | null | undefined): boolean;
+export declare class OpenAIToolRegistryService {
+    private readonly runtimeRegistry;
+    constructor(runtimeRegistry: RuntimeToolRegistryService);
+    getToolsForAgent(filter: AgentToolFilter | string[] | null | undefined): ChatTool[];
+    getAllowedToolNames(filter: AgentToolFilter | string[] | null | undefined): string[];
+    isToolAllowed(toolName: string, filter: AgentToolFilter | string[] | null | undefined): boolean;
 }

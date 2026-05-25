@@ -174,6 +174,11 @@ let SessionContextService = SessionContextService_1 = class SessionContextServic
                 model: session.agent.model,
                 temperature: session.agent.temperature,
                 enabledTools: Array.isArray(session.agent.enabledTools) ? session.agent.enabledTools : null,
+                toolPermissions: session.agent.toolPermissions && typeof session.agent.toolPermissions === 'object'
+                    ? session.agent.toolPermissions
+                    : null,
+                personality: session.agent.voiceProfile?.providerConfig
+                    ?.personality ?? null,
                 maxToolCallsPerTurn: session.agent.maxToolCallsPerTurn ?? null,
                 handoffEnabled: session.agent.handoffEnabled ?? null,
                 knowledgeBaseSource: session.agent.knowledgeBaseSource ?? null,

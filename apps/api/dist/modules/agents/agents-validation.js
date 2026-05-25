@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.debugShopifySearchBodySchema = exports.smokeTestBodySchema = exports.configureTwilioWebhookBodySchema = exports.testElevenLabsCredentialsSchema = exports.testOpenAiCredentialsSchema = exports.testTwilioCredentialsSchema = exports.testDatabaseCredentialsSchema = exports.testShopifyCredentialsSchema = exports.testAiBehaviorBodySchema = exports.logsQuerySchema = exports.cuidParamSchema = void 0;
+exports.debugShopifySearchBodySchema = exports.smokeTestBodySchema = exports.configureTwilioWebhookBodySchema = exports.testAgentEmailBodySchema = exports.testElevenLabsCredentialsSchema = exports.testOpenAiCredentialsSchema = exports.testTwilioCredentialsSchema = exports.testDatabaseCredentialsSchema = exports.testShopifyCredentialsSchema = exports.testAiBehaviorBodySchema = exports.logsQuerySchema = exports.cuidParamSchema = void 0;
 const zod_1 = require("zod");
 exports.cuidParamSchema = zod_1.z.string().min(20).max(32).regex(/^c[a-z0-9]+$/i);
 exports.logsQuerySchema = zod_1.z
@@ -61,6 +61,18 @@ exports.testElevenLabsCredentialsSchema = zod_1.z
     useWorkspaceDefaults: zod_1.z.boolean().optional(),
     elevenlabsApiKey: optionalTrimmed,
     voiceId: optionalTrimmed,
+})
+    .strict()
+    .default({});
+exports.testAgentEmailBodySchema = zod_1.z
+    .object({
+    toEmail: zod_1.z.string().trim().email().optional(),
+    checkoutUrl: zod_1.z
+        .string()
+        .trim()
+        .url()
+        .refine((u) => u.startsWith('https://'), { message: 'checkoutUrl must use HTTPS.' })
+        .optional(),
 })
     .strict()
     .default({});

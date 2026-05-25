@@ -4,6 +4,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { Prisma } from '@prisma/client';
 import { buildPaymentEmailContent } from './payment-email-templates';
 import { paymentEmailIdempotencyKey } from '../../../common/payment-email-idempotency';
+import type { ResolvedAgentEmailConfig } from './agent-email-config.service';
 
 function assertHttpsCheckoutUrl(raw: string): string {
   let url: URL;
@@ -58,9 +59,9 @@ export class ResendEmailService {
     private readonly prisma: PrismaService,
   ) {}
 
-  private apiKey(): string {
-    const key = this.config.get<string>('RESEND_API_KEY')?.trim();
-    if (!key) throw new Error('RESEND_API_KEY is not configured.');
+  private apiKey(override?: string): string {
+    const key = override?.trim() || this.config.get<string>('RESEND_API_KEY')?.trim();
+    if (!key) throw new Error('Resend API key is not configured for this agent or workspace.');
     return key;
   }
 
@@ -77,6 +78,8 @@ export class ResendEmailService {
     supportPhone?: string | null;
     checkoutUrl: string;
     items: Array<{ title: string; quantity: number; price?: string | null }>;
+    /** Per-agent resolved email config (never log these values). */
+    emailConfig?: ResolvedAgentEmailConfig | null;
   }): Promise<SendPaymentEmailResult> {
     const safeCheckoutUrl = assertHttpsCheckoutUrl(input.checkoutUrl.trim());
     const cleanTo = input.to.trim().toLowerCase();
@@ -90,6 +93,8 @@ export class ResendEmailService {
       supportPhone: input.supportPhone,
       checkoutUrl: safeCheckoutUrl,
       items: input.items,
+      subjectTemplate: input.emailConfig?.subjectTemplate,
+      customIntro: input.emailConfig?.paymentLinkIntro,
     });
 
     const idemKey =
@@ -265,8 +270,10 @@ export class ResendEmailService {
     const emailRow = txResult.row;
     const emailEventId = emailRow.id;
 
-    const from = this.config.get<string>('RESEND_FROM_EMAIL')?.trim();
+    const from =
+      input.emailConfig?.from?.trim() || this.config.get<string>('RESEND_FROM_EMAIL')?.trim();
     if (!from) {
+      const configMsg = 'Email sender address is not configured for this agent.';
       this.logger.error(
         JSON.stringify({
           event: 'payment_email.send_config_error',
@@ -274,7 +281,7 @@ export class ResendEmailService {
           agentId: input.agentId,
           checkoutLinkId: input.checkoutLinkId,
           emailEventId,
-          message: 'RESEND_FROM_EMAIL is not configured.',
+          message: configMsg,
         }),
       );
       await this.prisma.emailEvent.update({
@@ -284,7 +291,7 @@ export class ResendEmailService {
           metadata: appendSendAttempt(emailRow.metadata, {
             at: new Date().toISOString(),
             outcome: 'config_error',
-            message: 'RESEND_FROM_EMAIL is not configured.',
+            message: configMsg,
           }),
         },
       });
@@ -297,12 +304,13 @@ export class ResendEmailService {
           metadata: {
             emailEventId,
             recipientEmail: cleanTo.replace(/^(.).+(@.*)$/, '$1***$2'),
-            message: 'RESEND_FROM_EMAIL is not configured.',
+            message: configMsg,
           } as Prisma.InputJsonValue,
         },
       });
-      throw new Error('RESEND_FROM_EMAIL is not configured.');
+      throw new Error(configMsg);
     }
+    const replyTo = input.emailConfig?.replyTo?.trim();
 
     let lastPayload: { id?: string; message?: string } = {};
     let lastStatus = 0;
@@ -322,19 +330,22 @@ export class ResendEmailService {
       );
 
       try {
+        const payload: Record<string, unknown> = {
+          from,
+          to: [cleanTo],
+          subject: tmpl.subject,
+          html: tmpl.html,
+          text: tmpl.text,
+        };
+        if (replyTo) payload.reply_to = replyTo;
+
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${this.apiKey()}`,
+            Authorization: `Bearer ${this.apiKey(input.emailConfig?.apiKey)}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            from,
-            to: [cleanTo],
-            subject: tmpl.subject,
-            html: tmpl.html,
-            text: tmpl.text,
-          }),
+          body: JSON.stringify(payload),
         });
         lastStatus = response.status;
         lastPayload = (await response.json().catch(() => ({}))) as { id?: string; message?: string };

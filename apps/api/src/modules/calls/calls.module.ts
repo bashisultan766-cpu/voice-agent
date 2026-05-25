@@ -8,6 +8,9 @@ import { VoiceRuntimeService } from './runtime/voice-runtime.service';
 import { SessionContextService } from './runtime/session-context.service';
 import { TranscriptBufferService } from './runtime/transcript-buffer.service';
 import { ToolOrchestratorService } from './runtime/tool-orchestrator.service';
+import { VoiceRuntimeContextService } from './runtime/voice-runtime-context.service';
+import { RuntimeSafetyService } from './runtime/runtime-safety.service';
+import { CallMemoryService } from './runtime/call-memory.service';
 import { OpenAIModule } from '../integrations/openai/openai.module';
 import { OpenAIVoiceService } from '../integrations/openai/openai-voice.service';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
@@ -18,9 +21,11 @@ import { CallbackRequestsController } from './callback-requests.controller';
 import { TwilioModule } from '../integrations/twilio/twilio.module';
 import { ShopifyModule } from '../integrations/shopify/shopify.module';
 import { EmailModule } from '../integrations/email/email.module';
+import { ToolsModule } from '../tools/tools.module';
 
 @Module({
   imports: [
+    ToolsModule,
     OpenAIModule,
     KnowledgeModule,
     AnalyticsModule,
@@ -37,6 +42,9 @@ import { EmailModule } from '../integrations/email/email.module';
     SessionContextService,
     TranscriptBufferService,
     ToolOrchestratorService,
+    VoiceRuntimeContextService,
+    RuntimeSafetyService,
+    CallMemoryService,
     OpenAIVoiceService,
     CallbackRequestsService,
   ],

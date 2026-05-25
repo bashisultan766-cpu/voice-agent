@@ -17,8 +17,13 @@ export declare class AnalyticsController {
         totalCalls: number;
         resolutionRate: number;
         escalationRate: number;
+        conversionRate: number;
         avgDurationSeconds: number;
         callbackRequestCount: number;
+        topProductsRequested: {
+            title: string;
+            count: number;
+        }[];
     }>;
     getAgentMetrics(tenantId: string, query: z.infer<typeof analyticsFilterQuerySchema>): Promise<{
         resolutionRate: number;
@@ -52,19 +57,19 @@ export declare class AnalyticsController {
         avgLatencyMs: number;
     }[]>;
     getCallEvents(tenantId: string, id: string): Promise<{
-        type: import("@prisma/client").$Enums.CallEventType;
         id: string;
-        createdAt: Date;
         tenantId: string;
+        createdAt: Date;
         callSessionId: string;
+        type: import("@prisma/client").$Enums.CallEventType;
         timestamp: Date;
         payload: import("@prisma/client/runtime/library").JsonValue | null;
     }[]>;
     updateCallOutcome(tenantId: string, id: string, body: UpdateCallOutcomeDto): Promise<{
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         summary: string | null;
         escalated: boolean;
         callSessionId: string;
@@ -77,21 +82,27 @@ export declare class AnalyticsController {
         fallbackCount: number;
         callbackRequested: boolean;
         qaScore: number | null;
+        productsRequested: import("@prisma/client/runtime/library").JsonValue | null;
+        conversionOutcome: string | null;
+        paymentLinkSent: boolean;
+        orderCompleted: boolean;
+        escalationReason: string | null;
+        analyticsMeta: import("@prisma/client/runtime/library").JsonValue | null;
     } | null>;
     listQaCalls(tenantId: string, query: z.infer<typeof qaCallsListQuerySchema>): Promise<({
         store: {
-            name: string;
             id: string;
+            name: string;
         } | null;
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
         callOutcome: {
             id: string;
+            tenantId: string;
             createdAt: Date;
             updatedAt: Date;
-            tenantId: string;
             summary: string | null;
             escalated: boolean;
             callSessionId: string;
@@ -104,19 +115,24 @@ export declare class AnalyticsController {
             fallbackCount: number;
             callbackRequested: boolean;
             qaScore: number | null;
+            productsRequested: import("@prisma/client/runtime/library").JsonValue | null;
+            conversionOutcome: string | null;
+            paymentLinkSent: boolean;
+            orderCompleted: boolean;
+            escalationReason: string | null;
+            analyticsMeta: import("@prisma/client/runtime/library").JsonValue | null;
         } | null;
         _count: {
             toolExecutions: number;
         };
     } & {
-        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
+        tenantId: string;
+        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         storeId: string | null;
         agentId: string;
-        metadata: import("@prisma/client/runtime/library").JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -133,24 +149,25 @@ export declare class AnalyticsController {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
+        metadata: import("@prisma/client/runtime/library").JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     })[]>;
     getQaCallDetail(tenantId: string, id: string): Promise<{
         store: {
-            name: string;
             id: string;
+            name: string;
         } | null;
         agent: {
-            name: string;
             id: string;
+            name: string;
             baseSystemPrompt: string;
         };
         callOutcome: {
             id: string;
+            tenantId: string;
             createdAt: Date;
             updatedAt: Date;
-            tenantId: string;
             summary: string | null;
             escalated: boolean;
             callSessionId: string;
@@ -163,12 +180,18 @@ export declare class AnalyticsController {
             fallbackCount: number;
             callbackRequested: boolean;
             qaScore: number | null;
+            productsRequested: import("@prisma/client/runtime/library").JsonValue | null;
+            conversionOutcome: string | null;
+            paymentLinkSent: boolean;
+            orderCompleted: boolean;
+            escalationReason: string | null;
+            analyticsMeta: import("@prisma/client/runtime/library").JsonValue | null;
         } | null;
         toolExecutions: {
-            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             id: string;
-            createdAt: Date;
             tenantId: string;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            createdAt: Date;
             agentId: string;
             callSessionId: string | null;
             toolName: string;
@@ -182,29 +205,28 @@ export declare class AnalyticsController {
             id: string;
             createdAt: Date;
             callSessionId: string;
-            sequenceNumber: number;
             role: string;
             content: string;
+            sequenceNumber: number;
             timestampMs: number | null;
         }[];
         callEvents: {
-            type: import("@prisma/client").$Enums.CallEventType;
             id: string;
-            createdAt: Date;
             tenantId: string;
+            createdAt: Date;
             callSessionId: string;
+            type: import("@prisma/client").$Enums.CallEventType;
             timestamp: Date;
             payload: import("@prisma/client/runtime/library").JsonValue | null;
         }[];
     } & {
-        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
+        tenantId: string;
+        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         storeId: string | null;
         agentId: string;
-        metadata: import("@prisma/client/runtime/library").JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -221,21 +243,22 @@ export declare class AnalyticsController {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
+        metadata: import("@prisma/client/runtime/library").JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }>;
     submitQaReview(tenantId: string, id: string, body: CreateQaReviewDto): Promise<{
         id: string;
-        createdAt: Date;
         tenantId: string;
+        createdAt: Date;
         agentId: string;
         callSessionId: string;
+        notes: string | null;
         reviewerUserId: string | null;
         accuracyScore: number | null;
         toneScore: number | null;
         policyComplianceScore: number | null;
         brevityScore: number | null;
-        notes: string | null;
         needsPromptUpdate: boolean;
         needsFaqUpdate: boolean;
     }>;

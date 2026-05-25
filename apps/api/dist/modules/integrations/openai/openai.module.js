@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OpenAIModule = void 0;
 const common_1 = require("@nestjs/common");
+const tools_module_1 = require("../../tools/tools.module");
 const openai_prompt_builder_service_1 = require("./openai-prompt-builder.service");
 const openai_tool_registry_service_1 = require("./openai-tool-registry.service");
 let OpenAIModule = class OpenAIModule {
@@ -15,6 +16,7 @@ let OpenAIModule = class OpenAIModule {
 exports.OpenAIModule = OpenAIModule;
 exports.OpenAIModule = OpenAIModule = __decorate([
     (0, common_1.Module)({
+        imports: [tools_module_1.ToolsModule],
         providers: [openai_prompt_builder_service_1.OpenAIPromptBuilderService, openai_tool_registry_service_1.OpenAIToolRegistryService],
         exports: [openai_prompt_builder_service_1.OpenAIPromptBuilderService, openai_tool_registry_service_1.OpenAIToolRegistryService],
     })

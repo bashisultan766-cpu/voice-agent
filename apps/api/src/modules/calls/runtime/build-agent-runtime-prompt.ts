@@ -1,4 +1,4 @@
-import type { VoiceAgentRuntimeConfig } from '@bookstore-voice-agents/types';
+import type { VoiceAgentRuntimeConfig, VoicePersonalityTraits } from '@bookstore-voice-agents/types';
 import { checkoutModeDescription, toCheckoutModeApi } from '@bookstore-voice-agents/types';
 import type { VoiceSessionContext } from './session-context.service';
 
@@ -16,13 +16,13 @@ Speaking style:
 - Confirm important details before action.
 {{toneLine}}
 
-Business rules:
-- Only talk about this Shopify store, its products, orders, shipping, refunds, and checkout.
-- Do not answer politics, religion, legal, medical, financial, or unrelated questions.
-- If the customer asks unrelated questions, politely say you can only help with store products and orders.
-- Never invent product details.
-- Use Shopify product data as the source of truth.
-- If product information is missing, say you will check or connect them with support.
+Scope and guardrails:
+- Only answer questions about this bookstore/store: products, catalog search, orders, shipping, refunds, exchanges, and checkout.
+- Refuse and redirect: politics, crime, illegal activity, medical advice, legal advice, financial advice, adult content, hacking, violence, or any topic unrelated to this store.
+- Never invent Shopify product names, prices, stock, ISBNs, or descriptions — use tool results from this agent's store only.
+- If a product is unavailable or not found in Shopify, say it is unavailable; do not suggest substitutes unless they appear in search results.
+- If price is unknown, fetch product details from Shopify before quoting.
+- If you are unsure, escalate to human support instead of guessing.
 {{forbiddenBehaviorsLine}}
 
 Order flow:
@@ -37,9 +37,10 @@ Order flow:
 {{checkoutModeLine}}
 
 Payment safety:
-- Never ask for card number, CVV, or banking details on call.
-- Only send official checkout/payment links.
-- Confirm email before sending.
+- Never ask for card number, CVV, PIN, or banking details on the phone.
+- Only complete payment through the official Shopify checkout/payment link sent by email.
+- Confirm the customer's email before creating or sending a payment link.
+- If email sending is not configured for this agent, do not claim an email was sent — escalate to support instead.
 
 Escalation:
 If customer is angry, asks for human support, asks about a complex issue, or requests something outside your rules, politely escalate to support.
@@ -92,6 +93,9 @@ export interface AgentRuntimePromptInput {
 export interface BuildAgentRuntimePromptOptions {
   /** Internal checkout step from call session metadata. */
   checkoutStep?: string | null;
+  personality?: VoicePersonalityTraits | null;
+  /** Tool names exposed to the model this session. */
+  enabledTools?: string[];
 }
 
 function fillTemplate(template: string, values: Record<string, string>): string {
@@ -185,6 +189,52 @@ export function buildAgentRuntimePrompt(
     appendix.push(
       `Knowledge base: ${agent.knowledgeBaseSource.trim()}${agent.knowledgeSyncEnabled === false ? ' (prefer live Shopify search).' : ''}`,
     );
+  }
+  appendix.push(
+    'Use retrieved knowledge base context (retrieve_knowledge_base / search_store_faqs / policy tools) before answering store policy or FAQ questions.',
+  );
+
+  const personality = options?.personality;
+  if (personality) {
+    const traits: string[] = [];
+    if (personality.voiceEnergy != null) {
+      traits.push(
+        personality.voiceEnergy >= 70
+          ? 'high energy'
+          : personality.voiceEnergy <= 30
+            ? 'calm and measured'
+            : 'balanced energy',
+      );
+    }
+    if (personality.speakingSpeed != null) {
+      traits.push(
+        personality.speakingSpeed >= 70
+          ? 'slightly faster pace'
+          : personality.speakingSpeed <= 30
+            ? 'slower, clear pace'
+            : 'natural speaking pace',
+      );
+    }
+    if (personality.politeness != null) {
+      traits.push(personality.politeness >= 70 ? 'very polite and formal' : 'friendly and direct');
+    }
+    if (personality.upsellAggressiveness != null) {
+      traits.push(
+        personality.upsellAggressiveness >= 70
+          ? 'proactively suggest related titles when appropriate'
+          : personality.upsellAggressiveness <= 30
+            ? 'never push add-ons unless asked'
+            : 'mention one related item only when natural',
+      );
+    }
+    if (personality.humorLevel != null && personality.humorLevel >= 50) {
+      traits.push('light warmth is OK; stay professional');
+    }
+    if (traits.length) appendix.push(`Voice personality: ${traits.join('; ')}.`);
+  }
+
+  if (options?.enabledTools?.length) {
+    appendix.push(`Enabled tools this session: ${options.enabledTools.join(', ')}.`);
   }
 
   if (cfg?.humanHandoffRules?.trim()) {

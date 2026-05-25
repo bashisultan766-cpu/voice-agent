@@ -385,4 +385,66 @@ export class CreateAgentDto {
   @IsOptional()
   @IsBoolean()
   useWorkspaceDefaults?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  voiceNameLabel?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  emailSenderName?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => trimToUndefined(value))
+  @IsString()
+  @MaxLength(255)
+  @IsEmail({}, { message: 'Sender email must be a valid email.' })
+  emailSenderAddress?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => trimToUndefined(value))
+  @IsString()
+  @MaxLength(255)
+  @IsEmail({}, { message: 'Reply-to email must be a valid email.' })
+  emailReplyTo?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  emailSubjectTemplate?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  paymentLinkEmailIntro?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => trimToUndefined(value))
+  @IsString()
+  @MaxLength(255)
+  @IsEmail({}, { message: 'Test email recipient must be a valid email.' })
+  emailTestRecipient?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  useWorkspaceEmail?: boolean;
+
+  @IsOptional()
+  @IsString()
+  resendApiKey?: string;
+
+  /** Dashboard tool permission toggles; synced to enabledTools at save. */
+  @IsOptional()
+  toolPermissions?: Record<string, boolean>;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  enabledTools?: string[];
+
+  /** Voice personality sliders (0–100). Stored on VoiceProfile.providerConfig.personality */
+  @IsOptional()
+  voicePersonality?: Record<string, number>;
 }

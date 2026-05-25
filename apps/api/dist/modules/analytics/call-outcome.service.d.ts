@@ -1,14 +1,14 @@
 import { PrismaService } from '../../database/prisma.service';
-import { CallResolutionStatus } from '@prisma/client';
+import { CallResolutionStatus, Prisma } from '@prisma/client';
 export declare class CallOutcomeService {
     private readonly prisma;
     constructor(prisma: PrismaService);
     deriveAndUpsert(callSessionId: string): Promise<void>;
     getByCallSession(callSessionId: string): Promise<{
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         summary: string | null;
         escalated: boolean;
         callSessionId: string;
@@ -21,6 +21,12 @@ export declare class CallOutcomeService {
         fallbackCount: number;
         callbackRequested: boolean;
         qaScore: number | null;
+        productsRequested: Prisma.JsonValue | null;
+        conversionOutcome: string | null;
+        paymentLinkSent: boolean;
+        orderCompleted: boolean;
+        escalationReason: string | null;
+        analyticsMeta: Prisma.JsonValue | null;
     } | null>;
     update(tenantId: string, callSessionId: string, data: {
         resolutionStatus?: CallResolutionStatus;
@@ -30,9 +36,9 @@ export declare class CallOutcomeService {
         qaScore?: number;
     }): Promise<{
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         summary: string | null;
         escalated: boolean;
         callSessionId: string;
@@ -45,5 +51,11 @@ export declare class CallOutcomeService {
         fallbackCount: number;
         callbackRequested: boolean;
         qaScore: number | null;
+        productsRequested: Prisma.JsonValue | null;
+        conversionOutcome: string | null;
+        paymentLinkSent: boolean;
+        orderCompleted: boolean;
+        escalationReason: string | null;
+        analyticsMeta: Prisma.JsonValue | null;
     } | null>;
 }
