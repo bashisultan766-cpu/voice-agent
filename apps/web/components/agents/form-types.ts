@@ -54,6 +54,9 @@ export interface CreateAgentFormData {
   fallbackMessage: string;
 
   // 3. Shopify Integration
+  /** When true, runtime uses workspace Shopify from Settings instead of per-agent credentials. */
+  useWorkspaceShopify: boolean;
+  shopifyApiVersion: string;
   shopifyStoreUrl: string;
   shopifyStoreNumber: string;
   shopifyAdminToken: string;
@@ -142,6 +145,8 @@ export const initialFormData: CreateAgentFormData = {
   elevenlabsApiKey: '',
   greetingMessage: '',
   fallbackMessage: '',
+  useWorkspaceShopify: false,
+  shopifyApiVersion: '2024-10',
   shopifyStoreUrl: '',
   shopifyStoreNumber: '',
   shopifyAdminToken: '',
@@ -546,17 +551,21 @@ export function validateLaunchReadiness(
   const agShopify = savedOnAgent?.shopify === 'ok';
   const agTwilio = savedOnAgent?.twilio === 'ok';
   const agOpenai = savedOnAgent?.openai === 'ok';
-  const shopifyCredOk = wsShopify || agShopify;
+  const shopifyCredOk =
+    agShopify || (data.useWorkspaceShopify && wsShopify) || Boolean(data.shopifyStoreUrl?.trim() && data.shopifyAdminToken?.trim());
   const twilioCredOk = wsTwilio || agTwilio;
   const openaiCredOk = wsOpenai || agOpenai;
 
-  if (!data.shopifyStoreUrl?.trim() && !shopifyCredOk) {
-    e.shopifyStoreUrl =
-      'Launch requires your Shopify myshopify domain, or connect Shopify under Settings → Integrations.';
+  if (data.useWorkspaceShopify && !wsShopify) {
+    e.useWorkspaceShopify =
+      'Workspace Shopify is not configured. Connect Shopify under Settings → Integrations, or use agent-specific credentials.';
   }
-  if (!data.shopifyAdminToken?.trim() && !shopifyCredOk) {
+  if (!data.useWorkspaceShopify && !data.shopifyStoreUrl?.trim() && !agShopify) {
+    e.shopifyStoreUrl = 'Enter your Shopify myshopify domain, or enable workspace Shopify integration.';
+  }
+  if (!data.useWorkspaceShopify && !data.shopifyAdminToken?.trim() && !agShopify) {
     e.shopifyAdminToken =
-      'Launch requires a Shopify Admin access token, or connect Shopify under Settings → Integrations.';
+      'Enter a Shopify Admin access token for this agent, or enable workspace Shopify integration.';
   }
   if (!data.openaiApiKey?.trim() && !openaiCredOk) {
     e.openaiApiKey =

@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { StoreSetting } from '@bookstore-voice-agents/voice-db';
+import {
+  isLegacyWebVoicePathAllowed,
+  LEGACY_WEB_VOICE_PRODUCTION_BLOCK_MESSAGE,
+} from '@bookstore-voice-agents/types';
 import { getVoicePrisma } from './prisma';
 import { buildSystemPrompt } from './prompts';
 import { chunkTextForRelay } from './chunk-text';
@@ -92,6 +96,14 @@ export async function runVoiceAssistantTurn(params: {
   conversationalMessages: ChatCompletionMessageParam[];
   sendText: VoiceSendText;
 }): Promise<ChatCompletionMessageParam[]> {
+  if (!isLegacyWebVoicePathAllowed(process.env.NODE_ENV)) {
+    for (const chunk of chunkTextForRelay(LEGACY_WEB_VOICE_PRODUCTION_BLOCK_MESSAGE)) {
+      params.sendText(chunk, false);
+    }
+    params.sendText('', true);
+    return params.conversationalMessages;
+  }
+
   const prisma = getVoicePrisma();
   const faqs = await prisma.faqItem.findMany({
     where: { storeKey: params.storeKey, isActive: true },
@@ -111,7 +123,8 @@ export async function runVoiceAssistantTurn(params: {
     typeof lastUser?.content === 'string' ? lastUser.content : JSON.stringify(lastUser?.content ?? '');
   await appendCallTranscript(params.callLogId, `[user]: ${userText}`);
 
-  const openaiKey = process.env.OPENAI_API_KEY;
+  /** Dev-only legacy path: StoreSetting has no OpenAI field; production is blocked above. */
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
   if (!openaiKey) {
     for (const chunk of chunkTextForRelay('Our assistant is not fully configured yet. Goodbye.')) {
       params.sendText(chunk, false);

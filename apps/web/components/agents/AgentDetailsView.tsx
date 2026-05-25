@@ -515,6 +515,21 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
       <PublicAgentLinkShare agentId={agent.id} />
 
       <DetailSection title="Live readiness checklist" description="LIVE is blocked until every required item passes">
+        {readiness?.credentialSources ? (
+          <div className="mb-4 rounded-lg border bg-muted/20 p-3 text-sm">
+            <p className="font-medium text-foreground">Credential sources</p>
+            <ul className="mt-2 space-y-1 text-muted-foreground">
+              <li>
+                Shopify: {readiness.credentialSources.shopify.source}
+                {readiness.credentialSources.shopify.configured ? ' (ready)' : ' (not ready)'}
+              </li>
+              <li>OpenAI: {readiness.credentialSources.openai.source}</li>
+              <li>ElevenLabs: {readiness.credentialSources.elevenlabs.source}</li>
+              <li>Twilio: {readiness.credentialSources.twilio.authSource}</li>
+              <li>Resend: {readiness.credentialSources.resend.source}</li>
+            </ul>
+          </div>
+        ) : null}
         <div className="space-y-0 divide-y divide-border">
           {(readiness?.checks ?? []).map((item) => (
             <DetailRow
@@ -578,6 +593,14 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
         <DetailSection title="Shopify connection" description="Store connection (credentials are stored securely)">
           <div className="space-y-0 divide-y divide-border">
             <DetailRow label="Store URL" value={(agent.shopifyStoreUrl as string) || '—'} />
+            <DetailRow
+              label="Shopify credential source"
+              value={(agent.shopifySource as string) || '—'}
+            />
+            <DetailRow
+              label="Use workspace Shopify"
+              value={agent.useWorkspaceShopify === true ? 'Yes' : 'No'}
+            />
             <DetailRow label="Credentials" value="••••••••" />
             <DetailRow
               label="Status"

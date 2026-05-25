@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import type { CredentialSourcesSummaryApi } from '@/lib/api/agents';
 
 interface RuntimeDebugPayload {
   toolsEnabled: string[];
@@ -15,6 +16,33 @@ interface RuntimeDebugPayload {
     outputPreview?: string;
   }>;
   runtimeContextPreview: Record<string, unknown> | null;
+  credentialSources?: CredentialSourcesSummaryApi;
+}
+
+function sourceLabel(source: string): string {
+  switch (source) {
+    case 'agent':
+      return 'agent-specific';
+    case 'workspace':
+      return 'workspace default';
+    case 'env':
+      return 'environment';
+    case 'missing':
+      return 'missing';
+    default:
+      return source;
+  }
+}
+
+function CredentialRow({ label, source, ok }: { label: string; source: string; ok: boolean }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+      <span className="font-medium">{label}</span>
+      <span className={ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+        {sourceLabel(source)} {ok ? '✅' : '⚠️'}
+      </span>
+    </div>
+  );
 }
 
 export function AgentRuntimeDebugPanel({
@@ -54,8 +82,30 @@ export function AgentRuntimeDebugPanel({
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (!data) return null;
 
+  const cs = data.credentialSources;
+
   return (
     <div className="space-y-4">
+      {cs ? (
+        <div className="rounded-lg border bg-card p-4">
+          <h3 className="text-sm font-semibold">Credential sources</h3>
+          <p className="mt-1 text-xs text-muted-foreground">Resolved precedence for runtime (secrets never shown).</p>
+          <div className="mt-3 space-y-2">
+            <CredentialRow
+              label="Shopify"
+              source={cs.shopify.source}
+              ok={
+                cs.shopify.configured &&
+                !(cs.shopify.source === 'workspace' && !cs.shopify.useWorkspaceShopify)
+              }
+            />
+            <CredentialRow label="OpenAI" source={cs.openai.source} ok={cs.openai.configured} />
+            <CredentialRow label="ElevenLabs" source={cs.elevenlabs.source} ok={cs.elevenlabs.configured} />
+            <CredentialRow label="Twilio" source={cs.twilio.authSource} ok={cs.twilio.configured} />
+            <CredentialRow label="Email (Resend)" source={cs.resend.source} ok={cs.resend.configured} />
+          </div>
+        </div>
+      ) : null}
       <div className="rounded-lg border bg-card p-4">
         <h3 className="text-sm font-semibold">Tools enabled ({data.toolsEnabled.length})</h3>
         <p className="mt-2 font-mono text-xs text-muted-foreground">{data.toolsEnabled.join(', ')}</p>

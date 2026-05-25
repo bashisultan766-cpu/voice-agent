@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCredentialPriority } from './agents.service';
+import { resolveCredentialPriority } from '../../common/credential-priority.util';
 
 test('uses agent credential before workspace and env', () => {
   const resolved = resolveCredentialPriority('agent-key', 'workspace-key', 'env-key');

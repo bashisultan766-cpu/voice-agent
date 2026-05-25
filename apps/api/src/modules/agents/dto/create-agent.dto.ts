@@ -431,6 +431,16 @@ export class CreateAgentDto {
   @IsBoolean()
   useWorkspaceEmail?: boolean;
 
+  /** When true, runtime uses workspace Shopify integration instead of per-agent store credentials. */
+  @IsOptional()
+  @IsBoolean()
+  useWorkspaceShopify?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  shopifyApiVersion?: string;
+
   @IsOptional()
   @IsString()
   resendApiKey?: string;

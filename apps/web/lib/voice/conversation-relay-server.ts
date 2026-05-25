@@ -2,6 +2,7 @@ import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { VoiceCallStatus } from '@bookstore-voice-agents/voice-db';
+import { isLegacyWebVoicePathAllowed } from '@bookstore-voice-agents/types';
 import { getPublicWebSocketUrlFromRequest, validateTwilioWebSocketRequest } from '@/lib/twilio/signature';
 import { VOICE_WS_PATH } from '@/lib/voice/constants';
 import { FALLBACK_SPEECH } from '@/lib/voice/constants';
@@ -61,6 +62,11 @@ async function sendFallbackAndOptionalEnd(ws: WebSocket, end: boolean) {
 }
 
 export async function handleConversationRelayConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
+  if (!isLegacyWebVoicePathAllowed(process.env.NODE_ENV)) {
+    ws.close(1008, 'Legacy web voice path disabled in production');
+    return;
+  }
+
   const publicWsUrl = getPublicWebSocketUrlFromRequest(req, VOICE_WS_PATH);
   const sig = req.headers['x-twilio-signature'];
   const ok = validateTwilioWebSocketRequest({

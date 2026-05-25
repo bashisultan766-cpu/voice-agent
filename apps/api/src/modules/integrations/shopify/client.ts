@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
+import {
+  logCredentialResolution,
+  resolveShopifyConfig,
+  type AgentSecretsSlice,
+} from '../../../common/credential-resolver.util';
 import { ShopifyGraphqlError, ShopifyRestError, isShopifyRetryableError } from './shopify-errors';
 import type { ShopifyGraphqlErrorItem } from './shopify-errors';
 
@@ -13,6 +18,8 @@ function sleep(ms: number): Promise<void> {
 
 @Injectable()
 export class ShopifyClientService {
+  private readonly logger = new Logger(ShopifyClientService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
@@ -25,47 +32,79 @@ export class ShopifyClientService {
   async getAgentShopifyConfig(
     tenantId: string,
     agentId: string,
-  ): Promise<{ domain: string; token: string; shopifyConnectionId: string | null }> {
+  ): Promise<{ domain: string; token: string; shopifyConnectionId: string | null; apiVersion: string; source: string }> {
     const agent = await this.prisma.agent.findFirstOrThrow({
       where: { id: agentId, tenantId, deletedAt: null },
-      select: { shopifyStoreUrl: true, secretsEnc: true, storeId: true },
+      select: {
+        shopifyStoreUrl: true,
+        secretsEnc: true,
+        storeId: true,
+        agentConfig: { select: { useWorkspaceShopify: true, shopifyApiVersion: true } },
+      },
     });
-    if (!agent.shopifyStoreUrl) throw new Error('Shopify store URL is not configured for this agent.');
-    if (!this.encryption.isAvailable()) throw new Error('Encrypted Shopify credentials are unavailable.');
+    if (!this.encryption.isAvailable()) {
+      throw new Error('Encrypted Shopify credentials are unavailable.');
+    }
 
-    let token: string | null = null;
-    let agentToken: string | null = null;
+    let secrets: AgentSecretsSlice = {};
     if (agent.secretsEnc) {
       const decrypted = this.encryption.decryptFromStorage(agent.secretsEnc);
       if (decrypted) {
         try {
-          const parsed = JSON.parse(decrypted) as { shopifyAdminToken?: string };
-          agentToken = parsed.shopifyAdminToken?.trim() || null;
+          secrets = JSON.parse(decrypted) as AgentSecretsSlice;
         } catch {
-          agentToken = null;
+          secrets = {};
         }
       }
     }
 
-    const normalizedDomain = this.normalizeDomain(agent.shopifyStoreUrl);
+    const integration = await this.prisma.tenantIntegration.findUnique({
+      where: { tenantId },
+      select: { shopifyShopDomain: true, shopifyAdminTokenEnc: true },
+    });
+    const workspace =
+      integration && this.encryption.isAvailable()
+        ? {
+            shopifyStoreUrl: integration.shopifyShopDomain?.trim()
+              ? `https://${integration.shopifyShopDomain.trim()}`
+              : undefined,
+            shopifyAdminToken: integration.shopifyAdminTokenEnc
+              ? (this.encryption.decryptFromStorage(integration.shopifyAdminTokenEnc) ?? undefined)
+              : undefined,
+          }
+        : null;
+
+    const resolved = resolveShopifyConfig({
+      agent: {
+        shopifyStoreUrl: agent.shopifyStoreUrl,
+        secrets,
+        useWorkspaceShopify: agent.agentConfig?.useWorkspaceShopify === true,
+        shopifyApiVersion: agent.agentConfig?.shopifyApiVersion,
+      },
+      workspace,
+      env: {
+        shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
+        shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
+      },
+    });
+
+    if (!resolved) {
+      throw new Error('Shopify credentials missing for this agent.');
+    }
+
+    logCredentialResolution(this.logger, 'shopify', resolved.source, agentId);
+
+    const normalizedDomain = this.normalizeDomain(resolved.shopifyStoreUrl);
     const connection = agent.storeId
       ? await this.prisma.shopifyConnection.findFirst({
           where: { tenantId, storeId: agent.storeId },
-          select: { id: true, accessTokenEnc: true, shopDomain: true },
+          select: { id: true, shopDomain: true },
         })
       : await this.prisma.shopifyConnection.findFirst({
           where: { tenantId, shopDomain: normalizedDomain },
-          select: { id: true, accessTokenEnc: true, shopDomain: true },
+          select: { id: true, shopDomain: true },
         });
 
-    // Prefer store/integration connection token first, then fall back to agent-level secret.
-    if (connection?.accessTokenEnc) {
-      const decTok = this.encryption.decryptFromStorage(connection.accessTokenEnc);
-      if (decTok?.trim()) token = decTok.trim();
-    }
-    if (!token?.trim() && agentToken?.trim()) token = agentToken.trim();
-
-    if (!token?.trim()) throw new Error('Shopify Admin token is missing for this agent.');
     const domain =
       normalizedDomain ||
       (connection?.shopDomain ? this.normalizeDomain(`https://${connection.shopDomain}`) : '');
@@ -73,12 +112,17 @@ export class ShopifyClientService {
 
     return {
       domain,
-      token: token.trim(),
+      token: resolved.shopifyAdminToken,
       shopifyConnectionId: connection?.id ?? null,
+      apiVersion: resolved.shopifyApiVersion,
+      source: resolved.source,
     };
   }
 
-  private parseGraphqlPayload(body: unknown, httpStatus: number): { data?: unknown; errors?: ShopifyGraphqlErrorItem[] } {
+  private parseGraphqlPayload(
+    body: unknown,
+    httpStatus: number,
+  ): { data: unknown; errors: ShopifyGraphqlErrorItem[] } {
     if (!body || typeof body !== 'object') {
       throw new ShopifyGraphqlError(
         `Shopify Admin GraphQL returned a non-JSON body (HTTP ${httpStatus}).`,
@@ -88,31 +132,35 @@ export class ShopifyClientService {
     }
     const b = body as { data?: unknown; errors?: unknown };
     const normalizedErrors: ShopifyGraphqlErrorItem[] = Array.isArray(b.errors)
-      ? b.errors
-          .map((row) => {
-            if (row && typeof row === 'object') {
-              const r = row as { message?: unknown; extensions?: unknown; locations?: unknown };
-              return {
-                message: typeof r.message === 'string' ? r.message : JSON.stringify(row).slice(0, 300),
-                extensions: r.extensions && typeof r.extensions === 'object' ? (r.extensions as Record<string, unknown>) : undefined,
-                locations: r.locations,
-              } satisfies ShopifyGraphqlErrorItem;
-            }
-            return { message: String(row) } satisfies ShopifyGraphqlErrorItem;
-          })
+      ? b.errors.map((row) => {
+          if (row && typeof row === 'object') {
+            const r = row as { message?: string; extensions?: unknown; locations?: unknown };
+            return {
+              message:
+                typeof r.message === 'string' ? r.message : JSON.stringify(row).slice(0, 300),
+              extensions:
+                r.extensions && typeof r.extensions === 'object'
+                  ? (r.extensions as Record<string, unknown>)
+                  : undefined,
+              locations: r.locations,
+            };
+          }
+          return { message: String(row) };
+        })
       : typeof b.errors === 'string'
         ? [{ message: b.errors }]
         : [];
     return { data: b.data, errors: normalizedErrors };
   }
 
-  private async executeGraphqlOnce<T>(
+  private async executeGraphqlOnce(
     domain: string,
     token: string,
+    apiVersion: string,
     query: string,
     variables?: Record<string, unknown>,
-  ): Promise<T> {
-    const response = await fetch(`https://${domain}/admin/api/2024-10/graphql.json`, {
+  ): Promise<unknown> {
+    const response = await fetch(`https://${domain}/admin/api/${apiVersion}/graphql.json`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -122,11 +170,10 @@ export class ShopifyClientService {
     });
     const json = (await response.json().catch(() => null)) as unknown;
     const { data, errors } = this.parseGraphqlPayload(json, response.status);
-
     if (!response.ok) {
       const msg =
         errors?.[0]?.message ||
-        (typeof json === 'object' && json !== null && 'errors' in json
+        (typeof json === 'object' && json !== null && 'errors' in (json as object)
           ? JSON.stringify((json as { errors: unknown }).errors).slice(0, 400)
           : `HTTP ${response.status}`);
       throw new ShopifyGraphqlError(
@@ -135,7 +182,6 @@ export class ShopifyClientService {
         response.status,
       );
     }
-
     if (errors?.length) {
       throw new ShopifyGraphqlError(
         errors.map((e) => e.message).join('; ') || 'GraphQL errors',
@@ -143,7 +189,6 @@ export class ShopifyClientService {
         response.status,
       );
     }
-
     if (data === undefined || data === null) {
       throw new ShopifyGraphqlError(
         'Shopify Admin API returned empty data.',
@@ -151,22 +196,20 @@ export class ShopifyClientService {
         response.status,
       );
     }
-    return data as T;
+    return data;
   }
 
-  /**
-   * Admin GraphQL with retries on throttling / transient HTTP failures.
-   */
-  async adminGraphql<T>(
+  async adminGraphql<T = unknown>(
     domain: string,
     token: string,
     query: string,
     variables?: Record<string, unknown>,
+    apiVersion = '2024-10',
   ): Promise<T> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < DEFAULT_GRAPHQL_ATTEMPTS; attempt++) {
       try {
-        return await this.executeGraphqlOnce<T>(domain, token, query, variables);
+        return (await this.executeGraphqlOnce(domain, token, apiVersion, query, variables)) as T;
       } catch (err) {
         lastErr = err;
         const retryable = isShopifyRetryableError(err);
@@ -178,16 +221,17 @@ export class ShopifyClientService {
     throw lastErr;
   }
 
-  async adminRest<T>(
+  async adminRest(
     domain: string,
     token: string,
     path: string,
     init?: RequestInit,
-  ): Promise<T> {
+    apiVersion = '2024-10',
+  ): Promise<unknown> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < DEFAULT_GRAPHQL_ATTEMPTS; attempt++) {
       try {
-        const response = await fetch(`https://${domain}/admin/api/2024-10/${path.replace(/^\//, '')}`, {
+        const response = await fetch(`https://${domain}/admin/api/${apiVersion}/${path.replace(/^\//, '')}`, {
           ...init,
           headers: {
             'Content-Type': 'application/json',
@@ -202,8 +246,7 @@ export class ShopifyClientService {
         } catch {
           payload = { raw: text.slice(0, 500) };
         }
-        const body = payload as T & { errors?: unknown; error?: unknown };
-
+        const body = payload as Record<string, unknown>;
         if (!response.ok) {
           const message =
             (typeof body?.errors === 'string' && body.errors) ||

@@ -40,6 +40,12 @@ export class TestShopifyCredentialsDto {
   @MinLength(8)
   @MaxLength(2000)
   shopifyAdminToken?: string;
+
+  @Transform(({ value }) => trimToOptionalString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  shopifyApiVersion?: string;
 }
 
 export class TestDatabaseCredentialsDto {

@@ -460,6 +460,9 @@ model AgentConfig {
   paymentLinkEmailIntro     String?
   emailTestRecipient        String?
   useWorkspaceEmail         Boolean      @default(true)
+  /** When true, Shopify Admin API uses workspace integration instead of per-agent credentials. */
+  useWorkspaceShopify       Boolean      @default(false)
+  shopifyApiVersion         String?
   metadata                  Json?
   createdAt                 DateTime     @default(now())
   updatedAt                 DateTime     @updatedAt

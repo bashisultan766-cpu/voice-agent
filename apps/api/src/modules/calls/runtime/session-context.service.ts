@@ -9,6 +9,12 @@ import {
   resolveOpenAiKeyChain,
   type VoiceCredentialSource,
 } from './voice-config-resolution.util';
+import {
+  buildCredentialSourcesSummary,
+  resolveShopifyConfig,
+  type AgentSecretsSlice,
+  type CredentialSource,
+} from '../../../common/credential-resolver.util';
 
 export interface VoiceSessionContext {
   callSessionId: string;
@@ -71,6 +77,10 @@ export interface VoiceSessionContext {
     runtimeCredentialHints?: {
       openaiKeySource: VoiceCredentialSource;
       elevenLabsKeySource: VoiceCredentialSource;
+      shopifySource: CredentialSource;
+      shopifyConfigured: boolean;
+      resendSource: CredentialSource;
+      twilioSource: CredentialSource;
     };
   };
   /** Agent row `updatedAt` when context was built (fresh read). */
@@ -109,7 +119,9 @@ export class SessionContextService {
 
     let agentOpenaiPlain: string | null = null;
     let agentElevenPlain: string | null = null;
-    let shopifyAdminToken: string | null = null;
+    let agentSecrets: AgentSecretsSlice = {};
+    let useWorkspaceShopify = false;
+    let shopifyApiVersion: string | null = null;
     let workspaceElevenlabsDefaultVoiceId: string | null = null;
     let workspaceElevenlabsDefaultModel: string | null = null;
     let tiOpenaiEnc: string | null = null;
@@ -119,28 +131,23 @@ export class SessionContextService {
       const dec = this.encryption.decryptFromStorage(session.agent.secretsEnc);
       if (dec) {
         try {
-          const secrets = JSON.parse(dec) as {
+          const secrets = JSON.parse(dec) as AgentSecretsSlice & {
             openaiApiKey?: string;
             elevenlabsApiKey?: string;
-            shopifyAdminToken?: string;
           };
+          agentSecrets = secrets;
           agentOpenaiPlain = typeof secrets.openaiApiKey === 'string' ? secrets.openaiApiKey : null;
           agentElevenPlain = typeof secrets.elevenlabsApiKey === 'string' ? secrets.elevenlabsApiKey : null;
-          shopifyAdminToken =
-            typeof secrets.shopifyAdminToken === 'string'
-              ? secrets.shopifyAdminToken
-              : null;
         } catch {
           /* ignore - keep keys null */
         }
       }
     }
 
-    if (!shopifyAdminToken?.trim() && store?.shopifyConnection?.accessTokenEnc && this.encryption.isAvailable()) {
-      const decTok = this.encryption.decryptFromStorage(store.shopifyConnection.accessTokenEnc);
-      if (decTok?.trim()) shopifyAdminToken = decTok.trim();
-    }
+    useWorkspaceShopify = session.agent.agentConfig?.useWorkspaceShopify === true;
+    shopifyApiVersion = session.agent.agentConfig?.shopifyApiVersion ?? null;
 
+    let workspaceShopify: { shopifyStoreUrl?: string; shopifyAdminToken?: string } | null = null;
     if (this.encryption.isAvailable()) {
       const ti = await this.prisma.tenantIntegration.findUnique({
         where: { tenantId: session.tenantId },
@@ -149,13 +156,53 @@ export class SessionContextService {
           elevenlabsApiKeyEnc: true,
           elevenlabsDefaultModel: true,
           elevenlabsDefaultVoiceId: true,
+          shopifyShopDomain: true,
+          shopifyAdminTokenEnc: true,
         },
       });
       workspaceElevenlabsDefaultVoiceId = ti?.elevenlabsDefaultVoiceId?.trim() || null;
       workspaceElevenlabsDefaultModel = ti?.elevenlabsDefaultModel?.trim() || null;
       tiOpenaiEnc = ti?.openaiApiKeyEnc ?? null;
       tiElevenEnc = ti?.elevenlabsApiKeyEnc ?? null;
+      if (ti?.shopifyShopDomain?.trim()) {
+        const host = ti.shopifyShopDomain.trim();
+        workspaceShopify = {
+          shopifyStoreUrl: host.startsWith('http') ? host : `https://${host}`,
+          shopifyAdminToken: ti.shopifyAdminTokenEnc
+            ? (this.encryption.decryptFromStorage(ti.shopifyAdminTokenEnc) ?? undefined)
+            : undefined,
+        };
+      }
     }
+
+    const shopifyResolved = resolveShopifyConfig({
+      agent: {
+        shopifyStoreUrl: session.agent.shopifyStoreUrl,
+        secrets: agentSecrets,
+        useWorkspaceShopify,
+        shopifyApiVersion,
+      },
+      workspace: workspaceShopify,
+      env: {
+        shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
+        shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
+      },
+    });
+    const shopifyAdminToken = shopifyResolved?.shopifyAdminToken ?? null;
+    const credentialSources = buildCredentialSourcesSummary({
+      agent: {
+        shopifyStoreUrl: session.agent.shopifyStoreUrl,
+        secrets: agentSecrets,
+        useWorkspaceShopify,
+        useWorkspaceEmail: session.agent.agentConfig?.useWorkspaceEmail !== false,
+        voiceId: session.agent.voiceId,
+      },
+      workspace: workspaceShopify ?? undefined,
+      env: {
+        openaiApiKey: process.env.OPENAI_API_KEY,
+        elevenlabsApiKey: process.env.ELEVENLABS_API_KEY,
+      },
+    });
 
     const encAvail = this.encryption.isAvailable();
     const openaiResolved = resolveOpenAiKeyChain({
@@ -191,9 +238,9 @@ export class SessionContextService {
     const openaiApiKey = openaiResolved.value;
     const elevenlabsApiKey = elevenResolved.value;
 
-    const connDomain = store?.shopifyConnection?.shopDomain?.trim() || null;
-    const agentUrlDomain = normalizeShopifyDomain(session.agent.shopifyStoreUrl);
-    const shopDomain = connDomain || agentUrlDomain;
+    const shopDomain =
+      normalizeShopifyDomain(shopifyResolved?.shopifyStoreUrl ?? session.agent.shopifyStoreUrl) ||
+      normalizeShopifyDomain(store?.shopifyConnection?.shopDomain ? `https://${store.shopifyConnection.shopDomain}` : null);
 
     const configUpdatedAt = session.agent.updatedAt?.toISOString() ?? null;
     const voiceIdEffective = session.agent.voiceId ?? workspaceElevenlabsDefaultVoiceId;
@@ -312,6 +359,10 @@ export class SessionContextService {
         runtimeCredentialHints: {
           openaiKeySource,
           elevenLabsKeySource: elevenResolved.source,
+          shopifySource: credentialSources.shopify.source,
+          shopifyConfigured: credentialSources.shopify.configured,
+          resendSource: credentialSources.resend.source,
+          twilioSource: credentialSources.twilio.authSource,
         },
       },
       store: {

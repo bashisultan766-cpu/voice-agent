@@ -102,11 +102,27 @@ export interface AgentReadinessCheck {
   fixAction: string;
 }
 
+export type CredentialSourceApi = 'agent' | 'workspace' | 'env' | 'missing';
+
+export interface CredentialSourcesSummaryApi {
+  shopify: {
+    configured: boolean;
+    source: CredentialSourceApi;
+    useWorkspaceShopify: boolean;
+    shopifyStoreUrlPresent: boolean;
+  };
+  openai: { source: CredentialSourceApi; configured: boolean };
+  elevenlabs: { source: CredentialSourceApi; configured: boolean };
+  twilio: { authSource: CredentialSourceApi; configured: boolean };
+  resend: { source: CredentialSourceApi; configured: boolean };
+}
+
 export interface AgentReadinessResponse {
   ready: boolean;
   status: 'READY' | 'CONFIG_REQUIRED';
   checks: AgentReadinessCheck[];
   failures: Array<{ key: string; label: string; fixAction: string }>;
+  credentialSources?: CredentialSourcesSummaryApi;
   expectedTwilioWebhookUrls: {
     inbound: string;
     status: string;
@@ -303,6 +319,8 @@ export interface CreateAgentPayload {
   paymentLinkEmailIntro?: string;
   emailTestRecipient?: string;
   useWorkspaceEmail?: boolean;
+  useWorkspaceShopify?: boolean;
+  shopifyApiVersion?: string;
   resendApiKey?: string;
   toolPermissions?: Record<string, boolean>;
   voicePersonality?: Record<string, number>;
@@ -726,6 +744,8 @@ export function agentToFormData(a: AgentApi): CreateAgentPayload {
     elevenlabsApiKey: '',
     greetingMessage: (a.greetingMessage as string) ?? '',
     fallbackMessage: (a.fallbackMessage as string) ?? '',
+    useWorkspaceShopify: (a.useWorkspaceShopify as boolean) ?? false,
+    shopifyApiVersion: (a.shopifyApiVersion as string) ?? '2024-10',
     shopifyStoreUrl: (a.shopifyStoreUrl as string) ?? '',
     shopifyStoreNumber: (a.shopifyStoreNumber as string) ?? '',
     shopifyAdminToken: '',

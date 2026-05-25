@@ -1925,6 +1925,26 @@ function StepShopify({ data, update, errors, testStatus, testError, testWarning,
         title="Shopify connection"
         description={`Connect your Shopify admin so the agent can look up orders and catalog. Optional extras (app keys, FAQs) are under Advanced.${hint}`}
       >
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-muted/20 px-3 py-3">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={data.useWorkspaceShopify}
+            onChange={(e) => update('useWorkspaceShopify', e.target.checked)}
+          />
+          <span className="text-sm">
+            <span className="font-medium text-foreground">Use workspace Shopify integration</span>
+            <span className="mt-0.5 block text-muted-foreground">
+              When enabled, this agent uses the Shopify store configured under Settings → Integrations instead of
+              agent-specific credentials below. Default is off so each agent can represent its own store.
+            </span>
+          </span>
+        </label>
+        {!data.useWorkspaceShopify && (
+          <p className="text-sm text-muted-foreground">
+            Agent-specific Shopify credentials (recommended for multi-store setups).
+          </p>
+        )}
         {isEdit && (
           <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200" role="note">
             <p>For security, saved credentials are never shown here. Leave credential fields blank to keep current values.</p>
@@ -1936,7 +1956,22 @@ function StepShopify({ data, update, errors, testStatus, testError, testWarning,
             </div>
           </div>
         )}
-        <FormField id="shopifyStoreUrl" label="Shopify myshopify domain" optional helperText="Paste any Shopify admin/store URL. We will automatically keep only the domain." error={errors.shopifyStoreUrl}>
+        <FormField
+          id="shopifyApiVersion"
+          label="Shopify API version"
+          optional
+          helperText="Admin API version (default 2024-10)."
+          error={errors.shopifyApiVersion}
+        >
+          <FormInput
+            id="shopifyApiVersion"
+            type="text"
+            value={data.shopifyApiVersion}
+            onChange={(v) => update('shopifyApiVersion', v)}
+            placeholder="2024-10"
+          />
+        </FormField>
+        <FormField id="shopifyStoreUrl" label="Shopify myshopify domain" optional={data.useWorkspaceShopify} helperText="Paste any Shopify admin/store URL. We will automatically keep only the domain." error={errors.shopifyStoreUrl}>
           <FormInput
             id="shopifyStoreUrl"
             type="text"

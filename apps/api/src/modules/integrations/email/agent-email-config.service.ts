@@ -95,11 +95,14 @@ export class AgentEmailConfigService {
     const agentKey = secrets.resendApiKey;
     const envKey = this.config.get<string>('RESEND_API_KEY')?.trim();
     const useWorkspace = cfg?.useWorkspaceEmail !== false;
-    const keyResolved = resolveCredentialPriority(
-      useWorkspace ? undefined : agentKey,
-      workspaceKey ?? undefined,
-      envKey,
-    );
+    const allowEnv = process.env.NODE_ENV !== 'production';
+    const keyResolved = agentKey?.trim()
+      ? { value: agentKey.trim(), source: 'agent' as const }
+      : useWorkspace
+        ? resolveCredentialPriority(undefined, workspaceKey ?? undefined, allowEnv ? envKey : undefined)
+        : allowEnv && envKey
+          ? { value: envKey, source: 'env' as const }
+          : { source: 'missing' as const, value: undefined };
     const fromResolved = resolveCredentialPriority(
       cfg?.emailSenderAddress?.trim(),
       integration?.resendFromEmail?.trim(),
@@ -150,12 +153,17 @@ export class AgentEmailConfigService {
       integration?.resendApiKeyEnc && this.encryption.isAvailable()
         ? this.encryption.decryptFromStorage(integration.resendApiKeyEnc)
         : undefined;
+    const agentKey = secrets.resendApiKey;
+    const envKey = this.config.get<string>('RESEND_API_KEY')?.trim();
     const useWorkspace = cfg?.useWorkspaceEmail !== false;
-    const keyResolved = resolveCredentialPriority(
-      useWorkspace ? undefined : secrets.resendApiKey,
-      workspaceKey ?? undefined,
-      this.config.get<string>('RESEND_API_KEY')?.trim(),
-    );
+    const allowEnv = process.env.NODE_ENV !== 'production';
+    const keyResolved = agentKey?.trim()
+      ? { value: agentKey.trim(), source: 'agent' as const }
+      : useWorkspace
+        ? resolveCredentialPriority(undefined, workspaceKey ?? undefined, allowEnv ? envKey : undefined)
+        : allowEnv && envKey
+          ? { value: envKey, source: 'env' as const }
+          : { source: 'missing' as const, value: undefined };
     const fromEmailResolved = resolveCredentialPriority(
       cfg?.emailSenderAddress?.trim(),
       integration?.resendFromEmail?.trim(),

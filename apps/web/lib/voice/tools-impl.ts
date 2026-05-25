@@ -23,11 +23,8 @@ export async function toolGetOrderStatus(
     };
   }
 
-  const shopifyDomain = (ctx.settings.shopifyDomain || process.env.SHOPIFY_SHOP_DOMAIN || '').replace(
-    /^https?:\/\//,
-    '',
-  );
-  const accessToken = ctx.settings.shopifyAdminToken || process.env.SHOPIFY_ADMIN_API_TOKEN;
+  const shopifyDomain = (ctx.settings.shopifyDomain || '').replace(/^https?:\/\//, '');
+  const accessToken = ctx.settings.shopifyAdminToken;
 
   if (!shopifyDomain || !accessToken) {
     return {
