@@ -223,8 +223,43 @@ export class CreateAgentDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  openAiModel?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(10000)
   systemPrompt?: string;
+
+  /** Alias for `allowedActions` (dashboard topic allow-list). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  allowedTopics?: string;
+
+  /** Alias for `restrictedActions` (dashboard topic block-list). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  blockedTopics?: string;
+
+  /** Alias for `agentGoal` (product guidance). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  productGuidance?: string;
+
+  /** Alias for `humanHandoffRules` (checkout instructions). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  checkoutInstructions?: string;
+
+  /** Alias for `returnPolicy`. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  refundPolicy?: string;
 
   @IsOptional()
   @IsString()

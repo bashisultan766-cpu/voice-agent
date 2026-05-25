@@ -71,6 +71,7 @@ export interface CreateAgentFormData {
   incomingCallHandling: string;
 
   // 6. AI System Prompt
+  openAiModel: string;
   promptTemplate: string;
   systemPrompt: string;
   agentRole: string;
@@ -138,6 +139,7 @@ export const initialFormData: CreateAgentFormData = {
   twilioPhoneNumber: '',
   callRoutingMode: 'auto',
   incomingCallHandling: 'answer',
+  openAiModel: 'gpt-4o-mini',
   promptTemplate: '',
   systemPrompt: '',
   agentRole: '',

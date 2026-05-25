@@ -266,6 +266,7 @@ export interface CreateAgentPayload {
   callRoutingMode?: string;
   incomingCallHandling?: string;
   promptTemplate?: string; // form-only; not sent to API
+  openAiModel?: string;
   systemPrompt?: string;
   agentGoal?: string;
   agentRole?: string;
@@ -550,6 +551,25 @@ export async function testAgentAi(
   return res.json();
 }
 
+export interface RuntimePromptPreview {
+  agentId: string;
+  agentName: string;
+  updatedAt: string;
+  greetingMessage: string | null;
+  prompt: string;
+  promptLength: number;
+}
+
+export async function getAgentRuntimePromptPreview(agentId: string): Promise<RuntimePromptPreview> {
+  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/runtime-prompt-preview`, {
+    headers: getHeaders(),
+    cache: 'no-store',
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(await parseErrorResponse(res));
+  return res.json();
+}
+
 export async function getAgentReadiness(agentId: string): Promise<AgentReadinessResponse> {
   const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/readiness`, {
     headers: getHeaders(),
@@ -689,6 +709,7 @@ export function agentToFormData(a: AgentApi): CreateAgentPayload {
     incomingCallHandling: (a.incomingCallHandling as string) ?? 'answer',
     databaseProvider: (a.databaseProvider as string) ?? '',
     promptTemplate: '',
+    openAiModel: (a.model as string) ?? 'gpt-4o-mini',
     systemPrompt:
       (a.customSystemPrompt as string) ||
       (a.baseSystemPrompt as string) ||

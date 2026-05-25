@@ -3,12 +3,15 @@ import { PrismaService } from '../../../database/prisma.service';
 import { normalizePhoneNumber } from './utils/normalize-phone';
 import { AgentStatus } from '@prisma/client';
 
-/** Inbound voice: allow draft agents so a mapped number works before formal go-live. */
-const INBOUND_VOICE_AGENT_STATUSES: AgentStatus[] = [
-  AgentStatus.ACTIVE,
-  AgentStatus.READY,
-  AgentStatus.DRAFT,
-];
+function inboundVoiceAgentStatuses(): AgentStatus[] {
+  const allowDraft =
+    process.env.VOICE_ALLOW_DRAFT_AGENTS === 'true' ||
+    process.env.ALLOW_DRAFT_VOICE_AGENTS === 'true' ||
+    process.env.NODE_ENV !== 'production';
+  return allowDraft
+    ? [AgentStatus.ACTIVE, AgentStatus.READY, AgentStatus.DRAFT]
+    : [AgentStatus.ACTIVE, AgentStatus.READY];
+}
 
 function digitsLast4(value: string): string {
   const d = value.replace(/\D/g, '');
@@ -74,7 +77,7 @@ export class AgentResolutionService {
         phoneNumber: normalized,
         agent: {
           deletedAt: null,
-          status: { in: INBOUND_VOICE_AGENT_STATUSES },
+          status: { in: inboundVoiceAgentStatuses() },
         },
       },
       include: {
@@ -136,7 +139,7 @@ export class AgentResolutionService {
         agentId: { not: null },
         agent: {
           deletedAt: null,
-          status: { in: INBOUND_VOICE_AGENT_STATUSES },
+          status: { in: inboundVoiceAgentStatuses() },
         },
       },
       include: {
@@ -188,27 +191,59 @@ export class AgentResolutionService {
     }
 
     // 2) Resolution by agent.twilioPhoneNumber (no PhoneNumber record required)
-    let agent =
-      (await this.prisma.agent.findFirst({
-        where: {
-          deletedAt: null,
-          status: { in: INBOUND_VOICE_AGENT_STATUSES },
-          twilioPhoneNumber: normalized,
-        },
-        include: { store: true },
-      })) ?? null;
+    const statuses = inboundVoiceAgentStatuses();
+    const byField = await this.prisma.agent.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: statuses },
+        twilioPhoneNumber: normalized,
+      },
+      include: { store: true },
+      orderBy: { updatedAt: 'desc' },
+      take: 5,
+    });
+    let agent: (typeof byField)[0] | null = null;
+    if (byField.length > 0) {
+      const tenants = new Set(byField.map((a) => a.tenantId));
+      if (tenants.size > 1) {
+        this.log.warn(
+          JSON.stringify({
+            event: 'twilio.agent_resolution.ambiguous_tenant',
+            normalizedLast4: digitsLast4(normalized),
+            tenantCount: tenants.size,
+          }),
+        );
+        return null;
+      }
+      agent = byField[0];
+    }
 
     if (!agent) {
       const candidates = await this.prisma.agent.findMany({
         where: {
           deletedAt: null,
-          status: { in: INBOUND_VOICE_AGENT_STATUSES },
+          status: { in: statuses },
           twilioPhoneNumber: { not: null },
         },
         include: { store: true },
       });
-      agent =
-        candidates.find((a) => a.twilioPhoneNumber && normalizePhoneNumber(a.twilioPhoneNumber) === normalized) ?? null;
+      const matched = candidates.filter(
+        (a) => a.twilioPhoneNumber && normalizePhoneNumber(a.twilioPhoneNumber) === normalized,
+      );
+      if (matched.length > 0) {
+        const tenants = new Set(matched.map((a) => a.tenantId));
+        if (tenants.size > 1) {
+          this.log.warn(
+            JSON.stringify({
+              event: 'twilio.agent_resolution.ambiguous_tenant_normalized',
+              normalizedLast4: digitsLast4(normalized),
+              tenantCount: tenants.size,
+            }),
+          );
+          return null;
+        }
+        agent = matched.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+      }
     }
     if (!agent) {
       const mappingAnyStatus = await this.prisma.phoneNumberMapping.findFirst({
@@ -222,8 +257,8 @@ export class AgentResolutionService {
       let hint: string | undefined;
       if (mappedAgent?.deletedAt != null) {
         hint = 'Mapping points to a deleted agent.';
-      } else if (mappedAgent && !INBOUND_VOICE_AGENT_STATUSES.includes(mappedAgent.status)) {
-        hint = 'Phone is mapped but agent status is not ACTIVE, READY, or DRAFT.';
+      } else if (mappedAgent && !inboundVoiceAgentStatuses().includes(mappedAgent.status)) {
+        hint = 'Phone is mapped but agent status is not ACTIVE or READY.';
       } else if (mappingRowCount === 0) {
         hint = 'No PhoneNumberMapping for normalized To; save the agent phone number to create the link.';
       }

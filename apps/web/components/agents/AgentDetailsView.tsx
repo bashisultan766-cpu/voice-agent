@@ -13,6 +13,8 @@ import {
   testAgentAi,
   simulateAgentBuyingFlow,
   getAgentReadiness,
+  getAgentRuntimePromptPreview,
+  type RuntimePromptPreview,
   configureTwilioWebhook,
   syncAgentSecretsFromSettings,
   runAgentSmokeTest,
@@ -85,6 +87,8 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
   const [loading, setLoading] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [runtimePrompt, setRuntimePrompt] = useState<RuntimePromptPreview | null>(null);
+  const [runtimePromptLoading, setRuntimePromptLoading] = useState(false);
   type AnalyticsPayload = {
     totalCalls: number;
     resolvedCalls: number;
@@ -347,8 +351,24 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
     window.location.href = url;
   };
 
-  const systemPrompt = (agent.baseSystemPrompt as string) || '';
-  const promptPreview = systemPrompt.length > 400 ? systemPrompt.slice(0, 400) + '…' : systemPrompt;
+  const handleLoadRuntimePrompt = async () => {
+    setRuntimePromptLoading(true);
+    try {
+      const preview = await getAgentRuntimePromptPreview(agent.id);
+      setRuntimePrompt(preview);
+      addToast('success', `Runtime prompt loaded (${preview.promptLength} chars).`);
+    } catch (e) {
+      addToast('error', e instanceof Error ? e.message : 'Failed to load runtime prompt.');
+    } finally {
+      setRuntimePromptLoading(false);
+    }
+  };
+
+  const storedPrompt = (agent.customSystemPrompt as string) || (agent.baseSystemPrompt as string) || '';
+  const promptPreview = storedPrompt.length > 400 ? storedPrompt.slice(0, 400) + '…' : storedPrompt;
+  const runtimeDisplay =
+    runtimePrompt?.prompt ??
+    (storedPrompt || 'No system prompt set. Load runtime preview to see the full call prompt.');
 
   const statusBadgeClass =
     statusMapped === 'active'
@@ -665,18 +685,41 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
       </div>
 
       {/* AI behavior & system prompt preview */}
-      <DetailSection title="AI behavior & system prompt" description="Role, tone, and instructions (edit in Edit agent)">
+      <DetailSection
+        title="AI behavior & runtime prompt"
+        description="Stored instructions and the exact prompt used on live calls"
+      >
         <div className="space-y-3">
-          {((agent.agentRole as string) || (agent.toneOfVoice as string)) && (
+          {((agent.agentRole as string) || (agent.toneOfVoice as string) || (agent.model as string)) && (
             <div className="space-y-0 divide-y divide-border">
               {(agent.agentRole as string) && <DetailRow label="Role" value={agent.agentRole as string} />}
               {(agent.toneOfVoice as string) && <DetailRow label="Tone" value={agent.toneOfVoice as string} />}
+              {(agent.model as string) && <DetailRow label="OpenAI model" value={agent.model as string} />}
             </div>
           )}
-          <div className="rounded-xl border border-border bg-muted/20 p-5">
-            <pre className="whitespace-pre-wrap text-sm text-foreground font-sans">
-              {promptPreview || 'No system prompt set.'}
-            </pre>
+          {(agent.greetingMessage as string) && (
+            <DetailRow label="Greeting" value={agent.greetingMessage as string} />
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleLoadRuntimePrompt}
+              disabled={runtimePromptLoading}
+              className="inline-flex items-center rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              {runtimePromptLoading ? 'Loading…' : 'Load runtime prompt preview'}
+            </button>
+            {runtimePrompt && (
+              <span className="text-xs text-muted-foreground self-center">
+                Prompt version {formatDate(runtimePrompt.updatedAt)} · {runtimePrompt.promptLength} chars
+              </span>
+            )}
+          </div>
+          {!runtimePrompt && storedPrompt && (
+            <p className="text-xs text-muted-foreground">Stored prompt (truncated): {promptPreview}</p>
+          )}
+          <div className="rounded-xl border border-border bg-muted/20 p-5 max-h-[420px] overflow-y-auto">
+            <pre className="whitespace-pre-wrap text-sm text-foreground font-sans">{runtimeDisplay}</pre>
           </div>
         </div>
       </DetailSection>

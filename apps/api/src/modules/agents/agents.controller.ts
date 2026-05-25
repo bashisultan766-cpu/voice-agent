@@ -195,6 +195,15 @@ export class AgentsController {
     return this.agentsService.testAiBehavior(tenantId, id, dto?.sampleQuery ?? 'Where is my order?');
   }
 
+  @Roles(UserRole.MANAGER)
+  @Get(':id/runtime-prompt-preview')
+  getRuntimePromptPreview(
+    @TenantId() tenantId: string,
+    @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
+  ) {
+    return this.agentsService.getRuntimePromptPreview(tenantId, id);
+  }
+
   @Roles(UserRole.SUPPORT)
   @Get(':id')
   findOne(@TenantId() tenantId: string, @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string) {

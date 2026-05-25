@@ -30,6 +30,10 @@ import { normalizeShopifyDomain } from '@bookstore-voice-agents/types';
 import { assertProductionOwnershipRequired, assertTenantOwnership } from './ownership-linkage';
 import { ConfigService } from '@nestjs/config';
 import { normalizePublicWebhookBaseUrl } from '../../common/public-webhook-base-url';
+import {
+  buildAgentRuntimePrompt,
+  type AgentRuntimePromptInput,
+} from '../calls/runtime/build-agent-runtime-prompt';
 
 const SECRET_KEYS = [
   'shopifyAdminToken',
@@ -43,6 +47,25 @@ const SECRET_KEYS = [
   'openaiApiKey',
   'elevenlabsApiKey',
 ] as const;
+
+/** Map dashboard alias field names onto persisted DTO fields before create/update. */
+function normalizeAgentDtoAliases(dto: CreateAgentDto | UpdateAgentDto): void {
+  if (dto.allowedTopics?.trim() && !dto.allowedActions?.trim()) {
+    dto.allowedActions = dto.allowedTopics.trim();
+  }
+  if (dto.blockedTopics?.trim() && !dto.restrictedActions?.trim()) {
+    dto.restrictedActions = dto.blockedTopics.trim();
+  }
+  if (dto.productGuidance?.trim() && !dto.agentGoal?.trim()) {
+    dto.agentGoal = dto.productGuidance.trim();
+  }
+  if (dto.checkoutInstructions?.trim() && !dto.humanHandoffRules?.trim()) {
+    dto.humanHandoffRules = dto.checkoutInstructions.trim();
+  }
+  if (dto.refundPolicy?.trim() && !dto.returnPolicy?.trim()) {
+    dto.returnPolicy = dto.refundPolicy.trim();
+  }
+}
 
 interface AgentSecrets {
   shopifyAdminToken?: string;
@@ -576,6 +599,7 @@ export class AgentsService {
     dto: CreateAgentDto,
     createdById?: string,
   ) {
+    normalizeAgentDtoAliases(dto);
     if (dto.agentStatus === AgentStatusDto.ACTIVE) {
       throw new BadRequestException('Use Go Live to activate an agent after readiness checks pass.');
     }
@@ -702,7 +726,7 @@ export class AgentsService {
         greetingMessage: dto.greetingMessage?.trim() || null,
         fallbackMessage: dto.fallbackMessage?.trim() || null,
         escalationMessage: null,
-        model: null,
+        model: dto.openAiModel?.trim() || null,
         temperature: null,
         status: statusDtoToPrisma(dto.agentStatus),
         handoffEnabled: dto.transferToHumanEnabled ?? true,
@@ -985,6 +1009,93 @@ export class AgentsService {
     return this.serializeAgent(agent);
   }
 
+  /** Tenant-scoped agent load for voice runtime and admin tools (never cross-tenant). */
+  async getAgentById(tenantId: string, agentId: string) {
+    return this.findOne(tenantId, agentId);
+  }
+
+  private agentRowToRuntimePromptInput(
+    agent: Awaited<ReturnType<AgentsService['loadAgentRowForRuntime']>>,
+  ): AgentRuntimePromptInput | null {
+    if (!agent) return null;
+    const cfg = agent.agentConfig;
+    const voiceCfg = (agent.voiceProfile?.providerConfig ?? {}) as {
+      languageMode?: 'auto' | 'fixed';
+      fixedLanguage?: string;
+      supportedLanguages?: string[];
+    };
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      storeName: agent.storeName ?? agent.store?.name ?? 'Store',
+      language: agent.language,
+      baseSystemPrompt: agent.baseSystemPrompt,
+      agentRole: agent.agentRole,
+      agentGoal: agent.agentGoal,
+      toneOfVoice: agent.toneOfVoice,
+      allowedActions: agent.allowedActions,
+      restrictedActions: agent.restrictedActions,
+      escalationInstructions: agent.escalationInstructions,
+      returnRefundBehavior: agent.returnRefundBehavior,
+      orderStatusHandling: agent.orderStatusHandling,
+      outOfStockHandling: agent.outOfStockHandling,
+      transferToHumanEnabled: agent.transferToHumanEnabled,
+      escalationPhone: agent.escalationPhone,
+      escalationEmail: agent.escalationEmail,
+      knowledgeBaseSource: agent.knowledgeBaseSource,
+      knowledgeSyncEnabled: agent.knowledgeSyncEnabled,
+      greetingMessage: agent.greetingMessage,
+      languageMode: voiceCfg.languageMode ?? 'auto',
+      fixedLanguage: voiceCfg.fixedLanguage ?? agent.language,
+      supportedLanguages: voiceCfg.supportedLanguages,
+      config: cfg
+        ? {
+            businessName: cfg.businessName,
+            supportEmail: cfg.supportEmail,
+            supportPhone: cfg.supportPhone,
+            shippingPolicy: cfg.shippingPolicy,
+            returnPolicy: cfg.returnPolicy,
+            exchangePolicy: cfg.exchangePolicy,
+            deliveryNotes: cfg.deliveryNotes,
+            escalationRules: cfg.escalationRules,
+            forbiddenBehaviors: cfg.forbiddenBehaviors,
+            checkoutMode: cfg.checkoutMode,
+            askEmailBeforePaymentLink: cfg.askEmailBeforePaymentLink,
+            fallbackHumanContact: cfg.fallbackHumanContact,
+            customSystemPrompt: cfg.customSystemPrompt,
+            humanHandoffRules: cfg.humanHandoffRules,
+          }
+        : null,
+    };
+  }
+
+  private async loadAgentRowForRuntime(tenantId: string, agentId: string) {
+    return this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: {
+        ...this.agentSelect(),
+        store: { select: { name: true } },
+      },
+    });
+  }
+
+  /** Exact system prompt used on live calls for this agent (admin/debug). */
+  async getRuntimePromptPreview(tenantId: string, agentId: string) {
+    const agent = await this.loadAgentRowForRuntime(tenantId, agentId);
+    if (!agent) throw new NotFoundException('Agent not found.');
+    const input = this.agentRowToRuntimePromptInput(agent);
+    if (!input) throw new NotFoundException('Agent not found.');
+    const prompt = buildAgentRuntimePrompt(input);
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      updatedAt: agent.updatedAt.toISOString(),
+      greetingMessage: agent.greetingMessage,
+      prompt,
+      promptLength: prompt.length,
+    };
+  }
+
   /** Public share page: no tenant header; only non-sensitive fields. */
   async getPublicLiveCard(id: string) {
     const agent = await this.prisma.agent.findFirst({
@@ -1011,6 +1122,7 @@ export class AgentsService {
   }
 
   async update(tenantId: string, id: string, dto: UpdateAgentDto, actorUserId?: string) {
+    normalizeAgentDtoAliases(dto);
     const existing = await this.findOne(tenantId, id);
     const currentStatus = String((existing as { status?: unknown }).status ?? '').toLowerCase();
     if (dto.agentStatus === AgentStatusDto.ACTIVE && currentStatus !== AgentStatusDto.ACTIVE) {
@@ -1212,6 +1324,7 @@ export class AgentsService {
       ...(dto.incomingCallHandling !== undefined && { incomingCallHandling: dto.incomingCallHandling?.trim() || null }),
       ...(dto.databaseProvider !== undefined && { databaseProvider: dto.databaseProvider?.trim() || null }),
       ...(dto.systemPrompt !== undefined && { baseSystemPrompt: dto.systemPrompt.trim() || '' }),
+      ...(dto.openAiModel !== undefined && { model: dto.openAiModel?.trim() || null }),
       ...(dto.agentGoal !== undefined && { agentGoal: dto.agentGoal?.trim() || null }),
       ...(dto.agentRole !== undefined && { agentRole: dto.agentRole?.trim() || null }),
       ...(dto.toneOfVoice !== undefined && { toneOfVoice: dto.toneOfVoice?.trim() || null }),

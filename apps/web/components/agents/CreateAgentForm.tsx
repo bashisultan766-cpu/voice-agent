@@ -2501,6 +2501,9 @@ function StepAIInstructions({
       <FormField id="toneOfVoice" label="Tone of voice" optional helperText="How the agent should sound.">
         <FormSelect id="toneOfVoice" value={data.toneOfVoice} onChange={(v) => update('toneOfVoice', v)} options={TONE_OPTIONS} />
       </FormField>
+      <FormField id="openAiModel" label="OpenAI model" optional helperText="Model used for live call reasoning (e.g. gpt-4o-mini).">
+        <FormInput id="openAiModel" value={data.openAiModel} onChange={(v) => update('openAiModel', v)} placeholder="gpt-4o-mini" />
+      </FormField>
       <FormField id="allowedActions" label="Allowed actions" optional helperText="What the agent may do.">
         <FormTextarea id="allowedActions" value={data.allowedActions} onChange={(v) => update('allowedActions', v)} placeholder="Look up orders, check hours, answer FAQs" rows={2} />
       </FormField>

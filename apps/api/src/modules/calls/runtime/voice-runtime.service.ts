@@ -270,10 +270,10 @@ export class VoiceRuntimeService {
 
     const parts: string[] = [];
     if (askedHowAreYou) parts.push("I'm doing well, thanks for asking.");
-    if (askedName) parts.push("I'm the bookstore assistant on this line.");
-    if (askedStore) parts.push("You're speaking with our bookstore.");
+    if (askedName) parts.push("I'm the voice assistant on this line.");
+    if (askedStore) parts.push("You're speaking with our store.");
     if (askedHelp) {
-      parts.push('I can help with book availability, pricing, orders, and payment links.');
+      parts.push('I can help with product availability, pricing, orders, and payment links.');
     }
     return parts.join(' ').trim();
   }
@@ -663,7 +663,8 @@ export class VoiceRuntimeService {
     const ctx = await this.sessionContext.load(callSessionId);
     if (!ctx) return "Hello, I'm having trouble loading your session. Please try again.";
     const greeting =
-      ctx.agent.greetingMessage ?? 'Hi there—thanks for calling. What book can I help you find?';
+      ctx.agent.greetingMessage?.trim() ??
+      `Hello, you've reached ${ctx.store.name}. How can I help you today?`;
     return greeting;
   }
 
@@ -685,6 +686,8 @@ export class VoiceRuntimeService {
       lastEventAt: new Date(),
     });
     if (ctx) {
+      console.log('[voice-runtime] loaded agent', ctx.agentId, ctx.agent.name);
+      console.log('[voice-runtime] using prompt version', ctx.configUpdatedAt ?? 'unknown');
       await this.callEvents.log(ctx.tenantId, callSessionId, CallEventType.TWILIO_CONNECTED);
       await this.callEvents.log(ctx.tenantId, callSessionId, CallEventType.OPENAI_SESSION_STARTED);
       this.logger.log(
@@ -693,6 +696,8 @@ export class VoiceRuntimeService {
           callSessionId,
           tenantId: ctx.tenantId,
           agentId: ctx.agentId,
+          agentName: ctx.agent.name,
+          configUpdatedAt: ctx.configUpdatedAt,
         }),
       );
     }
@@ -778,8 +783,22 @@ export class VoiceRuntimeService {
       return { reply };
     }
     const ctx = await this.sessionContext.load(callSessionId);
+    if (!ctx) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'voice.journey.session_missing',
+          callSessionId,
+        }),
+      );
+      return {
+        reply:
+          "I'm sorry, this call session could not be loaded. Please hang up and call again, or contact store support.",
+      };
+    }
+    console.log('[voice-runtime] loaded agent', ctx.agentId, ctx.agent.name);
+    console.log('[voice-runtime] using prompt version', ctx.configUpdatedAt ?? 'unknown');
     const metadata =
-      ctx?.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
+      ctx.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
         ? (ctx.metadata as Record<string, unknown>)
         : {};
     if (!metadata.orderState) {
