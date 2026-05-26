@@ -4,10 +4,8 @@ import type { NextRequest } from 'next/server';
 export function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
   const token = request.cookies.get('va_access_token')?.value;
-  const isDev = process.env.NODE_ENV !== 'production';
-  const devHint = isDev ? request.cookies.get('va_auth_hint')?.value : undefined;
-  /** Dashboard: real cookie, or dev-only hint (Bearer may live in localStorage). */
-  const canAccessDashboard = Boolean(token || (isDev && devHint));
+  /** Dashboard requires a real session cookie (SSR and API proxy depend on it). */
+  const canAccessDashboard = Boolean(token?.trim());
 
   /**
    * After 401 we send users here with a stale httpOnly cookie still set.

@@ -1,5 +1,6 @@
 import { DashboardSidebar } from '@/components/dashboard/DashboardSidebar';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
+import { SessionCookieSync } from '@/components/dashboard/SessionCookieSync';
 
 export default function DashboardLayout({
   children,
@@ -8,6 +9,7 @@ export default function DashboardLayout({
 }) {
   return (
     <div className="flex min-h-screen">
+      <SessionCookieSync />
       <DashboardSidebar />
       <div className="flex flex-1 flex-col">
         <DashboardHeader />

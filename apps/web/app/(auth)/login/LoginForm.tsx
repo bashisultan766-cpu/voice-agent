@@ -41,7 +41,14 @@ export function LoginForm({ sessionExpired = false }: LoginFormProps) {
         return;
       }
       const token = (data as { accessToken?: string }).accessToken;
-      if (token) persistClientSession(token);
+      if (token) {
+        persistClientSession(token);
+        await fetch('/api/auth/session-sync', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
+      }
       router.push('/dashboard');
       router.refresh();
     } catch {

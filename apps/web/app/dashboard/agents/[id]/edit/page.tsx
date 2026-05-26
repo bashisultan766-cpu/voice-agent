@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 import { CreateAgentForm } from '@/components/agents/CreateAgentForm';
 import type { CreateAgentFormData } from '@/components/agents/form-types';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -7,6 +6,7 @@ import { Breadcrumb } from '@/components/dashboard/ui/Breadcrumb';
 import { PageHeader } from '@/components/dashboard/ui/PageHeader';
 import { agentToFormData, mapStatus } from '@/lib/api/agents';
 import { getAgentServer } from '@/lib/api/agents-server';
+import { AgentPageLoader } from '@/components/agents/AgentPageLoader';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,8 +16,18 @@ interface AgentEditPageProps {
 
 export default async function AgentEditPage({ params }: AgentEditPageProps) {
   const { id } = await params;
-  const agent = await getAgentServer(id);
-  if (!agent) notFound();
+  const initialAgent = await getAgentServer(id);
+
+  return (
+    <ToastProvider>
+      <AgentPageLoader agentId={id} initialAgent={initialAgent}>
+        {(agent) => <AgentEditPageContent id={id} agent={agent} />}
+      </AgentPageLoader>
+    </ToastProvider>
+  );
+}
+
+function AgentEditPageContent({ id, agent }: { id: string; agent: NonNullable<Awaited<ReturnType<typeof getAgentServer>>> }) {
   const initialData = agentToFormData(agent);
   const savedCredentials = {
     shopify:
@@ -49,7 +59,6 @@ export default async function AgentEditPage({ params }: AgentEditPageProps) {
   const statusLabel = mapStatus(agent.status);
 
   return (
-    <ToastProvider>
       <div className="space-y-8">
         <Breadcrumb
           items={[
@@ -93,6 +102,5 @@ export default async function AgentEditPage({ params }: AgentEditPageProps) {
           lastTestedAt={agent.lastConnectionTestAt ?? null}
         />
       </div>
-    </ToastProvider>
   );
 }
