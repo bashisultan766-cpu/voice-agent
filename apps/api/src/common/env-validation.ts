@@ -61,8 +61,12 @@ export function validateProductionEnv(): { ok: boolean; missing: string[] } {
     if (!process.env.PUBLIC_WEBHOOK_BASE_URL?.trim()) {
       missing.push('PUBLIC_WEBHOOK_BASE_URL');
     }
-    if (process.env.VALIDATE_TWILIO_SIGNATURES !== 'false' && !process.env.TWILIO_AUTH_TOKEN?.trim()) {
-      missing.push('TWILIO_AUTH_TOKEN');
+    if (
+      process.env.VALIDATE_TWILIO_SIGNATURES !== 'false' &&
+      process.env.ALLOW_PROVIDER_ENV_FALLBACK === 'true' &&
+      !process.env.TWILIO_AUTH_TOKEN?.trim()
+    ) {
+      missing.push('TWILIO_AUTH_TOKEN (required only when ALLOW_PROVIDER_ENV_FALLBACK=true)');
     }
     if (process.env.ALLOW_HEADER_TENANT_FALLBACK !== undefined && process.env.ALLOW_HEADER_TENANT_FALLBACK !== 'false') {
       missing.push('ALLOW_HEADER_TENANT_FALLBACK (must be exactly "false" or unset in production)');

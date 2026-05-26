@@ -316,7 +316,7 @@ export function resolveEmailFromAddress(args: {
   const resolved = resolveCredentialPriority(
     undefined,
     trimOrUndef(args.workspaceFromEmail),
-    envOrUndef(args.envFromEmail),
+    envOrUndef(args.envFromEmail ?? undefined),
   );
   if (!resolved.value || resolved.source === 'missing') return null;
   return { address: resolved.value, source: resolved.source };

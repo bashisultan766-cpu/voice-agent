@@ -1,4 +1,5 @@
 import { parseApiErrorMessage } from '@/lib/api/error-message';
+import { getAuthenticatedHeaders } from '@/lib/api/authenticated-fetch';
 
 export type TenantIntegrationSummary = {
   shopify: {
@@ -39,11 +40,9 @@ export type TenantIntegrationSummary = {
   };
 };
 
-/** Headers for browser → Next `/api/tenant-integrations/*` (JSON; auth comes from cookie). */
+/** Headers for browser → `/api/tenant-integrations/*` (Bearer + cookie for Nest when nginx proxies /api). */
 export function tenantIntegrationHeaders(): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-  };
+  return getAuthenticatedHeaders() as Record<string, string>;
 }
 
 export type IntegrationTestPayload = {

@@ -38,6 +38,7 @@ import {
   type AgentRuntimePromptInput,
 } from '../calls/runtime/build-agent-runtime-prompt';
 import { allowProviderEnvFallback } from '../../common/provider-env-fallback.util';
+import { buildProviderEnvSlice } from '../../common/provider-env-slice.util';
 import { AgentEmailConfigService } from '../integrations/email/agent-email-config.service';
 import { ResendEmailService } from '../integrations/email/resend-email.service';
 import { paymentEmailIdempotencyKey } from '../../common/payment-email-idempotency';
@@ -310,15 +311,7 @@ export class AgentsService {
         voiceId: credentialBundle.voiceId,
       },
       workspace: credentialBundle.workspace,
-      env: allowProviderEnvFallback()
-        ? {
-            openaiApiKey: process.env.OPENAI_API_KEY,
-            elevenlabsApiKey: process.env.ELEVENLABS_API_KEY,
-            resendApiKey: this.config.get<string>('RESEND_API_KEY'),
-            shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-            shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-          }
-        : undefined,
+      env: this.providerEnvSlice(),
     });
     const shopifyPolicyOk =
       credentialSources.shopify.configured &&
@@ -1621,10 +1614,7 @@ export class AgentsService {
           shopifyApiVersion: dto.shopifyApiVersion ?? existingRow?.agentConfig?.shopifyApiVersion,
         },
         workspace: workspaceConfig,
-        env: {
-          shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-          shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-        },
+        env: this.providerEnvSlice(),
       });
       if (!resolved) {
         throw new BadRequestException('Shopify credentials missing for this agent.');
@@ -2100,12 +2090,7 @@ export class AgentsService {
         shopifyApiVersion: bundle.shopifyApiVersion,
       },
       workspace: bundle.workspace,
-      env: allowProviderEnvFallback()
-        ? {
-            shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-            shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-          }
-        : undefined,
+      env: this.providerEnvSlice(),
     });
     if (!resolved) return null;
     logCredentialResolution(this.log, 'shopify', resolved.source, agentId);
@@ -2157,15 +2142,7 @@ export class AgentsService {
         voiceId: bundle.voiceId,
       },
       workspace: bundle.workspace,
-      env: allowProviderEnvFallback()
-        ? {
-            openaiApiKey: process.env.OPENAI_API_KEY,
-            elevenlabsApiKey: process.env.ELEVENLABS_API_KEY,
-            resendApiKey: this.config.get<string>('RESEND_API_KEY'),
-            shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-            shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-          }
-        : undefined,
+      env: this.providerEnvSlice(),
     });
   }
 
@@ -2249,7 +2226,13 @@ export class AgentsService {
     workspaceValue: string | undefined,
     envValue?: string | undefined,
   ): ResolvedCredential {
-    return resolveCredentialPriority(agentValue, workspaceValue, envValue);
+    const gatedEnv =
+      envValue?.trim() && allowProviderEnvFallback() ? envValue.trim() : undefined;
+    return resolveCredentialPriority(agentValue, workspaceValue, gatedEnv);
+  }
+
+  private providerEnvSlice() {
+    return buildProviderEnvSlice(this.config);
   }
 
   async testShopifyConnection(
@@ -2281,20 +2264,14 @@ export class AgentsService {
           shopifyApiVersion: bundle.shopifyApiVersion,
         },
         workspace,
-        env: {
-          shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-          shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-        },
+        env: this.providerEnvSlice(),
       });
       source = resolved?.source ?? 'missing';
     } else if (workspace?.shopifyStoreUrl && workspace?.shopifyAdminToken) {
       resolved = resolveShopifyConfig({
         agent: { useWorkspaceShopify: true },
         workspace,
-        env: {
-          shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-          shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-        },
+        env: this.providerEnvSlice(),
       });
       source = resolved?.source ?? 'missing';
     }
@@ -2402,19 +2379,27 @@ export class AgentsService {
     dto?: TestOpenAICredentialsDto,
   ): Promise<{ success: boolean; message: string; status?: ConnectionStatus; provider: 'openai'; source: CredentialSource; warnings?: string[] }> {
     const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
-    const agentConfig = agentId ? await this.getAgentConfigForTest(tenantId, agentId) : null;
-    const resolved =
-      dto?.openaiApiKey?.trim()
-        ? { value: dto.openaiApiKey.trim(), source: 'agent' as const }
-        : this.resolveCredential(
-            agentConfig?.openaiApiKey,
-            workspace?.openaiApiKey,
-            process.env.OPENAI_API_KEY,
-          );
+    const envSlice = this.providerEnvSlice();
+    let resolved: ResolvedCredential;
+    if (dto?.openaiApiKey?.trim()) {
+      resolved = { value: dto.openaiApiKey.trim(), source: 'agent' };
+    } else if (agentId) {
+      const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+      const cfg = resolveOpenAiConfig({
+        agentSecrets: bundle.secrets,
+        workspace: bundle.workspace,
+        useWorkspaceOpenai: bundle.useWorkspaceOpenai,
+        envApiKey: envSlice?.openaiApiKey,
+      });
+      resolved = cfg ? { value: cfg.apiKey, source: cfg.source } : { source: 'missing' };
+    } else {
+      resolved = this.resolveCredential(undefined, workspace?.openaiApiKey, envSlice?.openaiApiKey);
+    }
     if (resolved.source === 'missing') {
       return {
         success: false,
-        message: 'OpenAI test failed: no API key found (agent, workspace, or OPENAI_API_KEY).',
+        message:
+          'OpenAI test failed: no API key found. Add an OpenAI key on the agent form or enable workspace OpenAI with a saved workspace key.',
         status: agentId ? ConnectionStatus.FAILED : undefined,
         provider: 'openai',
         source: 'missing',
@@ -2447,9 +2432,12 @@ export class AgentsService {
     dto?: TestElevenLabsCredentialsDto,
   ): Promise<{ success: boolean; message: string; status?: ConnectionStatus; provider: 'elevenlabs'; source: CredentialSource; warnings?: string[] }> {
     const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
+    const envSlice = this.providerEnvSlice();
     const agentConfig = agentId ? await this.getAgentConfigForTest(tenantId, agentId) : null;
+    const bundle = agentId ? await this.loadAgentCredentialBundle(tenantId, agentId) : null;
     const voiceId =
       dto?.voiceId?.trim() ||
+      bundle?.voiceId?.trim() ||
       (agentConfig as { voiceId?: string } | null)?.voiceId?.trim() ||
       workspace?.elevenlabsDefaultVoiceId?.trim() ||
       undefined;
@@ -2457,15 +2445,17 @@ export class AgentsService {
       dto?.elevenlabsApiKey?.trim()
         ? { apiKey: dto.elevenlabsApiKey.trim(), source: 'agent' as const, voiceId }
         : resolveElevenLabsConfig({
-            agentSecrets: agentConfig ?? undefined,
-            workspace,
-            envApiKey: process.env.ELEVENLABS_API_KEY,
+            agentSecrets: bundle?.secrets ?? agentConfig ?? undefined,
+            workspace: bundle?.workspace ?? workspace,
+            useWorkspaceElevenlabs: bundle?.useWorkspaceElevenlabs,
+            envApiKey: envSlice?.elevenlabsApiKey,
             agentVoiceId: voiceId ?? null,
           });
     if (!elevenResolved) {
       return {
         success: false,
-        message: 'ElevenLabs test failed: no API key found (agent, workspace, or ELEVENLABS_API_KEY).',
+        message:
+          'ElevenLabs test failed: no API key found. Add an ElevenLabs key on the agent form or enable workspace ElevenLabs with a saved workspace key.',
         status: agentId ? ConnectionStatus.FAILED : undefined,
         provider: 'elevenlabs',
         source: 'missing',
@@ -2581,10 +2571,7 @@ export class AgentsService {
         shopifyApiVersion: bundle.shopifyApiVersion,
       },
       workspace: bundle.workspace,
-      env: {
-        shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-        shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-      },
+      env: this.providerEnvSlice(),
     });
     const shopifySource = shopifyResolved?.source ?? 'missing';
     const shopDomain = shopifyResolved
@@ -2644,17 +2631,18 @@ export class AgentsService {
       },
     });
     if (!row) throw new NotFoundException('Agent not found.');
-    const cfg = await this.getAgentConfigForTest(tenantId, agentId);
-    const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
+    const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
     const openaiResolved = resolveOpenAiConfig({
-      agentSecrets: cfg,
-      workspace,
-      envApiKey: process.env.OPENAI_API_KEY,
+      agentSecrets: bundle.secrets,
+      workspace: bundle.workspace,
+      useWorkspaceOpenai: bundle.useWorkspaceOpenai,
+      envApiKey: this.providerEnvSlice()?.openaiApiKey,
     });
     if (!openaiResolved) {
       return {
         success: false,
-        message: 'OpenAI API key is not configured (agent, workspace, or OPENAI_API_KEY).',
+        message:
+          'OpenAI API key is not configured for this agent. Add openaiApiKey on the agent form or enable workspace OpenAI.',
         source: 'missing',
       };
     }

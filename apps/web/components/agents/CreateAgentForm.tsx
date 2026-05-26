@@ -13,6 +13,7 @@ import {
   type CreateAgentPayload,
   type UpdatedSecretsMeta,
 } from '@/lib/api/agents';
+import { authenticatedFetch } from '@/lib/api/authenticated-fetch';
 import { FormSection } from './FormSection';
 import {
   FormField,
@@ -548,8 +549,7 @@ export function CreateAgentForm({
       setOpenaiOverridesWorkspaceWarning(false);
       return;
     }
-    void fetch(`/api/voice/config-check?agentId=${encodeURIComponent(agentId)}`, {
-      credentials: 'include',
+    void authenticatedFetch(`/api/voice/config-check?agentId=${encodeURIComponent(agentId)}`, {
       cache: 'no-store',
     })
       .then((r) => (r.ok ? r.json() : null))

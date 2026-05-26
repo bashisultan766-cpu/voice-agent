@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { CredentialSourcesSummaryApi } from '@/lib/api/agents';
+import { authenticatedFetch } from '@/lib/api/authenticated-fetch';
 
 type LiveMonitorPayload = {
   ok?: boolean;
@@ -138,9 +139,8 @@ export function AgentRuntimeDebugPanel({
     let cancelled = false;
     const poll = async () => {
       try {
-        const res = await fetch(
+        const res = await authenticatedFetch(
           `/api/calls/runtime/live-monitor?callSessionId=${encodeURIComponent(callSessionId)}`,
-          { credentials: 'include' },
         );
         if (!res.ok) return;
         const json = (await res.json()) as LiveMonitorPayload;
@@ -164,7 +164,7 @@ export function AgentRuntimeDebugPanel({
       setError(null);
       try {
         const qs = callSessionId ? `?callSessionId=${encodeURIComponent(callSessionId)}` : '';
-        const res = await fetch(`/api/agents/${agentId}/runtime-debug${qs}`, { credentials: 'include' });
+        const res = await authenticatedFetch(`/api/agents/${agentId}/runtime-debug${qs}`);
         if (!res.ok) throw new Error(await res.text());
         const json = (await res.json()) as RuntimeDebugPayload;
         if (!cancelled) setData(json);

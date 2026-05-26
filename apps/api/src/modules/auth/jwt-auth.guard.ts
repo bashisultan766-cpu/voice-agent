@@ -43,13 +43,19 @@ export class JwtAuthGuard implements CanActivate {
       }
     }
 
-    if (!token) throw new UnauthorizedException('Missing or invalid authentication');
+    if (!token) {
+      throw new UnauthorizedException(
+        'Authentication required. Sign in and send Authorization: Bearer <access_token> on API requests.',
+      );
+    }
 
     let payload: { sub: string };
     try {
       payload = this.jwt.verify<{ sub: string }>(token);
     } catch {
-      throw new UnauthorizedException('Invalid or expired token');
+      throw new UnauthorizedException(
+        'Invalid or expired access token. Sign in again to obtain a new token.',
+      );
     }
 
     const user = await this.prisma.user.findFirst({
@@ -57,7 +63,9 @@ export class JwtAuthGuard implements CanActivate {
       include: { tenant: true },
     });
     if (!user || user.tenant.deletedAt) {
-      throw new UnauthorizedException('Invalid or expired token');
+      throw new UnauthorizedException(
+        'Account not found or tenant disabled. Sign in again or contact an administrator.',
+      );
     }
     req.tenantId = user.tenantId;
     req.userId = user.id;

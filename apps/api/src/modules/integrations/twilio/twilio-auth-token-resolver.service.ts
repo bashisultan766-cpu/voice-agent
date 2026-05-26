@@ -7,11 +7,13 @@ import {
   type AgentSecretsSlice,
   type CredentialSource,
 } from '../../../common/credential-resolver.util';
+import { allowProviderEnvFallback } from '../../../common/provider-env-fallback.util';
+import { gatedProcessEnv } from '../../../common/provider-env-slice.util';
 import { AgentResolutionService } from './agent-resolution.service';
 
 /**
  * Resolves Twilio auth tokens for webhook signature validation.
- * Prefers the agent mapped to the called number; falls back to global TWILIO_AUTH_TOKEN.
+ * Uses per-agent (or workspace when opted-in) credentials; global TWILIO_AUTH_TOKEN only when ALLOW_PROVIDER_ENV_FALLBACK=true.
  */
 @Injectable()
 export class TwilioAuthTokenResolverService {
@@ -79,7 +81,9 @@ export class TwilioAuthTokenResolverService {
       }
     }
 
-    push(this.config.get<string>('TWILIO_AUTH_TOKEN'), 'env_global');
+    if (allowProviderEnvFallback()) {
+      push(gatedProcessEnv('TWILIO_AUTH_TOKEN', this.config), 'env_global');
+    }
     return out;
   }
 }

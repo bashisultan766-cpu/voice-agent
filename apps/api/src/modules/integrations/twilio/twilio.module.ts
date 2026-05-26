@@ -10,12 +10,13 @@ import { TwilioSmsService } from './twilio-sms.service';
 import { CallsModule } from '../../calls/calls.module';
 import { AnalyticsModule } from '../../analytics/analytics.module';
 import { ElevenLabsModule } from '../elevenlabs/elevenlabs.module';
+import { AgentsModule } from '../../agents/agents.module';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
 import { VoicePromptAudioService } from './voice-prompt-audio.service';
 import { TwilioMediaStreamService } from './twilio-media-stream.service';
 
 @Module({
-  imports: [PrismaModule, forwardRef(() => CallsModule), AnalyticsModule, ElevenLabsModule],
+  imports: [PrismaModule, forwardRef(() => CallsModule), AnalyticsModule, ElevenLabsModule, AgentsModule],
   controllers: [TwilioVoiceController],
   providers: [
     TwilioAuthTokenResolverService,

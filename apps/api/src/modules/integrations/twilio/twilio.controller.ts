@@ -24,6 +24,9 @@ import { Public } from '../../../common/decorators/public.decorator';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { redactSecrets } from '../../../common/logging/safe-log';
 import { validateProductionEnv } from '../../../common/env-validation';
+import { allowProviderEnvFallback } from '../../../common/provider-env-fallback.util';
+import { TenantId } from '../../../common/decorators/tenant-id.decorator';
+import { AgentsService } from '../../agents/agents.service';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
 import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
 import { buildFallbackTwiML } from './twiml/conversation-relay.twiml';
@@ -59,6 +62,7 @@ export class TwilioVoiceController {
     private readonly config: ConfigService,
     private readonly ttsCache: TwilioTtsCacheService,
     private readonly voiceWebhooks: TwilioWebhookService,
+    private readonly agents: AgentsService,
   ) {}
   private readonly logger = new Logger(TwilioVoiceController.name);
 
@@ -73,8 +77,11 @@ export class TwilioVoiceController {
     const baseUrlRaw = this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL') ?? '';
     const baseUrl = normalizePublicWebhookBaseUrl(baseUrlRaw);
     const validateSignatures = this.signature.isValidationEnabled();
-    const hasTwilioAuthToken = Boolean((this.config.get<string>('TWILIO_AUTH_TOKEN') ?? '').trim());
-    const hasElevenLabsApiKey = Boolean((this.config.get<string>('ELEVENLABS_API_KEY') ?? '').trim());
+    const envFallback = allowProviderEnvFallback();
+    const hasTwilioAuthToken =
+      Boolean((this.config.get<string>('TWILIO_AUTH_TOKEN') ?? '').trim()) || !envFallback;
+    const hasElevenLabsApiKey =
+      Boolean((this.config.get<string>('ELEVENLABS_API_KEY') ?? '').trim()) || !envFallback;
     const hasPublicWebhookBaseUrl = Boolean(baseUrl);
     const isPublicHttps = /^https:\/\//i.test(baseUrl) && !/localhost|127\.0\.0\.1/i.test(baseUrl);
 
@@ -88,7 +95,13 @@ export class TwilioVoiceController {
     const missing: string[] = [];
     if (!requiredChecks.publicWebhookBaseUrlSet) missing.push('PUBLIC_WEBHOOK_BASE_URL');
     if (!requiredChecks.publicWebhookBaseUrlPublicHttps) missing.push('PUBLIC_WEBHOOK_BASE_URL must be public HTTPS (not localhost)');
-    if (validateSignatures && !requiredChecks.twilioAuthTokenSet) missing.push('TWILIO_AUTH_TOKEN (required when signature validation is enabled)');
+    if (
+      validateSignatures &&
+      envFallback &&
+      !Boolean((this.config.get<string>('TWILIO_AUTH_TOKEN') ?? '').trim())
+    ) {
+      missing.push('TWILIO_AUTH_TOKEN (required when ALLOW_PROVIDER_ENV_FALLBACK=true and signature validation is enabled)');
+    }
 
     const ready = missing.length === 0;
 
@@ -104,7 +117,9 @@ export class TwilioVoiceController {
       },
       checks: requiredChecks,
       missing,
+      credentialMode: envFallback ? 'env_fallback_allowed' : 'per_agent_db_only',
       notes: [
+        'Provider API keys (OpenAI, ElevenLabs, Twilio, Shopify, Resend) are loaded per agent from the database unless ALLOW_PROVIDER_ENV_FALLBACK=true.',
         'Configure your Twilio phone number to POST incoming calls to this app, not to the ElevenLabs native Twilio URL.',
         'Live inbound calls use Twilio webhooks plus Twilio Gather; OpenAI generates reply text.',
         'Inbound greeting uses Twilio <Say> only (fast webhook). After each user utterance, the app returns an instant <Say> then polls /api/twilio/voice/deferred-poll until OpenAI + optional ElevenLabs complete.',
@@ -131,19 +146,36 @@ export class TwilioVoiceController {
   @Roles(UserRole.MANAGER)
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Get('live-call-ready')
-  liveCallReady() {
+  async liveCallReady(@TenantId() tenantId: string, @Query('agentId') agentId?: string) {
     const twilio = this.configCheck();
     const env = validateProductionEnv();
-    const openAi = Boolean((this.config.get<string>('OPENAI_API_KEY') ?? '').trim());
-    const elevenLabs = Boolean((this.config.get<string>('ELEVENLABS_API_KEY') ?? '').trim());
     const encryption = Boolean((this.config.get<string>('ENCRYPTION_KEY') ?? '').trim());
     const jwt = Boolean((this.config.get<string>('JWT_SECRET') ?? '').trim());
+
+    let openAi = allowProviderEnvFallback()
+      ? Boolean((this.config.get<string>('OPENAI_API_KEY') ?? '').trim())
+      : true;
+    let elevenLabs = allowProviderEnvFallback()
+      ? Boolean((this.config.get<string>('ELEVENLABS_API_KEY') ?? '').trim())
+      : true;
+    let agentCredentialSummary: Awaited<ReturnType<AgentsService['getCredentialSourcesSummary']>> | null =
+      null;
+
+    const trimmedAgentId = agentId?.trim();
+    if (trimmedAgentId) {
+      agentCredentialSummary = await this.agents.getCredentialSourcesSummary(tenantId, trimmedAgentId);
+      openAi = agentCredentialSummary.openai.configured;
+      elevenLabs = agentCredentialSummary.elevenlabs.configured;
+    }
+
     const ready = twilio.ready && env.ok && openAi && elevenLabs && encryption && jwt;
     return {
       status: ready ? 'ready' : 'not_ready',
       ready,
       twilio,
       env,
+      agentId: trimmedAgentId ?? null,
+      agentCredentialSources: agentCredentialSummary,
       runtime: {
         inboundVoiceWebhookOwner: 'this_app',
         inboundCallMode: 'twilio-gather-mvp',
@@ -155,7 +187,13 @@ export class TwilioVoiceController {
         elevenLabsKeySet: elevenLabs,
         encryptionKeySet: encryption,
         jwtSecretSet: jwt,
+        agentIdProvided: Boolean(trimmedAgentId),
       },
+      notes: trimmedAgentId
+        ? []
+        : [
+            'Pass ?agentId=<uuid> to validate per-agent OpenAI and ElevenLabs credentials from the agent form.',
+          ],
     };
   }
 

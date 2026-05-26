@@ -30,6 +30,7 @@ import {
   type VoiceCredentialSource,
 } from '../../calls/runtime/voice-config-resolution.util';
 import { fingerprintApiKey } from '../../../common/logging/api-key-fingerprint';
+import { gatedProcessEnv } from '../../../common/provider-env-slice.util';
 import {
   shortenReplyForVoiceTts,
   VOICE_REPLY_TTS_MAX_CHARS,
@@ -285,12 +286,30 @@ export class TwilioWebhookService implements OnModuleInit {
     return { playbackUrl: r.playbackUrl, voiceProviderActuallyUsed: 'elevenlabs' };
   }
 
+  private async loadAgentWorkspaceFlags(agentId: string | undefined): Promise<{
+    useWorkspaceOpenai: boolean;
+    useWorkspaceElevenlabs: boolean;
+  }> {
+    if (!agentId) {
+      return { useWorkspaceOpenai: false, useWorkspaceElevenlabs: false };
+    }
+    const cfg = await this.prisma.agentConfig.findUnique({
+      where: { agentId },
+      select: { useWorkspaceOpenai: true, useWorkspaceElevenlabs: true },
+    });
+    return {
+      useWorkspaceOpenai: cfg?.useWorkspaceOpenai === true,
+      useWorkspaceElevenlabs: cfg?.useWorkspaceElevenlabs === true,
+    };
+  }
+
   /**
    * OpenAI key resolution for gather-turn logs + parity with GET /api/voice/config-check.
    */
   private async auditOpenAiKeyForGather(
     tenantId: string,
     secretsEnc: string | null | undefined,
+    agentId?: string,
   ): Promise<{
     openaiKeySource: VoiceCredentialSource;
     openaiKeyFingerprint: string | null;
@@ -320,18 +339,22 @@ export class TwilioWebhookService implements OnModuleInit {
       : null;
 
     const encAvail = this.encryption.isAvailable();
+    const workspaceFlags = await this.loadAgentWorkspaceFlags(agentId);
+    const envPlain = gatedProcessEnv('OPENAI_API_KEY', this.config);
     const openaiR = resolveOpenAiKeyChain({
       agentSecretPlain: agentOpenaiPlain,
       tenantEnc: ti?.openaiApiKeyEnc ?? null,
       decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-      envPlain: this.config.get<string>('OPENAI_API_KEY'),
+      envPlain,
       encryptionAvailable: encAvail,
+      useWorkspaceOpenai: workspaceFlags.useWorkspaceOpenai,
     });
 
     const layers = openAiKeyLayerPresence({
       agentSecretPlain: agentOpenaiPlain,
       tenantEnc: ti?.openaiApiKeyEnc ?? null,
-      envPlain: this.config.get<string>('OPENAI_API_KEY'),
+      envPlain,
+      useWorkspaceOpenai: workspaceFlags.useWorkspaceOpenai,
     });
 
     return {
@@ -694,7 +717,11 @@ export class TwilioWebhookService implements OnModuleInit {
       where: { id: ctx.agentId },
       select: { secretsEnc: true },
     });
-    const openAiKeyAudit = await this.auditOpenAiKeyForGather(ctx.tenantId, gatherSecretsRow?.secretsEnc);
+    const openAiKeyAudit = await this.auditOpenAiKeyForGather(
+      ctx.tenantId,
+      gatherSecretsRow?.secretsEnc,
+      ctx.agentId,
+    );
     this.logger.log(
       JSON.stringify({
         event: 'twilio.voice.gather_openai_key_proof',
@@ -707,6 +734,7 @@ export class TwilioWebhookService implements OnModuleInit {
     const { keySource: gatherElevenLabsKeySource } = await this.resolveElevenLabsApiKeyAndSource(
       ctx.tenantId,
       gatherSecretsRow?.secretsEnc,
+      ctx.agentId,
     );
 
     const session = await this.callsService.findOneById(callSessionId);
@@ -1786,6 +1814,7 @@ export class TwilioWebhookService implements OnModuleInit {
   private async resolveElevenLabsApiKeyAndSource(
     tenantId: string,
     secretsEnc: string | null | undefined,
+    agentId?: string,
   ): Promise<{
     apiKey?: string;
     keySource: 'agent' | 'tenant' | 'env' | 'none';
@@ -1810,12 +1839,14 @@ export class TwilioWebhookService implements OnModuleInit {
         })
       : null;
 
+    const workspaceFlags = await this.loadAgentWorkspaceFlags(agentId);
     const r = resolveElevenLabsKeyChain({
       agentSecretPlain: agentPlain,
       tenantEnc: ti?.elevenlabsApiKeyEnc ?? null,
       decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-      envPlain: this.config.get<string>('ELEVENLABS_API_KEY'),
+      envPlain: gatedProcessEnv('ELEVENLABS_API_KEY', this.config),
       encryptionAvailable: this.encryption.isAvailable(),
+      useWorkspaceElevenlabs: workspaceFlags.useWorkspaceElevenlabs,
     });
 
     return { apiKey: r.value ?? undefined, keySource: r.source };
@@ -1844,6 +1875,7 @@ export class TwilioWebhookService implements OnModuleInit {
     const { apiKey: elevenlabsApiKey, keySource } = await this.resolveElevenLabsApiKeyAndSource(
       context.tenantId,
       row?.secretsEnc,
+      context.agentId,
     );
 
     if (this.encryption.isAvailable()) {

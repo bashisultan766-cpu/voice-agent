@@ -10,6 +10,7 @@ import {
   resolveOpenAiKeyChain,
   type VoiceCredentialSource,
 } from './voice-config-resolution.util';
+import { gatedProcessEnv } from '../../../common/provider-env-slice.util';
 
 export type VoiceConfigCheckResponse = {
   resolvedAgentId: string;
@@ -55,9 +56,15 @@ export class VoiceConfigCheckService {
         voiceId: true,
         twilioPhoneNumber: true,
         secretsEnc: true,
+        agentConfig: {
+          select: { useWorkspaceOpenai: true, useWorkspaceElevenlabs: true },
+        },
       },
     });
     if (!agent) throw new NotFoundException('Agent not found.');
+
+    const useWorkspaceOpenai = agent.agentConfig?.useWorkspaceOpenai === true;
+    const useWorkspaceElevenlabs = agent.agentConfig?.useWorkspaceElevenlabs === true;
 
     const warnings: string[] = [];
 
@@ -88,17 +95,20 @@ export class VoiceConfigCheckService {
       warnings.push('encryption_not_configured_tenant_keys_unreadable');
     }
 
+    const openaiEnvPlain = gatedProcessEnv('OPENAI_API_KEY', this.config);
     const openaiR = resolveOpenAiKeyChain({
       agentSecretPlain: agentOpenaiPlain,
       tenantEnc: ti?.openaiApiKeyEnc ?? null,
       decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-      envPlain: this.config.get<string>('OPENAI_API_KEY') ?? process.env.OPENAI_API_KEY,
+      envPlain: openaiEnvPlain,
       encryptionAvailable: encAvail,
+      useWorkspaceOpenai,
     });
     const openaiLayers = openAiKeyLayerPresence({
       agentSecretPlain: agentOpenaiPlain,
       tenantEnc: ti?.openaiApiKeyEnc ?? null,
-      envPlain: this.config.get<string>('OPENAI_API_KEY') ?? process.env.OPENAI_API_KEY,
+      envPlain: openaiEnvPlain,
+      useWorkspaceOpenai,
     });
     const agentOpenaiKeyStored = openaiLayers.agentKeyPresent;
     const tenantOpenaiKeyStored = openaiLayers.tenantKeyPresent;
@@ -109,8 +119,9 @@ export class VoiceConfigCheckService {
       agentSecretPlain: agentElevenPlain,
       tenantEnc: ti?.elevenlabsApiKeyEnc ?? null,
       decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-      envPlain: this.config.get<string>('ELEVENLABS_API_KEY') ?? process.env.ELEVENLABS_API_KEY,
+      envPlain: gatedProcessEnv('ELEVENLABS_API_KEY', this.config),
       encryptionAvailable: encAvail,
+      useWorkspaceElevenlabs,
     });
 
     if (agentOverridesWorkspaceOpenai) {

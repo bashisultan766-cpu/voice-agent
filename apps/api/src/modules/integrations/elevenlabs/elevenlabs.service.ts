@@ -13,9 +13,11 @@ export class ElevenLabsService {
     voiceId?: string,
     options?: { apiKey?: string; modelId?: string; styleNotes?: string },
   ): Promise<Buffer> {
-    const key = options?.apiKey?.trim() || this.config.get<string>('ELEVENLABS_API_KEY');
-    if (!key?.trim()) {
-      throw new BadRequestException('ELEVENLABS_API_KEY is not configured');
+    const key = options?.apiKey?.trim();
+    if (!key) {
+      throw new BadRequestException(
+        'ElevenLabs API key is not configured for this agent. Add it in the agent form and save.',
+      );
     }
     const trimmed = text.trim().slice(0, 2500);
     if (!trimmed) throw new BadRequestException('Text is required');

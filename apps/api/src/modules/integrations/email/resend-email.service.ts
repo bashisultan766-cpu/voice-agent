@@ -60,8 +60,12 @@ export class ResendEmailService {
   ) {}
 
   private apiKey(override?: string): string {
-    const key = override?.trim() || this.config.get<string>('RESEND_API_KEY')?.trim();
-    if (!key) throw new Error('Resend API key is not configured for this agent or workspace.');
+    const key = override?.trim();
+    if (!key) {
+      throw new Error(
+        'Resend API key is not configured for this agent. Add resendApiKey in the agent form (or enable workspace email with a saved workspace key).',
+      );
+    }
     return key;
   }
 

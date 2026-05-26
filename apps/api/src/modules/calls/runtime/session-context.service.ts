@@ -4,7 +4,7 @@ import { normalizeShopifyDomain } from '@bookstore-voice-agents/types';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
 import type { VoiceCredentialSource } from './voice-config-resolution.util';
-import { allowProviderEnvFallback } from '../../../common/provider-env-fallback.util';
+import { buildProviderEnvSlice } from '../../../common/provider-env-slice.util';
 import {
   buildCredentialSourcesSummary,
   resolveElevenLabsConfig,
@@ -175,14 +175,7 @@ export class SessionContextService {
       }
     }
 
-    const envSlice = allowProviderEnvFallback()
-      ? {
-          shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-          shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-          openaiApiKey: process.env.OPENAI_API_KEY,
-          elevenlabsApiKey: process.env.ELEVENLABS_API_KEY,
-        }
-      : undefined;
+    const envSlice = buildProviderEnvSlice();
 
     const shopifyResolved = resolveShopifyConfig({
       agent: {

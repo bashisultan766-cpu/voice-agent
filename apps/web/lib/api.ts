@@ -1,7 +1,7 @@
-import { getBearerInit } from '@/lib/auth/browser-session';
+import { authenticatedFetchJson } from '@/lib/api/authenticated-fetch';
 
 /**
- * Browser: same-origin paths use the admin session (cookie + optional Bearer from storage).
+ * Browser: same-origin paths use the admin session (cookie + Bearer from localStorage).
  * Server / Node: uses `NEXT_PUBLIC_API_URL` as origin when set.
  */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -10,12 +10,13 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   const url = isBrowser
     ? normalized
     : `${(process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '')}${normalized}`;
+  if (isBrowser) {
+    return authenticatedFetchJson<T>(url, init);
+  }
   const res = await fetch(url, {
     ...init,
-    credentials: isBrowser ? 'include' : init?.credentials,
     headers: {
       'Content-Type': 'application/json',
-      ...(isBrowser ? getBearerInit() : {}),
       ...init?.headers,
     },
   });

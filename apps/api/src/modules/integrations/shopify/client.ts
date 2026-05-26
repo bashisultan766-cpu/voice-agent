@@ -6,6 +6,7 @@ import {
   resolveShopifyConfig,
   type AgentSecretsSlice,
 } from '../../../common/credential-resolver.util';
+import { buildProviderEnvSlice } from '../../../common/provider-env-slice.util';
 import { ShopifyGraphqlError, ShopifyRestError, isShopifyRetryableError } from './shopify-errors';
 import type { ShopifyGraphqlErrorItem } from './shopify-errors';
 
@@ -82,10 +83,7 @@ export class ShopifyClientService {
         shopifyApiVersion: agent.agentConfig?.shopifyApiVersion,
       },
       workspace,
-      env: {
-        shopifyStoreUrl: process.env.SHOPIFY_SHOP_DOMAIN,
-        shopifyAdminToken: process.env.SHOPIFY_ADMIN_API_TOKEN,
-      },
+      env: buildProviderEnvSlice(),
     });
 
     if (!resolved) {

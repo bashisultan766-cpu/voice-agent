@@ -1,4 +1,4 @@
-import { clearClientSession, getBearerInit } from '@/lib/auth/browser-session';
+import { authenticatedFetch, authenticatedFetchJson } from '@/lib/api/authenticated-fetch';
 
 const getBaseUrl = () =>
   typeof window !== 'undefined'
@@ -6,50 +6,15 @@ const getBaseUrl = () =>
     : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000');
 
 async function fetchOps<T>(path: string): Promise<T> {
-  const res = await fetch(`${getBaseUrl()}/api/ops/${path}`, {
-    cache: 'no-store',
-    credentials: 'include',
-    headers: { ...getBearerInit() },
-  });
-  if (res.status === 401) {
-    if (typeof window !== 'undefined') {
-      clearClientSession();
-      window.location.href = '/login?reason=session-expired';
-      throw new Error('Session expired, please login again.');
-    }
-    throw new Error('Session expired, please login again.');
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(text || `Failed to load ${path} (${res.status})`);
-  }
-  return res.json() as Promise<T>;
+  return authenticatedFetchJson<T>(`${getBaseUrl()}/api/ops/${path}`, { cache: 'no-store' });
 }
 
 async function postOps<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${getBaseUrl()}/api/ops/${path}`, {
+  return authenticatedFetchJson<T>(`${getBaseUrl()}/api/ops/${path}`, {
     method: 'POST',
     cache: 'no-store',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getBearerInit(),
-    },
     body: JSON.stringify(body),
   });
-  if (res.status === 401) {
-    if (typeof window !== 'undefined') {
-      clearClientSession();
-      window.location.href = '/login?reason=session-expired';
-      throw new Error('Session expired, please login again.');
-    }
-    throw new Error('Session expired, please login again.');
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(text || `Failed to post ${path} (${res.status})`);
-  }
-  return res.json() as Promise<T>;
 }
 
 export interface OpsAgentOverview {

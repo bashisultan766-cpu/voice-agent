@@ -9,6 +9,8 @@ import {
   tenantIntegrationHeaders,
 } from '@/lib/api/tenant-integrations';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
+import { getAgents } from '@/lib/api/agents';
+import { authenticatedFetch } from '@/lib/api/authenticated-fetch';
 
 type VoiceConfigCheck = {
   resolvedAgentId?: string;
@@ -64,13 +66,9 @@ export default function OpenAIIntegrationSettingsPage() {
   }, []);
 
   useEffect(() => {
-    void fetch('/api/agents', { credentials: 'include', cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((rows: unknown) => {
-        const list = Array.isArray(rows) ? rows : [];
-        const mapped = list
-          .filter((a): a is { id: string; agentName?: string; name?: string } => Boolean(a && typeof a === 'object' && 'id' in a))
-          .map((a) => ({ id: String(a.id), name: String(a.agentName ?? a.name ?? a.id) }));
+    void getAgents()
+      .then((rows) => {
+        const mapped = rows.map((a) => ({ id: a.id, name: a.name }));
         setAgents(mapped);
         if (mapped.length === 1) setCheckAgentId(mapped[0]!.id);
       })
@@ -83,8 +81,7 @@ export default function OpenAIIntegrationSettingsPage() {
       return;
     }
     setConfigCheckLoading(true);
-    void fetch(`/api/voice/config-check?agentId=${encodeURIComponent(checkAgentId)}`, {
-      credentials: 'include',
+    void authenticatedFetch(`/api/voice/config-check?agentId=${encodeURIComponent(checkAgentId)}`, {
       cache: 'no-store',
     })
       .then(async (r) => {

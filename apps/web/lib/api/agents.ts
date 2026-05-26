@@ -8,17 +8,18 @@ import {
   DEFAULT_TOOL_PERMISSIONS,
   DEFAULT_VOICE_PERSONALITY,
 } from '@bookstore-voice-agents/types';
-import { clearClientSession, getBearerInit } from '@/lib/auth/browser-session';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
+import {
+  authenticatedFetch,
+  authenticatedFetchJson,
+  getAuthenticatedHeaders,
+} from '@/lib/api/authenticated-fetch';
 
 const getBaseUrl = () =>
   typeof window !== 'undefined' ? '' : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000');
 
 function getHeaders(): HeadersInit {
-  return {
-    'Content-Type': 'application/json',
-    ...getBearerInit(),
-  };
+  return getAuthenticatedHeaders();
 }
 
 export type AgentStatusApi = 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'DISABLED';
@@ -202,28 +203,10 @@ async function parseErrorResponse(res: Response): Promise<string> {
   return parseApiErrorMessage(text, res.status);
 }
 
-function handleUnauthorized(res: Response): never | void {
-  if (res.status !== 401) return;
-  if (typeof window !== 'undefined') {
-    clearClientSession();
-    window.location.href = '/login?reason=session-expired';
-    throw new Error('Session expired, please login again.');
-  }
-  throw new Error('Session expired, please login again.');
-}
-
 export async function getAgents(): Promise<AgentListItem[]> {
-  const res = await fetch(`${getBaseUrl()}/api/agents`, {
-    headers: getHeaders(),
+  const data = (await authenticatedFetchJson<unknown>(`${getBaseUrl()}/api/agents`, {
     cache: 'no-store',
-    credentials: 'include',
-  });
-  handleUnauthorized(res);
-  if (!res.ok) {
-    const message = await parseErrorResponse(res);
-    throw new Error(message);
-  }
-  const data = (await res.json()) as unknown;
+  })) as unknown;
   if (!Array.isArray(data)) {
     throw new Error('Invalid agents response from server.');
   }
@@ -231,18 +214,15 @@ export async function getAgents(): Promise<AgentListItem[]> {
 }
 
 export async function getAgent(id: string): Promise<AgentApi | null> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${id}`, {
-    headers: getHeaders(),
+  const res = await authenticatedFetch(`${getBaseUrl()}/api/agents/${id}`, {
     cache: 'no-store',
-    credentials: 'include',
   });
-  handleUnauthorized(res);
   if (res.status === 404) return null;
   if (!res.ok) {
     const text = await res.text();
     throw new Error(res.status === 400 ? text || 'Bad request' : `Failed to load agent: ${res.status}`);
   }
-  return res.json();
+  return res.json() as Promise<AgentApi>;
 }
 
 /** Payload for create/update: camelCase, same shape as CreateAgentDto. */
@@ -331,44 +311,31 @@ export interface CreateAgentPayload {
 }
 
 export async function createAgent(payload: CreateAgentPayload): Promise<AgentApi> {
-  const res = await fetch(`${getBaseUrl()}/api/agents`, {
+  return authenticatedFetchJson<AgentApi>(`${getBaseUrl()}/api/agents`, {
     method: 'POST',
-    headers: getHeaders(),
     body: JSON.stringify(payload),
-    credentials: 'include',
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error((err as { message?: string }).message || `Create failed: ${res.status}`);
-  }
-  return res.json();
 }
 
 export async function updateAgent(
   id: string,
   payload: Partial<CreateAgentPayload>,
 ): Promise<AgentApi & { updatedSecrets?: UpdatedSecretsMeta }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${id}`, {
-    method: 'PATCH',
-    headers: getHeaders(),
-    body: JSON.stringify(payload),
-    credentials: 'include',
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(parseApiErrorMessage(text, res.status));
-  }
-  return res.json();
+  return authenticatedFetchJson<AgentApi & { updatedSecrets?: UpdatedSecretsMeta }>(
+    `${getBaseUrl()}/api/agents/${id}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 /** Normalize Twilio numbers in the browser the same way as the API (NANP 10-digit → +1…). */
 export { normalizePhoneNumber };
 
 export async function deleteAgent(id: string): Promise<void> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${id}`, {
+  const res = await authenticatedFetch(`${getBaseUrl()}/api/agents/${id}`, {
     method: 'DELETE',
-    headers: getHeaders(),
-    credentials: 'include',
   });
   if (!res.ok) {
     const text = await res.text();
@@ -424,11 +391,9 @@ export async function testAgentConnection(
     if (credentials?.voiceId) body.voiceId = credentials.voiceId;
   }
   if (credentials?.useWorkspaceDefaults === true) body.useWorkspaceDefaults = true;
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/${path}`, {
+  const res = await authenticatedFetch(`${getBaseUrl()}/api/agents/${agentId}/${path}`, {
     method: 'POST',
-    headers: getHeaders(),
     body: JSON.stringify(body),
-    credentials: 'include',
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -486,11 +451,9 @@ export async function testCredentials(
   }
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await authenticatedFetch(url, {
       method: 'POST',
-      headers: getHeaders(),
       body: bodyStr,
-      credentials: 'include',
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Network error';
@@ -531,13 +494,9 @@ export async function getAgentAnalytics(agentId: string): Promise<{
   avgDurationSeconds: number | null;
   lastCallAt: string | null;
 }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/analytics`, {
-    headers: getHeaders(),
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/analytics`, {
     cache: 'no-store',
-    credentials: 'include',
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function getAgentLogs(agentId: string, limit = 50): Promise<
@@ -552,13 +511,9 @@ export async function getAgentLogs(agentId: string, limit = 50): Promise<
     endedAt: string | null;
   }>
 > {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/logs?limit=${limit}`, {
-    headers: getHeaders(),
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/logs?limit=${limit}`, {
     cache: 'no-store',
-    credentials: 'include',
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function getAgentCatalogReadiness(agentId: string): Promise<{
@@ -567,27 +522,19 @@ export async function getAgentCatalogReadiness(agentId: string): Promise<{
   itemCount: number;
   reason: string;
 }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/catalog-readiness`, {
-    headers: getHeaders(),
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/catalog-readiness`, {
     cache: 'no-store',
-    credentials: 'include',
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function testAgentAi(
   agentId: string,
   sampleQuery?: string,
 ): Promise<{ success: boolean; message: string; suggestedResponse?: string }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/test-ai`, {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/test-ai`, {
     method: 'POST',
-    headers: getHeaders(),
     body: JSON.stringify({ sampleQuery: sampleQuery ?? 'Where is my order?' }),
-    credentials: 'include',
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export interface RuntimePromptPreview {
@@ -607,61 +554,41 @@ export interface RuntimePromptPreview {
 }
 
 export async function getAgentRuntimePromptPreview(agentId: string): Promise<RuntimePromptPreview> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/runtime-prompt-preview`, {
-    headers: getHeaders(),
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/runtime-prompt-preview`, {
     cache: 'no-store',
-    credentials: 'include',
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function sendAgentTestEmail(
   agentId: string,
   input?: { toEmail?: string; checkoutUrl?: string },
 ): Promise<{ success: boolean; message: string; emailEventId?: string }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/test-email`, {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/test-email`, {
     method: 'POST',
-    headers: getHeaders(),
-    credentials: 'include',
     body: JSON.stringify(input ?? {}),
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function getAgentReadiness(agentId: string): Promise<AgentReadinessResponse> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/readiness`, {
-    headers: getHeaders(),
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/readiness`, {
     cache: 'no-store',
-    credentials: 'include',
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function configureTwilioWebhook(agentId: string): Promise<AgentReadinessResponse> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/configure-twilio-webhook`, {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/configure-twilio-webhook`, {
     method: 'POST',
-    headers: getHeaders(),
-    credentials: 'include',
     body: JSON.stringify({}),
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function syncAgentSecretsFromSettings(
   agentId: string,
 ): Promise<AgentApi & { updatedSecrets?: UpdatedSecretsMeta }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/sync-secrets-from-settings`, {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/sync-secrets-from-settings`, {
     method: 'POST',
-    headers: getHeaders(),
-    credentials: 'include',
     body: JSON.stringify({}),
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function runAgentSmokeTest(agentId: string): Promise<{
@@ -669,14 +596,10 @@ export async function runAgentSmokeTest(agentId: string): Promise<{
   checks: Array<{ key: string; pass: boolean; details: string }>;
   note?: string;
 }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/smoke-test`, {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/smoke-test`, {
     method: 'POST',
-    headers: getHeaders(),
-    credentials: 'include',
     body: JSON.stringify({ dryRun: true }),
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function goLiveAgent(agentId: string): Promise<{
@@ -685,14 +608,10 @@ export async function goLiveAgent(agentId: string): Promise<{
   failures?: Array<{ key: string; label: string; fixAction: string }>;
   readiness: AgentReadinessResponse;
 }> {
-  const res = await fetch(`${getBaseUrl()}/api/agents/${agentId}/go-live`, {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/go-live`, {
     method: 'POST',
-    headers: getHeaders(),
-    credentials: 'include',
     body: JSON.stringify({}),
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 export async function simulateAgentBuyingFlow(
@@ -704,14 +623,10 @@ export async function simulateAgentBuyingFlow(
     checkoutMode?: 'STOREFRONT_CART' | 'DRAFT_ORDER_INVOICE';
   },
 ): Promise<{ ok: boolean; reason?: string; callSessionId?: string; emailSent?: boolean; steps?: unknown[] }> {
-  const res = await fetch(`${getBaseUrl()}/api/ops/agents/${agentId}/simulate-buying-flow`, {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/ops/agents/${agentId}/simulate-buying-flow`, {
     method: 'POST',
-    headers: getHeaders(),
-    credentials: 'include',
     body: JSON.stringify(input ?? {}),
   });
-  if (!res.ok) throw new Error(await parseErrorResponse(res));
-  return res.json();
 }
 
 /** Map API agent to form data for edit. Secrets are never returned, so those fields stay empty. */
