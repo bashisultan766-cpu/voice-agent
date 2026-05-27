@@ -7,12 +7,7 @@ import type { AgentApi } from '@/lib/api/agents';
 import { getAgent } from '@/lib/api/agents';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
 import { ensureClientSession } from '@/lib/auth/browser-session';
-
-/** Strip non-JSON values before crossing the Server → Client boundary. */
-export function normalizeAgentForClient(agent: AgentApi | null | undefined): AgentApi | null {
-  if (!agent) return null;
-  return JSON.parse(JSON.stringify(agent)) as AgentApi;
-}
+import { normalizeAgentForClient } from '@/lib/agents/normalize-agent-for-client';
 
 const AgentLoaderContext = createContext<AgentApi | null>(null);
 

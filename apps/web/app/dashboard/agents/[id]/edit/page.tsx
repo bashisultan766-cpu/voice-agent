@@ -1,6 +1,7 @@
 import { ToastProvider } from '@/components/ui/Toast';
 import { getAgentServer } from '@/lib/api/agents-server';
-import { AgentPageLoader, normalizeAgentForClient } from '@/components/agents/AgentPageLoader';
+import { AgentPageLoader } from '@/components/agents/AgentPageLoader';
+import { normalizeAgentForClient } from '@/lib/agents/normalize-agent-for-client';
 import { AgentEditPageClient } from '@/components/agents/AgentEditPageClient';
 
 export const dynamic = 'force-dynamic';

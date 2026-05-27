@@ -6,6 +6,7 @@ export { ConfirmDeleteModal } from './ConfirmDeleteModal';
 export { AgentActionsDropdown } from './AgentActionsDropdown';
 export { AgentsDashboardSkeleton } from './AgentsDashboardSkeleton';
 export { AgentDetailsView } from './AgentDetailsView';
-export { AgentPageLoader, useLoadedAgent, normalizeAgentForClient } from './AgentPageLoader';
+export { AgentPageLoader, useLoadedAgent } from './AgentPageLoader';
+export { normalizeAgentForClient } from '@/lib/agents/normalize-agent-for-client';
 export { AgentEditPageClient } from './AgentEditPageClient';
 export { AgentDetailsPageClient } from './AgentDetailsPageClient';
