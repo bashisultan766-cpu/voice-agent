@@ -3,14 +3,14 @@ export declare class CallsController {
     private readonly callsService;
     constructor(callsService: CallsService);
     findAll(tenantId: string): Promise<{
-        id: string;
-        tenantId: string;
-        storeId: string | null;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
+        storeId: string | null;
         agentId: string;
-        metadata: import("@prisma/client/runtime/library").JsonValue | null;
+        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -32,16 +32,16 @@ export declare class CallsController {
     }[]>;
     findOne(tenantId: string, id: string): Promise<{
         toolExecutions: {
-            id: string;
-            tenantId: string;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            id: string;
             createdAt: Date;
+            tenantId: string;
             agentId: string;
             callSessionId: string | null;
             requestId: string | null;
             toolName: string;
-            inputJson: import("@prisma/client/runtime/library").JsonValue;
-            outputJson: import("@prisma/client/runtime/library").JsonValue | null;
+            inputJson: import("@prisma/client/runtime/client").JsonValue;
+            outputJson: import("@prisma/client/runtime/client").JsonValue | null;
             errorMessage: string | null;
             latencyMs: number | null;
         }[];
@@ -49,20 +49,20 @@ export declare class CallsController {
             id: string;
             createdAt: Date;
             callSessionId: string;
+            sequenceNumber: number;
             role: string;
             content: string;
-            sequenceNumber: number;
             timestampMs: number | null;
         }[];
     } & {
-        id: string;
-        tenantId: string;
-        storeId: string | null;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
+        storeId: string | null;
         agentId: string;
-        metadata: import("@prisma/client/runtime/library").JsonValue | null;
+        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;

@@ -5,6 +5,8 @@ exports.buildDeferredVoiceKickoffTwiML = buildDeferredVoiceKickoffTwiML;
 exports.buildDeferredVoicePollPauseTwiML = buildDeferredVoicePollPauseTwiML;
 exports.buildDeferredVoiceMomentPleaseTwiML = buildDeferredVoiceMomentPleaseTwiML;
 exports.buildVoiceTerminalTwiml = buildVoiceTerminalTwiml;
+exports.escapeXml = escapeXml;
+exports.escapeXmlAttribute = escapeXmlAttribute;
 const TWILIO_SAY_VOICE_EN = 'Polly.Matthew';
 function sayOpeningAttrs(language) {
     const lang = (language || 'en-US').trim();

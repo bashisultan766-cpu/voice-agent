@@ -12,7 +12,7 @@ import { agentApisToListItems, type AgentApi, type AgentListItem } from './agent
 export async function getAgentServer(id: string): Promise<AgentApi | null> {
   const token = (await cookies()).get('va_access_token')?.value;
   if (!token?.trim()) {
-    return null;
+    redirect('/login?reason=session-expired');
   }
 
   const safeId = encodeURIComponent(id);

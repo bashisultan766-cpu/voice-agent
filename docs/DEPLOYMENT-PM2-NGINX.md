@@ -30,8 +30,10 @@ sudo nginx -t && sudo systemctl reload nginx
 
 **Default in `infra/nginx/voice-agent.mailcallcommunication.com.conf`:** split upstreams:
 
-- `location /api/` → `127.0.0.1:3001` (**no trailing slash** on `proxy_pass`, so `/api/agents` stays `/api/agents`)
-- `location /` → `127.0.0.1:3000`
+- `location ~ ^/api/auth/(login|register|logout|session-sync)$` → **Next** (`3000`) so httpOnly `va_access_token` is set
+- `location /api/` → **Nest** (`3001`) (**no trailing slash** on `proxy_pass`, so `/api/agents` stays `/api/agents`)
+- `location /` → **Next** (`3000`)
+- `GET /session/bootstrap` → **Next** (restores localStorage JWT from the cookie when `/api` hits Nest directly)
 
 Do **not** use `proxy_pass http://127.0.0.1:3001/;` — the trailing slash strips `/api/` and Nest returns 404.
 

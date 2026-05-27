@@ -31,6 +31,8 @@ const ownership_linkage_1 = require("./ownership-linkage");
 const config_1 = require("@nestjs/config");
 const public_webhook_base_url_1 = require("../../common/public-webhook-base-url");
 const build_agent_runtime_prompt_1 = require("../calls/runtime/build-agent-runtime-prompt");
+const provider_env_fallback_util_1 = require("../../common/provider-env-fallback.util");
+const provider_env_slice_util_1 = require("../../common/provider-env-slice.util");
 const agent_email_config_service_1 = require("../integrations/email/agent-email-config.service");
 const resend_email_service_1 = require("../integrations/email/resend-email.service");
 const payment_email_idempotency_1 = require("../../common/payment-email-idempotency");
@@ -68,6 +70,7 @@ function normalizeAgentDtoAliases(dto) {
 }
 const credential_priority_util_1 = require("../../common/credential-priority.util");
 Object.defineProperty(exports, "resolveCredentialPriority", { enumerable: true, get: function () { return credential_priority_util_1.resolveCredentialPriority; } });
+const credential_resolver_util_1 = require("../../common/credential-resolver.util");
 function statusDtoToPrisma(s) {
     if (!s)
         return prisma_types_1.AgentStatus.DRAFT;
@@ -219,6 +222,23 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const twilioInboundLinked = !twilioPhoneNumber ||
             Boolean(inboundMappingRow) ||
             Boolean(agentPhoneNorm && agentPhoneNorm === twilioPhoneNumber);
+        const credentialBundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+        const credentialSources = (0, credential_resolver_util_1.buildCredentialSourcesSummary)({
+            agent: {
+                shopifyStoreUrl: credentialBundle.shopifyStoreUrl,
+                secrets: credentialBundle.secrets,
+                useWorkspaceShopify: credentialBundle.useWorkspaceShopify,
+                useWorkspaceEmail: credentialBundle.useWorkspaceEmail,
+                useWorkspaceOpenai: credentialBundle.useWorkspaceOpenai,
+                useWorkspaceElevenlabs: credentialBundle.useWorkspaceElevenlabs,
+                useWorkspaceTwilio: credentialBundle.useWorkspaceTwilio,
+                voiceId: credentialBundle.voiceId,
+            },
+            workspace: credentialBundle.workspace,
+            env: this.providerEnvSlice(),
+        });
+        const shopifyPolicyOk = credentialSources.shopify.configured &&
+            !(credentialSources.shopify.source === 'workspace' && !credentialSources.shopify.useWorkspaceShopify);
         const shopify = await this.testShopifyConnection(tenantId, agentId);
         const catalog = await this.getCatalogReadiness(tenantId, agentId);
         const openai = await this.testOpenAIConnection(tenantId, agentId);
@@ -281,8 +301,10 @@ let AgentsService = AgentsService_1 = class AgentsService {
             {
                 key: 'shopify_connected',
                 label: 'Shopify connected',
-                pass: shopify.success,
-                fixAction: 'Connect Shopify credentials and verify store access.',
+                pass: shopify.success && shopifyPolicyOk,
+                fixAction: credentialSources.shopify.source === 'workspace' && !credentialSources.shopify.useWorkspaceShopify
+                    ? 'Enable “Use workspace Shopify integration” or add agent-specific Shopify credentials.'
+                    : 'Shopify credentials missing for this agent. Add store domain and admin token, or enable workspace Shopify.',
             },
             {
                 key: 'catalog_ready',
@@ -347,7 +369,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             {
                 key: 'checkout_link_ready',
                 label: 'Checkout link creation ready (Shopify)',
-                pass: shopify.success,
+                pass: shopify.success && shopifyPolicyOk,
                 fixAction: 'Connect Shopify and verify product search works for this agent store.',
             },
             {
@@ -363,6 +385,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             status: failures.length === 0 ? 'READY' : 'CONFIG_REQUIRED',
             checks,
             failures: failures.map((f) => ({ key: f.key, label: f.label, fixAction: f.fixAction })),
+            credentialSources,
             expectedTwilioWebhookUrls: {
                 inbound: webhook.inboundUrl,
                 status: webhook.statusUrl,
@@ -522,7 +545,12 @@ let AgentsService = AgentsService_1 = class AgentsService {
             emailSubjectTemplate: config?.emailSubjectTemplate ?? null,
             paymentLinkEmailIntro: config?.paymentLinkEmailIntro ?? null,
             emailTestRecipient: config?.emailTestRecipient ?? null,
-            useWorkspaceEmail: config?.useWorkspaceEmail ?? true,
+            useWorkspaceEmail: config?.useWorkspaceEmail === true,
+            useWorkspaceShopify: config?.useWorkspaceShopify === true,
+            useWorkspaceOpenai: config?.useWorkspaceOpenai === true,
+            useWorkspaceElevenlabs: config?.useWorkspaceElevenlabs === true,
+            useWorkspaceTwilio: config?.useWorkspaceTwilio === true,
+            shopifyApiVersion: config?.shopifyApiVersion ?? null,
             resendApiKeyConfigured: config?.resendApiKeyConfigured === true,
             voiceProfileProvider: voiceProfile?.provider ?? null,
             voiceProfileLanguage: voiceProfile?.language ?? null,
@@ -549,8 +577,67 @@ let AgentsService = AgentsService_1 = class AgentsService {
             out.emailTestRecipient = dto.emailTestRecipient?.trim() || null;
         }
         if (dto.useWorkspaceEmail !== undefined)
-            out.useWorkspaceEmail = dto.useWorkspaceEmail;
+            out.useWorkspaceEmail = dto.useWorkspaceEmail === true;
+        if (dto.useWorkspaceShopify !== undefined)
+            out.useWorkspaceShopify = dto.useWorkspaceShopify === true;
+        if (dto.useWorkspaceOpenai !== undefined)
+            out.useWorkspaceOpenai = dto.useWorkspaceOpenai === true;
+        if (dto.useWorkspaceElevenlabs !== undefined) {
+            out.useWorkspaceElevenlabs = dto.useWorkspaceElevenlabs === true;
+        }
+        if (dto.useWorkspaceTwilio !== undefined)
+            out.useWorkspaceTwilio = dto.useWorkspaceTwilio === true;
+        if (dto.shopifyApiVersion !== undefined) {
+            out.shopifyApiVersion = dto.shopifyApiVersion?.trim() || null;
+        }
         return out;
+    }
+    secretsFromRow(secretsEnc) {
+        if (!secretsEnc || !this.encryption.isAvailable())
+            return {};
+        const dec = this.encryption.decryptFromStorage(secretsEnc);
+        if (!dec)
+            return {};
+        try {
+            return JSON.parse(dec);
+        }
+        catch {
+            return {};
+        }
+    }
+    async loadAgentCredentialBundle(tenantId, agentId) {
+        const row = await this.prisma.agent.findFirst({
+            where: { id: agentId, tenantId, deletedAt: null },
+            select: {
+                shopifyStoreUrl: true,
+                voiceId: true,
+                secretsEnc: true,
+                agentConfig: {
+                    select: {
+                        useWorkspaceShopify: true,
+                        useWorkspaceEmail: true,
+                        useWorkspaceOpenai: true,
+                        useWorkspaceElevenlabs: true,
+                        useWorkspaceTwilio: true,
+                        shopifyApiVersion: true,
+                    },
+                },
+            },
+        });
+        if (!row)
+            throw new common_1.NotFoundException('Agent not found.');
+        return {
+            shopifyStoreUrl: row.shopifyStoreUrl,
+            voiceId: row.voiceId,
+            secrets: this.secretsFromRow(row.secretsEnc),
+            useWorkspaceShopify: row.agentConfig?.useWorkspaceShopify === true,
+            useWorkspaceEmail: row.agentConfig?.useWorkspaceEmail === true,
+            useWorkspaceOpenai: row.agentConfig?.useWorkspaceOpenai === true,
+            useWorkspaceElevenlabs: row.agentConfig?.useWorkspaceElevenlabs === true,
+            useWorkspaceTwilio: row.agentConfig?.useWorkspaceTwilio === true,
+            shopifyApiVersion: row.agentConfig?.shopifyApiVersion ?? null,
+            workspace: await this.getWorkspaceIntegrationForTenant(tenantId),
+        };
     }
     pickSecrets(dto) {
         const out = {};
@@ -567,54 +654,43 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const json = JSON.stringify(secrets);
         return this.encryption.encryptToStorage(json);
     }
-    async mergeWorkspaceDefaultsIfRequested(tenantId, dto) {
+    async applyWorkspaceIntegrationFlagsOnly(tenantId, dto) {
         if (!dto.useWorkspaceDefaults)
             return;
         const row = await this.prisma.tenantIntegration.findUnique({ where: { tenantId } });
-        if (!row || !this.encryption.isAvailable())
+        if (!row)
             return;
-        const d = dto;
-        const setIfEmpty = (key, val) => {
-            const cur = d[key];
+        const setNonSecretDefault = (key, val) => {
+            if (!val?.trim())
+                return;
+            const cur = dto[key];
             if (typeof cur === 'string' && cur.trim())
                 return;
-            if (val?.trim())
-                d[key] = val;
+            dto[key] = val;
         };
-        if (row.shopifyShopDomain?.trim()) {
-            const host = row.shopifyShopDomain.trim();
-            setIfEmpty('shopifyStoreUrl', host.startsWith('http') ? host : `https://${host}`);
-            if (row.shopifyAdminTokenEnc) {
-                const tok = this.encryption.decryptFromStorage(row.shopifyAdminTokenEnc);
-                setIfEmpty('shopifyAdminToken', tok ?? undefined);
-            }
+        if (row.shopifyShopDomain?.trim() && row.shopifyAdminTokenEnc) {
+            dto.useWorkspaceShopify = true;
         }
-        if (row.twilioAccountSid)
-            setIfEmpty('twilioAccountSid', row.twilioAccountSid);
-        if (row.twilioAuthTokenEnc) {
-            const tok = this.encryption.decryptFromStorage(row.twilioAuthTokenEnc);
-            setIfEmpty('twilioAuthToken', tok ?? undefined);
+        if (row.openaiApiKeyEnc)
+            dto.useWorkspaceOpenai = true;
+        if (row.elevenlabsApiKeyEnc)
+            dto.useWorkspaceElevenlabs = true;
+        if (row.twilioAccountSid && row.twilioAuthTokenEnc)
+            dto.useWorkspaceTwilio = true;
+        if (row.resendApiKeyEnc)
+            dto.useWorkspaceEmail = true;
+        if (row.elevenlabsDefaultVoiceId?.trim()) {
+            setNonSecretDefault('voiceId', row.elevenlabsDefaultVoiceId.trim());
         }
-        if (row.twilioPhoneNumber)
-            setIfEmpty('twilioPhoneNumber', row.twilioPhoneNumber);
-        if (row.openaiApiKeyEnc) {
-            const tok = this.encryption.decryptFromStorage(row.openaiApiKeyEnc);
-            setIfEmpty('openaiApiKey', tok ?? undefined);
+        if (row.elevenlabsDefaultModel?.trim()) {
+            setNonSecretDefault('elevenlabsModel', row.elevenlabsDefaultModel.trim());
         }
-        if (row.elevenlabsApiKeyEnc) {
-            const tok = this.encryption.decryptFromStorage(row.elevenlabsApiKeyEnc);
-            setIfEmpty('elevenlabsApiKey', tok ?? undefined);
+        if (row.twilioPhoneNumber?.trim()) {
+            setNonSecretDefault('twilioPhoneNumber', row.twilioPhoneNumber.trim());
         }
-        if (row.elevenlabsDefaultVoiceId?.trim())
-            setIfEmpty('voiceId', row.elevenlabsDefaultVoiceId);
-        if (row.elevenlabsDefaultModel?.trim())
-            setIfEmpty('elevenlabsModel', row.elevenlabsDefaultModel);
-        if (row.resendApiKeyEnc) {
-            const tok = this.encryption.decryptFromStorage(row.resendApiKeyEnc);
-            setIfEmpty('resendApiKey', tok ?? undefined);
+        if (row.resendFromEmail?.trim()) {
+            setNonSecretDefault('emailSenderAddress', row.resendFromEmail.trim());
         }
-        if (row.resendFromEmail?.trim())
-            setIfEmpty('emailSenderAddress', row.resendFromEmail.trim());
     }
     async create(tenantId, dto, createdById) {
         normalizeAgentDtoAliases(dto);
@@ -626,7 +702,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             clientId: dto.clientId,
             storeId: dto.storeId,
         });
-        await this.mergeWorkspaceDefaultsIfRequested(tenantId, dto);
+        await this.applyWorkspaceIntegrationFlagsOnly(tenantId, dto);
         let validatedClientId = null;
         if (dto.clientId?.trim()) {
             const client = await this.prisma.client.findFirst({
@@ -808,7 +884,12 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     emailSubjectTemplate: dto.emailSubjectTemplate?.trim() || null,
                     paymentLinkEmailIntro: dto.paymentLinkEmailIntro?.trim() || null,
                     emailTestRecipient: dto.emailTestRecipient?.trim() || null,
-                    useWorkspaceEmail: dto.useWorkspaceEmail ?? true,
+                    useWorkspaceEmail: dto.useWorkspaceEmail === true,
+                    useWorkspaceShopify: dto.useWorkspaceShopify === true,
+                    useWorkspaceOpenai: dto.useWorkspaceOpenai === true,
+                    useWorkspaceElevenlabs: dto.useWorkspaceElevenlabs === true,
+                    useWorkspaceTwilio: dto.useWorkspaceTwilio === true,
+                    shopifyApiVersion: dto.shopifyApiVersion?.trim() || null,
                 },
             });
             await tx.voiceProfile.create({
@@ -962,6 +1043,11 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     paymentLinkEmailIntro: true,
                     emailTestRecipient: true,
                     useWorkspaceEmail: true,
+                    useWorkspaceShopify: true,
+                    useWorkspaceOpenai: true,
+                    useWorkspaceElevenlabs: true,
+                    useWorkspaceTwilio: true,
+                    shopifyApiVersion: true,
                 },
             },
             voiceProfile: {
@@ -981,22 +1067,30 @@ let AgentsService = AgentsService_1 = class AgentsService {
             orderBy: { updatedAt: 'desc' },
             select: this.agentSelect(),
         });
-        const domains = [...new Set(items.map((a) => (0, types_2.normalizeShopifyDomain)(a.shopifyStoreUrl)).filter((v) => !!v))];
-        const grouped = domains.length > 0
+        const agentDomains = items
+            .map((a) => ({
+            agentId: a.id,
+            domain: (0, types_2.normalizeShopifyDomain)(a.shopifyStoreUrl),
+        }))
+            .filter((x) => Boolean(x.domain));
+        const grouped = agentDomains.length > 0
             ? await this.prisma.productCache.groupBy({
-                by: ['shopDomain'],
-                where: { tenantId, shopDomain: { in: domains } },
+                by: ['agentId', 'shopDomain'],
+                where: {
+                    tenantId,
+                    OR: agentDomains.map((x) => ({ agentId: x.agentId, shopDomain: x.domain })),
+                },
                 _count: { _all: true },
                 _max: { syncedAt: true },
             })
             : [];
-        const readinessByDomain = new Map(grouped.map((row) => {
+        const readinessByAgentDomain = new Map(grouped.map((row) => {
             const itemCount = row._count._all;
             const lastSyncedAt = row._max.syncedAt;
             const staleMs = Number(process.env.CATALOG_STALE_MS) || 24 * 60 * 60 * 1000;
             const isFresh = lastSyncedAt ? Date.now() - lastSyncedAt.getTime() <= staleMs : false;
             return [
-                row.shopDomain,
+                `${row.agentId}:${row.shopDomain}`,
                 {
                     catalogReady: itemCount > 0 && isFresh,
                     catalogItemCount: itemCount,
@@ -1007,7 +1101,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
         return items.map((item) => {
             const serialized = this.serializeAgent(item);
             const domain = (0, types_2.normalizeShopifyDomain)(item.shopifyStoreUrl);
-            const readiness = domain ? readinessByDomain.get(domain) : null;
+            const readiness = domain ? readinessByAgentDomain.get(`${item.id}:${domain}`) : null;
             return {
                 ...serialized,
                 catalogReady: readiness?.catalogReady ?? false,
@@ -1024,6 +1118,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
         if (!agent)
             throw new common_1.NotFoundException('Agent not found.');
         const emailSummary = await this.agentEmailConfig.getSummary(tenantId, id);
+        const credentialSources = await this.getCredentialSourcesSummary(tenantId, id);
         const withEmailMeta = {
             ...agent,
             agentConfig: agent.agentConfig
@@ -1032,6 +1127,9 @@ let AgentsService = AgentsService_1 = class AgentsService {
                     resendApiKeyConfigured: emailSummary?.resendKeyConfigured === true,
                 }
                 : null,
+            shopifyConfigured: credentialSources.shopify.configured,
+            shopifySource: credentialSources.shopify.source,
+            credentialSources,
         };
         return this.serializeAgent(withEmailMeta);
     }
@@ -1196,14 +1294,24 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const input = this.agentRowToRuntimePromptInput(agent);
         if (!input)
             throw new common_1.NotFoundException('Agent not found.');
-        const prompt = (0, build_agent_runtime_prompt_1.buildAgentRuntimePrompt)(input);
+        const layers = (0, build_agent_runtime_prompt_1.buildEnterpriseRuntimePromptLayers)(input);
         return {
             agentId: agent.id,
             agentName: agent.name,
             updatedAt: agent.updatedAt.toISOString(),
             greetingMessage: agent.greetingMessage,
-            prompt,
-            promptLength: prompt.length,
+            prompt: layers.combined,
+            promptLength: layers.combined.length,
+            promptBudget: layers.budget,
+            promptLayers: {
+                platform: layers.platform,
+                agentIdentity: layers.agentIdentity,
+                storePolicyKnowledge: layers.storePolicyKnowledge,
+                runtimeTools: layers.runtimeTools,
+                shopifyTruth: layers.shopifyTruth,
+                knowledgeRetrieval: layers.knowledgeRetrieval,
+                runtimeContext: layers.runtimeContext,
+            },
         };
     }
     async getPublicLiveCard(id) {
@@ -1232,6 +1340,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
     }
     async update(tenantId, id, dto, actorUserId) {
         normalizeAgentDtoAliases(dto);
+        await this.applyWorkspaceIntegrationFlagsOnly(tenantId, dto);
         const existing = await this.findOne(tenantId, id);
         const currentStatus = String(existing.status ?? '').toLowerCase();
         if (dto.agentStatus === create_agent_dto_1.AgentStatusDto.ACTIVE && currentStatus !== create_agent_dto_1.AgentStatusDto.ACTIVE) {
@@ -1309,18 +1418,34 @@ let AgentsService = AgentsService_1 = class AgentsService {
             ? await this.getWorkspaceIntegrationForTenant(tenantId)
             : null;
         if (shouldValidateShopify) {
-            const finalStoreUrl = (dto.shopifyStoreUrl !== undefined
-                ? dto.shopifyStoreUrl
-                : existingConfig?.shopifyStoreUrl || workspaceConfig?.shopifyStoreUrl) ?? null;
-            const finalToken = (newSecrets.shopifyAdminToken !== undefined
-                ? newSecrets.shopifyAdminToken
-                : workspaceConfig?.shopifyAdminToken || existingConfig?.shopifyAdminToken) ?? null;
-            if (!finalStoreUrl?.trim() || !finalToken?.trim()) {
-                throw new common_1.BadRequestException('To validate Shopify credentials, provide both Shopify store URL and Admin access token.');
+            const existingRow = await this.prisma.agent.findFirst({
+                where: { id, tenantId, deletedAt: null },
+                select: {
+                    shopifyStoreUrl: true,
+                    secretsEnc: true,
+                    agentConfig: { select: { useWorkspaceShopify: true, shopifyApiVersion: true } },
+                },
+            });
+            const mergedSecrets = { ...this.secretsFromRow(existingRow?.secretsEnc ?? null), ...newSecrets };
+            if (dto.shopifyStoreUrl !== undefined) {
+                existingRow.shopifyStoreUrl = dto.shopifyStoreUrl;
+            }
+            const resolved = (0, credential_resolver_util_1.resolveShopifyConfig)({
+                agent: {
+                    shopifyStoreUrl: existingRow?.shopifyStoreUrl ?? existingConfig?.shopifyStoreUrl,
+                    secrets: mergedSecrets,
+                    useWorkspaceShopify: dto.useWorkspaceShopify ?? existingRow?.agentConfig?.useWorkspaceShopify === true,
+                    shopifyApiVersion: dto.shopifyApiVersion ?? existingRow?.agentConfig?.shopifyApiVersion,
+                },
+                workspace: workspaceConfig,
+                env: this.providerEnvSlice(),
+            });
+            if (!resolved) {
+                throw new common_1.BadRequestException('Shopify credentials missing for this agent.');
             }
             const r = await this.shopifyTest.testConnection({
-                shopifyStoreUrl: finalStoreUrl,
-                shopifyAdminToken: finalToken,
+                shopifyStoreUrl: resolved.shopifyStoreUrl,
+                shopifyAdminToken: resolved.shopifyAdminToken,
             });
             if (!r.success)
                 throw new common_1.BadRequestException(r.message || 'Shopify connection test failed.');
@@ -1487,6 +1612,8 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 paymentLinkEmailIntro: dto.paymentLinkEmailIntro?.trim() || null,
                 emailTestRecipient: dto.emailTestRecipient?.trim() || null,
                 useWorkspaceEmail: dto.useWorkspaceEmail ?? true,
+                useWorkspaceShopify: dto.useWorkspaceShopify ?? false,
+                shopifyApiVersion: dto.shopifyApiVersion?.trim() || null,
             },
             update: {
                 ...(dto.businessName !== undefined && { businessName: dto.businessName?.trim() || null }),
@@ -1619,13 +1746,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
             }
         }
         const workspaceToAgent = {
-            shopifyAdminToken: workspace?.shopifyAdminToken?.trim(),
             twilioAccountSid: workspace?.twilioAccountSid?.trim(),
             twilioAuthToken: workspace?.twilioAuthToken?.trim(),
             openaiApiKey: workspace?.openaiApiKey?.trim(),
             elevenlabsApiKey: workspace?.elevenlabsApiKey?.trim(),
             resendApiKey: workspace?.resendApiKey?.trim(),
         };
+        const workspaceShopifyAvailable = Boolean(workspace?.shopifyStoreUrl?.trim() && workspace?.shopifyAdminToken?.trim());
         const updatedSecrets = Object.fromEntries(SECRET_KEYS.map((key) => [key, false]));
         for (const [key, value] of Object.entries(workspaceToAgent)) {
             if (typeof value === 'string' && value.trim()) {
@@ -1636,8 +1763,13 @@ let AgentsService = AgentsService_1 = class AgentsService {
             }
         }
         const anyUpdated = Object.values(updatedSecrets).some(Boolean);
-        if (!anyUpdated) {
+        if (!anyUpdated && !workspaceShopifyAvailable) {
             throw new common_1.BadRequestException('No workspace secrets are available to sync yet. Save credentials in Settings first.');
+        }
+        if (workspaceShopifyAvailable) {
+            delete merged.shopifyAdminToken;
+            delete merged.shopifyApiKey;
+            delete merged.shopifyApiSecret;
         }
         const secretsEnc = this.encryptSecrets(merged);
         if (!secretsEnc) {
@@ -1650,6 +1782,17 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 lastConnectionTestAt: new Date(),
             },
         });
+        if (workspaceShopifyAvailable) {
+            await this.prisma.agentConfig.upsert({
+                where: { agentId: id },
+                create: {
+                    tenantId,
+                    agentId: id,
+                    useWorkspaceShopify: true,
+                },
+                update: { useWorkspaceShopify: true },
+            });
+        }
         const [shopify, twilio, openai, elevenlabs] = await Promise.all([
             this.testShopifyConnection(tenantId, id).catch((error) => ({
                 success: false,
@@ -1721,30 +1864,65 @@ let AgentsService = AgentsService_1 = class AgentsService {
         return { deleted: true };
     }
     async getShopifyConfig(tenantId, agentId) {
-        const [config, workspace] = await Promise.all([
-            this.getAgentConfigForTest(tenantId, agentId),
-            this.getWorkspaceIntegrationForTenant(tenantId),
-        ]);
-        const url = workspace?.shopifyStoreUrl?.trim() || config.shopifyStoreUrl?.trim();
-        const token = workspace?.shopifyAdminToken?.trim() || config.shopifyAdminToken?.trim();
-        if (!url || !token)
+        const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+        const resolved = (0, credential_resolver_util_1.resolveShopifyConfig)({
+            agent: {
+                shopifyStoreUrl: bundle.shopifyStoreUrl,
+                secrets: bundle.secrets,
+                useWorkspaceShopify: bundle.useWorkspaceShopify,
+                shopifyApiVersion: bundle.shopifyApiVersion,
+            },
+            workspace: bundle.workspace,
+            env: this.providerEnvSlice(),
+        });
+        if (!resolved)
             return null;
-        return { shopifyStoreUrl: url, shopifyAdminToken: token };
+        (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'shopify', resolved.source, agentId);
+        return {
+            shopifyStoreUrl: resolved.shopifyStoreUrl,
+            shopifyAdminToken: resolved.shopifyAdminToken,
+            shopifyApiVersion: resolved.shopifyApiVersion,
+            source: resolved.source,
+        };
     }
     async getTwilioConfig(tenantId, agentId) {
-        const [config, workspace] = await Promise.all([
-            this.getAgentConfigForTest(tenantId, agentId),
-            this.getWorkspaceIntegrationForTenant(tenantId),
-        ]);
-        const sid = workspace?.twilioAccountSid?.trim() || config.twilioAccountSid?.trim();
-        const token = workspace?.twilioAuthToken?.trim() || config.twilioAuthToken?.trim();
-        if (!sid || !token)
-            return null;
+        const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
         const agent = await this.prisma.agent.findFirst({
             where: { id: agentId, tenantId, deletedAt: null },
             select: { twilioPhoneNumber: true },
         });
-        return { accountSid: sid, authToken: token, messagingFrom: agent?.twilioPhoneNumber?.trim() || null };
+        const resolved = (0, credential_resolver_util_1.resolveTwilioConfig)({
+            agentSecrets: bundle.secrets,
+            workspace: bundle.workspace,
+            useWorkspaceTwilio: bundle.useWorkspaceTwilio,
+            agentPhoneNumber: agent?.twilioPhoneNumber,
+        });
+        if (!resolved)
+            return null;
+        (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'twilio', resolved.authSource, agentId);
+        return {
+            accountSid: resolved.accountSid,
+            authToken: resolved.authToken,
+            messagingFrom: resolved.phoneNumber ?? null,
+            source: resolved.authSource,
+        };
+    }
+    async getCredentialSourcesSummary(tenantId, agentId) {
+        const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+        return (0, credential_resolver_util_1.buildCredentialSourcesSummary)({
+            agent: {
+                shopifyStoreUrl: bundle.shopifyStoreUrl,
+                secrets: bundle.secrets,
+                useWorkspaceShopify: bundle.useWorkspaceShopify,
+                useWorkspaceEmail: bundle.useWorkspaceEmail,
+                useWorkspaceOpenai: bundle.useWorkspaceOpenai,
+                useWorkspaceElevenlabs: bundle.useWorkspaceElevenlabs,
+                useWorkspaceTwilio: bundle.useWorkspaceTwilio,
+                voiceId: bundle.voiceId,
+            },
+            workspace: bundle.workspace,
+            env: this.providerEnvSlice(),
+        });
     }
     async getAgentConfigForTest(tenantId, agentId) {
         const row = await this.prisma.agent.findFirst({
@@ -1818,22 +1996,67 @@ let AgentsService = AgentsService_1 = class AgentsService {
         };
     }
     resolveCredential(agentValue, workspaceValue, envValue) {
-        return (0, credential_priority_util_1.resolveCredentialPriority)(agentValue, workspaceValue, envValue);
+        const gatedEnv = envValue?.trim() && (0, provider_env_fallback_util_1.allowProviderEnvFallback)() ? envValue.trim() : undefined;
+        return (0, credential_priority_util_1.resolveCredentialPriority)(agentValue, workspaceValue, gatedEnv);
+    }
+    providerEnvSlice() {
+        return (0, provider_env_slice_util_1.buildProviderEnvSlice)(this.config);
     }
     async testShopifyConnection(tenantId, agentId, dto) {
         const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
-        const agentConfig = agentId ? await this.getAgentConfigForTest(tenantId, agentId) : null;
-        const storeUrl = (dto?.shopifyStoreUrl?.trim() || agentConfig?.shopifyStoreUrl?.trim() || workspace?.shopifyStoreUrl?.trim() || null);
-        const tokenResolved = dto?.shopifyAdminToken?.trim()
-            ? { value: dto.shopifyAdminToken.trim(), source: 'agent' }
-            : this.resolveCredential(agentConfig?.shopifyAdminToken, workspace?.shopifyAdminToken);
-        const config = {
-            shopifyStoreUrl: storeUrl,
-            shopifyAdminToken: tokenResolved.value ?? null,
-        };
-        const result = await this.shopifyTest.testConnection(config);
+        let resolved = null;
+        let source = 'missing';
+        if (dto?.shopifyStoreUrl?.trim() && dto?.shopifyAdminToken?.trim()) {
+            resolved = {
+                shopifyStoreUrl: dto.shopifyStoreUrl.trim(),
+                shopifyAdminToken: dto.shopifyAdminToken.trim(),
+                shopifyApiVersion: dto.shopifyApiVersion?.trim() || '2024-10',
+                source: 'agent',
+            };
+            source = 'agent';
+        }
+        else if (agentId) {
+            const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+            if (dto?.shopifyStoreUrl?.trim())
+                bundle.shopifyStoreUrl = dto.shopifyStoreUrl.trim();
+            if (dto?.shopifyAdminToken?.trim())
+                bundle.secrets = { ...bundle.secrets, shopifyAdminToken: dto.shopifyAdminToken.trim() };
+            resolved = (0, credential_resolver_util_1.resolveShopifyConfig)({
+                agent: {
+                    shopifyStoreUrl: bundle.shopifyStoreUrl,
+                    secrets: bundle.secrets,
+                    useWorkspaceShopify: bundle.useWorkspaceShopify,
+                    shopifyApiVersion: bundle.shopifyApiVersion,
+                },
+                workspace,
+                env: this.providerEnvSlice(),
+            });
+            source = resolved?.source ?? 'missing';
+        }
+        else if (workspace?.shopifyStoreUrl && workspace?.shopifyAdminToken) {
+            resolved = (0, credential_resolver_util_1.resolveShopifyConfig)({
+                agent: { useWorkspaceShopify: true },
+                workspace,
+                env: this.providerEnvSlice(),
+            });
+            source = resolved?.source ?? 'missing';
+        }
+        if (!resolved) {
+            return {
+                success: false,
+                message: 'Shopify credentials missing for this agent.',
+                status: agentId ? prisma_types_1.ConnectionStatus.FAILED : undefined,
+                provider: 'shopify',
+                source: 'missing',
+            };
+        }
+        const result = await this.shopifyTest.testConnection({
+            shopifyStoreUrl: resolved.shopifyStoreUrl,
+            shopifyAdminToken: resolved.shopifyAdminToken,
+        });
         const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
-        if (agentId && result.success !== undefined) {
+        if (agentId) {
+            (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'shopify', source, agentId);
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
                 data: { shopifyConnectionStatus: status, lastConnectionTestAt: new Date() },
@@ -1843,7 +2066,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             ...result,
             status: agentId ? status : undefined,
             provider: 'shopify',
-            source: tokenResolved.source,
+            source,
         };
     }
     async testDatabaseConnection(tenantId, agentId, dto) {
@@ -1902,14 +2125,28 @@ let AgentsService = AgentsService_1 = class AgentsService {
     }
     async testOpenAIConnection(tenantId, agentId, dto) {
         const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
-        const agentConfig = agentId ? await this.getAgentConfigForTest(tenantId, agentId) : null;
-        const resolved = dto?.openaiApiKey?.trim()
-            ? { value: dto.openaiApiKey.trim(), source: 'agent' }
-            : this.resolveCredential(agentConfig?.openaiApiKey, workspace?.openaiApiKey, process.env.OPENAI_API_KEY);
+        const envSlice = this.providerEnvSlice();
+        let resolved;
+        if (dto?.openaiApiKey?.trim()) {
+            resolved = { value: dto.openaiApiKey.trim(), source: 'agent' };
+        }
+        else if (agentId) {
+            const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+            const cfg = (0, credential_resolver_util_1.resolveOpenAiConfig)({
+                agentSecrets: bundle.secrets,
+                workspace: bundle.workspace,
+                useWorkspaceOpenai: bundle.useWorkspaceOpenai,
+                envApiKey: envSlice?.openaiApiKey,
+            });
+            resolved = cfg ? { value: cfg.apiKey, source: cfg.source } : { source: 'missing' };
+        }
+        else {
+            resolved = this.resolveCredential(undefined, workspace?.openaiApiKey, envSlice?.openaiApiKey);
+        }
         if (resolved.source === 'missing') {
             return {
                 success: false,
-                message: 'OpenAI test failed: no API key found (agent, workspace, or OPENAI_API_KEY).',
+                message: 'OpenAI test failed: no API key found. Add an OpenAI key on the agent form or enable workspace OpenAI with a saved workspace key.',
                 status: agentId ? prisma_types_1.ConnectionStatus.FAILED : undefined,
                 provider: 'openai',
                 source: 'missing',
@@ -1935,26 +2172,35 @@ let AgentsService = AgentsService_1 = class AgentsService {
     }
     async testElevenLabsConnection(tenantId, agentId, dto) {
         const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
+        const envSlice = this.providerEnvSlice();
         const agentConfig = agentId ? await this.getAgentConfigForTest(tenantId, agentId) : null;
-        const resolved = dto?.elevenlabsApiKey?.trim()
-            ? { value: dto.elevenlabsApiKey.trim(), source: 'agent' }
-            : this.resolveCredential(agentConfig?.elevenlabsApiKey, workspace?.elevenlabsApiKey);
-        if (resolved.source === 'missing') {
+        const bundle = agentId ? await this.loadAgentCredentialBundle(tenantId, agentId) : null;
+        const voiceId = dto?.voiceId?.trim() ||
+            bundle?.voiceId?.trim() ||
+            agentConfig?.voiceId?.trim() ||
+            workspace?.elevenlabsDefaultVoiceId?.trim() ||
+            undefined;
+        const elevenResolved = dto?.elevenlabsApiKey?.trim()
+            ? { apiKey: dto.elevenlabsApiKey.trim(), source: 'agent', voiceId }
+            : (0, credential_resolver_util_1.resolveElevenLabsConfig)({
+                agentSecrets: bundle?.secrets ?? agentConfig ?? undefined,
+                workspace: bundle?.workspace ?? workspace,
+                useWorkspaceElevenlabs: bundle?.useWorkspaceElevenlabs,
+                envApiKey: envSlice?.elevenlabsApiKey,
+                agentVoiceId: voiceId ?? null,
+            });
+        if (!elevenResolved) {
             return {
                 success: false,
-                message: 'ElevenLabs test failed: no API key found (agent or workspace).',
+                message: 'ElevenLabs test failed: no API key found. Add an ElevenLabs key on the agent form or enable workspace ElevenLabs with a saved workspace key.',
                 status: agentId ? prisma_types_1.ConnectionStatus.FAILED : undefined,
                 provider: 'elevenlabs',
                 source: 'missing',
             };
         }
-        const resolvedVoiceId = dto?.voiceId?.trim() ||
-            agentConfig?.voiceId?.trim() ||
-            workspace?.elevenlabsDefaultVoiceId?.trim() ||
-            undefined;
         const result = await this.elevenlabsTest.testConnection({
-            elevenlabsApiKey: resolved.value,
-            voiceId: resolvedVoiceId,
+            elevenlabsApiKey: elevenResolved.apiKey,
+            voiceId: elevenResolved.voiceId ?? voiceId,
             source: 'test',
             tenantId,
         });
@@ -1969,10 +2215,10 @@ let AgentsService = AgentsService_1 = class AgentsService {
             ...result,
             status: agentId ? status : undefined,
             provider: 'elevenlabs',
-            source: resolved.source,
+            source: elevenResolved.source,
             message: result.success
-                ? `ElevenLabs connection successful (using ${resolved.source} credential).`
-                : `ElevenLabs test failed using ${resolved.source} credential: ${result.message}`,
+                ? `ElevenLabs connection successful (using ${elevenResolved.source} credential).`
+                : `ElevenLabs test failed using ${elevenResolved.source} credential: ${result.message}`,
         };
     }
     async getAgentAnalytics(tenantId, agentId) {
@@ -2038,18 +2284,39 @@ let AgentsService = AgentsService_1 = class AgentsService {
     async getCatalogReadiness(tenantId, agentId) {
         const agent = await this.prisma.agent.findFirst({
             where: { id: agentId, tenantId, deletedAt: null },
-            select: { id: true, shopifyStoreUrl: true },
+            select: { id: true },
         });
         if (!agent)
             throw new common_1.NotFoundException('Agent not found.');
-        const shopDomain = (0, types_2.normalizeShopifyDomain)(agent.shopifyStoreUrl);
+        const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+        const shopifyResolved = (0, credential_resolver_util_1.resolveShopifyConfig)({
+            agent: {
+                shopifyStoreUrl: bundle.shopifyStoreUrl,
+                secrets: bundle.secrets,
+                useWorkspaceShopify: bundle.useWorkspaceShopify,
+                shopifyApiVersion: bundle.shopifyApiVersion,
+            },
+            workspace: bundle.workspace,
+            env: this.providerEnvSlice(),
+        });
+        const shopifySource = shopifyResolved?.source ?? 'missing';
+        const shopDomain = shopifyResolved
+            ? (0, types_2.normalizeShopifyDomain)(shopifyResolved.shopifyStoreUrl)
+            : null;
         if (!shopDomain) {
-            return { catalogReady: false, lastSyncedAt: null, itemCount: 0, reason: 'shopify_not_connected' };
+            return {
+                catalogReady: false,
+                lastSyncedAt: null,
+                itemCount: 0,
+                reason: 'shopify_not_connected',
+                shopifySource,
+                shopifyConfigured: false,
+            };
         }
         const [itemCount, latest] = await Promise.all([
-            this.prisma.productCache.count({ where: { tenantId, shopDomain } }),
+            this.prisma.productCache.count({ where: { tenantId, agentId, shopDomain } }),
             this.prisma.productCache.findFirst({
-                where: { tenantId, shopDomain },
+                where: { tenantId, agentId, shopDomain },
                 orderBy: { syncedAt: 'desc' },
                 select: { syncedAt: true },
             }),
@@ -2062,6 +2329,8 @@ let AgentsService = AgentsService_1 = class AgentsService {
             lastSyncedAt: lastSyncedAt?.toISOString() ?? null,
             itemCount,
             reason: itemCount === 0 ? 'catalog_empty' : isFresh ? 'ready' : 'catalog_stale',
+            shopifySource,
+            shopifyConfigured: true,
         };
     }
     async testAiBehavior(tenantId, agentId, sampleQuery) {
@@ -2078,14 +2347,21 @@ let AgentsService = AgentsService_1 = class AgentsService {
         });
         if (!row)
             throw new common_1.NotFoundException('Agent not found.');
-        const cfg = await this.getAgentConfigForTest(tenantId, agentId);
-        const apiKey = cfg.openaiApiKey?.trim();
-        if (!apiKey) {
+        const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+        const openaiResolved = (0, credential_resolver_util_1.resolveOpenAiConfig)({
+            agentSecrets: bundle.secrets,
+            workspace: bundle.workspace,
+            useWorkspaceOpenai: bundle.useWorkspaceOpenai,
+            envApiKey: this.providerEnvSlice()?.openaiApiKey,
+        });
+        if (!openaiResolved) {
             return {
                 success: false,
-                message: 'OpenAI API key is not configured for this agent.',
+                message: 'OpenAI API key is not configured for this agent. Add openaiApiKey on the agent form or enable workspace OpenAI.',
+                source: 'missing',
             };
         }
+        const apiKey = openaiResolved.apiKey;
         const prompt = [
             row.baseSystemPrompt,
             row.agentRole ? `Role: ${row.agentRole}` : '',
@@ -2108,9 +2384,10 @@ let AgentsService = AgentsService_1 = class AgentsService {
         return {
             success: Boolean(responseText),
             message: responseText
-                ? 'AI behavior test completed successfully.'
-                : 'AI behavior test completed but model returned no content.',
+                ? `AI behavior test completed successfully (using ${openaiResolved.source} credential).`
+                : `AI behavior test completed but model returned no content (using ${openaiResolved.source} credential).`,
             suggestedResponse: responseText || undefined,
+            source: openaiResolved.source,
         };
     }
     async getRuntimeDebug(tenantId, agentId, callSessionId) {
@@ -2135,7 +2412,11 @@ let AgentsService = AgentsService_1 = class AgentsService {
             toneOfVoice: agent.toneOfVoice,
             config: agent.agentConfig,
         };
-        const livePrompt = (0, build_agent_runtime_prompt_1.buildAgentRuntimePrompt)(promptInput, { personality, enabledTools });
+        const enterpriseLayers = (0, build_agent_runtime_prompt_1.buildEnterpriseRuntimePromptLayers)(promptInput, {
+            personality,
+            enabledTools,
+        });
+        const livePrompt = enterpriseLayers.combined;
         let lastToolCalls = [];
         let runtimeContextPreview = null;
         if (callSessionId) {
@@ -2165,14 +2446,60 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 };
             }
         }
+        const credentialSources = await this.getCredentialSourcesSummary(tenantId, agentId);
+        const agentRow = agent;
+        let liveMonitor = null;
+        if (callSessionId) {
+            try {
+                const session = await this.prisma.callSession.findFirst({
+                    where: { id: callSessionId, tenantId, agentId },
+                    select: { metadata: true },
+                });
+                if (session?.metadata) {
+                    const m = session.metadata;
+                    liveMonitor = {
+                        conversationStage: m.conversationMemory?.conversationStage ??
+                            m.conversationStage,
+                        streamingStatus: m.voiceStreamMetrics?.streamingStatus ?? 'idle',
+                        voiceStreamMetrics: m.voiceStreamMetrics ?? null,
+                        voiceCostMetrics: m.voiceCostMetrics ?? null,
+                        deferredJobPhase: m.deferredVoiceJob?.phase ?? null,
+                        bargeInRequested: m.bargeInRequested === true,
+                        runtimeScores: m.runtimeScores ?? null,
+                        runtimeAnalytics: m.runtimeAnalytics ?? null,
+                    };
+                }
+            }
+            catch {
+                liveMonitor = null;
+            }
+        }
         return {
             agentId,
             toolsEnabled: enabledTools,
             toolPermissions: perms,
             personality,
             livePromptPreview: livePrompt.slice(0, 8000),
+            promptBudget: enterpriseLayers.budget,
+            promptLayers: {
+                platform: enterpriseLayers.platform,
+                agentIdentity: enterpriseLayers.agentIdentity,
+                storePolicyKnowledge: enterpriseLayers.storePolicyKnowledge,
+                runtimeTools: enterpriseLayers.runtimeTools,
+                shopifyTruth: enterpriseLayers.shopifyTruth,
+                knowledgeRetrieval: enterpriseLayers.knowledgeRetrieval,
+                runtimeContext: enterpriseLayers.runtimeContext,
+            },
+            activeRestrictions: {
+                blockedTopics: agentRow.restrictedActions ?? null,
+                allowedTopics: agentRow.allowedActions ?? null,
+                forbiddenBehaviors: agent.agentConfig?.forbiddenBehaviors ??
+                    null,
+            },
             lastToolCalls,
             runtimeContextPreview,
+            credentialSources,
+            liveMonitor,
             toolCatalog: this.toolRegistry.getCatalog().map((t) => ({
                 name: t.name,
                 permissionGroups: t.permissionGroups,

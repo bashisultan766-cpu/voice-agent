@@ -20,8 +20,16 @@ const tool_orchestrator_service_1 = require("./runtime/tool-orchestrator.service
 const voice_runtime_context_service_1 = require("./runtime/voice-runtime-context.service");
 const runtime_safety_service_1 = require("./runtime/runtime-safety.service");
 const call_memory_service_1 = require("./runtime/call-memory.service");
+const conversation_flow_engine_service_1 = require("./runtime/conversation-flow-engine.service");
+const conversation_analytics_service_1 = require("./runtime/conversation-analytics.service");
+const policy_context_prefetch_service_1 = require("./runtime/policy-context-prefetch.service");
+const voice_stream_metrics_service_1 = require("./runtime/voice-stream-metrics.service");
+const voice_cost_analytics_service_1 = require("./runtime/voice-cost-analytics.service");
+const voice_streaming_session_service_1 = require("./runtime/voice-streaming-session.service");
+const voice_live_monitor_service_1 = require("./runtime/voice-live-monitor.service");
 const openai_module_1 = require("../integrations/openai/openai.module");
 const openai_voice_service_1 = require("../integrations/openai/openai-voice.service");
+const openai_streaming_voice_service_1 = require("../integrations/openai/openai-streaming-voice.service");
 const knowledge_module_1 = require("../knowledge/knowledge.module");
 const analytics_module_1 = require("../analytics/analytics.module");
 const agents_module_1 = require("../agents/agents.module");
@@ -57,7 +65,15 @@ exports.CallsModule = CallsModule = __decorate([
             voice_runtime_context_service_1.VoiceRuntimeContextService,
             runtime_safety_service_1.RuntimeSafetyService,
             call_memory_service_1.CallMemoryService,
+            conversation_flow_engine_service_1.ConversationFlowEngineService,
+            conversation_analytics_service_1.ConversationAnalyticsService,
+            policy_context_prefetch_service_1.PolicyContextPrefetchService,
+            voice_stream_metrics_service_1.VoiceStreamMetricsService,
+            voice_cost_analytics_service_1.VoiceCostAnalyticsService,
+            voice_streaming_session_service_1.VoiceStreamingSessionService,
+            voice_live_monitor_service_1.VoiceLiveMonitorService,
             openai_voice_service_1.OpenAIVoiceService,
+            openai_streaming_voice_service_1.OpenAIStreamingVoiceService,
             callback_requests_service_1.CallbackRequestsService,
         ],
         exports: [
@@ -67,6 +83,10 @@ exports.CallsModule = CallsModule = __decorate([
             callback_requests_service_1.CallbackRequestsService,
             transcript_buffer_service_1.TranscriptBufferService,
             tool_orchestrator_service_1.ToolOrchestratorService,
+            voice_stream_metrics_service_1.VoiceStreamMetricsService,
+            voice_cost_analytics_service_1.VoiceCostAnalyticsService,
+            voice_streaming_session_service_1.VoiceStreamingSessionService,
+            voice_live_monitor_service_1.VoiceLiveMonitorService,
         ],
     })
 ], CallsModule);

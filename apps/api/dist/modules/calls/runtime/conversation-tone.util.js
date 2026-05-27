@@ -55,6 +55,9 @@ function resolveToneLead(args) {
         }
         return pick([LEAD_ALRIGHT, LEAD_OKAY]);
     }
+    if (args.slot === 'objection') {
+        return pick([LEAD_SURE, LEAD_GOT_IT, LEAD_ALRIGHT]);
+    }
     return { lead: '', toneLeadUsed: null };
 }
 function computeAllowPaymentSuggestion(args) {

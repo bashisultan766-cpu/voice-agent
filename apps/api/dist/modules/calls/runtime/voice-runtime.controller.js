@@ -17,13 +17,15 @@ const common_1 = require("@nestjs/common");
 const throttler_1 = require("@nestjs/throttler");
 const client_1 = require("@prisma/client");
 const voice_runtime_service_1 = require("./voice-runtime.service");
+const voice_live_monitor_service_1 = require("./voice-live-monitor.service");
 const roles_decorator_1 = require("../../../common/decorators/roles.decorator");
 const zod_validation_pipe_1 = require("../../../common/pipes/zod-validation.pipe");
 const voice_runtime_schema_1 = require("./voice-runtime.schema");
 const ops_validation_1 = require("../../ops/ops-validation");
 let VoiceRuntimeController = class VoiceRuntimeController {
-    constructor(runtime) {
+    constructor(runtime, liveMonitor) {
         this.runtime = runtime;
+        this.liveMonitor = liveMonitor;
     }
     async getGreeting(query) {
         const text = await this.runtime.getGreeting(query.callSessionId);
@@ -33,6 +35,12 @@ let VoiceRuntimeController = class VoiceRuntimeController {
         const greeting = await this.runtime.getGreeting(callSessionId);
         const systemPrompt = await this.runtime.buildSystemPrompt(callSessionId);
         return { greeting, systemPrompt };
+    }
+    async getLiveMonitor(query) {
+        const snap = await this.liveMonitor.snapshot(query.callSessionId);
+        if (!snap)
+            return { ok: false, message: 'Call session not found' };
+        return { ok: true, ...snap };
     }
     async processTurn(body) {
         const { callSessionId, message, history = [] } = body;
@@ -58,6 +66,14 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], VoiceRuntimeController.prototype, "getContext", null);
 __decorate([
+    (0, throttler_1.Throttle)({ default: { limit: 120, ttl: 60_000 } }),
+    (0, common_1.Get)('live-monitor'),
+    __param(0, (0, common_1.Query)(new zod_validation_pipe_1.ZodValidationPipe(voice_runtime_schema_1.greetingQuerySchema))),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [void 0]),
+    __metadata("design:returntype", Promise)
+], VoiceRuntimeController.prototype, "getLiveMonitor", null);
+__decorate([
     (0, throttler_1.Throttle)({ default: { limit: Number(process.env.API_RATE_LIMIT_SENSITIVE_MAX) || 40, ttl: 60_000 } }),
     (0, common_1.Post)('turn'),
     __param(0, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(voice_runtime_schema_1.turnBodySchema))),
@@ -68,6 +84,7 @@ __decorate([
 exports.VoiceRuntimeController = VoiceRuntimeController = __decorate([
     (0, common_1.Controller)('calls/runtime'),
     (0, roles_decorator_1.Roles)(client_1.UserRole.MANAGER),
-    __metadata("design:paramtypes", [voice_runtime_service_1.VoiceRuntimeService])
+    __metadata("design:paramtypes", [voice_runtime_service_1.VoiceRuntimeService,
+        voice_live_monitor_service_1.VoiceLiveMonitorService])
 ], VoiceRuntimeController);
 //# sourceMappingURL=voice-runtime.controller.js.map

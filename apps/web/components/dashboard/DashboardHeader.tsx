@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { clearClientSession, getBearerInit } from '@/lib/auth/browser-session';
+import { clearClientSession, ensureClientSession, getBearerInit } from '@/lib/auth/browser-session';
 
 type Me = {
   user?: { email?: string; fullName?: string | null };
@@ -14,14 +14,16 @@ export function DashboardHeader() {
   const [me, setMe] = useState<Me | null>(null);
 
   useEffect(() => {
-    fetch('/api/auth/me', {
-      cache: 'no-store',
-      credentials: 'include',
-      headers: { ...getBearerInit() },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setMe(data))
-      .catch(() => setMe(null));
+    void ensureClientSession().then(() =>
+      fetch('/api/auth/me', {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: { ...getBearerInit() },
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => setMe(data))
+        .catch(() => setMe(null)),
+    );
   }, []);
 
   async function logout() {

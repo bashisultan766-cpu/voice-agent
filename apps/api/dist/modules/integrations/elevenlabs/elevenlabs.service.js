@@ -17,9 +17,9 @@ let ElevenLabsService = class ElevenLabsService {
         this.config = config;
     }
     async textToSpeech(text, voiceId, options) {
-        const key = options?.apiKey?.trim() || this.config.get('ELEVENLABS_API_KEY');
-        if (!key?.trim()) {
-            throw new common_1.BadRequestException('ELEVENLABS_API_KEY is not configured');
+        const key = options?.apiKey?.trim();
+        if (!key) {
+            throw new common_1.BadRequestException('ElevenLabs API key is not configured for this agent. Add it in the agent form and save.');
         }
         const trimmed = text.trim().slice(0, 2500);
         if (!trimmed)

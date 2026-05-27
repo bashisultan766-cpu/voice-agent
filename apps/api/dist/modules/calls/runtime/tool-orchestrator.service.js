@@ -40,6 +40,8 @@ const checkout_email_policy_util_1 = require("./checkout-email-policy.util");
 const language_intelligence_util_1 = require("./language-intelligence.util");
 const order_state_machine_util_1 = require("./order-state-machine.util");
 const shopify_errors_1 = require("../../integrations/shopify/shopify-errors");
+const product_recommendation_util_1 = require("./product-recommendation.util");
+const objection_patterns_util_1 = require("./objection-patterns.util");
 const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
 let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestratorService {
     constructor(prisma, toolRegistry, retrieval, retrievalOrchestrator, callMemory, callEvents, shopifyAgent, callbacks, booking, checkout, twilioSms, agentsService, productSearch, resendEmail, agentEmailConfig, transcriptBuffer) {
@@ -159,6 +161,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
             'store_category_question',
             'capability_question',
             'general_business_question',
+            'store_policy_question',
             'unclear',
             'unknown',
         ]);
@@ -482,7 +485,10 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 if (!query) {
                     return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need query before searching products.', retryable: true } };
                 }
-                const limit = 1;
+                const objection = (0, objection_patterns_util_1.classifyConversationalObjection)(query);
+                const limit = objection?.type === 'wants_recommendation' || /\b(recommend|suggest|bestseller|popular)\b/i.test(query)
+                    ? 5
+                    : 1;
                 const live = await this.shopifyAgent.searchProducts(ctx.tenantId, ctx.agentId, query, limit);
                 if (!live.ok) {
                     return {
@@ -548,9 +554,62 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                         meta: { source: 'shopify_live' },
                     };
                 }
-                const top = items[0];
+                const mem = await this.callMemory.load(callSessionId);
+                const interestSignals = [
+                    ...new Set([
+                        ...(mem.interestSignals ?? []),
+                        ...(0, product_recommendation_util_1.extractInterestSignalsFromText)(query),
+                    ]),
+                ];
+                const enrichedQuery = (0, product_recommendation_util_1.buildRecommendationQueryFromSignals)(query, interestSignals);
+                const genres = [
+                    ...(mem.preferredGenres ?? []),
+                    ...(0, product_recommendation_util_1.extractGenrePreferencesFromText)(enrichedQuery),
+                ];
+                const recommendable = items.map((p) => ({
+                    productId: p.productId,
+                    title: p.title,
+                    handle: p.handle ?? null,
+                    vendor: p.vendor ?? null,
+                    productType: p.productType ?? null,
+                    tags: Array.isArray(p.tags) ? p.tags.join(', ') : typeof p.tags === 'string' ? p.tags : null,
+                    relevanceScore: p.relevanceScore,
+                    variants: (p.variants ?? []).map((v) => ({
+                        variantId: v.id,
+                        price: v.price ?? null,
+                        inventoryQuantity: v.inventory_quantity ?? 0,
+                        availableForSale: (v.inventory_quantity ?? 0) > 0,
+                    })),
+                }));
+                const ranked = items.length > 1
+                    ? (0, product_recommendation_util_1.rankProductRecommendations)(recommendable, {
+                        preferredGenres: [...new Set(genres)],
+                        rejectedTitles: (mem.rejectedProducts ?? []).map((r) => r.title),
+                        mentionedTitles: (mem.discussedProducts ?? mem.mentionedProducts ?? []).map((m) => m.title),
+                        queryTokens: enrichedQuery.split(/\s+/).filter((t) => t.length > 1),
+                        interestSignals,
+                        priceSensitivity: mem.priceSensitivity ?? undefined,
+                    })
+                    : recommendable;
+                const topLive = items.find((i) => i.productId === ranked[0]?.productId) ?? items[0];
+                const top = topLive;
                 const v0 = top.variants[0];
                 const requiresClarification = topScore >= shopify_product_relevance_util_1.PRODUCT_SEARCH_CONFIRM_MIN_SCORE && topScore < shopify_product_relevance_util_1.PRODUCT_SEARCH_CONFIDENT_MIN_SCORE;
+                await this.callMemory.recordProduct(callSessionId, {
+                    productId: top.productId,
+                    title: top.title,
+                    variantId: v0?.id,
+                    price: v0?.price ?? undefined,
+                });
+                if (v0) {
+                    await this.callMemory.updateCart(callSessionId, {
+                        productId: top.productId,
+                        title: top.title,
+                        variantId: v0.id,
+                        quantity: 1,
+                        price: v0.price ?? undefined,
+                    });
+                }
                 const topMapped = {
                     id: top.productId,
                     title: top.title,
@@ -587,7 +646,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 const variantIdArg = this.getStringArg(input, 'variantId');
                 const titleArg = this.getStringArg(input, 'title');
                 let detailsMeta = 'product_cache';
-                let product = await this.productSearch.getDetails(ctx.tenantId, {
+                let product = await this.productSearch.getDetails(ctx.tenantId, ctx.agentId, {
                     productId: productIdArg,
                     variantId: variantIdArg,
                     title: titleArg,
@@ -653,7 +712,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 const shopDomain = ctx.agent.shopify?.shopDomain?.trim() ||
                     (0, types_2.normalizeShopifyDomain)(ctx.agent.shopify?.storeUrl ?? null);
                 let availabilityMeta = 'product_cache';
-                let product = await this.productSearch.getDetails(ctx.tenantId, { productId, variantId: variantId || undefined }, shopDomain);
+                let product = await this.productSearch.getDetails(ctx.tenantId, ctx.agentId, { productId, variantId: variantId || undefined }, shopDomain);
                 if (!product) {
                     const live = await this.shopifyAgent.getProductLive(ctx.tenantId, ctx.agentId, {
                         productId,
@@ -1530,7 +1589,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 const limit = Math.min(Number(input.limit) || 5, 10);
                 const shopDomain = ctx.agent.shopify?.shopDomain?.trim() ||
                     (0, types_2.normalizeShopifyDomain)(ctx.agent.shopify?.storeUrl ?? null);
-                const products = await this.productSearch.search(ctx.tenantId, query, limit, shopDomain);
+                const products = await this.productSearch.search(ctx.tenantId, ctx.agentId, query, limit, shopDomain);
                 const collections = new Map();
                 for (const p of products) {
                     const type = p.productType?.trim() || 'General';
@@ -1547,7 +1606,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
             case 'lookup_variant': {
                 const shopDomain = ctx.agent.shopify?.shopDomain?.trim() ||
                     (0, types_2.normalizeShopifyDomain)(ctx.agent.shopify?.storeUrl ?? null);
-                const details = await this.productSearch.getDetails(ctx.tenantId, {
+                const details = await this.productSearch.getDetails(ctx.tenantId, ctx.agentId, {
                     productId: this.getStringArg(input, 'productId') || undefined,
                     variantId: this.getStringArg(input, 'variantId') || undefined,
                     title: undefined,
@@ -1568,7 +1627,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
             case 'validate_price': {
                 const shopDomain = ctx.agent.shopify?.shopDomain?.trim() ||
                     (0, types_2.normalizeShopifyDomain)(ctx.agent.shopify?.storeUrl ?? null);
-                const details = await this.productSearch.getDetails(ctx.tenantId, {
+                const details = await this.productSearch.getDetails(ctx.tenantId, ctx.agentId, {
                     productId: this.getStringArg(input, 'productId') || undefined,
                     variantId: this.getStringArg(input, 'variantId') || undefined,
                 }, shopDomain);

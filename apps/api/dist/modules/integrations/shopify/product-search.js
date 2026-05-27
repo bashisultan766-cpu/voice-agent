@@ -19,7 +19,7 @@ let ShopifyProductSearchService = class ShopifyProductSearchService {
         this.isbnKeyPattern = /^isbn(?:[-_]?1[03])?$/i;
         this.isbnTextPattern = /\b(?:97[89][\s-]?)?\d(?:[\s-]?\d){8,16}\b/g;
     }
-    async search(tenantId, query, limit = 8, shopDomain) {
+    async search(tenantId, agentId, query, limit = 8, shopDomain) {
         const q = query.trim();
         if (!q)
             return [];
@@ -27,7 +27,7 @@ let ShopifyProductSearchService = class ShopifyProductSearchService {
         if (tokens.length === 0)
             return [];
         const domain = shopDomain?.trim().toLowerCase() || null;
-        const tenantScope = { tenantId };
+        const tenantScope = { tenantId, agentId };
         if (domain) {
             tenantScope.shopDomain = domain;
         }
@@ -54,14 +54,14 @@ let ShopifyProductSearchService = class ShopifyProductSearchService {
         });
         return results.map((product) => this.mapProduct(product));
     }
-    async fuzzySearch(tenantId, query, limit = 8, shopDomain) {
+    async fuzzySearch(tenantId, agentId, query, limit = 8, shopDomain) {
         const normalized = this.normalizeProductQuery(query);
         if (!normalized)
             return { confidence: 0, results: [], normalizedQuery: normalized };
         const tokens = [...new Set(normalized.split(/\s+/).filter(Boolean))];
         const expanded = [...new Set(tokens.flatMap((t) => [t, ...this.synonymsForToken(t)]))];
         const domain = shopDomain?.trim().toLowerCase() || null;
-        const tenantScope = { tenantId };
+        const tenantScope = { tenantId, agentId };
         if (domain)
             tenantScope.shopDomain = domain;
         const tokenClauses = expanded.map((token) => ({
@@ -99,10 +99,11 @@ let ShopifyProductSearchService = class ShopifyProductSearchService {
             results: top.map((s) => s.mapped),
         };
     }
-    async getDetails(tenantId, lookup, shopDomain) {
+    async getDetails(tenantId, agentId, lookup, shopDomain) {
         const domain = shopDomain?.trim().toLowerCase() || null;
         const baseWhere = {
             tenantId,
+            agentId,
             ...(domain ? { shopDomain: domain } : {}),
         };
         const orConditions = [];

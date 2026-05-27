@@ -30,6 +30,7 @@ import { RolesGuard } from './modules/auth/roles.guard';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: '.env',
       validate: (config: Record<string, unknown>) => {
         const parsed = parseEnv();
         if (!parsed.ok) {

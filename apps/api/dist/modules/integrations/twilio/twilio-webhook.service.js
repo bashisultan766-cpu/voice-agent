@@ -32,10 +32,18 @@ const prisma_service_1 = require("../../../database/prisma.service");
 const encryption_service_1 = require("../../../common/encryption.service");
 const voice_config_resolution_util_1 = require("../../calls/runtime/voice-config-resolution.util");
 const api_key_fingerprint_1 = require("../../../common/logging/api-key-fingerprint");
+const provider_env_slice_util_1 = require("../../../common/provider-env-slice.util");
 const voice_reply_tts_shorten_util_1 = require("./voice-reply-tts-shorten.util");
 const voice_prompt_audio_service_1 = require("./voice-prompt-audio.service");
 const user_intent_classifier_util_1 = require("../../calls/runtime/user-intent-classifier.util");
 const instant_acknowledgement_util_1 = require("./instant-acknowledgement.util");
+const media_stream_twiml_1 = require("./twiml/media-stream.twiml");
+const voice_stream_metrics_service_1 = require("../../calls/runtime/voice-stream-metrics.service");
+const voice_cost_analytics_service_1 = require("../../calls/runtime/voice-cost-analytics.service");
+const voice_streaming_session_service_1 = require("../../calls/runtime/voice-streaming-session.service");
+const elevenlabs_streaming_service_1 = require("../elevenlabs/elevenlabs-streaming.service");
+const voice_response_chunker_util_1 = require("../../calls/runtime/voice-response-chunker.util");
+const streaming_fallback_util_1 = require("../../calls/runtime/streaming-fallback.util");
 function maskPhoneForLog(value) {
     const digits = value.replace(/\D/g, '');
     if (digits.length < 4)
@@ -44,7 +52,7 @@ function maskPhoneForLog(value) {
 }
 const VOICE_DEFERRED_JOB_TIMEOUT_MS_MIN = 50_000;
 let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
-    constructor(config, agentResolution, callsService, callEvents, voiceRuntime, sessionContext, transcriptBuffer, elevenLabs, ttsCache, voicePromptAudio, prisma, encryption) {
+    constructor(config, agentResolution, callsService, callEvents, voiceRuntime, sessionContext, transcriptBuffer, elevenLabs, ttsCache, voicePromptAudio, prisma, encryption, streamMetrics, voiceCost, streamingSession, elevenStreaming) {
         this.config = config;
         this.agentResolution = agentResolution;
         this.callsService = callsService;
@@ -57,6 +65,10 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
         this.voicePromptAudio = voicePromptAudio;
         this.prisma = prisma;
         this.encryption = encryption;
+        this.streamMetrics = streamMetrics;
+        this.voiceCost = voiceCost;
+        this.streamingSession = streamingSession;
+        this.elevenStreaming = elevenStreaming;
         this.logger = new common_1.Logger(TwilioWebhookService_1.name);
     }
     onModuleInit() {
@@ -157,7 +169,20 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
         }));
         return { playbackUrl: r.playbackUrl, voiceProviderActuallyUsed: 'elevenlabs' };
     }
-    async auditOpenAiKeyForGather(tenantId, secretsEnc) {
+    async loadAgentWorkspaceFlags(agentId) {
+        if (!agentId) {
+            return { useWorkspaceOpenai: false, useWorkspaceElevenlabs: false };
+        }
+        const cfg = await this.prisma.agentConfig.findUnique({
+            where: { agentId },
+            select: { useWorkspaceOpenai: true, useWorkspaceElevenlabs: true },
+        });
+        return {
+            useWorkspaceOpenai: cfg?.useWorkspaceOpenai === true,
+            useWorkspaceElevenlabs: cfg?.useWorkspaceElevenlabs === true,
+        };
+    }
+    async auditOpenAiKeyForGather(tenantId, secretsEnc, agentId) {
         let agentOpenaiPlain = null;
         if (secretsEnc && this.encryption.isAvailable()) {
             const dec = this.encryption.decryptFromStorage(secretsEnc);
@@ -177,17 +202,21 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             })
             : null;
         const encAvail = this.encryption.isAvailable();
+        const workspaceFlags = await this.loadAgentWorkspaceFlags(agentId);
+        const envPlain = (0, provider_env_slice_util_1.gatedProcessEnv)('OPENAI_API_KEY', this.config);
         const openaiR = (0, voice_config_resolution_util_1.resolveOpenAiKeyChain)({
             agentSecretPlain: agentOpenaiPlain,
             tenantEnc: ti?.openaiApiKeyEnc ?? null,
             decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-            envPlain: this.config.get('OPENAI_API_KEY'),
+            envPlain,
             encryptionAvailable: encAvail,
+            useWorkspaceOpenai: workspaceFlags.useWorkspaceOpenai,
         });
         const layers = (0, voice_config_resolution_util_1.openAiKeyLayerPresence)({
             agentSecretPlain: agentOpenaiPlain,
             tenantEnc: ti?.openaiApiKeyEnc ?? null,
-            envPlain: this.config.get('OPENAI_API_KEY'),
+            envPlain,
+            useWorkspaceOpenai: workspaceFlags.useWorkspaceOpenai,
         });
         return {
             openaiKeySource: openaiR.source,
@@ -285,6 +314,20 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             configUpdatedAt: agentRow?.updatedAt?.toISOString() ?? null,
         }));
         const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+        if ((0, media_stream_twiml_1.isMediaStreamInboundEnabled)()) {
+            const wsBase = origin.replace(/^http/i, 'wss');
+            const streamUrl = `${wsBase}/api/twilio/voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
+            const twimlStream = (0, media_stream_twiml_1.buildMediaStreamConnectTwiML)(streamUrl, session.id);
+            await this.streamMetrics.merge(session.id, {
+                streamingMode: 'media_stream',
+                streamingStatus: 'listening',
+            });
+            this.logger.log(JSON.stringify({
+                event: 'twilio.voice.inbound_media_stream',
+                callSessionId: session.id,
+            }));
+            return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };
+        }
         const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(session.id)}`;
         const hearingDebug = this.isGatherHearingDebugMode();
         const hearingDebugEffective = this.resolveGatherHearingDebugEffective();
@@ -438,6 +481,17 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 agentResolved: false,
             };
         }
+        const unstablePartial = typeof payload.UnstableSpeechResult === 'string'
+            ? payload.UnstableSpeechResult.trim()
+            : '';
+        if (unstablePartial) {
+            await this.streamMetrics.recordPartialTranscript(callSessionId, unstablePartial);
+        }
+        await this.streamingSession.cancelDeferredJobForBargeIn(callSessionId);
+        await this.streamMetrics.merge(callSessionId, {
+            sttLatencyMs: Date.now() - handlerStartedAt,
+            streamingMode: 'gather_deferred',
+        });
         const ctx = await this.sessionContext.load(callSessionId);
         if (!ctx) {
             const twiml = (0, conversation_relay_twiml_1.buildFallbackTwiML)("I'm sorry, I couldn't load your call session. Please try again.");
@@ -460,14 +514,14 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             where: { id: ctx.agentId },
             select: { secretsEnc: true },
         });
-        const openAiKeyAudit = await this.auditOpenAiKeyForGather(ctx.tenantId, gatherSecretsRow?.secretsEnc);
+        const openAiKeyAudit = await this.auditOpenAiKeyForGather(ctx.tenantId, gatherSecretsRow?.secretsEnc, ctx.agentId);
         this.logger.log(JSON.stringify({
             event: 'twilio.voice.gather_openai_key_proof',
             callSessionId,
             callSid: payload.CallSid,
             ...openAiKeyAudit,
         }));
-        const { keySource: gatherElevenLabsKeySource } = await this.resolveElevenLabsApiKeyAndSource(ctx.tenantId, gatherSecretsRow?.secretsEnc);
+        const { keySource: gatherElevenLabsKeySource } = await this.resolveElevenLabsApiKeyAndSource(ctx.tenantId, gatherSecretsRow?.secretsEnc, ctx.agentId);
         const session = await this.callsService.findOneById(callSessionId);
         if (session.status !== client_1.CallStatus.IN_PROGRESS) {
             await this.voiceRuntime.onRuntimeConnected(callSessionId);
@@ -1210,9 +1264,27 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'session_context_missing');
             return;
         }
+        if (await this.streamingSession.isBargeInRequested(callSessionId)) {
+            await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'barge_in_interrupted');
+            return;
+        }
         try {
+            const llmStarted = Date.now();
             const utter = await this.voiceRuntime.processUtterance(callSessionId, speechText, []);
+            const llmLatencyMs = Date.now() - llmStarted;
             const assistantResponse = utter.reply;
+            const proof = utter.turnProof;
+            await this.streamMetrics.merge(callSessionId, {
+                llmLatencyMs,
+                streamingStatus: 'processing',
+                toolLatencyMs: typeof proof?.responseDelayMs === 'number' ? proof.responseDelayMs : llmLatencyMs,
+            });
+            if (typeof proof?.openaiUsed === 'boolean') {
+                await this.voiceCost.recordOpenAiUsage(callSessionId, {
+                    promptTokens: 800,
+                    completionTokens: Math.ceil(assistantResponse.length / 4),
+                });
+            }
             this.logger.log(JSON.stringify({
                 event: 'twilio.voice.llm_reply_generated',
                 eventJourney: 'voice.journey.twilio_llm_reply_ready',
@@ -1222,9 +1294,12 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 turnProof: utter.turnProof ?? null,
                 deferredJobId: jobId,
             }));
+            if (await this.streamingSession.isBargeInRequested(callSessionId)) {
+                await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'barge_in_interrupted');
+                return;
+            }
             const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
-            const ttsStart = Date.now();
-            const tts = await this.buildElevenLabsPlaybackUrl(origin, assistantResponse, {
+            const voiceOpts = {
                 callSessionId,
                 tenantId: ctx.tenantId,
                 phase: 'gather_reply',
@@ -1232,8 +1307,23 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
                 elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
                 voiceStyle: ctx.agent.voiceStyle ?? undefined,
-            });
+            };
+            const firstChunkText = (0, voice_response_chunker_util_1.firstSpeakableChunk)(assistantResponse);
+            const ttsStart = Date.now();
+            const [firstChunkTts, tts] = await Promise.all([
+                firstChunkText.length < assistantResponse.length
+                    ? this.buildElevenLabsPlaybackUrl(origin, firstChunkText, voiceOpts)
+                    : Promise.resolve({ playbackUrl: undefined }),
+                this.buildElevenLabsPlaybackUrl(origin, assistantResponse, voiceOpts),
+            ]);
             const ttsGenerationTimeMs = tts.tts_generation_time_ms ?? Date.now() - ttsStart;
+            await this.voiceCost.recordElevenLabsUsage(callSessionId, assistantResponse.length);
+            await this.streamMetrics.merge(callSessionId, {
+                ttsLatencyMs: ttsGenerationTimeMs,
+                chunksEmitted: Math.max(1, firstChunkText.length < assistantResponse.length ? 2 : 1),
+                streamingStatus: 'speaking',
+                agentSpeaking: true,
+            });
             const row = await this.callsService.findOneById(callSessionId);
             const meta = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
                 ? row.metadata
@@ -1255,11 +1345,14 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     momentPromptPlayed: cur.momentPromptPlayed,
                     assistantResponse,
                     playbackUrl: tts.playbackUrl,
+                    firstChunkPlaybackUrl: 'playbackUrl' in firstChunkTts ? firstChunkTts.playbackUrl : undefined,
                     usedElevenLabs: Boolean(tts.playbackUrl),
                     audioBytes: tts.audioBytes,
                     ttsGenerationTimeMs,
+                    streamingEnabled: true,
                 },
             });
+            await this.streamingSession.clearBargeIn(callSessionId);
             const responseDelayMs = Date.now() - cur.startedAtMs;
             const fillerUsedLog = meta.fillerUsed === true;
             this.logger.log(JSON.stringify({
@@ -1282,6 +1375,10 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 message,
                 deferred: true,
             }));
+            const stall = (0, streaming_fallback_util_1.stallAcknowledgement)(message.includes('timeout') ? 'processing_timeout' : 'openai_slow');
+            await this.callsService.mergeSessionMetadata(callSessionId, {
+                lastStallPhrase: stall,
+            });
             await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, message);
         }
     }
@@ -1306,7 +1403,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             });
         });
     }
-    async resolveElevenLabsApiKeyAndSource(tenantId, secretsEnc) {
+    async resolveElevenLabsApiKeyAndSource(tenantId, secretsEnc, agentId) {
         let agentPlain = null;
         if (secretsEnc && this.encryption.isAvailable()) {
             const dec = this.encryption.decryptFromStorage(secretsEnc);
@@ -1325,12 +1422,14 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 select: { elevenlabsApiKeyEnc: true },
             })
             : null;
+        const workspaceFlags = await this.loadAgentWorkspaceFlags(agentId);
         const r = (0, voice_config_resolution_util_1.resolveElevenLabsKeyChain)({
             agentSecretPlain: agentPlain,
             tenantEnc: ti?.elevenlabsApiKeyEnc ?? null,
             decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-            envPlain: this.config.get('ELEVENLABS_API_KEY'),
+            envPlain: (0, provider_env_slice_util_1.gatedProcessEnv)('ELEVENLABS_API_KEY', this.config),
             encryptionAvailable: this.encryption.isAvailable(),
+            useWorkspaceElevenlabs: workspaceFlags.useWorkspaceElevenlabs,
         });
         return { apiKey: r.value ?? undefined, keySource: r.source };
     }
@@ -1346,7 +1445,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 voiceProfile: { select: { providerConfig: true } },
             },
         });
-        const { apiKey: elevenlabsApiKey, keySource } = await this.resolveElevenLabsApiKeyAndSource(context.tenantId, row?.secretsEnc);
+        const { apiKey: elevenlabsApiKey, keySource } = await this.resolveElevenLabsApiKeyAndSource(context.tenantId, row?.secretsEnc, context.agentId);
         if (this.encryption.isAvailable()) {
             const ti = await this.prisma.tenantIntegration.findUnique({
                 where: { tenantId: context.tenantId },
@@ -1454,6 +1553,10 @@ exports.TwilioWebhookService = TwilioWebhookService = TwilioWebhookService_1 = _
         twilio_tts_cache_service_1.TwilioTtsCacheService,
         voice_prompt_audio_service_1.VoicePromptAudioService,
         prisma_service_1.PrismaService,
-        encryption_service_1.EncryptionService])
+        encryption_service_1.EncryptionService,
+        voice_stream_metrics_service_1.VoiceStreamMetricsService,
+        voice_cost_analytics_service_1.VoiceCostAnalyticsService,
+        voice_streaming_session_service_1.VoiceStreamingSessionService,
+        elevenlabs_streaming_service_1.ElevenLabsStreamingService])
 ], TwilioWebhookService);
 //# sourceMappingURL=twilio-webhook.service.js.map

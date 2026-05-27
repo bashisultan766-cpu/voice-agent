@@ -56,9 +56,10 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
         this.logger = new common_1.Logger(ResendEmailService_1.name);
     }
     apiKey(override) {
-        const key = override?.trim() || this.config.get('RESEND_API_KEY')?.trim();
-        if (!key)
-            throw new Error('Resend API key is not configured for this agent or workspace.');
+        const key = override?.trim();
+        if (!key) {
+            throw new Error('Resend API key is not configured for this agent. Add resendApiKey in the agent form (or enable workspace email with a saved workspace key).');
+        }
         return key;
     }
     async sendPaymentEmail(input) {

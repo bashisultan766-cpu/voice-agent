@@ -47,7 +47,7 @@ let ShopifyCheckoutService = class ShopifyCheckoutService {
         }
         const lines = [];
         for (const row of rawRows) {
-            lines.push(await this.resolveLineFromCache(tenantId, domain, row.variantKey || row.sku || row.title, row.quantity));
+            lines.push(await this.resolveLineFromCache(tenantId, agentId, domain, row.variantKey || row.sku || row.title, row.quantity));
         }
         const aggregated = new Map();
         for (const line of lines) {
@@ -150,13 +150,14 @@ let ShopifyCheckoutService = class ShopifyCheckoutService {
             orderBy: { createdAt: 'desc' },
         });
     }
-    async resolveLineFromCache(tenantId, shopDomain, rawKey, quantity) {
+    async resolveLineFromCache(tenantId, agentId, shopDomain, rawKey, quantity) {
+        const productScope = { shopDomain, agentId };
         const variantKeys = (0, shopify_ids_1.variantIdLookupKeys)(rawKey);
         let v = await this.prisma.variantCache.findFirst({
             where: {
                 tenantId,
                 shopifyVariantId: { in: variantKeys },
-                product: { shopDomain },
+                product: productScope,
             },
             include: { product: { select: { title: true, shopifyProductId: true } } },
         });
@@ -167,7 +168,7 @@ let ShopifyCheckoutService = class ShopifyCheckoutService {
                     where: {
                         tenantId,
                         sku: { equals: skuKey, mode: 'insensitive' },
-                        product: { shopDomain },
+                        product: productScope,
                     },
                     include: { product: { select: { title: true, shopifyProductId: true } } },
                     orderBy: { updatedAt: 'desc' },
@@ -181,7 +182,7 @@ let ShopifyCheckoutService = class ShopifyCheckoutService {
                     where: {
                         tenantId,
                         title: { contains: titleKey, mode: 'insensitive' },
-                        product: { shopDomain },
+                        product: productScope,
                     },
                     include: { product: { select: { title: true, shopifyProductId: true } } },
                     orderBy: { updatedAt: 'desc' },
@@ -194,7 +195,7 @@ let ShopifyCheckoutService = class ShopifyCheckoutService {
                 where: {
                     tenantId,
                     product: {
-                        shopDomain,
+                        ...productScope,
                         shopifyProductId: { in: productKeys },
                     },
                 },

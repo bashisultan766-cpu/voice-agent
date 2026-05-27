@@ -25,7 +25,7 @@ export declare class ShopifyProductSearchService {
     constructor(prisma: PrismaService);
     private readonly isbnKeyPattern;
     private readonly isbnTextPattern;
-    search(tenantId: string, query: string, limit?: number, shopDomain?: string | null): Promise<{
+    search(tenantId: string, agentId: string, query: string, limit?: number, shopDomain?: string | null): Promise<{
         productId: string;
         title: string;
         handle: string | null;
@@ -46,12 +46,12 @@ export declare class ShopifyProductSearchService {
         }[];
         syncedAt: Date;
     }[]>;
-    fuzzySearch(tenantId: string, query: string, limit?: number, shopDomain?: string | null): Promise<{
+    fuzzySearch(tenantId: string, agentId: string, query: string, limit?: number, shopDomain?: string | null): Promise<{
         confidence: number;
         results: ProductCandidate[];
         normalizedQuery: string;
     }>;
-    getDetails(tenantId: string, lookup: {
+    getDetails(tenantId: string, agentId: string, lookup: {
         productId?: string;
         variantId?: string;
         title?: string;

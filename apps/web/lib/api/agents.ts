@@ -220,7 +220,7 @@ export async function getAgent(id: string): Promise<AgentApi | null> {
   if (res.status === 404) return null;
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(res.status === 400 ? text || 'Bad request' : `Failed to load agent: ${res.status}`);
+    throw new Error(parseApiErrorMessage(text, res.status));
   }
   return res.json() as Promise<AgentApi>;
 }

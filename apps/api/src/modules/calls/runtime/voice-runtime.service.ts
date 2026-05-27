@@ -36,6 +36,7 @@ import type { ToolResult } from './tool-orchestrator.service';
 import { buildProfessionalResponse } from './professional-voice-response.util';
 import type { OrderTurnIntent } from './order-intent-classifier.util';
 import type { VoiceTurnToolTrace } from './voice-turn-tool-trace.util';
+import type { CallConversationMemory } from '@bookstore-voice-agents/types';
 import { decideResponseMode } from './response-mode.util';
 import { buildContextAwareReply } from './context-aware-reply.util';
 import {
@@ -348,6 +349,7 @@ export class VoiceRuntimeService {
     lastToneLeadUsed: string | null;
     allowPaymentSuggestion: boolean;
     followUpOfferedProductKey: string | null;
+    conversationMemory?: CallConversationMemory;
   }): {
     reply: string;
     responseMode: 'template' | 'openai';

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import type { AgentApi } from '@/lib/api/agents';
 import { getAgent } from '@/lib/api/agents';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
+import { ensureClientSession } from '@/lib/auth/browser-session';
 
 type AgentPageLoaderProps = {
   agentId: string;
@@ -24,7 +25,8 @@ export function AgentPageLoader({ agentId, initialAgent, children }: AgentPageLo
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void getAgent(agentId)
+    void ensureClientSession()
+      .then(() => getAgent(agentId))
       .then((row) => {
         if (cancelled) return;
         if (!row) {

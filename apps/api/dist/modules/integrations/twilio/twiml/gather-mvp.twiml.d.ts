@@ -33,3 +33,5 @@ export declare function buildVoiceTerminalTwiml(options: {
     sayText?: string;
     language?: string;
 }): string;
+export declare function escapeXml(text: string): string;
+export declare function escapeXmlAttribute(value: string): string;

@@ -4,6 +4,7 @@ import { TwilioSignatureService } from './twilio-signature.service';
 import { TwilioWebhookService } from './twilio-webhook.service';
 import { TwilioStatusCallbackService } from './twilio-status-callback.service';
 import { ConfigService } from '@nestjs/config';
+import { AgentsService } from '../../agents/agents.service';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
 export declare class TwilioVoiceController {
     private readonly signature;
@@ -11,7 +12,8 @@ export declare class TwilioVoiceController {
     private readonly config;
     private readonly ttsCache;
     private readonly voiceWebhooks;
-    constructor(signature: TwilioSignatureService, statusCallback: TwilioStatusCallbackService, config: ConfigService, ttsCache: TwilioTtsCacheService, voiceWebhooks: TwilioWebhookService);
+    private readonly agents;
+    constructor(signature: TwilioSignatureService, statusCallback: TwilioStatusCallbackService, config: ConfigService, ttsCache: TwilioTtsCacheService, voiceWebhooks: TwilioWebhookService, agents: AgentsService);
     private readonly logger;
     configCheck(): {
         status: string;
@@ -30,6 +32,7 @@ export declare class TwilioVoiceController {
             elevenLabsApiKeySet: boolean;
         };
         missing: string[];
+        credentialMode: string;
         notes: string[];
         recommendedTwilioConfig: {
             incomingCallWebhook: string;
@@ -40,7 +43,7 @@ export declare class TwilioVoiceController {
             httpMethod: string;
         };
     };
-    liveCallReady(): {
+    liveCallReady(tenantId: string, agentId?: string): Promise<{
         status: string;
         ready: boolean;
         twilio: {
@@ -60,6 +63,7 @@ export declare class TwilioVoiceController {
                 elevenLabsApiKeySet: boolean;
             };
             missing: string[];
+            credentialMode: string;
             notes: string[];
             recommendedTwilioConfig: {
                 incomingCallWebhook: string;
@@ -74,6 +78,8 @@ export declare class TwilioVoiceController {
             ok: boolean;
             missing: string[];
         };
+        agentId: string | null;
+        agentCredentialSources: import("../../../common/credential-resolver.util").CredentialSourcesSummary | null;
         runtime: {
             inboundVoiceWebhookOwner: string;
             inboundCallMode: string;
@@ -85,8 +91,10 @@ export declare class TwilioVoiceController {
             elevenLabsKeySet: boolean;
             encryptionKeySet: boolean;
             jwtSecretSet: boolean;
+            agentIdProvided: boolean;
         };
-    };
+        notes: string[];
+    }>;
     ttsAudio(token: string, res: Response): void;
     inbound(req: RawBodyRequest<Request>, res: Response, body: Record<string, string>, signature: string): Promise<void>;
     inboundLegacy(req: RawBodyRequest<Request>, res: Response, body: Record<string, string>, signature: string): Promise<void>;

@@ -2,27 +2,35 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { getBearerInit, readStoredAccessToken } from '@/lib/auth/browser-session';
+import {
+  ensureClientSession,
+  getBearerInit,
+  readStoredAccessToken,
+} from '@/lib/auth/browser-session';
 
 /**
- * Keeps httpOnly va_access_token aligned with localStorage for SSR (getAgentServer, etc.).
+ * Keeps httpOnly va_access_token and localStorage in sync for SSR + direct Nest /api calls.
  */
 export function SessionCookieSync() {
   const router = useRouter();
   const synced = useRef(false);
 
   useEffect(() => {
-    const token = readStoredAccessToken();
-    if (!token || synced.current) return;
+    if (synced.current) return;
     synced.current = true;
 
-    void fetch('/api/auth/session-sync', {
-      method: 'POST',
-      credentials: 'include',
-      headers: getBearerInit(),
-    })
+    const token = readStoredAccessToken();
+    const work = token
+      ? fetch('/api/auth/session-sync', {
+          method: 'POST',
+          credentials: 'include',
+          headers: getBearerInit(),
+        })
+      : ensureClientSession().then((ok) => (ok ? Promise.resolve(new Response(null, { status: 200 })) : null));
+
+    void work
       .then((res) => {
-        if (res.ok) router.refresh();
+        if (res?.ok) router.refresh();
       })
       .catch(() => {
         synced.current = false;

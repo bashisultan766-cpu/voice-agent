@@ -5,6 +5,9 @@ exports.parseEnv = parseEnv;
 exports.validateProductionEnv = validateProductionEnv;
 exports.assertProductionEnvOrExit = assertProductionEnvOrExit;
 const zod_1 = require("zod");
+function optionalNonEmptyString(minLen) {
+    return zod_1.z.preprocess((val) => (typeof val === 'string' && val.trim() === '' ? undefined : val), zod_1.z.string().min(minLen).optional());
+}
 exports.envSchema = zod_1.z.object({
     NODE_ENV: zod_1.z.enum(['development', 'test', 'production']).default('development'),
     DATABASE_URL: zod_1.z.string().min(1),
@@ -15,15 +18,15 @@ exports.envSchema = zod_1.z.object({
     CORS_ORIGIN: zod_1.z.string().optional(),
     PUBLIC_WEBHOOK_BASE_URL: zod_1.z.string().url().optional().or(zod_1.z.literal('')),
     VALIDATE_TWILIO_SIGNATURES: zod_1.z.enum(['true', 'false']).default('true'),
-    TWILIO_AUTH_TOKEN: zod_1.z.string().min(8).optional(),
-    TWILIO_PROXY_SHARED_SECRET: zod_1.z.string().min(12).optional(),
+    TWILIO_AUTH_TOKEN: optionalNonEmptyString(8),
+    TWILIO_PROXY_SHARED_SECRET: optionalNonEmptyString(12),
     API_RATE_LIMIT_WINDOW_MS: zod_1.z.coerce.number().int().positive().default(60000),
     API_RATE_LIMIT_MAX_REQUESTS: zod_1.z.coerce.number().int().positive().default(120),
     API_RATE_LIMIT_SENSITIVE_MAX: zod_1.z.coerce.number().int().positive().default(40),
     LIVE_CALL_TEST_MODE: zod_1.z.enum(['true', 'false']).default('false'),
     TRUST_PROXY: zod_1.z.enum(['true', 'false']).default('false'),
-    OPENAI_API_KEY: zod_1.z.string().min(8).optional(),
-    RESEND_API_KEY: zod_1.z.string().min(8).optional(),
+    OPENAI_API_KEY: optionalNonEmptyString(8),
+    RESEND_API_KEY: optionalNonEmptyString(8),
     RESEND_FROM_EMAIL: zod_1.z.string().email().optional().or(zod_1.z.literal('')),
     ALLOW_HEADER_TENANT_FALLBACK: zod_1.z.enum(['true', 'false']).optional(),
     ENABLE_DEV_OPS_ENDPOINTS: zod_1.z.enum(['true', 'false']).optional(),
@@ -53,8 +56,10 @@ function validateProductionEnv() {
         if (!process.env.PUBLIC_WEBHOOK_BASE_URL?.trim()) {
             missing.push('PUBLIC_WEBHOOK_BASE_URL');
         }
-        if (process.env.VALIDATE_TWILIO_SIGNATURES !== 'false' && !process.env.TWILIO_AUTH_TOKEN?.trim()) {
-            missing.push('TWILIO_AUTH_TOKEN');
+        if (process.env.VALIDATE_TWILIO_SIGNATURES !== 'false' &&
+            process.env.ALLOW_PROVIDER_ENV_FALLBACK === 'true' &&
+            !process.env.TWILIO_AUTH_TOKEN?.trim()) {
+            missing.push('TWILIO_AUTH_TOKEN (required only when ALLOW_PROVIDER_ENV_FALLBACK=true)');
         }
         if (process.env.ALLOW_HEADER_TENANT_FALLBACK !== undefined && process.env.ALLOW_HEADER_TENANT_FALLBACK !== 'false') {
             missing.push('ALLOW_HEADER_TENANT_FALLBACK (must be exactly "false" or unset in production)');

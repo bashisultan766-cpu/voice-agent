@@ -38,9 +38,16 @@ function applyTurnToOrderState(currentRaw, intent, cls) {
             return { nextState: 'PRODUCT_DISCOVERY', recoveryPrompt: { key: 'UNCLEAR_PRODUCT' } };
         }
         case 'EMAIL_COLLECTION': {
+            if (intent === 'quantity_provided') {
+                return { nextState: 'EMAIL_COLLECTION', recoveryPrompt: { key: 'CONFIRM_QUANTITY' } };
+            }
             if (intent === 'email_provided')
                 return { nextState: 'EMAIL_COLLECTION' };
             if (intent === 'general_question') {
+                const wantsResend = /\b(resend|send again|didn't get|did not receive)\b/i.test(t);
+                if (wantsResend) {
+                    return { nextState: 'EMAIL_COLLECTION', recoveryPrompt: { key: 'RESEND_PAYMENT_LINK' } };
+                }
                 const looksLikeQuestion = t.includes('?') || t.startsWith('what ') || t.startsWith('how ') || t.startsWith('when ');
                 if (looksLikeQuestion)
                     return { nextState: 'EMAIL_COLLECTION' };
@@ -69,6 +76,10 @@ function recoveryPromptText(languageCode, key) {
             return L('No problem. If you want a book, tell me the title first.', 'Nessun problema. Se vuoi un libro, dimmi il titolo o l’ISBN.', 'Хорошо. Если нужна книга, назовите название или ISBN.');
         case 'NEED_PRODUCT_FIRST':
             return L('Sure. Tell me the book title first.', 'Quale libro cerchi—titolo o ISBN?', 'Какую книгу ищем—название или ISBN?');
+        case 'CONFIRM_QUANTITY':
+            return L('Got it. How many copies should I put on the checkout link?', 'Perfetto. Quante copie vuoi?', 'Сколько экземпляров добавить в заказ?');
+        case 'RESEND_PAYMENT_LINK':
+            return L('I can resend the checkout link—what email should I use?', 'Posso reinviare il link—quale email uso?', 'Могу отправить ссылку снова — какой email?');
         default:
             return L('Could you repeat that?', 'Puoi ripetere?', 'Повторите, пожалуйста.');
     }

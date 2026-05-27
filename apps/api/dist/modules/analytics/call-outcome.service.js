@@ -32,6 +32,7 @@ let CallOutcomeService = class CallOutcomeService {
         const metadata = session.metadata ?? {};
         const callbackRequested = Boolean(metadata.callbackRequested);
         const mem = (metadata.conversationMemory ?? {});
+        const analytics = (metadata.runtimeAnalytics ?? {});
         const productsRequested = Array.isArray(mem.mentionedProducts)
             ? mem.mentionedProducts
                 .map((p) => p.title)
@@ -88,6 +89,8 @@ let CallOutcomeService = class CallOutcomeService {
                 analyticsMeta: {
                     toolNames: session.toolExecutions.map((t) => t.toolName),
                     durationSeconds: session.durationSeconds,
+                    runtimeAnalytics: analytics,
+                    conversationStage: (mem.conversationStage ?? metadata.conversationStage),
                 },
             },
             update: {
@@ -106,6 +109,8 @@ let CallOutcomeService = class CallOutcomeService {
                 analyticsMeta: {
                     toolNames: session.toolExecutions.map((t) => t.toolName),
                     durationSeconds: session.durationSeconds,
+                    runtimeAnalytics: analytics,
+                    conversationStage: (mem.conversationStage ?? metadata.conversationStage),
                 },
             },
         });

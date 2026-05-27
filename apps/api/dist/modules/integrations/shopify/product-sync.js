@@ -139,9 +139,12 @@ let ShopifyProductSyncService = ShopifyProductSyncService_1 = class ShopifyProdu
                 const variants = await this.fetchAllVariantNodes(domain, token, variantPageQuery, productId);
                 try {
                     const cached = await this.prisma.productCache.upsert({
-                        where: { tenantId_shopifyProductId: { tenantId, shopifyProductId: productId } },
+                        where: {
+                            tenantId_agentId_shopifyProductId: { tenantId, agentId, shopifyProductId: productId },
+                        },
                         create: {
                             tenantId,
+                            agentId,
                             shopDomain: domain,
                             shopifyProductId: productId,
                             handle: String(product.handle ?? ''),

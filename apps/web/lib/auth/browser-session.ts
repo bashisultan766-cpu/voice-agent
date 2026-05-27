@@ -42,3 +42,35 @@ export function clearClientSession(): void {
   }
   document.cookie = `${AUTH_HINT_COOKIE}=; Path=/; Max-Age=0`;
 }
+
+let bootstrapPromise: Promise<boolean> | null = null;
+
+/**
+ * Ensures localStorage has the JWT (from httpOnly cookie via Next `/session/bootstrap`).
+ * Required in production when nginx sends `/api/*` to Nest, which only accepts Bearer auth.
+ */
+export async function ensureClientSession(options?: { force?: boolean }): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if (!options?.force && readStoredAccessToken()) return true;
+
+  if (!bootstrapPromise) {
+    bootstrapPromise = (async () => {
+      try {
+        const res = await fetch('/session/bootstrap', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!res.ok) return false;
+        const data = (await res.json()) as { accessToken?: string };
+        if (!data.accessToken?.trim()) return false;
+        persistClientSession(data.accessToken.trim());
+        return true;
+      } catch {
+        return false;
+      } finally {
+        bootstrapPromise = null;
+      }
+    })();
+  }
+  return bootstrapPromise;
+}

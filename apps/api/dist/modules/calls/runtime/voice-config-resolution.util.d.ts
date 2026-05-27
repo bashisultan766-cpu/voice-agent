@@ -7,13 +7,15 @@ export declare function resolveOpenAiKeyChain(args: {
     agentSecretPlain: string | null | undefined;
     tenantEnc: string | null | undefined;
     decryptFromStorage: (enc: string) => string | null;
-    envPlain: string | null | undefined;
+    envPlain?: string | null | undefined;
     encryptionAvailable: boolean;
+    useWorkspaceOpenai?: boolean;
 }): ResolvedSecret;
 export declare function openAiKeyLayerPresence(args: {
     agentSecretPlain: string | null | undefined;
     tenantEnc: string | null | undefined;
-    envPlain: string | null | undefined;
+    envPlain?: string | null | undefined;
+    useWorkspaceOpenai?: boolean;
 }): {
     agentKeyPresent: boolean;
     tenantKeyPresent: boolean;
@@ -23,6 +25,7 @@ export declare function resolveElevenLabsKeyChain(args: {
     agentSecretPlain: string | null | undefined;
     tenantEnc: string | null | undefined;
     decryptFromStorage: (enc: string) => string | null;
-    envPlain: string | null | undefined;
+    envPlain?: string | null | undefined;
     encryptionAvailable: boolean;
+    useWorkspaceElevenlabs?: boolean;
 }): ResolvedSecret;

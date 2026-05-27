@@ -2,6 +2,7 @@ export declare class TestShopifyCredentialsDto {
     useWorkspaceDefaults?: boolean;
     shopifyStoreUrl?: string;
     shopifyAdminToken?: string;
+    shopifyApiVersion?: string;
 }
 export declare class TestDatabaseCredentialsDto {
     useWorkspaceDefaults?: boolean;

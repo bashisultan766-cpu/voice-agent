@@ -7,6 +7,10 @@ import { CallOutcomeService } from '../../analytics/call-outcome.service';
 import { TranscriptBufferService } from './transcript-buffer.service';
 import { ToolOrchestratorService } from './tool-orchestrator.service';
 import { RuntimeSafetyService } from './runtime-safety.service';
+import { ConversationFlowEngineService } from './conversation-flow-engine.service';
+import { ConversationAnalyticsService } from './conversation-analytics.service';
+import { CallMemoryService } from './call-memory.service';
+import { PolicyContextPrefetchService } from './policy-context-prefetch.service';
 export declare class VoiceRuntimeService {
     private readonly sessionContext;
     private readonly callsService;
@@ -17,11 +21,16 @@ export declare class VoiceRuntimeService {
     private readonly transcriptBuffer;
     private readonly promptBuilder;
     private readonly runtimeSafety;
+    private readonly conversationFlow;
+    private readonly conversationAnalytics;
+    private readonly callMemory;
+    private readonly policyPrefetch;
     private readonly logger;
-    constructor(sessionContext: SessionContextService, callsService: CallsService, openaiVoice: OpenAIVoiceService, tools: ToolOrchestratorService, callEvents: CallEventsService, callOutcome: CallOutcomeService, transcriptBuffer: TranscriptBufferService, promptBuilder: OpenAIPromptBuilderService, runtimeSafety: RuntimeSafetyService);
+    constructor(sessionContext: SessionContextService, callsService: CallsService, openaiVoice: OpenAIVoiceService, tools: ToolOrchestratorService, callEvents: CallEventsService, callOutcome: CallOutcomeService, transcriptBuffer: TranscriptBufferService, promptBuilder: OpenAIPromptBuilderService, runtimeSafety: RuntimeSafetyService, conversationFlow: ConversationFlowEngineService, conversationAnalytics: ConversationAnalyticsService, callMemory: CallMemoryService, policyPrefetch: PolicyContextPrefetchService);
     private deterministicFallbackEnabled;
     private professionalReplyFromSearchTool;
     private appendConversationalMomentum;
+    private buildFastVoiceReply;
     private normalizeForRepeatCheck;
     private hasSpecificProductSignalForSearch;
     private evaluateSearchToolPolicy;

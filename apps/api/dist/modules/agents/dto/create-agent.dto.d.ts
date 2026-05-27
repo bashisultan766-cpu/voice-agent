@@ -80,6 +80,11 @@ export declare class CreateAgentDto {
     paymentLinkEmailIntro?: string;
     emailTestRecipient?: string;
     useWorkspaceEmail?: boolean;
+    useWorkspaceOpenai?: boolean;
+    useWorkspaceElevenlabs?: boolean;
+    useWorkspaceTwilio?: boolean;
+    useWorkspaceShopify?: boolean;
+    shopifyApiVersion?: string;
     resendApiKey?: string;
     toolPermissions?: Record<string, boolean>;
     enabledTools?: string[];

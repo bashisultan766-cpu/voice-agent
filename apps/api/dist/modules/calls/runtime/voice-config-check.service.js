@@ -17,6 +17,7 @@ const encryption_service_1 = require("../../../common/encryption.service");
 const public_webhook_base_url_1 = require("../../../common/public-webhook-base-url");
 const normalize_phone_1 = require("../../integrations/twilio/utils/normalize-phone");
 const voice_config_resolution_util_1 = require("./voice-config-resolution.util");
+const provider_env_slice_util_1 = require("../../../common/provider-env-slice.util");
 let VoiceConfigCheckService = class VoiceConfigCheckService {
     constructor(prisma, encryption, config) {
         this.prisma = prisma;
@@ -33,10 +34,15 @@ let VoiceConfigCheckService = class VoiceConfigCheckService {
                 voiceId: true,
                 twilioPhoneNumber: true,
                 secretsEnc: true,
+                agentConfig: {
+                    select: { useWorkspaceOpenai: true, useWorkspaceElevenlabs: true },
+                },
             },
         });
         if (!agent)
             throw new common_1.NotFoundException('Agent not found.');
+        const useWorkspaceOpenai = agent.agentConfig?.useWorkspaceOpenai === true;
+        const useWorkspaceElevenlabs = agent.agentConfig?.useWorkspaceElevenlabs === true;
         const warnings = [];
         let agentOpenaiPlain = null;
         let agentElevenPlain = null;
@@ -63,17 +69,20 @@ let VoiceConfigCheckService = class VoiceConfigCheckService {
         if (!encAvail) {
             warnings.push('encryption_not_configured_tenant_keys_unreadable');
         }
+        const openaiEnvPlain = (0, provider_env_slice_util_1.gatedProcessEnv)('OPENAI_API_KEY', this.config);
         const openaiR = (0, voice_config_resolution_util_1.resolveOpenAiKeyChain)({
             agentSecretPlain: agentOpenaiPlain,
             tenantEnc: ti?.openaiApiKeyEnc ?? null,
             decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-            envPlain: this.config.get('OPENAI_API_KEY') ?? process.env.OPENAI_API_KEY,
+            envPlain: openaiEnvPlain,
             encryptionAvailable: encAvail,
+            useWorkspaceOpenai,
         });
         const openaiLayers = (0, voice_config_resolution_util_1.openAiKeyLayerPresence)({
             agentSecretPlain: agentOpenaiPlain,
             tenantEnc: ti?.openaiApiKeyEnc ?? null,
-            envPlain: this.config.get('OPENAI_API_KEY') ?? process.env.OPENAI_API_KEY,
+            envPlain: openaiEnvPlain,
+            useWorkspaceOpenai,
         });
         const agentOpenaiKeyStored = openaiLayers.agentKeyPresent;
         const tenantOpenaiKeyStored = openaiLayers.tenantKeyPresent;
@@ -83,8 +92,9 @@ let VoiceConfigCheckService = class VoiceConfigCheckService {
             agentSecretPlain: agentElevenPlain,
             tenantEnc: ti?.elevenlabsApiKeyEnc ?? null,
             decryptFromStorage: (s) => this.encryption.decryptFromStorage(s),
-            envPlain: this.config.get('ELEVENLABS_API_KEY') ?? process.env.ELEVENLABS_API_KEY,
+            envPlain: (0, provider_env_slice_util_1.gatedProcessEnv)('ELEVENLABS_API_KEY', this.config),
             encryptionAvailable: encAvail,
+            useWorkspaceElevenlabs,
         });
         if (agentOverridesWorkspaceOpenai) {
             warnings.push('agent_openai_key_overrides_workspace_openai_key');

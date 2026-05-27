@@ -26,6 +26,9 @@ const public_decorator_1 = require("../../../common/decorators/public.decorator"
 const roles_decorator_1 = require("../../../common/decorators/roles.decorator");
 const safe_log_1 = require("../../../common/logging/safe-log");
 const env_validation_1 = require("../../../common/env-validation");
+const provider_env_fallback_util_1 = require("../../../common/provider-env-fallback.util");
+const tenant_id_decorator_1 = require("../../../common/decorators/tenant-id.decorator");
+const agents_service_1 = require("../../agents/agents.service");
 const twilio_tts_cache_service_1 = require("./twilio-tts-cache.service");
 const public_webhook_base_url_1 = require("../../../common/public-webhook-base-url");
 const conversation_relay_twiml_1 = require("./twiml/conversation-relay.twiml");
@@ -50,20 +53,22 @@ const statusSchema = zod_1.z.object({
     RecordingUrl: zod_1.z.string().optional(),
 });
 let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceController {
-    constructor(signature, statusCallback, config, ttsCache, voiceWebhooks) {
+    constructor(signature, statusCallback, config, ttsCache, voiceWebhooks, agents) {
         this.signature = signature;
         this.statusCallback = statusCallback;
         this.config = config;
         this.ttsCache = ttsCache;
         this.voiceWebhooks = voiceWebhooks;
+        this.agents = agents;
         this.logger = new common_1.Logger(TwilioVoiceController_1.name);
     }
     configCheck() {
         const baseUrlRaw = this.config.get('PUBLIC_WEBHOOK_BASE_URL') ?? '';
         const baseUrl = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(baseUrlRaw);
         const validateSignatures = this.signature.isValidationEnabled();
-        const hasTwilioAuthToken = Boolean((this.config.get('TWILIO_AUTH_TOKEN') ?? '').trim());
-        const hasElevenLabsApiKey = Boolean((this.config.get('ELEVENLABS_API_KEY') ?? '').trim());
+        const envFallback = (0, provider_env_fallback_util_1.allowProviderEnvFallback)();
+        const hasTwilioAuthToken = Boolean((this.config.get('TWILIO_AUTH_TOKEN') ?? '').trim()) || !envFallback;
+        const hasElevenLabsApiKey = Boolean((this.config.get('ELEVENLABS_API_KEY') ?? '').trim()) || !envFallback;
         const hasPublicWebhookBaseUrl = Boolean(baseUrl);
         const isPublicHttps = /^https:\/\//i.test(baseUrl) && !/localhost|127\.0\.0\.1/i.test(baseUrl);
         const requiredChecks = {
@@ -77,8 +82,11 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             missing.push('PUBLIC_WEBHOOK_BASE_URL');
         if (!requiredChecks.publicWebhookBaseUrlPublicHttps)
             missing.push('PUBLIC_WEBHOOK_BASE_URL must be public HTTPS (not localhost)');
-        if (validateSignatures && !requiredChecks.twilioAuthTokenSet)
-            missing.push('TWILIO_AUTH_TOKEN (required when signature validation is enabled)');
+        if (validateSignatures &&
+            envFallback &&
+            !Boolean((this.config.get('TWILIO_AUTH_TOKEN') ?? '').trim())) {
+            missing.push('TWILIO_AUTH_TOKEN (required when ALLOW_PROVIDER_ENV_FALLBACK=true and signature validation is enabled)');
+        }
         const ready = missing.length === 0;
         return {
             status: ready ? 'ready' : 'not_ready',
@@ -92,7 +100,9 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             },
             checks: requiredChecks,
             missing,
+            credentialMode: envFallback ? 'env_fallback_allowed' : 'per_agent_db_only',
             notes: [
+                'Provider API keys (OpenAI, ElevenLabs, Twilio, Shopify, Resend) are loaded per agent from the database unless ALLOW_PROVIDER_ENV_FALLBACK=true.',
                 'Configure your Twilio phone number to POST incoming calls to this app, not to the ElevenLabs native Twilio URL.',
                 'Live inbound calls use Twilio webhooks plus Twilio Gather; OpenAI generates reply text.',
                 'Inbound greeting uses Twilio <Say> only (fast webhook). After each user utterance, the app returns an instant <Say> then polls /api/twilio/voice/deferred-poll until OpenAI + optional ElevenLabs complete.',
@@ -111,19 +121,32 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             },
         };
     }
-    liveCallReady() {
+    async liveCallReady(tenantId, agentId) {
         const twilio = this.configCheck();
         const env = (0, env_validation_1.validateProductionEnv)();
-        const openAi = Boolean((this.config.get('OPENAI_API_KEY') ?? '').trim());
-        const elevenLabs = Boolean((this.config.get('ELEVENLABS_API_KEY') ?? '').trim());
         const encryption = Boolean((this.config.get('ENCRYPTION_KEY') ?? '').trim());
         const jwt = Boolean((this.config.get('JWT_SECRET') ?? '').trim());
+        let openAi = (0, provider_env_fallback_util_1.allowProviderEnvFallback)()
+            ? Boolean((this.config.get('OPENAI_API_KEY') ?? '').trim())
+            : true;
+        let elevenLabs = (0, provider_env_fallback_util_1.allowProviderEnvFallback)()
+            ? Boolean((this.config.get('ELEVENLABS_API_KEY') ?? '').trim())
+            : true;
+        let agentCredentialSummary = null;
+        const trimmedAgentId = agentId?.trim();
+        if (trimmedAgentId) {
+            agentCredentialSummary = await this.agents.getCredentialSourcesSummary(tenantId, trimmedAgentId);
+            openAi = agentCredentialSummary.openai.configured;
+            elevenLabs = agentCredentialSummary.elevenlabs.configured;
+        }
         const ready = twilio.ready && env.ok && openAi && elevenLabs && encryption && jwt;
         return {
             status: ready ? 'ready' : 'not_ready',
             ready,
             twilio,
             env,
+            agentId: trimmedAgentId ?? null,
+            agentCredentialSources: agentCredentialSummary,
             runtime: {
                 inboundVoiceWebhookOwner: 'this_app',
                 inboundCallMode: 'twilio-gather-mvp',
@@ -135,7 +158,13 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
                 elevenLabsKeySet: elevenLabs,
                 encryptionKeySet: encryption,
                 jwtSecretSet: jwt,
+                agentIdProvided: Boolean(trimmedAgentId),
             },
+            notes: trimmedAgentId
+                ? []
+                : [
+                    'Pass ?agentId=<uuid> to validate per-agent OpenAI and ElevenLabs credentials from the agent form.',
+                ],
         };
     }
     ttsAudio(token, res) {
@@ -159,7 +188,7 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             if (this.signature.isValidationEnabled()) {
                 if (!signature)
                     throw new common_1.BadRequestException('Missing Twilio signature');
-                const valid = this.signature.validate(url, body, signature);
+                const valid = await this.signature.validateInbound(url, body, signature);
                 if (!valid) {
                     this.logger.warn(JSON.stringify({
                         event: 'twilio.voice.signature_invalid',
@@ -191,7 +220,7 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
         if (this.signature.isValidationEnabled()) {
             if (!signature)
                 throw new common_1.BadRequestException('Missing Twilio signature');
-            const valid = this.signature.validate(url, body, signature);
+            const valid = await this.signature.validateInbound(url, body, signature);
             if (!valid) {
                 this.logger.warn(JSON.stringify({
                     event: 'twilio.voice.signature_invalid',
@@ -219,7 +248,7 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             if (this.signature.isValidationEnabled()) {
                 if (!signature)
                     throw new common_1.BadRequestException('Missing Twilio signature');
-                const valid = this.signature.validate(url, body, signature);
+                const valid = await this.signature.validateInbound(url, body, signature);
                 if (!valid) {
                     this.logger.warn(JSON.stringify({
                         event: 'twilio.voice.signature_invalid',
@@ -295,7 +324,7 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             if (this.signature.isValidationEnabled()) {
                 if (!signature)
                     throw new common_1.BadRequestException('Missing Twilio signature');
-                const valid = this.signature.validate(url, body, signature);
+                const valid = await this.signature.validateInbound(url, body, signature);
                 if (!valid) {
                     this.logger.warn(JSON.stringify({
                         event: 'twilio.voice.signature_invalid',
@@ -335,7 +364,7 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
                     this.logger.warn(JSON.stringify({ event: 'twilio.voice.status_missing_signature' }));
                     return res.status(200).send('OK');
                 }
-                const valid = this.signature.validate(url, body, signature);
+                const valid = await this.signature.validateInbound(url, body, signature);
                 if (!valid) {
                     this.logger.warn(JSON.stringify({
                         event: 'twilio.voice.signature_invalid',
@@ -377,9 +406,11 @@ __decorate([
     (0, roles_decorator_1.Roles)(client_1.UserRole.MANAGER),
     (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
     (0, common_1.Get)('live-call-ready'),
+    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(1, (0, common_1.Query)('agentId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
-    __metadata("design:returntype", void 0)
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
 ], TwilioVoiceController.prototype, "liveCallReady", null);
 __decorate([
     (0, public_decorator_1.Public)(),
@@ -459,6 +490,7 @@ exports.TwilioVoiceController = TwilioVoiceController = TwilioVoiceController_1 
         twilio_status_callback_service_1.TwilioStatusCallbackService,
         config_1.ConfigService,
         twilio_tts_cache_service_1.TwilioTtsCacheService,
-        twilio_webhook_service_1.TwilioWebhookService])
+        twilio_webhook_service_1.TwilioWebhookService,
+        agents_service_1.AgentsService])
 ], TwilioVoiceController);
 //# sourceMappingURL=twilio.controller.js.map

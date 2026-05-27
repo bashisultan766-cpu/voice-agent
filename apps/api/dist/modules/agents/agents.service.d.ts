@@ -55,6 +55,7 @@ export declare class AgentsService {
             label: string;
             fixAction: string;
         }[];
+        credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
         expectedTwilioWebhookUrls: {
             inbound: string;
             status: string;
@@ -82,6 +83,7 @@ export declare class AgentsService {
             label: string;
             fixAction: string;
         }[];
+        credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
         expectedTwilioWebhookUrls: {
             inbound: string;
             status: string;
@@ -128,6 +130,7 @@ export declare class AgentsService {
                 label: string;
                 fixAction: string;
             }[];
+            credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
             expectedTwilioWebhookUrls: {
                 inbound: string;
                 status: string;
@@ -158,6 +161,7 @@ export declare class AgentsService {
                 label: string;
                 fixAction: string;
             }[];
+            credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
             expectedTwilioWebhookUrls: {
                 inbound: string;
                 status: string;
@@ -175,26 +179,28 @@ export declare class AgentsService {
     }>;
     private serializeAgent;
     private agentConfigEmailFieldsFromDto;
+    private secretsFromRow;
+    private loadAgentCredentialBundle;
     private pickSecrets;
     private encryptSecrets;
-    private mergeWorkspaceDefaultsIfRequested;
+    private applyWorkspaceIntegrationFlagsOnly;
     create(tenantId: string, dto: CreateAgentDto, createdById?: string): Promise<{
-        twilioPhoneNumber: string | null;
+        name: string;
         agentConfig: {
+            customSystemPrompt: string | null;
+            shippingPolicy: string | null;
             supportEmail: string | null;
             supportPhone: string | null;
             businessName: string | null;
             askEmailBeforePaymentLink: boolean;
             checkoutMode: import("@prisma/client").$Enums.CheckoutMode;
             humanHandoffRules: string | null;
-            shippingPolicy: string | null;
             returnPolicy: string | null;
             exchangePolicy: string | null;
             deliveryNotes: string | null;
             forbiddenBehaviors: string | null;
             escalationRules: string | null;
             fallbackHumanContact: string | null;
-            customSystemPrompt: string | null;
             emailSenderName: string | null;
             emailSenderAddress: string | null;
             emailReplyTo: string | null;
@@ -202,6 +208,11 @@ export declare class AgentsService {
             paymentLinkEmailIntro: string | null;
             emailTestRecipient: string | null;
             useWorkspaceEmail: boolean;
+            useWorkspaceShopify: boolean;
+            useWorkspaceOpenai: boolean;
+            useWorkspaceElevenlabs: boolean;
+            useWorkspaceTwilio: boolean;
+            shopifyApiVersion: string | null;
         } | null;
         voiceProfile: {
             language: string;
@@ -210,21 +221,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        id: string;
-        tenantId: string;
-        name: string;
-        slug: string;
-        timezone: string | null;
+        shopifyStoreUrl: string | null;
         status: import("@prisma/client").$Enums.AgentStatus;
-        createdAt: Date;
-        updatedAt: Date;
-        clientId: string | null;
-        storeId: string | null;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
+        id: string;
+        slug: string;
         description: string | null;
         language: string;
+        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
-        voiceId: string | null;
         voiceNameLabel: string | null;
         voiceStyle: string | null;
         baseSystemPrompt: string;
@@ -254,13 +262,11 @@ export declare class AgentsService {
         transferToHumanEnabled: boolean;
         escalationPhone: string | null;
         escalationEmail: string | null;
-        shopifyStoreUrl: string | null;
         shopifyStoreNumber: string | null;
         knowledgeBaseSource: string | null;
         knowledgeSyncEnabled: boolean;
         callRoutingMode: string | null;
         incomingCallHandling: string | null;
-        databaseProvider: string | null;
         shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         databaseConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
@@ -268,6 +274,11 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        tenantId: string;
+        clientId: string | null;
+        storeId: string | null;
     }>;
     private agentSelect;
     findAll(tenantId: string): Promise<{
@@ -278,20 +289,20 @@ export declare class AgentsService {
     findOne(tenantId: string, id: string): Promise<{
         agentConfig: {
             resendApiKeyConfigured: boolean;
+            customSystemPrompt: string | null;
+            shippingPolicy: string | null;
             supportEmail: string | null;
             supportPhone: string | null;
             businessName: string | null;
             askEmailBeforePaymentLink: boolean;
             checkoutMode: import("@prisma/client").$Enums.CheckoutMode;
             humanHandoffRules: string | null;
-            shippingPolicy: string | null;
             returnPolicy: string | null;
             exchangePolicy: string | null;
             deliveryNotes: string | null;
             forbiddenBehaviors: string | null;
             escalationRules: string | null;
             fallbackHumanContact: string | null;
-            customSystemPrompt: string | null;
             emailSenderName: string | null;
             emailSenderAddress: string | null;
             emailReplyTo: string | null;
@@ -299,8 +310,16 @@ export declare class AgentsService {
             paymentLinkEmailIntro: string | null;
             emailTestRecipient: string | null;
             useWorkspaceEmail: boolean;
+            useWorkspaceShopify: boolean;
+            useWorkspaceOpenai: boolean;
+            useWorkspaceElevenlabs: boolean;
+            useWorkspaceTwilio: boolean;
+            shopifyApiVersion: string | null;
         } | null;
-        twilioPhoneNumber: string | null;
+        shopifyConfigured: boolean;
+        shopifySource: CredentialSource;
+        credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
+        name: string;
         voiceProfile: {
             language: string;
             greetingMessage: string | null;
@@ -308,21 +327,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        id: string;
-        tenantId: string;
-        name: string;
-        slug: string;
-        timezone: string | null;
+        shopifyStoreUrl: string | null;
         status: import("@prisma/client").$Enums.AgentStatus;
-        createdAt: Date;
-        updatedAt: Date;
-        clientId: string | null;
-        storeId: string | null;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
+        id: string;
+        slug: string;
         description: string | null;
         language: string;
+        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
-        voiceId: string | null;
         voiceNameLabel: string | null;
         voiceStyle: string | null;
         baseSystemPrompt: string;
@@ -352,13 +368,11 @@ export declare class AgentsService {
         transferToHumanEnabled: boolean;
         escalationPhone: string | null;
         escalationEmail: string | null;
-        shopifyStoreUrl: string | null;
         shopifyStoreNumber: string | null;
         knowledgeBaseSource: string | null;
         knowledgeSyncEnabled: boolean;
         callRoutingMode: string | null;
         incomingCallHandling: string | null;
-        databaseProvider: string | null;
         shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         databaseConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
@@ -366,24 +380,29 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        tenantId: string;
+        clientId: string | null;
+        storeId: string | null;
     }>;
     getAgentById(tenantId: string, agentId: string): Promise<{
         agentConfig: {
             resendApiKeyConfigured: boolean;
+            customSystemPrompt: string | null;
+            shippingPolicy: string | null;
             supportEmail: string | null;
             supportPhone: string | null;
             businessName: string | null;
             askEmailBeforePaymentLink: boolean;
             checkoutMode: import("@prisma/client").$Enums.CheckoutMode;
             humanHandoffRules: string | null;
-            shippingPolicy: string | null;
             returnPolicy: string | null;
             exchangePolicy: string | null;
             deliveryNotes: string | null;
             forbiddenBehaviors: string | null;
             escalationRules: string | null;
             fallbackHumanContact: string | null;
-            customSystemPrompt: string | null;
             emailSenderName: string | null;
             emailSenderAddress: string | null;
             emailReplyTo: string | null;
@@ -391,8 +410,16 @@ export declare class AgentsService {
             paymentLinkEmailIntro: string | null;
             emailTestRecipient: string | null;
             useWorkspaceEmail: boolean;
+            useWorkspaceShopify: boolean;
+            useWorkspaceOpenai: boolean;
+            useWorkspaceElevenlabs: boolean;
+            useWorkspaceTwilio: boolean;
+            shopifyApiVersion: string | null;
         } | null;
-        twilioPhoneNumber: string | null;
+        shopifyConfigured: boolean;
+        shopifySource: CredentialSource;
+        credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
+        name: string;
         voiceProfile: {
             language: string;
             greetingMessage: string | null;
@@ -400,21 +427,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        id: string;
-        tenantId: string;
-        name: string;
-        slug: string;
-        timezone: string | null;
+        shopifyStoreUrl: string | null;
         status: import("@prisma/client").$Enums.AgentStatus;
-        createdAt: Date;
-        updatedAt: Date;
-        clientId: string | null;
-        storeId: string | null;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
+        id: string;
+        slug: string;
         description: string | null;
         language: string;
+        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
-        voiceId: string | null;
         voiceNameLabel: string | null;
         voiceStyle: string | null;
         baseSystemPrompt: string;
@@ -444,13 +468,11 @@ export declare class AgentsService {
         transferToHumanEnabled: boolean;
         escalationPhone: string | null;
         escalationEmail: string | null;
-        shopifyStoreUrl: string | null;
         shopifyStoreNumber: string | null;
         knowledgeBaseSource: string | null;
         knowledgeSyncEnabled: boolean;
         callRoutingMode: string | null;
         incomingCallHandling: string | null;
-        databaseProvider: string | null;
         shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         databaseConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
@@ -458,6 +480,11 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        tenantId: string;
+        clientId: string | null;
+        storeId: string | null;
     }>;
     private agentRowToRuntimePromptInput;
     private loadAgentRowForRuntime;
@@ -476,6 +503,16 @@ export declare class AgentsService {
         greetingMessage: string | null;
         prompt: string;
         promptLength: number;
+        promptBudget: import("../calls/runtime/prompt-budget.util").PromptBudgetReport;
+        promptLayers: {
+            platform: string;
+            agentIdentity: string;
+            storePolicyKnowledge: string;
+            runtimeTools: string;
+            shopifyTruth: string;
+            knowledgeRetrieval: string;
+            runtimeContext: string;
+        };
     }>;
     getPublicLiveCard(id: string): Promise<{
         name: string;
@@ -487,23 +524,23 @@ export declare class AgentsService {
         greeting: string | null;
     }>;
     update(tenantId: string, id: string, dto: UpdateAgentDto, actorUserId?: string): Promise<{
-        updatedSecrets: Record<"twilioAccountSid" | "openaiApiKey" | "twilioAuthToken" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "elevenlabsApiKey" | "resendApiKey", boolean>;
-        twilioPhoneNumber: string | null;
+        updatedSecrets: Record<"shopifyAdminToken" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "resendApiKey", boolean>;
+        name: string;
         agentConfig: {
+            customSystemPrompt: string | null;
+            shippingPolicy: string | null;
             supportEmail: string | null;
             supportPhone: string | null;
             businessName: string | null;
             askEmailBeforePaymentLink: boolean;
             checkoutMode: import("@prisma/client").$Enums.CheckoutMode;
             humanHandoffRules: string | null;
-            shippingPolicy: string | null;
             returnPolicy: string | null;
             exchangePolicy: string | null;
             deliveryNotes: string | null;
             forbiddenBehaviors: string | null;
             escalationRules: string | null;
             fallbackHumanContact: string | null;
-            customSystemPrompt: string | null;
             emailSenderName: string | null;
             emailSenderAddress: string | null;
             emailReplyTo: string | null;
@@ -511,6 +548,11 @@ export declare class AgentsService {
             paymentLinkEmailIntro: string | null;
             emailTestRecipient: string | null;
             useWorkspaceEmail: boolean;
+            useWorkspaceShopify: boolean;
+            useWorkspaceOpenai: boolean;
+            useWorkspaceElevenlabs: boolean;
+            useWorkspaceTwilio: boolean;
+            shopifyApiVersion: string | null;
         } | null;
         voiceProfile: {
             language: string;
@@ -519,21 +561,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        id: string;
-        tenantId: string;
-        name: string;
-        slug: string;
-        timezone: string | null;
+        shopifyStoreUrl: string | null;
         status: import("@prisma/client").$Enums.AgentStatus;
-        createdAt: Date;
-        updatedAt: Date;
-        clientId: string | null;
-        storeId: string | null;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
+        id: string;
+        slug: string;
         description: string | null;
         language: string;
+        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
-        voiceId: string | null;
         voiceNameLabel: string | null;
         voiceStyle: string | null;
         baseSystemPrompt: string;
@@ -563,13 +602,11 @@ export declare class AgentsService {
         transferToHumanEnabled: boolean;
         escalationPhone: string | null;
         escalationEmail: string | null;
-        shopifyStoreUrl: string | null;
         shopifyStoreNumber: string | null;
         knowledgeBaseSource: string | null;
         knowledgeSyncEnabled: boolean;
         callRoutingMode: string | null;
         incomingCallHandling: string | null;
-        databaseProvider: string | null;
         shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         databaseConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
@@ -577,25 +614,30 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        tenantId: string;
+        clientId: string | null;
+        storeId: string | null;
     }>;
     syncSecretsFromWorkspace(tenantId: string, id: string, actorUserId?: string): Promise<{
-        updatedSecrets: Record<"twilioAccountSid" | "openaiApiKey" | "twilioAuthToken" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "elevenlabsApiKey" | "resendApiKey", boolean>;
-        twilioPhoneNumber: string | null;
+        updatedSecrets: Record<"shopifyAdminToken" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "resendApiKey", boolean>;
+        name: string;
         agentConfig: {
+            customSystemPrompt: string | null;
+            shippingPolicy: string | null;
             supportEmail: string | null;
             supportPhone: string | null;
             businessName: string | null;
             askEmailBeforePaymentLink: boolean;
             checkoutMode: import("@prisma/client").$Enums.CheckoutMode;
             humanHandoffRules: string | null;
-            shippingPolicy: string | null;
             returnPolicy: string | null;
             exchangePolicy: string | null;
             deliveryNotes: string | null;
             forbiddenBehaviors: string | null;
             escalationRules: string | null;
             fallbackHumanContact: string | null;
-            customSystemPrompt: string | null;
             emailSenderName: string | null;
             emailSenderAddress: string | null;
             emailReplyTo: string | null;
@@ -603,6 +645,11 @@ export declare class AgentsService {
             paymentLinkEmailIntro: string | null;
             emailTestRecipient: string | null;
             useWorkspaceEmail: boolean;
+            useWorkspaceShopify: boolean;
+            useWorkspaceOpenai: boolean;
+            useWorkspaceElevenlabs: boolean;
+            useWorkspaceTwilio: boolean;
+            shopifyApiVersion: string | null;
         } | null;
         voiceProfile: {
             language: string;
@@ -611,21 +658,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        id: string;
-        tenantId: string;
-        name: string;
-        slug: string;
-        timezone: string | null;
+        shopifyStoreUrl: string | null;
         status: import("@prisma/client").$Enums.AgentStatus;
-        createdAt: Date;
-        updatedAt: Date;
-        clientId: string | null;
-        storeId: string | null;
+        databaseProvider: string | null;
+        twilioPhoneNumber: string | null;
+        voiceId: string | null;
+        id: string;
+        slug: string;
         description: string | null;
         language: string;
+        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
-        voiceId: string | null;
         voiceNameLabel: string | null;
         voiceStyle: string | null;
         baseSystemPrompt: string;
@@ -655,13 +699,11 @@ export declare class AgentsService {
         transferToHumanEnabled: boolean;
         escalationPhone: string | null;
         escalationEmail: string | null;
-        shopifyStoreUrl: string | null;
         shopifyStoreNumber: string | null;
         knowledgeBaseSource: string | null;
         knowledgeSyncEnabled: boolean;
         callRoutingMode: string | null;
         incomingCallHandling: string | null;
-        databaseProvider: string | null;
         shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         databaseConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
@@ -669,6 +711,11 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        tenantId: string;
+        clientId: string | null;
+        storeId: string | null;
     }>;
     remove(tenantId: string, id: string, actorUserId?: string): Promise<{
         deleted: boolean;
@@ -676,15 +723,20 @@ export declare class AgentsService {
     getShopifyConfig(tenantId: string, agentId: string): Promise<{
         shopifyStoreUrl: string;
         shopifyAdminToken: string;
+        shopifyApiVersion: string;
+        source: CredentialSource;
     } | null>;
     getTwilioConfig(tenantId: string, agentId: string): Promise<{
         accountSid: string;
         authToken: string;
         messagingFrom?: string | null;
+        source: CredentialSource;
     } | null>;
+    getCredentialSourcesSummary(tenantId: string, agentId: string): Promise<import("../../common/credential-resolver.util").CredentialSourcesSummary>;
     private getAgentConfigForTest;
     private getWorkspaceIntegrationForTenant;
     private resolveCredential;
+    private providerEnvSlice;
     testShopifyConnection(tenantId: string, agentId: string | null, dto?: TestShopifyCredentialsDto): Promise<{
         success: boolean;
         message: string;
@@ -742,11 +794,14 @@ export declare class AgentsService {
         lastSyncedAt: string | null;
         itemCount: number;
         reason: string;
+        shopifySource: "agent" | "workspace" | "env" | "missing";
+        shopifyConfigured: boolean;
     }>;
     testAiBehavior(tenantId: string, agentId: string, sampleQuery: string): Promise<{
         success: boolean;
         message: string;
         suggestedResponse?: string;
+        source?: CredentialSource;
     }>;
     getRuntimeDebug(tenantId: string, agentId: string, callSessionId?: string): Promise<{
         agentId: string;
@@ -754,8 +809,25 @@ export declare class AgentsService {
         toolPermissions: import("@bookstore-voice-agents/types").AgentToolPermissions;
         personality: VoicePersonalityTraits | null;
         livePromptPreview: string;
+        promptBudget: import("../calls/runtime/prompt-budget.util").PromptBudgetReport;
+        promptLayers: {
+            platform: string;
+            agentIdentity: string;
+            storePolicyKnowledge: string;
+            runtimeTools: string;
+            shopifyTruth: string;
+            knowledgeRetrieval: string;
+            runtimeContext: string;
+        };
+        activeRestrictions: {
+            blockedTopics: string | null;
+            allowedTopics: string | null;
+            forbiddenBehaviors: string | null;
+        };
         lastToolCalls: Record<string, unknown>[];
         runtimeContextPreview: Record<string, unknown> | null;
+        credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
+        liveMonitor: Record<string, unknown> | null;
         toolCatalog: {
             name: string;
             permissionGroups: (keyof import("@bookstore-voice-agents/types").AgentToolPermissions)[];

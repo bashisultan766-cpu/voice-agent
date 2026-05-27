@@ -14,9 +14,11 @@ const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const crypto = require("crypto");
 const public_webhook_base_url_1 = require("../../../common/public-webhook-base-url");
+const twilio_auth_token_resolver_service_1 = require("./twilio-auth-token-resolver.service");
 let TwilioSignatureService = class TwilioSignatureService {
-    constructor(config) {
+    constructor(config, authTokenResolver) {
         this.config = config;
+        this.authTokenResolver = authTokenResolver;
     }
     isTrustedProxyUrlHeader(req) {
         const expected = this.config.get('TWILIO_PROXY_SHARED_SECRET')?.trim();
@@ -34,15 +36,11 @@ let TwilioSignatureService = class TwilioSignatureService {
     isValidationEnabled() {
         return this.config.get('VALIDATE_TWILIO_SIGNATURES') !== 'false';
     }
-    validate(url, params, signature) {
-        const authToken = this.config.get('TWILIO_AUTH_TOKEN');
+    validateWithToken(url, params, signature, authToken) {
         if (!authToken || !signature)
             return false;
         const payload = url + this.sortedParams(params);
-        const expected = crypto
-            .createHmac('sha1', authToken)
-            .update(payload)
-            .digest('base64');
+        const expected = crypto.createHmac('sha1', authToken).update(payload).digest('base64');
         try {
             const sigBuf = Buffer.from(signature, 'base64');
             const expBuf = Buffer.from(expected, 'base64');
@@ -53,6 +51,21 @@ let TwilioSignatureService = class TwilioSignatureService {
         catch {
             return false;
         }
+    }
+    validate(url, params, signature) {
+        const authToken = this.config.get('TWILIO_AUTH_TOKEN');
+        if (!authToken)
+            return false;
+        return this.validateWithToken(url, params, signature, authToken);
+    }
+    async validateInbound(url, params, signature) {
+        const to = params.To ?? params.to;
+        const candidates = await this.authTokenResolver.resolveValidationTokens(to);
+        for (const { token } of candidates) {
+            if (this.validateWithToken(url, params, signature, token))
+                return true;
+        }
+        return false;
     }
     resolveValidationUrl(req) {
         const originalUrlHeader = req.headers['x-original-url']?.trim();
@@ -84,6 +97,7 @@ let TwilioSignatureService = class TwilioSignatureService {
 exports.TwilioSignatureService = TwilioSignatureService;
 exports.TwilioSignatureService = TwilioSignatureService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [config_1.ConfigService])
+    __metadata("design:paramtypes", [config_1.ConfigService,
+        twilio_auth_token_resolver_service_1.TwilioAuthTokenResolverService])
 ], TwilioSignatureService);
 //# sourceMappingURL=twilio-signature.service.js.map

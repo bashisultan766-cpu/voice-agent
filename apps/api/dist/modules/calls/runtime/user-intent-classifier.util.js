@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.classifyUserIntent = classifyUserIntent;
+const policy_intent_util_1 = require("./policy-intent.util");
 function norm(text) {
     return text.toLowerCase().trim();
 }
@@ -68,6 +69,9 @@ function classifyUserIntent(text) {
     if ((onlyBuyIntent || orderFlowPhrase) && !hasProductOrCatalogSignal(t)) {
         return 'purchase_confirmation';
     }
+    if ((0, policy_intent_util_1.isStorePolicyQuestion)(t)) {
+        return 'store_policy_question';
+    }
     if (hasProductOrCatalogSignal(t) &&
         !/\b(what store is this|where am i calling|who are you|what do you sell|what can you do|how can you help|how does this work|can i order from here)\b/.test(t)) {
         return 'product_search';
@@ -75,7 +79,9 @@ function classifyUserIntent(text) {
     if (/\b(looking for|search(ing)? for|need (a |an |the |some )?|want (a |an |the |some )?|can i get|can you find)\b/i.test(t)) {
         return 'product_search';
     }
-    if (words.length >= 5 && !/^(yes|no|ok|okay|sure|uh|um)\b/i.test(t)) {
+    if (words.length >= 5 &&
+        !/^(yes|no|ok|okay|sure|uh|um)\b/i.test(t) &&
+        !(0, policy_intent_util_1.isStorePolicyQuestion)(t)) {
         return 'product_search';
     }
     if (/^(yes|no|ok|okay|sure|uh|um|hmm|maybe)\b/i.test(t)) {

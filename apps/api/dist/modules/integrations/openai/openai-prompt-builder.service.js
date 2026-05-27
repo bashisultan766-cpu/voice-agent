@@ -17,21 +17,62 @@ let OpenAIPromptBuilderService = class OpenAIPromptBuilderService {
     constructor(toolRegistry) {
         this.toolRegistry = toolRegistry;
     }
-    build(ctx) {
-        const step = ctx.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
-            ? ctx.metadata.orderState
-            : null;
+    build(ctx, extras) {
+        const meta = ctx.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
+            ? ctx.metadata
+            : {};
+        const step = meta.orderState;
         const checkoutStep = typeof step === 'string' && step.trim() ? step.trim() : null;
+        const mem = meta.conversationMemory;
+        const memorySummary = extras?.memorySummary ??
+            (mem && typeof mem === 'object' ? this.summarizeMemory(mem) : null);
+        const conversationStage = extras?.conversationStage ??
+            (typeof mem?.conversationStage === 'string'
+                ? String(mem.conversationStage)
+                : null);
+        const stageGuidance = extras?.stageGuidance ??
+            (typeof meta.conversationStageGuidance === 'string' ? meta.conversationStageGuidance : null);
         const personality = (ctx.agent.personality ?? null);
         const enabledTools = this.toolRegistry.resolveEnabledToolNames({
             enabledTools: ctx.agent.enabledTools,
             toolPermissions: ctx.agent.toolPermissions,
         });
+        const policyTopic = typeof meta.policyTopic === 'string' ? meta.policyTopic : null;
+        const knowledgeRetrievalSnapshot = typeof meta.policyRetrievalSnapshot === 'string' ? meta.policyRetrievalSnapshot : null;
+        const policyRetrievalRequired = meta.policyRetrievalRequired === true;
+        const salesGuidance = typeof meta.salesGuidance === 'string' ? meta.salesGuidance : null;
         return (0, build_agent_runtime_prompt_1.buildAgentRuntimePrompt)((0, build_agent_runtime_prompt_1.promptInputFromVoiceSessionContext)(ctx), {
             checkoutStep,
+            conversationStage,
+            stageGuidance,
+            memorySummary,
             personality,
             enabledTools,
+            policyTopic,
+            knowledgeRetrievalSnapshot,
+            policyRetrievalRequired,
+            salesGuidance,
         });
+    }
+    summarizeMemory(mem) {
+        const parts = [];
+        if (typeof mem.customerName === 'string' && mem.customerName.trim()) {
+            parts.push(`Customer: ${mem.customerName.trim()}`);
+        }
+        const genres = mem.preferredGenres;
+        if (Array.isArray(genres) && genres.length) {
+            parts.push(`Genres: ${genres.join(', ')}`);
+        }
+        const discussed = (mem.discussedProducts ?? mem.mentionedProducts);
+        if (Array.isArray(discussed) && discussed.length) {
+            const titles = discussed
+                .map((p) => (p && typeof p === 'object' && 'title' in p ? String(p.title) : ''))
+                .filter(Boolean)
+                .slice(-4);
+            if (titles.length)
+                parts.push(`Discussed product titles (verify via Shopify if quoting): ${titles.join('; ')}`);
+        }
+        return parts.length ? parts.join('. ') : null;
     }
 };
 exports.OpenAIPromptBuilderService = OpenAIPromptBuilderService;

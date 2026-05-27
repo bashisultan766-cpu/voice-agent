@@ -396,9 +396,9 @@ let OpsService = class OpsService {
         const shopDomain = (0, types_1.normalizeShopifyDomain)(agent.shopifyStoreUrl);
         const [catalogItemCount, latestSynced] = shopDomain
             ? await Promise.all([
-                this.prisma.productCache.count({ where: { tenantId, shopDomain } }),
+                this.prisma.productCache.count({ where: { tenantId, agentId, shopDomain } }),
                 this.prisma.productCache.findFirst({
-                    where: { tenantId, shopDomain },
+                    where: { tenantId, agentId, shopDomain },
                     orderBy: { syncedAt: 'desc' },
                     select: { syncedAt: true },
                 }),

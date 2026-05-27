@@ -1,7 +1,8 @@
 import type { VoiceAgentRuntimeConfig } from '@bookstore-voice-agents/types';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
-import { type VoiceCredentialSource } from './voice-config-resolution.util';
+import type { VoiceCredentialSource } from './voice-config-resolution.util';
+import { type CredentialSource } from '../../../common/credential-resolver.util';
 export interface VoiceSessionContext {
     callSessionId: string;
     tenantId: string;
@@ -61,6 +62,10 @@ export interface VoiceSessionContext {
         runtimeCredentialHints?: {
             openaiKeySource: VoiceCredentialSource;
             elevenLabsKeySource: VoiceCredentialSource;
+            shopifySource: CredentialSource;
+            shopifyConfigured: boolean;
+            resendSource: CredentialSource;
+            twilioSource: CredentialSource;
         };
     };
     configUpdatedAt?: string | null;

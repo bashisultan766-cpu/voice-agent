@@ -26,14 +26,27 @@ const order_intent_classifier_util_1 = require("./order-intent-classifier.util")
 const order_turn_state_manager_util_1 = require("./order-turn-state-manager.util");
 const tool_orchestrator_service_1 = require("./tool-orchestrator.service");
 const runtime_safety_service_1 = require("./runtime-safety.service");
+const conversation_flow_engine_service_1 = require("./conversation-flow-engine.service");
+const conversation_analytics_service_1 = require("./conversation-analytics.service");
+const call_memory_service_1 = require("./call-memory.service");
+const anti_hallucination_util_1 = require("./anti-hallucination.util");
+const voice_speaking_util_1 = require("./voice-speaking.util");
+const conversation_stage_util_1 = require("./conversation-stage.util");
+const adaptive_voice_behavior_util_1 = require("./adaptive-voice-behavior.util");
+const voice_timing_util_1 = require("./voice-timing.util");
 const user_intent_classifier_util_1 = require("./user-intent-classifier.util");
+const policy_intent_util_1 = require("./policy-intent.util");
+const policy_context_prefetch_service_1 = require("./policy-context-prefetch.service");
+const checkout_recovery_util_1 = require("./checkout-recovery.util");
+const sales_behavior_util_1 = require("./sales-behavior.util");
+const runtime_scoring_util_1 = require("./runtime-scoring.util");
 const order_state_machine_util_1 = require("./order-state-machine.util");
 const professional_voice_response_util_1 = require("./professional-voice-response.util");
 const response_mode_util_1 = require("./response-mode.util");
 const context_aware_reply_util_1 = require("./context-aware-reply.util");
 const conversation_tone_util_1 = require("./conversation-tone.util");
 let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
-    constructor(sessionContext, callsService, openaiVoice, tools, callEvents, callOutcome, transcriptBuffer, promptBuilder, runtimeSafety) {
+    constructor(sessionContext, callsService, openaiVoice, tools, callEvents, callOutcome, transcriptBuffer, promptBuilder, runtimeSafety, conversationFlow, conversationAnalytics, callMemory, policyPrefetch) {
         this.sessionContext = sessionContext;
         this.callsService = callsService;
         this.openaiVoice = openaiVoice;
@@ -43,6 +56,10 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         this.transcriptBuffer = transcriptBuffer;
         this.promptBuilder = promptBuilder;
         this.runtimeSafety = runtimeSafety;
+        this.conversationFlow = conversationFlow;
+        this.conversationAnalytics = conversationAnalytics;
+        this.callMemory = callMemory;
+        this.policyPrefetch = policyPrefetch;
         this.logger = new common_1.Logger(VoiceRuntimeService_1.name);
     }
     deterministicFallbackEnabled() {
@@ -94,7 +111,25 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             return t;
         void userIntent;
         void orderState;
-        return t;
+        return (0, voice_speaking_util_1.polishVoiceReply)(t, { maxSentences: 3 });
+    }
+    buildFastVoiceReply(args) {
+        const greeting = args.ctx.agent.greetingMessage?.trim() ??
+            `Hello, you've reached ${args.ctx.store.name}. How can I help you today?`;
+        if (args.userIntent === 'greeting') {
+            return greeting;
+        }
+        if (args.userIntent === 'small_talk') {
+            return "I'm doing well, thanks. What book or topic can I help you find?";
+        }
+        const identity = this.buildConciseIdentityOrCapabilityReply(args.userIntent, args.turnPlan.memory.lastIntent ?? '');
+        if (identity)
+            return identity;
+        if ((0, conversation_stage_util_1.normalizeConversationStage)(args.turnPlan.stage) === 'GREETING') {
+            return greeting;
+        }
+        void args.langCode;
+        return null;
     }
     normalizeForRepeatCheck(text) {
         return text.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -123,6 +158,13 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             return {
                 toolCallAllowed: false,
                 toolCallBlockedReason: 'general_category_question',
+                customerQuestionType,
+            };
+        }
+        if (intent === 'store_policy_question') {
+            return {
+                toolCallAllowed: true,
+                toolCallBlockedReason: null,
                 customerQuestionType,
             };
         }
@@ -561,6 +603,16 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             durationSeconds,
             escalated: session.escalated,
         });
+        const metaEnd = (session.metadata ?? {});
+        const memEnd = metaEnd.conversationMemory;
+        const stage = typeof memEnd?.conversationStage === 'string'
+            ? memEnd.conversationStage
+            : typeof metaEnd.conversationStage === 'string'
+                ? metaEnd.conversationStage
+                : 'unknown';
+        if (session.status === client_1.CallStatus.COMPLETED || session.status === client_1.CallStatus.ABANDONED) {
+            await this.conversationAnalytics.recordAbandonedStage(session.tenantId, callSessionId, stage);
+        }
         await this.callOutcome.deriveAndUpsert(callSessionId);
         this.logger.log(JSON.stringify({
             event: 'voice.journey.session_completed',
@@ -575,6 +627,10 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         const safety = this.runtimeSafety.checkUserInput(safeText);
         if (safety.blocked) {
             const reply = this.runtimeSafety.refusalReply(safety.category);
+            const ctxEarly = await this.sessionContext.load(callSessionId);
+            if (ctxEarly) {
+                await this.conversationAnalytics.recordRefusal(ctxEarly.tenantId, callSessionId, safety.category);
+            }
             return { reply };
         }
         if (safeText !== text) {
@@ -636,7 +692,7 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             });
         }
         const cls = (0, order_intent_classifier_util_1.classifyOrderTurn)(safeText);
-        const userIntent = (0, user_intent_classifier_util_1.classifyUserIntent)(safeText);
+        let userIntent = (0, user_intent_classifier_util_1.classifyUserIntent)(safeText);
         const toolPolicy = this.evaluateSearchToolPolicy(userIntent, safeText);
         const conversationTone = (0, conversation_tone_util_1.detectConversationTone)(safeText);
         const initialLastToneLeadUsed = typeof metadata.lastToneLeadUsed === 'string' ? metadata.lastToneLeadUsed : null;
@@ -645,6 +701,33 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             ? (metadata.language || 'en')
             : 'en';
         const update = (0, order_turn_state_manager_util_1.applyTurnToOrderState)(beforeState, cls.intent, cls);
+        const memBefore = await this.callMemory.load(callSessionId);
+        const paymentLinkSent = memBefore.checkoutState === 'link_sent';
+        const turnPlan = await this.conversationFlow.planTurn({
+            callSessionId,
+            userText: safeText,
+            orderState: update.nextState,
+            orderIntent: cls.intent,
+            toolCallAllowed: toolPolicy.toolCallAllowed,
+            paymentLinkSent,
+        });
+        userIntent = turnPlan.userIntent;
+        const policyTopic = userIntent === 'store_policy_question' ? (0, policy_intent_util_1.classifyPolicyTopic)(safeText) : null;
+        let policyRetrievalSnapshot = null;
+        if (userIntent === 'store_policy_question' && ctx.storeId) {
+            policyRetrievalSnapshot = await this.policyPrefetch.prefetch({
+                tenantId: ctx.tenantId,
+                storeId: ctx.storeId,
+                customerText: safeText,
+                topic: policyTopic,
+                config: ctx.agent.config ?? null,
+                returnRefundBehavior: ctx.agent.returnRefundBehavior ?? null,
+            });
+        }
+        await this.conversationAnalytics.merge(callSessionId, ctx.tenantId, {
+            ...turnPlan.analyticsPatch,
+            lastStage: turnPlan.stage,
+        });
         await this.callsService.mergeSessionMetadata(callSessionId, {
             orderState: update.nextState,
             lastUserIntent: userIntent,
@@ -652,16 +735,40 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             lastTurnIntent: cls.intent,
             lastTurnIntentConfidence: cls.confidence,
             conversationTone,
+            conversationStage: turnPlan.stage,
+            conversationStageGuidance: turnPlan.stageGuidance,
+            salesGuidance: turnPlan.salesGuidance,
+            policyTopic: policyTopic ?? undefined,
+            policyRetrievalRequired: userIntent === 'store_policy_question',
+            policyRetrievalSnapshot: policyRetrievalSnapshot ?? undefined,
             ...(cls.extracted?.quantity != null ? { quantity: cls.extracted.quantity } : {}),
             ...(cls.extracted?.email ? { lastProvidedEmail: cls.extracted.email } : {}),
         });
+        if (cls.extracted?.email) {
+            await this.callMemory.setEmailState(callSessionId, cls.extracted.email, 'pending');
+        }
+        if (cls.extracted?.quantity != null && memBefore.cart?.items?.length) {
+            const last = memBefore.cart.items[memBefore.cart.items.length - 1];
+            if (last) {
+                await this.callMemory.updateCart(callSessionId, {
+                    ...last,
+                    quantity: cls.extracted.quantity,
+                });
+            }
+        }
         if (userIntent === 'purchase_confirmation' &&
             (beforeState === 'IDLE' || beforeState === 'PRODUCT_DISCOVERY')) {
             await this.callsService.mergeSessionMetadata(callSessionId, { orderState: 'EMAIL_COLLECTION' });
+            await this.conversationAnalytics.recordCheckoutAttempt(ctx.tenantId, callSessionId);
         }
         const historyFromDb = conversationHistory.length > 0
             ? conversationHistory
             : await this.transcriptBuffer.getConversationHistory(callSessionId, 24);
+        const adaptiveBehavior = (0, adaptive_voice_behavior_util_1.resolveAdaptiveVoiceBehavior)(safeText, historyFromDb.length);
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+            adaptiveCallerMood: adaptiveBehavior.mood,
+            adaptiveToneHint: adaptiveBehavior.toneHint,
+        });
         this.logger.log(JSON.stringify({
             event: 'voice.journey.turn_start',
             callSessionId,
@@ -678,6 +785,48 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         }));
         const userSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
         await this.transcriptBuffer.append(callSessionId, 'user', safeText, userSeq);
+        if (turnPlan.useFastVoicePath) {
+            const fastReply = this.buildFastVoiceReply({
+                userIntent,
+                turnPlan,
+                ctx,
+                langCode,
+            });
+            if (fastReply) {
+                const polished = (0, voice_speaking_util_1.polishVoiceReply)(fastReply, {
+                    maxSentences: 2,
+                    stage: turnPlan.stage,
+                });
+                const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
+                await this.transcriptBuffer.append(callSessionId, 'agent', polished, agentSeq);
+                this.logTurnProof({
+                    callSessionId,
+                    tenantId: ctx.tenantId,
+                    agentId: ctx.agentId,
+                    userSpeechText: safeText.slice(0, 500),
+                    openaiKeySource: ctx.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
+                    modelUsed: ctx.agent.model ?? 'n/a',
+                    openaiCalled: false,
+                    openaiSuccess: true,
+                    replyPreview: polished.slice(0, 240),
+                    voiceProvider: ctx.agent.voiceProvider ?? null,
+                    voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+                    ttsProviderUsed: null,
+                    intentDetected: userIntent,
+                    toolCalled: false,
+                    flowStep: 'fast_voice_path',
+                    state: update.nextState,
+                    finalResponseText: polished,
+                    responseMode: 'template',
+                    responseSource: 'template',
+                    responseTemplateUsed: 'fast_voice_path',
+                    templateUsed: 'fast_voice_path',
+                    openaiUsed: false,
+                    templateSuppressedBecauseRepeated: false,
+                });
+                return { reply: polished };
+            }
+        }
         if (update.recoveryPrompt) {
             const reply = (0, order_turn_state_manager_util_1.recoveryPromptText)(langCode, update.recoveryPrompt.key);
             const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
@@ -724,6 +873,9 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         const llmStartedAt = Date.now();
         const result = await this.openaiVoice.processTurn(callSessionId, safeText, historyFromDb);
         const responseDelayMs = Date.now() - llmStartedAt;
+        if (result.toolCallsCount > 0) {
+            await this.conversationAnalytics.recordToolLatency(ctx.tenantId, callSessionId, responseDelayMs, 'voice_tool_loop');
+        }
         const deterministicFallbackActive = this.deterministicFallbackEnabled();
         if (deterministicFallbackActive && result.error?.code === 'OPENAI_429') {
             const preserveOrderState = update.nextState;
@@ -804,6 +956,13 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             ? metaAfterLlm.followUpOfferedProductKey.trim()
             : null;
         const fillerUsedSession = metaAfterLlm.fillerUsed === true;
+        const abandonReason = (0, checkout_recovery_util_1.detectCheckoutAbandonReason)(safeText, stateForLogOpenAi);
+        if (abandonReason) {
+            await this.conversationAnalytics.recordAbandonedStage(ctx.tenantId, callSessionId, turnPlan.stage, abandonReason);
+            await this.callsService.mergeSessionMetadata(callSessionId, {
+                checkoutRecoveryGuidance: (0, checkout_recovery_util_1.buildCheckoutRecoveryGuidance)(abandonReason, turnPlan.memory),
+            });
+        }
         const resolved = this.resolveSpokenReplyAfterOpenAI({
             toolTrace: result.toolTrace,
             orderStateAfter: stateForLogOpenAi,
@@ -821,9 +980,66 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
                 orderState: stateForLogOpenAi,
             }),
             followUpOfferedProductKey: followUpOfferedProductKeyForResolve,
+            conversationMemory: turnPlan.memory,
         });
+        const memTitles = (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? [])
+            .map((p) => p.title)
+            .filter(Boolean);
+        const hallucinationGuard = (0, anti_hallucination_util_1.applyAntiHallucinationGuard)(resolved.reply, result.toolTrace, memTitles);
+        if (hallucinationGuard.hallucinationAttempt) {
+            const prior = await this.conversationAnalytics.load(callSessionId);
+            await this.conversationAnalytics.merge(callSessionId, ctx.tenantId, {
+                hallucinationAttempts: (prior.hallucinationAttempts ?? 0) + 1,
+            });
+        }
+        if (result.toolTrace?.searchProducts?.ok && result.toolTrace.searchProducts.found) {
+            await this.conversationAnalytics.recordRecommendation(ctx.tenantId, callSessionId, true);
+            await this.conversationAnalytics.recordRecommendationOffer(ctx.tenantId, callSessionId);
+            if (userIntent === 'purchase_confirmation') {
+                await this.conversationAnalytics.recordRecommendationOutcome(ctx.tenantId, callSessionId, true);
+                await this.callMemory.merge(callSessionId, {
+                    recommendationAccepted: (turnPlan.memory.recommendationAccepted ?? 0) + 1,
+                });
+            }
+        }
+        if (result.toolTrace?.sendPaymentEmail?.ok) {
+            await this.conversationAnalytics.recordCheckoutConverted(ctx.tenantId, callSessionId);
+        }
+        const cartItems = turnPlan.memory.cart?.items ?? [];
+        let cartValue = 0;
+        for (const item of cartItems) {
+            const p = parseFloat(String(item.price ?? '').replace(/[^0-9.]/g, ''));
+            if (!Number.isNaN(p))
+                cartValue += p * (item.quantity ?? 1);
+        }
+        if (cartValue > 0) {
+            await this.conversationAnalytics.recordEstimatedOrderValue(ctx.tenantId, callSessionId, cartValue);
+        }
+        const salesShapedReply = (0, sales_behavior_util_1.applyHumanSalesBehavior)({
+            reply: hallucinationGuard.reply,
+            adaptive: adaptiveBehavior,
+            stage: turnPlan.stage,
+            reassurance: (0, sales_behavior_util_1.confidenceReinforcementPhrase)(turnPlan.stage),
+        });
+        const polishedReply = (0, voice_speaking_util_1.polishVoiceReply)((0, voice_timing_util_1.applyTimingToChunkText)(salesShapedReply, adaptiveBehavior), {
+            maxSentences: adaptiveBehavior.maxSentences,
+            stage: turnPlan.stage,
+        });
+        const analyticsSnap = await this.conversationAnalytics.load(callSessionId);
+        const runtimeScores = (0, runtime_scoring_util_1.computeRuntimeScores)({
+            stage: turnPlan.stage,
+            memory: turnPlan.memory,
+            analytics: analyticsSnap,
+            hallucinationAttempt: hallucinationGuard.hallucinationAttempt,
+            toolCallsCount: result.toolCallsCount,
+            searchSucceeded: Boolean(result.toolTrace?.searchProducts?.ok && result.toolTrace.searchProducts.found),
+            replyChars: polishedReply.length,
+            adaptiveMood: adaptiveBehavior.mood,
+            objectionHandled: Boolean(turnPlan.objectionType && resolved.contextAware),
+        });
+        await this.callsService.mergeSessionMetadata(callSessionId, { runtimeScores });
         const repeatChecked = this.applyRepeatGuard({
-            currentReply: resolved.reply,
+            currentReply: polishedReply,
             responseMode: resolved.responseMode,
             responseSource: resolved.responseSource,
             responseTemplateUsed: resolved.responseTemplateUsed,
@@ -1005,6 +1221,10 @@ exports.VoiceRuntimeService = VoiceRuntimeService = VoiceRuntimeService_1 = __de
         call_outcome_service_1.CallOutcomeService,
         transcript_buffer_service_1.TranscriptBufferService,
         openai_prompt_builder_service_1.OpenAIPromptBuilderService,
-        runtime_safety_service_1.RuntimeSafetyService])
+        runtime_safety_service_1.RuntimeSafetyService,
+        conversation_flow_engine_service_1.ConversationFlowEngineService,
+        conversation_analytics_service_1.ConversationAnalyticsService,
+        call_memory_service_1.CallMemoryService,
+        policy_context_prefetch_service_1.PolicyContextPrefetchService])
 ], VoiceRuntimeService);
 //# sourceMappingURL=voice-runtime.service.js.map

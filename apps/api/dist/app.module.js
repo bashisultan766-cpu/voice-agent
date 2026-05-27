@@ -42,6 +42,7 @@ exports.AppModule = AppModule = __decorate([
         imports: [
             config_1.ConfigModule.forRoot({
                 isGlobal: true,
+                envFilePath: '.env',
                 validate: (config) => {
                     const parsed = (0, env_validation_1.parseEnv)();
                     if (!parsed.ok) {

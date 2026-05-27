@@ -7,8 +7,8 @@ export declare class CallEventsService {
     getByCallSession(callSessionId: string, tenantId?: string): Promise<{
         type: import("@prisma/client").$Enums.CallEventType;
         id: string;
-        tenantId: string;
         createdAt: Date;
+        tenantId: string;
         callSessionId: string;
         timestamp: Date;
         payload: Prisma.JsonValue | null;

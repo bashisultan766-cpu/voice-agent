@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+/** Treat unset or blank .env values as missing (common in local templates). */
+function optionalNonEmptyString(minLen: number) {
+  return z.preprocess(
+    (val) => (typeof val === 'string' && val.trim() === '' ? undefined : val),
+    z.string().min(minLen).optional(),
+  );
+}
+
 /**
  * Base schema: validates shape and coercion. Stricter rules applied in assertProductionEnv().
  */
@@ -14,15 +22,15 @@ export const envSchema = z.object({
   CORS_ORIGIN: z.string().optional(),
   PUBLIC_WEBHOOK_BASE_URL: z.string().url().optional().or(z.literal('')),
   VALIDATE_TWILIO_SIGNATURES: z.enum(['true', 'false']).default('true'),
-  TWILIO_AUTH_TOKEN: z.string().min(8).optional(),
-  TWILIO_PROXY_SHARED_SECRET: z.string().min(12).optional(),
+  TWILIO_AUTH_TOKEN: optionalNonEmptyString(8),
+  TWILIO_PROXY_SHARED_SECRET: optionalNonEmptyString(12),
   API_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
   API_RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(120),
   API_RATE_LIMIT_SENSITIVE_MAX: z.coerce.number().int().positive().default(40),
   LIVE_CALL_TEST_MODE: z.enum(['true', 'false']).default('false'),
   TRUST_PROXY: z.enum(['true', 'false']).default('false'),
-  OPENAI_API_KEY: z.string().min(8).optional(),
-  RESEND_API_KEY: z.string().min(8).optional(),
+  OPENAI_API_KEY: optionalNonEmptyString(8),
+  RESEND_API_KEY: optionalNonEmptyString(8),
   RESEND_FROM_EMAIL: z.string().email().optional().or(z.literal('')),
   ALLOW_HEADER_TENANT_FALLBACK: z.enum(['true', 'false']).optional(),
   ENABLE_DEV_OPS_ENDPOINTS: z.enum(['true', 'false']).optional(),

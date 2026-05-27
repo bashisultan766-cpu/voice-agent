@@ -33,6 +33,7 @@ export type WorkspaceIntegrationSlice = {
   openaiApiKey?: string;
   elevenlabsApiKey?: string;
   elevenlabsDefaultVoiceId?: string;
+  elevenlabsDefaultModel?: string;
   twilioAccountSid?: string;
   twilioAuthToken?: string;
   twilioPhoneNumber?: string;
@@ -68,7 +69,7 @@ export type ResolvedTwilioConfig = {
 
 export type ResolvedEmailKeyConfig = {
   apiKey: string;
-  source: CredentialSource;
+  source: Exclude<CredentialSource, 'missing'>;
 };
 
 export type ShopifyCredentialSummary = {

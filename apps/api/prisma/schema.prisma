@@ -7,7 +7,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum UserRole {
@@ -1093,3 +1092,4 @@ model AuditLog {
   @@index([tenantId])
   @@index([entityType, entityId])
 }
+

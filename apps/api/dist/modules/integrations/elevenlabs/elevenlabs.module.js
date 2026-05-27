@@ -10,6 +10,7 @@ exports.ElevenLabsModule = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const elevenlabs_service_1 = require("./elevenlabs.service");
+const elevenlabs_streaming_service_1 = require("./elevenlabs-streaming.service");
 const elevenlabs_controller_1 = require("./elevenlabs.controller");
 let ElevenLabsModule = class ElevenLabsModule {
 };
@@ -18,8 +19,8 @@ exports.ElevenLabsModule = ElevenLabsModule = __decorate([
     (0, common_1.Module)({
         imports: [config_1.ConfigModule],
         controllers: [elevenlabs_controller_1.ElevenLabsController],
-        providers: [elevenlabs_service_1.ElevenLabsService],
-        exports: [elevenlabs_service_1.ElevenLabsService],
+        providers: [elevenlabs_service_1.ElevenLabsService, elevenlabs_streaming_service_1.ElevenLabsStreamingService],
+        exports: [elevenlabs_service_1.ElevenLabsService, elevenlabs_streaming_service_1.ElevenLabsStreamingService],
     })
 ], ElevenLabsModule);
 //# sourceMappingURL=elevenlabs.module.js.map

@@ -110,7 +110,7 @@ async function testSearchWorksByTitleSkuHandle() {
         },
     };
     const svc = new product_search_1.ShopifyProductSearchService(fakePrisma);
-    await svc.search('tenant_1', 'alpha', 8, 'demo.myshopify.com');
+    await svc.search('tenant_1', 'agent_1', 'alpha', 8, 'demo.myshopify.com');
     const where = JSON.stringify(capturedWhere ?? {});
     strict_1.default.match(where, /"title"/);
     strict_1.default.match(where, /"handle"/);

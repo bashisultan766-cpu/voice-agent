@@ -14,7 +14,7 @@ export function detectCheckoutAbandonReason(
   userText: string,
   orderState: OrderState,
 ): CheckoutAbandonReason | null {
-  if (orderState !== 'EMAIL_COLLECTION' && orderState !== 'CHECKOUT_READY') {
+  if (orderState !== 'EMAIL_COLLECTION') {
     const objection = classifyConversationalObjection(userText);
     if (objection?.type === 'call_later' || objection?.type === 'let_me_think') {
       return objection.type === 'call_later' ? 'call_later' : 'let_me_think';

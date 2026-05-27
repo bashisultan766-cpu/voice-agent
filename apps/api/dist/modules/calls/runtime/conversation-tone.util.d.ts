@@ -2,7 +2,7 @@ import type { OrderState } from './order-state-machine.util';
 import type { UserUtteranceIntent } from './user-intent-classifier.util';
 import type { OrderTurnIntent } from './order-intent-classifier.util';
 export type ConversationTone = 'direct' | 'friendly' | 'neutral';
-type ToneLeadSlot = 'product_found' | 'correction' | 'email' | 'price' | 'email_ack' | 'none';
+type ToneLeadSlot = 'product_found' | 'correction' | 'email' | 'price' | 'email_ack' | 'objection' | 'none';
 export declare function detectConversationTone(text: string): ConversationTone;
 export declare function resolveToneLead(args: {
     slot: ToneLeadSlot;

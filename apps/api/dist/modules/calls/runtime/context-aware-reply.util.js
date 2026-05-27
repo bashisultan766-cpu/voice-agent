@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildContextAwareReply = buildContextAwareReply;
 const conversation_tone_util_1 = require("./conversation-tone.util");
+const objection_patterns_util_1 = require("./objection-patterns.util");
+const checkout_recovery_util_1 = require("./checkout-recovery.util");
 function normalizeText(text) {
     return text.trim().toLowerCase();
 }
@@ -92,6 +94,47 @@ function buildContextAwareReply(args) {
                 followUpTriggered: false,
             };
         }
+    }
+    const abandonReason = (0, checkout_recovery_util_1.detectCheckoutAbandonReason)(args.lastUserMessage, args.state);
+    if (abandonReason && args.conversationMemory) {
+        const seed = (0, checkout_recovery_util_1.checkoutRecoveryReplySeed)(abandonReason, args.conversationMemory);
+        if (seed) {
+            const { lead, toneLeadUsed } = (0, conversation_tone_util_1.resolveToneLead)({
+                slot: 'objection',
+                conversationTone: args.conversationTone,
+                lastToneLeadUsed: args.lastToneLeadUsed,
+            });
+            return {
+                text: lead ? `${lead} ${seed}` : seed,
+                source: 'openai',
+                templateKey: `checkout_recovery_${abandonReason}`,
+                questionAnsweredFirst: true,
+                interruptionHandled: true,
+                toneLeadUsed,
+                paymentSuggestionUsed: false,
+                followUpTriggered: false,
+            };
+        }
+    }
+    const objection = (0, objection_patterns_util_1.classifyConversationalObjection)(args.lastUserMessage);
+    if (objection?.suggestedReplySeed) {
+        const seed = (0, objection_patterns_util_1.objectionReplyFromMatch)(objection, 'en') ?? objection.suggestedReplySeed;
+        const { lead, toneLeadUsed } = (0, conversation_tone_util_1.resolveToneLead)({
+            slot: 'objection',
+            conversationTone: args.conversationTone,
+            lastToneLeadUsed: args.lastToneLeadUsed,
+        });
+        const text = lead ? `${lead} ${seed}` : seed;
+        return {
+            text,
+            source: 'openai',
+            templateKey: `objection_${objection.type}`,
+            questionAnsweredFirst: true,
+            interruptionHandled: true,
+            toneLeadUsed,
+            paymentSuggestionUsed: false,
+            followUpTriggered: false,
+        };
     }
     if (args.intent === 'correction') {
         const hint = getCorrectionHint(args.lastUserMessage);
