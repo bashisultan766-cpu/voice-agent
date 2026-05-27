@@ -15,15 +15,15 @@ export declare class CallbackRequestsService {
     create(input: CreateCallbackRequestInput): Promise<{
         id: string;
         tenantId: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         createdAt: Date;
         updatedAt: Date;
+        reason: string;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         phone: string;
         agentId: string;
         callSessionId: string | null;
-        notes: string | null;
-        reason: string;
         priority: string | null;
+        notes: string | null;
     }>;
     listForTenant(tenantId: string, options?: {
         status?: CallbackRequestStatus;
@@ -31,28 +31,28 @@ export declare class CallbackRequestsService {
     }): Promise<{
         id: string;
         tenantId: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         createdAt: Date;
         updatedAt: Date;
+        reason: string;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         phone: string;
         agentId: string;
         callSessionId: string | null;
-        notes: string | null;
-        reason: string;
         priority: string | null;
+        notes: string | null;
     }[]>;
     updateStatus(tenantId: string, id: string, status: CallbackRequestStatus): Promise<{
         id: string;
         tenantId: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         createdAt: Date;
         updatedAt: Date;
+        reason: string;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         phone: string;
         agentId: string;
         callSessionId: string | null;
-        notes: string | null;
-        reason: string;
         priority: string | null;
+        notes: string | null;
     } | null>;
     markRequestedOnSession(callSessionId: string): Promise<void>;
 }

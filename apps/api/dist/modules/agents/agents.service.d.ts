@@ -220,15 +220,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -240,7 +243,6 @@ export declare class AgentsService {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: Prisma.JsonValue;
         toolPermissions: Prisma.JsonValue;
@@ -277,8 +279,6 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     private agentSelect;
     findAll(tenantId: string): Promise<{
@@ -326,15 +326,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -346,7 +349,6 @@ export declare class AgentsService {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: Prisma.JsonValue;
         toolPermissions: Prisma.JsonValue;
@@ -383,8 +385,6 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     getAgentById(tenantId: string, agentId: string): Promise<{
         agentConfig: {
@@ -426,15 +426,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -446,7 +449,6 @@ export declare class AgentsService {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: Prisma.JsonValue;
         toolPermissions: Prisma.JsonValue;
@@ -483,8 +485,6 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     private agentRowToRuntimePromptInput;
     private loadAgentRowForRuntime;
@@ -524,7 +524,7 @@ export declare class AgentsService {
         greeting: string | null;
     }>;
     update(tenantId: string, id: string, dto: UpdateAgentDto, actorUserId?: string): Promise<{
-        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey", boolean>;
+        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "openaiApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "elevenlabsApiKey", boolean>;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -560,15 +560,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -580,7 +583,6 @@ export declare class AgentsService {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: Prisma.JsonValue;
         toolPermissions: Prisma.JsonValue;
@@ -617,11 +619,9 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     syncSecretsFromWorkspace(tenantId: string, id: string, actorUserId?: string): Promise<{
-        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey", boolean>;
+        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "openaiApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "elevenlabsApiKey", boolean>;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -657,15 +657,18 @@ export declare class AgentsService {
             tone: string | null;
             providerConfig: Prisma.JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -677,7 +680,6 @@ export declare class AgentsService {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: Prisma.JsonValue;
         toolPermissions: Prisma.JsonValue;
@@ -714,8 +716,6 @@ export declare class AgentsService {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     remove(tenantId: string, id: string, actorUserId?: string): Promise<{
         deleted: boolean;

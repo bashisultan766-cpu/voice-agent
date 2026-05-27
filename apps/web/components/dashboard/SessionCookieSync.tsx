@@ -21,7 +21,7 @@ export function SessionCookieSync() {
 
     const token = readStoredAccessToken();
     const work = token
-      ? fetch('/api/auth/session-sync', {
+      ? fetch('/session/session-sync', {
           method: 'POST',
           credentials: 'include',
           headers: getBearerInit(),

@@ -92,15 +92,18 @@ export declare class AgentsController {
             tone: string | null;
             providerConfig: import("@prisma/client/runtime/client").JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -112,7 +115,6 @@ export declare class AgentsController {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: import("@prisma/client/runtime/client").JsonValue;
         toolPermissions: import("@prisma/client/runtime/client").JsonValue;
@@ -149,8 +151,6 @@ export declare class AgentsController {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     findAll(tenantId: string): Promise<{
         catalogReady: boolean;
@@ -246,15 +246,18 @@ export declare class AgentsController {
             tone: string | null;
             providerConfig: import("@prisma/client/runtime/client").JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -266,7 +269,6 @@ export declare class AgentsController {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: import("@prisma/client/runtime/client").JsonValue;
         toolPermissions: import("@prisma/client/runtime/client").JsonValue;
@@ -303,8 +305,6 @@ export declare class AgentsController {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     getRuntimeDebug(tenantId: string, id: string, callSessionId?: string): Promise<{
         agentId: string;
@@ -476,7 +476,7 @@ export declare class AgentsController {
         failures?: undefined;
     }>;
     syncSecretsFromSettings(tenantId: string, userId: string, id: string): Promise<{
-        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey", boolean>;
+        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "openaiApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "elevenlabsApiKey", boolean>;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -512,15 +512,18 @@ export declare class AgentsController {
             tone: string | null;
             providerConfig: import("@prisma/client/runtime/client").JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -532,7 +535,6 @@ export declare class AgentsController {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: import("@prisma/client/runtime/client").JsonValue;
         toolPermissions: import("@prisma/client/runtime/client").JsonValue;
@@ -569,11 +571,9 @@ export declare class AgentsController {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     update(tenantId: string, userId: string, id: string, dto: UpdateAgentDto): Promise<{
-        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey", boolean>;
+        updatedSecrets: Record<"twilioAccountSid" | "resendApiKey" | "openaiApiKey" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAuthToken" | "elevenlabsApiKey", boolean>;
         agentConfig: {
             supportEmail: string | null;
             supportPhone: string | null;
@@ -609,15 +609,18 @@ export declare class AgentsController {
             tone: string | null;
             providerConfig: import("@prisma/client/runtime/client").JsonValue;
         } | null;
-        name: string;
         id: string;
         tenantId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        name: string;
+        slug: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        timezone: string | null;
         clientId: string | null;
         storeId: string | null;
-        slug: string;
         description: string | null;
         language: string;
-        timezone: string | null;
         voice: string | null;
         voiceProvider: string | null;
         voiceId: string | null;
@@ -629,7 +632,6 @@ export declare class AgentsController {
         escalationMessage: string | null;
         model: string | null;
         temperature: number | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
         isPublished: boolean;
         enabledTools: import("@prisma/client/runtime/client").JsonValue;
         toolPermissions: import("@prisma/client/runtime/client").JsonValue;
@@ -666,8 +668,6 @@ export declare class AgentsController {
         elevenlabsConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         lastConnectionTestAt: Date | null;
         createdById: string | null;
-        createdAt: Date;
-        updatedAt: Date;
     }>;
     remove(tenantId: string, userId: string, id: string): Promise<{
         deleted: boolean;

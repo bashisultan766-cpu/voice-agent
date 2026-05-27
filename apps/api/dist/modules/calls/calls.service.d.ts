@@ -16,14 +16,14 @@ export declare class CallsService {
     createSession(input: CreateCallSessionInput): Promise<{
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -53,14 +53,14 @@ export declare class CallsService {
     }): Promise<{
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -86,14 +86,14 @@ export declare class CallsService {
     findAllForTenant(tenantId: string): Promise<{
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -115,8 +115,8 @@ export declare class CallsService {
         toolExecutions: {
             id: string;
             tenantId: string;
-            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             createdAt: Date;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             agentId: string;
             callSessionId: string | null;
             requestId: string | null;
@@ -128,9 +128,9 @@ export declare class CallsService {
         }[];
         transcripts: {
             id: string;
+            role: string;
             createdAt: Date;
             callSessionId: string;
-            role: string;
             content: string;
             sequenceNumber: number;
             timestampMs: number | null;
@@ -138,14 +138,14 @@ export declare class CallsService {
     } & {
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -167,8 +167,8 @@ export declare class CallsService {
         toolExecutions: {
             id: string;
             tenantId: string;
-            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             createdAt: Date;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             agentId: string;
             callSessionId: string | null;
             requestId: string | null;
@@ -180,9 +180,9 @@ export declare class CallsService {
         }[];
         transcripts: {
             id: string;
+            role: string;
             createdAt: Date;
             callSessionId: string;
-            role: string;
             content: string;
             sequenceNumber: number;
             timestampMs: number | null;
@@ -190,14 +190,14 @@ export declare class CallsService {
     } & {
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -218,14 +218,14 @@ export declare class CallsService {
     findOneByTwilioCallSid(twilioCallSid: string): Promise<{
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -246,14 +246,14 @@ export declare class CallsService {
     mergeSessionMetadata(callSessionId: string, patch: Record<string, unknown>): Promise<{
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;

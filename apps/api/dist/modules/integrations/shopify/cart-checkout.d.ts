@@ -21,21 +21,21 @@ export declare class ShopifyCartCheckoutService {
     }): Promise<{
         id: string;
         tenantId: string;
-        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         agentId: string;
         metadata: Prisma.JsonValue | null;
-        mode: import("@prisma/client").$Enums.CheckoutMode;
         callSessionId: string | null;
+        sentAt: Date | null;
         checkoutFingerprint: string | null;
         shopifyConnectionId: string | null;
+        mode: import("@prisma/client").$Enums.CheckoutMode;
         checkoutUrl: string;
         customerEmail: string | null;
         itemsJson: Prisma.JsonValue | null;
         providerRef: string | null;
         expiresAt: Date | null;
-        sentAt: Date | null;
         completedAt: Date | null;
     }>;
 }

@@ -12,6 +12,8 @@ export declare class CallOutcomeService {
         callSessionId: string;
         summary: string | null;
         escalated: boolean;
+        callbackRequested: boolean;
+        escalationReason: string | null;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
@@ -19,13 +21,11 @@ export declare class CallOutcomeService {
         toolsUsedCount: number;
         toolFailuresCount: number;
         fallbackCount: number;
-        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
         paymentLinkSent: boolean;
         orderCompleted: boolean;
-        escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;
     } | null>;
     update(tenantId: string, callSessionId: string, data: {
@@ -42,6 +42,8 @@ export declare class CallOutcomeService {
         callSessionId: string;
         summary: string | null;
         escalated: boolean;
+        callbackRequested: boolean;
+        escalationReason: string | null;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
@@ -49,13 +51,11 @@ export declare class CallOutcomeService {
         toolsUsedCount: number;
         toolFailuresCount: number;
         fallbackCount: number;
-        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
         paymentLinkSent: boolean;
         orderCompleted: boolean;
-        escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;
     } | null>;
 }

@@ -5,14 +5,14 @@ export declare class CallsController {
     findAll(tenantId: string): Promise<{
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -34,8 +34,8 @@ export declare class CallsController {
         toolExecutions: {
             id: string;
             tenantId: string;
-            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             createdAt: Date;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
             agentId: string;
             callSessionId: string | null;
             requestId: string | null;
@@ -47,9 +47,9 @@ export declare class CallsController {
         }[];
         transcripts: {
             id: string;
+            role: string;
             createdAt: Date;
             callSessionId: string;
-            role: string;
             content: string;
             sequenceNumber: number;
             timestampMs: number | null;
@@ -57,14 +57,14 @@ export declare class CallsController {
     } & {
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;

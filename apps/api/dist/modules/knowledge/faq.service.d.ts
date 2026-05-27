@@ -14,44 +14,44 @@ export declare class FaqService {
     }): Promise<{
         id: string;
         tenantId: string;
-        storeId: string;
-        language: string;
         createdAt: Date;
         updatedAt: Date;
+        storeId: string;
+        language: string;
         tags: string | null;
-        priority: number;
-        branchProfileId: string | null;
         question: string;
         answer: string;
+        priority: number;
         isActive: boolean;
+        branchProfileId: string | null;
     }>;
     findAll(tenantId: string, storeId?: string, branchProfileId?: string, isActive?: boolean): Promise<{
         id: string;
         tenantId: string;
-        storeId: string;
-        language: string;
         createdAt: Date;
         updatedAt: Date;
+        storeId: string;
+        language: string;
         tags: string | null;
-        priority: number;
-        branchProfileId: string | null;
         question: string;
         answer: string;
+        priority: number;
         isActive: boolean;
+        branchProfileId: string | null;
     }[]>;
     findOne(tenantId: string, id: string): Promise<{
         id: string;
         tenantId: string;
-        storeId: string;
-        language: string;
         createdAt: Date;
         updatedAt: Date;
+        storeId: string;
+        language: string;
         tags: string | null;
-        priority: number;
-        branchProfileId: string | null;
         question: string;
         answer: string;
+        priority: number;
         isActive: boolean;
+        branchProfileId: string | null;
     }>;
     update(tenantId: string, id: string, dto: Partial<{
         question: string;
@@ -63,30 +63,30 @@ export declare class FaqService {
     }>): Promise<{
         id: string;
         tenantId: string;
-        storeId: string;
-        language: string;
         createdAt: Date;
         updatedAt: Date;
+        storeId: string;
+        language: string;
         tags: string | null;
-        priority: number;
-        branchProfileId: string | null;
         question: string;
         answer: string;
+        priority: number;
         isActive: boolean;
+        branchProfileId: string | null;
     }>;
     remove(tenantId: string, id: string): Promise<{
         id: string;
         tenantId: string;
-        storeId: string;
-        language: string;
         createdAt: Date;
         updatedAt: Date;
+        storeId: string;
+        language: string;
         tags: string | null;
-        priority: number;
-        branchProfileId: string | null;
         question: string;
         answer: string;
+        priority: number;
         isActive: boolean;
+        branchProfileId: string | null;
     }>;
     search(tenantId: string, storeId: string, query: string, branchProfileId?: string, limit?: number): Promise<{
         id: string;

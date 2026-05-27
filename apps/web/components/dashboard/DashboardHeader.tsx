@@ -28,7 +28,7 @@ export function DashboardHeader() {
 
   async function logout() {
     clearClientSession();
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    await fetch('/session/logout', { method: 'POST', credentials: 'include' });
     router.push('/login');
     router.refresh();
   }

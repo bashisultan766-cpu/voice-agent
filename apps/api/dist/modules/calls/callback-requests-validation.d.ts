@@ -8,10 +8,10 @@ export declare const callbackListQuerySchema: z.ZodObject<{
     }>>;
     limit: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
-    status?: "COMPLETED" | "IN_PROGRESS" | "OPEN" | "CANCELLED" | undefined;
+    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
     limit?: number | undefined;
 }, {
-    status?: "COMPLETED" | "IN_PROGRESS" | "OPEN" | "CANCELLED" | undefined;
+    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
     limit?: number | undefined;
 }>;
 export declare const callbackPatchStatusBodySchema: z.ZodObject<{
@@ -22,7 +22,7 @@ export declare const callbackPatchStatusBodySchema: z.ZodObject<{
         CANCELLED: "CANCELLED";
     }>>;
 }, "strip", z.ZodTypeAny, {
-    status?: "COMPLETED" | "IN_PROGRESS" | "OPEN" | "CANCELLED" | undefined;
+    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
 }, {
-    status?: "COMPLETED" | "IN_PROGRESS" | "OPEN" | "CANCELLED" | undefined;
+    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
 }>;

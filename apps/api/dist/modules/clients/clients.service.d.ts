@@ -3,11 +3,11 @@ export declare class ClientsService {
     private readonly prisma;
     constructor(prisma: PrismaService);
     findAll(tenantId: string): Promise<{
-        name: string;
         id: string;
         tenantId: string;
         createdAt: Date;
         updatedAt: Date;
+        name: string;
         contactEmail: string | null;
         contactPhone: string | null;
     }[]>;

@@ -1,15 +1,16 @@
 import { authenticatedFetchJson } from '@/lib/api/authenticated-fetch';
+import { getServerApiBaseUrl } from '@/lib/server-api-base';
 
 /**
  * Browser: same-origin paths use the admin session (cookie + Bearer from localStorage).
- * Server / Node: uses `NEXT_PUBLIC_API_URL` as origin when set.
+ * Server / Node: uses INTERNAL_API_URL first (via getServerApiBaseUrl()).
  */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const isBrowser = typeof window !== 'undefined';
   const normalized = path.startsWith('/') ? path : `/${path}`;
   const url = isBrowser
     ? normalized
-    : `${(process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/$/, '')}${normalized}`;
+    : `${getServerApiBaseUrl()}${normalized}`;
   if (isBrowser) {
     return authenticatedFetchJson<T>(url, init);
   }

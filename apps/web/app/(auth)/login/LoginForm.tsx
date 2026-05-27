@@ -21,18 +21,19 @@ export function LoginForm({ sessionExpired = false }: LoginFormProps) {
   useEffect(() => {
     if (!sessionExpired) return;
     clearClientSession();
-    void fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    void fetch('/session/logout', { method: 'POST', credentials: 'include' });
   }, [sessionExpired]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
+    const normalizedWorkspaceSlug = workspaceSlug.trim().toLowerCase();
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch('/session/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceSlug, email, password }),
+        body: JSON.stringify({ workspaceSlug: normalizedWorkspaceSlug, email: email.trim(), password }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -43,7 +44,7 @@ export function LoginForm({ sessionExpired = false }: LoginFormProps) {
       const token = (data as { accessToken?: string }).accessToken;
       if (token) {
         persistClientSession(token);
-        await fetch('/api/auth/session-sync', {
+        await fetch('/session/session-sync', {
           method: 'POST',
           credentials: 'include',
           headers: { Authorization: `Bearer ${token}` },
