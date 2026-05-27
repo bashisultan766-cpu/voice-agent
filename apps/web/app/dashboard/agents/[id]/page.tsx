@@ -1,8 +1,7 @@
 import { getAgentServer } from '@/lib/api/agents-server';
 import { ToastProvider } from '@/components/ui/Toast';
-import { AgentDetailsView } from '@/components/agents/AgentDetailsView';
-import { AgentPageLoader } from '@/components/agents/AgentPageLoader';
-import { Breadcrumb } from '@/components/dashboard/ui/Breadcrumb';
+import { AgentPageLoader, normalizeAgentForClient } from '@/components/agents/AgentPageLoader';
+import { AgentDetailsPageClient } from '@/components/agents/AgentDetailsPageClient';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,22 +11,12 @@ interface AgentDetailsPageProps {
 
 export default async function AgentDetailsPage({ params }: AgentDetailsPageProps) {
   const { id } = await params;
-  const initialAgent = await getAgentServer(id);
+  const initialAgent = normalizeAgentForClient(await getAgentServer(id));
 
   return (
     <ToastProvider>
       <AgentPageLoader agentId={id} initialAgent={initialAgent}>
-        {(agent) => (
-          <div className="space-y-6">
-            <Breadcrumb
-              items={[
-                { label: 'Agents', href: '/dashboard/agents' },
-                { label: agent.name },
-              ]}
-            />
-            <AgentDetailsView agent={agent} />
-          </div>
-        )}
+        <AgentDetailsPageClient />
       </AgentPageLoader>
     </ToastProvider>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { AgentApi } from '@/lib/api/agents';
@@ -8,16 +8,36 @@ import { getAgent } from '@/lib/api/agents';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
 import { ensureClientSession } from '@/lib/auth/browser-session';
 
+/** Strip non-JSON values before crossing the Server → Client boundary. */
+export function normalizeAgentForClient(agent: AgentApi | null | undefined): AgentApi | null {
+  if (!agent) return null;
+  return JSON.parse(JSON.stringify(agent)) as AgentApi;
+}
+
+const AgentLoaderContext = createContext<AgentApi | null>(null);
+
+export function useLoadedAgent(): AgentApi {
+  const agent = useContext(AgentLoaderContext);
+  if (!agent) {
+    throw new Error('useLoadedAgent must be used within AgentPageLoader after the agent has loaded.');
+  }
+  return agent;
+}
+
 type AgentPageLoaderProps = {
   agentId: string;
   initialAgent?: AgentApi | null;
-  children: (agent: AgentApi) => React.ReactNode;
+  children: ReactNode;
 };
 
 export function AgentPageLoader({ agentId, initialAgent, children }: AgentPageLoaderProps) {
   const router = useRouter();
-  const [agent, setAgent] = useState<AgentApi | null>(initialAgent ?? null);
-  const [loading, setLoading] = useState(!initialAgent);
+  const normalizedInitialAgent = useMemo(
+    () => normalizeAgentForClient(initialAgent),
+    [initialAgent],
+  );
+  const [agent, setAgent] = useState<AgentApi | null>(normalizedInitialAgent);
+  const [loading, setLoading] = useState(!normalizedInitialAgent);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,7 +53,7 @@ export function AgentPageLoader({ agentId, initialAgent, children }: AgentPageLo
           setError('Agent not found.');
           return;
         }
-        setAgent(row);
+        setAgent(normalizeAgentForClient(row));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -96,5 +116,5 @@ export function AgentPageLoader({ agentId, initialAgent, children }: AgentPageLo
     );
   }
 
-  return <>{children(agent)}</>;
+  return <AgentLoaderContext.Provider value={agent}>{children}</AgentLoaderContext.Provider>;
 }
