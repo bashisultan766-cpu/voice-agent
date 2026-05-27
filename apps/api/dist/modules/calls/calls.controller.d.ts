@@ -5,14 +5,13 @@ export declare class CallsController {
     findAll(tenantId: string): Promise<{
         id: string;
         tenantId: string;
+        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
         storeId: string | null;
         agentId: string;
-        metadata: import("@prisma/client/runtime/client").JsonValue | null;
-        twilioCallSid: string | null;
         phoneNumberId: string | null;
+        twilioCallSid: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -27,6 +26,7 @@ export declare class CallsController {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
+        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }[]>;
@@ -34,12 +34,12 @@ export declare class CallsController {
         toolExecutions: {
             id: string;
             tenantId: string;
-            createdAt: Date;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            createdAt: Date;
             agentId: string;
             callSessionId: string | null;
-            requestId: string | null;
             toolName: string;
+            requestId: string | null;
             inputJson: import("@prisma/client/runtime/client").JsonValue;
             outputJson: import("@prisma/client/runtime/client").JsonValue | null;
             errorMessage: string | null;
@@ -47,9 +47,9 @@ export declare class CallsController {
         }[];
         transcripts: {
             id: string;
-            role: string;
             createdAt: Date;
             callSessionId: string;
+            role: string;
             content: string;
             sequenceNumber: number;
             timestampMs: number | null;
@@ -57,14 +57,13 @@ export declare class CallsController {
     } & {
         id: string;
         tenantId: string;
+        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
         storeId: string | null;
         agentId: string;
-        metadata: import("@prisma/client/runtime/client").JsonValue | null;
-        twilioCallSid: string | null;
         phoneNumberId: string | null;
+        twilioCallSid: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -79,6 +78,7 @@ export declare class CallsController {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
+        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }>;

@@ -149,6 +149,9 @@ let AgentsController = class AgentsController {
     syncSecretsFromSettings(tenantId, userId, id) {
         return this.agentsService.syncSecretsFromWorkspace(tenantId, id, userId);
     }
+    updateStatus(tenantId, userId, id, body) {
+        return this.agentsService.updateStatus(tenantId, id, body.status, userId);
+    }
     update(tenantId, userId, id, dto) {
         return this.agentsService.update(tenantId, id, dto, userId);
     }
@@ -374,6 +377,17 @@ __decorate([
     __metadata("design:paramtypes", [String, String, String]),
     __metadata("design:returntype", void 0)
 ], AgentsController.prototype, "syncSecretsFromSettings", null);
+__decorate([
+    (0, roles_decorator_1.Roles)(client_1.UserRole.MANAGER),
+    (0, common_1.Patch)(':id/status'),
+    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(1, (0, user_id_decorator_1.UserId)()),
+    __param(2, (0, common_1.Param)('id', new zod_validation_pipe_1.ZodValidationPipe(agents_validation_1.cuidParamSchema))),
+    __param(3, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(agents_validation_1.updateAgentStatusBodySchema))),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String, void 0]),
+    __metadata("design:returntype", void 0)
+], AgentsController.prototype, "updateStatus", null);
 __decorate([
     (0, roles_decorator_1.Roles)(client_1.UserRole.MANAGER),
     (0, common_1.Patch)(':id'),

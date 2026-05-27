@@ -1,8 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.debugShopifySearchBodySchema = exports.smokeTestBodySchema = exports.configureTwilioWebhookBodySchema = exports.testAgentEmailBodySchema = exports.testElevenLabsCredentialsSchema = exports.testOpenAiCredentialsSchema = exports.testTwilioCredentialsSchema = exports.testDatabaseCredentialsSchema = exports.testShopifyCredentialsSchema = exports.testAiBehaviorBodySchema = exports.logsQuerySchema = exports.cuidParamSchema = void 0;
+exports.debugShopifySearchBodySchema = exports.smokeTestBodySchema = exports.configureTwilioWebhookBodySchema = exports.testAgentEmailBodySchema = exports.testElevenLabsCredentialsSchema = exports.testOpenAiCredentialsSchema = exports.testTwilioCredentialsSchema = exports.testDatabaseCredentialsSchema = exports.testShopifyCredentialsSchema = exports.testAiBehaviorBodySchema = exports.logsQuerySchema = exports.updateAgentStatusBodySchema = exports.cuidParamSchema = void 0;
 const zod_1 = require("zod");
 exports.cuidParamSchema = zod_1.z.string().min(20).max(32).regex(/^c[a-z0-9]+$/i);
+exports.updateAgentStatusBodySchema = zod_1.z
+    .object({
+    status: zod_1.z.enum(['draft', 'active', 'paused']),
+})
+    .strict();
 exports.logsQuerySchema = zod_1.z
     .object({
     limit: zod_1.z.coerce.number().int().min(1).max(100).optional(),

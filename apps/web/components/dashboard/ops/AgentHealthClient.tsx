@@ -8,7 +8,12 @@ import {
   type OpsAgentOverview,
   type OpsFullReadinessSmokeResponse,
 } from '@/lib/api/ops';
-import { testAgentConnection, updateAgent } from '@/lib/api/agents';
+import {
+  testAgentConnection,
+  updateAgent,
+  goLiveAgent,
+  formatAgentStatusFailureMessage,
+} from '@/lib/api/agents';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/dashboard/ui/PageHeader';
 import { SearchInput } from '@/components/dashboard/ui/SearchInput';
@@ -105,8 +110,17 @@ export function AgentHealthClient() {
     const next = row.status === 'ACTIVE' ? 'paused' : 'active';
     setBusy(row.id, 'toggle');
     try {
-      await updateAgent(row.id, { agentStatus: next });
-      addToast('success', next === 'active' ? 'Agent resumed.' : 'Agent paused.');
+      if (next === 'active') {
+        const result = await goLiveAgent(row.id);
+        if (!result.ready) {
+          addToast('error', formatAgentStatusFailureMessage(result.failures));
+          return;
+        }
+        addToast('success', 'Agent resumed and is live.');
+      } else {
+        await updateAgent(row.id, { agentStatus: 'paused' });
+        addToast('success', 'Agent paused.');
+      }
       await load('soft');
     } catch (e) {
       addToast('error', e instanceof Error ? e.message : 'Could not update agent.');

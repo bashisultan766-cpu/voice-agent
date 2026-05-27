@@ -7,18 +7,18 @@ export declare class TenantsService {
         slug: string;
     }): Promise<{
         id: string;
+        name: string;
+        slug: string;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        name: string;
-        slug: string;
     }>;
     findOne(id: string): Promise<{
         id: string;
+        name: string;
+        slug: string;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        name: string;
-        slug: string;
     }>;
 }

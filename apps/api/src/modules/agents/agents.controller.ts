@@ -16,6 +16,7 @@ import { AgentsService } from './agents.service';
 import { ShopifyAgentService } from './shopify-agent.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
+import { UpdateAgentStatusDto } from './dto/update-agent-status.dto';
 import { TenantId } from '../../common/decorators/tenant-id.decorator';
 import { UserId } from '../../common/decorators/user-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -33,6 +34,7 @@ import {
   smokeTestBodySchema,
   debugShopifySearchBodySchema,
   testAgentEmailBodySchema,
+  updateAgentStatusBodySchema,
 } from './agents-validation';
 import { z } from 'zod';
 
@@ -283,6 +285,18 @@ export class AgentsController {
     @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
   ) {
     return this.agentsService.syncSecretsFromWorkspace(tenantId, id, userId);
+  }
+
+  @Roles(UserRole.MANAGER)
+  @Patch(':id/status')
+  updateStatus(
+    @TenantId() tenantId: string,
+    @UserId() userId: string,
+    @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
+    @Body(new ZodValidationPipe(updateAgentStatusBodySchema))
+    body: z.infer<typeof updateAgentStatusBodySchema>,
+  ) {
+    return this.agentsService.updateStatus(tenantId, id, body.status as UpdateAgentStatusDto['status'], userId);
   }
 
   @Roles(UserRole.MANAGER)

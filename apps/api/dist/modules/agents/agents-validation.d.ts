@@ -1,5 +1,12 @@
 import { z } from 'zod';
 export declare const cuidParamSchema: z.ZodString;
+export declare const updateAgentStatusBodySchema: z.ZodObject<{
+    status: z.ZodEnum<["draft", "active", "paused"]>;
+}, "strict", z.ZodTypeAny, {
+    status: "draft" | "active" | "paused";
+}, {
+    status: "draft" | "active" | "paused";
+}>;
 export declare const logsQuerySchema: z.ZodObject<{
     limit: z.ZodOptional<z.ZodNumber>;
 }, "strict", z.ZodTypeAny, {
@@ -86,11 +93,11 @@ export declare const testAgentEmailBodySchema: z.ZodDefault<z.ZodObject<{
     toEmail: z.ZodOptional<z.ZodString>;
     checkoutUrl: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
-    toEmail?: string | undefined;
     checkoutUrl?: string | undefined;
+    toEmail?: string | undefined;
 }, {
-    toEmail?: string | undefined;
     checkoutUrl?: string | undefined;
+    toEmail?: string | undefined;
 }>>;
 export declare const configureTwilioWebhookBodySchema: z.ZodDefault<z.ZodObject<{
     force: z.ZodOptional<z.ZodBoolean>;

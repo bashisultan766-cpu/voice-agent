@@ -9,10 +9,13 @@ import {
   getAgent,
   createAgent,
   updateAgent,
+  goLiveAgent,
+  formatAgentStatusFailureMessage,
   agentToFormData,
   testAgentConnection,
   syncAgentSecretsFromSettings,
 } from '@/lib/api/agents';
+import { useToast } from '@/components/ui/Toast';
 
 interface AgentActionsDropdownProps {
   agent: AgentListItem;
@@ -31,6 +34,7 @@ export function AgentActionsDropdown({
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const router = useRouter();
+  const { addToast } = useToast();
 
   useLayoutEffect(() => {
     if (!open || !ref.current) {
@@ -109,9 +113,16 @@ export function AgentActionsDropdown({
     setOpen(false);
     setLoading('activate');
     try {
-      await updateAgent(agent.id, { agentStatus: 'active' });
+      const result = await goLiveAgent(agent.id);
+      if (result.ready) {
+        addToast('success', 'Agent is live and can receive calls.');
+      } else {
+        addToast('error', formatAgentStatusFailureMessage(result.failures));
+      }
       onActionEnd?.();
       router.refresh();
+    } catch (e) {
+      addToast('error', e instanceof Error ? e.message : 'Failed to activate agent.');
     } finally {
       setLoading(null);
     }

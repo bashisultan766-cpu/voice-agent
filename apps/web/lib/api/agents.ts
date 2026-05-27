@@ -617,6 +617,36 @@ export async function goLiveAgent(agentId: string): Promise<{
   });
 }
 
+export type AgentStatusTransition = 'draft' | 'active' | 'paused';
+
+export interface UpdateAgentStatusResponse {
+  agent: AgentApi;
+  ready?: boolean;
+  goLiveStatus?: 'LIVE' | 'CONFIG_REQUIRED';
+  failures?: Array<{ key: string; label: string; fixAction: string }>;
+  readiness?: AgentReadinessResponse;
+}
+
+/** List/dashboard status control — activate runs readiness checks (go-live). */
+export async function updateAgentStatus(
+  agentId: string,
+  status: AgentStatusTransition,
+): Promise<UpdateAgentStatusResponse> {
+  return authenticatedFetchJson<UpdateAgentStatusResponse>(`${getBaseUrl()}/api/agents/${agentId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function formatAgentStatusFailureMessage(
+  failures?: Array<{ label: string; fixAction: string }>,
+): string {
+  if (!failures?.length) {
+    return 'Agent is not ready to go live. Open the agent and complete readiness checks.';
+  }
+  return failures.map((f) => `${f.label}: ${f.fixAction}`).join(' · ');
+}
+
 export async function simulateAgentBuyingFlow(
   agentId: string,
   input?: {

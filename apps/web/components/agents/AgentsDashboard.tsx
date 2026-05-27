@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, Fragment, type ReactNode } from 'react';
 import Link from 'next/link';
 import { getAgents, deleteAgent, type AgentListItem } from '@/lib/api/agents';
 import { SearchInput } from '@/components/dashboard/ui/SearchInput';
@@ -10,6 +10,7 @@ import { Pagination } from '@/components/dashboard/ops/TableStates';
 import { AgentsDashboardSkeleton } from './AgentsDashboardSkeleton';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { AgentActionsDropdown } from './AgentActionsDropdown';
+import { AgentStatusDropdown } from './AgentStatusDropdown';
 import { EmptyState } from './EmptyState';
 
 const PAGE_SIZE = 12;
@@ -33,24 +34,61 @@ function formatUpdatedAt(iso: string): string {
   }
 }
 
-const statusStyles: Record<AgentListItem['status'], string> = {
-  active: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
-  draft: 'bg-slate-50 text-slate-600 border border-slate-200',
-  paused: 'bg-slate-50 text-slate-500 border border-slate-200',
-};
-
 const connectionStyles: Record<AgentListItem['shopifyConnectionStatus'], string> = {
   ok: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
   failed: 'bg-red-50 text-red-600 border border-red-100',
   unknown: 'bg-slate-50 text-slate-500 border border-slate-200',
 };
 
-function ConnectionBadge({ status }: { status: AgentListItem['shopifyConnectionStatus'] }) {
-  const label = status === 'ok' ? 'Connected' : status === 'failed' ? 'Failed' : '—';
+function ConnectionBadge({
+  status,
+  compact,
+}: {
+  status: AgentListItem['shopifyConnectionStatus'];
+  compact?: boolean;
+}) {
+  const label = status === 'ok' ? (compact ? 'OK' : 'Connected') : status === 'failed' ? (compact ? 'Fail' : 'Failed') : '—';
   return (
-    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${connectionStyles[status]}`}>
+    <span
+      className={`inline-flex shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium sm:text-xs sm:px-2 ${connectionStyles[status]}`}
+      title={status === 'ok' ? 'Connected' : status === 'failed' ? 'Failed' : 'Unknown'}
+    >
       {label}
     </span>
+  );
+}
+
+function IntegrationPills({ agent }: { agent: AgentListItem }) {
+  const items: Array<{ key: string; label: string; node: ReactNode }> = [
+    { key: 'shopify', label: 'Shopify', node: <ConnectionBadge status={agent.shopifyConnectionStatus} compact /> },
+    {
+      key: 'catalog',
+      label: 'Catalog',
+      node: (
+        <span
+          className={`inline-flex shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium sm:text-xs sm:px-2 ${
+            agent.catalogReady
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+              : 'bg-amber-50 text-amber-700 border border-amber-100'
+          }`}
+        >
+          {agent.catalogReady ? 'Cat OK' : 'Cat —'}
+        </span>
+      ),
+    },
+    { key: 'database', label: 'Database', node: <ConnectionBadge status={agent.databaseConnectionStatus} compact /> },
+    { key: 'twilio', label: 'Twilio', node: <ConnectionBadge status={agent.twilioConnectionStatus} compact /> },
+    { key: 'openai', label: 'OpenAI', node: <ConnectionBadge status={agent.openaiConnectionStatus} compact /> },
+    { key: 'elevenlabs', label: 'ElevenLabs', node: <ConnectionBadge status={agent.elevenlabsConnectionStatus} compact /> },
+  ];
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1">
+      {items.map((item) => (
+        <span key={item.key} title={item.label}>
+          {item.node}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -94,6 +132,25 @@ export function AgentsDashboard({
   const [page, setPage] = useState(1);
   const [deleteTarget, setDeleteTarget] = useState<AgentListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
+
+  const patchAgentStatus = useCallback((agentId: string, status: AgentListItem['status']) => {
+    setAgents((prev) => prev.map((a) => (a.id === agentId ? { ...a, status } : a)));
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = window.localStorage.getItem(AGENTS_CACHE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as AgentListItem[];
+        if (!Array.isArray(parsed)) return;
+        window.localStorage.setItem(
+          AGENTS_CACHE_KEY,
+          JSON.stringify(parsed.map((a) => (a.id === agentId ? { ...a, status } : a))),
+        );
+      } catch {
+        /* ignore cache write errors */
+      }
+    }
+  }, []);
 
   const fetchAgents = useCallback(async (mode: 'full' | 'soft' = 'full') => {
     const soft = mode === 'soft' && agents.length > 0;
@@ -167,7 +224,7 @@ export function AgentsDashboard({
 
   if (loading && agents.length === 0 && !fetchError) {
     return (
-      <div className="space-y-8">
+      <div className="w-full max-w-full min-w-0 space-y-8 overflow-x-hidden">
         <PageHeader
           title="Agents"
           description="Create and manage Shopify-connected voice agents for your stores."
@@ -179,7 +236,7 @@ export function AgentsDashboard({
 
   if (fetchError && agents.length === 0) {
     return (
-      <div className="space-y-8">
+      <div className="w-full max-w-full min-w-0 space-y-8 overflow-x-hidden">
         <PageHeader
           title="Agents"
           description="Create and manage Shopify-connected voice agents for your stores."
@@ -211,7 +268,7 @@ export function AgentsDashboard({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="w-full max-w-full min-w-0 space-y-8 overflow-x-hidden">
       <PageHeader
         title="Agents"
         description="Create and manage Shopify-connected voice agents for your stores."
@@ -279,94 +336,169 @@ export function AgentsDashboard({
             </div>
           </div>
 
-          <div className={`overflow-hidden rounded-xl border border-border bg-card ${refreshing ? 'opacity-70 transition-opacity' : ''}`}>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[800px] text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Agent</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Store</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Voice</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Status</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Shopify</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Catalog</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Database</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Twilio</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">OpenAI</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">ElevenLabs</th>
-                    <th className="px-5 py-3.5 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Updated</th>
-                    <th className="w-12 px-2 py-3.5" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.length === 0 ? (
-                    <tr>
-                      <td colSpan={12} className="px-5 py-14 text-center text-sm text-muted-foreground">
-                        No agents match your search or filter.
-                      </td>
-                    </tr>
-                  ) : (
-                    paged.map((agent) => (
-                      <tr
-                        key={agent.id}
-                        className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
-                      >
-                        <td className="px-5 py-3.5">
+          <div
+            className={`overflow-hidden rounded-xl border border-border bg-card ${refreshing ? 'opacity-70 transition-opacity' : ''}`}
+          >
+            {filtered.length === 0 ? (
+              <p className="px-5 py-14 text-center text-sm text-muted-foreground">
+                No agents match your search or filter.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-3 p-4 lg:hidden">
+                  {paged.map((agent) => (
+                    <article
+                      key={agent.id}
+                      className="min-w-0 rounded-lg border border-border bg-background p-4 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
                           <Link
                             href={`/dashboard/agents/${agent.id}`}
-                            className="font-medium text-foreground hover:text-muted-foreground transition-colors"
-                            title="View agent details"
+                            className="block truncate font-medium text-foreground hover:text-muted-foreground"
                           >
                             {agent.name}
                           </Link>
-                        </td>
-                        <td className="px-5 py-3.5 text-muted-foreground">{agent.storeName ?? '—'}</td>
-                        <td className="px-5 py-3.5 text-muted-foreground">{agent.voice ?? '—'}</td>
-                        <td className="px-5 py-3.5">
-                          <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium capitalize ${statusStyles[agent.status]}`}>
-                            {agent.status}
-                          </span>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <ConnectionBadge status={agent.shopifyConnectionStatus} />
-                        </td>
-                        <td className="px-5 py-3.5 text-xs">
-                          <span
-                            className={`inline-flex rounded-md px-2 py-0.5 font-medium ${
-                              agent.catalogReady
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                                : 'bg-amber-50 text-amber-700 border border-amber-100'
-                            }`}
-                          >
-                            {agent.catalogReady ? 'Ready' : 'Not ready'}
-                          </span>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <ConnectionBadge status={agent.databaseConnectionStatus} />
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <ConnectionBadge status={agent.twilioConnectionStatus} />
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <ConnectionBadge status={agent.openaiConnectionStatus} />
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <ConnectionBadge status={agent.elevenlabsConnectionStatus} />
-                        </td>
-                        <td className="px-5 py-3.5 text-muted-foreground">{formatUpdatedAt(agent.updatedAt)}</td>
-                        <td className="px-2 py-3.5">
-                          <AgentActionsDropdown
-                            agent={agent}
-                            onDeleteRequest={setDeleteTarget}
-                            onActionEnd={() => void fetchAgents(agents.length > 0 ? 'soft' : 'full')}
-                          />
-                        </td>
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {agent.storeName ?? 'No store'} · {formatUpdatedAt(agent.updatedAt)}
+                          </p>
+                          {agent.voice ? (
+                            <p className="mt-1 break-words text-xs text-muted-foreground">{agent.voice}</p>
+                          ) : null}
+                        </div>
+                        <AgentActionsDropdown
+                          agent={agent}
+                          onDeleteRequest={setDeleteTarget}
+                          onActionEnd={() => void fetchAgents(agents.length > 0 ? 'soft' : 'full')}
+                        />
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <AgentStatusDropdown
+                          agent={agent}
+                          onStatusChanged={(status) => patchAgentStatus(agent.id, status)}
+                        />
+                      </div>
+                      <div className="mt-3">
+                        <IntegrationPills agent={agent} />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                <div className="hidden lg:block">
+                  <table className="w-full table-fixed text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="w-[22%] px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          Agent
+                        </th>
+                        <th className="w-[14%] px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          Store
+                        </th>
+                        <th className="w-[12%] px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          Status
+                        </th>
+                        <th className="w-[30%] px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          Integrations
+                        </th>
+                        <th className="w-[10%] px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                          Updated
+                        </th>
+                        <th className="w-10 px-2 py-3" />
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {paged.map((agent) => {
+                        const expanded = expandedAgentId === agent.id;
+                        return (
+                          <Fragment key={agent.id}>
+                            <tr className="border-b border-border hover:bg-muted/30 transition-colors">
+                              <td className="min-w-0 px-4 py-3">
+                                <Link
+                                  href={`/dashboard/agents/${agent.id}`}
+                                  className="block truncate font-medium text-foreground hover:text-muted-foreground"
+                                  title={agent.name}
+                                >
+                                  {agent.name}
+                                </Link>
+                                {agent.voice ? (
+                                  <p className="mt-0.5 truncate text-xs text-muted-foreground" title={agent.voice}>
+                                    {agent.voice}
+                                  </p>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedAgentId(expanded ? null : agent.id)}
+                                  className="mt-1 text-xs text-violet-600 hover:underline"
+                                >
+                                  {expanded ? 'Hide details' : 'Show details'}
+                                </button>
+                              </td>
+                              <td className="min-w-0 px-3 py-3">
+                                <span className="block truncate text-muted-foreground" title={agent.storeName ?? undefined}>
+                                  {agent.storeName ?? '—'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3">
+                                <AgentStatusDropdown
+                                  agent={agent}
+                                  onStatusChanged={(status) => patchAgentStatus(agent.id, status)}
+                                />
+                              </td>
+                              <td className="min-w-0 px-3 py-3">
+                                <IntegrationPills agent={agent} />
+                              </td>
+                              <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">
+                                {formatUpdatedAt(agent.updatedAt)}
+                              </td>
+                              <td className="px-2 py-3">
+                                <AgentActionsDropdown
+                                  agent={agent}
+                                  onDeleteRequest={setDeleteTarget}
+                                  onActionEnd={() => void fetchAgents(agents.length > 0 ? 'soft' : 'full')}
+                                />
+                              </td>
+                            </tr>
+                            {expanded ? (
+                              <tr className="border-b border-border bg-muted/20">
+                                <td colSpan={6} className="px-4 py-3">
+                                  <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+                                    <span>
+                                      Shopify:{' '}
+                                      <ConnectionBadge status={agent.shopifyConnectionStatus} />
+                                    </span>
+                                    <span>
+                                      Catalog:{' '}
+                                      {agent.catalogReady ? (
+                                        <span className="text-emerald-700">Ready ({agent.catalogItemCount} items)</span>
+                                      ) : (
+                                        <span className="text-amber-700">Not ready</span>
+                                      )}
+                                    </span>
+                                    <span>
+                                      Database: <ConnectionBadge status={agent.databaseConnectionStatus} />
+                                    </span>
+                                    <span>
+                                      Twilio: <ConnectionBadge status={agent.twilioConnectionStatus} />
+                                    </span>
+                                    <span>
+                                      OpenAI: <ConnectionBadge status={agent.openaiConnectionStatus} />
+                                    </span>
+                                    <span>
+                                      ElevenLabs: <ConnectionBadge status={agent.elevenlabsConnectionStatus} />
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
             <Pagination
               page={page}
               totalPages={totalPages}

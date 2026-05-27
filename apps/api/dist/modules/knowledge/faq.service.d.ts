@@ -19,9 +19,9 @@ export declare class FaqService {
         storeId: string;
         language: string;
         tags: string | null;
+        priority: number;
         question: string;
         answer: string;
-        priority: number;
         isActive: boolean;
         branchProfileId: string | null;
     }>;
@@ -33,9 +33,9 @@ export declare class FaqService {
         storeId: string;
         language: string;
         tags: string | null;
+        priority: number;
         question: string;
         answer: string;
-        priority: number;
         isActive: boolean;
         branchProfileId: string | null;
     }[]>;
@@ -47,9 +47,9 @@ export declare class FaqService {
         storeId: string;
         language: string;
         tags: string | null;
+        priority: number;
         question: string;
         answer: string;
-        priority: number;
         isActive: boolean;
         branchProfileId: string | null;
     }>;
@@ -68,9 +68,9 @@ export declare class FaqService {
         storeId: string;
         language: string;
         tags: string | null;
+        priority: number;
         question: string;
         answer: string;
-        priority: number;
         isActive: boolean;
         branchProfileId: string | null;
     }>;
@@ -82,9 +82,9 @@ export declare class FaqService {
         storeId: string;
         language: string;
         tags: string | null;
+        priority: number;
         question: string;
         answer: string;
-        priority: number;
         isActive: boolean;
         branchProfileId: string | null;
     }>;

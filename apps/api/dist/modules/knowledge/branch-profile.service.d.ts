@@ -5,14 +5,15 @@ export declare class BranchProfileService {
     create(tenantId: string, dto: Record<string, unknown>): Promise<{
         id: string;
         tenantId: string;
-        email: string | null;
-        createdAt: Date;
-        updatedAt: Date;
         name: string;
         city: string | null;
         address: string | null;
         phone: string | null;
+        email: string | null;
+        createdAt: Date;
+        updatedAt: Date;
         storeId: string;
+        notes: string | null;
         isActive: boolean;
         branchCode: string | null;
         area: string | null;
@@ -20,19 +21,19 @@ export declare class BranchProfileService {
         openingHoursJson: import("@prisma/client/runtime/client").JsonValue | null;
         pickupAvailable: boolean;
         deliveryAvailable: boolean;
-        notes: string | null;
     }>;
     findAll(tenantId: string, storeId?: string, city?: string, isActive?: boolean): Promise<{
         id: string;
         tenantId: string;
-        email: string | null;
-        createdAt: Date;
-        updatedAt: Date;
         name: string;
         city: string | null;
         address: string | null;
         phone: string | null;
+        email: string | null;
+        createdAt: Date;
+        updatedAt: Date;
         storeId: string;
+        notes: string | null;
         isActive: boolean;
         branchCode: string | null;
         area: string | null;
@@ -40,19 +41,19 @@ export declare class BranchProfileService {
         openingHoursJson: import("@prisma/client/runtime/client").JsonValue | null;
         pickupAvailable: boolean;
         deliveryAvailable: boolean;
-        notes: string | null;
     }[]>;
     findOne(tenantId: string, id: string): Promise<{
         id: string;
         tenantId: string;
-        email: string | null;
-        createdAt: Date;
-        updatedAt: Date;
         name: string;
         city: string | null;
         address: string | null;
         phone: string | null;
+        email: string | null;
+        createdAt: Date;
+        updatedAt: Date;
         storeId: string;
+        notes: string | null;
         isActive: boolean;
         branchCode: string | null;
         area: string | null;
@@ -60,19 +61,19 @@ export declare class BranchProfileService {
         openingHoursJson: import("@prisma/client/runtime/client").JsonValue | null;
         pickupAvailable: boolean;
         deliveryAvailable: boolean;
-        notes: string | null;
     }>;
     update(tenantId: string, id: string, dto: Record<string, unknown>): Promise<{
         id: string;
         tenantId: string;
-        email: string | null;
-        createdAt: Date;
-        updatedAt: Date;
         name: string;
         city: string | null;
         address: string | null;
         phone: string | null;
+        email: string | null;
+        createdAt: Date;
+        updatedAt: Date;
         storeId: string;
+        notes: string | null;
         isActive: boolean;
         branchCode: string | null;
         area: string | null;
@@ -80,19 +81,19 @@ export declare class BranchProfileService {
         openingHoursJson: import("@prisma/client/runtime/client").JsonValue | null;
         pickupAvailable: boolean;
         deliveryAvailable: boolean;
-        notes: string | null;
     }>;
     remove(tenantId: string, id: string): Promise<{
         id: string;
         tenantId: string;
-        email: string | null;
-        createdAt: Date;
-        updatedAt: Date;
         name: string;
         city: string | null;
         address: string | null;
         phone: string | null;
+        email: string | null;
+        createdAt: Date;
+        updatedAt: Date;
         storeId: string;
+        notes: string | null;
         isActive: boolean;
         branchCode: string | null;
         area: string | null;
@@ -100,19 +101,19 @@ export declare class BranchProfileService {
         openingHoursJson: import("@prisma/client/runtime/client").JsonValue | null;
         pickupAvailable: boolean;
         deliveryAvailable: boolean;
-        notes: string | null;
     }>;
     getByStore(tenantId: string, storeId: string, branchId?: string, city?: string): Promise<{
         id: string;
         tenantId: string;
-        email: string | null;
-        createdAt: Date;
-        updatedAt: Date;
         name: string;
         city: string | null;
         address: string | null;
         phone: string | null;
+        email: string | null;
+        createdAt: Date;
+        updatedAt: Date;
         storeId: string;
+        notes: string | null;
         isActive: boolean;
         branchCode: string | null;
         area: string | null;
@@ -120,6 +121,5 @@ export declare class BranchProfileService {
         openingHoursJson: import("@prisma/client/runtime/client").JsonValue | null;
         pickupAvailable: boolean;
         deliveryAvailable: boolean;
-        notes: string | null;
     }[]>;
 }

@@ -520,6 +520,53 @@ let AgentsService = AgentsService_1 = class AgentsService {
         });
         return { status: 'LIVE', ready: true, readiness };
     }
+    async updateStatus(tenantId, agentId, status, actorUserId) {
+        const existing = await this.findOne(tenantId, agentId);
+        const current = String(existing.status ?? '').toLowerCase();
+        if (status === create_agent_dto_1.AgentStatusDto.ACTIVE) {
+            const goLive = await this.goLive(tenantId, agentId, actorUserId);
+            const agent = await this.findOne(tenantId, agentId);
+            return {
+                agent: this.serializeAgent(agent),
+                ready: goLive.ready,
+                goLiveStatus: goLive.status,
+                failures: goLive.failures,
+                readiness: goLive.readiness,
+            };
+        }
+        const target = status === create_agent_dto_1.AgentStatusDto.PAUSED
+            ? prisma_types_1.AgentStatus.PAUSED
+            : status === create_agent_dto_1.AgentStatusDto.DRAFT
+                ? prisma_types_1.AgentStatus.DRAFT
+                : prisma_types_1.AgentStatus.DRAFT;
+        if (current === status) {
+            const agent = await this.findOne(tenantId, agentId);
+            return { agent: this.serializeAgent(agent), ready: true };
+        }
+        const blocked = new Set(['disabled', 'provisioning', 'error']);
+        if (blocked.has(current)) {
+            throw new common_1.BadRequestException(`Cannot change status while agent is ${current.toUpperCase()}.`);
+        }
+        const updateResult = await this.prisma.agent.updateMany({
+            where: { id: agentId, tenantId, deletedAt: null },
+            data: { status: target },
+        });
+        if (updateResult.count === 0) {
+            throw new common_1.NotFoundException('Agent not found.');
+        }
+        await this.prisma.auditLog.create({
+            data: {
+                tenantId,
+                userId: actorUserId ?? null,
+                action: status === create_agent_dto_1.AgentStatusDto.PAUSED ? 'AGENT_PAUSED' : 'AGENT_SET_DRAFT',
+                entityType: 'AGENT',
+                entityId: agentId,
+                metadata: { from: current, to: status },
+            },
+        });
+        const agent = await this.findOne(tenantId, agentId);
+        return { agent: this.serializeAgent(agent), ready: true };
+    }
     serializeAgent(agent) {
         const config = agent.agentConfig ?? null;
         const voiceProfile = agent.voiceProfile ?? null;

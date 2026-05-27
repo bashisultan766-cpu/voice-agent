@@ -8,8 +8,8 @@ export declare class CallEventsService {
         id: string;
         tenantId: string;
         createdAt: Date;
-        type: import("@prisma/client").$Enums.CallEventType;
         callSessionId: string;
+        type: import("@prisma/client").$Enums.CallEventType;
         timestamp: Date;
         payload: Prisma.JsonValue | null;
     }[]>;

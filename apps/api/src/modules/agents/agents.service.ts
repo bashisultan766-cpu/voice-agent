@@ -614,6 +614,71 @@ export class AgentsService {
     return { status: 'LIVE', ready: true, readiness };
   }
 
+  /**
+   * Safe status transitions from list/dashboard controls.
+   * Activate runs readiness (go-live); pause/draft update directly.
+   */
+  async updateStatus(
+    tenantId: string,
+    agentId: string,
+    status: AgentStatusDto,
+    actorUserId?: string,
+  ) {
+    const existing = await this.findOne(tenantId, agentId);
+    const current = String((existing as { status?: unknown }).status ?? '').toLowerCase();
+
+    if (status === AgentStatusDto.ACTIVE) {
+      const goLive = await this.goLive(tenantId, agentId, actorUserId);
+      const agent = await this.findOne(tenantId, agentId);
+      return {
+        agent: this.serializeAgent(agent as Record<string, unknown>),
+        ready: goLive.ready,
+        goLiveStatus: goLive.status,
+        failures: goLive.failures,
+        readiness: goLive.readiness,
+      };
+    }
+
+    const target =
+      status === AgentStatusDto.PAUSED
+        ? AgentStatus.PAUSED
+        : status === AgentStatusDto.DRAFT
+          ? AgentStatus.DRAFT
+          : AgentStatus.DRAFT;
+
+    if (current === status) {
+      const agent = await this.findOne(tenantId, agentId);
+      return { agent: this.serializeAgent(agent as Record<string, unknown>), ready: true };
+    }
+
+    const blocked = new Set(['disabled', 'provisioning', 'error']);
+    if (blocked.has(current)) {
+      throw new BadRequestException(`Cannot change status while agent is ${current.toUpperCase()}.`);
+    }
+
+    const updateResult = await this.prisma.agent.updateMany({
+      where: { id: agentId, tenantId, deletedAt: null },
+      data: { status: target },
+    });
+    if (updateResult.count === 0) {
+      throw new NotFoundException('Agent not found.');
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        userId: actorUserId ?? null,
+        action: status === AgentStatusDto.PAUSED ? 'AGENT_PAUSED' : 'AGENT_SET_DRAFT',
+        entityType: 'AGENT',
+        entityId: agentId,
+        metadata: { from: current, to: status } as Prisma.InputJsonValue,
+      },
+    });
+
+    const agent = await this.findOne(tenantId, agentId);
+    return { agent: this.serializeAgent(agent as Record<string, unknown>), ready: true };
+  }
+
   private serializeAgent<T extends Record<string, unknown>>(agent: T): T {
     const config = (agent.agentConfig as Record<string, unknown> | null | undefined) ?? null;
     const voiceProfile = (agent.voiceProfile as Record<string, unknown> | null | undefined) ?? null;

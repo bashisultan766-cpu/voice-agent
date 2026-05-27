@@ -4,6 +4,7 @@ export { CreateAgentForm } from './CreateAgentForm';
 export { AgentsDashboard } from './AgentsDashboard';
 export { ConfirmDeleteModal } from './ConfirmDeleteModal';
 export { AgentActionsDropdown } from './AgentActionsDropdown';
+export { AgentStatusDropdown } from './AgentStatusDropdown';
 export { AgentsDashboardSkeleton } from './AgentsDashboardSkeleton';
 export { AgentDetailsView } from './AgentDetailsView';
 export { AgentPageLoader, useLoadedAgent } from './AgentPageLoader';

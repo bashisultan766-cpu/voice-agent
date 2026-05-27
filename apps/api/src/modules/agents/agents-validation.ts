@@ -2,6 +2,12 @@ import { z } from 'zod';
 
 export const cuidParamSchema = z.string().min(20).max(32).regex(/^c[a-z0-9]+$/i);
 
+export const updateAgentStatusBodySchema = z
+  .object({
+    status: z.enum(['draft', 'active', 'paused']),
+  })
+  .strict();
+
 export const logsQuerySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(100).optional(),
