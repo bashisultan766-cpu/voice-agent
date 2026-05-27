@@ -333,6 +333,48 @@ export async function updateAgent(
   );
 }
 
+export type PatchAgentCredentialsPayload = {
+  useWorkspaceShopify?: boolean;
+  shopifyStoreUrl?: string;
+  shopifyAdminToken?: string;
+  shopifyApiVersion?: string;
+  useWorkspaceTwilio?: boolean;
+  twilioAccountSid?: string;
+  twilioAuthToken?: string;
+  twilioPhoneNumber?: string;
+  useWorkspaceOpenai?: boolean;
+  openaiApiKey?: string;
+  useWorkspaceElevenlabs?: boolean;
+  elevenlabsApiKey?: string;
+  voiceId?: string;
+  useWorkspaceEmail?: boolean;
+  resendApiKey?: string;
+  emailSenderName?: string;
+  emailSenderAddress?: string;
+  emailReplyTo?: string;
+  emailSubjectTemplate?: string;
+  paymentLinkEmailIntro?: string;
+  clearOpenaiApiKey?: boolean;
+  clearElevenlabsApiKey?: boolean;
+  clearResendApiKey?: boolean;
+};
+
+export async function patchAgentCredentials(
+  agentId: string,
+  payload: PatchAgentCredentialsPayload,
+): Promise<
+  AgentApi & {
+    updatedSecrets?: UpdatedSecretsMeta;
+    readiness: AgentReadinessResponse;
+    credentialSources: CredentialSourcesSummaryApi;
+  }
+> {
+  return authenticatedFetchJson(`${getBaseUrl()}/api/agents/${agentId}/credentials`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 /** Normalize Twilio numbers in the browser the same way as the API (NANP 10-digit → +1…). */
 export { normalizePhoneNumber };
 

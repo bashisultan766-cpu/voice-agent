@@ -26,6 +26,8 @@ import { useToast } from '@/components/ui/Toast';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 import { PublicAgentLinkShare } from './PublicAgentLinkShare';
 import { AgentRuntimeDebugPanel } from './AgentRuntimeDebugPanel';
+import { AgentCredentialsPanel } from './AgentCredentialsPanel';
+import type { CredentialSourcesSummaryApi } from '@/lib/api/agents';
 
 type TestTarget = 'shopify' | 'twilio' | 'openai' | 'elevenlabs';
 
@@ -108,6 +110,9 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
   const [logsError, setLogsError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<{ catalogReady: boolean; lastSyncedAt: string | null; itemCount: number; reason: string } | null>(null);
   const [readiness, setReadiness] = useState<AgentReadinessResponse | null>(null);
+  const [credentialSources, setCredentialSources] = useState<CredentialSourcesSummaryApi | null>(
+    (agent.credentialSources as CredentialSourcesSummaryApi | undefined) ?? null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -150,7 +155,10 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
       });
     void getAgentReadiness(agent.id)
       .then((r) => {
-        if (!cancelled) setReadiness(r);
+        if (!cancelled) {
+          setReadiness(r);
+          if (r.credentialSources) setCredentialSources(r.credentialSources);
+        }
       })
       .catch(() => {
         if (!cancelled) setReadiness(null);
@@ -513,6 +521,16 @@ export function AgentDetailsView({ agent }: AgentDetailsViewProps) {
       </div>
 
       <PublicAgentLinkShare agentId={agent.id} />
+
+      <AgentCredentialsPanel
+        agentId={agent.id}
+        agent={agent}
+        credentialSources={credentialSources}
+        onUpdated={(r, sources) => {
+          setReadiness(r);
+          setCredentialSources(sources);
+        }}
+      />
 
       <DetailSection title="Live readiness checklist" description="LIVE is blocked until every required item passes">
         {readiness?.credentialSources ? (

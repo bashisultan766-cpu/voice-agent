@@ -187,16 +187,22 @@ let AgentsService = AgentsService_1 = class AgentsService {
     }
     async getReadiness(tenantId, agentId) {
         const agent = await this.findOne(tenantId, agentId);
-        const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
+        const credentialBundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+        const workspace = credentialBundle.workspace;
         const cfg = await this.getAgentConfigForTest(tenantId, agentId);
         const webhook = this.expectedTwilioWebhookUrls();
         const baseUrlValid = this.isPublicHttpsBaseUrl(webhook.base);
-        const twilioPhoneRaw = agent.twilioPhoneNumber?.trim() || workspace?.twilioPhoneNumber?.trim() || null;
+        const twilioResolved = (0, credential_resolver_util_1.resolveTwilioConfig)({
+            agentSecrets: credentialBundle.secrets,
+            workspace: credentialBundle.workspace,
+            useWorkspaceTwilio: credentialBundle.useWorkspaceTwilio,
+            agentPhoneNumber: agent.twilioPhoneNumber ?? null,
+        });
+        const twilioPhoneRaw = twilioResolved?.phoneNumber?.trim() || null;
         const twilioPhoneNumber = twilioPhoneRaw ? (0, normalize_phone_1.normalizePhoneNumber)(twilioPhoneRaw) : null;
-        const twilioCredentialsPresent = Boolean((cfg.twilioAccountSid?.trim() || workspace?.twilioAccountSid?.trim()) &&
-            (cfg.twilioAuthToken?.trim() || workspace?.twilioAuthToken?.trim()));
-        const twilioSid = cfg.twilioAccountSid?.trim() || workspace?.twilioAccountSid?.trim() || null;
-        const twilioAuth = cfg.twilioAuthToken?.trim() || workspace?.twilioAuthToken?.trim() || null;
+        const twilioCredentialsPresent = Boolean(twilioResolved);
+        const twilioSid = twilioResolved?.accountSid ?? null;
+        const twilioAuth = twilioResolved?.authToken ?? null;
         const twilioConfig = twilioSid && twilioAuth && twilioPhoneNumber
             ? await this.twilioTest.getIncomingPhoneNumberConfig({
                 twilioAccountSid: twilioSid,
@@ -222,7 +228,6 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const twilioInboundLinked = !twilioPhoneNumber ||
             Boolean(inboundMappingRow) ||
             Boolean(agentPhoneNorm && agentPhoneNorm === twilioPhoneNumber);
-        const credentialBundle = await this.loadAgentCredentialBundle(tenantId, agentId);
         const credentialSources = (0, credential_resolver_util_1.buildCredentialSourcesSummary)({
             agent: {
                 shopifyStoreUrl: credentialBundle.shopifyStoreUrl,
@@ -410,13 +415,37 @@ let AgentsService = AgentsService_1 = class AgentsService {
     async getAgentReadiness(tenantId, agentId) {
         return this.getReadiness(tenantId, agentId);
     }
+    async patchCredentials(tenantId, agentId, body, actorUserId) {
+        const dto = body;
+        if (body.clearOpenaiApiKey === true)
+            dto.openaiApiKey = '';
+        if (body.clearElevenlabsApiKey === true)
+            dto.elevenlabsApiKey = '';
+        if (body.clearResendApiKey === true)
+            dto.resendApiKey = '';
+        const updated = await this.update(tenantId, agentId, dto, actorUserId);
+        const [readiness, credentialSources] = await Promise.all([
+            this.getAgentReadiness(tenantId, agentId),
+            this.getCredentialSourcesSummary(tenantId, agentId),
+        ]);
+        return { ...updated, readiness, credentialSources };
+    }
     async configureTwilioWebhook(tenantId, agentId) {
         const readiness = await this.getReadiness(tenantId, agentId);
-        const cfg = await this.getAgentConfigForTest(tenantId, agentId);
-        const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
-        const sid = cfg.twilioAccountSid?.trim() || workspace?.twilioAccountSid?.trim() || null;
-        const auth = cfg.twilioAuthToken?.trim() || workspace?.twilioAuthToken?.trim() || null;
-        const phone = (await this.findOne(tenantId, agentId)).twilioPhoneNumber?.trim() || workspace?.twilioPhoneNumber?.trim() || null;
+        const agentRow = await this.prisma.agent.findFirst({
+            where: { id: agentId, tenantId, deletedAt: null },
+            select: { twilioPhoneNumber: true },
+        });
+        const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+        const twilioResolved = (0, credential_resolver_util_1.resolveTwilioConfig)({
+            agentSecrets: bundle.secrets,
+            workspace: bundle.workspace,
+            useWorkspaceTwilio: bundle.useWorkspaceTwilio,
+            agentPhoneNumber: agentRow?.twilioPhoneNumber ?? null,
+        });
+        const sid = twilioResolved?.accountSid ?? null;
+        const auth = twilioResolved?.authToken ?? null;
+        const phone = twilioResolved?.phoneNumber?.trim() ?? null;
         if (!sid || !auth || !phone) {
             throw new common_1.BadRequestException('Twilio SID, auth token, and phone number must be configured before webhook setup.');
         }
@@ -1425,12 +1454,19 @@ let AgentsService = AgentsService_1 = class AgentsService {
         if (dto.twilioPhoneNumber !== undefined && dto.twilioPhoneNumber?.trim()) {
             await this.assertPhoneNotAssignedToOtherAgent(tenantId, id, (0, normalize_phone_1.normalizePhoneNumber)(dto.twilioPhoneNumber.trim()), this.prisma);
         }
-        const explicitClearOpenai = dto.openaiApiKey !== undefined && !String(dto.openaiApiKey ?? '').trim();
-        const explicitClearEleven = dto.elevenlabsApiKey !== undefined && !String(dto.elevenlabsApiKey ?? '').trim();
+        const explicitClearOpenai = dto.clearOpenaiApiKey === true ||
+            (dto.openaiApiKey !== undefined && !String(dto.openaiApiKey ?? '').trim());
+        const explicitClearEleven = dto.clearElevenlabsApiKey === true ||
+            (dto.elevenlabsApiKey !== undefined && !String(dto.elevenlabsApiKey ?? '').trim());
+        const explicitClearResend = dto.clearResendApiKey === true ||
+            (dto.resendApiKey !== undefined && !String(dto.resendApiKey ?? '').trim());
         const newSecrets = this.pickSecrets(dto);
         const updatedSecrets = Object.fromEntries(SECRET_KEYS.map((key) => [key, Object.prototype.hasOwnProperty.call(newSecrets, key)]));
         let secretsEnc = undefined;
-        const hasSecretChanges = Object.keys(newSecrets).length > 0 || explicitClearOpenai || explicitClearEleven;
+        const hasSecretChanges = Object.keys(newSecrets).length > 0 ||
+            explicitClearOpenai ||
+            explicitClearEleven ||
+            explicitClearResend;
         if (hasSecretChanges && !this.encryption.isAvailable()) {
             throw new common_1.BadRequestException('Encryption is not configured; cannot store secrets.');
         }
@@ -1455,6 +1491,8 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 delete merged.openaiApiKey;
             if (explicitClearEleven)
                 delete merged.elevenlabsApiKey;
+            if (explicitClearResend)
+                delete merged.resendApiKey;
             secretsEnc = this.encryptSecrets(merged);
         }
         let shopifyConnectionStatus;
@@ -1665,8 +1703,11 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 emailSubjectTemplate: dto.emailSubjectTemplate?.trim() || null,
                 paymentLinkEmailIntro: dto.paymentLinkEmailIntro?.trim() || null,
                 emailTestRecipient: dto.emailTestRecipient?.trim() || null,
-                useWorkspaceEmail: dto.useWorkspaceEmail ?? true,
-                useWorkspaceShopify: dto.useWorkspaceShopify ?? false,
+                useWorkspaceEmail: dto.useWorkspaceEmail === true,
+                useWorkspaceShopify: dto.useWorkspaceShopify === true,
+                useWorkspaceOpenai: dto.useWorkspaceOpenai === true,
+                useWorkspaceElevenlabs: dto.useWorkspaceElevenlabs === true,
+                useWorkspaceTwilio: dto.useWorkspaceTwilio === true,
                 shopifyApiVersion: dto.shopifyApiVersion?.trim() || null,
             },
             update: {
@@ -2152,19 +2193,63 @@ let AgentsService = AgentsService_1 = class AgentsService {
     }
     async testTwilioConnection(tenantId, agentId, dto) {
         const workspace = await this.getWorkspaceIntegrationForTenant(tenantId);
-        const agentConfig = agentId ? await this.getAgentConfigForTest(tenantId, agentId) : null;
-        const sid = dto?.twilioAccountSid?.trim() || workspace?.twilioAccountSid?.trim() || agentConfig?.twilioAccountSid?.trim() || null;
-        const authResolved = dto?.twilioAuthToken?.trim()
-            ? { value: dto.twilioAuthToken.trim(), source: 'agent' }
-            : this.resolveCredential(agentConfig?.twilioAuthToken, workspace?.twilioAuthToken);
-        const config = {
-            twilioAccountSid: sid,
-            twilioAuthToken: authResolved.value ?? null,
-            twilioPhoneNumber: dto?.twilioPhoneNumber?.trim() || workspace?.twilioPhoneNumber || null,
-        };
-        const result = await this.twilioTest.testConnection(config);
+        let twilioResolved = null;
+        let source = 'missing';
+        if (dto?.twilioAccountSid?.trim() && dto?.twilioAuthToken?.trim()) {
+            twilioResolved = {
+                accountSid: dto.twilioAccountSid.trim(),
+                authToken: dto.twilioAuthToken.trim(),
+                phoneNumber: dto.twilioPhoneNumber?.trim(),
+                sidSource: 'agent',
+                authSource: 'agent',
+            };
+            source = 'agent';
+        }
+        else if (agentId) {
+            const bundle = await this.loadAgentCredentialBundle(tenantId, agentId);
+            const agentRow = await this.prisma.agent.findFirst({
+                where: { id: agentId, tenantId, deletedAt: null },
+                select: { twilioPhoneNumber: true },
+            });
+            const secrets = { ...bundle.secrets };
+            if (dto?.twilioAccountSid?.trim())
+                secrets.twilioAccountSid = dto.twilioAccountSid.trim();
+            if (dto?.twilioAuthToken?.trim())
+                secrets.twilioAuthToken = dto.twilioAuthToken.trim();
+            twilioResolved = (0, credential_resolver_util_1.resolveTwilioConfig)({
+                agentSecrets: secrets,
+                workspace: bundle.workspace,
+                useWorkspaceTwilio: dto?.useWorkspaceDefaults === true ? true : bundle.useWorkspaceTwilio,
+                agentPhoneNumber: dto?.twilioPhoneNumber?.trim() || agentRow?.twilioPhoneNumber || null,
+            });
+            source = twilioResolved?.authSource ?? 'missing';
+        }
+        else if (workspace?.twilioAccountSid && workspace?.twilioAuthToken) {
+            twilioResolved = (0, credential_resolver_util_1.resolveTwilioConfig)({
+                agentSecrets: undefined,
+                workspace,
+                useWorkspaceTwilio: true,
+                agentPhoneNumber: dto?.twilioPhoneNumber?.trim() || workspace.twilioPhoneNumber,
+            });
+            source = twilioResolved?.authSource ?? 'missing';
+        }
+        if (!twilioResolved) {
+            return {
+                success: false,
+                message: 'Twilio credentials missing. Save Account SID and Auth Token on this agent, or enable workspace Twilio under Settings → Integrations.',
+                status: agentId ? prisma_types_1.ConnectionStatus.FAILED : undefined,
+                provider: 'twilio',
+                source: 'missing',
+            };
+        }
+        const result = await this.twilioTest.testConnection({
+            twilioAccountSid: twilioResolved.accountSid,
+            twilioAuthToken: twilioResolved.authToken,
+            twilioPhoneNumber: twilioResolved.phoneNumber,
+        });
         const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId) {
+            (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'twilio', source, agentId);
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
                 data: { twilioConnectionStatus: status, lastConnectionTestAt: new Date() },
@@ -2174,7 +2259,10 @@ let AgentsService = AgentsService_1 = class AgentsService {
             ...result,
             status: agentId ? status : undefined,
             provider: 'twilio',
-            source: authResolved.source,
+            source,
+            message: result.success
+                ? `Twilio connection successful (using ${source} credential).`
+                : result.message,
         };
     }
     async testOpenAIConnection(tenantId, agentId, dto) {

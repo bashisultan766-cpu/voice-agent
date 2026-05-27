@@ -35,6 +35,7 @@ import {
   debugShopifySearchBodySchema,
   testAgentEmailBodySchema,
   updateAgentStatusBodySchema,
+  patchAgentCredentialsBodySchema,
 } from './agents-validation';
 import { z } from 'zod';
 
@@ -285,6 +286,18 @@ export class AgentsController {
     @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
   ) {
     return this.agentsService.syncSecretsFromWorkspace(tenantId, id, userId);
+  }
+
+  @Roles(UserRole.MANAGER)
+  @Patch(':id/credentials')
+  patchCredentials(
+    @TenantId() tenantId: string,
+    @UserId() userId: string,
+    @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
+    @Body(new ZodValidationPipe(patchAgentCredentialsBodySchema))
+    body: z.infer<typeof patchAgentCredentialsBodySchema>,
+  ) {
+    return this.agentsService.patchCredentials(tenantId, id, body, userId);
   }
 
   @Roles(UserRole.MANAGER)

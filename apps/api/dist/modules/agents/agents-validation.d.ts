@@ -7,6 +7,79 @@ export declare const updateAgentStatusBodySchema: z.ZodObject<{
 }, {
     status: "draft" | "active" | "paused";
 }>;
+export declare const patchAgentCredentialsBodySchema: z.ZodObject<{
+    useWorkspaceShopify: z.ZodOptional<z.ZodBoolean>;
+    shopifyStoreUrl: z.ZodOptional<z.ZodString>;
+    shopifyAdminToken: z.ZodOptional<z.ZodString>;
+    shopifyApiVersion: z.ZodOptional<z.ZodString>;
+    useWorkspaceTwilio: z.ZodOptional<z.ZodBoolean>;
+    twilioAccountSid: z.ZodOptional<z.ZodString>;
+    twilioAuthToken: z.ZodOptional<z.ZodString>;
+    twilioPhoneNumber: z.ZodOptional<z.ZodString>;
+    useWorkspaceOpenai: z.ZodOptional<z.ZodBoolean>;
+    openaiApiKey: z.ZodOptional<z.ZodString>;
+    useWorkspaceElevenlabs: z.ZodOptional<z.ZodBoolean>;
+    elevenlabsApiKey: z.ZodOptional<z.ZodString>;
+    voiceId: z.ZodOptional<z.ZodString>;
+    useWorkspaceEmail: z.ZodOptional<z.ZodBoolean>;
+    resendApiKey: z.ZodOptional<z.ZodString>;
+    emailSenderName: z.ZodOptional<z.ZodString>;
+    emailSenderAddress: z.ZodUnion<[z.ZodOptional<z.ZodString>, z.ZodLiteral<"">]>;
+    emailReplyTo: z.ZodUnion<[z.ZodOptional<z.ZodString>, z.ZodLiteral<"">]>;
+    emailSubjectTemplate: z.ZodOptional<z.ZodString>;
+    paymentLinkEmailIntro: z.ZodOptional<z.ZodString>;
+    clearOpenaiApiKey: z.ZodOptional<z.ZodBoolean>;
+    clearElevenlabsApiKey: z.ZodOptional<z.ZodBoolean>;
+    clearResendApiKey: z.ZodOptional<z.ZodBoolean>;
+}, "strict", z.ZodTypeAny, {
+    voiceId?: string | undefined;
+    shopifyStoreUrl?: string | undefined;
+    twilioPhoneNumber?: string | undefined;
+    emailSenderName?: string | undefined;
+    emailSenderAddress?: string | undefined;
+    emailReplyTo?: string | undefined;
+    emailSubjectTemplate?: string | undefined;
+    paymentLinkEmailIntro?: string | undefined;
+    useWorkspaceEmail?: boolean | undefined;
+    useWorkspaceShopify?: boolean | undefined;
+    useWorkspaceOpenai?: boolean | undefined;
+    useWorkspaceElevenlabs?: boolean | undefined;
+    useWorkspaceTwilio?: boolean | undefined;
+    shopifyApiVersion?: string | undefined;
+    shopifyAdminToken?: string | undefined;
+    twilioAccountSid?: string | undefined;
+    twilioAuthToken?: string | undefined;
+    openaiApiKey?: string | undefined;
+    elevenlabsApiKey?: string | undefined;
+    resendApiKey?: string | undefined;
+    clearOpenaiApiKey?: boolean | undefined;
+    clearElevenlabsApiKey?: boolean | undefined;
+    clearResendApiKey?: boolean | undefined;
+}, {
+    voiceId?: string | undefined;
+    shopifyStoreUrl?: string | undefined;
+    twilioPhoneNumber?: string | undefined;
+    emailSenderName?: string | undefined;
+    emailSenderAddress?: string | undefined;
+    emailReplyTo?: string | undefined;
+    emailSubjectTemplate?: string | undefined;
+    paymentLinkEmailIntro?: string | undefined;
+    useWorkspaceEmail?: boolean | undefined;
+    useWorkspaceShopify?: boolean | undefined;
+    useWorkspaceOpenai?: boolean | undefined;
+    useWorkspaceElevenlabs?: boolean | undefined;
+    useWorkspaceTwilio?: boolean | undefined;
+    shopifyApiVersion?: string | undefined;
+    shopifyAdminToken?: string | undefined;
+    twilioAccountSid?: string | undefined;
+    twilioAuthToken?: string | undefined;
+    openaiApiKey?: string | undefined;
+    elevenlabsApiKey?: string | undefined;
+    resendApiKey?: string | undefined;
+    clearOpenaiApiKey?: boolean | undefined;
+    clearElevenlabsApiKey?: boolean | undefined;
+    clearResendApiKey?: boolean | undefined;
+}>;
 export declare const logsQuerySchema: z.ZodObject<{
     limit: z.ZodOptional<z.ZodNumber>;
 }, "strict", z.ZodTypeAny, {
@@ -93,11 +166,11 @@ export declare const testAgentEmailBodySchema: z.ZodDefault<z.ZodObject<{
     toEmail: z.ZodOptional<z.ZodString>;
     checkoutUrl: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
-    checkoutUrl?: string | undefined;
     toEmail?: string | undefined;
+    checkoutUrl?: string | undefined;
 }, {
-    checkoutUrl?: string | undefined;
     toEmail?: string | undefined;
+    checkoutUrl?: string | undefined;
 }>>;
 export declare const configureTwilioWebhookBodySchema: z.ZodDefault<z.ZodObject<{
     force: z.ZodOptional<z.ZodBoolean>;

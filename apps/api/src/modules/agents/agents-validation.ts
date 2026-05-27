@@ -8,6 +8,37 @@ export const updateAgentStatusBodySchema = z
   })
   .strict();
 
+const optionalSecret = z.string().optional();
+
+/** Scoped credential save — empty strings do not clear existing secrets. */
+export const patchAgentCredentialsBodySchema = z
+  .object({
+    useWorkspaceShopify: z.boolean().optional(),
+    shopifyStoreUrl: z.string().trim().max(500).optional(),
+    shopifyAdminToken: optionalSecret,
+    shopifyApiVersion: z.string().trim().max(20).optional(),
+    useWorkspaceTwilio: z.boolean().optional(),
+    twilioAccountSid: optionalSecret,
+    twilioAuthToken: optionalSecret,
+    twilioPhoneNumber: z.string().trim().max(30).optional(),
+    useWorkspaceOpenai: z.boolean().optional(),
+    openaiApiKey: optionalSecret,
+    useWorkspaceElevenlabs: z.boolean().optional(),
+    elevenlabsApiKey: optionalSecret,
+    voiceId: z.string().trim().max(120).optional(),
+    useWorkspaceEmail: z.boolean().optional(),
+    resendApiKey: optionalSecret,
+    emailSenderName: z.string().trim().max(200).optional(),
+    emailSenderAddress: z.string().trim().email().optional().or(z.literal('')),
+    emailReplyTo: z.string().trim().email().optional().or(z.literal('')),
+    emailSubjectTemplate: z.string().trim().max(500).optional(),
+    paymentLinkEmailIntro: z.string().trim().max(4000).optional(),
+    clearOpenaiApiKey: z.boolean().optional(),
+    clearElevenlabsApiKey: z.boolean().optional(),
+    clearResendApiKey: z.boolean().optional(),
+  })
+  .strict();
+
 export const logsQuerySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(100).optional(),

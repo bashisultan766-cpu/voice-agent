@@ -5,37 +5,26 @@ import { CreateAgentForm } from '@/components/agents/CreateAgentForm';
 import type { CreateAgentFormData } from '@/components/agents/form-types';
 import { Breadcrumb } from '@/components/dashboard/ui/Breadcrumb';
 import { PageHeader } from '@/components/dashboard/ui/PageHeader';
-import { agentToFormData, mapStatus } from '@/lib/api/agents';
+import { agentToFormData, mapStatus, type CredentialSourcesSummaryApi } from '@/lib/api/agents';
 import { useAgentPageLoader } from '@/components/agents/AgentPageLoader';
 
 export function AgentEditPageClient({ agentId }: { agentId: string }) {
   const { agent, reloadAgent } = useAgentPageLoader();
   const initialData = agentToFormData(agent);
+  const sources = agent.credentialSources as CredentialSourcesSummaryApi | undefined;
+  const conn = (status: string | undefined, configured?: boolean) => {
+    if (configured === true || status === 'OK') return 'ok' as const;
+    if (status === 'FAILED') return 'failed' as const;
+    return 'unknown' as const;
+  };
   const savedCredentials = {
-    shopify:
-      agent.shopifyConnectionStatus === 'OK'
-        ? ('ok' as const)
-        : agent.shopifyConnectionStatus === 'FAILED'
-          ? ('failed' as const)
-          : ('unknown' as const),
-    twilio:
-      agent.twilioConnectionStatus === 'OK'
-        ? ('ok' as const)
-        : agent.twilioConnectionStatus === 'FAILED'
-          ? ('failed' as const)
-          : ('unknown' as const),
-    openai:
-      agent.openaiConnectionStatus === 'OK'
-        ? ('ok' as const)
-        : agent.openaiConnectionStatus === 'FAILED'
-          ? ('failed' as const)
-          : ('unknown' as const),
-    elevenlabs:
-      agent.elevenlabsConnectionStatus === 'OK'
-        ? ('ok' as const)
-        : agent.elevenlabsConnectionStatus === 'FAILED'
-          ? ('failed' as const)
-          : ('unknown' as const),
+    shopify: conn(agent.shopifyConnectionStatus as string | undefined, sources?.shopify.configured),
+    twilio: conn(agent.twilioConnectionStatus as string | undefined, sources?.twilio.configured),
+    openai: conn(agent.openaiConnectionStatus as string | undefined, sources?.openai.configured),
+    elevenlabs: conn(
+      agent.elevenlabsConnectionStatus as string | undefined,
+      sources?.elevenlabs.configured,
+    ),
   };
 
   const statusLabel = mapStatus(agent.status);
