@@ -7,7 +7,7 @@ export { AgentActionsDropdown } from './AgentActionsDropdown';
 export { AgentStatusDropdown } from './AgentStatusDropdown';
 export { AgentsDashboardSkeleton } from './AgentsDashboardSkeleton';
 export { AgentDetailsView } from './AgentDetailsView';
-export { AgentPageLoader, useLoadedAgent } from './AgentPageLoader';
+export { AgentPageLoader, useLoadedAgent, useAgentPageLoader } from './AgentPageLoader';
 export { normalizeAgentForClient } from '@/lib/agents/normalize-agent-for-client';
 export { AgentEditPageClient } from './AgentEditPageClient';
 export { AgentDetailsPageClient } from './AgentDetailsPageClient';

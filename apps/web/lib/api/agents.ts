@@ -638,13 +638,30 @@ export async function updateAgentStatus(
   });
 }
 
+const READINESS_FIX_HINTS: Record<string, string> = {
+  openai_connected: 'Settings → Integrations → OpenAI, or agent OpenAI key on the edit form.',
+  elevenlabs_connected: 'Settings → Integrations → ElevenLabs, or agent ElevenLabs key + voice ID.',
+  email_connected: 'Settings → Integrations → Email (Resend), or agent email sender + Resend key.',
+  resend_key_configured: 'Settings → Integrations → Email (Resend API key).',
+  email_sender_configured: 'Agent email sender fields or Settings → Integrations → Email.',
+  shopify_connected: 'Agent Shopify tab, or Settings → Integrations → Shopify with “use workspace”.',
+  twilio_credentials_configured: 'Settings → Integrations → Twilio, or agent Twilio credentials.',
+  twilio_webhook_verified: 'Agent details → Configure Twilio Webhook.',
+  catalog_ready: 'Agent details → sync Shopify catalog / products.',
+};
+
 export function formatAgentStatusFailureMessage(
-  failures?: Array<{ label: string; fixAction: string }>,
+  failures?: Array<{ key?: string; label: string; fixAction: string }>,
 ): string {
   if (!failures?.length) {
     return 'Agent is not ready to go live. Open the agent and complete readiness checks.';
   }
-  return failures.map((f) => `${f.label}: ${f.fixAction}`).join(' · ');
+  return failures
+    .map((f) => {
+      const where = f.key ? READINESS_FIX_HINTS[f.key] : undefined;
+      return where ? `${f.label}: ${f.fixAction} (${where})` : `${f.label}: ${f.fixAction}`;
+    })
+    .join(' · ');
 }
 
 export async function simulateAgentBuyingFlow(

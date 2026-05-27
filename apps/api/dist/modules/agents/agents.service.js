@@ -237,6 +237,11 @@ let AgentsService = AgentsService_1 = class AgentsService {
             workspace: credentialBundle.workspace,
             env: this.providerEnvSlice(),
         });
+        (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'shopify', credentialSources.shopify.source, agentId);
+        (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'openai', credentialSources.openai.source, agentId);
+        (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'elevenlabs', credentialSources.elevenlabs.source, agentId);
+        (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'twilio', credentialSources.twilio.authSource, agentId);
+        (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'resend', credentialSources.resend.source, agentId);
         const shopifyPolicyOk = credentialSources.shopify.configured &&
             !(credentialSources.shopify.source === 'workspace' && !credentialSources.shopify.useWorkspaceShopify);
         const shopify = await this.testShopifyConnection(tenantId, agentId);
@@ -1391,7 +1396,9 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const existing = await this.findOne(tenantId, id);
         const currentStatus = String(existing.status ?? '').toLowerCase();
         if (dto.agentStatus === create_agent_dto_1.AgentStatusDto.ACTIVE && currentStatus !== create_agent_dto_1.AgentStatusDto.ACTIVE) {
-            throw new common_1.BadRequestException('Direct activate is blocked. Use Go Live after readiness checks.');
+            const statusResult = await this.updateStatus(tenantId, id, create_agent_dto_1.AgentStatusDto.ACTIVE, actorUserId);
+            const emptySecrets = Object.fromEntries(SECRET_KEYS.map((key) => [key, false]));
+            return { ...statusResult.agent, updatedSecrets: emptySecrets };
         }
         if (process.env.NODE_ENV === 'production') {
             const finalClientId = dto.clientId !== undefined ? dto.clientId?.trim() || '' : existing.clientId || '';

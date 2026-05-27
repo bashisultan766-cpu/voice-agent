@@ -313,6 +313,11 @@ export class AgentsService {
       workspace: credentialBundle.workspace,
       env: this.providerEnvSlice(),
     });
+    logCredentialResolution(this.log, 'shopify', credentialSources.shopify.source, agentId);
+    logCredentialResolution(this.log, 'openai', credentialSources.openai.source, agentId);
+    logCredentialResolution(this.log, 'elevenlabs', credentialSources.elevenlabs.source, agentId);
+    logCredentialResolution(this.log, 'twilio', credentialSources.twilio.authSource, agentId);
+    logCredentialResolution(this.log, 'resend', credentialSources.resend.source, agentId);
     const shopifyPolicyOk =
       credentialSources.shopify.configured &&
       !(credentialSources.shopify.source === 'workspace' && !credentialSources.shopify.useWorkspaceShopify);
@@ -1561,7 +1566,11 @@ export class AgentsService {
     const existing = await this.findOne(tenantId, id);
     const currentStatus = String((existing as { status?: unknown }).status ?? '').toLowerCase();
     if (dto.agentStatus === AgentStatusDto.ACTIVE && currentStatus !== AgentStatusDto.ACTIVE) {
-      throw new BadRequestException('Direct activate is blocked. Use Go Live after readiness checks.');
+      const statusResult = await this.updateStatus(tenantId, id, AgentStatusDto.ACTIVE, actorUserId);
+      const emptySecrets = Object.fromEntries(
+        SECRET_KEYS.map((key) => [key, false]),
+      ) as Record<(typeof SECRET_KEYS)[number], boolean>;
+      return { ...statusResult.agent, updatedSecrets: emptySecrets };
     }
     if (process.env.NODE_ENV === 'production') {
       const finalClientId = dto.clientId !== undefined ? dto.clientId?.trim() || '' : (existing.clientId as string | undefined) || '';

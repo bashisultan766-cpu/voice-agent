@@ -7,6 +7,7 @@ import { normalizePhoneNumber } from '@bookstore-voice-agents/types';
 import {
   createAgent,
   updateAgent,
+  getAgentReadiness,
   testAgentConnection,
   testCredentials,
   sendAgentTestEmail,
@@ -182,6 +183,8 @@ interface CreateAgentFormProps {
     shopifyStoreUrl?: string;
     shopifyAdminToken?: string;
   }) => Promise<{ success: boolean; message: string; warnings?: string[] }>;
+  /** After a successful edit save — refetch agent/readiness in parent. */
+  onAgentSaved?: () => void | Promise<void>;
 }
 
 const SECRET_KEYS: (keyof CreateAgentFormData)[] = [
@@ -436,6 +439,7 @@ export function CreateAgentForm({
   lastTestedAt,
   createAgentAction,
   testShopifyAction,
+  onAgentSaved,
 }: CreateAgentFormProps) {
   const [step, setStep] = useState<CreateAgentStep>(1);
   const [setupMode, setSetupMode] = useState<'simple' | 'advanced'>(agentId ? 'advanced' : 'simple');
@@ -884,12 +888,7 @@ export function CreateAgentForm({
           for (const key of SECRET_KEYS) {
             const v = payload[key];
             if (typeof v === 'string' && !v.trim()) {
-              if (key === 'openaiApiKey' || key === 'elevenlabsApiKey') {
-                const p = payload as unknown as Record<string, string>;
-                p[key] = '';
-              } else {
-                delete payload[key];
-              }
+              delete payload[key];
             }
           }
           const updated = await updateAgent(agentId, payload as Parameters<typeof updateAgent>[1]);
@@ -901,9 +900,22 @@ export function CreateAgentForm({
             initialPhone !== submittedPhone && submittedPhone
               ? 'Phone number updated and linked to this agent.'
               : '';
-          const successMessage = [phoneLinkMessage, secretMessage].filter(Boolean).join(' ').trim() || 'Changes saved.';
+          let readinessNote = '';
+          try {
+            const readiness = await getAgentReadiness(agentId);
+            const failed = readiness.failures?.length ?? 0;
+            readinessNote =
+              failed === 0
+                ? 'Readiness: all checks passed — you can Make Live from the agents list.'
+                : `Readiness: ${failed} item(s) still need attention (see agent details).`;
+          } catch {
+            readinessNote = '';
+          }
+          const successMessage =
+            [phoneLinkMessage, secretMessage, readinessNote].filter(Boolean).join(' ').trim() || 'Changes saved.';
           setSaveFeedback({ kind: 'success', message: successMessage });
           addToast('success', successMessage);
+          await onAgentSaved?.();
           if (redirectToDetails) {
             router.push(`/dashboard/agents/${agentId}`);
             router.refresh();
@@ -957,7 +969,7 @@ export function CreateAgentForm({
         setSubmitKind(null);
       }
     },
-    [data, stores, workspaceSummary, launchReadinessSavedHint, addToast, router, agentId, createAgentAction, initialData],
+    [data, stores, workspaceSummary, launchReadinessSavedHint, addToast, router, agentId, createAgentAction, initialData, onAgentSaved],
   );
 
   const runRequiredLaunchChecks = useCallback(async () => {

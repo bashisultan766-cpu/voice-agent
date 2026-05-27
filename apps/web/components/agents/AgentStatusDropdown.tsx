@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import type { AgentListItem } from '@/lib/api/agents';
 import {
   formatAgentStatusFailureMessage,
+  goLiveAgent,
   mapStatus,
   updateAgentStatus,
   type AgentStatusTransition,
@@ -71,13 +72,19 @@ export function AgentStatusDropdown({ agent, onStatusChanged }: AgentStatusDropd
     setOpen(false);
     setLoading(true);
     try {
-      const result = await updateAgentStatus(agent.id, status);
-      const next = mapStatus(result.agent.status);
-      onStatusChanged(next);
-      if (status === 'active' && result.ready === false) {
-        addToast('error', formatAgentStatusFailureMessage(result.failures));
+      if (status === 'active') {
+        const result = await goLiveAgent(agent.id);
+        if (result.ready) {
+          onStatusChanged('active');
+          addToast('success', successLabel);
+        } else {
+          onStatusChanged('paused');
+          addToast('error', formatAgentStatusFailureMessage(result.failures));
+        }
         return;
       }
+      const result = await updateAgentStatus(agent.id, status);
+      onStatusChanged(mapStatus(result.agent.status));
       addToast('success', successLabel);
     } catch (e) {
       addToast('error', e instanceof Error ? e.message : 'Could not update agent status.');

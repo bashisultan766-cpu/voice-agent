@@ -6,10 +6,10 @@ import type { CreateAgentFormData } from '@/components/agents/form-types';
 import { Breadcrumb } from '@/components/dashboard/ui/Breadcrumb';
 import { PageHeader } from '@/components/dashboard/ui/PageHeader';
 import { agentToFormData, mapStatus } from '@/lib/api/agents';
-import { useLoadedAgent } from '@/components/agents/AgentPageLoader';
+import { useAgentPageLoader } from '@/components/agents/AgentPageLoader';
 
 export function AgentEditPageClient({ agentId }: { agentId: string }) {
-  const agent = useLoadedAgent();
+  const { agent, reloadAgent } = useAgentPageLoader();
   const initialData = agentToFormData(agent);
   const savedCredentials = {
     shopify:
@@ -77,11 +77,14 @@ export function AgentEditPageClient({ agentId }: { agentId: string }) {
       />
 
       <CreateAgentForm
-        key={agentId}
+        key={`${agentId}-${agent.updatedAt}`}
         agentId={agentId}
         initialData={initialData as CreateAgentFormData}
         savedCredentials={savedCredentials}
         lastTestedAt={agent.lastConnectionTestAt ?? null}
+        onAgentSaved={async () => {
+          await reloadAgent();
+        }}
       />
     </div>
   );
