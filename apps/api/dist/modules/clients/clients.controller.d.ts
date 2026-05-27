@@ -5,9 +5,9 @@ export declare class ClientsController {
     findAll(tenantId: string): Promise<{
         name: string;
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         contactEmail: string | null;
         contactPhone: string | null;
     }[]>;

@@ -8,14 +8,14 @@ export declare class StoresService {
         slug: string;
     }): Promise<{
         name: string;
-        status: import("@prisma/client").$Enums.StoreStatus;
         id: string;
+        tenantId: string;
         slug: string;
         timezone: string | null;
+        status: import("@prisma/client").$Enums.StoreStatus;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        tenantId: string;
         city: string | null;
         address: string | null;
         phone: string | null;
@@ -23,14 +23,14 @@ export declare class StoresService {
     }>;
     findAll(tenantId: string): Promise<{
         name: string;
-        status: import("@prisma/client").$Enums.StoreStatus;
         id: string;
+        tenantId: string;
         slug: string;
         timezone: string | null;
+        status: import("@prisma/client").$Enums.StoreStatus;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        tenantId: string;
         city: string | null;
         address: string | null;
         phone: string | null;
@@ -38,14 +38,14 @@ export declare class StoresService {
     }[]>;
     updateForTenant(tenantId: string, id: string, data: Record<string, unknown>): Promise<{
         name: string;
-        status: import("@prisma/client").$Enums.StoreStatus;
         id: string;
+        tenantId: string;
         slug: string;
         timezone: string | null;
+        status: import("@prisma/client").$Enums.StoreStatus;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        tenantId: string;
         city: string | null;
         address: string | null;
         phone: string | null;

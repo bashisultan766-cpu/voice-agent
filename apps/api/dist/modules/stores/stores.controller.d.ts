@@ -6,14 +6,14 @@ export declare class StoresController {
     constructor(storesService: StoresService);
     create(tenantId: string, body: z.infer<typeof createStoreBodySchema>): Promise<{
         name: string;
-        status: import("@prisma/client").$Enums.StoreStatus;
         id: string;
+        tenantId: string;
         slug: string;
         timezone: string | null;
+        status: import("@prisma/client").$Enums.StoreStatus;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        tenantId: string;
         city: string | null;
         address: string | null;
         phone: string | null;
@@ -21,14 +21,14 @@ export declare class StoresController {
     }>;
     findAll(tenantId: string): Promise<{
         name: string;
-        status: import("@prisma/client").$Enums.StoreStatus;
         id: string;
+        tenantId: string;
         slug: string;
         timezone: string | null;
+        status: import("@prisma/client").$Enums.StoreStatus;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        tenantId: string;
         city: string | null;
         address: string | null;
         phone: string | null;
@@ -36,14 +36,14 @@ export declare class StoresController {
     }[]>;
     update(tenantId: string, id: string, body: z.infer<typeof patchStoreBodySchema>): Promise<{
         name: string;
-        status: import("@prisma/client").$Enums.StoreStatus;
         id: string;
+        tenantId: string;
         slug: string;
         timezone: string | null;
+        status: import("@prisma/client").$Enums.StoreStatus;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
-        tenantId: string;
         city: string | null;
         address: string | null;
         phone: string | null;

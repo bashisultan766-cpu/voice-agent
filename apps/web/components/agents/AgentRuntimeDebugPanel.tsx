@@ -88,6 +88,16 @@ function sourceLabel(source: string): string {
   }
 }
 
+function formatDebugValue(value: unknown, fallback = '—'): string {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+}
+
 function CredentialRow({
   label,
   source,
@@ -193,17 +203,19 @@ export function AgentRuntimeDebugPanel({
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold">Live voice monitor</h3>
             <span className="text-xs text-muted-foreground">
-              {live?.streamingStatus ?? 'idle'} · {live?.streamingMode ?? '—'}
+              {formatDebugValue(live?.streamingStatus, 'idle')} · {formatDebugValue(live?.streamingMode)}
             </span>
           </div>
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
             <div>
               <dt className="text-muted-foreground">Stage</dt>
-              <dd className="font-medium">{live?.conversationStage ?? data.liveMonitor?.conversationStage ?? '—'}</dd>
+              <dd className="font-medium">
+                {formatDebugValue(live?.conversationStage ?? data.liveMonitor?.conversationStage)}
+              </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Order state</dt>
-              <dd className="font-medium">{live?.orderState ?? '—'}</dd>
+              <dd className="font-medium">{formatDebugValue(live?.orderState)}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Agent speaking</dt>
@@ -217,7 +229,7 @@ export function AgentRuntimeDebugPanel({
             </div>
             <div>
               <dt className="text-muted-foreground">Deferred job</dt>
-              <dd className="font-medium">{live?.deferredJobPhase ?? '—'}</dd>
+              <dd className="font-medium">{formatDebugValue(live?.deferredJobPhase)}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Est. cost (USD)</dt>

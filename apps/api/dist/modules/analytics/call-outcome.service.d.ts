@@ -6,12 +6,12 @@ export declare class CallOutcomeService {
     deriveAndUpsert(callSessionId: string): Promise<void>;
     getByCallSession(callSessionId: string): Promise<{
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
+        callSessionId: string;
         summary: string | null;
         escalated: boolean;
-        callSessionId: string;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
@@ -36,12 +36,12 @@ export declare class CallOutcomeService {
         qaScore?: number;
     }): Promise<{
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
+        callSessionId: string;
         summary: string | null;
         escalated: boolean;
-        callSessionId: string;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;

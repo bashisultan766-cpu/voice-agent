@@ -7,6 +7,8 @@ import {
   normalizePhoneNumber,
   DEFAULT_TOOL_PERMISSIONS,
   DEFAULT_VOICE_PERSONALITY,
+  type AgentToolPermissions,
+  type VoicePersonalityTraits,
 } from '@bookstore-voice-agents/types';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
 import {
@@ -71,6 +73,7 @@ export interface AgentApi {
       supportedLanguages?: string[] | null;
       voiceStyle?: string | null;
     } | null;
+    personality?: VoicePersonalityTraits | null;
   } | null;
   /** ISO timestamp of last connection test run on save, if any. */
   lastConnectionTestAt?: string | null;
@@ -305,8 +308,8 @@ export interface CreateAgentPayload {
   useWorkspaceTwilio?: boolean;
   shopifyApiVersion?: string;
   resendApiKey?: string;
-  toolPermissions?: Record<string, boolean>;
-  voicePersonality?: Record<string, number>;
+  toolPermissions?: AgentToolPermissions;
+  voicePersonality?: VoicePersonalityTraits;
   enabledTools?: string[];
 }
 
@@ -731,7 +734,7 @@ export function agentToFormData(a: AgentApi): CreateAgentPayload {
     },
     voicePersonality: {
       ...DEFAULT_VOICE_PERSONALITY,
-      ...((voiceCfg?.personality as Record<string, number> | undefined) ?? {}),
+      ...(a.voiceProfile?.personality ?? {}),
     },
   };
 }
