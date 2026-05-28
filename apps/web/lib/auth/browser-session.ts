@@ -28,7 +28,7 @@ export function persistClientSession(accessToken: string): void {
     /* quota / private mode */
   }
   if (process.env.NODE_ENV === 'production') return;
-  const maxAge = 60 * 60 * 24 * 7;
+  const maxAge = 60 * 60 * 24 * 30;
   const secure = window.location.protocol === 'https:';
   document.cookie = `${AUTH_HINT_COOKIE}=1; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure ? '; Secure' : ''}`;
 }

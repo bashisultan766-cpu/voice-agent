@@ -8,8 +8,11 @@ import {
   type AgentApi,
   agentToFormData,
   createAgent,
+  formatAgentStatusFailureMessage,
   getAgent,
+  mapStatus,
   updateAgent,
+  updateAgentStatus,
   getAgentReadiness,
   testAgentConnection,
   testCredentials,
@@ -896,6 +899,8 @@ export function CreateAgentForm({
           hasTwilioSid: Boolean(payload.twilioAccountSid?.trim()),
         });
         if (agentId) {
+          const requestedStatus = payload.agentStatus;
+          const statusChanged = requestedStatus !== initialDataRef.current.agentStatus;
           if (payload.agentStatus === initialDataRef.current.agentStatus) {
             delete payload.agentStatus;
           }
@@ -912,8 +917,22 @@ export function CreateAgentForm({
             }
           }
           const updated = await updateAgent(agentId, payload as Parameters<typeof updateAgent>[1]);
+          if (statusChanged && requestedStatus) {
+            const statusRes = await updateAgentStatus(agentId, requestedStatus);
+            if (requestedStatus === 'active' && statusRes.goLiveStatus === 'CONFIG_REQUIRED') {
+              throw new Error(formatAgentStatusFailureMessage(statusRes.failures));
+            }
+          }
           const refreshed = await getAgent(agentId);
           const latestAgent = (refreshed ?? (updated as AgentApi));
+          if (statusChanged && requestedStatus) {
+            const persisted = mapStatus(latestAgent.status);
+            if (persisted !== requestedStatus) {
+              throw new Error(
+                `Status save failed: requested ${requestedStatus.toUpperCase()} but saved ${persisted.toUpperCase()}.`,
+              );
+            }
+          }
           const mappedForm = agentToFormData(latestAgent);
           const nextFormData: CreateAgentFormData = {
             ...initialFormData,
