@@ -887,9 +887,23 @@ export function CreateAgentForm({
           ...rest,
           agentStatus: !agentId ? (asDraft ? 'draft' : 'active') : data.agentStatus,
         };
+        console.log({
+          event: 'agent.edit.submit.debug',
+          useWorkspaceOpenai: payload.useWorkspaceOpenai,
+          useWorkspaceTwilio: payload.useWorkspaceTwilio,
+          agentStatus: payload.agentStatus,
+          hasOpenAiKey: Boolean(payload.openaiApiKey?.trim()),
+          hasTwilioSid: Boolean(payload.twilioAccountSid?.trim()),
+        });
         if (agentId) {
           if (payload.agentStatus === initialDataRef.current.agentStatus) {
             delete payload.agentStatus;
+          }
+          if (payload.useWorkspaceOpenai === initialDataRef.current.useWorkspaceOpenai) {
+            delete payload.useWorkspaceOpenai;
+          }
+          if (payload.useWorkspaceTwilio === initialDataRef.current.useWorkspaceTwilio) {
+            delete payload.useWorkspaceTwilio;
           }
           for (const key of SECRET_KEYS) {
             const v = payload[key];

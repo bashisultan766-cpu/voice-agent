@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../../database/prisma.service';
@@ -103,6 +104,7 @@ import {
 } from '../../common/credential-priority.util';
 import {
   buildCredentialSourcesSummary,
+  logCredentialResolutionDebug,
   logCredentialResolution,
   resolveElevenLabsConfig,
   resolveOpenAiConfig,
@@ -150,6 +152,10 @@ function normalizeEscalationRules(
   return null;
 }
 
+export function isExplicitSecretClear(value: unknown): boolean {
+  return value === true;
+}
+
 @Injectable()
 export class AgentsService {
   private readonly log = new Logger(AgentsService.name);
@@ -167,6 +173,34 @@ export class AgentsService {
         ...args,
       }),
     );
+  }
+
+  private async verifyAgentStatusPersist(args: {
+    tenantId: string;
+    agentId: string;
+    requestedStatus: string | null;
+    savedStatus: string | null;
+  }): Promise<void> {
+    const verify = await this.prisma.agent.findFirst({
+      where: { id: args.agentId, tenantId: args.tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    const dbStatus = verify?.status ?? null;
+    this.log.log(
+      JSON.stringify({
+        event: 'agent.status.persist.verify',
+        agentId: args.agentId,
+        tenantId: args.tenantId,
+        requestedStatus: args.requestedStatus,
+        savedStatus: args.savedStatus,
+        dbStatus,
+      }),
+    );
+    if (args.savedStatus && dbStatus && args.savedStatus !== dbStatus) {
+      throw new InternalServerErrorException(
+        `Agent status persistence mismatch: requested=${args.requestedStatus ?? 'null'} saved=${args.savedStatus} db=${dbStatus}`,
+      );
+    }
   }
 
   constructor(
@@ -336,6 +370,28 @@ export class AgentsService {
     logCredentialResolution(this.log, 'elevenlabs', credentialSources.elevenlabs.source, agentId);
     logCredentialResolution(this.log, 'twilio', credentialSources.twilio.authSource, agentId);
     logCredentialResolution(this.log, 'resend', credentialSources.resend.source, agentId);
+    logCredentialResolutionDebug(this.log, {
+      provider: 'openai',
+      agentId,
+      useWorkspaceOpenai: credentialBundle.useWorkspaceOpenai,
+      hasAgentOpenAi: Boolean(credentialBundle.secrets.openaiApiKey?.trim()),
+      hasWorkspaceOpenAi: Boolean(credentialBundle.workspace?.openaiApiKey?.trim()),
+      resolvedSource: credentialSources.openai.source,
+    });
+    logCredentialResolutionDebug(this.log, {
+      provider: 'twilio',
+      agentId,
+      useWorkspaceTwilio: credentialBundle.useWorkspaceTwilio,
+      hasAgentTwilio: Boolean(
+        credentialBundle.secrets.twilioAccountSid?.trim() &&
+          credentialBundle.secrets.twilioAuthToken?.trim(),
+      ),
+      hasWorkspaceTwilio: Boolean(
+        credentialBundle.workspace?.twilioAccountSid?.trim() &&
+          credentialBundle.workspace?.twilioAuthToken?.trim(),
+      ),
+      resolvedSource: credentialSources.twilio.authSource,
+    });
     const shopifyPolicyOk =
       credentialSources.shopify.configured &&
       !(credentialSources.shopify.source === 'workspace' && !credentialSources.shopify.useWorkspaceShopify);
@@ -661,6 +717,12 @@ export class AgentsService {
         savedStatus: verify?.status ?? null,
         changedBy: actorUserId ?? null,
       });
+      await this.verifyAgentStatusPersist({
+        tenantId,
+        agentId,
+        requestedStatus: AgentStatusDto.ACTIVE,
+        savedStatus: verify?.status ?? null,
+      });
       return { status: 'CONFIG_REQUIRED', ready: false, failures: readiness.failures, readiness };
     }
     await this.prisma.agent.updateMany({
@@ -677,6 +739,12 @@ export class AgentsService {
       requestedStatus: AgentStatusDto.ACTIVE,
       savedStatus: verify?.status ?? null,
       changedBy: actorUserId ?? null,
+    });
+    await this.verifyAgentStatusPersist({
+      tenantId,
+      agentId,
+      requestedStatus: AgentStatusDto.ACTIVE,
+      savedStatus: verify?.status ?? null,
     });
     await this.prisma.auditLog.create({
       data: {
@@ -747,6 +815,12 @@ export class AgentsService {
       requestedStatus: status,
       savedStatus: verify?.status ?? null,
       changedBy: actorUserId ?? null,
+    });
+    await this.verifyAgentStatusPersist({
+      tenantId,
+      agentId,
+      requestedStatus: status,
+      savedStatus: verify?.status ?? null,
     });
 
     if (updateResult.count === 0) {
@@ -1685,15 +1759,15 @@ export class AgentsService {
       );
     }
 
-    const explicitClearOpenai =
-      (dto as { clearOpenaiApiKey?: boolean }).clearOpenaiApiKey === true ||
-      (dto.openaiApiKey !== undefined && !String(dto.openaiApiKey ?? '').trim());
-    const explicitClearEleven =
-      (dto as { clearElevenlabsApiKey?: boolean }).clearElevenlabsApiKey === true ||
-      (dto.elevenlabsApiKey !== undefined && !String(dto.elevenlabsApiKey ?? '').trim());
-    const explicitClearResend =
-      (dto as { clearResendApiKey?: boolean }).clearResendApiKey === true ||
-      (dto.resendApiKey !== undefined && !String(dto.resendApiKey ?? '').trim());
+    const explicitClearOpenai = isExplicitSecretClear(
+      (dto as { clearOpenaiApiKey?: boolean }).clearOpenaiApiKey,
+    );
+    const explicitClearEleven = isExplicitSecretClear(
+      (dto as { clearElevenlabsApiKey?: boolean }).clearElevenlabsApiKey,
+    );
+    const explicitClearResend = isExplicitSecretClear(
+      (dto as { clearResendApiKey?: boolean }).clearResendApiKey,
+    );
 
     const newSecrets = this.pickSecrets(dto);
     const updatedSecrets = Object.fromEntries(
@@ -2086,6 +2160,19 @@ export class AgentsService {
         requestedStatus: dto.agentStatus,
         savedStatus: statusVerify?.status ?? null,
         changedBy: actorUserId ?? null,
+      });
+      await this.verifyAgentStatusPersist({
+        tenantId,
+        agentId: id,
+        requestedStatus: dto.agentStatus,
+        savedStatus: updated.status ?? null,
+      });
+    } else {
+      await this.verifyAgentStatusPersist({
+        tenantId,
+        agentId: id,
+        requestedStatus: currentStatus || null,
+        savedStatus: updated.status ?? null,
       });
     }
     if (explicitClearOpenai) {
@@ -2584,6 +2671,16 @@ export class AgentsService {
     const status = result.success ? ConnectionStatus.OK : ConnectionStatus.FAILED;
     if (agentId) {
       logCredentialResolution(this.log, 'twilio', source, agentId);
+      logCredentialResolutionDebug(this.log, {
+        provider: 'twilio',
+        agentId,
+        useWorkspaceTwilio: dto?.useWorkspaceDefaults === true,
+        hasAgentTwilio: Boolean(dto?.twilioAccountSid?.trim() && dto?.twilioAuthToken?.trim()),
+        hasWorkspaceTwilio: Boolean(
+          workspace?.twilioAccountSid?.trim() && workspace?.twilioAuthToken?.trim(),
+        ),
+        resolvedSource: source,
+      });
       await this.prisma.agent.updateMany({
         where: { id: agentId, tenantId, deletedAt: null },
         data: { twilioConnectionStatus: status, lastConnectionTestAt: new Date() },
@@ -2637,6 +2734,14 @@ export class AgentsService {
 
     const status = result.success ? ConnectionStatus.OK : ConnectionStatus.FAILED;
     if (agentId) {
+      logCredentialResolutionDebug(this.log, {
+        provider: 'openai',
+        agentId,
+        useWorkspaceOpenai: dto?.useWorkspaceDefaults === true,
+        hasAgentOpenAi: Boolean(dto?.openaiApiKey?.trim()),
+        hasWorkspaceOpenAi: Boolean(workspace?.openaiApiKey?.trim()),
+        resolvedSource: resolved.source,
+      });
       await this.prisma.agent.updateMany({
         where: { id: agentId, tenantId, deletedAt: null },
         data: { openaiConnectionStatus: status, lastConnectionTestAt: new Date() },

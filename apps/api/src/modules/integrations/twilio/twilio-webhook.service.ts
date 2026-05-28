@@ -23,6 +23,7 @@ import { normalizeLanguageForTwilio } from '../../calls/runtime/language-intelli
 import { normalizePhoneNumber } from './utils/normalize-phone';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
+import { buildCredentialSourcesSummary, type AgentSecretsSlice, type WorkspaceIntegrationSlice } from '../../../common/credential-resolver.util';
 import {
   openAiKeyLayerPresence,
   resolveElevenLabsKeyChain,
@@ -303,6 +304,58 @@ export class TwilioWebhookService implements OnModuleInit {
     };
   }
 
+  private decryptAgentSecrets(secretsEnc: string | null | undefined): AgentSecretsSlice {
+    if (!secretsEnc || !this.encryption.isAvailable()) return {};
+    const dec = this.encryption.decryptFromStorage(secretsEnc);
+    if (!dec) return {};
+    try {
+      return JSON.parse(dec) as AgentSecretsSlice;
+    } catch {
+      return {};
+    }
+  }
+
+  private async getWorkspaceIntegrationSlice(tenantId: string): Promise<WorkspaceIntegrationSlice | null> {
+    const row = await this.prisma.tenantIntegration.findUnique({
+      where: { tenantId },
+      select: {
+        shopifyShopDomain: true,
+        shopifyAdminTokenEnc: true,
+        openaiApiKeyEnc: true,
+        elevenlabsApiKeyEnc: true,
+        elevenlabsDefaultVoiceId: true,
+        twilioAccountSid: true,
+        twilioAuthTokenEnc: true,
+        twilioPhoneNumber: true,
+        resendApiKeyEnc: true,
+      },
+    });
+    if (!row || !this.encryption.isAvailable()) return null;
+    return {
+      shopifyStoreUrl: row.shopifyShopDomain?.trim()
+        ? `https://${row.shopifyShopDomain.trim()}`
+        : undefined,
+      shopifyAdminToken: row.shopifyAdminTokenEnc
+        ? (this.encryption.decryptFromStorage(row.shopifyAdminTokenEnc) ?? undefined)
+        : undefined,
+      openaiApiKey: row.openaiApiKeyEnc
+        ? (this.encryption.decryptFromStorage(row.openaiApiKeyEnc) ?? undefined)
+        : undefined,
+      elevenlabsApiKey: row.elevenlabsApiKeyEnc
+        ? (this.encryption.decryptFromStorage(row.elevenlabsApiKeyEnc) ?? undefined)
+        : undefined,
+      elevenlabsDefaultVoiceId: row.elevenlabsDefaultVoiceId?.trim() || undefined,
+      twilioAccountSid: row.twilioAccountSid?.trim() || undefined,
+      twilioAuthToken: row.twilioAuthTokenEnc
+        ? (this.encryption.decryptFromStorage(row.twilioAuthTokenEnc) ?? undefined)
+        : undefined,
+      twilioPhoneNumber: row.twilioPhoneNumber?.trim() || undefined,
+      resendApiKey: row.resendApiKeyEnc
+        ? (this.encryption.decryptFromStorage(row.resendApiKeyEnc) ?? undefined)
+        : undefined,
+    };
+  }
+
   /**
    * OpenAI key resolution for gather-turn logs + parity with GET /api/voice/config-check.
    */
@@ -470,6 +523,66 @@ export class TwilioWebhookService implements OnModuleInit {
         configUpdatedAt: agentRow?.updatedAt?.toISOString() ?? null,
       }),
     );
+
+    const runtimeAgentRow = await this.prisma.agent.findFirst({
+      where: { id: context.agentId, tenantId: context.tenantId, deletedAt: null },
+      select: {
+        status: true,
+        shopifyStoreUrl: true,
+        voiceId: true,
+        secretsEnc: true,
+        agentConfig: {
+          select: {
+            useWorkspaceShopify: true,
+            useWorkspaceOpenai: true,
+            useWorkspaceElevenlabs: true,
+            useWorkspaceTwilio: true,
+            useWorkspaceEmail: true,
+          },
+        },
+      },
+    });
+    if (runtimeAgentRow) {
+      const [workspaceSlice, sessionCtx] = await Promise.all([
+        this.getWorkspaceIntegrationSlice(context.tenantId),
+        this.sessionContext.load(session.id),
+      ]);
+      const sources = buildCredentialSourcesSummary({
+        agent: {
+          shopifyStoreUrl: runtimeAgentRow.shopifyStoreUrl,
+          voiceId: runtimeAgentRow.voiceId,
+          secrets: this.decryptAgentSecrets(runtimeAgentRow.secretsEnc),
+          useWorkspaceShopify: runtimeAgentRow.agentConfig?.useWorkspaceShopify === true,
+          useWorkspaceOpenai: runtimeAgentRow.agentConfig?.useWorkspaceOpenai === true,
+          useWorkspaceElevenlabs: runtimeAgentRow.agentConfig?.useWorkspaceElevenlabs === true,
+          useWorkspaceTwilio: runtimeAgentRow.agentConfig?.useWorkspaceTwilio === true,
+          useWorkspaceEmail: runtimeAgentRow.agentConfig?.useWorkspaceEmail === true,
+        },
+        workspace: workspaceSlice,
+      });
+      const missingRequirements = [
+        !sources.openai.configured ? 'openai' : null,
+        !sources.twilio.configured ? 'twilio' : null,
+        !sources.elevenlabs.configured && (sessionCtx?.agent.voiceProvider ?? '').toLowerCase() === 'elevenlabs'
+          ? 'elevenlabs'
+          : null,
+        !sources.resend.configured ? 'resend' : null,
+      ].filter((v): v is string => Boolean(v));
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.runtime.readiness.summary',
+          callSessionId: session.id,
+          agentId: context.agentId,
+          tenantId: context.tenantId,
+          agentStatus: runtimeAgentRow.status,
+          openaiSource: sources.openai.source,
+          twilioSource: sources.twilio.authSource,
+          elevenlabsSource: sources.elevenlabs.source,
+          resendSource: sources.resend.source,
+          missingRequirements,
+        }),
+      );
+    }
 
     const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
 

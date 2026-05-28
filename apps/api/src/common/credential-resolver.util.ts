@@ -429,3 +429,25 @@ export function logCredentialResolution(
   const tail = tokenTail ? ` tokenTail=${tokenTail}` : '';
   logger.log(`[credential-resolution] ${provider} source=${source} agentId=${agentId}${tail}`);
 }
+
+export function logCredentialResolutionDebug(
+  logger: { log: (msg: string) => void },
+  payload: {
+    provider: 'openai' | 'twilio';
+    agentId: string;
+    useWorkspaceOpenai?: boolean;
+    useWorkspaceTwilio?: boolean;
+    hasAgentOpenAi?: boolean;
+    hasWorkspaceOpenAi?: boolean;
+    hasAgentTwilio?: boolean;
+    hasWorkspaceTwilio?: boolean;
+    resolvedSource: CredentialSource;
+  },
+): void {
+  logger.log(
+    JSON.stringify({
+      event: 'credential-resolution.debug',
+      ...payload,
+    }),
+  );
+}
