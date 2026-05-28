@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SessionContextService } from './session-context.service';
 import { CallsService } from '../calls.service';
-import { OpenAIVoiceService } from '../../integrations/openai/openai-voice.service';
 import { OpenAIPromptBuilderService } from '../../integrations/openai/openai-prompt-builder.service';
+import { LlmAgentOrchestratorService } from './llm-agent-orchestrator.service';
 import { CallEventsService } from '../../analytics/call-events.service';
 import { CallOutcomeService } from '../../analytics/call-outcome.service';
 import { CallStatus, CallEventType } from '@prisma/client';
@@ -62,7 +62,7 @@ export class VoiceRuntimeService {
   constructor(
     private readonly sessionContext: SessionContextService,
     private readonly callsService: CallsService,
-    private readonly openaiVoice: OpenAIVoiceService,
+    private readonly llmAgent: LlmAgentOrchestratorService,
     private readonly tools: ToolOrchestratorService,
     private readonly callEvents: CallEventsService,
     private readonly callOutcome: CallOutcomeService,
@@ -1099,168 +1099,9 @@ export class VoiceRuntimeService {
     await this.transcriptBuffer.append(callSessionId, 'user', safeText, userSeq);
 
     const stateNorm = normalizeOrderState(update.nextState);
-    const professionalRoute = classifyConversationRouteIntent({
-      customerText: safeText,
-      userIntent,
-      orderState: stateNorm,
-      storeName: 'SureShot Books',
-      agentName: 'Justin',
-      selectedProductTitle:
-        (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).slice(-1)[0]
-          ?.title ?? null,
-      hasDiscussedProduct:
-        (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).length > 0,
-    });
-    if (shouldUseProfessionalFastReply(professionalRoute, toolPolicy.toolCallAllowed)) {
-      const policyReply = buildProfessionalConversationReply(professionalRoute, {
-        customerText: safeText,
-        userIntent,
-        orderState: stateNorm,
-        storeName: 'SureShot Books',
-        agentName: 'Justin',
-        selectedProductTitle:
-          (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).slice(-1)[0]
-            ?.title ?? null,
-        hasDiscussedProduct:
-          (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).length > 0,
-      });
-      if (policyReply?.trim()) {
-        const polished = polishVoiceReply(policyReply, { maxSentences: 2, stage: turnPlan.stage });
-        const agentSeqPolicy = await this.transcriptBuffer.getNextSequence(callSessionId);
-        await this.transcriptBuffer.append(callSessionId, 'agent', polished, agentSeqPolicy);
-        this.logTurnProof({
-          callSessionId,
-          tenantId: ctx.tenantId,
-          agentId: ctx.agentId,
-          userSpeechText: safeText.slice(0, 500),
-          openaiKeySource: ctx.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
-          modelUsed: ctx.agent.model ?? 'n/a',
-          openaiCalled: false,
-          openaiSuccess: true,
-          replyPreview: polished.slice(0, 240),
-          voiceProvider: ctx.agent.voiceProvider ?? null,
-          voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
-          ttsProviderUsed: null,
-          intentDetected: userIntent,
-          toolCalled: false,
-          flowStep: 'professional_conversation_policy',
-          state: stateNorm,
-          finalResponseText: polished,
-          responseMode: 'template',
-          responseSource: 'template',
-          responseTemplateUsed: `professional_${professionalRoute}`,
-          templateUsed: `professional_${professionalRoute}`,
-          openaiUsed: false,
-          templateSuppressedBecauseRepeated: false,
-        });
-        return { reply: polished };
-      }
-    }
-
-    if (turnPlan.useFastVoicePath) {
-      const fastReply = this.buildFastVoiceReply({
-        customerText: safeText,
-        userIntent,
-        orderState: stateNorm,
-        toolCallAllowed: toolPolicy.toolCallAllowed,
-        turnPlan,
-        ctx,
-        langCode,
-      });
-      if (fastReply) {
-        const polished = polishVoiceReply(fastReply, {
-          maxSentences: 2,
-          stage: turnPlan.stage,
-        });
-        const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
-        await this.transcriptBuffer.append(callSessionId, 'agent', polished, agentSeq);
-        this.logTurnProof({
-          callSessionId,
-          tenantId: ctx.tenantId,
-          agentId: ctx.agentId,
-          userSpeechText: safeText.slice(0, 500),
-          openaiKeySource: ctx.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
-          modelUsed: ctx.agent.model ?? 'n/a',
-          openaiCalled: false,
-          openaiSuccess: true,
-          replyPreview: polished.slice(0, 240),
-          voiceProvider: ctx.agent.voiceProvider ?? null,
-          voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
-          ttsProviderUsed: null,
-          intentDetected: userIntent,
-          toolCalled: false,
-          flowStep: 'fast_voice_path',
-          state: update.nextState,
-          finalResponseText: polished,
-          responseMode: 'template',
-          responseSource: 'template',
-          responseTemplateUsed: 'fast_voice_path',
-          templateUsed: 'fast_voice_path',
-          openaiUsed: false,
-          templateSuppressedBecauseRepeated: false,
-        });
-        return { reply: polished };
-      }
-    }
-
-    if (update.recoveryPrompt) {
-      const startedAt = Date.now();
-      const reply = recoveryPromptText(langCode, update.recoveryPrompt.key);
-      const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
-      await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeq);
-      this.logger.log(
-        JSON.stringify({
-          event: 'voice.journey.turn_recovered',
-          callSessionId,
-          intent: cls.intent,
-          intentDetected: userIntent,
-          toolCalled: false,
-          fromState: beforeState,
-          toState: update.nextState,
-          recoveryKey: update.recoveryPrompt.key,
-          flowStep: `recovery_${update.recoveryPrompt.key}`,
-          state: update.nextState,
-        }),
-      );
-      this.logTurnProof({
-        callSessionId,
-        tenantId: ctx?.tenantId ?? null,
-        agentId: ctx?.agentId ?? null,
-        userSpeechText: safeText.slice(0, 500),
-        openaiKeySource: ctx?.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
-        modelUsed: ctx?.agent.model ?? 'n/a',
-        openaiCalled: false,
-        openaiSuccess: true,
-        replyPreview: reply.slice(0, 240),
-        voiceProvider: ctx?.agent.voiceProvider ?? null,
-        voiceIdPresent: Boolean(ctx?.agent.voiceId?.trim()),
-        ttsProviderUsed: null,
-        intentDetected: userIntent,
-        toolCalled: false,
-        flowStep: `recovery_${update.recoveryPrompt.key}`,
-        state: update.nextState,
-        finalResponseText: reply,
-        responseMode: 'template',
-        responseSource: 'template',
-        responseTemplateUsed: `recovery_${update.recoveryPrompt.key}`,
-        templateUsed: `recovery_${update.recoveryPrompt.key}`,
-        openaiUsed: false,
-        templateSuppressedBecauseRepeated: false,
-      });
-      this.logResponsePath({
-        callSessionId,
-        usedOpenAI: false,
-        usedTemplate: true,
-        templateReason: `recovery_${update.recoveryPrompt.key}`,
-        intent: userIntent,
-        state: update.nextState,
-        latencyMs: Date.now() - startedAt,
-      });
-      return { reply };
-    }
 
     const llmStartedAt = Date.now();
-    const result = await this.openaiVoice.processTurn(callSessionId, safeText, historyFromDb);
+    const result = await this.llmAgent.processTurn(callSessionId, safeText, historyFromDb);
     const responseDelayMs = Date.now() - llmStartedAt;
     if (result.toolCallsCount > 0) {
       await this.conversationAnalytics.recordToolLatency(
@@ -1283,193 +1124,54 @@ export class VoiceRuntimeService {
       const reply = fb429.reply;
       const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
       await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeq);
-      this.logger.log(
-        JSON.stringify({
-          event: 'voice.journey.turn_complete',
-          callSessionId,
-          tenantId: ctx?.tenantId,
-          agentId: ctx?.agentId,
-          toolCallsCount: result.toolCallsCount,
-          replyChars: reply.length,
-          escalated: false,
-          fallback_used: true,
-          reason: 'openai_429',
-          intentDetected: userIntent,
-          toolCalled: result.toolCallsCount > 0,
-          flowStep: 'deterministic_fallback_429',
-          state: preserveOrderState,
-          finalResponseText: reply.slice(0, 500),
-          customerQuestionType: toolPolicy.customerQuestionType,
-          toolCallAllowed: toolPolicy.toolCallAllowed,
-          toolCallBlockedReason: toolPolicy.toolCallBlockedReason,
-          responseSource: fb429.responseSource,
-          responseTemplateUsed: fb429.responseTemplateUsed,
-          humanLikeMode: true,
-          roboticTemplateSuppressed: false,
-          openaiUsed: false,
-          templateUsed: fb429.responseTemplateUsed,
-        }),
-      );
-      const ctx429 = await this.sessionContext.load(callSessionId);
-      const proof429 = {
+      this.logTurnProof({
         callSessionId,
-        tenantId: ctx429?.tenantId ?? ctx?.tenantId ?? null,
-        agentId: ctx429?.agentId ?? ctx?.agentId ?? null,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
         userSpeechText: safeText.slice(0, 500),
-        openaiKeySource: result.proof?.openaiKeySource ?? ctx429?.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
-        modelUsed: result.proof?.modelUsed ?? ctx429?.agent.model ?? 'unknown',
-        openaiCalled: result.proof?.openaiCalled ?? true,
+        openaiKeySource: result.proof?.openaiKeySource ?? 'none',
+        modelUsed: result.proof?.modelUsed ?? 'n/a',
+        openaiCalled: true,
         openaiSuccess: false,
         replyPreview: reply.slice(0, 240),
-        voiceProvider: ctx429?.agent.voiceProvider ?? null,
-        voiceIdPresent: Boolean(ctx429?.agent.voiceId?.trim()),
-        ttsProviderUsed: null as string | null,
+        voiceProvider: ctx.agent.voiceProvider ?? null,
+        voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+        ttsProviderUsed: null,
         intentDetected: userIntent,
         toolCalled: result.toolCallsCount > 0,
         flowStep: 'deterministic_fallback_429',
         state: preserveOrderState,
         finalResponseText: reply,
-        customerQuestionType: toolPolicy.customerQuestionType,
-        toolCallAllowed: toolPolicy.toolCallAllowed,
-        toolCallBlockedReason: toolPolicy.toolCallBlockedReason,
-        responseMode: 'template' as const,
+        responseMode: 'template',
         responseSource: fb429.responseSource,
         responseTemplateUsed: fb429.responseTemplateUsed,
         templateUsed: fb429.responseTemplateUsed,
         openaiUsed: false,
         templateSuppressedBecauseRepeated: false,
-      };
-      this.logTurnProof(proof429);
-      this.logResponsePath({
-        callSessionId,
-        usedOpenAI: false,
-        usedTemplate: true,
-        templateReason: fb429.responseTemplateUsed,
-        intent: userIntent,
-        state: preserveOrderState,
-        latencyMs: responseDelayMs,
       });
-      return { reply, turnProof: proof429 };
-    }
-    const ctxAfterLlm = await this.sessionContext.load(callSessionId);
-    const metaAfterLlm =
-      ctxAfterLlm?.metadata && typeof ctxAfterLlm.metadata === 'object' && !Array.isArray(ctxAfterLlm.metadata)
-        ? (ctxAfterLlm.metadata as Record<string, unknown>)
-        : {};
-    const stateForLogOpenAi = normalizeOrderState(metaAfterLlm.orderState ?? update.nextState);
-    const stateBeforeNorm = normalizeOrderState(beforeState);
-    const followUpOfferedProductKeyForResolve =
-      typeof metaAfterLlm.followUpOfferedProductKey === 'string' && metaAfterLlm.followUpOfferedProductKey.trim()
-        ? metaAfterLlm.followUpOfferedProductKey.trim()
-        : null;
-    const fillerUsedSession = metaAfterLlm.fillerUsed === true;
-
-    const abandonReason = detectCheckoutAbandonReason(safeText, stateForLogOpenAi);
-    if (abandonReason) {
-      await this.conversationAnalytics.recordAbandonedStage(
-        ctx.tenantId,
-        callSessionId,
-        turnPlan.stage,
-        abandonReason,
-      );
-      await this.callsService.mergeSessionMetadata(callSessionId, {
-        checkoutRecoveryGuidance: buildCheckoutRecoveryGuidance(abandonReason, turnPlan.memory),
-      });
+      return { reply };
     }
 
-    const resolved = this.resolveSpokenReplyAfterOpenAI({
-      toolTrace: result.toolTrace,
-      orderStateAfter: stateForLogOpenAi,
-      orderStateBefore: stateBeforeNorm,
-      openaiMessage: result.message,
-      clsIntent: cls.intent,
-      userIntent,
-      customerText: safeText,
-      conversationHistory: historyFromDb,
-      conversationTone,
-      lastToneLeadUsed: initialLastToneLeadUsed,
-      allowPaymentSuggestion: computeAllowPaymentSuggestion({
-        userIntent,
-        clsIntent: cls.intent,
-        orderState: stateForLogOpenAi,
-      }),
-      followUpOfferedProductKey: followUpOfferedProductKeyForResolve,
-      conversationMemory: turnPlan.memory,
-    });
-    const memTitles = (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? [])
-      .map((p) => p.title)
-      .filter(Boolean);
-    const hallucinationGuard = applyAntiHallucinationGuard(
-      resolved.reply,
-      result.toolTrace,
-      memTitles,
-    );
-    if (hallucinationGuard.hallucinationAttempt) {
-      const prior = await this.conversationAnalytics.load(callSessionId);
-      await this.conversationAnalytics.merge(callSessionId, ctx.tenantId, {
-        hallucinationAttempts: (prior.hallucinationAttempts ?? 0) + 1,
-      });
-    }
-    if (result.toolTrace?.searchProducts?.ok && result.toolTrace.searchProducts.found) {
-      await this.conversationAnalytics.recordRecommendation(ctx.tenantId, callSessionId, true);
-      await this.conversationAnalytics.recordRecommendationOffer(ctx.tenantId, callSessionId);
-      if (userIntent === 'purchase_confirmation') {
-        await this.conversationAnalytics.recordRecommendationOutcome(ctx.tenantId, callSessionId, true);
-        await this.callMemory.merge(callSessionId, {
-          recommendationAccepted: (turnPlan.memory.recommendationAccepted ?? 0) + 1,
-        });
-      }
-    }
-    if (result.toolTrace?.sendPaymentEmail?.ok) {
-      await this.conversationAnalytics.recordCheckoutConverted(ctx.tenantId, callSessionId);
-    }
-    const cartItems = turnPlan.memory.cart?.items ?? [];
-    let cartValue = 0;
-    for (const item of cartItems) {
-      const p = parseFloat(String(item.price ?? '').replace(/[^0-9.]/g, ''));
-      if (!Number.isNaN(p)) cartValue += p * (item.quantity ?? 1);
-    }
-    if (cartValue > 0) {
-      await this.conversationAnalytics.recordEstimatedOrderValue(ctx.tenantId, callSessionId, cartValue);
+    if (result.error?.code === 'OPENAI_401') {
+      const reply = result.reply;
+      const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeq);
+      return { reply };
     }
 
-    const salesShapedReply = applyHumanSalesBehavior({
-      reply: hallucinationGuard.reply,
-      adaptive: adaptiveBehavior,
+    const polishedReply = polishVoiceReply(result.reply, {
+      maxSentences: 3,
       stage: turnPlan.stage,
-      reassurance: confidenceReinforcementPhrase(turnPlan.stage),
     });
-
-    const polishedReply = polishVoiceReply(
-      applyTimingToChunkText(salesShapedReply, adaptiveBehavior),
-      {
-        maxSentences: adaptiveBehavior.maxSentences,
-        stage: turnPlan.stage,
-      },
-    );
-
-    const analyticsSnap = await this.conversationAnalytics.load(callSessionId);
-    const runtimeScores = computeRuntimeScores({
-      stage: turnPlan.stage,
-      memory: turnPlan.memory,
-      analytics: analyticsSnap,
-      hallucinationAttempt: hallucinationGuard.hallucinationAttempt,
-      toolCallsCount: result.toolCallsCount,
-      searchSucceeded: Boolean(result.toolTrace?.searchProducts?.ok && result.toolTrace.searchProducts.found),
-      replyChars: polishedReply.length,
-      adaptiveMood: adaptiveBehavior.mood,
-      objectionHandled: Boolean(turnPlan.objectionType && resolved.contextAware),
-    });
-    await this.callsService.mergeSessionMetadata(callSessionId, { runtimeScores });
 
     const repeatChecked = this.applyRepeatGuard({
       currentReply: polishedReply,
-      responseMode: resolved.responseMode,
-      responseSource: resolved.responseSource,
-      responseTemplateUsed: resolved.responseTemplateUsed,
+      responseMode: 'openai',
+      responseSource: 'openai',
+      responseTemplateUsed: undefined,
       previousTemplate: typeof metadata.lastSpokenTemplate === 'string' ? metadata.lastSpokenTemplate : null,
       previousText: typeof metadata.lastSpokenText === 'string' ? metadata.lastSpokenText : null,
-      openaiFallbackReply: result.message,
+      openaiFallbackReply: result.reply,
       repeatIndex:
         typeof metadata.repeatSuppressionCount === 'number' ? metadata.repeatSuppressionCount : 0,
     });
@@ -1477,7 +1179,6 @@ export class VoiceRuntimeService {
     const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
     await this.transcriptBuffer.append(callSessionId, 'agent', repeatChecked.reply, agentSeq);
     await this.callsService.mergeSessionMetadata(callSessionId, {
-      lastToneLeadUsed: resolved.toneLeadUsed ?? null,
       lastSpokenTemplate: repeatChecked.templateUsed,
       lastSpokenText: repeatChecked.reply,
       repeatSuppressionCount: repeatChecked.templateSuppressedBecauseRepeated
@@ -1485,104 +1186,40 @@ export class VoiceRuntimeService {
           ? metadata.repeatSuppressionCount + 1
           : 1
         : 0,
-      ...(resolved.followUpTriggered && resolved.followUpOfferedProductKey
-        ? { followUpOfferedProductKey: resolved.followUpOfferedProductKey }
-        : {}),
     });
 
-    this.logger.log(
-      JSON.stringify({
-        event: 'voice.journey.turn_complete',
-        callSessionId,
-        tenantId: ctx?.tenantId,
-        agentId: ctx?.agentId,
-        toolCallsCount: result.toolCallsCount,
-        replyChars: repeatChecked.reply.length,
-        escalated: Boolean(result.escalated),
-        intentDetected: userIntent,
-        toolCalled: result.toolCallsCount > 0,
-        flowStep: result.toolCallsCount > 0 ? 'llm_tool_loop' : 'llm_reply',
-        state: stateForLogOpenAi,
-        finalResponseText: repeatChecked.reply.slice(0, 500),
-        contextAware: resolved.contextAware,
-        questionAnsweredFirst: resolved.questionAnsweredFirst,
-        interruptionHandled: resolved.interruptionHandled,
-        conversationTone: resolved.conversationTone,
-        toneLeadUsed: resolved.toneLeadUsed,
-        paymentSuggestionUsed: resolved.paymentSuggestionUsed,
-        followUpTriggered: resolved.followUpTriggered,
-        responseDelayMs,
-        fillerUsed: fillerUsedSession,
-        responseMode: repeatChecked.responseMode,
-        responseSource: repeatChecked.responseSource,
-        openaiUsed: repeatChecked.openaiUsed,
-        customerIntentHandled: true,
-        toolCallAllowed: toolPolicy.toolCallAllowed,
-        toolCallBlockedReason: toolPolicy.toolCallBlockedReason,
-        customerQuestionType: toolPolicy.customerQuestionType,
-        templateSuppressedBecauseRepeated: repeatChecked.templateSuppressedBecauseRepeated,
-        ...(repeatChecked.templateUsed != null ? { templateUsed: repeatChecked.templateUsed } : {}),
-        ...(repeatChecked.templateUsed != null
-          ? { responseTemplateUsed: repeatChecked.templateUsed }
-          : {}),
-        humanLikeMode: true,
-        roboticTemplateSuppressed: repeatChecked.templateSuppressedBecauseRepeated,
-      }),
-    );
-
     if (result.escalated) {
-      const ctx2 = await this.sessionContext.load(callSessionId);
       await this.callsService.updateSessionStatus(callSessionId, {
         escalated: true,
         lastEventAt: new Date(),
         metadata: { endedReason: 'escalated' } as Record<string, unknown>,
       });
-      if (ctx2) {
-        await this.callEvents.log(ctx2.tenantId, callSessionId, CallEventType.ESCALATION_TRIGGERED);
-      }
+      await this.callEvents.log(ctx.tenantId, callSessionId, CallEventType.ESCALATION_TRIGGERED);
     }
+
     const turnProof = {
       callSessionId,
-      tenantId: ctxAfterLlm?.tenantId ?? ctx?.tenantId ?? null,
-      agentId: ctxAfterLlm?.agentId ?? ctx?.agentId ?? null,
+      tenantId: ctx.tenantId,
+      agentId: ctx.agentId,
       userSpeechText: safeText.slice(0, 500),
-      openaiKeySource:
-        result.proof?.openaiKeySource ?? ctxAfterLlm?.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
-      modelUsed: result.proof?.modelUsed ?? ctxAfterLlm?.agent.model ?? 'unknown',
+      openaiKeySource: result.proof?.openaiKeySource ?? 'none',
+      modelUsed: result.proof?.modelUsed ?? 'unknown',
       openaiCalled: result.proof?.openaiCalled ?? true,
       openaiSuccess: result.proof?.openaiSuccess ?? true,
       replyPreview: repeatChecked.reply.slice(0, 240),
-      voiceProvider: ctxAfterLlm?.agent.voiceProvider ?? null,
-      voiceIdPresent: Boolean(ctxAfterLlm?.agent.voiceId?.trim()),
+      voiceProvider: ctx.agent.voiceProvider ?? null,
+      voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
       ttsProviderUsed: null as string | null,
       intentDetected: userIntent,
       toolCalled: result.toolCallsCount > 0,
-      flowStep: result.toolCallsCount > 0 ? 'llm_tool_loop' : 'llm_reply',
-      state: stateForLogOpenAi,
+      flowStep: result.toolCallsCount > 0 ? 'llm_agent_tool_loop' : 'llm_agent_reply',
+      state: stateNorm,
       finalResponseText: repeatChecked.reply,
-      contextAware: resolved.contextAware,
-      questionAnsweredFirst: resolved.questionAnsweredFirst,
-      interruptionHandled: resolved.interruptionHandled,
-      conversationTone: resolved.conversationTone,
-      toneLeadUsed: resolved.toneLeadUsed,
-      paymentSuggestionUsed: resolved.paymentSuggestionUsed,
-      followUpTriggered: resolved.followUpTriggered,
-      responseDelayMs,
-      fillerUsed: fillerUsedSession,
       responseMode: repeatChecked.responseMode,
       responseSource: repeatChecked.responseSource,
       openaiUsed: repeatChecked.openaiUsed,
-      customerIntentHandled: true,
-      toolCallAllowed: toolPolicy.toolCallAllowed,
-      toolCallBlockedReason: toolPolicy.toolCallBlockedReason,
-      customerQuestionType: toolPolicy.customerQuestionType,
+      llmTools: result.toolNames,
       templateSuppressedBecauseRepeated: repeatChecked.templateSuppressedBecauseRepeated,
-      ...(repeatChecked.templateUsed != null ? { templateUsed: repeatChecked.templateUsed } : {}),
-      ...(repeatChecked.templateUsed != null
-        ? { responseTemplateUsed: repeatChecked.templateUsed }
-        : {}),
-      humanLikeMode: true,
-      roboticTemplateSuppressed: repeatChecked.templateSuppressedBecauseRepeated,
     };
     this.logTurnProof(turnProof);
     this.logResponsePath({
@@ -1591,8 +1228,8 @@ export class VoiceRuntimeService {
       usedTemplate: !repeatChecked.openaiUsed,
       templateReason: repeatChecked.templateUsed,
       intent: userIntent,
-      state: stateForLogOpenAi,
-      latencyMs: responseDelayMs,
+      state: stateNorm,
+      latencyMs: Date.now() - llmStartedAt,
     });
     return { reply: repeatChecked.reply, turnProof };
   }
