@@ -57,6 +57,7 @@ import {
   resolveInboundGreetingText,
   shouldPlayInboundElevenLabsGreeting,
 } from '../../calls/runtime/book-sales-voice.util';
+import { computeGatherSpeechGate } from './gather-speech-gate.util';
 
 export interface InboundCallPayload {
   CallSid: string;
@@ -1031,10 +1032,16 @@ export class TwilioWebhookService implements OnModuleInit {
     const hearingDebugEffective = this.resolveGatherHearingDebugEffective();
     const strictElevenLabsOnly = this.isStrictElevenLabsOnly();
 
-    const speechText = (
-      (payload.SpeechResult ?? '').trim() ||
-      (payload.StableSpeechResult ?? '').trim()
-    ).trim();
+    const speechGate = computeGatherSpeechGate({
+      SpeechResult: payload.SpeechResult,
+      StableSpeechResult: payload.StableSpeechResult,
+      Confidence: payload.Confidence,
+    });
+    const speechText = speechGate.speechTextMerged;
+    const confidence = speechGate.confidenceParsed;
+    const hasUsableSpeech = speechGate.hasUsableSpeech;
+    const willCallVoiceRuntime = speechGate.willCallVoiceRuntime;
+
     if (!speechText) {
       console.log(
         JSON.stringify({
@@ -1053,12 +1060,6 @@ export class TwilioWebhookService implements OnModuleInit {
         }),
       );
     }
-    // Twilio often omits Confidence. Number('') === 0 would wrongly mark all speech as low-confidence.
-    const confidenceStr = (payload.Confidence ?? '').trim();
-    const confidenceParsed = confidenceStr === '' ? NaN : Number(confidenceStr);
-    const confidence = Number.isFinite(confidenceParsed) ? confidenceParsed : null;
-    const lowConfidence = confidence !== null && confidence < 0.25;
-    const hasUsableSpeech = speechText.length >= 2 && !lowConfidence;
     let assistantResponse: string;
     const metadata =
       ctx.metadata && typeof ctx.metadata === 'object' && !Array.isArray(ctx.metadata)
@@ -1077,6 +1078,28 @@ export class TwilioWebhookService implements OnModuleInit {
       }),
     );
 
+    if (hasUsableSpeech) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.speech.accepted',
+          callSessionId,
+          speechResult: speechText.slice(0, 500),
+          confidence,
+          reason: speechGate.acceptReason,
+        }),
+      );
+    } else {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.speech.rejected',
+          callSessionId,
+          speechResult: speechText.slice(0, 500),
+          confidence,
+          reason: speechGate.rejectReason ?? 'empty',
+        }),
+      );
+    }
+
     console.log(
       JSON.stringify({
         event: 'twilio.voice.gather_speech_gate',
@@ -1085,12 +1108,11 @@ export class TwilioWebhookService implements OnModuleInit {
         speechResultRaw: (payload.SpeechResult ?? '').slice(0, 300),
         stableSpeechRaw: (payload.StableSpeechResult ?? '').slice(0, 300),
         speechTextMerged: speechText.slice(0, 300),
-        confidenceRawField: confidenceStr || null,
+        confidenceRawField: (payload.Confidence ?? '').trim() || null,
         confidenceParsed: confidence,
-        lowConfidence,
         hasUsableSpeech,
-        willCallVoiceRuntime: false,
-        voiceDeferredKickoff: hasUsableSpeech,
+        willCallVoiceRuntime,
+        voiceDeferredKickoff: willCallVoiceRuntime,
         openaiKeySource: openAiKeyAudit.openaiKeySource,
         openaiKeyFingerprint: openAiKeyAudit.openaiKeyFingerprint,
         agentKeyPresent: openAiKeyAudit.agentKeyPresent,
@@ -1122,7 +1144,7 @@ export class TwilioWebhookService implements OnModuleInit {
         'system',
         !speechText
           ? 'No speech captured from Twilio Gather.'
-          : `Low-confidence speech from Twilio Gather (confidence=${confidence ?? 'unknown'}).`,
+          : `No meaningful speech from Twilio Gather (reason=${speechGate.rejectReason ?? 'unknown'}).`,
         seq,
       );
 
@@ -1188,7 +1210,7 @@ export class TwilioWebhookService implements OnModuleInit {
         JSON.stringify({
           event: 'twilio.voice.llm_reply_skipped',
           callSessionId,
-          reason: !speechText ? 'empty_gather_speech' : 'low_confidence_gather_speech',
+          reason: !speechText ? 'empty_gather_speech' : `meaningless_gather_speech_${speechGate.rejectReason ?? 'unknown'}`,
           confidence,
           replyChars: assistantResponse.length,
           retryAttempt: nextRetry,

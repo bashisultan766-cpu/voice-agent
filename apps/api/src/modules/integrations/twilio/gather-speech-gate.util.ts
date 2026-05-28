@@ -1,5 +1,6 @@
 /**
  * Twilio Gather speech gating — keep in sync with TwilioWebhookService.handleGatherMvpVoice.
+ * Confidence is advisory only; meaningful transcript text always routes to voice runtime.
  */
 export type GatherSpeechGateInput = {
   SpeechResult?: string;
@@ -7,38 +8,71 @@ export type GatherSpeechGateInput = {
   Confidence?: string;
 };
 
+export type GatherSpeechRejectReason =
+  | 'empty'
+  | 'too_short'
+  | 'noise_only';
+
+const MEANINGLESS_SPEECH = new Set(['.', '...', 'uh', 'um', 'hmm']);
+
+export function hasMeaningfulSpeech(text: string | undefined | null): boolean {
+  if (!text) return false;
+
+  const cleaned = text.trim().toLowerCase();
+
+  if (cleaned.length < 2) return false;
+
+  if (MEANINGLESS_SPEECH.has(cleaned)) return false;
+
+  return true;
+}
+
+function mergeGatherSpeechText(input: GatherSpeechGateInput): string {
+  const speechResult = (input.SpeechResult ?? '').trim();
+  const stable = (input.StableSpeechResult ?? '').trim();
+  return speechResult || stable;
+}
+
+function parseConfidenceForLog(confidenceRaw: string | undefined): number | null {
+  const confidenceStr = (confidenceRaw ?? '').trim();
+  if (confidenceStr === '') return null;
+  const parsed = Number(confidenceStr);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function rejectReasonForSpeech(text: string): GatherSpeechRejectReason | null {
+  const trimmed = text.trim();
+  if (!trimmed) return 'empty';
+  if (!hasMeaningfulSpeech(text)) {
+    const cleaned = trimmed.toLowerCase();
+    if (cleaned.length < 2) return 'too_short';
+    return 'noise_only';
+  }
+  return null;
+}
+
 export function computeGatherSpeechGate(input: GatherSpeechGateInput): {
   speechTextMerged: string;
   hasUsableSpeech: boolean;
   willCallVoiceRuntime: boolean;
   confidenceParsed: number | null;
-  confidenceIgnored: true;
   speechAccepted: boolean;
+  acceptReason: 'meaningful_text' | null;
+  rejectReason: GatherSpeechRejectReason | null;
 } {
-  const { SpeechResult, StableSpeechResult, Confidence } = input;
-  const speechTextMerged = [SpeechResult, StableSpeechResult]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-
-  // ✅ ONLY RULE: if text exists → accept it
-  const hasUsableSpeech = speechTextMerged.length >= 2;
+  const speechTextMerged = mergeGatherSpeechText(input);
+  const hasUsableSpeech = hasMeaningfulSpeech(speechTextMerged);
   const willCallVoiceRuntime = hasUsableSpeech;
-
-  // 🚫 REMOVE these completely from logic:
-  // - lowConfidence blocking
-  // - confidence thresholds
-  // - confidence-based rejection
-
-  // ✅ Keep confidence ONLY for logging
-  const confidenceParsed = Confidence ? Number(Confidence) : null;
+  const confidenceParsed = parseConfidenceForLog(input.Confidence);
+  const rejectReason = hasUsableSpeech ? null : rejectReasonForSpeech(speechTextMerged);
 
   return {
     speechTextMerged,
     hasUsableSpeech,
     willCallVoiceRuntime,
     confidenceParsed,
-    confidenceIgnored: true,
-    speechAccepted: hasUsableSpeech
+    speechAccepted: hasUsableSpeech,
+    acceptReason: hasUsableSpeech ? 'meaningful_text' : null,
+    rejectReason,
   };
 }
