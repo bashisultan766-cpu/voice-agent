@@ -191,8 +191,6 @@ export function resolveOpenAiConfig(args: {
   const agentKey = trimOrUndef(args.agentSecrets?.openaiApiKey);
   if (agentKey) return { apiKey: agentKey, source: 'agent' };
 
-  if (args.useWorkspaceOpenai !== true) return null;
-
   const resolved = resolveCredentialPriority(
     undefined,
     trimOrUndef(args.workspace?.openaiApiKey),
@@ -252,10 +250,11 @@ export function resolveTwilioConfig(args: {
     };
   }
 
-  if (args.useWorkspaceTwilio !== true) return null;
-
   const sidResolved = resolveCredentialPriority(undefined, trimOrUndef(args.workspace?.twilioAccountSid));
-  const authResolved = resolveCredentialPriority(undefined, trimOrUndef(args.workspace?.twilioAuthToken));
+  const authResolved = resolveCredentialPriority(
+    undefined,
+    trimOrUndef(args.workspace?.twilioAuthToken),
+  );
   if (!sidResolved.value || !authResolved.value) return null;
   const phone =
     trimOrUndef(args.agentPhoneNumber) || trimOrUndef(args.workspace?.twilioPhoneNumber);
@@ -381,6 +380,11 @@ export function buildCredentialSourcesSummary(args: {
     envApiKey: args.env?.resendApiKey,
   });
 
+  const workspaceHasOpenai = Boolean(trimOrUndef(args.workspace?.openaiApiKey));
+  const workspaceHasTwilio = Boolean(
+    trimOrUndef(args.workspace?.twilioAccountSid) && trimOrUndef(args.workspace?.twilioAuthToken),
+  );
+
   return {
     shopify: {
       configured: Boolean(shopifyResolved),
@@ -389,7 +393,7 @@ export function buildCredentialSourcesSummary(args: {
       shopifyStoreUrlPresent: Boolean(trimOrUndef(flags.shopifyStoreUrl)),
     },
     openai: {
-      source: openai?.source ?? 'missing',
+      source: openai?.source ?? (workspaceHasOpenai ? 'workspace' : 'missing'),
       configured: Boolean(openai),
       useWorkspaceOpenai: flags.useWorkspaceOpenai === true,
     },
@@ -399,7 +403,7 @@ export function buildCredentialSourcesSummary(args: {
       useWorkspaceElevenlabs: flags.useWorkspaceElevenlabs === true,
     },
     twilio: {
-      authSource: twilio?.authSource ?? 'missing',
+      authSource: twilio?.authSource ?? (workspaceHasTwilio ? 'workspace' : 'missing'),
       configured: Boolean(twilio),
       useWorkspaceTwilio: flags.useWorkspaceTwilio === true,
     },

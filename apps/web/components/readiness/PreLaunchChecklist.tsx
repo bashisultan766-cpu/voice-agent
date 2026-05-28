@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { getAgents, type AgentListItem } from '@/lib/api/agents';
+import { getAgents, type AgentListItem, type CredentialSourcesSummaryApi } from '@/lib/api/agents';
 import { getAgentReadiness } from '@/lib/api/agents';
 import { getShopifyConnectionStatus, getShopifyWebhookHealth, type ShopifyWebhookHealth } from '@/lib/api/shopify';
 import { getSystemHealth } from '@/lib/api/system';
@@ -31,6 +31,7 @@ export function PreLaunchChecklist() {
   const [rows, setRows] = useState<AgentReadinessRow[]>([]);
   const [integrationSummary, setIntegrationSummary] = useState<TenantIntegrationSummary | null>(null);
   const [activeAgentReadiness, setActiveAgentReadiness] = useState<Record<string, boolean>>({});
+  const [activeCredentialSources, setActiveCredentialSources] = useState<CredentialSourcesSummaryApi | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -68,6 +69,7 @@ export function PreLaunchChecklist() {
         if (active) {
           const readiness = await getAgentReadiness(active.id).catch(() => null);
           const checks = new Map((readiness?.checks ?? []).map((c) => [c.key, c.pass]));
+          setActiveCredentialSources(readiness?.credentialSources ?? null);
           setActiveAgentReadiness({
             activeAgentSelected: true,
             systemPrompt: checks.get('system_prompt_present') === true,
@@ -78,6 +80,7 @@ export function PreLaunchChecklist() {
           });
         } else {
           setActiveAgentReadiness({ activeAgentSelected: false });
+          setActiveCredentialSources(null);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load readiness checks.');
@@ -179,6 +182,11 @@ export function PreLaunchChecklist() {
       <div className="rounded-xl border border-border bg-card p-5">
         <h2 className="text-sm font-medium text-foreground">Voice agent readiness</h2>
         <p className="mt-1 text-xs text-muted-foreground">Live call prerequisites for current workspace and active agent.</p>
+        {activeCredentialSources ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Twilio source: {activeCredentialSources.twilio.authSource} · OpenAI source: {activeCredentialSources.openai.source}
+          </p>
+        ) : null}
         <div className="mt-4 grid gap-2 md:grid-cols-2">
           {voiceReadinessItems.map(([label, pass]) => (
             <div key={label} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
