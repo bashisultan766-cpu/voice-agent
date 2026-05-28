@@ -4,13 +4,7 @@ import { normalizePhoneNumber } from './utils/normalize-phone';
 import { AgentStatus } from '@prisma/client';
 
 function inboundVoiceAgentStatuses(): AgentStatus[] {
-  const allowDraft =
-    process.env.VOICE_ALLOW_DRAFT_AGENTS === 'true' ||
-    process.env.ALLOW_DRAFT_VOICE_AGENTS === 'true' ||
-    process.env.NODE_ENV !== 'production';
-  return allowDraft
-    ? [AgentStatus.ACTIVE, AgentStatus.READY, AgentStatus.DRAFT]
-    : [AgentStatus.ACTIVE, AgentStatus.READY];
+  return [AgentStatus.ACTIVE, AgentStatus.READY];
 }
 
 function digitsLast4(value: string): string {

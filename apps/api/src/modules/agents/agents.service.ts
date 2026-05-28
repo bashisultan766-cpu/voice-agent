@@ -114,7 +114,7 @@ import {
 
 export { resolveCredentialPriority };
 
-function statusDtoToPrisma(s?: AgentStatusDto): AgentStatus {
+export function statusDtoToPrisma(s?: AgentStatusDto): AgentStatus {
   if (!s) return AgentStatus.DRAFT;
   switch (s) {
     case AgentStatusDto.ACTIVE:
@@ -1600,13 +1600,6 @@ export class AgentsService {
     await this.applyWorkspaceIntegrationFlagsOnly(tenantId, dto);
     const existing = await this.findOne(tenantId, id);
     const currentStatus = String((existing as { status?: unknown }).status ?? '').toLowerCase();
-    if (dto.agentStatus === AgentStatusDto.ACTIVE && currentStatus !== AgentStatusDto.ACTIVE) {
-      const statusResult = await this.updateStatus(tenantId, id, AgentStatusDto.ACTIVE, actorUserId);
-      const emptySecrets = Object.fromEntries(
-        SECRET_KEYS.map((key) => [key, false]),
-      ) as Record<(typeof SECRET_KEYS)[number], boolean>;
-      return { ...statusResult.agent, updatedSecrets: emptySecrets };
-    }
     if (process.env.NODE_ENV === 'production') {
       const finalClientId = dto.clientId !== undefined ? dto.clientId?.trim() || '' : (existing.clientId as string | undefined) || '';
       const finalStoreId = dto.storeId !== undefined ? dto.storeId?.trim() || '' : (existing.storeId as string | undefined) || '';
@@ -2023,6 +2016,14 @@ export class AgentsService {
         openaiKeyCleared: explicitClearOpenai,
         elevenLabsKeyTouched: dto.elevenlabsApiKey !== undefined,
         elevenLabsKeyCleared: explicitClearEleven,
+      }),
+    );
+    this.log.log(
+      JSON.stringify({
+        event: 'agent.update',
+        agentId: id,
+        incomingStatus: dto.agentStatus ?? null,
+        savedStatus: updated.status,
       }),
     );
     if (explicitClearOpenai) {

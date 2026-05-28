@@ -5,7 +5,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { normalizePhoneNumber } from '@bookstore-voice-agents/types';
 import {
+  type AgentApi,
+  agentToFormData,
   createAgent,
+  getAgent,
   updateAgent,
   getAgentReadiness,
   testAgentConnection,
@@ -892,6 +895,19 @@ export function CreateAgentForm({
             }
           }
           const updated = await updateAgent(agentId, payload as Parameters<typeof updateAgent>[1]);
+          const refreshed = await getAgent(agentId);
+          const latestAgent = (refreshed ?? (updated as AgentApi));
+          const mappedForm = agentToFormData(latestAgent);
+          const nextFormData: CreateAgentFormData = {
+            ...initialFormData,
+            ...mappedForm,
+            escalationRules: Array.isArray(mappedForm.escalationRules)
+              ? mappedForm.escalationRules.join('\n')
+              : (mappedForm.escalationRules ?? ''),
+            checkoutMode: mappedForm.checkoutMode === 'draft_order' ? 'draft_order' : 'cart',
+          };
+          setData(nextFormData);
+          initialDataRef.current = nextFormData;
           setIsDirty(false);
           const secretMessage = formatSecretUpdateMessage(updated.updatedSecrets);
           const initialPhone = (initialData?.twilioPhoneNumber ?? '').trim();
