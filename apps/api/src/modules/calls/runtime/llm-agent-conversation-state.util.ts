@@ -13,6 +13,7 @@ export type LlmCheckoutStage =
   | 'quantity'
   | 'email'
   | 'payment'
+  | 'payment_sent'
   | 'done';
 
 export type LlmSelectedProduct = {
@@ -40,6 +41,10 @@ export type LlmAgentConversationState = {
   lastSearchedProducts: LlmSelectedProduct[];
   checkoutStage: LlmCheckoutStage;
   lastToolCalls: string[];
+  paymentLinkCreated?: boolean;
+  paymentLinkSent?: boolean;
+  checkoutLinkId?: string | null;
+  checkoutUrl?: string | null;
 };
 
 export const LLM_AGENT_STATE_KEY = 'llmAgentState';
@@ -121,6 +126,8 @@ export function formatStateForPrompt(state: LlmAgentConversationState): string {
     lines.push(`Selected for order: ${sel}.`);
   }
   if (state.customerEmail) lines.push(`Customer email: ${state.customerEmail}.`);
+  if (state.paymentLinkSent) lines.push('Payment link email: already sent for this order.');
+  else if (state.paymentLinkCreated) lines.push('Payment link: created; email not confirmed sent yet.');
   if (state.lastToolCalls.length) {
     lines.push(`Recent tools: ${state.lastToolCalls.slice(-5).join(', ')}.`);
   }

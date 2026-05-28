@@ -235,3 +235,107 @@ test('banned phrase sanitizer strips go ahead and dropshipping', () => {
   assert.doesNotMatch(sanitizeBannedVoicePhrases('Go ahead and tell me.'), /go ahead/i);
   assert.doesNotMatch(sanitizeBannedVoicePhrases('We offer dropshipping.'), /dropship/i);
 });
+
+test('email capture auto-runs checkout and sendPaymentEmail without another LLM turn', async () => {
+  const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
+  const internalTools: string[] = [];
+  let openAiCalls = 0;
+
+  const completionFn: OpenAiCompletionFn = async () => {
+    openAiCalls += 1;
+    return {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: 'Thanks, I have your email.',
+          },
+        },
+      ],
+    } as OpenAI.Chat.ChatCompletion;
+  };
+
+  const orchestrator = new LlmAgentOrchestratorService(
+    { get: () => undefined } as never,
+    {
+      load: async () =>
+        ({
+          tenantId: 't1',
+          agentId: 'a1',
+          storeId: 's1',
+          fromNumber: '+15551234567',
+          metadata: {
+            llmAgentState: {
+              selectedProducts: [
+                {
+                  title: 'World History Vol 1',
+                  variantId: 'gid://shopify/ProductVariant/99',
+                  inStock: true,
+                  stock: 8,
+                },
+              ],
+              quantities: { 'gid://shopify/ProductVariant/99': 2 },
+              checkoutStage: 'quantity',
+              customerEmail: null,
+              lastSearchedProducts: [],
+              lastToolCalls: [],
+            },
+          },
+          agent: {
+            openaiApiKey: 'sk-test-key-1234567890',
+            model: 'gpt-4o-mini',
+            enabledTools: ['searchProducts', 'createCheckoutLink', 'sendPaymentEmail'],
+            toolPermissions: null,
+            runtimeCredentialHints: { openaiKeySource: 'test' },
+          },
+          store: { name: 'SureShot Books' },
+        }) as never,
+    } as never,
+    {
+      execute: async (_ctx: unknown, name: string) => {
+        internalTools.push(name);
+        if (name === 'createCheckoutLink') {
+          return {
+            ok: true,
+            toolName: name,
+            storeId: 's1',
+            data: {
+              checkoutLinkId: 'chk_auto_1',
+              checkoutUrl: 'https://demo.myshopify.com/cart/abc',
+              mode: 'STOREFRONT_CART',
+            },
+          };
+        }
+        if (name === 'sendPaymentEmail') {
+          return {
+            ok: true,
+            toolName: name,
+            storeId: 's1',
+            data: { voiceSummary: 'Email sent.' },
+          };
+        }
+        return { ok: false, toolName: name, storeId: 's1', error: { code: 'UNEXPECTED', message: 'n/a', retryable: false } };
+      },
+    } as never,
+    {
+      summarizeForPrompt: () => '',
+      load: async () => ({}),
+      setEmailState: async () => undefined,
+    } as never,
+    { mergeSessionMetadata: async () => ({}) } as never,
+  );
+
+  const out = await orchestrator.handleTurn('sess_checkout_auto', 'oishisultan766@gmail.com', [], {
+    completionFn,
+  });
+
+  assert.equal(openAiCalls, 0, 'OpenAI should not run when auto-checkout handles the email turn');
+  assert.ok(internalTools.includes('createCheckoutLink'));
+  assert.ok(internalTools.includes('sendPaymentEmail'));
+  assert.match(out.reply, /sent the secure payment link/i);
+  assert.match(out.reply, /oishisultan766@gmail.com/);
+  assert.equal(out.state.paymentLinkCreated, true);
+  assert.equal(out.state.paymentLinkSent, true);
+  assert.equal(out.state.checkoutStage, 'payment_sent');
+  assert.equal(out.toolCallsCount, 2);
+});

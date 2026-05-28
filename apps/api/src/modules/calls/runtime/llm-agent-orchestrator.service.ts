@@ -29,6 +29,12 @@ import {
 import { classifyOrderTurn } from './order-intent-classifier.util';
 import { normalizeSpokenEmail } from './email-normalization.util';
 import { shouldBlockCheckoutForOutOfStock } from './voice-stock-sales-policy.util';
+import {
+  applyPaymentFlowToState,
+  buildAutoCheckoutConfirmationReply,
+  buildCreatePaymentLinkArgsFromState,
+  shouldAutoTriggerCheckoutAfterEmail,
+} from './llm-agent-auto-checkout.util';
 
 const MAX_TOOL_ITERATIONS = Number(process.env.MAX_TOOL_ITERATIONS_VOICE) || 8;
 const MAX_TOOL_CALLS_PER_TURN = Number(process.env.MAX_TOOL_CALLS_PER_TURN) || 4;
@@ -128,6 +134,27 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       await this.callMemory.setEmailState(callSessionId, state.customerEmail, 'confirmed');
     }
 
+    const emailCapturedThisTurn = Boolean(cls.extracted?.email && state.customerEmail);
+    let totalToolCalls = 0;
+    const toolNames: string[] = [];
+    let escalated = false;
+    let lastContent = '';
+    let skipLlmToolLoop = false;
+
+    if (shouldAutoTriggerCheckoutAfterEmail(state, { emailCapturedThisTurn })) {
+      const autoResult = await this.runDeterministicCheckoutAfterEmail(
+        ctx,
+        callSessionId,
+        state,
+        'auto_email_capture',
+      );
+      state = autoResult.state;
+      totalToolCalls = autoResult.toolCallsCount;
+      toolNames.push(...autoResult.toolNames);
+      lastContent = autoResult.reply;
+      skipLlmToolLoop = autoResult.checkoutAttempted;
+    }
+
     this.logger.log(
       JSON.stringify({
         event: 'voice.brain.selected',
@@ -166,14 +193,10 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       { role: 'user', content: userMessage },
     ];
 
-    let totalToolCalls = 0;
-    const toolNames: string[] = [];
-    let escalated = false;
-    let lastContent = '';
     let modelToUse = model;
     const fallbackMini = 'gpt-4o-mini';
 
-    for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+    if (!skipLlmToolLoop) for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
       let response: OpenAI.Chat.ChatCompletion;
       try {
         response = await complete({
@@ -472,33 +495,265 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     );
 
     if (llmName === 'CreatePaymentLink' && result.ok) {
-      const data = (result.data ?? {}) as Record<string, unknown>;
-      const checkoutLinkId = data.checkoutLinkId as string | undefined;
-      const email = String(mappedArgs.email ?? '').trim();
-      if (checkoutLinkId && email) {
-        await this.callsService.mergeSessionMetadata(callSessionId, {
-          orderState: 'PAYMENT_LINK_CREATING',
-          emailConfirmationState: 'confirmed',
-          normalizedEmail: email,
-        });
-        const emailResult = await this.toolOrchestrator.execute(
-          ctx,
-          'sendPaymentEmail',
-          { checkoutLinkId, email },
-          callSessionId,
-          `${requestId}-email`,
-        );
-        return {
-          result: emailResult.ok ? emailResult : result,
-          followUpContent: JSON.stringify({
-            checkout: result.data,
-            emailDelivery: emailResult.data ?? emailResult.error,
-            ok: result.ok && emailResult.ok,
-          }),
-        };
-      }
+      const chained = await this.chainSendPaymentEmailAfterCheckout(
+        ctx,
+        callSessionId,
+        result,
+        mappedArgs,
+        requestId,
+      );
+      return chained;
     }
 
     return { result };
+  }
+
+  private async runDeterministicCheckoutAfterEmail(
+    ctx: VoiceSessionContext,
+    callSessionId: string,
+    state: LlmAgentConversationState,
+    requestIdPrefix: string,
+  ): Promise<{
+    state: LlmAgentConversationState;
+    reply: string;
+    toolNames: string[];
+    toolCallsCount: number;
+    checkoutAttempted: boolean;
+    checkoutSucceeded: boolean;
+  }> {
+    const linkArgs = buildCreatePaymentLinkArgsFromState(state);
+    if (!linkArgs) {
+      return {
+        state,
+        reply: '',
+        toolNames: [],
+        toolCallsCount: 0,
+        checkoutAttempted: false,
+        checkoutSucceeded: false,
+      };
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.checkout.auto_triggered_after_email',
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        email: linkArgs.email.replace(/^(.).+(@.*)$/, '$1***$2'),
+        itemCount: linkArgs.items.length,
+        checkoutStage: state.checkoutStage,
+      }),
+    );
+
+    await this.callsService.mergeSessionMetadata(callSessionId, {
+      orderState: 'PAYMENT_LINK_CREATING',
+    });
+
+    const { result: checkoutResult, emailDelivery } = await this.executeCreatePaymentLinkWithEmail(
+      ctx,
+      callSessionId,
+      linkArgs,
+      `${requestIdPrefix}-${Date.now()}`,
+    );
+
+    let nextState = applyToolResultToState(state, 'CreatePaymentLink', checkoutResult);
+    const checkoutData = (checkoutResult.data ?? {}) as Record<string, unknown>;
+    const checkoutOk = checkoutResult.ok === true;
+    const emailOk = emailDelivery?.ok === true;
+    const checkoutUrl =
+      typeof checkoutData.checkoutUrl === 'string' ? checkoutData.checkoutUrl : undefined;
+    const checkoutLinkId =
+      typeof checkoutData.checkoutLinkId === 'string' ? checkoutData.checkoutLinkId : undefined;
+
+    if (checkoutOk) {
+      nextState = applyPaymentFlowToState(nextState, {
+        checkoutLinkId,
+        checkoutUrl,
+        paymentLinkCreated: true,
+        paymentLinkSent: emailOk,
+      });
+      if (emailOk) {
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+          orderState: 'PAYMENT_LINK_SENT',
+        });
+      }
+    }
+
+    const toolNames = ['CreatePaymentLink'];
+    let toolCallsCount = 1;
+    if (emailDelivery) {
+      toolNames.push('sendPaymentEmail');
+      toolCallsCount += 1;
+    }
+
+    const reply = buildAutoCheckoutConfirmationReply({
+      email: linkArgs.email,
+      checkoutOk,
+      emailOk,
+      checkoutUrl,
+    });
+
+    return {
+      state: nextState,
+      reply,
+      toolNames,
+      toolCallsCount,
+      checkoutAttempted: true,
+      checkoutSucceeded: checkoutOk && emailOk,
+    };
+  }
+
+  private async executeCreatePaymentLinkWithEmail(
+    ctx: VoiceSessionContext,
+    callSessionId: string,
+    linkArgs: { email: string; items: Array<{ variantId: string; quantity: number }> },
+    requestId: string,
+  ): Promise<{ result: ToolResult; emailDelivery: ToolResult | null }> {
+    const stockBlock = shouldBlockCheckoutForOutOfStock(
+      await this.loadState(callSessionId),
+    );
+    if (stockBlock.blocked) {
+      return {
+        result: {
+          ok: false,
+          toolName: 'CreatePaymentLink',
+          storeId: ctx.storeId,
+          error: {
+            code: 'OUT_OF_STOCK',
+            message: stockBlock.message ?? 'Product out of stock',
+            retryable: true,
+          },
+          data: {
+            voiceSummary:
+              'That book is out of stock, so I cannot send a payment link for it. Would you like a different title that is in stock?',
+          },
+        },
+        emailDelivery: null,
+      };
+    }
+
+    const mappedArgs = mapLlmToolArgs('CreatePaymentLink', linkArgs);
+    let checkoutResult = await this.toolOrchestrator.execute(
+      ctx,
+      'createCheckoutLink',
+      mappedArgs,
+      callSessionId,
+      requestId,
+    );
+
+    if (!checkoutResult.ok) {
+      return { result: checkoutResult, emailDelivery: null };
+    }
+
+    const checkoutData = (checkoutResult.data ?? {}) as Record<string, unknown>;
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.checkout.payment_link_created',
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        checkoutLinkId: checkoutData.checkoutLinkId ?? null,
+      }),
+    );
+
+    const chained = await this.chainSendPaymentEmailAfterCheckout(
+      ctx,
+      callSessionId,
+      checkoutResult,
+      mappedArgs,
+      requestId,
+    );
+    return {
+      result: chained.result,
+      emailDelivery: chained.emailDelivery ?? null,
+    };
+  }
+
+  private async chainSendPaymentEmailAfterCheckout(
+    ctx: VoiceSessionContext,
+    callSessionId: string,
+    checkoutResult: ToolResult,
+    mappedArgs: Record<string, unknown>,
+    requestId: string,
+  ): Promise<{
+    result: ToolResult;
+    followUpContent?: string;
+    emailDelivery?: ToolResult;
+  }> {
+    const data = (checkoutResult.data ?? {}) as Record<string, unknown>;
+    const checkoutLinkId = data.checkoutLinkId as string | undefined;
+    const checkoutUrl = typeof data.checkoutUrl === 'string' ? data.checkoutUrl : undefined;
+    const email = String(mappedArgs.email ?? '').trim();
+    if (!checkoutLinkId || !email) {
+      return { result: checkoutResult };
+    }
+
+    await this.callsService.mergeSessionMetadata(callSessionId, {
+      orderState: 'PAYMENT_LINK_CREATING',
+      emailConfirmationState: 'confirmed',
+      normalizedEmail: email,
+      paymentLink: checkoutUrl,
+    });
+
+    const emailResult = await this.toolOrchestrator.execute(
+      ctx,
+      'sendPaymentEmail',
+      { checkoutLinkId, email },
+      callSessionId,
+      `${requestId}-email`,
+    );
+
+    if (emailResult.ok) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.checkout.email_sent',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          checkoutLinkId,
+        }),
+      );
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        orderState: 'PAYMENT_LINK_SENT',
+      });
+    } else {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.checkout.email_failed',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          checkoutLinkId,
+          checkoutUrl: checkoutUrl?.slice(0, 120) ?? null,
+          errorCode: emailResult.error?.code ?? 'EMAIL_FAILED',
+        }),
+      );
+    }
+
+    const emailOk = emailResult.ok === true;
+    const voiceSummary = buildAutoCheckoutConfirmationReply({
+      email,
+      checkoutOk: true,
+      emailOk,
+      checkoutUrl,
+    });
+
+    return {
+      result: {
+        ...checkoutResult,
+        data: {
+          ...data,
+          emailSent: emailOk,
+          voiceSummary,
+        },
+      },
+      emailDelivery: emailResult,
+      followUpContent: JSON.stringify({
+        checkout: checkoutResult.data,
+        emailDelivery: emailResult.data ?? emailResult.error,
+        ok: checkoutResult.ok && emailOk,
+        voiceSummary,
+      }),
+    };
   }
 }
