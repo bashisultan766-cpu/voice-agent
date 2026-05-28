@@ -757,9 +757,7 @@ export class TwilioWebhookService implements OnModuleInit {
       gatherActionUrl,
       language: hearingDebug ? 'en-US' : normalizeLanguageForTwilio(context.agent.language ?? 'en'),
       playbackAudioUrl: undefined,
-      openingSayText: strictElevenLabsOnly
-        ? undefined
-        : hearingDebugEffective
+      openingSayText: hearingDebugEffective
         ? debugOpeningText
         : shortGreeting,
       finalFallbackAudioUrl: hearingDebugEffective ? undefined : finalFallbackAudioUrl,

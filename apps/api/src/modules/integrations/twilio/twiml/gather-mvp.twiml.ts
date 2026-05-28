@@ -79,6 +79,12 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
     }
   }
   const gatherInner = gatherInnerLines.length > 0 ? `${gatherInnerLines.join('\n')}\n` : '';
+  const preGatherLines: string[] = [];
+  if (!includePromptInsideGather) {
+    if (openingSayText.length > 0) preGatherLines.push(`  <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
+    else preGatherLines.push(`  <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
+  }
+  const preGather = preGatherLines.length > 0 ? `${preGatherLines.join('\n')}\n` : '';
 
   const afterGatherLines: string[] = [];
   if (finalFallbackAudioUrl.length > 0) afterGatherLines.push(`  <Play>${escapeXml(finalFallbackAudioUrl)}</Play>`);
@@ -87,7 +93,7 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" action="${actionAttr}" method="POST" speechTimeout="${escapeXmlAttribute(speechTimeout)}" timeout="${timeoutSeconds}" language="${escapeXmlAttribute(language)}" actionOnEmptyResult="true">
+${preGather}  <Gather input="speech" action="${actionAttr}" method="POST" speechTimeout="${escapeXmlAttribute(speechTimeout)}" timeout="${timeoutSeconds}" language="${escapeXmlAttribute(language)}" actionOnEmptyResult="true">
 ${gatherInner}  </Gather>
 ${afterGather}  <Hangup />
 </Response>`;
