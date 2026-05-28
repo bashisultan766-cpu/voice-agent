@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { z } from 'zod';
 import {
@@ -176,8 +176,9 @@ export default function EmailIntegrationSettingsPage() {
     }
   }
 
-  function handleSaveSubmit(e: FormEvent<HTMLFormElement>) {
+  function handleSaveClick(e: MouseEvent<HTMLButtonElement>) {
     e.preventDefault();
+    e.stopPropagation();
     if (!canSave || saving || testing) return;
     void saveCredentials();
   }
@@ -230,7 +231,7 @@ export default function EmailIntegrationSettingsPage() {
           <p className="text-xs font-mono text-muted-foreground mb-3">Saved API key: {keyMasked}</p>
         ) : null}
 
-        <form onSubmit={handleSaveSubmit} className="space-y-3">
+        <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium" htmlFor="resend-api-key">
               Resend API key
@@ -324,15 +325,16 @@ export default function EmailIntegrationSettingsPage() {
               {testing ? 'Testing...' : 'Test connection'}
             </button>
             <button
-              type="submit"
+              type="button"
               disabled={saving || testing || !canSave}
+              onClick={handleSaveClick}
               aria-busy={saving}
               className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );
