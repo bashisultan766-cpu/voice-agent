@@ -232,6 +232,15 @@ export class AgentsController {
     return this.agentsService.getAgentReadiness(tenantId, id);
   }
 
+  @Roles(UserRole.ADMIN)
+  @Get(':id/persistence-diagnostics')
+  getPersistenceDiagnostics(
+    @TenantId() tenantId: string,
+    @Param('id', new ZodValidationPipe(cuidParamSchema)) id: string,
+  ) {
+    return this.agentsService.getPersistenceDiagnostics(tenantId, id);
+  }
+
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Roles(UserRole.MANAGER)
   @Post(':id/test-email')

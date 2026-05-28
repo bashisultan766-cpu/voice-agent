@@ -154,6 +154,21 @@ function normalizeEscalationRules(
 export class AgentsService {
   private readonly log = new Logger(AgentsService.name);
 
+  private logAgentStatusPersist(args: {
+    agentId: string;
+    tenantId: string;
+    requestedStatus: string | null;
+    savedStatus: string | null;
+    changedBy: string | null;
+  }): void {
+    this.log.log(
+      JSON.stringify({
+        event: 'agent.status.persist',
+        ...args,
+      }),
+    );
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
@@ -635,11 +650,33 @@ export class AgentsService {
         where: { id: agentId, tenantId, deletedAt: null },
         data: { status: AgentStatus.PAUSED },
       });
+      const verify = await this.prisma.agent.findFirst({
+        where: { id: agentId, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      this.logAgentStatusPersist({
+        agentId,
+        tenantId,
+        requestedStatus: AgentStatusDto.ACTIVE,
+        savedStatus: verify?.status ?? null,
+        changedBy: actorUserId ?? null,
+      });
       return { status: 'CONFIG_REQUIRED', ready: false, failures: readiness.failures, readiness };
     }
     await this.prisma.agent.updateMany({
       where: { id: agentId, tenantId, deletedAt: null },
       data: { status: AgentStatus.ACTIVE },
+    });
+    const verify = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    this.logAgentStatusPersist({
+      agentId,
+      tenantId,
+      requestedStatus: AgentStatusDto.ACTIVE,
+      savedStatus: verify?.status ?? null,
+      changedBy: actorUserId ?? null,
     });
     await this.prisma.auditLog.create({
       data: {
@@ -700,6 +737,18 @@ export class AgentsService {
       where: { id: agentId, tenantId, deletedAt: null },
       data: { status: target },
     });
+    const verify = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: { status: true },
+    });
+    this.logAgentStatusPersist({
+      agentId,
+      tenantId,
+      requestedStatus: status,
+      savedStatus: verify?.status ?? null,
+      changedBy: actorUserId ?? null,
+    });
+
     if (updateResult.count === 0) {
       throw new NotFoundException('Agent not found.');
     }
@@ -2026,6 +2075,19 @@ export class AgentsService {
         savedStatus: updated.status,
       }),
     );
+    if (dto.agentStatus !== undefined) {
+      const statusVerify = await this.prisma.agent.findFirst({
+        where: { id, tenantId, deletedAt: null },
+        select: { status: true },
+      });
+      this.logAgentStatusPersist({
+        agentId: id,
+        tenantId,
+        requestedStatus: dto.agentStatus,
+        savedStatus: statusVerify?.status ?? null,
+        changedBy: actorUserId ?? null,
+      });
+    }
     if (explicitClearOpenai) {
       console.log({ openaiKeyCleared: true, agentId: id, tenantId });
     }
@@ -2970,6 +3032,50 @@ export class AgentsService {
         name: t.name,
         permissionGroups: t.permissionGroups,
       })),
+    };
+  }
+
+  async getPersistenceDiagnostics(tenantId: string, agentId: string) {
+    const [agent, workspace, readiness] = await Promise.all([
+      this.prisma.agent.findFirst({
+        where: { id: agentId, tenantId, deletedAt: null },
+        select: { id: true, status: true, twilioPhoneNumber: true },
+      }),
+      this.prisma.tenantIntegration.findUnique({
+        where: { tenantId },
+        select: {
+          id: true,
+          twilioAccountSid: true,
+          twilioAuthTokenEnc: true,
+          openaiApiKeyEnc: true,
+          resendApiKeyEnc: true,
+          shopifyShopDomain: true,
+        },
+      }),
+      this.getAgentReadiness(tenantId, agentId),
+    ]);
+    if (!agent) throw new NotFoundException('Agent not found.');
+
+    return {
+      dbConnected: true,
+      tenantId,
+      workspaceId: workspace?.id ?? null,
+      agentId: agent.id,
+      agentStatusFromDb: agent.status,
+      mappedPhoneNumber: agent.twilioPhoneNumber ?? null,
+      workspaceSaved: {
+        twilio: Boolean(workspace?.twilioAccountSid && workspace?.twilioAuthTokenEnc),
+        openai: Boolean(workspace?.openaiApiKeyEnc),
+        resend: Boolean(workspace?.resendApiKeyEnc),
+      },
+      shopifySource: readiness.credentialSources?.shopify.source ?? 'missing',
+      runtimeCredentialSource: {
+        shopify: readiness.credentialSources?.shopify.source ?? 'missing',
+        twilio: readiness.credentialSources?.twilio.authSource ?? 'missing',
+        openai: readiness.credentialSources?.openai.source ?? 'missing',
+        elevenlabs: readiness.credentialSources?.elevenlabs.source ?? 'missing',
+        resend: readiness.credentialSources?.resend.source ?? 'missing',
+      },
     };
   }
 }

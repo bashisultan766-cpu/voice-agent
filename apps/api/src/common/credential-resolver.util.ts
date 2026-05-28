@@ -191,6 +191,8 @@ export function resolveOpenAiConfig(args: {
   const agentKey = trimOrUndef(args.agentSecrets?.openaiApiKey);
   if (agentKey) return { apiKey: agentKey, source: 'agent' };
 
+  if (args.useWorkspaceOpenai !== true) return null;
+
   const resolved = resolveCredentialPriority(
     undefined,
     trimOrUndef(args.workspace?.openaiApiKey),
@@ -249,6 +251,8 @@ export function resolveTwilioConfig(args: {
       authSource: 'agent',
     };
   }
+
+  if (args.useWorkspaceTwilio !== true) return null;
 
   const sidResolved = resolveCredentialPriority(undefined, trimOrUndef(args.workspace?.twilioAccountSid));
   const authResolved = resolveCredentialPriority(

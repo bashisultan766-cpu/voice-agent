@@ -253,7 +253,7 @@ export class TenantIntegrationsService {
       const str = (value: unknown): string | null =>
         typeof value === 'string' && value.trim() ? value.trim() : null;
       const bool = (value: unknown): boolean | null => (typeof value === 'boolean' ? value : null);
-      return {
+      const summary = {
         shopify: {
           configured: Boolean(str(row.shopifyShopDomain) && str(row.shopifyAdminTokenEnc)),
           shopDomain: str(row.shopifyShopDomain),
@@ -300,6 +300,20 @@ export class TenantIntegrationsService {
           lastTestAt: dateIso(row.emailLastTestAt),
         },
       };
+      this.log.log(
+        JSON.stringify({
+          event: 'tenant_integration.load',
+          tenantId,
+          providers: {
+            shopify: { saved: summary.shopify.configured, source: summary.shopify.configured ? 'workspace' : 'missing' },
+            twilio: { saved: summary.twilio.configured, source: summary.twilio.configured ? 'workspace' : 'missing' },
+            openai: { saved: summary.openai.configured, source: summary.openai.configured ? 'workspace' : 'missing' },
+            elevenlabs: { saved: summary.elevenlabs.configured, source: summary.elevenlabs.configured ? 'workspace' : 'missing' },
+            resend: { saved: summary.email.configured, source: summary.email.configured ? 'workspace' : 'missing' },
+          },
+        }),
+      );
+      return summary;
     } catch (e) {
       this.audit('summary', 'summary', tenantId, false, e);
       this.mapIntegrationError('summary', e);
@@ -568,6 +582,15 @@ export class TenantIntegrationsService {
     },
   ) {
     try {
+      const existing = await this.prisma.tenantIntegration.findUnique({
+        where: { tenantId },
+        select: {
+          twilioAccountSid: true,
+          twilioAuthTokenEnc: true,
+          twilioPhoneSid: true,
+        },
+      });
+      const savedTokenExistsBefore = Boolean(existing?.twilioAuthTokenEnc);
       this.log.log(
         JSON.stringify({
           op: 'save',
@@ -575,8 +598,9 @@ export class TenantIntegrationsService {
           tenantId,
           bodyKeys: Object.keys((body ?? {}) as Record<string, unknown>),
           hasAccountSid: Boolean(body?.accountSid?.trim()),
-          hasAuthToken: Boolean(body?.authToken?.trim()),
+          hasAuthTokenInput: Boolean(body?.authToken?.trim()),
           hasPhoneNumber: Boolean(body?.phoneNumber?.trim()),
+          savedTokenExistsBefore,
         }),
       );
       if (!this.encryption.isAvailable()) {
@@ -595,14 +619,6 @@ export class TenantIntegrationsService {
       if (!isE164Phone(phoneNumber)) {
         throw new BadRequestException('Phone number must be in E.164 format (e.g. +15551234567).');
       }
-      const existing = await this.prisma.tenantIntegration.findUnique({
-        where: { tenantId },
-        select: {
-          twilioAccountSid: true,
-          twilioAuthTokenEnc: true,
-          twilioPhoneSid: true,
-        },
-      });
       let authToken = authTokenIncoming;
       let enc = '';
       if (authToken) {
@@ -691,6 +707,22 @@ export class TenantIntegrationsService {
           },
         });
       });
+      const verifyAfter = await this.prisma.tenantIntegration.findUnique({
+        where: { tenantId },
+        select: { twilioAuthTokenEnc: true },
+      });
+      this.log.log(
+        JSON.stringify({
+          event: 'tenant_integration.twilio.save',
+          tenantId,
+          bodyKeys: Object.keys((body ?? {}) as Record<string, unknown>),
+          hasAccountSid: Boolean(accountSid),
+          hasAuthTokenInput: Boolean(authTokenIncoming),
+          hasPhoneNumber: Boolean(phoneNumber),
+          savedTokenExistsBefore,
+          savedTokenExistsAfter: Boolean(verifyAfter?.twilioAuthTokenEnc),
+        }),
+      );
 
       this.audit('save', 'twilio', tenantId, true);
       return {
@@ -814,13 +846,19 @@ export class TenantIntegrationsService {
         throw new BadRequestException('Encryption is not configured (ENCRYPTION_KEY).');
       }
       const keyIn = body.apiKey?.trim();
+      const existing = await this.prisma.tenantIntegration.findUnique({
+        where: { tenantId },
+        select: { openaiApiKeyEnc: true },
+      });
+      const savedKeyExistsBefore = Boolean(existing?.openaiApiKeyEnc);
       this.log.log(
         JSON.stringify({
           provider: 'openai',
           operation: 'save',
           tenantId,
-          hasApiKey: Boolean(keyIn),
-          keyLength: keyIn?.length ?? 0,
+          bodyKeys: Object.keys((body ?? {}) as Record<string, unknown>),
+          hasApiKeyInput: Boolean(keyIn),
+          savedKeyExistsBefore,
         }),
       );
       const now = new Date();
@@ -910,6 +948,16 @@ export class TenantIntegrationsService {
         ? this.encryption.decryptFromStorage(verify.openaiApiKeyEnc)?.trim()
         : null;
       const keyPresent = Boolean(roundTrip);
+      this.log.log(
+        JSON.stringify({
+          event: 'tenant_integration.openai.save',
+          tenantId,
+          bodyKeys: Object.keys((body ?? {}) as Record<string, unknown>),
+          hasApiKeyInput: Boolean(keyIn),
+          savedKeyExistsBefore,
+          savedKeyExistsAfter: keyPresent,
+        }),
+      );
       if (!keyPresent) {
         throw new BadRequestException('OpenAI key was saved but could not be verified (decrypt failed).');
       }

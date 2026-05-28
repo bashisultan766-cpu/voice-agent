@@ -117,7 +117,7 @@ test('Agent C without Shopify and useWorkspaceShopify=true uses workspace', () =
 
 
 
-test('OpenAI falls back to workspace when agent key missing', () => {
+test('OpenAI does not use workspace when useWorkspaceOpenai is false', () => {
 
   const prev = process.env.NODE_ENV;
 
@@ -135,9 +135,7 @@ test('OpenAI falls back to workspace when agent key missing', () => {
 
   process.env.NODE_ENV = prev;
 
-  assert.ok(resolved);
-  assert.equal(resolved.source, 'workspace');
-  assert.equal(resolved.apiKey, 'workspace-key');
+  assert.equal(resolved, null);
 
 });
 
@@ -169,7 +167,7 @@ test('OpenAI with useWorkspaceOpenai uses workspace in production', () => {
 
 
 
-test('Twilio falls back to workspace credentials when agent credentials are missing', () => {
+test('Twilio does not use workspace credentials when useWorkspaceTwilio is false', () => {
 
   const resolved = resolveTwilioConfig({
 
@@ -187,13 +185,7 @@ test('Twilio falls back to workspace credentials when agent credentials are miss
 
   });
 
-  assert.ok(resolved);
-
-  assert.equal(resolved.authSource, 'workspace');
-
-  assert.equal(resolved.sidSource, 'workspace');
-
-  assert.equal(resolved.phoneNumber, '+12512554549');
+  assert.equal(resolved, null);
 
 });
 
@@ -351,7 +343,7 @@ test('readiness summary marks workspace-only Shopify blocked when useWorkspaceSh
 
 
 
-test('readiness summary marks workspace Twilio/OpenAI sources when agent keys missing', () => {
+test('readiness summary marks workspace source but not configured when workspace flags are disabled', () => {
 
   const summary = buildCredentialSourcesSummary({
 
@@ -370,8 +362,9 @@ test('readiness summary marks workspace Twilio/OpenAI sources when agent keys mi
   });
 
   assert.equal(summary.twilio.authSource, 'workspace');
-
+  assert.equal(summary.twilio.configured, false);
   assert.equal(summary.openai.source, 'workspace');
+  assert.equal(summary.openai.configured, false);
 
 });
 

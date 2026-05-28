@@ -888,6 +888,9 @@ export function CreateAgentForm({
           agentStatus: !agentId ? (asDraft ? 'draft' : 'active') : data.agentStatus,
         };
         if (agentId) {
+          if (payload.agentStatus === initialDataRef.current.agentStatus) {
+            delete payload.agentStatus;
+          }
           for (const key of SECRET_KEYS) {
             const v = payload[key];
             if (typeof v === 'string' && !v.trim()) {
