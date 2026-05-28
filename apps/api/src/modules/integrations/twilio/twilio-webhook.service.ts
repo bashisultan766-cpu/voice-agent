@@ -187,6 +187,28 @@ export class TwilioWebhookService implements OnModuleInit {
     return this.publicBaseUrl;
   }
 
+  private getVoiceGreetingMaxMs(): number {
+    const raw = `${this.config.get<string>('VOICE_GREETING_MAX_MS') ?? process.env.VOICE_GREETING_MAX_MS ?? '1200'}`.trim();
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return 1200;
+    return Math.max(400, Math.min(3000, Math.trunc(n)));
+  }
+
+  private estimateGreetingAudioMs(text: string): number {
+    const chars = text.trim().length;
+    if (chars <= 0) return 0;
+    return Math.max(350, Math.min(7000, Math.trunc(chars * 55)));
+  }
+
+  private shortenGreetingForCapture(text: string, maxMs: number): string {
+    const t = text.trim();
+    if (!t) return 'Hello, how can I help?';
+    if (this.estimateGreetingAudioMs(t) <= maxMs) return t;
+    const sentence = t.split(/[.!?]/).map((s) => s.trim()).filter(Boolean)[0] ?? t;
+    const compact = sentence.split(/\s+/).slice(0, 8).join(' ');
+    return compact.length > 0 ? compact : 'Hello, how can I help?';
+  }
+
   private isGatherHearingDebugMode(): boolean {
     const v = `${this.config.get<string>('TWILIO_GATHER_HEARING_DEBUG') ?? process.env.TWILIO_GATHER_HEARING_DEBUG ?? ''}`.trim();
     return v === '1' || v.toLowerCase() === 'true';
@@ -636,6 +658,9 @@ export class TwilioWebhookService implements OnModuleInit {
     const greetingText =
       context.agent.greetingMessage ??
       `Hello, you've reached ${context.store.name}. How can I help you today?`;
+    const maxGreetingMs = this.getVoiceGreetingMaxMs();
+    const shortGreeting = this.shortenGreetingForCapture(greetingText, maxGreetingMs);
+    const estimatedGreetingMs = this.estimateGreetingAudioMs(shortGreeting);
     const fallbackText =
       context.agent.fallbackMessage?.trim() ??
       "We're having trouble hearing you. Please call again later. Goodbye.";
@@ -647,9 +672,9 @@ export class TwilioWebhookService implements OnModuleInit {
 
     const shouldTryElGreeting =
       (!hearingDebug || forceElOnly) && elOptsInbound.voiceId && /^https:\/\//i.test(origin);
-    if (shouldTryElGreeting) {
+    if (shouldTryElGreeting && estimatedGreetingMs <= maxGreetingMs) {
       const inboundVoiceId = elOptsInbound.voiceId as string;
-      const openingForTts = hearingDebug && forceElOnly ? debugOpeningText : greetingText;
+      const openingForTts = hearingDebug && forceElOnly ? debugOpeningText : shortGreeting;
       const gPlay = await this.voicePromptAudio.createPhrasePlaybackUrl(origin, {
         text: openingForTts,
         voiceId: inboundVoiceId,
@@ -717,23 +742,33 @@ export class TwilioWebhookService implements OnModuleInit {
         playAudioUrl: hearingDebugEffective ? null : (greetingPlaybackUrl ?? null),
       }),
     );
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.gather.capture_timing',
+        callSessionId: session.id,
+        greetingAudioMs: estimatedGreetingMs,
+        timeUntilGatherListening: 0,
+        speechDetected: false,
+        speechResultChars: 0,
+        emptySpeechRate: 0,
+      }),
+    );
     const twiml = buildInboundGatherMvpTwiML({
       gatherActionUrl,
       language: hearingDebug ? 'en-US' : normalizeLanguageForTwilio(context.agent.language ?? 'en'),
-      playbackAudioUrl: hearingDebugEffective ? undefined : greetingPlaybackUrl,
+      playbackAudioUrl: undefined,
       openingSayText: strictElevenLabsOnly
         ? undefined
         : hearingDebugEffective
         ? debugOpeningText
-        : greetingPlaybackUrl
-          ? undefined
-          : greetingText,
+        : shortGreeting,
       finalFallbackAudioUrl: hearingDebugEffective ? undefined : finalFallbackAudioUrl,
       finalFallbackSayText:
         strictElevenLabsOnly || hearingDebugEffective || finalFallbackAudioUrl ? undefined : fallbackText,
-      timeoutSeconds: hearingDebug ? 12 : 10,
-      speechTimeout: hearingDebug ? '3' : '2',
+      timeoutSeconds: 5,
+      speechTimeout: 'auto',
       pauseBeforeListenSeconds: 0,
+      includePromptInsideGather: false,
     });
 
     const greetingSeq = await this.transcriptBuffer.getNextSequence(session.id);
@@ -901,7 +936,7 @@ export class TwilioWebhookService implements OnModuleInit {
           checks: {
             spokeDuringPromptAudio:
               'Twilio only starts recognition after inner Play/Say/Pause finish; speech during greeting is dropped.',
-            timeoutTooShort: 'Gather uses timeout=10s (start speaking) and speechTimeout=2 (end of utterance).',
+            timeoutTooShort: 'Gather uses timeout=5s (start speaking) and speechTimeout=auto for conversational flow.',
             languageMismatch: 'Gather language is derived from agent/session; wrong code hurts recognition.',
             enhancedOrSpeechModel: 'enhanced and speechModel removed from TwiML for compatibility.',
             twilioPostedToGather:
@@ -922,6 +957,17 @@ export class TwilioWebhookService implements OnModuleInit {
         ? (ctx.metadata as Record<string, unknown>)
         : {};
     const gatherRetryCount = Number(metadata.gatherRetryCount ?? 0);
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.gather.capture_timing',
+        callSessionId,
+        greetingAudioMs: 0,
+        timeUntilGatherListening: 0,
+        speechDetected: speechText.length > 0,
+        speechResultChars: speechText.length,
+        emptySpeechRate: speechText.length > 0 ? 0 : Math.min(1, (gatherRetryCount + 1) / (gatherRetryCount + 2)),
+      }),
+    );
 
     console.log(
       JSON.stringify({
@@ -1028,7 +1074,7 @@ export class TwilioWebhookService implements OnModuleInit {
         return { twiml, callSessionId, agentResolved: true };
       }
 
-      assistantResponse = 'Please speak after the beep.';
+      assistantResponse = 'Go ahead.';
       const seq2 = await this.transcriptBuffer.getNextSequence(callSessionId);
       await this.transcriptBuffer.append(callSessionId, 'agent', assistantResponse, seq2);
       this.logger.log(
@@ -1333,9 +1379,10 @@ export class TwilioWebhookService implements OnModuleInit {
       finalFallbackAudioUrl: retryFinal.playbackUrl,
       openingSayText: strictElevenLabsOnly || retryOpen.playbackUrl ? undefined : assistantResponse,
       finalFallbackSayText: strictElevenLabsOnly || retryFinal.playbackUrl ? undefined : gatherFallbackText,
-      timeoutSeconds: 10,
-      speechTimeout: '2',
+      timeoutSeconds: 5,
+      speechTimeout: 'auto',
       pauseBeforeListenSeconds: 0,
+      includePromptInsideGather: false,
     });
 
     const replyVerb: 'Play' | 'Say' = retryOpen.playbackUrl ? 'Play' : 'Say';

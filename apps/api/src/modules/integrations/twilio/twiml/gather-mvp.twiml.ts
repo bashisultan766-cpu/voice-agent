@@ -43,6 +43,8 @@ export interface InboundGatherMvpTwiMLOptions {
   openingSayText?: string;
   /** Spoken fallback after empty Gather (before Hangup). */
   finalFallbackSayText?: string;
+  /** For barge-in mode, avoid nested prompt media inside Gather. */
+  includePromptInsideGather?: boolean;
 }
 
 /**
@@ -51,11 +53,12 @@ export interface InboundGatherMvpTwiMLOptions {
  */
 export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions): string {
   const language = options.language ?? 'en-US';
-  const speechTimeout = options.speechTimeout ?? '2';
-  const timeoutSeconds = Number.isFinite(options.timeoutSeconds) ? Math.max(2, Math.trunc(options.timeoutSeconds as number)) : 10;
+  const speechTimeout = options.speechTimeout ?? 'auto';
+  const timeoutSeconds = Number.isFinite(options.timeoutSeconds) ? Math.max(2, Math.trunc(options.timeoutSeconds as number)) : 5;
   const pauseRaw = options.pauseBeforeListenSeconds;
   const pauseBeforeListen =
     pauseRaw === undefined ? 1 : Math.max(0, Math.min(10, Math.trunc(Number(pauseRaw))));
+  const includePromptInsideGather = options.includePromptInsideGather === true;
 
   const actionAttr = escapeXmlAttribute(options.gatherActionUrl);
   const playbackAudioUrl = options.playbackAudioUrl?.trim() ?? '';
@@ -65,15 +68,17 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
 
   const sayAttr = sayOpeningAttrs(language);
   const gatherInnerLines: string[] = [];
-  if (playbackAudioUrl.length > 0) gatherInnerLines.push(`    <Play>${escapeXml(playbackAudioUrl)}</Play>`);
-  if (openingSayText.length > 0) gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
-  if (gatherInnerLines.length === 0) {
-    gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
+  if (includePromptInsideGather) {
+    if (playbackAudioUrl.length > 0) gatherInnerLines.push(`    <Play>${escapeXml(playbackAudioUrl)}</Play>`);
+    if (openingSayText.length > 0) gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
+    if (gatherInnerLines.length === 0) {
+      gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
+    }
+    if (pauseBeforeListen > 0) {
+      gatherInnerLines.push(`    <Pause length="${pauseBeforeListen}"/>`);
+    }
   }
-  if (pauseBeforeListen > 0) {
-    gatherInnerLines.push(`    <Pause length="${pauseBeforeListen}"/>`);
-  }
-  const gatherInner = `${gatherInnerLines.join('\n')}\n`;
+  const gatherInner = gatherInnerLines.length > 0 ? `${gatherInnerLines.join('\n')}\n` : '';
 
   const afterGatherLines: string[] = [];
   if (finalFallbackAudioUrl.length > 0) afterGatherLines.push(`  <Play>${escapeXml(finalFallbackAudioUrl)}</Play>`);
