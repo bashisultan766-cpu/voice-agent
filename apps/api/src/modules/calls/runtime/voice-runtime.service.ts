@@ -76,6 +76,26 @@ export class VoiceRuntimeService {
     return true;
   }
 
+  private resolveInterruptIntent(
+    userIntent: UserUtteranceIntent,
+    text: string,
+  ): { intent?: 'product_search' | 'order_lookup' | 'support_question' | 'pricing_question'; confidence: number } {
+    if (userIntent === 'product_search' || userIntent === 'product_question') {
+      return { intent: 'product_search', confidence: 0.9 };
+    }
+    if (userIntent === 'payment_question') {
+      return { intent: 'pricing_question', confidence: 0.82 };
+    }
+    if (userIntent === 'store_policy_question') {
+      return { intent: 'support_question', confidence: 0.8 };
+    }
+    const t = text.toLowerCase();
+    if (/\b(order status|where is my order|track my order|tracking number|order number)\b/.test(t)) {
+      return { intent: 'order_lookup', confidence: 0.85 };
+    }
+    return { intent: undefined, confidence: 0.2 };
+  }
+
   /** Map Shopify search tool output to fixed product / catalog lines (no model copy). */
   private professionalReplyFromSearchTool(
     search: ToolResult,
@@ -906,7 +926,11 @@ export class VoiceRuntimeService {
       typeof (metadata.language as unknown) === 'string'
         ? ((metadata.language as string) || 'en')
         : 'en';
-    const update = applyTurnToOrderState(beforeState, cls.intent, cls);
+    const interruptIntent = this.resolveInterruptIntent(userIntent, safeText);
+    const update = applyTurnToOrderState(beforeState, cls.intent, cls, {
+      alternateIntent: interruptIntent.intent,
+      alternateIntentConfidence: interruptIntent.confidence,
+    });
     const memBefore = await this.callMemory.load(callSessionId);
     const paymentLinkSent = memBefore.checkoutState === 'link_sent';
     const turnPlan = await this.conversationFlow.planTurn({
@@ -953,6 +977,17 @@ export class VoiceRuntimeService {
       ...(cls.extracted?.quantity != null ? { quantity: cls.extracted.quantity } : {}),
       ...(cls.extracted?.email ? { lastProvidedEmail: cls.extracted.email } : {}),
     });
+    if (update.stateInterrupted) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.state.interrupt',
+          callSessionId,
+          fromState: update.stateInterrupted.fromState,
+          toIntent: update.stateInterrupted.toIntent,
+          reason: update.stateInterrupted.reason,
+        }),
+      );
+    }
     if (cls.extracted?.email) {
       await this.callMemory.setEmailState(callSessionId, cls.extracted.email, 'pending');
     }

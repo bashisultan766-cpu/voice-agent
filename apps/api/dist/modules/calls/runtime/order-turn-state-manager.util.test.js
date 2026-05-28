@@ -26,6 +26,22 @@ function step(state, utterance) {
     strict_1.default.equal(res.nextState, 'EMAIL_COLLECTION');
     strict_1.default.equal(res.recoveryPrompt?.key, 'INVALID_EMAIL');
 });
+(0, node_test_1.default)('EMAIL_COLLECTION + product query interrupts recovery and returns to discovery', () => {
+    const cls = (0, order_intent_classifier_util_1.classifyOrderTurn)('You have Game of Thrones');
+    const res = (0, order_turn_state_manager_util_1.applyTurnToOrderState)('EMAIL_COLLECTION', cls.intent, cls, {
+        alternateIntent: 'product_search',
+        alternateIntentConfidence: 0.92,
+    });
+    strict_1.default.equal(res.nextState, 'PRODUCT_DISCOVERY');
+    strict_1.default.equal(res.recoveryPrompt, undefined);
+    strict_1.default.equal(res.stateInterrupted?.toIntent, 'product_search');
+});
+(0, node_test_1.default)('interrupt rules require high confidence alternate intent', () => {
+    const low = (0, order_turn_state_manager_util_1.canInterruptCurrentState)('product_search', 'EMAIL_COLLECTION', 0.4);
+    strict_1.default.equal(low.canInterrupt, false);
+    const high = (0, order_turn_state_manager_util_1.canInterruptCurrentState)('product_search', 'EMAIL_COLLECTION', 0.9);
+    strict_1.default.equal(high.canInterrupt, true);
+});
 (0, node_test_1.default)('user cancels: transitions to DONE', () => {
     const { res } = step('PRODUCT_DISCOVERY', 'cancel order');
     strict_1.default.equal(res.nextState, 'DONE');

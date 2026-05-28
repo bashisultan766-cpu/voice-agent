@@ -28,6 +28,7 @@ export declare class VoiceRuntimeService {
     private readonly logger;
     constructor(sessionContext: SessionContextService, callsService: CallsService, openaiVoice: OpenAIVoiceService, tools: ToolOrchestratorService, callEvents: CallEventsService, callOutcome: CallOutcomeService, transcriptBuffer: TranscriptBufferService, promptBuilder: OpenAIPromptBuilderService, runtimeSafety: RuntimeSafetyService, conversationFlow: ConversationFlowEngineService, conversationAnalytics: ConversationAnalyticsService, callMemory: CallMemoryService, policyPrefetch: PolicyContextPrefetchService);
     private deterministicFallbackEnabled;
+    private resolveInterruptIntent;
     private professionalReplyFromSearchTool;
     private appendConversationalMomentum;
     private buildFastVoiceReply;

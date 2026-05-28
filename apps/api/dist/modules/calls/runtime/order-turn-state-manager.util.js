@@ -1,12 +1,68 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getIntentPriority = getIntentPriority;
+exports.canInterruptCurrentState = canInterruptCurrentState;
 exports.applyTurnToOrderState = applyTurnToOrderState;
 exports.recoveryPromptText = recoveryPromptText;
 const order_state_machine_util_1 = require("./order-state-machine.util");
-function applyTurnToOrderState(currentRaw, intent, cls) {
+const INTERRUPTIBLE_INTENTS = new Set([
+    'product_search',
+    'order_lookup',
+    'support_question',
+    'pricing_question',
+]);
+const INTERRUPTIBLE_STATES = new Set(['EMAIL_COLLECTION', 'PAYMENT_COLLECTION']);
+function getIntentPriority(intent) {
+    const i = intent.trim().toLowerCase();
+    if (i === 'product_search')
+        return 100;
+    if (i === 'order_lookup')
+        return 95;
+    if (i === 'support_question')
+        return 90;
+    if (i === 'pricing_question')
+        return 85;
+    if (i === 'email_collection_recovery')
+        return 60;
+    return 0;
+}
+function canInterruptCurrentState(intent, state, confidence = 1) {
+    const normalizedState = `${state ?? ''}`.trim().toUpperCase();
+    const normalizedIntent = intent.trim().toLowerCase();
+    const highPriority = getIntentPriority(normalizedIntent) > getIntentPriority('email_collection_recovery');
+    const intentAllowed = INTERRUPTIBLE_INTENTS.has(normalizedIntent);
+    if (!INTERRUPTIBLE_STATES.has(normalizedState)) {
+        return { canInterrupt: false, reason: 'state_not_interruptible' };
+    }
+    if (!intentAllowed) {
+        return { canInterrupt: false, reason: 'intent_not_interruptible' };
+    }
+    if (confidence < 0.6) {
+        return { canInterrupt: false, reason: 'alternate_intent_low_confidence' };
+    }
+    if (!highPriority) {
+        return { canInterrupt: false, reason: 'alternate_intent_not_high_priority' };
+    }
+    return { canInterrupt: true, reason: 'high_confidence_alternate_intent' };
+}
+function applyTurnToOrderState(currentRaw, intent, cls, options) {
     const current = (0, order_state_machine_util_1.normalizeOrderState)(currentRaw);
+    const currentName = `${currentRaw ?? current}`.trim() || current;
     const rawText = cls.rawText ?? '';
     const t = rawText.toLowerCase().trim();
+    const alternateIntent = options?.alternateIntent?.trim().toLowerCase() ?? '';
+    const alternateIntentConfidence = options?.alternateIntentConfidence ?? 0;
+    const interruption = canInterruptCurrentState(alternateIntent, currentName, alternateIntentConfidence);
+    if (interruption.canInterrupt) {
+        return {
+            nextState: 'PRODUCT_DISCOVERY',
+            stateInterrupted: {
+                fromState: currentName,
+                toIntent: alternateIntent,
+                reason: interruption.reason,
+            },
+        };
+    }
     if (intent === 'cancel_order') {
         return { nextState: 'DONE', recoveryPrompt: { key: 'CHANGED_MIND' } };
     }
