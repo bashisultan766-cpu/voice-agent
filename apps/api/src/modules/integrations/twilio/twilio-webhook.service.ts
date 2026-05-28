@@ -33,10 +33,10 @@ import {
 import { fingerprintApiKey } from '../../../common/logging/api-key-fingerprint';
 import { gatedProcessEnv } from '../../../common/provider-env-slice.util';
 import {
-  shortenReplyForVoiceTts,
-  VOICE_REPLY_TTS_MAX_CHARS,
-  VOICE_TTS_MAX_AUDIO_BYTES,
-} from './voice-reply-tts-shorten.util';
+  buildTtsPlaybackUrl,
+  prepareVoiceTtsInputText,
+  validateTtsAudioBuffer,
+} from './voice-elevenlabs-playback.util';
 import { VoicePromptAudioService } from './voice-prompt-audio.service';
 import { classifyUserIntent } from '../../calls/runtime/user-intent-classifier.util';
 import { buildInstantAckMetadataPatch, selectInstantAcknowledgement } from './instant-acknowledgement.util';
@@ -2300,45 +2300,73 @@ export class TwilioWebhookService implements OnModuleInit {
 
     const ttsStart = Date.now();
     try {
-      const prep = shortenReplyForVoiceTts(text, VOICE_REPLY_TTS_MAX_CHARS);
+      const speechText = prepareVoiceTtsInputText(text);
+      if (!speechText) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.tts.fallback_used',
+            phase: opts.phase,
+            callSessionId: opts.callSessionId,
+            reason: 'empty_tts_input',
+          }),
+        );
+        return {};
+      }
+
       this.logger.log(
         JSON.stringify({
           event: 'voice.tts_text_prepared',
           phase: opts.phase,
           callSessionId: opts.callSessionId,
-          'voice.reply_shortened': prep.reply_shortened,
-          originalChars: prep.originalChars,
-          finalChars: prep.finalChars,
+          ttsInputChars: speechText.length,
         }),
       );
-      const audio = await this.elevenLabs.textToSpeech(prep.text, opts.voiceId, {
+
+      const audio = await this.elevenLabs.textToSpeech(speechText, opts.voiceId, {
         apiKey: opts.elevenlabsApiKey,
         modelId: opts.elevenlabsModel,
       });
       const tts_generation_time_ms = Date.now() - ttsStart;
-      if (audio.length > VOICE_TTS_MAX_AUDIO_BYTES) {
+
+      const validation = validateTtsAudioBuffer(audio);
+      if (!validation.valid) {
         this.logger.warn(
           JSON.stringify({
-            event: 'twilio.voice.tts_oversize_discarded',
+            event: 'voice.tts.fallback_used',
             phase: opts.phase,
             callSessionId: opts.callSessionId,
+            reason: validation.reason ?? 'invalid_audio',
             audioBytes: audio.length,
-            maxBytes: VOICE_TTS_MAX_AUDIO_BYTES,
             tts_generation_time_ms,
           }),
         );
         return { audioBytes: audio.length, tts_generation_time_ms };
       }
+
       const token = this.ttsCache.put(audio);
-      const playbackUrl = `${publicOrigin}/api/twilio/voice/tts/${encodeURIComponent(token)}`;
+      const playbackUrl = buildTtsPlaybackUrl(publicOrigin, token);
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.tts.playback_ready',
+          provider: 'elevenlabs',
+          phase: opts.phase,
+          callSessionId: opts.callSessionId,
+          audioBytes: audio.length,
+          playbackUrl,
+          contentType: validation.contentType,
+          ttsInputChars: speechText.length,
+          tts_generation_time_ms,
+        }),
+      );
+
       this.logger.log(
         JSON.stringify({
           event: 'twilio.voice.elevenlabs_audio_generated',
           phase: opts.phase,
           callSessionId: opts.callSessionId,
           audioBytes: audio.length,
-          'voice.reply_shortened': prep.reply_shortened,
-          ttsInputChars: prep.finalChars,
+          ttsInputChars: speechText.length,
           tts_generation_time_ms,
         }),
       );
@@ -2348,12 +2376,11 @@ export class TwilioWebhookService implements OnModuleInit {
       const message = err instanceof Error ? err.message.slice(0, 300) : 'unknown_error';
       this.logger.warn(
         JSON.stringify({
-          event: 'twilio.voice.tts_fallback',
+          event: 'voice.tts.fallback_used',
           phase: opts.phase,
           callSessionId: opts.callSessionId,
           reason: 'elevenlabs_request_failed',
           message,
-          nextPlayback: 'openai_voice_or_safe_default',
           tts_generation_time_ms,
         }),
       );

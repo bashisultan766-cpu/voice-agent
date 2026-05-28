@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { ElevenLabsService } from '../elevenlabs/elevenlabs.service';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
+import { buildTtsPlaybackUrl, validateTtsAudioBuffer } from './voice-elevenlabs-playback.util';
 
 interface PhraseEntry {
   buffer: Buffer;
@@ -66,8 +67,13 @@ export class VoicePromptAudioService {
       }
     }
 
+    const validation = validateTtsAudioBuffer(buffer);
+    if (!validation.valid) {
+      return { playbackUrl: undefined, fromPhraseCache };
+    }
+
     const token = this.ttsCache.put(buffer);
-    const playbackUrl = `${publicOrigin}/api/twilio/voice/tts/${encodeURIComponent(token)}`;
+    const playbackUrl = buildTtsPlaybackUrl(publicOrigin, token);
     return { playbackUrl, fromPhraseCache };
   }
 }

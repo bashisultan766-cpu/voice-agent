@@ -215,9 +215,11 @@ export class TwilioVoiceController {
     if (!audio) throw new BadRequestException('TTS audio is missing or expired');
     this.logger.log(
       JSON.stringify({
-        event: 'twilio.voice.tts_audio_served',
+        event: 'voice.tts.playback_started',
+        provider: 'elevenlabs',
         tokenPrefix: trimmed.slice(0, 8),
         audioBytes: audio.length,
+        contentType: 'audio/mpeg',
       }),
     );
     res.setHeader('Content-Type', 'audio/mpeg');
