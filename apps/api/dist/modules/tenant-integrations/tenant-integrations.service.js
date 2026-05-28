@@ -880,7 +880,9 @@ let TenantIntegrationsService = TenantIntegrationsService_1 = class TenantIntegr
         }
     }
     async testEmail(tenantId, body) {
-        const { apiKey, fromEmail, testRecipientEmail, fromName } = body;
+        this.log.log(JSON.stringify({ event: 'tenant_integration', op: 'test', provider: 'email', tenantId }));
+        const { fromEmail, testRecipientEmail, fromName } = body;
+        const apiKey = await this.resolveResendApiKeyForTest(tenantId, body.apiKey);
         const from = (0, resend_api_util_1.formatResendFromAddress)(fromEmail, fromName);
         try {
             const response = await fetch('https://api.resend.com/emails', {
@@ -928,6 +930,23 @@ let TenantIntegrationsService = TenantIntegrationsService_1 = class TenantIntegr
             this.audit('test', 'email', tenantId, false, msg);
             return out;
         }
+    }
+    async resolveResendApiKeyForTest(tenantId, apiKeyIn) {
+        const trimmed = apiKeyIn?.trim();
+        if (trimmed)
+            return trimmed;
+        const row = await this.prisma.tenantIntegration.findUnique({
+            where: { tenantId },
+            select: { resendApiKeyEnc: true },
+        });
+        if (!row?.resendApiKeyEnc) {
+            throw new common_1.BadRequestException('Resend API key is required. Enter your key or save workspace credentials first.');
+        }
+        const decrypted = this.encryption.decryptFromStorage(row.resendApiKeyEnc);
+        if (!decrypted?.trim()) {
+            throw new common_1.BadRequestException('Could not read saved Resend key; re-enter your API key.');
+        }
+        return decrypted.trim();
     }
     async recordEmailTestResult(tenantId, ok) {
         const testedAt = new Date();

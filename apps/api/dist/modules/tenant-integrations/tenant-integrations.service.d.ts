@@ -121,7 +121,7 @@ export declare class TenantIntegrationsService {
         keyPresent: boolean;
     }>;
     testEmail(tenantId: string, body: {
-        apiKey: string;
+        apiKey?: string;
         fromEmail: string;
         testRecipientEmail: string;
         fromName?: string;
@@ -129,6 +129,7 @@ export declare class TenantIntegrationsService {
         success: boolean;
         message: string;
     }>;
+    private resolveResendApiKeyForTest;
     private recordEmailTestResult;
     saveEmail(tenantId: string, body: {
         apiKey?: string;

@@ -16,7 +16,8 @@ const testRecipientEmailField = z
 
 export const emailTestBodySchema = z
   .object({
-    apiKey: z.string().trim().min(1, 'Resend API key is required.'),
+    /** Omit to use the saved workspace key (after Save). */
+    apiKey: z.string().trim().min(1).optional(),
     fromEmail: fromEmailField,
     testRecipientEmail: testRecipientEmailField,
     /** Optional display name for `Name <email>` From header during connection test. */

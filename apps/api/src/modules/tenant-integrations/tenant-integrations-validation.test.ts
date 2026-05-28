@@ -13,6 +13,14 @@ test('emailTestBodySchema accepts payments@mailcallcommunication.com', () => {
   assert.equal(parsed.apiKey, 're_test_key');
 });
 
+test('emailTestBodySchema allows omitted apiKey when using saved workspace key', () => {
+  const parsed = emailTestBodySchema.parse({
+    fromEmail: 'payments@mailcallcommunication.com',
+    testRecipientEmail: 'user@gmail.com',
+  });
+  assert.equal(parsed.apiKey, undefined);
+});
+
 test('emailTestBodySchema rejects invalid testRecipientEmail', () => {
   const result = emailTestBodySchema.safeParse({
     apiKey: 're_test_key',
