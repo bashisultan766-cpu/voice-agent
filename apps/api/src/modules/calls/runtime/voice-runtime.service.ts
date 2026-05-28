@@ -3,6 +3,7 @@ import { SessionContextService } from './session-context.service';
 import { CallsService } from '../calls.service';
 import { OpenAIPromptBuilderService } from '../../integrations/openai/openai-prompt-builder.service';
 import { LlmAgentOrchestratorService } from './llm-agent-orchestrator.service';
+import { buildLlmReplyMetadataPatch } from './voice-single-reply-pipeline.util';
 import { CallEventsService } from '../../analytics/call-events.service';
 import { CallOutcomeService } from '../../analytics/call-outcome.service';
 import { CallStatus, CallEventType } from '@prisma/client';
@@ -877,7 +878,6 @@ export class VoiceRuntimeService {
   }> {
     const safeText = redactPaymentLikePatterns(text);
     const trimmedUserText = safeText.trim();
-    let brainInvoked = false;
     let reply = '';
     const safety = this.runtimeSafety.checkUserInput(safeText);
     if (safety.blocked) {
@@ -969,6 +969,7 @@ export class VoiceRuntimeService {
 
     const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
     await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeq);
+    await this.callsService.mergeSessionMetadata(callSessionId, buildLlmReplyMetadataPatch(reply));
 
     if (result.escalated) {
       await this.callsService.updateSessionStatus(callSessionId, {
@@ -1011,18 +1012,6 @@ export class VoiceRuntimeService {
       openaiUsed: true,
     };
     this.logTurnProof(turnProof);
-
-    if (trimmedUserText && !brainInvoked) {
-      this.logger.error(
-        JSON.stringify({
-          event: 'voice.brain.bypass_detected',
-          agentId: ctx.agentId,
-          sessionId: callSessionId,
-          userText: trimmedUserText.slice(0, 500),
-          reason: 'reply_without_llm_orchestrator',
-        }),
-      );
-    }
 
     return { reply, turnProof };
   }
