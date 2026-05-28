@@ -37,7 +37,6 @@ export class VoicePromptAudioService {
       voiceId: string;
       apiKey?: string;
       modelId?: string;
-      styleNotes?: string;
     },
   ): Promise<{ playbackUrl?: string; fromPhraseCache: boolean }> {
     const modelId = opts.modelId?.trim() || 'eleven_multilingual_v2';
@@ -60,7 +59,6 @@ export class VoicePromptAudioService {
         buffer = await this.elevenLabs.textToSpeech(text, vid, {
           apiKey: opts.apiKey,
           modelId,
-          styleNotes: opts.styleNotes,
         });
         this.phraseBuffers.set(k, { buffer, expiresAt: now + this.phraseTtlMs });
       } catch {

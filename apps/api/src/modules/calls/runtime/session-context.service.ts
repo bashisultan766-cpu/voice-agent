@@ -256,7 +256,7 @@ export class SessionContextService {
       typeof cfgMeta?.promptUpdatedAt === 'string' && cfgMeta.promptUpdatedAt.trim()
         ? cfgMeta.promptUpdatedAt
         : session.agent.agentConfig?.updatedAt?.toISOString() ?? configUpdatedAt;
-    const voiceIdEffective = session.agent.voiceId ?? workspaceElevenlabsDefaultVoiceId;
+    const voiceIdEffective = session.agent.voiceId?.trim() || null;
     const personality =
       (session.agent.voiceProfile?.providerConfig as { personality?: Record<string, unknown> } | null)
         ?.personality ?? null;
@@ -320,7 +320,7 @@ export class SessionContextService {
         name: session.agent.name,
         voice: session.agent.voice,
         voiceProvider: session.agent.voiceProvider,
-        voiceId: session.agent.voiceId ?? workspaceElevenlabsDefaultVoiceId,
+        voiceId: session.agent.voiceId?.trim() || null,
         voiceStyle: session.agent.voiceStyle,
         language: session.agent.language,
         baseSystemPrompt: session.agent.baseSystemPrompt,

@@ -211,8 +211,7 @@ export function resolveElevenLabsConfig(args: {
 }): ResolvedElevenLabsConfig | null {
   const agentKey = trimOrUndef(args.agentSecrets?.elevenlabsApiKey);
   if (agentKey) {
-    const voiceId =
-      trimOrUndef(args.agentVoiceId) || trimOrUndef(args.workspace?.elevenlabsDefaultVoiceId);
+    const voiceId = trimOrUndef(args.agentVoiceId);
     return { apiKey: agentKey, source: 'agent', voiceId };
   }
 
@@ -224,8 +223,7 @@ export function resolveElevenLabsConfig(args: {
     envOrUndef(args.envApiKey),
   );
   if (!keyResolved.value || keyResolved.source === 'missing') return null;
-  const voiceId =
-    trimOrUndef(args.agentVoiceId) || trimOrUndef(args.workspace?.elevenlabsDefaultVoiceId);
+  const voiceId = trimOrUndef(args.agentVoiceId);
   return {
     apiKey: keyResolved.value,
     source: keyResolved.source,

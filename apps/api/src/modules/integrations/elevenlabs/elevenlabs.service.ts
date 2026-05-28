@@ -11,7 +11,7 @@ export class ElevenLabsService {
   async textToSpeech(
     text: string,
     voiceId?: string,
-    options?: { apiKey?: string; modelId?: string; styleNotes?: string },
+    options?: { apiKey?: string; modelId?: string },
   ): Promise<Buffer> {
     const key = options?.apiKey?.trim();
     if (!key) {
@@ -21,10 +21,12 @@ export class ElevenLabsService {
     }
     const trimmed = text.trim().slice(0, 2500);
     if (!trimmed) throw new BadRequestException('Text is required');
-    const vid =
-      voiceId?.trim() ||
-      this.config.get<string>('ELEVENLABS_DEFAULT_VOICE_ID')?.trim() ||
-      '21m00Tcm4TlvDq8ikWAM';
+    const vid = voiceId?.trim();
+    if (!vid) {
+      throw new BadRequestException(
+        'ElevenLabs voice ID is required on the agent. Save a single voice ID in agent settings.',
+      );
+    }
     const modelId =
       options?.modelId?.trim() ||
       this.config.get<string>('ELEVENLABS_MODEL_ID')?.trim() ||
@@ -33,13 +35,12 @@ export class ElevenLabsService {
     const body = JSON.stringify({
       text: trimmed,
       model_id: modelId,
-      ...(options?.styleNotes?.trim()
-        ? {
-            voice_settings: {
-              style: 0.45,
-            },
-          }
-        : {}),
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.8,
+        style: 0,
+        use_speaker_boost: true,
+      },
     });
 
     let lastNetworkError: unknown;

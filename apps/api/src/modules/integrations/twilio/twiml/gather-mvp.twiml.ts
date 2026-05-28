@@ -71,9 +71,6 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
   if (includePromptInsideGather) {
     if (playbackAudioUrl.length > 0) gatherInnerLines.push(`    <Play>${escapeXml(playbackAudioUrl)}</Play>`);
     if (openingSayText.length > 0) gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
-    if (gatherInnerLines.length === 0) {
-      gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
-    }
     if (pauseBeforeListen > 0) {
       gatherInnerLines.push(`    <Pause length="${pauseBeforeListen}"/>`);
     }
@@ -83,7 +80,6 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
   if (!includePromptInsideGather) {
     if (playbackAudioUrl.length > 0) preGatherLines.push(`  <Play>${escapeXml(playbackAudioUrl)}</Play>`);
     else if (openingSayText.length > 0) preGatherLines.push(`  <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
-    else preGatherLines.push(`  <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
   }
   const preGather = preGatherLines.length > 0 ? `${preGatherLines.join('\n')}\n` : '';
 
@@ -201,7 +197,6 @@ export function buildVoiceTerminalTwiml(options: {
   const lines: string[] = [];
   if (play.length > 0) lines.push(`  <Play>${escapeXml(play)}</Play>`);
   if (say.length > 0) lines.push(`  <Say${sayAttr}>${escapeXml(say)}</Say>`);
-  if (lines.length === 0) lines.push(`  <Say${sayAttr}>${escapeXml('Goodbye.')}</Say>`);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
 ${lines.join('\n')}

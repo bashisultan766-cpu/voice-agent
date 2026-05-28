@@ -247,15 +247,26 @@ export class TwilioWebhookService implements OnModuleInit {
       voiceId?: string | null;
       elevenlabsApiKey?: string | null;
       elevenlabsModel?: string | null;
-      voiceStyle?: string | null;
     };
     logLabel: string;
   }): Promise<{ playbackUrl?: string; voiceProviderActuallyUsed: 'elevenlabs' | 'twilio_say_fallback' }> {
     const voiceId = this.resolveElevenLabsVoiceId(params.agent);
     const voiceProviderRequested = 'elevenlabs';
     const forceElOnly = this.isForceElevenLabsOnly();
+    const strictElOnly = this.isStrictElevenLabsOnly();
 
-    if (params.hearingDebugEffective) {
+    if (params.hearingDebugEffective && strictElOnly) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.strict_elevenlabs_only',
+          callSessionId: params.callSessionId,
+          phrase: params.logLabel,
+          message: 'Twilio Say disabled; using ElevenLabs agent voice ID only.',
+        }),
+      );
+    }
+
+    if (params.hearingDebugEffective && !strictElOnly) {
       this.logger.warn(
         JSON.stringify({
           event: 'twilio.voice.phrase_audio',
@@ -281,21 +292,22 @@ export class TwilioWebhookService implements OnModuleInit {
           phrase: params.logLabel,
           voiceProviderRequested,
           voiceIdUsed: voiceId ?? null,
-          voiceProviderActuallyUsed: 'twilio_say_fallback',
-          twimlVerbUsed: 'Say',
-          voiceFallbackToTwilioSay: true,
+          voiceProviderActuallyUsed: strictElOnly ? 'elevenlabs' : 'twilio_say_fallback',
+          twimlVerbUsed: strictElOnly ? 'silent' : 'Say',
+          voiceFallbackToTwilioSay: !strictElOnly,
           fallbackReason: !voiceId ? 'no_elevenlabs_voice_id' : 'webhook_base_not_https',
-          emergencyTwilioSayFallback: forceElOnly,
+          strictElevenLabsOnly: strictElOnly,
         }),
       );
-      return { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+      return strictElOnly
+        ? { playbackUrl: undefined, voiceProviderActuallyUsed: 'elevenlabs' }
+        : { voiceProviderActuallyUsed: 'twilio_say_fallback' };
     }
     const r = await this.voicePromptAudio.createPhrasePlaybackUrl(params.origin, {
       text: params.text,
       voiceId,
       apiKey: params.agent.elevenlabsApiKey ?? undefined,
       modelId: params.agent.elevenlabsModel ?? undefined,
-      styleNotes: params.agent.voiceStyle ?? undefined,
     });
     if (!r.playbackUrl) {
       this.logger.warn(
@@ -305,14 +317,16 @@ export class TwilioWebhookService implements OnModuleInit {
           phrase: params.logLabel,
           voiceProviderRequested,
           voiceIdUsed: voiceId,
-          voiceProviderActuallyUsed: 'twilio_say_fallback',
-          twimlVerbUsed: 'Say',
-          voiceFallbackToTwilioSay: true,
+          voiceProviderActuallyUsed: strictElOnly ? 'elevenlabs' : 'twilio_say_fallback',
+          twimlVerbUsed: strictElOnly ? 'silent' : 'Say',
+          voiceFallbackToTwilioSay: !strictElOnly,
           fallbackReason: 'elevenlabs_phrase_failed',
-          emergencyTwilioSayFallback: forceElOnly,
+          strictElevenLabsOnly: strictElOnly,
         }),
       );
-      return { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+      return strictElOnly
+        ? { playbackUrl: undefined, voiceProviderActuallyUsed: 'elevenlabs' }
+        : { voiceProviderActuallyUsed: 'twilio_say_fallback' };
     }
     this.logger.log(
       JSON.stringify({
@@ -697,7 +711,9 @@ export class TwilioWebhookService implements OnModuleInit {
       }
     }
 
-    const greetingReplyVerb: 'Play' | 'Say' = greetingPlaybackUrl && !hearingDebugEffective ? 'Play' : 'Say';
+    const strictElOnlyInbound = this.isStrictElevenLabsOnly();
+    const greetingReplyVerb: 'Play' | 'Say' =
+      greetingPlaybackUrl ? 'Play' : strictElOnlyInbound ? 'Play' : 'Say';
     const providerUsed = greetingVoice === 'elevenlabs' ? 'elevenlabs' : 'twilio_say';
     const voiceIdUsedInbound = elOptsInbound.voiceId ?? null;
     console.log(
@@ -758,12 +774,12 @@ export class TwilioWebhookService implements OnModuleInit {
       language: hearingDebug ? 'en-US' : normalizeLanguageForTwilio(context.agent.language ?? 'en'),
       playbackAudioUrl: hearingDebugEffective ? undefined : greetingPlaybackUrl,
       openingSayText:
-        hearingDebugEffective || !greetingPlaybackUrl
+        !strictElOnlyInbound && (hearingDebugEffective || !greetingPlaybackUrl)
           ? shortGreeting
           : undefined,
       finalFallbackAudioUrl: hearingDebugEffective ? undefined : finalFallbackAudioUrl,
       finalFallbackSayText:
-        strictElevenLabsOnly || hearingDebugEffective || finalFallbackAudioUrl ? undefined : fallbackText,
+        strictElOnlyInbound || hearingDebugEffective || finalFallbackAudioUrl ? undefined : fallbackText,
       timeoutSeconds: 5,
       speechTimeout: 'auto',
       pauseBeforeListenSeconds: 0,
@@ -1032,7 +1048,6 @@ export class TwilioWebhookService implements OnModuleInit {
           voiceId: this.resolveElevenLabsVoiceId(ctx.agent),
           elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
           elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
-          voiceStyle: ctx.agent.voiceStyle ?? undefined,
         });
         const twiml = buildVoiceTerminalTwiml({
           playbackAudioUrl: finalPlay,
@@ -1154,7 +1169,6 @@ export class TwilioWebhookService implements OnModuleInit {
             voiceId: this.resolveElevenLabsVoiceId(ctx.agent),
             elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
             elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
-            voiceStyle: ctx.agent.voiceStyle ?? undefined,
           }),
           syncTtsBudgetMs,
           {},
@@ -1945,7 +1959,6 @@ export class TwilioWebhookService implements OnModuleInit {
         voiceId: this.resolveElevenLabsVoiceId(ctx.agent),
         elevenlabsApiKey: ctx.agent.elevenlabsApiKey ?? undefined,
         elevenlabsModel: ctx.agent.elevenlabsModel ?? undefined,
-        voiceStyle: ctx.agent.voiceStyle ?? undefined,
       };
       const firstChunkText = firstSpeakableChunk(assistantResponse);
       const ttsStart = Date.now();
@@ -2111,7 +2124,6 @@ export class TwilioWebhookService implements OnModuleInit {
     keySource: 'agent' | 'tenant' | 'env' | 'none';
   }> {
     let model: string | undefined;
-    let workspaceDefaultVoiceId: string | null = null;
 
     const row = await this.prisma.agent.findUnique({
       where: { id: context.agentId },
@@ -2134,18 +2146,15 @@ export class TwilioWebhookService implements OnModuleInit {
         where: { tenantId: context.tenantId },
         select: {
           elevenlabsDefaultModel: true,
-          elevenlabsDefaultVoiceId: true,
         },
       });
-      workspaceDefaultVoiceId = ti?.elevenlabsDefaultVoiceId?.trim() || null;
       if (ti?.elevenlabsDefaultModel?.trim()) model = ti.elevenlabsDefaultModel.trim();
     }
 
     const pc = row?.voiceProfile?.providerConfig as { elevenlabsModel?: string } | null;
     if (pc?.elevenlabsModel?.trim()) model = pc.elevenlabsModel.trim();
 
-    const voiceIdMerged = row?.voiceId?.trim() || workspaceDefaultVoiceId || undefined;
-    const voiceId = voiceIdMerged || undefined;
+    const voiceId = row?.voiceId?.trim() || undefined;
 
     return { apiKey: elevenlabsApiKey, model, voiceId, keySource };
   }
@@ -2160,7 +2169,6 @@ export class TwilioWebhookService implements OnModuleInit {
       voiceId?: string;
       elevenlabsApiKey?: string;
       elevenlabsModel?: string;
-      voiceStyle?: string;
     },
   ): Promise<{
     playbackUrl?: string;
@@ -2197,7 +2205,6 @@ export class TwilioWebhookService implements OnModuleInit {
       const audio = await this.elevenLabs.textToSpeech(prep.text, opts.voiceId, {
         apiKey: opts.elevenlabsApiKey,
         modelId: opts.elevenlabsModel,
-        styleNotes: opts.voiceStyle,
       });
       const tts_generation_time_ms = Date.now() - ttsStart;
       if (audio.length > VOICE_TTS_MAX_AUDIO_BYTES) {
