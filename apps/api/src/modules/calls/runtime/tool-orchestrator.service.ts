@@ -50,7 +50,7 @@ import {
 } from './product-recommendation.util';
 import { classifyConversationalObjection } from './objection-patterns.util';
 import { normalizeSpokenEmail } from './email-normalization.util';
-import { cleanVoiceProductQuery } from '../../agents/voice-product-query.util';
+import { cleanVoiceProductQuery, pickVoiceProductSearchQuery } from '../../agents/voice-product-query.util';
 import {
   detectBookCategoryQuery,
   formatCategorySearchVoiceSummary,
@@ -617,15 +617,32 @@ export class ToolOrchestratorService {
         if (!query) {
           return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need query before searching products.', retryable: true } };
         }
-        const objection = classifyConversationalObjection(query);
-        const categoryLabel = detectBookCategoryQuery(query);
+        const effectiveQuery = pickVoiceProductSearchQuery(query, ctx.metadata);
+        if (effectiveQuery !== query.trim()) {
+          this.logger.log(
+            JSON.stringify({
+              event: 'voice.transcript.search_query_boost',
+              callSessionId,
+              toolQuery: query.slice(0, 200),
+              effectiveQuery: effectiveQuery.slice(0, 200),
+            }),
+          );
+        }
+        const objection = classifyConversationalObjection(effectiveQuery);
+        const categoryLabel = detectBookCategoryQuery(effectiveQuery);
         const limit =
-          objection?.type === 'wants_recommendation' || /\b(recommend|suggest|bestseller|popular)\b/i.test(query)
+          objection?.type === 'wants_recommendation' ||
+            /\b(recommend|suggest|bestseller|popular)\b/i.test(effectiveQuery)
             ? 5
             : categoryLabel
               ? 3
               : 3;
-        const live = await this.shopifyAgent.searchProducts(ctx.tenantId, ctx.agentId, query, limit);
+        const live = await this.shopifyAgent.searchProducts(
+          ctx.tenantId,
+          ctx.agentId,
+          effectiveQuery,
+          limit,
+        );
         if (!live.ok) {
           return {
             ok: false,

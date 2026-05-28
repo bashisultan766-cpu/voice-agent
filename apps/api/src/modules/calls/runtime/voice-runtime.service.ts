@@ -3,6 +3,7 @@ import { SessionContextService } from './session-context.service';
 import { CallsService } from '../calls.service';
 import { OpenAIPromptBuilderService } from '../../integrations/openai/openai-prompt-builder.service';
 import { LlmAgentOrchestratorService } from './llm-agent-orchestrator.service';
+import { TranscriptNormalizerService } from './transcript-normalizer.service';
 import { buildLlmReplyMetadataPatch } from './voice-single-reply-pipeline.util';
 import { CallEventsService } from '../../analytics/call-events.service';
 import { CallOutcomeService } from '../../analytics/call-outcome.service';
@@ -64,6 +65,7 @@ export class VoiceRuntimeService {
     private readonly sessionContext: SessionContextService,
     private readonly callsService: CallsService,
     private readonly llmAgent: LlmAgentOrchestratorService,
+    private readonly transcriptNormalizer: TranscriptNormalizerService,
     private readonly tools: ToolOrchestratorService,
     private readonly callEvents: CallEventsService,
     private readonly callOutcome: CallOutcomeService,
@@ -929,8 +931,23 @@ export class VoiceRuntimeService {
         ? conversationHistory
         : await this.transcriptBuffer.getConversationHistory(callSessionId, 24);
 
+    const normalization = await this.transcriptNormalizer.normalizeTranscript(trimmedUserText, {
+      tenantId: ctx.tenantId,
+      agentId: ctx.agentId,
+      callSessionId,
+      conversationHistory: historyFromDb,
+    });
+    const orchestratorSpeech = normalization.normalized;
+
+    await this.callsService.mergeSessionMetadata(callSessionId, {
+      lastRawTranscript: normalization.raw,
+      lastNormalizedTranscript: normalization.normalized,
+      transcriptNormalizeConfidence: normalization.confidence,
+      transcriptNormalizeCorrected: normalization.corrected,
+    });
+
     const userSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
-    await this.transcriptBuffer.append(callSessionId, 'user', safeText, userSeq);
+    await this.transcriptBuffer.append(callSessionId, 'user', orchestratorSpeech, userSeq);
 
     this.logger.log(
       JSON.stringify({
@@ -938,13 +955,15 @@ export class VoiceRuntimeService {
         agentId: ctx.agentId,
         sessionId: callSessionId,
         tenantId: ctx.tenantId,
-        userText: safeText.slice(0, 500),
+        userText: orchestratorSpeech.slice(0, 500),
+        rawTranscript: normalization.raw.slice(0, 500),
+        transcriptCorrected: normalization.corrected,
         brain: 'openai_llm_agent_orchestrator',
       }),
     );
 
     const llmStartedAt = Date.now();
-    const result = await this.llmAgent.handleTurn(callSessionId, safeText, historyFromDb);
+    const result = await this.llmAgent.handleTurn(callSessionId, orchestratorSpeech, historyFromDb);
     const responseDelayMs = Date.now() - llmStartedAt;
 
     if (result.toolCallsCount > 0) {

@@ -6,6 +6,7 @@ import { VoiceConfigCheckController } from './runtime/voice-config-check.control
 import { VoiceConfigCheckService } from './runtime/voice-config-check.service';
 import { VoiceRuntimeService } from './runtime/voice-runtime.service';
 import { LlmAgentOrchestratorService } from './runtime/llm-agent-orchestrator.service';
+import { TranscriptNormalizerService } from './runtime/transcript-normalizer.service';
 import { SessionContextService } from './runtime/session-context.service';
 import { TranscriptBufferService } from './runtime/transcript-buffer.service';
 import { ToolOrchestratorService } from './runtime/tool-orchestrator.service';
@@ -48,6 +49,7 @@ import { ToolsModule } from '../tools/tools.module';
     CallsService,
     VoiceRuntimeService,
     LlmAgentOrchestratorService,
+    TranscriptNormalizerService,
     VoiceConfigCheckService,
     SessionContextService,
     TranscriptBufferService,

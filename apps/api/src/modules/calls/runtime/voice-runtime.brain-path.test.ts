@@ -38,6 +38,15 @@ function buildRuntime(overrides: {
     updateSessionStatus: async () => ({}),
   } as unknown as CallsService;
 
+  const transcriptNormalizer = {
+    normalizeTranscript: async (input: string) => ({
+      raw: input.trim(),
+      normalized: input.trim(),
+      corrected: false,
+      confidence: 'unchanged' as const,
+    }),
+  };
+
   const runtimeSafety = {
     checkUserInput: () => ({ blocked: false }),
     refusalReply: () => 'blocked',
@@ -64,6 +73,7 @@ function buildRuntime(overrides: {
     sessionContext,
     callsService,
     llmAgent,
+    transcriptNormalizer as never,
     {} as never,
     callEvents,
     {} as never,

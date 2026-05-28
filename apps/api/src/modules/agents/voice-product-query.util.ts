@@ -73,6 +73,29 @@ export function extractBookTitlesFromUtterance(raw: string): string[] {
   return [base];
 }
 
+/**
+ * Prefer LLM-normalized transcript when the tool query still matches raw Twilio STT.
+ */
+export function pickVoiceProductSearchQuery(
+  toolQuery: string,
+  metadata: Record<string, unknown> | null | undefined,
+): string {
+  const q = `${toolQuery ?? ''}`.trim();
+  const raw =
+    typeof metadata?.lastRawTranscript === 'string' ? metadata.lastRawTranscript.trim() : '';
+  const normalized =
+    typeof metadata?.lastNormalizedTranscript === 'string'
+      ? metadata.lastNormalizedTranscript.trim()
+      : '';
+  if (!normalized) return q;
+  if (!q) return normalized;
+  if (raw && (q === raw || q.toLowerCase() === raw.toLowerCase())) return normalized;
+  if (raw && raw.toLowerCase().includes(q.toLowerCase()) && q.length < raw.length * 0.9) {
+    return normalized;
+  }
+  return q;
+}
+
 export function slugifyProductHandleHint(title: string): string {
   return title
     .trim()
