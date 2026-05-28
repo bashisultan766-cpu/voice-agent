@@ -63,6 +63,11 @@ import {
   stockFieldsFromVariants,
 } from './voice-stock-sales-policy.util';
 import { parseLlmAgentState, LLM_AGENT_STATE_KEY } from './llm-agent-conversation-state.util';
+import { assessVoiceToolPciRisk, isSafeHostedCheckoutOnlyEnabled } from './voice-pci-guard.util';
+import {
+  resolveCheckoutLineItemsFromLlmState,
+  voiceCheckoutPreconditionMet,
+} from './voice-checkout-flow.util';
 
 const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
 
@@ -89,23 +94,6 @@ export class ToolOrchestratorService {
     'PAYMENT_LINK_SENT',
     'DONE',
   ];
-
-  private static readonly SENSITIVE_PAYMENT_KEYS = [
-    'card',
-    'cardNumber',
-    'card_number',
-    'cvv',
-    'cvc',
-    'expiry',
-    'exp',
-    'securityCode',
-    'security_code',
-    'iban',
-    'bankAccount',
-    'bank_account',
-  ];
-  private static readonly SENSITIVE_PAYMENT_PATTERN =
-    /\b(?:\d[ -]*?){13,19}\b|\b(?:cvv|cvc|security code|card number|expiry|exp)\b/i;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -313,27 +301,6 @@ export class ToolOrchestratorService {
     });
   }
 
-  private hasSensitivePaymentInput(args: Record<string, unknown>): boolean {
-    for (const [key, value] of Object.entries(args)) {
-      if (ToolOrchestratorService.SENSITIVE_PAYMENT_KEYS.includes(key)) return true;
-      if (typeof value === 'string' && ToolOrchestratorService.SENSITIVE_PAYMENT_PATTERN.test(value)) return true;
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (typeof item === 'string' && ToolOrchestratorService.SENSITIVE_PAYMENT_PATTERN.test(item)) return true;
-        }
-      }
-      if (value && typeof value === 'object') {
-        const nested = value as Record<string, unknown>;
-        for (const nestedValue of Object.values(nested)) {
-          if (typeof nestedValue === 'string' && ToolOrchestratorService.SENSITIVE_PAYMENT_PATTERN.test(nestedValue)) {
-            return true;
-          }
-        }
-      }
-    }
-    return false;
-  }
-
   /**
    * Execute one tool call. Injects tenantId, storeId from context.
    * Logs to ToolExecution. Returns normalized result for model.
@@ -440,7 +407,18 @@ export class ToolOrchestratorService {
         },
       });
     }
-    if (this.hasSensitivePaymentInput(parsedArgs.args)) {
+    const pciAssessment = assessVoiceToolPciRisk(toolName, parsedArgs.args);
+    if (pciAssessment.blocked) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.checkout.pci_blocked',
+          callSessionId,
+          toolName,
+          permissionDecision: pciAssessment.permissionDecision,
+          pciRestrictionReason: pciAssessment.pciRestrictionReason,
+          safeHostedCheckoutOnly: isSafeHostedCheckoutOnlyEnabled(),
+        }),
+      );
       return await this.logAndReturn(ctx, callSessionId, toolName, args, requestId, start, {
         ok: false,
         error: {
@@ -450,7 +428,8 @@ export class ToolOrchestratorService {
         },
         data: {
           voiceSummary:
-            'For security, I cannot process or store card details here. I can send a secure Shopify checkout link by SMS or email instead.',
+            'For security, I cannot take card numbers on this call. I can email you a secure Shopify checkout link instead.',
+          pciRestrictionReason: pciAssessment.pciRestrictionReason,
         },
       });
     }
@@ -1155,11 +1134,17 @@ export class ToolOrchestratorService {
             },
           };
         }
-        const currentState = normalizeOrderState(metadata.orderState);
-        if (ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf(currentState) < ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf('PRODUCT_SEARCH')) {
+        const shopDomain =
+          ctx.agent.shopify?.shopDomain?.trim() ||
+          normalizeShopifyDomain(ctx.agent.shopify?.storeUrl ?? null);
+        if (!voiceCheckoutPreconditionMet(metadata.orderState, llmState)) {
           return {
             ok: false,
-            error: { code: 'PRECONDITION_FAILED', message: 'Product is required before payment link generation.', retryable: true },
+            error: {
+              code: 'PRECONDITION_FAILED',
+              message: 'Product is required before payment link generation.',
+              retryable: true,
+            },
             data: {
               voiceSummary: 'Let’s confirm the book first—what title or ISBN?',
             },
@@ -1169,7 +1154,15 @@ export class ToolOrchestratorService {
         if (!email) {
           return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need customer email before creating checkout.', retryable: true } };
         }
-        const itemsRaw = this.normalizeItems(input.items);
+        let itemsRaw = this.normalizeItems(input.items);
+        if (itemsRaw.length === 0) {
+          itemsRaw = resolveCheckoutLineItemsFromLlmState(llmState).map((row) => ({
+            productId: row.productId ?? row.variantId,
+            variantId: row.variantId,
+            title: row.title,
+            quantity: row.quantity,
+          }));
+        }
         const checkoutMode = this.getStringArg(input, 'mode').toLowerCase();
         const items = itemsRaw.map((item) => ({
           variantId: item.variantId ?? item.productId,
@@ -1193,14 +1186,22 @@ export class ToolOrchestratorService {
         const configuredMode = checkoutMode ? toCheckoutModeApi(checkoutMode) : undefined;
         const forceNewCheckout =
           this.getBooleanArg(input as Record<string, unknown>, 'forceNewCheckout', 'force_new_checkout') === true;
+        const primaryVariantId = items[0]?.variantId ?? null;
         this.logger.log(
           JSON.stringify({
             event: 'voice.journey.checkout_create_start',
             callSessionId,
             tenantId: ctx.tenantId,
             agentId: ctx.agentId,
+            checkoutProvider: 'shopify',
+            shopifyStore: shopDomain,
+            variantId: primaryVariantId,
+            inventory: llmState.selectedProducts[0]?.stock ?? llmState.lastSearchedProducts[0]?.stock ?? null,
+            checkoutMode: configuredMode ?? 'agent_default',
+            permissionDecision: 'allow_hosted_checkout',
+            hostedCheckout: true,
+            safeHostedCheckoutOnly: isSafeHostedCheckoutOnlyEnabled(),
             itemCount: items.length,
-            modeHint: configuredMode ?? 'agent_default',
             forceNewCheckout,
           }),
         );
@@ -1217,10 +1218,38 @@ export class ToolOrchestratorService {
           const msg = formatShopifyErrorForCaller(err);
           const retryable =
             err instanceof ShopifyGraphqlError ? err.retryable : !(err instanceof ShopifyCheckoutValidationError);
+          const errCode =
+            err instanceof ShopifyCheckoutValidationError
+              ? err.code
+              : err instanceof ShopifyGraphqlError
+                ? 'SHOPIFY_GRAPHQL'
+                : 'CHECKOUT_FAILED';
+          this.logger.warn(
+            JSON.stringify({
+              event: 'voice.checkout.create_failed',
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              errorCode: 'CHECKOUT_FAILED',
+              shopifyErrorCode: errCode,
+              checkoutProvider: 'shopify',
+              shopifyStore: shopDomain,
+              variantId: primaryVariantId,
+              checkoutMode: configuredMode ?? 'agent_default',
+              permissionDecision: 'allow_hosted_checkout',
+              pciRestrictionReason: null,
+              message: msg.slice(0, 300),
+              retryable,
+            }),
+          );
           return {
             ok: false,
             error: { code: 'CHECKOUT_FAILED', message: msg, retryable },
-            data: { voiceSummary: msg },
+            data: {
+              voiceSummary: msg,
+              checkoutFailed: true,
+              doNotRetryProductLookup: true,
+            },
           };
         }
         const link = await this.prisma.checkoutLink.findUniqueOrThrow({

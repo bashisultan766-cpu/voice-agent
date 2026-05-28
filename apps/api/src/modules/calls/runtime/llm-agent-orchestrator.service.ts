@@ -237,7 +237,11 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       const toRun = toolCalls.slice(0, maxThisTurn);
       totalToolCalls += toRun.length;
 
+      let stopToolLoopAfterCheckoutFailure = false;
+
       for (const tc of toRun) {
+        if (stopToolLoopAfterCheckoutFailure) break;
+
         const llmName = (tc.function?.name ?? '') as LlmAgentToolName;
         toolNames.push(llmName);
         let args: Record<string, unknown> = {};
@@ -259,6 +263,16 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         );
         state = applyToolResultToState(state, llmName, result);
         if (llmName === 'HumanHandoff' && result.ok) escalated = true;
+
+        if (llmName === 'CreatePaymentLink' && !result.ok) {
+          const data = (result.data ?? {}) as Record<string, unknown>;
+          if (data.doNotRetryProductLookup === true || result.error?.code === 'CHECKOUT_FAILED') {
+            stopToolLoopAfterCheckoutFailure = true;
+            if (typeof data.voiceSummary === 'string' && data.voiceSummary.trim()) {
+              lastContent = data.voiceSummary.trim();
+            }
+          }
+        }
 
         const output =
           followUpContent ??
@@ -282,7 +296,11 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           },
           { role: 'tool', tool_call_id: tc.id, content: output },
         );
+
+        if (stopToolLoopAfterCheckoutFailure) break;
       }
+
+      if (stopToolLoopAfterCheckoutFailure) break;
     }
 
     state.customerIntent = intentHint ?? state.customerIntent;
