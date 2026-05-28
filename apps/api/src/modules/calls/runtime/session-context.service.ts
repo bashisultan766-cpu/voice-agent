@@ -257,6 +257,21 @@ export class SessionContextService {
         ? cfgMeta.promptUpdatedAt
         : session.agent.agentConfig?.updatedAt?.toISOString() ?? configUpdatedAt;
     const voiceIdEffective = session.agent.voiceId ?? workspaceElevenlabsDefaultVoiceId;
+    const personality =
+      (session.agent.voiceProfile?.providerConfig as { personality?: Record<string, unknown> } | null)
+        ?.personality ?? null;
+    const voiceEnergy =
+      personality && typeof personality.voiceEnergy === 'number' ? personality.voiceEnergy : null;
+    const speakingSpeed =
+      personality && typeof personality.speakingSpeed === 'number' ? personality.speakingSpeed : null;
+    const politeness =
+      personality && typeof personality.politeness === 'number' ? personality.politeness : null;
+    const upsellLevel =
+      personality && typeof personality.upsellAggressiveness === 'number'
+        ? personality.upsellAggressiveness
+        : null;
+    const humorLevel =
+      personality && typeof personality.humorLevel === 'number' ? personality.humorLevel : null;
     this.log.log(
       JSON.stringify({
         event: 'voice.session_context.loaded_fresh',
@@ -274,6 +289,13 @@ export class SessionContextService {
         configUpdatedAt,
         configVersion,
         promptUpdatedAt,
+        voiceId: voiceIdEffective ?? null,
+        voiceEnergy,
+        speakingSpeed,
+        politeness,
+        upsellLevel,
+        humorLevel,
+        source: 'database/runtime_config',
         fieldsUpdated: null,
         /** If both agent and tenant carry OpenAI keys, agent wins; log helps debug “Settings ignored” reports. */
         precedenceNote:

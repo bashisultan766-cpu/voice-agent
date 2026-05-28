@@ -863,6 +863,12 @@ export class AgentsService {
   private serializeAgent<T extends Record<string, unknown>>(agent: T): T {
     const config = (agent.agentConfig as Record<string, unknown> | null | undefined) ?? null;
     const voiceProfile = (agent.voiceProfile as Record<string, unknown> | null | undefined) ?? null;
+    const voiceProfileConfig =
+      (voiceProfile?.providerConfig as Record<string, unknown> | null | undefined) ?? null;
+    const voicePersonality =
+      (voiceProfile?.personality as Record<string, unknown> | null | undefined) ??
+      (voiceProfileConfig?.personality as Record<string, unknown> | null | undefined) ??
+      null;
     return {
       ...agent,
       businessName: config?.businessName ?? null,
@@ -896,6 +902,12 @@ export class AgentsService {
       voiceProfileLanguage: voiceProfile?.language ?? null,
       voiceProfileTone: voiceProfile?.tone ?? null,
       voiceProfileGreetingMessage: voiceProfile?.greetingMessage ?? null,
+      voiceProfile: voiceProfile
+        ? {
+            ...voiceProfile,
+            personality: voicePersonality,
+          }
+        : null,
     } as T;
   }
 
@@ -3148,133 +3160,58 @@ export class AgentsService {
 
   /** Runtime debug snapshot for dashboard (no secrets). */
   async getRuntimeDebug(tenantId: string, agentId: string, callSessionId?: string) {
-    const agent = await this.findOne(tenantId, agentId);
-    const perms = normalizeToolPermissions(
-      (agent as { toolPermissions?: Record<string, unknown> }).toolPermissions,
-    );
-    const enabledTools = this.toolRegistry.resolveEnabledToolNames({
-      toolPermissions: perms,
-      enabledTools: Array.isArray((agent as { enabledTools?: string[] }).enabledTools)
-        ? (agent as { enabledTools: string[] }).enabledTools
-        : null,
-    });
-    const personality =
-      (agent as { voiceProfile?: { providerConfig?: { personality?: VoicePersonalityTraits } } })
-        .voiceProfile?.providerConfig?.personality ?? null;
-
-    const promptInput: AgentRuntimePromptInput = {
-      agentId: agent.id as string,
-      agentName: agent.name as string,
-      storeName: (agent.storeName as string) || 'Store',
-      language: (agent.language as string) || 'en',
-      baseSystemPrompt: agent.baseSystemPrompt as string,
-      agentRole: agent.agentRole as string | null,
-      agentGoal: agent.agentGoal as string | null,
-      toneOfVoice: agent.toneOfVoice as string | null,
-      config: agent.agentConfig as AgentRuntimePromptInput['config'],
-    };
-    const enterpriseLayers = buildEnterpriseRuntimePromptLayers(promptInput, {
-      personality,
-      enabledTools,
-    });
-    const livePrompt = enterpriseLayers.combined;
-
-    let lastToolCalls: Array<Record<string, unknown>> = [];
-    let runtimeContextPreview: Record<string, unknown> | null = null;
-    if (callSessionId) {
-      const session = await this.prisma.callSession.findFirst({
-        where: { id: callSessionId, tenantId, agentId },
-        include: {
-          toolExecutions: { orderBy: { createdAt: 'desc' }, take: 10 },
-          emailEvents: { orderBy: { createdAt: 'desc' }, take: 5 },
+    void callSessionId;
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: {
+        id: true,
+        storeName: true,
+        voiceId: true,
+        baseSystemPrompt: true,
+        updatedAt: true,
+        agentConfig: {
+          select: {
+            metadata: true,
+            updatedAt: true,
+          },
         },
-      });
-      if (session) {
-        lastToolCalls = session.toolExecutions.map((t) => ({
-          toolName: t.toolName,
-          status: t.status,
-          latencyMs: t.latencyMs,
-          createdAt: t.createdAt,
-          inputPreview: JSON.stringify(t.inputJson).slice(0, 200),
-          outputPreview: JSON.stringify(t.outputJson).slice(0, 300),
-        }));
-        runtimeContextPreview = {
-          callSessionId: session.id,
-          metadata: session.metadata,
-          emailEvents: session.emailEvents.map((e) => ({
-            status: e.status,
-            createdAt: e.createdAt,
-          })),
-        };
-      }
-    }
+        voiceProfile: {
+          select: {
+            providerConfig: true,
+          },
+        },
+      },
+    });
+    if (!agent) throw new NotFoundException('Agent not found.');
 
-    const credentialSources = await this.getCredentialSourcesSummary(tenantId, agentId);
+    const cfgMeta =
+      agent.agentConfig?.metadata &&
+      typeof agent.agentConfig.metadata === 'object' &&
+      !Array.isArray(agent.agentConfig.metadata)
+        ? (agent.agentConfig.metadata as Record<string, unknown>)
+        : null;
+    const configVersion =
+      typeof cfgMeta?.configVersion === 'number' && Number.isFinite(cfgMeta.configVersion)
+        ? Number(cfgMeta.configVersion)
+        : 1;
+    const promptUpdatedAt =
+      typeof cfgMeta?.promptUpdatedAt === 'string' && cfgMeta.promptUpdatedAt.trim()
+        ? cfgMeta.promptUpdatedAt
+        : agent.agentConfig?.updatedAt?.toISOString() ?? agent.updatedAt.toISOString();
 
-    const agentRow = agent as {
-      restrictedActions?: string | null;
-      allowedActions?: string | null;
-    };
-
-    let liveMonitor: Record<string, unknown> | null = null;
-    if (callSessionId) {
-      try {
-        const session = await this.prisma.callSession.findFirst({
-          where: { id: callSessionId, tenantId, agentId },
-          select: { metadata: true },
-        });
-        if (session?.metadata) {
-          const m = session.metadata as Record<string, unknown>;
-          liveMonitor = {
-            conversationStage:
-              (m.conversationMemory as Record<string, unknown> | undefined)?.conversationStage ??
-              m.conversationStage,
-            streamingStatus:
-              (m.voiceStreamMetrics as Record<string, unknown> | undefined)?.streamingStatus ?? 'idle',
-            voiceStreamMetrics: m.voiceStreamMetrics ?? null,
-            voiceCostMetrics: m.voiceCostMetrics ?? null,
-            deferredJobPhase: (m.deferredVoiceJob as { phase?: string } | undefined)?.phase ?? null,
-            bargeInRequested: m.bargeInRequested === true,
-            runtimeScores: m.runtimeScores ?? null,
-            runtimeAnalytics: m.runtimeAnalytics ?? null,
-          };
-        }
-      } catch {
-        liveMonitor = null;
-      }
-    }
+    const providerConfig =
+      (agent.voiceProfile?.providerConfig as { personality?: VoicePersonalityTraits } | null) ?? null;
+    const voicePersonality = providerConfig?.personality ?? null;
 
     return {
-      agentId,
-      toolsEnabled: enabledTools,
-      toolPermissions: perms,
-      personality,
-      livePromptPreview: livePrompt.slice(0, 8000),
-      promptBudget: enterpriseLayers.budget,
-      promptLayers: {
-        platform: enterpriseLayers.platform,
-        agentIdentity: enterpriseLayers.agentIdentity,
-        storePolicyKnowledge: enterpriseLayers.storePolicyKnowledge,
-        runtimeTools: enterpriseLayers.runtimeTools,
-        shopifyTruth: enterpriseLayers.shopifyTruth,
-        knowledgeRetrieval: enterpriseLayers.knowledgeRetrieval,
-        runtimeContext: enterpriseLayers.runtimeContext,
-      },
-      activeRestrictions: {
-        blockedTopics: agentRow.restrictedActions ?? null,
-        allowedTopics: agentRow.allowedActions ?? null,
-        forbiddenBehaviors:
-          (agent.agentConfig as { forbiddenBehaviors?: string | null } | null)?.forbiddenBehaviors ??
-          null,
-      },
-      lastToolCalls,
-      runtimeContextPreview,
-      credentialSources,
-      liveMonitor,
-      toolCatalog: this.toolRegistry.getCatalog().map((t) => ({
-        name: t.name,
-        permissionGroups: t.permissionGroups,
-      })),
+      agentId: agent.id,
+      configVersion,
+      promptUpdatedAt,
+      voiceId: agent.voiceId ?? null,
+      voicePersonality,
+      storeName: agent.storeName ?? 'Store',
+      systemPromptPreview: (agent.baseSystemPrompt ?? '').slice(0, 200),
+      updatedAt: agent.updatedAt.toISOString(),
     };
   }
 

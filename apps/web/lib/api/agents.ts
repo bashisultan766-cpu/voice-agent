@@ -823,7 +823,9 @@ export function agentToFormData(a: AgentApi): CreateAgentPayload {
     },
     voicePersonality: {
       ...DEFAULT_VOICE_PERSONALITY,
-      ...(a.voiceProfile?.personality ?? {}),
+      ...(((a.voiceProfile?.providerConfig as { personality?: VoicePersonalityTraits } | null)?.personality ??
+        a.voiceProfile?.personality ??
+        {}) as VoicePersonalityTraits),
     },
   };
 }

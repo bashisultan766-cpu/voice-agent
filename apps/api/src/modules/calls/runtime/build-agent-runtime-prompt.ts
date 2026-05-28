@@ -142,6 +142,15 @@ function buildAgentIdentityLayer(agent: AgentRuntimePromptInput, options?: Build
             : 'light upsell only when asked',
       );
     }
+    if (personality.humorLevel != null) {
+      traits.push(
+        personality.humorLevel >= 70
+          ? 'light, tasteful humor is okay when natural'
+          : personality.humorLevel <= 30
+            ? 'keep humor minimal and professional'
+            : 'occasional soft humor only when the caller is receptive',
+      );
+    }
     if (traits.length) lines.push('', `Speaking style: ${traits.join('; ')}.`);
   }
 
