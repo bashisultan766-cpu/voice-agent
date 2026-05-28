@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decideResponseMode } from './response-mode.util';
 
-test('uses template for exact catalog match (safe price/title)', () => {
+test('uses openai for exact catalog match (natural conversation)', () => {
   const mode = decideResponseMode({
     intent: 'product_search',
     state: 'PRODUCT_DISCOVERY',
@@ -17,7 +17,7 @@ test('uses template for exact catalog match (safe price/title)', () => {
     },
     customerText: 'Do you have Atomic Habits?',
   });
-  assert.equal(mode, 'template');
+  assert.equal(mode, 'openai');
 });
 
 test('uses openai in email collection without tool trace', () => {
@@ -56,7 +56,7 @@ test('uses openai for product question with existing context', () => {
   assert.equal(mode, 'openai');
 });
 
-test('uses template for payment email tool trace (success or failure)', () => {
+test('uses openai for payment email tool trace (success or failure)', () => {
   const modeOk = decideResponseMode({
     intent: 'email_provided',
     state: 'EMAIL_COLLECTION',
@@ -68,7 +68,7 @@ test('uses template for payment email tool trace (success or failure)', () => {
       },
     },
   });
-  assert.equal(modeOk, 'template');
+  assert.equal(modeOk, 'openai');
 
   const modeFail = decideResponseMode({
     intent: 'email_provided',
@@ -81,10 +81,10 @@ test('uses template for payment email tool trace (success or failure)', () => {
       },
     },
   });
-  assert.equal(modeFail, 'template');
+  assert.equal(modeFail, 'openai');
 });
 
-test('uses template for Shopify catalog hard failure', () => {
+test('uses openai for Shopify catalog hard failure', () => {
   const mode = decideResponseMode({
     intent: 'product_search',
     state: 'PRODUCT_DISCOVERY',
@@ -98,7 +98,7 @@ test('uses template for Shopify catalog hard failure', () => {
     },
     customerText: 'Dune',
   });
-  assert.equal(mode, 'template');
+  assert.equal(mode, 'openai');
 });
 
 test('uses openai when search tool blocked by policy (not a catalog outage)', () => {

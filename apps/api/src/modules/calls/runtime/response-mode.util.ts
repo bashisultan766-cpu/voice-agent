@@ -13,25 +13,14 @@ export function decideResponseMode(args: {
   customerText: string;
 }): 'template' | 'openai' {
   void args.intent;
-  void args.state;
   void args.customerText;
-  const sp = args.toolResult?.searchProducts;
   const ve = args.toolResult?.validateEmail;
-  const pay = args.toolResult?.sendPaymentEmail;
-
-  if (pay != null) return 'template';
 
   if (
     ve != null &&
     ve.valid === false &&
     (args.state === 'EMAIL_COLLECTING' || args.state === 'EMAIL_CONFIRMING' || args.state === 'EMAIL_COLLECTION')
   ) {
-    return 'template';
-  }
-
-  if (sp?.ok === false && sp.errorCode === 'SHOPIFY_SEARCH_FAILED') return 'template';
-
-  if (sp?.ok === true && sp.found === true && !sp.requiresClarification && sp.title?.trim()) {
     return 'template';
   }
 

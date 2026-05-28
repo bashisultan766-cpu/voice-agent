@@ -18,7 +18,6 @@ import { ConversationAnalyticsService } from './conversation-analytics.service';
 import { CallMemoryService } from './call-memory.service';
 import { applyAntiHallucinationGuard } from './anti-hallucination.util';
 import { polishVoiceReply } from './voice-speaking.util';
-import { normalizeConversationStage } from './conversation-stage.util';
 import { resolveAdaptiveVoiceBehavior } from './adaptive-voice-behavior.util';
 import { applyTimingToChunkText } from './voice-timing.util';
 import { classifyUserIntent, type UserUtteranceIntent } from './user-intent-classifier.util';
@@ -163,30 +162,12 @@ export class VoiceRuntimeService {
     return polishVoiceReply(t, { maxSentences: 3 });
   }
 
-  private buildFastVoiceReply(args: {
+  private buildFastVoiceReply(_args: {
     userIntent: UserUtteranceIntent;
     turnPlan: Awaited<ReturnType<ConversationFlowEngineService['planTurn']>>;
     ctx: NonNullable<Awaited<ReturnType<SessionContextService['load']>>>;
     langCode: string;
   }): string | null {
-    const greeting =
-      args.ctx.agent.greetingMessage?.trim() ??
-      `Hello, you've reached ${args.ctx.store.name}. How can I help you today?`;
-    if (args.userIntent === 'greeting') {
-      return greeting;
-    }
-    if (args.userIntent === 'small_talk') {
-      return "I'm doing well, thanks. What book or topic can I help you find?";
-    }
-    const identity = this.buildConciseIdentityOrCapabilityReply(
-      args.userIntent,
-      args.turnPlan.memory.lastIntent ?? '',
-    );
-    if (identity) return identity;
-    if (normalizeConversationStage(args.turnPlan.stage) === 'GREETING') {
-      return greeting;
-    }
-    void args.langCode;
     return null;
   }
 
@@ -347,13 +328,30 @@ export class VoiceRuntimeService {
     if (!(askedHowAreYou || askedName || askedStore || askedHelp)) return null;
 
     const parts: string[] = [];
-    if (askedHowAreYou) parts.push("I'm doing well, thanks for asking.");
+    if (askedHowAreYou) parts.push('Thank you for asking.');
     if (askedName) parts.push("I'm the voice assistant on this line.");
     if (askedStore) parts.push("You're speaking with our store.");
     if (askedHelp) {
       parts.push('I can help with product availability, pricing, orders, and payment links.');
     }
     return parts.join(' ').trim();
+  }
+
+  private logResponsePath(args: {
+    callSessionId: string;
+    usedOpenAI: boolean;
+    usedTemplate: boolean;
+    templateReason: string | null;
+    intent: string;
+    state: string;
+    latencyMs: number;
+  }): void {
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.response.path',
+        ...args,
+      }),
+    );
   }
 
   private resolveSpokenReplyAfterOpenAI(args: {
@@ -858,6 +856,7 @@ export class VoiceRuntimeService {
       return { reply };
     }
     if (safeText !== text) {
+      const startedAt = Date.now();
       this.logger.warn(
         JSON.stringify({
           event: 'voice.journey.payment_data_blocked',
@@ -890,6 +889,15 @@ export class VoiceRuntimeService {
         templateUsed: 'payment_security_block',
         openaiUsed: false,
         templateSuppressedBecauseRepeated: false,
+      });
+      this.logResponsePath({
+        callSessionId,
+        usedOpenAI: false,
+        usedTemplate: true,
+        templateReason: 'payment_security_block',
+        intent: classifyUserIntent(safeText),
+        state: 'n/a',
+        latencyMs: Date.now() - startedAt,
       });
       return { reply };
     }
@@ -1100,6 +1108,7 @@ export class VoiceRuntimeService {
     }
 
     if (update.recoveryPrompt) {
+      const startedAt = Date.now();
       const reply = recoveryPromptText(langCode, update.recoveryPrompt.key);
       const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
       await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeq);
@@ -1141,6 +1150,15 @@ export class VoiceRuntimeService {
         templateUsed: `recovery_${update.recoveryPrompt.key}`,
         openaiUsed: false,
         templateSuppressedBecauseRepeated: false,
+      });
+      this.logResponsePath({
+        callSessionId,
+        usedOpenAI: false,
+        usedTemplate: true,
+        templateReason: `recovery_${update.recoveryPrompt.key}`,
+        intent: userIntent,
+        state: update.nextState,
+        latencyMs: Date.now() - startedAt,
       });
       return { reply };
     }
@@ -1226,6 +1244,15 @@ export class VoiceRuntimeService {
         templateSuppressedBecauseRepeated: false,
       };
       this.logTurnProof(proof429);
+      this.logResponsePath({
+        callSessionId,
+        usedOpenAI: false,
+        usedTemplate: true,
+        templateReason: fb429.responseTemplateUsed,
+        intent: userIntent,
+        state: preserveOrderState,
+        latencyMs: responseDelayMs,
+      });
       return { reply, turnProof: proof429 };
     }
     const ctxAfterLlm = await this.sessionContext.load(callSessionId);
@@ -1462,6 +1489,15 @@ export class VoiceRuntimeService {
       roboticTemplateSuppressed: repeatChecked.templateSuppressedBecauseRepeated,
     };
     this.logTurnProof(turnProof);
+    this.logResponsePath({
+      callSessionId,
+      usedOpenAI: repeatChecked.openaiUsed,
+      usedTemplate: !repeatChecked.openaiUsed,
+      templateReason: repeatChecked.templateUsed,
+      intent: userIntent,
+      state: stateForLogOpenAi,
+      latencyMs: responseDelayMs,
+    });
     return { reply: repeatChecked.reply, turnProof };
   }
 
