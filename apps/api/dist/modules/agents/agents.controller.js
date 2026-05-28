@@ -132,6 +132,9 @@ let AgentsController = class AgentsController {
     getReadiness(tenantId, id) {
         return this.agentsService.getAgentReadiness(tenantId, id);
     }
+    getPersistenceDiagnostics(tenantId, id) {
+        return this.agentsService.getPersistenceDiagnostics(tenantId, id);
+    }
     sendTestEmail(tenantId, id, body) {
         return this.agentsService.sendTestEmail(tenantId, id, body);
     }
@@ -329,6 +332,15 @@ __decorate([
     __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)
 ], AgentsController.prototype, "getReadiness", null);
+__decorate([
+    (0, roles_decorator_1.Roles)(client_1.UserRole.ADMIN),
+    (0, common_1.Get)(':id/persistence-diagnostics'),
+    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(1, (0, common_1.Param)('id', new zod_validation_pipe_1.ZodValidationPipe(agents_validation_1.cuidParamSchema))),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", void 0)
+], AgentsController.prototype, "getPersistenceDiagnostics", null);
 __decorate([
     (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
     (0, roles_decorator_1.Roles)(client_1.UserRole.MANAGER),

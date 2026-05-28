@@ -30,6 +30,7 @@ const language_intelligence_util_1 = require("../../calls/runtime/language-intel
 const normalize_phone_1 = require("./utils/normalize-phone");
 const prisma_service_1 = require("../../../database/prisma.service");
 const encryption_service_1 = require("../../../common/encryption.service");
+const credential_resolver_util_1 = require("../../../common/credential-resolver.util");
 const voice_config_resolution_util_1 = require("../../calls/runtime/voice-config-resolution.util");
 const api_key_fingerprint_1 = require("../../../common/logging/api-key-fingerprint");
 const provider_env_slice_util_1 = require("../../../common/provider-env-slice.util");
@@ -70,6 +71,12 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
         this.streamingSession = streamingSession;
         this.elevenStreaming = elevenStreaming;
         this.logger = new common_1.Logger(TwilioWebhookService_1.name);
+        const validated = (0, public_webhook_base_url_1.validatePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+        if (!validated.ok) {
+            const reason = validated.reason ?? 'invalid';
+            throw new Error(`Invalid PUBLIC_WEBHOOK_BASE_URL (${reason}). Set a public HTTPS origin (no localhost/ngrok/example/localtunnel).`);
+        }
+        this.publicBaseUrl = validated.normalized;
     }
     onModuleInit() {
         const gatherDebug = this.isGatherHearingDebugMode();
@@ -84,6 +91,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     : 'TWILIO_GATHER_HEARING_DEBUG disables ElevenLabs for short scripted prompts; those lines use Twilio <Say> instead. This helps STT debugging but sounds like a second voice in production—unset it or set FORCE_ELEVENLABS_ONLY=true to keep ElevenLabs.',
             }));
         }
+        this.logger.log(JSON.stringify({
+            event: 'voice.public_base_url',
+            value: this.publicBaseUrl,
+        }));
+    }
+    getPublicBaseUrl() {
+        return this.publicBaseUrl;
     }
     isGatherHearingDebugMode() {
         const v = `${this.config.get('TWILIO_GATHER_HEARING_DEBUG') ?? process.env.TWILIO_GATHER_HEARING_DEBUG ?? ''}`.trim();
@@ -180,6 +194,60 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
         return {
             useWorkspaceOpenai: cfg?.useWorkspaceOpenai === true,
             useWorkspaceElevenlabs: cfg?.useWorkspaceElevenlabs === true,
+        };
+    }
+    decryptAgentSecrets(secretsEnc) {
+        if (!secretsEnc || !this.encryption.isAvailable())
+            return {};
+        const dec = this.encryption.decryptFromStorage(secretsEnc);
+        if (!dec)
+            return {};
+        try {
+            return JSON.parse(dec);
+        }
+        catch {
+            return {};
+        }
+    }
+    async getWorkspaceIntegrationSlice(tenantId) {
+        const row = await this.prisma.tenantIntegration.findUnique({
+            where: { tenantId },
+            select: {
+                shopifyShopDomain: true,
+                shopifyAdminTokenEnc: true,
+                openaiApiKeyEnc: true,
+                elevenlabsApiKeyEnc: true,
+                elevenlabsDefaultVoiceId: true,
+                twilioAccountSid: true,
+                twilioAuthTokenEnc: true,
+                twilioPhoneNumber: true,
+                resendApiKeyEnc: true,
+            },
+        });
+        if (!row || !this.encryption.isAvailable())
+            return null;
+        return {
+            shopifyStoreUrl: row.shopifyShopDomain?.trim()
+                ? `https://${row.shopifyShopDomain.trim()}`
+                : undefined,
+            shopifyAdminToken: row.shopifyAdminTokenEnc
+                ? (this.encryption.decryptFromStorage(row.shopifyAdminTokenEnc) ?? undefined)
+                : undefined,
+            openaiApiKey: row.openaiApiKeyEnc
+                ? (this.encryption.decryptFromStorage(row.openaiApiKeyEnc) ?? undefined)
+                : undefined,
+            elevenlabsApiKey: row.elevenlabsApiKeyEnc
+                ? (this.encryption.decryptFromStorage(row.elevenlabsApiKeyEnc) ?? undefined)
+                : undefined,
+            elevenlabsDefaultVoiceId: row.elevenlabsDefaultVoiceId?.trim() || undefined,
+            twilioAccountSid: row.twilioAccountSid?.trim() || undefined,
+            twilioAuthToken: row.twilioAuthTokenEnc
+                ? (this.encryption.decryptFromStorage(row.twilioAuthTokenEnc) ?? undefined)
+                : undefined,
+            twilioPhoneNumber: row.twilioPhoneNumber?.trim() || undefined,
+            resendApiKey: row.resendApiKeyEnc
+                ? (this.encryption.decryptFromStorage(row.resendApiKeyEnc) ?? undefined)
+                : undefined,
         };
     }
     async auditOpenAiKeyForGather(tenantId, secretsEnc, agentId) {
@@ -313,7 +381,64 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             twilioCallSid: payload.CallSid,
             configUpdatedAt: agentRow?.updatedAt?.toISOString() ?? null,
         }));
-        const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+        const runtimeAgentRow = await this.prisma.agent.findFirst({
+            where: { id: context.agentId, tenantId: context.tenantId, deletedAt: null },
+            select: {
+                status: true,
+                shopifyStoreUrl: true,
+                voiceId: true,
+                secretsEnc: true,
+                agentConfig: {
+                    select: {
+                        useWorkspaceShopify: true,
+                        useWorkspaceOpenai: true,
+                        useWorkspaceElevenlabs: true,
+                        useWorkspaceTwilio: true,
+                        useWorkspaceEmail: true,
+                    },
+                },
+            },
+        });
+        if (runtimeAgentRow) {
+            const [workspaceSlice, sessionCtx] = await Promise.all([
+                this.getWorkspaceIntegrationSlice(context.tenantId),
+                this.sessionContext.load(session.id),
+            ]);
+            const sources = (0, credential_resolver_util_1.buildCredentialSourcesSummary)({
+                agent: {
+                    shopifyStoreUrl: runtimeAgentRow.shopifyStoreUrl,
+                    voiceId: runtimeAgentRow.voiceId,
+                    secrets: this.decryptAgentSecrets(runtimeAgentRow.secretsEnc),
+                    useWorkspaceShopify: runtimeAgentRow.agentConfig?.useWorkspaceShopify === true,
+                    useWorkspaceOpenai: runtimeAgentRow.agentConfig?.useWorkspaceOpenai === true,
+                    useWorkspaceElevenlabs: runtimeAgentRow.agentConfig?.useWorkspaceElevenlabs === true,
+                    useWorkspaceTwilio: runtimeAgentRow.agentConfig?.useWorkspaceTwilio === true,
+                    useWorkspaceEmail: runtimeAgentRow.agentConfig?.useWorkspaceEmail === true,
+                },
+                workspace: workspaceSlice,
+            });
+            const missingRequirements = [
+                !sources.openai.configured ? 'openai' : null,
+                !sources.twilio.configured ? 'twilio' : null,
+                !sources.elevenlabs.configured && (sessionCtx?.agent.voiceProvider ?? '').toLowerCase() === 'elevenlabs'
+                    ? 'elevenlabs'
+                    : null,
+                !sources.resend.configured ? 'resend' : null,
+            ].filter((v) => Boolean(v));
+            this.logger.log(JSON.stringify({
+                event: 'voice.runtime.readiness.summary',
+                callSessionId: session.id,
+                agentId: context.agentId,
+                tenantId: context.tenantId,
+                agentStatus: runtimeAgentRow.status,
+                openaiSource: sources.openai.source,
+                twilioSource: sources.twilio.authSource,
+                elevenlabsSource: sources.elevenlabs.source,
+                resendSource: sources.resend.source,
+                missingRequirements,
+            }));
+        }
+        const origin = this.getPublicBaseUrl();
         if ((0, media_stream_twiml_1.isMediaStreamInboundEnabled)()) {
             const wsBase = origin.replace(/^http/i, 'wss');
             const streamUrl = `${wsBase}/api/twilio/voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
@@ -401,6 +526,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             greetingUsedElevenLabsAudio: Boolean(greetingPlaybackUrl),
             gatherHearingDebugSayOnly: hearingDebugEffective,
             FORCE_ELEVENLABS_ONLY: forceElOnly,
+        }));
+        this.logger.log(JSON.stringify({
+            event: 'voice.runtime.url_summary',
+            route: 'inbound',
+            publicBaseUrl: origin,
+            gatherActionUrl,
+            playAudioUrl: hearingDebugEffective ? null : (greetingPlaybackUrl ?? null),
         }));
         const twiml = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
             gatherActionUrl,
@@ -595,7 +727,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     'I am having trouble hearing you. Please call again or wait for a human assistant.';
                 const seqA = await this.transcriptBuffer.getNextSequence(callSessionId);
                 await this.transcriptBuffer.append(callSessionId, 'agent', finalMsg, seqA);
-                const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+                const origin = this.getPublicBaseUrl();
                 const { playbackUrl: finalPlay } = await this.buildElevenLabsPlaybackUrl(origin, finalMsg, {
                     callSessionId,
                     tenantId: ctx.tenantId,
@@ -660,7 +792,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 speechCharCount: speechText.length,
                 voicePipeline: 'deferred_async',
             }));
-            const originEarly = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+            const originEarly = this.getPublicBaseUrl();
             const orderStateForAck = typeof metadata.orderState === 'string' && metadata.orderState.trim()
                 ? metadata.orderState.trim()
                 : 'IDLE';
@@ -716,6 +848,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     agent: ctx.agent,
                     logLabel: 'gather_sync_social_final_fallback',
                 });
+                this.logger.log(JSON.stringify({
+                    event: 'voice.runtime.url_summary',
+                    route: 'gather_sync_social_reply',
+                    publicBaseUrl: originEarly,
+                    gatherActionUrl: gatherActionUrlSync,
+                    playAudioUrl: mainPlay.playbackUrl ?? null,
+                }));
                 const twimlSync = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
                     gatherActionUrl: gatherActionUrlSync,
                     language: this.getSessionLanguage(ctx),
@@ -784,6 +923,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 }), kickBudgetMs, { voiceProviderActuallyUsed: 'twilio_say_fallback' });
             }
             const allowKickSayFallback = !strictElevenLabsOnly && (hearingDebugEffective || (!kickPhrase.playbackUrl && kickText.length > 0));
+            this.logger.log(JSON.stringify({
+                event: 'voice.runtime.url_summary',
+                route: 'gather_deferred_kickoff',
+                publicBaseUrl: originEarly,
+                gatherActionUrl: deferPollUrl,
+                playAudioUrl: kickPhrase.playbackUrl ?? null,
+            }));
             const twimlKickoff = (0, gather_mvp_twiml_1.buildDeferredVoiceKickoffTwiML)({
                 deferPollUrl,
                 instantPlaybackUrl: kickPhrase.playbackUrl,
@@ -836,7 +982,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 agentResolved: true,
             };
         }
-        const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+        const origin = this.getPublicBaseUrl();
         const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(callSessionId)}`;
         const gatherFallbackText = ctx.agent.fallbackMessage?.trim() ?? "We're having trouble hearing you. Please call again later. Goodbye.";
         const retryOpen = await this.resolveShortPhrasePlayUrl({
@@ -857,6 +1003,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             agent: ctx.agent,
             logLabel: 'gather_retry_final_fallback',
         });
+        this.logger.log(JSON.stringify({
+            event: 'voice.runtime.url_summary',
+            route: 'gather',
+            publicBaseUrl: origin,
+            gatherActionUrl,
+            playAudioUrl: retryOpen.playbackUrl ?? null,
+        }));
         const twiml = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
             gatherActionUrl,
             language: this.getSessionLanguage(ctx),
@@ -931,7 +1084,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             const session = await this.callsService.findOneByTwilioCallSid(payload.CallSid);
             callSessionId = session?.id ?? '';
         }
-        const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+        const origin = this.getPublicBaseUrl();
         const deferPollUrl = `${origin}/api/twilio/voice/deferred-poll?callSessionId=${encodeURIComponent(callSessionId || 'missing')}`;
         if (!callSessionId) {
             const twiml = (0, conversation_relay_twiml_1.buildFallbackTwiML)("I'm sorry, I couldn't resume your call. Please try again.");
@@ -984,6 +1137,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 agent: ctx.agent,
                 logLabel: 'deferred_poll_missing_fallback',
             });
+            this.logger.log(JSON.stringify({
+                event: 'voice.runtime.url_summary',
+                route: 'deferred_poll_recover',
+                publicBaseUrl: origin,
+                gatherActionUrl,
+                playAudioUrl: missA.playbackUrl ?? null,
+            }));
             const twiml = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
                 gatherActionUrl,
                 language: this.getSessionLanguage(ctx),
@@ -1028,6 +1188,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     agent: ctx.agent,
                     logLabel: 'deferred_poll_timeout_fallback',
                 });
+                this.logger.log(JSON.stringify({
+                    event: 'voice.runtime.url_summary',
+                    route: 'deferred_poll_timeout',
+                    publicBaseUrl: origin,
+                    gatherActionUrl,
+                    playAudioUrl: toA.playbackUrl ?? null,
+                }));
                 const twiml = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
                     gatherActionUrl,
                     language: this.getSessionLanguage(ctx),
@@ -1121,6 +1288,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 agent: ctx.agent,
                 logLabel: 'deferred_poll_failed_fallback',
             });
+            this.logger.log(JSON.stringify({
+                event: 'voice.runtime.url_summary',
+                route: 'deferred_poll_failed',
+                publicBaseUrl: origin,
+                gatherActionUrl,
+                playAudioUrl: failA.playbackUrl ?? null,
+            }));
             const twiml = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
                 gatherActionUrl,
                 language: this.getSessionLanguage(ctx),
@@ -1146,6 +1320,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             agent: ctx.agent,
             logLabel: 'deferred_poll_ready_final_fallback',
         });
+        this.logger.log(JSON.stringify({
+            event: 'voice.runtime.url_summary',
+            route: 'deferred_poll_ready',
+            publicBaseUrl: origin,
+            gatherActionUrl,
+            playAudioUrl: playbackAudioUrl ?? null,
+        }));
         const twiml = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
             gatherActionUrl,
             language: this.getSessionLanguage(ctx),
@@ -1298,7 +1479,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 await this.failDeferredVoiceJobIfCurrent(callSessionId, jobId, 'barge_in_interrupted');
                 return;
             }
-            const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
+            const origin = this.getPublicBaseUrl();
             const voiceOpts = {
                 callSessionId,
                 tenantId: ctx.tenantId,

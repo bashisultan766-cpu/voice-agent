@@ -10,3 +10,37 @@ export function normalizePublicWebhookBaseUrl(raw: string | undefined | null): s
   }
   return s;
 }
+
+const BLOCKED_HOST_PATTERNS = [
+  /(^|\.)localhost$/i,
+  /^127\.0\.0\.1$/i,
+  /^0\.0\.0\.0$/i,
+  /\.local$/i,
+  /ngrok/i,
+  /localtunnel/i,
+  /example/i,
+];
+
+export function validatePublicWebhookBaseUrl(raw: string | undefined | null): {
+  ok: boolean;
+  normalized: string;
+  reason?: 'missing' | 'invalid_url' | 'not_https' | 'blocked_host';
+  host?: string;
+} {
+  const normalized = normalizePublicWebhookBaseUrl(raw);
+  if (!normalized) return { ok: false, normalized, reason: 'missing' };
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return { ok: false, normalized, reason: 'invalid_url' };
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (parsed.protocol !== 'https:') {
+    return { ok: false, normalized, reason: 'not_https', host };
+  }
+  if (BLOCKED_HOST_PATTERNS.some((re) => re.test(host))) {
+    return { ok: false, normalized, reason: 'blocked_host', host };
+  }
+  return { ok: true, normalized, host };
+}

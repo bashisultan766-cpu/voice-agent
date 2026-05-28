@@ -364,6 +364,27 @@ export declare class AgentsController {
             sid: string;
         } | null;
     }>;
+    getPersistenceDiagnostics(tenantId: string, id: string): Promise<{
+        dbConnected: boolean;
+        tenantId: string;
+        workspaceId: string | null;
+        agentId: string;
+        agentStatusFromDb: import("@prisma/client").$Enums.AgentStatus;
+        mappedPhoneNumber: string | null;
+        workspaceSaved: {
+            twilio: boolean;
+            openai: boolean;
+            resend: boolean;
+        };
+        shopifySource: import("../../common/credential-priority.util").CredentialSource;
+        runtimeCredentialSource: {
+            shopify: import("../../common/credential-priority.util").CredentialSource;
+            twilio: import("../../common/credential-priority.util").CredentialSource;
+            openai: import("../../common/credential-priority.util").CredentialSource;
+            elevenlabs: import("../../common/credential-priority.util").CredentialSource;
+            resend: import("../../common/credential-priority.util").CredentialSource;
+        };
+    }>;
     sendTestEmail(tenantId: string, id: string, body: z.infer<typeof testAgentEmailBodySchema>): Promise<{
         success: boolean;
         message: string;
@@ -603,37 +624,6 @@ export declare class AgentsController {
         };
         credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
         updatedSecrets: Record<"shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "resendApiKey", boolean>;
-    } | {
-        readiness: {
-            ready: boolean;
-            status: string;
-            checks: {
-                key: string;
-                label: string;
-                pass: boolean;
-                fixAction: string;
-            }[];
-            failures: {
-                key: string;
-                label: string;
-                fixAction: string;
-            }[];
-            credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
-            expectedTwilioWebhookUrls: {
-                inbound: string;
-                status: string;
-                method: string;
-            };
-            observedTwilioWebhook: {
-                voiceUrl: string | null;
-                statusCallback: string | null;
-                voiceMethod: string | null;
-                statusCallbackMethod: string | null;
-                sid: string;
-            } | null;
-        };
-        credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
-        updatedSecrets: Record<"shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "resendApiKey", boolean>;
         id: string;
         tenantId: string;
         createdAt: Date;
@@ -774,8 +764,6 @@ export declare class AgentsController {
         readiness?: undefined;
     }>;
     update(tenantId: string, userId: string, id: string, dto: UpdateAgentDto): Promise<{
-        updatedSecrets: Record<"shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "resendApiKey", boolean>;
-    } | {
         updatedSecrets: Record<"shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "resendApiKey", boolean>;
         id: string;
         tenantId: string;

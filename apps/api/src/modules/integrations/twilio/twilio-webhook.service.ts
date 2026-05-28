@@ -18,7 +18,7 @@ import { SessionContextService } from '../../calls/runtime/session-context.servi
 import { TranscriptBufferService } from '../../calls/runtime/transcript-buffer.service';
 import { ElevenLabsService } from '../elevenlabs/elevenlabs.service';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
-import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
+import { validatePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
 import { normalizeLanguageForTwilio } from '../../calls/runtime/language-intelligence.util';
 import { normalizePhoneNumber } from './utils/normalize-phone';
 import { PrismaService } from '../../../database/prisma.service';
@@ -130,6 +130,7 @@ const VOICE_DEFERRED_JOB_TIMEOUT_MS_MIN = 50_000;
 @Injectable()
 export class TwilioWebhookService implements OnModuleInit {
   private readonly logger = new Logger(TwilioWebhookService.name);
+  private readonly publicBaseUrl: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -148,7 +149,16 @@ export class TwilioWebhookService implements OnModuleInit {
     private readonly voiceCost: VoiceCostAnalyticsService,
     private readonly streamingSession: VoiceStreamingSessionService,
     private readonly elevenStreaming: ElevenLabsStreamingService,
-  ) {}
+  ) {
+    const validated = validatePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    if (!validated.ok) {
+      const reason = validated.reason ?? 'invalid';
+      throw new Error(
+        `Invalid PUBLIC_WEBHOOK_BASE_URL (${reason}). Set a public HTTPS origin (no localhost/ngrok/example/localtunnel).`,
+      );
+    }
+    this.publicBaseUrl = validated.normalized;
+  }
 
   onModuleInit(): void {
     const gatherDebug = this.isGatherHearingDebugMode();
@@ -165,6 +175,16 @@ export class TwilioWebhookService implements OnModuleInit {
         }),
       );
     }
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.public_base_url',
+        value: this.publicBaseUrl,
+      }),
+    );
+  }
+
+  private getPublicBaseUrl(): string {
+    return this.publicBaseUrl;
   }
 
   private isGatherHearingDebugMode(): boolean {
@@ -584,7 +604,7 @@ export class TwilioWebhookService implements OnModuleInit {
       );
     }
 
-    const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    const origin = this.getPublicBaseUrl();
 
     if (isMediaStreamInboundEnabled()) {
       const wsBase = origin.replace(/^http/i, 'wss');
@@ -688,6 +708,15 @@ export class TwilioWebhookService implements OnModuleInit {
       }),
     );
 
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.runtime.url_summary',
+        route: 'inbound',
+        publicBaseUrl: origin,
+        gatherActionUrl,
+        playAudioUrl: hearingDebugEffective ? null : (greetingPlaybackUrl ?? null),
+      }),
+    );
     const twiml = buildInboundGatherMvpTwiML({
       gatherActionUrl,
       language: hearingDebug ? 'en-US' : normalizeLanguageForTwilio(context.agent.language ?? 'en'),
@@ -950,7 +979,7 @@ export class TwilioWebhookService implements OnModuleInit {
         const seqA = await this.transcriptBuffer.getNextSequence(callSessionId);
         await this.transcriptBuffer.append(callSessionId, 'agent', finalMsg, seqA);
 
-        const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+        const origin = this.getPublicBaseUrl();
         const { playbackUrl: finalPlay } = await this.buildElevenLabsPlaybackUrl(origin, finalMsg, {
           callSessionId,
           tenantId: ctx.tenantId,
@@ -1025,7 +1054,7 @@ export class TwilioWebhookService implements OnModuleInit {
         }),
       );
 
-      const originEarly = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+      const originEarly = this.getPublicBaseUrl();
       const orderStateForAck =
         typeof metadata.orderState === 'string' && metadata.orderState.trim()
           ? metadata.orderState.trim()
@@ -1094,6 +1123,15 @@ export class TwilioWebhookService implements OnModuleInit {
           agent: ctx.agent,
           logLabel: 'gather_sync_social_final_fallback',
         });
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.runtime.url_summary',
+            route: 'gather_sync_social_reply',
+            publicBaseUrl: originEarly,
+            gatherActionUrl: gatherActionUrlSync,
+            playAudioUrl: mainPlay.playbackUrl ?? null,
+          }),
+        );
         const twimlSync = buildInboundGatherMvpTwiML({
           gatherActionUrl: gatherActionUrlSync,
           language: this.getSessionLanguage(ctx),
@@ -1179,6 +1217,15 @@ export class TwilioWebhookService implements OnModuleInit {
 
       const allowKickSayFallback =
         !strictElevenLabsOnly && (hearingDebugEffective || (!kickPhrase.playbackUrl && kickText.length > 0));
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.runtime.url_summary',
+          route: 'gather_deferred_kickoff',
+          publicBaseUrl: originEarly,
+          gatherActionUrl: deferPollUrl,
+          playAudioUrl: kickPhrase.playbackUrl ?? null,
+        }),
+      );
       const twimlKickoff = buildDeferredVoiceKickoffTwiML({
         deferPollUrl,
         instantPlaybackUrl: kickPhrase.playbackUrl,
@@ -1243,7 +1290,7 @@ export class TwilioWebhookService implements OnModuleInit {
       };
     }
 
-    const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    const origin = this.getPublicBaseUrl();
     const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(
       callSessionId,
     )}`;
@@ -1270,6 +1317,15 @@ export class TwilioWebhookService implements OnModuleInit {
       logLabel: 'gather_retry_final_fallback',
     });
 
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.runtime.url_summary',
+        route: 'gather',
+        publicBaseUrl: origin,
+        gatherActionUrl,
+        playAudioUrl: retryOpen.playbackUrl ?? null,
+      }),
+    );
     const twiml = buildInboundGatherMvpTwiML({
       gatherActionUrl,
       language: this.getSessionLanguage(ctx),
@@ -1360,7 +1416,7 @@ export class TwilioWebhookService implements OnModuleInit {
       callSessionId = session?.id ?? '';
     }
 
-    const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    const origin = this.getPublicBaseUrl();
     const deferPollUrl = `${origin}/api/twilio/voice/deferred-poll?callSessionId=${encodeURIComponent(
       callSessionId || 'missing',
     )}`;
@@ -1424,6 +1480,15 @@ export class TwilioWebhookService implements OnModuleInit {
         agent: ctx.agent,
         logLabel: 'deferred_poll_missing_fallback',
       });
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.runtime.url_summary',
+          route: 'deferred_poll_recover',
+          publicBaseUrl: origin,
+          gatherActionUrl,
+          playAudioUrl: missA.playbackUrl ?? null,
+        }),
+      );
       const twiml = buildInboundGatherMvpTwiML({
         gatherActionUrl,
         language: this.getSessionLanguage(ctx),
@@ -1472,6 +1537,15 @@ export class TwilioWebhookService implements OnModuleInit {
           agent: ctx.agent,
           logLabel: 'deferred_poll_timeout_fallback',
         });
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.runtime.url_summary',
+            route: 'deferred_poll_timeout',
+            publicBaseUrl: origin,
+            gatherActionUrl,
+            playAudioUrl: toA.playbackUrl ?? null,
+          }),
+        );
         const twiml = buildInboundGatherMvpTwiML({
           gatherActionUrl,
           language: this.getSessionLanguage(ctx),
@@ -1576,6 +1650,15 @@ export class TwilioWebhookService implements OnModuleInit {
         agent: ctx.agent,
         logLabel: 'deferred_poll_failed_fallback',
       });
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.runtime.url_summary',
+          route: 'deferred_poll_failed',
+          publicBaseUrl: origin,
+          gatherActionUrl,
+          playAudioUrl: failA.playbackUrl ?? null,
+        }),
+      );
       const twiml = buildInboundGatherMvpTwiML({
         gatherActionUrl,
         language: this.getSessionLanguage(ctx),
@@ -1603,6 +1686,15 @@ export class TwilioWebhookService implements OnModuleInit {
       agent: ctx.agent,
       logLabel: 'deferred_poll_ready_final_fallback',
     });
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.runtime.url_summary',
+        route: 'deferred_poll_ready',
+        publicBaseUrl: origin,
+        gatherActionUrl,
+        playAudioUrl: playbackAudioUrl ?? null,
+      }),
+    );
     const twiml = buildInboundGatherMvpTwiML({
       gatherActionUrl,
       language: this.getSessionLanguage(ctx),
@@ -1799,7 +1891,7 @@ export class TwilioWebhookService implements OnModuleInit {
         return;
       }
 
-      const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+      const origin = this.getPublicBaseUrl();
       const voiceOpts = {
         callSessionId,
         tenantId: ctx.tenantId,

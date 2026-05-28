@@ -11,6 +11,8 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var AgentsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentsService = exports.resolveCredentialPriority = void 0;
+exports.statusDtoToPrisma = statusDtoToPrisma;
+exports.isExplicitSecretClear = isExplicitSecretClear;
 const common_1 = require("@nestjs/common");
 const node_crypto_1 = require("node:crypto");
 const prisma_service_1 = require("../../database/prisma.service");
@@ -103,7 +105,34 @@ function normalizeEscalationRules(rules) {
     }
     return null;
 }
+function isExplicitSecretClear(value) {
+    return value === true;
+}
 let AgentsService = AgentsService_1 = class AgentsService {
+    logAgentStatusPersist(args) {
+        this.log.log(JSON.stringify({
+            event: 'agent.status.persist',
+            ...args,
+        }));
+    }
+    async verifyAgentStatusPersist(args) {
+        const verify = await this.prisma.agent.findFirst({
+            where: { id: args.agentId, tenantId: args.tenantId, deletedAt: null },
+            select: { status: true },
+        });
+        const dbStatus = verify?.status ?? null;
+        this.log.log(JSON.stringify({
+            event: 'agent.status.persist.verify',
+            agentId: args.agentId,
+            tenantId: args.tenantId,
+            requestedStatus: args.requestedStatus,
+            savedStatus: args.savedStatus,
+            dbStatus,
+        }));
+        if (args.savedStatus && dbStatus && args.savedStatus !== dbStatus) {
+            throw new common_1.InternalServerErrorException(`Agent status persistence mismatch: requested=${args.requestedStatus ?? 'null'} saved=${args.savedStatus} db=${dbStatus}`);
+        }
+    }
     constructor(prisma, encryption, config, shopifyTest, databaseTest, twilioTest, openaiTest, elevenlabsTest, productSyncQueue, agentEmailConfig, resendEmail, toolRegistry) {
         this.prisma = prisma;
         this.encryption = encryption;
@@ -149,20 +178,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
         };
     }
     isPublicHttpsBaseUrl(base) {
-        if (!base)
-            return false;
-        try {
-            const u = new URL(base);
-            const host = u.hostname.toLowerCase();
-            return (u.protocol === 'https:' &&
-                host !== 'localhost' &&
-                host !== '127.0.0.1' &&
-                host !== '0.0.0.0' &&
-                !host.endsWith('.local'));
-        }
-        catch {
-            return false;
-        }
+        return (0, public_webhook_base_url_1.validatePublicWebhookBaseUrl)(base).ok;
     }
     normalizeUrlStrict(url) {
         return (url ?? '').trim().replace(/\/+$/, '');
@@ -247,6 +263,24 @@ let AgentsService = AgentsService_1 = class AgentsService {
         (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'elevenlabs', credentialSources.elevenlabs.source, agentId);
         (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'twilio', credentialSources.twilio.authSource, agentId);
         (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'resend', credentialSources.resend.source, agentId);
+        (0, credential_resolver_util_1.logCredentialResolutionDebug)(this.log, {
+            provider: 'openai',
+            agentId,
+            useWorkspaceOpenai: credentialBundle.useWorkspaceOpenai,
+            hasAgentOpenAi: Boolean(credentialBundle.secrets.openaiApiKey?.trim()),
+            hasWorkspaceOpenAi: Boolean(credentialBundle.workspace?.openaiApiKey?.trim()),
+            resolvedSource: credentialSources.openai.source,
+        });
+        (0, credential_resolver_util_1.logCredentialResolutionDebug)(this.log, {
+            provider: 'twilio',
+            agentId,
+            useWorkspaceTwilio: credentialBundle.useWorkspaceTwilio,
+            hasAgentTwilio: Boolean(credentialBundle.secrets.twilioAccountSid?.trim() &&
+                credentialBundle.secrets.twilioAuthToken?.trim()),
+            hasWorkspaceTwilio: Boolean(credentialBundle.workspace?.twilioAccountSid?.trim() &&
+                credentialBundle.workspace?.twilioAuthToken?.trim()),
+            resolvedSource: credentialSources.twilio.authSource,
+        });
         const shopifyPolicyOk = credentialSources.shopify.configured &&
             !(credentialSources.shopify.source === 'workspace' && !credentialSources.shopify.useWorkspaceShopify);
         const shopify = await this.testShopifyConnection(tenantId, agentId);
@@ -536,11 +570,45 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 where: { id: agentId, tenantId, deletedAt: null },
                 data: { status: prisma_types_1.AgentStatus.PAUSED },
             });
+            const verify = await this.prisma.agent.findFirst({
+                where: { id: agentId, tenantId, deletedAt: null },
+                select: { status: true },
+            });
+            this.logAgentStatusPersist({
+                agentId,
+                tenantId,
+                requestedStatus: create_agent_dto_1.AgentStatusDto.ACTIVE,
+                savedStatus: verify?.status ?? null,
+                changedBy: actorUserId ?? null,
+            });
+            await this.verifyAgentStatusPersist({
+                tenantId,
+                agentId,
+                requestedStatus: create_agent_dto_1.AgentStatusDto.ACTIVE,
+                savedStatus: verify?.status ?? null,
+            });
             return { status: 'CONFIG_REQUIRED', ready: false, failures: readiness.failures, readiness };
         }
         await this.prisma.agent.updateMany({
             where: { id: agentId, tenantId, deletedAt: null },
             data: { status: prisma_types_1.AgentStatus.ACTIVE },
+        });
+        const verify = await this.prisma.agent.findFirst({
+            where: { id: agentId, tenantId, deletedAt: null },
+            select: { status: true },
+        });
+        this.logAgentStatusPersist({
+            agentId,
+            tenantId,
+            requestedStatus: create_agent_dto_1.AgentStatusDto.ACTIVE,
+            savedStatus: verify?.status ?? null,
+            changedBy: actorUserId ?? null,
+        });
+        await this.verifyAgentStatusPersist({
+            tenantId,
+            agentId,
+            requestedStatus: create_agent_dto_1.AgentStatusDto.ACTIVE,
+            savedStatus: verify?.status ?? null,
         });
         await this.prisma.auditLog.create({
             data: {
@@ -584,6 +652,23 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const updateResult = await this.prisma.agent.updateMany({
             where: { id: agentId, tenantId, deletedAt: null },
             data: { status: target },
+        });
+        const verify = await this.prisma.agent.findFirst({
+            where: { id: agentId, tenantId, deletedAt: null },
+            select: { status: true },
+        });
+        this.logAgentStatusPersist({
+            agentId,
+            tenantId,
+            requestedStatus: status,
+            savedStatus: verify?.status ?? null,
+            changedBy: actorUserId ?? null,
+        });
+        await this.verifyAgentStatusPersist({
+            tenantId,
+            agentId,
+            requestedStatus: status,
+            savedStatus: verify?.status ?? null,
         });
         if (updateResult.count === 0) {
             throw new common_1.NotFoundException('Agent not found.');
@@ -1424,11 +1509,6 @@ let AgentsService = AgentsService_1 = class AgentsService {
         await this.applyWorkspaceIntegrationFlagsOnly(tenantId, dto);
         const existing = await this.findOne(tenantId, id);
         const currentStatus = String(existing.status ?? '').toLowerCase();
-        if (dto.agentStatus === create_agent_dto_1.AgentStatusDto.ACTIVE && currentStatus !== create_agent_dto_1.AgentStatusDto.ACTIVE) {
-            const statusResult = await this.updateStatus(tenantId, id, create_agent_dto_1.AgentStatusDto.ACTIVE, actorUserId);
-            const emptySecrets = Object.fromEntries(SECRET_KEYS.map((key) => [key, false]));
-            return { ...statusResult.agent, updatedSecrets: emptySecrets };
-        }
         if (process.env.NODE_ENV === 'production') {
             const finalClientId = dto.clientId !== undefined ? dto.clientId?.trim() || '' : existing.clientId || '';
             const finalStoreId = dto.storeId !== undefined ? dto.storeId?.trim() || '' : existing.storeId || '';
@@ -1454,12 +1534,9 @@ let AgentsService = AgentsService_1 = class AgentsService {
         if (dto.twilioPhoneNumber !== undefined && dto.twilioPhoneNumber?.trim()) {
             await this.assertPhoneNotAssignedToOtherAgent(tenantId, id, (0, normalize_phone_1.normalizePhoneNumber)(dto.twilioPhoneNumber.trim()), this.prisma);
         }
-        const explicitClearOpenai = dto.clearOpenaiApiKey === true ||
-            (dto.openaiApiKey !== undefined && !String(dto.openaiApiKey ?? '').trim());
-        const explicitClearEleven = dto.clearElevenlabsApiKey === true ||
-            (dto.elevenlabsApiKey !== undefined && !String(dto.elevenlabsApiKey ?? '').trim());
-        const explicitClearResend = dto.clearResendApiKey === true ||
-            (dto.resendApiKey !== undefined && !String(dto.resendApiKey ?? '').trim());
+        const explicitClearOpenai = isExplicitSecretClear(dto.clearOpenaiApiKey);
+        const explicitClearEleven = isExplicitSecretClear(dto.clearElevenlabsApiKey);
+        const explicitClearResend = isExplicitSecretClear(dto.clearResendApiKey);
         const newSecrets = this.pickSecrets(dto);
         const updatedSecrets = Object.fromEntries(SECRET_KEYS.map((key) => [key, Object.prototype.hasOwnProperty.call(newSecrets, key)]));
         let secretsEnc = undefined;
@@ -1813,6 +1890,39 @@ let AgentsService = AgentsService_1 = class AgentsService {
             elevenLabsKeyTouched: dto.elevenlabsApiKey !== undefined,
             elevenLabsKeyCleared: explicitClearEleven,
         }));
+        this.log.log(JSON.stringify({
+            event: 'agent.update',
+            agentId: id,
+            incomingStatus: dto.agentStatus ?? null,
+            savedStatus: updated.status,
+        }));
+        if (dto.agentStatus !== undefined) {
+            const statusVerify = await this.prisma.agent.findFirst({
+                where: { id, tenantId, deletedAt: null },
+                select: { status: true },
+            });
+            this.logAgentStatusPersist({
+                agentId: id,
+                tenantId,
+                requestedStatus: dto.agentStatus,
+                savedStatus: statusVerify?.status ?? null,
+                changedBy: actorUserId ?? null,
+            });
+            await this.verifyAgentStatusPersist({
+                tenantId,
+                agentId: id,
+                requestedStatus: dto.agentStatus,
+                savedStatus: updated.status ?? null,
+            });
+        }
+        else {
+            await this.verifyAgentStatusPersist({
+                tenantId,
+                agentId: id,
+                requestedStatus: currentStatus || null,
+                savedStatus: updated.status ?? null,
+            });
+        }
         if (explicitClearOpenai) {
             console.log({ openaiKeyCleared: true, agentId: id, tenantId });
         }
@@ -2250,6 +2360,14 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId) {
             (0, credential_resolver_util_1.logCredentialResolution)(this.log, 'twilio', source, agentId);
+            (0, credential_resolver_util_1.logCredentialResolutionDebug)(this.log, {
+                provider: 'twilio',
+                agentId,
+                useWorkspaceTwilio: dto?.useWorkspaceDefaults === true,
+                hasAgentTwilio: Boolean(dto?.twilioAccountSid?.trim() && dto?.twilioAuthToken?.trim()),
+                hasWorkspaceTwilio: Boolean(workspace?.twilioAccountSid?.trim() && workspace?.twilioAuthToken?.trim()),
+                resolvedSource: source,
+            });
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
                 data: { twilioConnectionStatus: status, lastConnectionTestAt: new Date() },
@@ -2297,6 +2415,14 @@ let AgentsService = AgentsService_1 = class AgentsService {
         const result = await this.openaiTest.testConnection({ openaiApiKey: resolved.value });
         const status = result.success ? prisma_types_1.ConnectionStatus.OK : prisma_types_1.ConnectionStatus.FAILED;
         if (agentId) {
+            (0, credential_resolver_util_1.logCredentialResolutionDebug)(this.log, {
+                provider: 'openai',
+                agentId,
+                useWorkspaceOpenai: dto?.useWorkspaceDefaults === true,
+                hasAgentOpenAi: Boolean(dto?.openaiApiKey?.trim()),
+                hasWorkspaceOpenAi: Boolean(workspace?.openaiApiKey?.trim()),
+                resolvedSource: resolved.source,
+            });
             await this.prisma.agent.updateMany({
                 where: { id: agentId, tenantId, deletedAt: null },
                 data: { openaiConnectionStatus: status, lastConnectionTestAt: new Date() },
@@ -2646,6 +2772,49 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 name: t.name,
                 permissionGroups: t.permissionGroups,
             })),
+        };
+    }
+    async getPersistenceDiagnostics(tenantId, agentId) {
+        const [agent, workspace, readiness] = await Promise.all([
+            this.prisma.agent.findFirst({
+                where: { id: agentId, tenantId, deletedAt: null },
+                select: { id: true, status: true, twilioPhoneNumber: true },
+            }),
+            this.prisma.tenantIntegration.findUnique({
+                where: { tenantId },
+                select: {
+                    id: true,
+                    twilioAccountSid: true,
+                    twilioAuthTokenEnc: true,
+                    openaiApiKeyEnc: true,
+                    resendApiKeyEnc: true,
+                    shopifyShopDomain: true,
+                },
+            }),
+            this.getAgentReadiness(tenantId, agentId),
+        ]);
+        if (!agent)
+            throw new common_1.NotFoundException('Agent not found.');
+        return {
+            dbConnected: true,
+            tenantId,
+            workspaceId: workspace?.id ?? null,
+            agentId: agent.id,
+            agentStatusFromDb: agent.status,
+            mappedPhoneNumber: agent.twilioPhoneNumber ?? null,
+            workspaceSaved: {
+                twilio: Boolean(workspace?.twilioAccountSid && workspace?.twilioAuthTokenEnc),
+                openai: Boolean(workspace?.openaiApiKeyEnc),
+                resend: Boolean(workspace?.resendApiKeyEnc),
+            },
+            shopifySource: readiness.credentialSources?.shopify.source ?? 'missing',
+            runtimeCredentialSource: {
+                shopify: readiness.credentialSources?.shopify.source ?? 'missing',
+                twilio: readiness.credentialSources?.twilio.authSource ?? 'missing',
+                openai: readiness.credentialSources?.openai.source ?? 'missing',
+                elevenlabs: readiness.credentialSources?.elevenlabs.source ?? 'missing',
+                resend: readiness.credentialSources?.resend.source ?? 'missing',
+            },
         };
     }
 };

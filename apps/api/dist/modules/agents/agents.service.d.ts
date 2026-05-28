@@ -1,7 +1,7 @@
 import { PrismaService } from '../../database/prisma.service';
 import { EncryptionService } from '../../common/encryption.service';
 import { Prisma } from '@prisma/client';
-import { ConnectionStatus } from '../../database/prisma.types';
+import { AgentStatus, ConnectionStatus } from '../../database/prisma.types';
 import { CreateAgentDto, AgentStatusDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { ShopifyConnectionTestService } from './connection-test/shopify-connection-test.service';
@@ -19,6 +19,8 @@ import { RuntimeToolRegistryService } from '../tools/runtime-tool-registry.servi
 import type { VoicePersonalityTraits } from '@bookstore-voice-agents/types';
 import { resolveCredentialPriority, type CredentialSource } from '../../common/credential-priority.util';
 export { resolveCredentialPriority };
+export declare function statusDtoToPrisma(s?: AgentStatusDto): AgentStatus;
+export declare function isExplicitSecretClear(value: unknown): boolean;
 export declare class AgentsService {
     private readonly prisma;
     private readonly encryption;
@@ -33,6 +35,8 @@ export declare class AgentsService {
     private readonly resendEmail;
     private readonly toolRegistry;
     private readonly log;
+    private logAgentStatusPersist;
+    private verifyAgentStatusPersist;
     constructor(prisma: PrismaService, encryption: EncryptionService, config: ConfigService, shopifyTest: ShopifyConnectionTestService, databaseTest: DatabaseConnectionTestService, twilioTest: TwilioConnectionTestService, openaiTest: OpenAIConnectionTestService, elevenlabsTest: ElevenLabsConnectionTestService, productSyncQueue: ShopifyProductSyncQueueService, agentEmailConfig: AgentEmailConfigService, resendEmail: ResendEmailService, toolRegistry: RuntimeToolRegistryService);
     private resolveToolsFromDto;
     private buildVoiceProviderConfig;
@@ -70,37 +74,6 @@ export declare class AgentsService {
         } | null;
     }>;
     patchCredentials(tenantId: string, agentId: string, body: Record<string, unknown>, actorUserId?: string): Promise<{
-        readiness: {
-            ready: boolean;
-            status: string;
-            checks: {
-                key: string;
-                label: string;
-                pass: boolean;
-                fixAction: string;
-            }[];
-            failures: {
-                key: string;
-                label: string;
-                fixAction: string;
-            }[];
-            credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
-            expectedTwilioWebhookUrls: {
-                inbound: string;
-                status: string;
-                method: string;
-            };
-            observedTwilioWebhook: {
-                voiceUrl: string | null;
-                statusCallback: string | null;
-                voiceMethod: string | null;
-                statusCallbackMethod: string | null;
-                sid: string;
-            } | null;
-        };
-        credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
-        updatedSecrets: Record<"shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "resendApiKey", boolean>;
-    } | {
         readiness: {
             ready: boolean;
             status: string;
@@ -726,8 +699,6 @@ export declare class AgentsService {
     }>;
     update(tenantId: string, id: string, dto: UpdateAgentDto, actorUserId?: string): Promise<{
         updatedSecrets: Record<"shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "resendApiKey", boolean>;
-    } | {
-        updatedSecrets: Record<"shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "resendApiKey", boolean>;
         id: string;
         tenantId: string;
         createdAt: Date;
@@ -1035,5 +1006,26 @@ export declare class AgentsService {
             name: string;
             permissionGroups: (keyof import("@bookstore-voice-agents/types").AgentToolPermissions)[];
         }[];
+    }>;
+    getPersistenceDiagnostics(tenantId: string, agentId: string): Promise<{
+        dbConnected: boolean;
+        tenantId: string;
+        workspaceId: string | null;
+        agentId: string;
+        agentStatusFromDb: import("@prisma/client").$Enums.AgentStatus;
+        mappedPhoneNumber: string | null;
+        workspaceSaved: {
+            twilio: boolean;
+            openai: boolean;
+            resend: boolean;
+        };
+        shopifySource: CredentialSource;
+        runtimeCredentialSource: {
+            shopify: CredentialSource;
+            twilio: CredentialSource;
+            openai: CredentialSource;
+            elevenlabs: CredentialSource;
+            resend: CredentialSource;
+        };
     }>;
 }

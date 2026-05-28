@@ -5,6 +5,7 @@ exports.parseEnv = parseEnv;
 exports.validateProductionEnv = validateProductionEnv;
 exports.assertProductionEnvOrExit = assertProductionEnvOrExit;
 const zod_1 = require("zod");
+const public_webhook_base_url_1 = require("./public-webhook-base-url");
 function optionalNonEmptyString(minLen) {
     return zod_1.z.preprocess((val) => (typeof val === 'string' && val.trim() === '' ? undefined : val), zod_1.z.string().min(minLen).optional());
 }
@@ -55,6 +56,12 @@ function validateProductionEnv() {
         }
         if (!process.env.PUBLIC_WEBHOOK_BASE_URL?.trim()) {
             missing.push('PUBLIC_WEBHOOK_BASE_URL');
+        }
+        else {
+            const webhookBase = (0, public_webhook_base_url_1.validatePublicWebhookBaseUrl)(process.env.PUBLIC_WEBHOOK_BASE_URL);
+            if (!webhookBase.ok) {
+                missing.push(`PUBLIC_WEBHOOK_BASE_URL invalid (${webhookBase.reason ?? 'invalid'}) - use public HTTPS domain (no localhost/ngrok/example/localtunnel)`);
+            }
         }
         if (process.env.VALIDATE_TWILIO_SIGNATURES !== 'false' &&
             process.env.ALLOW_PROVIDER_ENV_FALLBACK === 'true' &&

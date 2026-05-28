@@ -69,8 +69,9 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
         const envFallback = (0, provider_env_fallback_util_1.allowProviderEnvFallback)();
         const hasTwilioAuthToken = Boolean((this.config.get('TWILIO_AUTH_TOKEN') ?? '').trim()) || !envFallback;
         const hasElevenLabsApiKey = Boolean((this.config.get('ELEVENLABS_API_KEY') ?? '').trim()) || !envFallback;
+        const webhookBaseValidation = (0, public_webhook_base_url_1.validatePublicWebhookBaseUrl)(baseUrlRaw);
         const hasPublicWebhookBaseUrl = Boolean(baseUrl);
-        const isPublicHttps = /^https:\/\//i.test(baseUrl) && !/localhost|127\.0\.0\.1/i.test(baseUrl);
+        const isPublicHttps = webhookBaseValidation.ok;
         const requiredChecks = {
             publicWebhookBaseUrlSet: hasPublicWebhookBaseUrl,
             publicWebhookBaseUrlPublicHttps: isPublicHttps,
@@ -80,8 +81,9 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
         const missing = [];
         if (!requiredChecks.publicWebhookBaseUrlSet)
             missing.push('PUBLIC_WEBHOOK_BASE_URL');
-        if (!requiredChecks.publicWebhookBaseUrlPublicHttps)
-            missing.push('PUBLIC_WEBHOOK_BASE_URL must be public HTTPS (not localhost)');
+        if (!requiredChecks.publicWebhookBaseUrlPublicHttps) {
+            missing.push(`PUBLIC_WEBHOOK_BASE_URL must be public HTTPS (no localhost/ngrok/example/localtunnel). reason=${webhookBaseValidation.reason ?? 'invalid'}`);
+        }
         if (validateSignatures &&
             envFallback &&
             !Boolean((this.config.get('TWILIO_AUTH_TOKEN') ?? '').trim())) {

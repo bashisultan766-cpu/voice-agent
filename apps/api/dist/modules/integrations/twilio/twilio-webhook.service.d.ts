@@ -63,14 +63,18 @@ export declare class TwilioWebhookService implements OnModuleInit {
     private readonly streamingSession;
     private readonly elevenStreaming;
     private readonly logger;
+    private readonly publicBaseUrl;
     constructor(config: ConfigService, agentResolution: AgentResolutionService, callsService: CallsService, callEvents: CallEventsService, voiceRuntime: VoiceRuntimeService, sessionContext: SessionContextService, transcriptBuffer: TranscriptBufferService, elevenLabs: ElevenLabsService, ttsCache: TwilioTtsCacheService, voicePromptAudio: VoicePromptAudioService, prisma: PrismaService, encryption: EncryptionService, streamMetrics: VoiceStreamMetricsService, voiceCost: VoiceCostAnalyticsService, streamingSession: VoiceStreamingSessionService, elevenStreaming: ElevenLabsStreamingService);
     onModuleInit(): void;
+    private getPublicBaseUrl;
     private isGatherHearingDebugMode;
     private isForceElevenLabsOnly;
     private isStrictElevenLabsOnly;
     private resolveGatherHearingDebugEffective;
     private resolveShortPhrasePlayUrl;
     private loadAgentWorkspaceFlags;
+    private decryptAgentSecrets;
+    private getWorkspaceIntegrationSlice;
     private auditOpenAiKeyForGather;
     private getSessionLanguage;
     handleInboundVoice(payload: InboundCallPayload): Promise<InboundWebhookResult>;

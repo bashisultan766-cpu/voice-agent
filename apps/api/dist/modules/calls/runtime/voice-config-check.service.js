@@ -112,8 +112,7 @@ let VoiceConfigCheckService = class VoiceConfigCheckService {
         if (normalizedTwilio && !twilioNumberMapped) {
             warnings.push('twilio_number_on_agent_not_found_in_phone_number_mapping');
         }
-        const origin = (0, public_webhook_base_url_1.normalizePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL'));
-        const publicWebhookBaseUrlValid = /^https:\/\//i.test(origin);
+        const publicWebhookBaseUrlValid = (0, public_webhook_base_url_1.validatePublicWebhookBaseUrl)(this.config.get('PUBLIC_WEBHOOK_BASE_URL')).ok;
         if (!publicWebhookBaseUrlValid) {
             warnings.push('public_webhook_base_url_must_be_https_for_elevenlabs_playback');
         }

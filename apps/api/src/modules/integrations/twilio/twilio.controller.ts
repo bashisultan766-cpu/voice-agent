@@ -28,7 +28,7 @@ import { allowProviderEnvFallback } from '../../../common/provider-env-fallback.
 import { TenantId } from '../../../common/decorators/tenant-id.decorator';
 import { AgentsService } from '../../agents/agents.service';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
-import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
+import { normalizePublicWebhookBaseUrl, validatePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
 import { buildFallbackTwiML } from './twiml/conversation-relay.twiml';
 import { computeGatherSpeechGate } from './gather-speech-gate.util';
 
@@ -82,8 +82,9 @@ export class TwilioVoiceController {
       Boolean((this.config.get<string>('TWILIO_AUTH_TOKEN') ?? '').trim()) || !envFallback;
     const hasElevenLabsApiKey =
       Boolean((this.config.get<string>('ELEVENLABS_API_KEY') ?? '').trim()) || !envFallback;
+    const webhookBaseValidation = validatePublicWebhookBaseUrl(baseUrlRaw);
     const hasPublicWebhookBaseUrl = Boolean(baseUrl);
-    const isPublicHttps = /^https:\/\//i.test(baseUrl) && !/localhost|127\.0\.0\.1/i.test(baseUrl);
+    const isPublicHttps = webhookBaseValidation.ok;
 
     const requiredChecks = {
       publicWebhookBaseUrlSet: hasPublicWebhookBaseUrl,
@@ -94,7 +95,11 @@ export class TwilioVoiceController {
 
     const missing: string[] = [];
     if (!requiredChecks.publicWebhookBaseUrlSet) missing.push('PUBLIC_WEBHOOK_BASE_URL');
-    if (!requiredChecks.publicWebhookBaseUrlPublicHttps) missing.push('PUBLIC_WEBHOOK_BASE_URL must be public HTTPS (not localhost)');
+    if (!requiredChecks.publicWebhookBaseUrlPublicHttps) {
+      missing.push(
+        `PUBLIC_WEBHOOK_BASE_URL must be public HTTPS (no localhost/ngrok/example/localtunnel). reason=${webhookBaseValidation.reason ?? 'invalid'}`,
+      );
+    }
     if (
       validateSignatures &&
       envFallback &&

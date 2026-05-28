@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
-import { normalizePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
+import { validatePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
 import { normalizePhoneNumber } from '../../integrations/twilio/utils/normalize-phone';
 import {
   openAiKeyLayerPresence,
@@ -146,8 +146,9 @@ export class VoiceConfigCheckService {
       warnings.push('twilio_number_on_agent_not_found_in_phone_number_mapping');
     }
 
-    const origin = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
-    const publicWebhookBaseUrlValid = /^https:\/\//i.test(origin);
+    const publicWebhookBaseUrlValid = validatePublicWebhookBaseUrl(
+      this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'),
+    ).ok;
 
     if (!publicWebhookBaseUrlValid) {
       warnings.push('public_webhook_base_url_must_be_https_for_elevenlabs_playback');

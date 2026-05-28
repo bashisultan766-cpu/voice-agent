@@ -10,7 +10,7 @@ import { OpenAIConnectionTestService } from '../agents/connection-test/openai-co
 import { ElevenLabsConnectionTestService } from '../agents/connection-test/elevenlabs-connection-test.service';
 import { normalizeShopifyDomain, normalizePhoneNumber } from '@bookstore-voice-agents/types';
 import { formatResendFromAddress, parseResendApiErrorMessage } from './resend-api.util';
-import { normalizePublicWebhookBaseUrl } from '../../common/public-webhook-base-url';
+import { validatePublicWebhookBaseUrl } from '../../common/public-webhook-base-url';
 
 function last4(value: string | null | undefined): string | null {
   const s = value?.trim();
@@ -759,10 +759,13 @@ export class TenantIntegrationsService {
     if (!authToken) {
       throw new BadRequestException('Could not read saved Twilio auth token. Re-save credentials.');
     }
-    const baseUrl = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
-    if (!/^https:\/\//i.test(baseUrl)) {
-      throw new BadRequestException('PUBLIC_WEBHOOK_BASE_URL must be a public HTTPS URL.');
+    const baseUrlValidation = validatePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    if (!baseUrlValidation.ok) {
+      throw new BadRequestException(
+        `PUBLIC_WEBHOOK_BASE_URL must be a public HTTPS URL (no localhost/ngrok/example/localtunnel). reason=${baseUrlValidation.reason ?? 'invalid'}.`,
+      );
     }
+    const baseUrl = baseUrlValidation.normalized;
     const inboundUrl = `${baseUrl}/api/twilio/voice/inbound`;
     const statusUrl = `${baseUrl}/api/twilio/voice/status`;
     let incomingPhoneSid = row.twilioPhoneSid?.trim() ?? '';

@@ -75,7 +75,7 @@ export declare class TenantIntegrationsController {
     }>;
     saveShopify(tenantId: string, body: ShopifySaveBodyDto): Promise<{
         ok: boolean;
-        storeId: any;
+        storeId: string;
         shopDomain: string;
     }>;
     testTwilio(tenantId: string, body: z.infer<typeof twilioTestBodySchema>): Promise<{

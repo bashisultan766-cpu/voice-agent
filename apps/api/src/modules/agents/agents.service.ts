@@ -31,7 +31,7 @@ import { toCheckoutModeApi } from '@bookstore-voice-agents/types';
 import { normalizeShopifyDomain } from '@bookstore-voice-agents/types';
 import { assertProductionOwnershipRequired, assertTenantOwnership } from './ownership-linkage';
 import { ConfigService } from '@nestjs/config';
-import { normalizePublicWebhookBaseUrl } from '../../common/public-webhook-base-url';
+import { normalizePublicWebhookBaseUrl, validatePublicWebhookBaseUrl } from '../../common/public-webhook-base-url';
 import {
   buildAgentRuntimePrompt,
   buildEnterpriseRuntimePromptLayers,
@@ -255,20 +255,7 @@ export class AgentsService {
   }
 
   private isPublicHttpsBaseUrl(base: string): boolean {
-    if (!base) return false;
-    try {
-      const u = new URL(base);
-      const host = u.hostname.toLowerCase();
-      return (
-        u.protocol === 'https:' &&
-        host !== 'localhost' &&
-        host !== '127.0.0.1' &&
-        host !== '0.0.0.0' &&
-        !host.endsWith('.local')
-      );
-    } catch {
-      return false;
-    }
+    return validatePublicWebhookBaseUrl(base).ok;
   }
 
   private normalizeUrlStrict(url: string | null | undefined): string {

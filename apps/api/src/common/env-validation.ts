@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { validatePublicWebhookBaseUrl } from './public-webhook-base-url';
 
 /** Treat unset or blank .env values as missing (common in local templates). */
 function optionalNonEmptyString(minLen: number) {
@@ -68,6 +69,13 @@ export function validateProductionEnv(): { ok: boolean; missing: string[] } {
     }
     if (!process.env.PUBLIC_WEBHOOK_BASE_URL?.trim()) {
       missing.push('PUBLIC_WEBHOOK_BASE_URL');
+    } else {
+      const webhookBase = validatePublicWebhookBaseUrl(process.env.PUBLIC_WEBHOOK_BASE_URL);
+      if (!webhookBase.ok) {
+        missing.push(
+          `PUBLIC_WEBHOOK_BASE_URL invalid (${webhookBase.reason ?? 'invalid'}) - use public HTTPS domain (no localhost/ngrok/example/localtunnel)`,
+        );
+      }
     }
     if (
       process.env.VALIDATE_TWILIO_SIGNATURES !== 'false' &&
