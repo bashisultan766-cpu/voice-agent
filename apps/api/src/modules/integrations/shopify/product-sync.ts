@@ -25,10 +25,14 @@ const REPAIR_VARIANT_BY_ID_QUERY = `
       id
       title
       sku
-      price
-      compareAtPrice
-      priceV2 { amount }
-      compareAtPriceV2 { amount }
+      price {
+        amount
+        currencyCode
+      }
+      compareAtPrice {
+        amount
+        currencyCode
+      }
       inventoryQuantity
       availableForSale
       product {
@@ -62,21 +66,25 @@ const REPAIR_PRODUCT_BY_ID_QUERY = `
   }
 `;
 
+function variantMoneyAmount(
+  field: unknown,
+  legacyV2: unknown,
+): string | null {
+  const money = field as { amount?: string } | string | number | null | undefined;
+  const priceAmount =
+    money != null && typeof money === 'object' && money.amount != null
+      ? String(money.amount)
+      : typeof money === 'string' || typeof money === 'number'
+        ? String(money)
+        : null;
+  const legacy = legacyV2 as { amount?: string } | undefined;
+  const legacyAmount = legacy?.amount != null ? String(legacy.amount) : null;
+  return priceAmount ?? legacyAmount;
+}
+
 function variantPriceStrings(variant: Record<string, unknown>): { price: string | null; compareAtPrice: string | null } {
-  const pv2 = variant.priceV2 as { amount?: string } | undefined;
-  const cv2 = variant.compareAtPriceV2 as { amount?: string } | undefined;
-  const price =
-    pv2?.amount != null
-      ? String(pv2.amount)
-      : variant.price != null
-        ? String(variant.price)
-        : null;
-  const compareAtPrice =
-    cv2?.amount != null
-      ? String(cv2.amount)
-      : variant.compareAtPrice != null
-        ? String(variant.compareAtPrice)
-        : null;
+  const price = variantMoneyAmount(variant.price, variant.priceV2);
+  const compareAtPrice = variantMoneyAmount(variant.compareAtPrice, variant.compareAtPriceV2);
   return { price, compareAtPrice };
 }
 
@@ -137,13 +145,13 @@ export class ShopifyProductSyncService {
               id
               title
               sku
-              price
-              compareAtPrice
-              priceV2 {
+              price {
                 amount
+                currencyCode
               }
-              compareAtPriceV2 {
+              compareAtPrice {
                 amount
+                currencyCode
               }
               inventoryQuantity
               availableForSale
@@ -399,10 +407,14 @@ export class ShopifyProductSyncService {
                     id
                     title
                     sku
-                    price
-                    compareAtPrice
-                    priceV2 { amount }
-                    compareAtPriceV2 { amount }
+                    price {
+                      amount
+                      currencyCode
+                    }
+                    compareAtPrice {
+                      amount
+                      currencyCode
+                    }
                     inventoryQuantity
                     availableForSale
                   }
