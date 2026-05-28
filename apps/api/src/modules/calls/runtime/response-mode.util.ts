@@ -21,7 +21,13 @@ export function decideResponseMode(args: {
 
   if (pay != null) return 'template';
 
-  if (ve != null && ve.valid === false) return 'template';
+  if (
+    ve != null &&
+    ve.valid === false &&
+    (args.state === 'EMAIL_COLLECTING' || args.state === 'EMAIL_CONFIRMING' || args.state === 'EMAIL_COLLECTION')
+  ) {
+    return 'template';
+  }
 
   if (sp?.ok === false && sp.errorCode === 'SHOPIFY_SEARCH_FAILED') return 'template';
 

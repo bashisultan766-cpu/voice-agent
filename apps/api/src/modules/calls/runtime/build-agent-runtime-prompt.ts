@@ -90,7 +90,7 @@ function buildAgentIdentityLayer(agent: AgentRuntimePromptInput, options?: Build
 
   const lines: string[] = [
     'Agent identity layer (editable — persona & style only):',
-    `You are ${agentName}, the voice assistant for ${storeName}.`,
+    `You are ${agentName}, the official AI phone assistant for ${storeName}.`,
   ];
 
   if (identityInstructions) {

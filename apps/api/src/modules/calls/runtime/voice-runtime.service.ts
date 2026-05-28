@@ -557,11 +557,14 @@ export class VoiceRuntimeService {
     const sp = trace?.searchProducts;
     if (
       sp &&
-      (args.orderStateAfter === 'PRODUCT_DISCOVERY' || args.orderStateBefore === 'PRODUCT_DISCOVERY')
+      (args.orderStateAfter === 'PRODUCT_SEARCH' ||
+        args.orderStateBefore === 'PRODUCT_SEARCH' ||
+        args.orderStateAfter === 'PRODUCT_DISCOVERY' ||
+        args.orderStateBefore === 'PRODUCT_DISCOVERY')
     ) {
       if (sp.ok && sp.found && !sp.requiresClarification && sp.title) {
         const r = buildProfessionalResponse({
-          state: 'PRODUCT_DISCOVERY',
+          state: 'PRODUCT_SEARCH',
           product: { title: sp.title, price: sp.price ?? null },
           email: null,
           found: true,
@@ -589,7 +592,12 @@ export class VoiceRuntimeService {
         };
       }
     }
-    if (trace?.validateEmail?.valid === false) {
+    if (
+      trace?.validateEmail?.valid === false &&
+      (args.orderStateAfter === 'EMAIL_COLLECTING' ||
+        args.orderStateAfter === 'EMAIL_CONFIRMING' ||
+        args.orderStateAfter === 'EMAIL_COLLECTION')
+    ) {
       return {
         text: 'Hmm, that does not sound like a complete email—could you give it to me one more time?',
         templateKey: 'invalid_email',
@@ -977,6 +985,15 @@ export class VoiceRuntimeService {
       ...(cls.extracted?.quantity != null ? { quantity: cls.extracted.quantity } : {}),
       ...(cls.extracted?.email ? { lastProvidedEmail: cls.extracted.email } : {}),
     });
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.checkout.state',
+        callSessionId,
+        fromState: beforeState,
+        toState: update.nextState,
+        orderIntent: cls.intent,
+      }),
+    );
     if (update.stateInterrupted) {
       this.logger.log(
         JSON.stringify({
@@ -1003,9 +1020,9 @@ export class VoiceRuntimeService {
 
     if (
       userIntent === 'purchase_confirmation' &&
-      (beforeState === 'IDLE' || beforeState === 'PRODUCT_DISCOVERY')
+      (beforeState === 'IDLE' || beforeState === 'PRODUCT_DISCOVERY' || beforeState === 'PRODUCT_SEARCH')
     ) {
-      await this.callsService.mergeSessionMetadata(callSessionId, { orderState: 'EMAIL_COLLECTION' });
+      await this.callsService.mergeSessionMetadata(callSessionId, { orderState: 'PRODUCT_CONFIRMED' });
       await this.conversationAnalytics.recordCheckoutAttempt(ctx.tenantId, callSessionId);
     }
 

@@ -49,6 +49,7 @@ import {
   type RecommendableProduct,
 } from './product-recommendation.util';
 import { classifyConversationalObjection } from './objection-patterns.util';
+import { normalizeSpokenEmail } from './email-normalization.util';
 
 const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
 
@@ -66,8 +67,13 @@ export class ToolOrchestratorService {
   private readonly logger = new Logger(ToolOrchestratorService.name);
   private static readonly ORDER_STATE_SEQUENCE: OrderState[] = [
     'IDLE',
-    'PRODUCT_DISCOVERY',
-    'EMAIL_COLLECTION',
+    'PRODUCT_SEARCH',
+    'PRODUCT_CONFIRMED',
+    'QUANTITY_COLLECTED',
+    'EMAIL_COLLECTING',
+    'EMAIL_CONFIRMING',
+    'PAYMENT_LINK_CREATING',
+    'PAYMENT_LINK_SENT',
     'DONE',
   ];
 
@@ -257,7 +263,7 @@ export class ToolOrchestratorService {
   }
 
   private normalizeEmail(email: string): string {
-    return email.trim().toLowerCase();
+    return normalizeSpokenEmail(email);
   }
 
   private async getSessionMetadata(callSessionId: string): Promise<Record<string, unknown>> {
@@ -552,11 +558,12 @@ export class ToolOrchestratorService {
         };
       }
       case 'validateEmail': {
-        const email = this.normalizeEmail(this.getStringArg(input, 'email'));
+        const emailInput = this.getStringArg(input, 'email');
+        const email = this.normalizeEmail(emailInput);
         const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         const metadata = await this.getSessionMetadata(callSessionId);
         const currentState = normalizeOrderState(metadata.orderState);
-        if (ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf(currentState) < ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf('PRODUCT_DISCOVERY')) {
+        if (currentState !== 'EMAIL_COLLECTING' && currentState !== 'EMAIL_CONFIRMING') {
           await this.updateOrderStateMetadata(callSessionId, {
             orderState: currentState,
           });
@@ -566,7 +573,7 @@ export class ToolOrchestratorService {
               valid: false,
               normalizedEmail: null,
               retryCount: Number(metadata.emailRetryCount ?? 0),
-              voiceSummary: 'Which book are we buying—title or ISBN?',
+              voiceSummary: 'Let us continue with the book details first, then I will collect your email.',
             },
             meta: { source: 'system' },
           };
@@ -576,8 +583,17 @@ export class ToolOrchestratorService {
         await this.updateOrderStateMetadata(callSessionId, {
           normalizedEmail: isValid ? email : '',
           emailRetryCount: nextRetries,
-          orderState: 'EMAIL_COLLECTION',
+          orderState: isValid ? 'EMAIL_CONFIRMING' : 'EMAIL_COLLECTING',
         });
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.email.normalized',
+            callSessionId,
+            originalPreview: emailInput.slice(0, 80),
+            normalizedPreview: email.slice(0, 80),
+            valid: isValid,
+          }),
+        );
         return {
           ok: true,
           data: {
@@ -585,7 +601,7 @@ export class ToolOrchestratorService {
             normalizedEmail: isValid ? email : null,
             retryCount: nextRetries,
             voiceSummary: isValid
-              ? `Thanks, I have a valid email: ${email}.`
+              ? `I heard ${email}. Is that correct?`
               : nextRetries >= 2
                 ? 'That email still looks invalid. Please say it clearly one final time so I can send your payment link.'
                 : 'That email format does not look valid. Please spell it again slowly.',
@@ -651,7 +667,7 @@ export class ToolOrchestratorService {
           }),
         );
         await this.updateOrderStateMetadata(callSessionId, {
-          orderState: 'PRODUCT_DISCOVERY',
+          orderState: 'PRODUCT_SEARCH',
           productMatchConfidence: confidence,
           productMatchName: items[0]?.title ?? '',
         });
@@ -947,7 +963,7 @@ export class ToolOrchestratorService {
           };
         }
         await this.updateOrderStateMetadata(callSessionId, {
-          orderState: 'EMAIL_COLLECTION',
+          orderState: 'PAYMENT_LINK_CREATING',
           normalizedEmail: this.normalizeEmail(email),
           paymentLink: checkout.checkoutUrl,
         });
@@ -1008,7 +1024,7 @@ export class ToolOrchestratorService {
           };
         }
         await this.updateOrderStateMetadata(callSessionId, {
-          orderState: 'EMAIL_COLLECTION',
+          orderState: 'PAYMENT_LINK_CREATING',
           normalizedEmail: this.normalizeEmail(email),
           paymentLink: checkout.checkoutUrl,
         });
@@ -1027,7 +1043,7 @@ export class ToolOrchestratorService {
       case 'createCheckoutLink': {
         const metadata = await this.getSessionMetadata(callSessionId);
         const currentState = normalizeOrderState(metadata.orderState);
-        if (ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf(currentState) < ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf('PRODUCT_DISCOVERY')) {
+        if (ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf(currentState) < ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf('PRODUCT_SEARCH')) {
           return {
             ok: false,
             error: { code: 'PRECONDITION_FAILED', message: 'Product is required before payment link generation.', retryable: true },
@@ -1111,10 +1127,18 @@ export class ToolOrchestratorService {
           }),
         );
         await this.updateOrderStateMetadata(callSessionId, {
-          orderState: 'EMAIL_COLLECTION',
+          orderState: 'PAYMENT_LINK_CREATING',
           normalizedEmail: this.normalizeEmail(email),
           paymentLink: link.checkoutUrl,
         });
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.payment_link.created',
+            callSessionId,
+            checkoutLinkId: link.id,
+            mode: link.mode,
+          }),
+        );
         return {
           ok: true,
           data: {
@@ -1137,6 +1161,22 @@ export class ToolOrchestratorService {
         const checkoutLinkId = checkoutLinkIdInput;
         if (!email || !checkoutLinkId) {
           return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need email and checkoutLinkId to send payment email.', retryable: true } };
+        }
+        const state = normalizeOrderState(metadata.orderState);
+        const emailConfirmed = metadata.emailConfirmationState === 'confirmed';
+        if (state !== 'PAYMENT_LINK_CREATING' || !emailConfirmed) {
+          return {
+            ok: false,
+            error: {
+              code: 'PRECONDITION_FAILED',
+              message: 'Payment link email requires confirmed email and checkout-ready state.',
+              retryable: true,
+            },
+            data: {
+              voiceSummary:
+                'Before I send the secure link, please confirm your email first.',
+            },
+          };
         }
         const link = await this.prisma.checkoutLink.findFirst({
           where: { id: checkoutLinkId, tenantId: ctx.tenantId, agentId: ctx.agentId },
@@ -1266,8 +1306,16 @@ export class ToolOrchestratorService {
           }),
         );
         await this.updateOrderStateMetadata(callSessionId, {
-          orderState: 'DONE',
+          orderState: 'PAYMENT_LINK_SENT',
         });
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.payment_email.sent',
+            callSessionId,
+            checkoutLinkId: link.id,
+            deduplicated: sendResult.deduplicated === true,
+          }),
+        );
         return {
           ok: true,
           data: {

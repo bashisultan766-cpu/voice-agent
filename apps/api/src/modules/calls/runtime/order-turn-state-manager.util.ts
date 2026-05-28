@@ -32,7 +32,12 @@ const INTERRUPTIBLE_INTENTS = new Set<InterruptibleIntent>([
   'pricing_question',
 ]);
 
-const INTERRUPTIBLE_STATES = new Set<string>(['EMAIL_COLLECTION', 'PAYMENT_COLLECTION']);
+const INTERRUPTIBLE_STATES = new Set<string>([
+  'EMAIL_COLLECTION',
+  'PAYMENT_COLLECTION',
+  'EMAIL_COLLECTING',
+  'EMAIL_CONFIRMING',
+]);
 
 export function getIntentPriority(intent: string): number {
   const i = intent.trim().toLowerCase();
@@ -106,43 +111,64 @@ export function applyTurnToOrderState(
 
   switch (current) {
     case 'IDLE': {
-      if (intent === 'product_search') return { nextState: 'PRODUCT_DISCOVERY' };
+      if (intent === 'product_search') return { nextState: 'PRODUCT_SEARCH' };
       return { nextState: 'IDLE' };
     }
-    case 'PRODUCT_DISCOVERY': {
+    case 'PRODUCT_SEARCH': {
       if (intent === 'product_confirmed' || intent === 'order_confirmed') {
-        return { nextState: 'EMAIL_COLLECTION' };
+        return { nextState: 'PRODUCT_CONFIRMED' };
       }
-      if (intent === 'email_provided') return { nextState: 'EMAIL_COLLECTION' };
+      if (intent === 'email_provided') return { nextState: 'EMAIL_COLLECTING' };
       if (intent === 'product_search' || intent === 'variant_selected') {
-        return { nextState: 'PRODUCT_DISCOVERY' };
+        return { nextState: 'PRODUCT_SEARCH' };
       }
       if (intent === 'general_question') {
         const filler = t.length <= 6 && ['uh', 'uhm', 'um', 'hmm', 'okay', 'ok'].includes(t);
         if (filler || cls.confidence < 0.35) {
-          return { nextState: 'PRODUCT_DISCOVERY', recoveryPrompt: { key: 'UNCLEAR_PRODUCT' } };
+          return { nextState: 'PRODUCT_SEARCH', recoveryPrompt: { key: 'UNCLEAR_PRODUCT' } };
         }
-        return { nextState: 'PRODUCT_DISCOVERY' };
+        return { nextState: 'PRODUCT_SEARCH' };
       }
-      return { nextState: 'PRODUCT_DISCOVERY', recoveryPrompt: { key: 'UNCLEAR_PRODUCT' } };
+      return { nextState: 'PRODUCT_SEARCH', recoveryPrompt: { key: 'UNCLEAR_PRODUCT' } };
     }
-    case 'EMAIL_COLLECTION': {
+    case 'PRODUCT_CONFIRMED': {
+      if (intent === 'quantity_provided') return { nextState: 'QUANTITY_COLLECTED' };
+      if (intent === 'product_search') return { nextState: 'PRODUCT_SEARCH' };
+      return { nextState: 'PRODUCT_CONFIRMED' };
+    }
+    case 'QUANTITY_COLLECTED': {
+      if (intent === 'email_provided') return { nextState: 'EMAIL_CONFIRMING' };
+      if (intent === 'product_search') return { nextState: 'PRODUCT_SEARCH' };
+      return { nextState: 'EMAIL_COLLECTING' };
+    }
+    case 'EMAIL_COLLECTING': {
       if (intent === 'quantity_provided') {
-        return { nextState: 'EMAIL_COLLECTION', recoveryPrompt: { key: 'CONFIRM_QUANTITY' } };
+        return { nextState: 'QUANTITY_COLLECTED', recoveryPrompt: { key: 'CONFIRM_QUANTITY' } };
       }
-      if (intent === 'email_provided') return { nextState: 'EMAIL_COLLECTION' };
+      if (intent === 'email_provided') return { nextState: 'EMAIL_CONFIRMING' };
       if (intent === 'general_question') {
         const wantsResend = /\b(resend|send again|didn't get|did not receive)\b/i.test(t);
         if (wantsResend) {
-          return { nextState: 'EMAIL_COLLECTION', recoveryPrompt: { key: 'RESEND_PAYMENT_LINK' } };
+          return { nextState: 'EMAIL_COLLECTING', recoveryPrompt: { key: 'RESEND_PAYMENT_LINK' } };
         }
         const looksLikeQuestion =
           t.includes('?') || t.startsWith('what ') || t.startsWith('how ') || t.startsWith('when ');
-        if (looksLikeQuestion) return { nextState: 'EMAIL_COLLECTION' };
-        return { nextState: 'EMAIL_COLLECTION', recoveryPrompt: { key: 'INVALID_EMAIL' } };
+        if (looksLikeQuestion) return { nextState: 'EMAIL_COLLECTING' };
+        return { nextState: 'EMAIL_COLLECTING', recoveryPrompt: { key: 'INVALID_EMAIL' } };
       }
-      if (intent === 'product_search') return { nextState: 'PRODUCT_DISCOVERY' };
-      return { nextState: 'EMAIL_COLLECTION', recoveryPrompt: { key: 'INVALID_EMAIL' } };
+      if (intent === 'product_search') return { nextState: 'PRODUCT_SEARCH' };
+      return { nextState: 'EMAIL_COLLECTING', recoveryPrompt: { key: 'INVALID_EMAIL' } };
+    }
+    case 'EMAIL_CONFIRMING': {
+      if (intent === 'order_confirmed') return { nextState: 'PAYMENT_LINK_CREATING' };
+      if (intent === 'product_search') return { nextState: 'PRODUCT_SEARCH' };
+      return { nextState: 'EMAIL_CONFIRMING' };
+    }
+    case 'PAYMENT_LINK_CREATING': {
+      return { nextState: 'PAYMENT_LINK_CREATING' };
+    }
+    case 'PAYMENT_LINK_SENT': {
+      return { nextState: 'PAYMENT_LINK_SENT' };
     }
     case 'DONE': {
       return { nextState: 'DONE' };
@@ -164,7 +190,7 @@ export function recoveryPromptText(languageCode: string | null | undefined, key:
       );
     case 'INVALID_EMAIL':
       return L(
-        'Sorry, that did not sound like a full email—could you say it once more for me?',
+        'Could you spell the email one more time slowly?',
         'Scusa, non mi è sembrata un’email completa—puoi ripeterla?',
         'Похоже, email получился неполным — повторите, пожалуйста?',
       );

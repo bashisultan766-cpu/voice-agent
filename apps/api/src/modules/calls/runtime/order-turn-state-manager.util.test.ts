@@ -13,21 +13,21 @@ test('bookstore flow: product search then confirm goes to email collection', () 
   let s: string = 'IDLE';
 
   ({ res: { nextState: s } } = step(s, 'I want Atomic Habits'));
-  assert.equal(s, 'PRODUCT_DISCOVERY');
+  assert.equal(s, 'PRODUCT_SEARCH');
 
   ({ res: { nextState: s } } = step(s, 'Yes'));
-  assert.equal(s, 'EMAIL_COLLECTION');
+  assert.equal(s, 'PRODUCT_CONFIRMED');
 });
 
 test('unclear product: recovery prompt in discovery', () => {
-  const { res } = step('PRODUCT_DISCOVERY', 'uhm');
-  assert.equal(res.nextState, 'PRODUCT_DISCOVERY');
+  const { res } = step('PRODUCT_SEARCH', 'uhm');
+  assert.equal(res.nextState, 'PRODUCT_SEARCH');
   assert.ok(res.recoveryPrompt);
 });
 
 test('invalid email retry: stays in EMAIL_COLLECTION', () => {
-  const { res } = step('EMAIL_COLLECTION', 'not-an-email');
-  assert.equal(res.nextState, 'EMAIL_COLLECTION');
+  const { res } = step('EMAIL_COLLECTING', 'not-an-email');
+  assert.equal(res.nextState, 'EMAIL_COLLECTING');
   assert.equal(res.recoveryPrompt?.key, 'INVALID_EMAIL');
 });
 
@@ -56,7 +56,20 @@ test('user cancels: transitions to DONE', () => {
 });
 
 test('general question mid-order: stays in product discovery', () => {
-  const { cls, res } = step('PRODUCT_DISCOVERY', 'What is your return policy?');
+  const { cls, res } = step('PRODUCT_SEARCH', 'What is your return policy?');
   assert.equal(cls.intent, 'general_question');
-  assert.equal(res.nextState, 'PRODUCT_DISCOVERY');
+  assert.equal(res.nextState, 'PRODUCT_SEARCH');
+});
+
+test('quantity then email progresses to email confirming', () => {
+  let s: string = 'PRODUCT_CONFIRMED';
+  ({ res: { nextState: s } } = step(s, '2 copies please'));
+  assert.equal(s, 'QUANTITY_COLLECTED');
+  ({ res: { nextState: s } } = step(s, 'reader@gmail.com'));
+  assert.equal(s, 'EMAIL_CONFIRMING');
+});
+
+test('email confirmation moves checkout to payment link creating', () => {
+  const { res } = step('EMAIL_CONFIRMING', 'yes');
+  assert.equal(res.nextState, 'PAYMENT_LINK_CREATING');
 });
