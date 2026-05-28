@@ -1242,11 +1242,15 @@ export class ToolOrchestratorService {
               retryable,
             }),
           );
+          const voiceSummary =
+            errCode === 'VARIANT_NOT_IN_CACHE'
+              ? "I'm having trouble generating the checkout link right now, but a human assistant will follow up shortly."
+              : msg;
           return {
             ok: false,
             error: { code: 'CHECKOUT_FAILED', message: msg, retryable },
             data: {
-              voiceSummary: msg,
+              voiceSummary,
               checkoutFailed: true,
               doNotRetryProductLookup: true,
             },

@@ -18,6 +18,7 @@ export type LlmCheckoutStage =
 export type LlmSelectedProduct = {
   productId?: string;
   variantId?: string;
+  handle?: string;
   title: string;
   price?: string | null;
   stock?: number | null;
@@ -25,6 +26,10 @@ export type LlmSelectedProduct = {
   availableForSale?: boolean;
   inStock?: boolean;
   outOfStock?: boolean;
+  /** ISO timestamp when catalog row was last synced locally. */
+  catalogSyncedAt?: string | null;
+  /** ISO timestamp when live inventory was last checked for this selection. */
+  inventoryCheckedAt?: string | null;
 };
 
 export type LlmAgentConversationState = {
@@ -148,6 +153,14 @@ function mapSearchResult(row: Record<string, unknown>): LlmSelectedProduct | nul
         ? row.primaryVariantId
         : undefined;
   const productId = typeof row.id === 'string' ? row.id : undefined;
+  const handle = typeof row.handle === 'string' ? row.handle : undefined;
+  const catalogSyncedAt =
+    typeof row.syncedAt === 'string'
+      ? row.syncedAt
+      : row.syncedAt instanceof Date
+        ? row.syncedAt.toISOString()
+        : null;
+  const inventoryCheckedAt = new Date().toISOString();
   const stockSnap = stockFieldsFromVariants(
     variants.map((v) => ({
       inventory_quantity:
@@ -162,6 +175,7 @@ function mapSearchResult(row: Record<string, unknown>): LlmSelectedProduct | nul
   return {
     productId,
     variantId,
+    handle,
     title,
     price,
     stock: pickStock(variants),
@@ -169,6 +183,8 @@ function mapSearchResult(row: Record<string, unknown>): LlmSelectedProduct | nul
     availableForSale: stockSnap.availableForSale,
     inStock: stockSnap.inStock,
     outOfStock: !stockSnap.inStock,
+    catalogSyncedAt,
+    inventoryCheckedAt,
   };
 }
 
@@ -215,9 +231,17 @@ export function applyToolResultToState(
             : typeof v0?.variantId === 'string'
               ? v0.variantId
               : undefined,
+        handle: typeof product.handle === 'string' ? product.handle : undefined,
         title: product.title,
         price: typeof v0?.price === 'string' ? v0.price : null,
         stock: pickStock(variants),
+        catalogSyncedAt:
+          typeof product.syncedAt === 'string'
+            ? product.syncedAt
+            : product.syncedAt instanceof Date
+              ? product.syncedAt.toISOString()
+              : null,
+        inventoryCheckedAt: new Date().toISOString(),
       };
       const stockSnap = stockFieldsFromVariants(
         variants.map((v) => ({

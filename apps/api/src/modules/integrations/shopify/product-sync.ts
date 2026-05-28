@@ -3,6 +3,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { ShopifyClientService } from './client';
 import { Prisma } from '@prisma/client';
 import { ShopifyGraphqlError } from './shopify-errors';
+import { productIdLookupKeys, toProductGid, toProductVariantGid, variantIdLookupKeys } from './shopify-ids';
 
 const PRODUCTS_PAGE_SIZE = Math.min(Math.max(Number(process.env.SHOPIFY_SYNC_PRODUCTS_PAGE) || 50, 1), 100);
 const VARIANTS_PAGE_SIZE = Math.min(Math.max(Number(process.env.SHOPIFY_SYNC_VARIANTS_PAGE) || 100, 1), 250);
@@ -13,6 +14,53 @@ const MAX_VARIANT_SYNC_PAGES = Math.max(Number(process.env.SHOPIFY_SYNC_MAX_VARI
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+export type RepairedVariantCacheRow = Prisma.VariantCacheGetPayload<{
+  include: { product: { select: { title: true; shopifyProductId: true } } };
+}>;
+
+const REPAIR_VARIANT_BY_ID_QUERY = `
+  query RepairVariantById($id: ID!) {
+    productVariant(id: $id) {
+      id
+      title
+      sku
+      price
+      compareAtPrice
+      priceV2 { amount }
+      compareAtPriceV2 { amount }
+      inventoryQuantity
+      availableForSale
+      product {
+        id
+        title
+        handle
+        vendor
+        productType
+        status
+        description
+        descriptionHtml
+        tags
+      }
+    }
+  }
+`;
+
+const REPAIR_PRODUCT_BY_ID_QUERY = `
+  query RepairProductById($id: ID!) {
+    product(id: $id) {
+      id
+      title
+      handle
+      vendor
+      productType
+      status
+      description
+      descriptionHtml
+      tags
+    }
+  }
+`;
 
 function variantPriceStrings(variant: Record<string, unknown>): { price: string | null; compareAtPrice: string | null } {
   const pv2 = variant.priceV2 as { amount?: string } | undefined;
@@ -291,6 +339,215 @@ export class ShopifyProductSyncService {
     );
 
     return { syncedProducts, syncedVariants, shopDomain: domain };
+  }
+
+  /**
+   * Fetch one product (and its variants) from Shopify Admin and upsert local ProductCache / VariantCache.
+   * Used when checkout references a variant that exists live but is missing or stale in cache.
+   */
+  async repairVariantCacheFromShopify(
+    tenantId: string,
+    agentId: string,
+    shopDomain: string,
+    rawKey: string,
+  ): Promise<RepairedVariantCacheRow | null> {
+    const { domain, token } = await this.shopifyClient.getAgentShopifyConfig(tenantId, agentId);
+    const normalizedDomain = domain || shopDomain;
+    const variantKeys = variantIdLookupKeys(rawKey);
+    const productKeys = productIdLookupKeys(rawKey);
+    const targetVariantGid =
+      variantKeys.find((k) => k.startsWith('gid://shopify/ProductVariant/')) ?? toProductVariantGid(rawKey);
+
+    let productNode: Record<string, unknown> | null = null;
+    let variantNodes: Array<Record<string, unknown>> = [];
+    let preferredVariantId = targetVariantGid;
+
+    if (variantKeys.some((k) => k.includes('ProductVariant') || /^\d+$/.test(k))) {
+      try {
+        const data = await this.shopifyClient.adminGraphql<{
+          productVariant: Record<string, unknown> | null;
+        }>(normalizedDomain, token, REPAIR_VARIANT_BY_ID_QUERY, { id: targetVariantGid });
+        const pv = data.productVariant;
+        if (pv?.product && typeof pv.product === 'object') {
+          productNode = pv.product as Record<string, unknown>;
+          variantNodes = [pv];
+          preferredVariantId = String(pv.id ?? targetVariantGid);
+        }
+      } catch (err) {
+        this.logSyncFailure('repair_variant', tenantId, agentId, normalizedDomain, err, targetVariantGid);
+      }
+    }
+
+    if (!productNode && productKeys.length > 0) {
+      const productGid = productKeys.find((k) => k.startsWith('gid://shopify/Product/')) ?? toProductGid(rawKey);
+      try {
+        const data = await this.shopifyClient.adminGraphql<{ product: Record<string, unknown> | null }>(
+          normalizedDomain,
+          token,
+          REPAIR_PRODUCT_BY_ID_QUERY,
+          { id: productGid },
+        );
+        productNode = data.product;
+        if (productNode?.id) {
+          const variantPageQuery = `
+            query ProductVariantsPage($id: ID!, $first: Int!, $after: String) {
+              product(id: $id) {
+                id
+                variants(first: $first, after: $after) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    id
+                    title
+                    sku
+                    price
+                    compareAtPrice
+                    priceV2 { amount }
+                    compareAtPriceV2 { amount }
+                    inventoryQuantity
+                    availableForSale
+                  }
+                }
+              }
+            }
+          `;
+          variantNodes = await this.fetchAllVariantNodes(
+            normalizedDomain,
+            token,
+            variantPageQuery,
+            String(productNode.id),
+          );
+        }
+      } catch (err) {
+        this.logSyncFailure('repair_product', tenantId, agentId, normalizedDomain, err, productGid);
+      }
+    }
+
+    if (!productNode || variantNodes.length === 0) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'shopify.sync.repair_no_match',
+          tenantId,
+          agentId,
+          shopDomain: normalizedDomain,
+          rawKey: rawKey.slice(0, 80),
+        }),
+      );
+      return null;
+    }
+
+    const productId = String(productNode.id ?? '');
+    if (!productId) return null;
+
+    const cached = await this.upsertProductCacheRow(tenantId, agentId, normalizedDomain, productNode, variantNodes);
+    const syncedVariantIds = variantNodes
+      .map((variant) => String(variant.id ?? '').trim())
+      .filter((id) => id.length > 0);
+    await this.prisma.variantCache.deleteMany({
+      where: {
+        tenantId,
+        productCacheId: cached.id,
+        ...(syncedVariantIds.length > 0 ? { shopifyVariantId: { notIn: syncedVariantIds } } : {}),
+      },
+    });
+
+    const lookupIds = new Set(variantIdLookupKeys(preferredVariantId));
+    return this.prisma.variantCache.findFirst({
+      where: {
+        tenantId,
+        shopifyVariantId: { in: [...lookupIds] },
+        productCacheId: cached.id,
+      },
+      include: { product: { select: { title: true, shopifyProductId: true } } },
+    });
+  }
+
+  private async upsertProductCacheRow(
+    tenantId: string,
+    agentId: string,
+    domain: string,
+    product: Record<string, unknown>,
+    variants: Array<Record<string, unknown>>,
+  ) {
+    const productId = String(product.id ?? '');
+    const cached = await this.prisma.productCache.upsert({
+      where: {
+        tenantId_agentId_shopifyProductId: { tenantId, agentId, shopifyProductId: productId },
+      },
+      create: {
+        tenantId,
+        agentId,
+        shopDomain: domain,
+        shopifyProductId: productId,
+        handle: String(product.handle ?? ''),
+        title: String(product.title ?? 'Untitled'),
+        vendor: String(product.vendor ?? ''),
+        productType: String(product.productType ?? ''),
+        status: String(product.status ?? ''),
+        bodyHtml:
+          product.descriptionHtml != null
+            ? String(product.descriptionHtml)
+            : product.description != null
+              ? String(product.description)
+              : null,
+        tags: Array.isArray(product.tags)
+          ? (product.tags as string[]).join(',')
+          : String(product.tags ?? ''),
+        rawJson: { ...product, variants: { nodes: variants } } as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        shopDomain: domain,
+        handle: String(product.handle ?? ''),
+        title: String(product.title ?? 'Untitled'),
+        vendor: String(product.vendor ?? ''),
+        productType: String(product.productType ?? ''),
+        status: String(product.status ?? ''),
+        bodyHtml:
+          product.descriptionHtml != null
+            ? String(product.descriptionHtml)
+            : product.description != null
+              ? String(product.description)
+              : null,
+        tags: Array.isArray(product.tags)
+          ? (product.tags as string[]).join(',')
+          : String(product.tags ?? ''),
+        rawJson: { ...product, variants: { nodes: variants } } as unknown as Prisma.InputJsonValue,
+        syncedAt: new Date(),
+      },
+    });
+
+    for (const variant of variants) {
+      const variantId = String(variant.id ?? '');
+      if (!variantId) continue;
+      const { price, compareAtPrice } = variantPriceStrings(variant);
+      await this.prisma.variantCache.upsert({
+        where: { tenantId_shopifyVariantId: { tenantId, shopifyVariantId: variantId } },
+        create: {
+          tenantId,
+          productCacheId: cached.id,
+          shopifyVariantId: variantId,
+          title: String(variant.title ?? ''),
+          sku: variant.sku != null ? String(variant.sku) : null,
+          price: price ?? undefined,
+          compareAtPrice: compareAtPrice ?? undefined,
+          inventoryQuantity: Number(variant.inventoryQuantity ?? 0),
+          availableForSale: Boolean(variant.availableForSale),
+          rawJson: variant as unknown as Prisma.InputJsonValue,
+        },
+        update: {
+          productCacheId: cached.id,
+          title: String(variant.title ?? ''),
+          sku: variant.sku != null ? String(variant.sku) : null,
+          price: price ?? undefined,
+          compareAtPrice: compareAtPrice ?? undefined,
+          inventoryQuantity: Number(variant.inventoryQuantity ?? 0),
+          availableForSale: Boolean(variant.availableForSale),
+          rawJson: variant as unknown as Prisma.InputJsonValue,
+          syncedAt: new Date(),
+        },
+      });
+    }
+
+    return cached;
   }
 
   private async fetchAllVariantNodes(

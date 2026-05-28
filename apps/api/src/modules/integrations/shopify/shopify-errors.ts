@@ -68,8 +68,22 @@ export function isShopifyRetryableError(err: unknown): boolean {
       : false;
 }
 
+const CHECKOUT_VALIDATION_CALLER_MESSAGES: Record<string, string> = {
+  EMAIL_REQUIRED: 'I need an email address before I can send the secure payment link.',
+  NO_LINE_ITEMS: 'I need to confirm the exact book before I can start checkout.',
+  VARIANT_NOT_IN_CACHE:
+    "I'm having trouble generating the checkout link right now, but a human assistant will follow up shortly.",
+  VARIANT_UNAVAILABLE:
+    'That item is not available right now. I can suggest another book that is in stock.',
+};
+
 export function formatShopifyErrorForCaller(err: unknown): string {
-  if (err instanceof ShopifyCheckoutValidationError) return err.message;
+  if (err instanceof ShopifyCheckoutValidationError) {
+    return (
+      CHECKOUT_VALIDATION_CALLER_MESSAGES[err.code] ??
+      'Something went wrong preparing checkout. Please try again in a moment.'
+    );
+  }
   if (err instanceof ShopifyGraphqlError) {
     return err.retryable
       ? 'The store connection hit a temporary limit. Please try again in a moment.'

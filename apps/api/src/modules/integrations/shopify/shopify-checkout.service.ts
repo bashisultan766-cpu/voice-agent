@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { ShopifyCartCheckoutService } from './cart-checkout';
 import { ShopifyDraftOrderService } from './draft-order';
 import { ShopifyClientService } from './client';
+import { ShopifyProductSyncService } from './product-sync';
+import { ShopifyProductSyncQueueService } from './product-sync.queue';
 import {
   productIdLookupKeys,
   variantIdLookupKeys,
@@ -12,6 +14,13 @@ import {
   toStorefrontCartVariantId,
 } from './shopify-ids';
 import { ShopifyCheckoutValidationError } from './shopify-errors';
+import {
+  getCheckoutCatalogStaleMs,
+  getShopifyCheckoutCacheStrategy,
+  isVariantCacheRowStale,
+  shouldFetchLiveVariantOnMiss,
+  shouldReadVariantCache,
+} from './shopify-checkout-cache-strategy.util';
 
 export interface CheckoutLinkCreateResult {
   checkoutUrl: string;
@@ -50,22 +59,30 @@ type ResolvedLine = {
   sku?: string | null;
 };
 
+type CachedVariantRow = Prisma.VariantCacheGetPayload<{
+  include: { product: { select: { title: true; shopifyProductId: true } } };
+}>;
+
 function normalizeLookupKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
 @Injectable()
 export class ShopifyCheckoutService {
+  private readonly logger = new Logger(ShopifyCheckoutService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly shopifyClient: ShopifyClientService,
     private readonly cartCheckout: ShopifyCartCheckoutService,
     private readonly draftOrderCheckout: ShopifyDraftOrderService,
+    private readonly productSync: ShopifyProductSyncService,
+    private readonly syncQueue: ShopifyProductSyncQueueService,
   ) {}
 
   /**
    * Voice-safe checkout: Shopify-hosted payment. Line items are validated against ProductCache
-   * so permalinks and draft invoices are not built from hallucinated SKUs.
+   * (with live Shopify fallback) so permalinks and draft invoices are not built from hallucinated SKUs.
    */
   async createCheckoutLink(
     tenantId: string,
@@ -107,11 +124,31 @@ export class ShopifyCheckoutService {
     }
 
     const lines: ResolvedLine[] = [];
+    let repairedFromLive = false;
     for (const row of rawRows) {
-      lines.push(
-        await this.resolveLineFromCache(tenantId, agentId, domain, row.variantKey || row.sku || row.title, row.quantity),
+      const { line, repaired } = await this.resolveLineItem(
+        tenantId,
+        agentId,
+        domain,
+        row.variantKey || row.sku || row.title,
+        row.quantity,
+      );
+      if (repaired) repairedFromLive = true;
+      lines.push(line);
+    }
+    if (repairedFromLive) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.shopify.checkout_retry_success',
+          tenantId,
+          agentId,
+          shopDomain: domain,
+          lineCount: lines.length,
+          cacheStrategy: getShopifyCheckoutCacheStrategy(),
+        }),
       );
     }
+
     const aggregated = new Map<string, ResolvedLine>();
     for (const line of lines) {
       const key = line.variantGid;
@@ -165,6 +202,7 @@ export class ShopifyCheckoutService {
       resolvedAt: new Date().toISOString(),
       lineCount: lines.length,
       checkoutFingerprint: fingerprint,
+      cacheStrategy: getShopifyCheckoutCacheStrategy(),
       lineItems: dedupedLines.map((line) => ({
         variantGid: line.variantGid,
         storefrontVariantId: line.storefrontVariantId,
@@ -240,13 +278,138 @@ export class ShopifyCheckoutService {
     });
   }
 
-  private async resolveLineFromCache(
+  private async resolveLineItem(
     tenantId: string,
     agentId: string,
     shopDomain: string,
     rawKey: string,
     quantity: number,
-  ): Promise<ResolvedLine> {
+  ): Promise<{ line: ResolvedLine; repaired: boolean }> {
+    const strategy = getShopifyCheckoutCacheStrategy();
+    const staleMs = getCheckoutCatalogStaleMs();
+    let repaired = false;
+
+    let v: CachedVariantRow | null = null;
+    if (shouldReadVariantCache(strategy)) {
+      v = await this.lookupVariantInCache(tenantId, agentId, shopDomain, rawKey);
+      if (v && shouldFetchLiveVariantOnMiss(strategy) && isVariantCacheRowStale(v.syncedAt, staleMs)) {
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.shopify.variant_cache_stale',
+            tenantId,
+            agentId,
+            shopDomain,
+            variantId: v.shopifyVariantId,
+            syncedAt: v.syncedAt?.toISOString() ?? null,
+            staleMs,
+          }),
+        );
+        const refreshed = await this.repairVariantCache(tenantId, agentId, shopDomain, rawKey);
+        if (refreshed) {
+          repaired = true;
+          v = refreshed;
+        }
+      }
+    }
+
+    if (!v && shouldFetchLiveVariantOnMiss(strategy)) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.shopify.variant_cache_miss',
+          tenantId,
+          agentId,
+          shopDomain,
+          rawKey: rawKey.slice(0, 80),
+          cacheStrategy: strategy,
+        }),
+      );
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.shopify.variant_live_lookup',
+          tenantId,
+          agentId,
+          shopDomain,
+          rawKey: rawKey.slice(0, 80),
+        }),
+      );
+      void this.enqueueCatalogHeal(tenantId, agentId);
+      const repairedRow = await this.repairVariantCache(tenantId, agentId, shopDomain, rawKey);
+      if (repairedRow) {
+        repaired = true;
+        v = repairedRow;
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.shopify.variant_cache_repaired',
+            tenantId,
+            agentId,
+            shopDomain,
+            variantId: repairedRow.shopifyVariantId,
+          }),
+        );
+      }
+    }
+
+    if (!v) {
+      throw new ShopifyCheckoutValidationError(
+        'VARIANT_NOT_IN_CACHE',
+        `Variant not resolvable for checkout (cache strategy=${strategy}). Ref: ${rawKey.slice(0, 64)}`,
+      );
+    }
+
+    if (!v.availableForSale || (v.inventoryQuantity ?? 0) <= 0) {
+      throw new ShopifyCheckoutValidationError(
+        'VARIANT_UNAVAILABLE',
+        `The selected variant is currently unavailable for sale. Please choose another option.`,
+      );
+    }
+
+    return { line: this.toResolvedLine(v, quantity), repaired };
+  }
+
+  private async repairVariantCache(
+    tenantId: string,
+    agentId: string,
+    shopDomain: string,
+    rawKey: string,
+  ): Promise<CachedVariantRow | null> {
+    try {
+      return await this.productSync.repairVariantCacheFromShopify(tenantId, agentId, shopDomain, rawKey);
+    } catch (err) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.shopify.variant_cache_repair_failed',
+          tenantId,
+          agentId,
+          shopDomain,
+          rawKey: rawKey.slice(0, 80),
+          message: err instanceof Error ? err.message.slice(0, 240) : 'error',
+        }),
+      );
+      return null;
+    }
+  }
+
+  private async enqueueCatalogHeal(tenantId: string, agentId: string): Promise<void> {
+    try {
+      await this.syncQueue.enqueue(tenantId, agentId);
+    } catch (err) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.shopify.catalog_heal_queue_skipped',
+          tenantId,
+          agentId,
+          message: err instanceof Error ? err.message.slice(0, 200) : 'queue_unavailable',
+        }),
+      );
+    }
+  }
+
+  private async lookupVariantInCache(
+    tenantId: string,
+    agentId: string,
+    shopDomain: string,
+    rawKey: string,
+  ): Promise<CachedVariantRow | null> {
     const productScope = { shopDomain, agentId };
     const variantKeys = variantIdLookupKeys(rawKey);
     let v = await this.prisma.variantCache.findFirst({
@@ -303,19 +466,10 @@ export class ShopifyCheckoutService {
       });
     }
 
-    if (!v) {
-      throw new ShopifyCheckoutValidationError(
-        'VARIANT_NOT_IN_CACHE',
-        `No matching variant found in the synced catalog for this store. Use search or run a catalog sync. Ref: ${rawKey.slice(0, 64)}`,
-      );
-    }
-    if (!v.availableForSale || (v.inventoryQuantity ?? 0) <= 0) {
-      throw new ShopifyCheckoutValidationError(
-        'VARIANT_UNAVAILABLE',
-        `The selected variant is currently unavailable for sale. Please choose another option.`,
-      );
-    }
+    return v;
+  }
 
+  private toResolvedLine(v: CachedVariantRow, quantity: number): ResolvedLine {
     const variantGid = toProductVariantGid(v.shopifyVariantId);
     const storefrontVariantId = toStorefrontCartVariantId(v.shopifyVariantId);
     const pTitle = v.product?.title;

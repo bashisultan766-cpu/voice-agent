@@ -211,6 +211,7 @@ async function testCheckoutMetadataSaved() {
         sku: 'SKU-100',
         availableForSale: true,
         inventoryQuantity: 10,
+        syncedAt: new Date(),
         product: { title: 'Sample Product', shopifyProductId: 'gid://shopify/Product/10' },
       }),
     },
@@ -237,11 +238,19 @@ async function testCheckoutMetadataSaved() {
       throw new Error('should not be called');
     },
   };
+  const fakeProductSync = {
+    repairVariantCacheFromShopify: async () => null,
+  };
+  const fakeSyncQueue = {
+    enqueue: async () => undefined,
+  };
   const svc = new ShopifyCheckoutService(
     fakePrisma as never,
     fakeClient as never,
     fakeCart as never,
     fakeDraft as never,
+    fakeProductSync as never,
+    fakeSyncQueue as never,
   );
   await svc.createCheckoutLink('tenant_1', 'agent_1', {
     customer: { email: 'buyer@example.com' },
@@ -265,7 +274,7 @@ async function testShopifyErrorsHandled() {
 
   assert.match(formatShopifyErrorForCaller(gqlRetryable), /temporary limit/i);
   assert.match(formatShopifyErrorForCaller(restFatal), /Shopify returned an error/i);
-  assert.equal(formatShopifyErrorForCaller(validation), 'Need line items.');
+  assert.match(formatShopifyErrorForCaller(validation), /confirm the exact book/i);
   logOk('Shopify error mapping returns caller-safe messages');
 }
 
