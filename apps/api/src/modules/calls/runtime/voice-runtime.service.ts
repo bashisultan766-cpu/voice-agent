@@ -18,6 +18,12 @@ import { ConversationAnalyticsService } from './conversation-analytics.service';
 import { CallMemoryService } from './call-memory.service';
 import { applyAntiHallucinationGuard } from './anti-hallucination.util';
 import { polishVoiceReply } from './voice-speaking.util';
+import {
+  buildProfessionalConversationReply,
+  classifyConversationRouteIntent,
+  sanitizeBannedVoicePhrases,
+  shouldUseProfessionalFastReply,
+} from './professional-conversation-policy.util';
 import { resolveAdaptiveVoiceBehavior } from './adaptive-voice-behavior.util';
 import { applyTimingToChunkText } from './voice-timing.util';
 import { classifyUserIntent, type UserUtteranceIntent } from './user-intent-classifier.util';
@@ -162,13 +168,40 @@ export class VoiceRuntimeService {
     return polishVoiceReply(t, { maxSentences: 3 });
   }
 
-  private buildFastVoiceReply(_args: {
+  private buildFastVoiceReply(args: {
+    customerText: string;
     userIntent: UserUtteranceIntent;
+    orderState: OrderState;
+    toolCallAllowed: boolean;
     turnPlan: Awaited<ReturnType<ConversationFlowEngineService['planTurn']>>;
     ctx: NonNullable<Awaited<ReturnType<SessionContextService['load']>>>;
     langCode: string;
   }): string | null {
-    return null;
+    const discussed = args.turnPlan.memory.discussedProducts ?? args.turnPlan.memory.mentionedProducts ?? [];
+    const lastTitle = discussed.length > 0 ? discussed[discussed.length - 1]?.title ?? null : null;
+    const route = classifyConversationRouteIntent({
+      customerText: args.customerText,
+      userIntent: args.userIntent,
+      orderState: args.orderState,
+      storeName: args.ctx.store?.name ?? 'SureShot Books',
+      agentName: 'Justin',
+      selectedProductTitle: lastTitle,
+      hasDiscussedProduct: discussed.length > 0,
+    });
+    if (!shouldUseProfessionalFastReply(route, args.toolCallAllowed)) {
+      return null;
+    }
+    const reply = buildProfessionalConversationReply(route, {
+      customerText: args.customerText,
+      userIntent: args.userIntent,
+      orderState: args.orderState,
+      storeName: args.ctx.store?.name ?? 'SureShot Books',
+      agentName: 'Justin',
+      selectedProductTitle: lastTitle,
+      hasDiscussedProduct: discussed.length > 0,
+    });
+    if (!reply?.trim()) return null;
+    return sanitizeBannedVoicePhrases(reply);
   }
 
   private normalizeForRepeatCheck(text: string): string {
@@ -309,32 +342,32 @@ export class VoiceRuntimeService {
   private buildConciseIdentityOrCapabilityReply(
     intent: UserUtteranceIntent,
     customerText: string,
+    orderState: OrderState = 'IDLE',
   ): string | null {
-    const t = customerText.trim().toLowerCase();
-    if (!t) return null;
-
-    const askedHowAreYou = /\bhow\s+(are|r)\s+(you|u|ya)\b/.test(t);
-    const askedName = /\b(what('?s| is) your name|who am i speaking with|who is this)\b/.test(t);
-    const askedStore =
-      /\b(what store is this|where am i calling|what is your store name|what is this store)\b/.test(t) ||
-      intent === 'store_identity_question';
-    const askedHelp =
-      /\b(what can you do|how can you help|what do you do|what is your services?|what are your services?)\b/.test(
-        t,
-      ) ||
-      intent === 'capability_question' ||
-      intent === 'general_business_question';
-
-    if (!(askedHowAreYou || askedName || askedStore || askedHelp)) return null;
-
-    const parts: string[] = [];
-    if (askedHowAreYou) parts.push('Thank you for asking.');
-    if (askedName) parts.push("I'm the voice assistant on this line.");
-    if (askedStore) parts.push("You're speaking with our store.");
-    if (askedHelp) {
-      parts.push('I can help with product availability, pricing, orders, and payment links.');
+    const route = classifyConversationRouteIntent({
+      customerText,
+      userIntent: intent,
+      orderState,
+      storeName: 'SureShot Books',
+      agentName: 'Justin',
+    });
+    if (
+      route !== 'GREETING' &&
+      route !== 'SMALL_TALK' &&
+      route !== 'WHO_ARE_YOU' &&
+      route !== 'HEAR_ME' &&
+      route !== 'UNKNOWN_BUSINESS_RELATED'
+    ) {
+      return null;
     }
-    return parts.join(' ').trim();
+    const reply = buildProfessionalConversationReply(route, {
+      customerText,
+      userIntent: intent,
+      orderState,
+      storeName: 'SureShot Books',
+      agentName: 'Justin',
+    });
+    return reply ? sanitizeBannedVoicePhrases(reply) : null;
   }
 
   private logResponsePath(args: {
@@ -385,6 +418,7 @@ export class VoiceRuntimeService {
     const conciseIdentityOrCapability = this.buildConciseIdentityOrCapabilityReply(
       args.userIntent,
       args.customerText,
+      args.orderStateAfter,
     );
     if (conciseIdentityOrCapability) {
       return {
@@ -749,7 +783,7 @@ export class VoiceRuntimeService {
     if (!ctx) return "Hello, I'm having trouble loading your session. Please try again.";
     const greeting =
       ctx.agent.greetingMessage?.trim() ??
-      'Hello, thank you for calling Shore Shot Bookstore. My name is Ava, your AI bookstore assistant. How can I help you today?';
+      'Hello, this is Justin with SureShot Books. How can I help you today?';
     return greeting;
   }
 
@@ -1064,9 +1098,71 @@ export class VoiceRuntimeService {
     const userSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
     await this.transcriptBuffer.append(callSessionId, 'user', safeText, userSeq);
 
+    const stateNorm = normalizeOrderState(update.nextState);
+    const professionalRoute = classifyConversationRouteIntent({
+      customerText: safeText,
+      userIntent,
+      orderState: stateNorm,
+      storeName: 'SureShot Books',
+      agentName: 'Justin',
+      selectedProductTitle:
+        (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).slice(-1)[0]
+          ?.title ?? null,
+      hasDiscussedProduct:
+        (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).length > 0,
+    });
+    if (shouldUseProfessionalFastReply(professionalRoute, toolPolicy.toolCallAllowed)) {
+      const policyReply = buildProfessionalConversationReply(professionalRoute, {
+        customerText: safeText,
+        userIntent,
+        orderState: stateNorm,
+        storeName: 'SureShot Books',
+        agentName: 'Justin',
+        selectedProductTitle:
+          (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).slice(-1)[0]
+            ?.title ?? null,
+        hasDiscussedProduct:
+          (turnPlan.memory.discussedProducts ?? turnPlan.memory.mentionedProducts ?? []).length > 0,
+      });
+      if (policyReply?.trim()) {
+        const polished = polishVoiceReply(policyReply, { maxSentences: 2, stage: turnPlan.stage });
+        const agentSeqPolicy = await this.transcriptBuffer.getNextSequence(callSessionId);
+        await this.transcriptBuffer.append(callSessionId, 'agent', polished, agentSeqPolicy);
+        this.logTurnProof({
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          userSpeechText: safeText.slice(0, 500),
+          openaiKeySource: ctx.agent.runtimeCredentialHints?.openaiKeySource ?? 'none',
+          modelUsed: ctx.agent.model ?? 'n/a',
+          openaiCalled: false,
+          openaiSuccess: true,
+          replyPreview: polished.slice(0, 240),
+          voiceProvider: ctx.agent.voiceProvider ?? null,
+          voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+          ttsProviderUsed: null,
+          intentDetected: userIntent,
+          toolCalled: false,
+          flowStep: 'professional_conversation_policy',
+          state: stateNorm,
+          finalResponseText: polished,
+          responseMode: 'template',
+          responseSource: 'template',
+          responseTemplateUsed: `professional_${professionalRoute}`,
+          templateUsed: `professional_${professionalRoute}`,
+          openaiUsed: false,
+          templateSuppressedBecauseRepeated: false,
+        });
+        return { reply: polished };
+      }
+    }
+
     if (turnPlan.useFastVoicePath) {
       const fastReply = this.buildFastVoiceReply({
+        customerText: safeText,
         userIntent,
+        orderState: stateNorm,
+        toolCallAllowed: toolPolicy.toolCallAllowed,
         turnPlan,
         ctx,
         langCode,

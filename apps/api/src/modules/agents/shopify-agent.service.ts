@@ -7,7 +7,12 @@ import {
   PRODUCT_SEARCH_CONFIRM_MIN_SCORE,
   rankCatalogProductsForVoice,
 } from './shopify-product-relevance.util';
-import { buildShopifyProductSearchAttempts, cleanVoiceProductQuery, type ShopifySearchAttempt } from './voice-product-query.util';
+import {
+  buildShopifyProductSearchAttempts,
+  cleanVoiceProductQuery,
+  extractBookTitlesFromUtterance,
+  type ShopifySearchAttempt,
+} from './voice-product-query.util';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const SHOPIFY_GRAPHQL_VERSION = '2024-10';
@@ -577,6 +582,52 @@ export class ShopifyAgentService {
       };
     }
 
+    const titlePhrases = extractBookTitlesFromUtterance(productSearchInputRaw);
+    if (titlePhrases.length > 1) {
+      const merged: ShopifyProductSummary[] = [];
+      const seenIds = new Set<string>();
+      const summaries: string[] = [];
+      for (const phrase of titlePhrases.slice(0, 4)) {
+        const one = await this.searchProducts(tenantId, agentId, phrase, Math.max(2, Math.ceil(limit / titlePhrases.length)));
+        if (!one.ok) {
+          return one;
+        }
+        for (const p of one.products ?? []) {
+          if (!seenIds.has(p.productId)) {
+            seenIds.add(p.productId);
+            merged.push(p);
+          }
+        }
+        if (one.voiceSummary?.trim()) summaries.push(one.voiceSummary.trim());
+      }
+      return {
+        ok: true,
+        products: merged.slice(0, limit),
+        voiceSummary:
+          summaries.length > 0
+            ? summaries.join(' ')
+            : merged.length > 0
+              ? `I found ${merged.length} titles from your list. Which one would you like?`
+              : `I couldn't find an exact match for those titles. Could you repeat the title or author?`,
+        searchVoiceLog: {
+          productSearchInputRaw,
+          cleanedQuery: titlePhrases.join(' | '),
+          probableTitle: titlePhrases[0] ?? '',
+          shopifyQueriesTried: titlePhrases.map((t) => ({ label: 'multi_title', query: t })),
+          productsReturned: merged.length,
+          productsReturnedCount: merged.length,
+          productsAfterRanking: merged.length,
+          rankedProducts: [],
+          topProduct: merged[0]?.title ?? null,
+          topProductTitle: merged[0]?.title ?? null,
+          topScore: merged[0]?.relevanceScore ?? null,
+          topMatchReason: 'multi_title_merge',
+          lowConfidenceSearch: merged.length === 0,
+          finalVoiceSummary: summaries[0] ?? '',
+        },
+      };
+    }
+
     const { cleanedQuery, probableTitle } = cleanVoiceProductQuery(productSearchInputRaw);
     const attempts = buildShopifyProductSearchAttempts({
       probableTitle,
@@ -623,7 +674,7 @@ export class ShopifyAgentService {
       let finalVoiceSummary: string;
       if (bestScore < PRODUCT_SEARCH_CONFIRM_MIN_SCORE || products.length === 0) {
         products = [];
-        finalVoiceSummary = `I couldn't find that exact book. Could you spell the title or give me the ISBN?`;
+        finalVoiceSummary = `I couldn't find an exact match, but I can check similar titles. Could you repeat the title or author?`;
       } else if (topRankedScore < PRODUCT_SEARCH_CONFIDENT_MIN_SCORE) {
         finalVoiceSummary = `I found something similar. Is this the one?`;
       } else {

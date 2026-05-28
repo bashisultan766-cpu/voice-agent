@@ -7,6 +7,7 @@ import {
   PLATFORM_LAYER_PROMPT,
   PLATFORM_SHOPIFY_TRUTH_RULES,
 } from './platform-runtime-prompts';
+import { PROFESSIONAL_CONVERSATION_POLICY_PROMPT } from './professional-conversation-policy.util';
 
 /** @deprecated Use PLATFORM_LAYER_PROMPT */
 export const AGENT_RUNTIME_PROMPT_TEMPLATE = PLATFORM_LAYER_PROMPT;
@@ -301,6 +302,7 @@ export function buildEnterpriseRuntimePromptLayers(
 
   const combined = [
     platform,
+    PROFESSIONAL_CONVERSATION_POLICY_PROMPT,
     agentIdentity,
     storePolicyKnowledge,
     runtimeTools,

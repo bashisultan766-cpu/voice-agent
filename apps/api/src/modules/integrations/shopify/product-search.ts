@@ -262,9 +262,50 @@ export class ShopifyProductSearchService {
     return query
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-      .replace(/\b(i want|i need|please|show me|looking for|can you|do you have)\b/g, ' ')
+      .replace(
+        /\b(i want|i need|please|show me|looking for|can you|do you have|got any|uh|um|like)\b/g,
+        ' ',
+      )
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  /** When strict AND token search returns nothing, retry with OR across tokens. */
+  async searchWithFuzzyFallback(
+    tenantId: string,
+    agentId: string,
+    query: string,
+    limit = 8,
+    shopDomain?: string | null,
+  ) {
+    const primary = await this.search(tenantId, agentId, query, limit, shopDomain);
+    if (primary.length > 0) return primary;
+    const normalized = this.normalizeProductQuery(query);
+    const tokens = [...new Set(normalized.split(/\s+/).filter((t) => t.length >= 2))];
+    if (tokens.length < 2) {
+      return this.fuzzySearch(tenantId, agentId, query, limit, shopDomain).then((r) => r.results);
+    }
+    const domain = shopDomain?.trim().toLowerCase() || null;
+    const tenantScope: Prisma.ProductCacheWhereInput = { tenantId, agentId };
+    if (domain) tenantScope.shopDomain = domain;
+    const orClauses: Prisma.ProductCacheWhereInput[] = tokens.map((token) => ({
+      OR: [
+        { title: { contains: token, mode: 'insensitive' } },
+        { handle: { contains: token, mode: 'insensitive' } },
+        { tags: { contains: token, mode: 'insensitive' } },
+        { bodyHtml: { contains: token, mode: 'insensitive' } },
+        { vendor: { contains: token, mode: 'insensitive' } },
+      ],
+    }));
+    const results = await this.prisma.productCache.findMany({
+      where: { ...tenantScope, OR: orClauses },
+      include: { variants: true },
+      take: Math.min(limit, 25),
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (results.length > 0) return results.map((product) => this.mapProduct(product));
+    const fuzzy = await this.fuzzySearch(tenantId, agentId, query, limit, shopDomain);
+    return fuzzy.results;
   }
 
   private synonymsForToken(token: string): string[] {

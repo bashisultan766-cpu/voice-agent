@@ -45,6 +45,34 @@ export function cleanVoiceProductQuery(raw: string): { cleanedQuery: string; pro
   };
 }
 
+const TITLE_CONNECTOR = /\s+(?:and|&|plus)\s+/i;
+
+/**
+ * Extract one or more book title phrases from a spoken utterance.
+ * Example: "Atomic Habits and Rich Dad Poor Dad" → two searches.
+ */
+export function extractBookTitlesFromUtterance(raw: string): string[] {
+  const text = `${raw ?? ''}`.trim();
+  if (!text) return [];
+
+  const quoted = [...text.matchAll(/["“”']([^"“”']{2,120})["“”']/g)]
+    .map((m) => m[1]?.trim())
+    .filter((q): q is string => Boolean(q && q.length >= 2));
+  if (quoted.length >= 2) return [...new Set(quoted)];
+
+  const { cleanedQuery, probableTitle } = cleanVoiceProductQuery(text);
+  const base = probableTitle || cleanedQuery;
+  if (!base) return [];
+
+  const parts = base
+    .split(TITLE_CONNECTOR)
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 3);
+  if (parts.length >= 2) return [...new Set(parts)];
+
+  return [base];
+}
+
 export function slugifyProductHandleHint(title: string): string {
   return title
     .trim()

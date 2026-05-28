@@ -80,6 +80,10 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
     return 'small_talk';
   }
 
+  if (/\b(can you hear me|do you hear me|are you there|can you hear)\b/.test(t)) {
+    return 'small_talk';
+  }
+
   // Small talk
   if (
     /\bhow\s+(are|r)\s+(you|u|ya)\b/.test(t) ||
@@ -129,6 +133,14 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
     )
   ) {
     return 'product_question';
+  }
+
+  if (
+    /\b(i want (the )?(first|second|third|this|that) one|i'?ll take|ill take|order that|add it|yes that book|this one|that one|the first one)\b/i.test(
+      raw,
+    )
+  ) {
+    return 'purchase_confirmation';
   }
 
   // Purchase confirmation intent without a specific product question

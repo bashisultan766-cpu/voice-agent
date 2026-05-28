@@ -50,6 +50,7 @@ import {
 } from './product-recommendation.util';
 import { classifyConversationalObjection } from './objection-patterns.util';
 import { normalizeSpokenEmail } from './email-normalization.util';
+import { cleanVoiceProductQuery } from '../../agents/voice-product-query.util';
 
 const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
 
@@ -176,13 +177,8 @@ export class ToolOrchestratorService {
   }
 
   private normalizeProductQueryText(text: string): string {
-    const cleaned = text
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-      .replace(/\b(i want|i need|please|show me|looking for|can you|do you have)\b/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    return cleaned;
+    const { cleanedQuery, probableTitle } = cleanVoiceProductQuery(text);
+    return (probableTitle || cleanedQuery || text).trim();
   }
 
   private hasSpecificProductSignal(query: string): boolean {
@@ -680,7 +676,7 @@ export class ToolOrchestratorService {
               requiresClarification: true,
               voiceSummary:
                 live.voiceSummary ??
-                `I couldn't find that title in the catalog. Please share the ISBN and I'll check again.`,
+                `I couldn't find an exact match, but I can check similar titles. Could you repeat the title or author?`,
             },
             meta: { source: 'shopify_live' },
           };

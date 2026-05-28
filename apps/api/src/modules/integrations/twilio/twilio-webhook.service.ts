@@ -202,11 +202,11 @@ export class TwilioWebhookService implements OnModuleInit {
 
   private shortenGreetingForCapture(text: string, maxMs: number): string {
     const t = text.trim();
-    if (!t) return 'Hello, how can I help?';
+    if (!t) return "I'm still here. How can I help you with your book order?";
     if (this.estimateGreetingAudioMs(t) <= maxMs) return t;
     const sentence = t.split(/[.!?]/).map((s) => s.trim()).filter(Boolean)[0] ?? t;
     const compact = sentence.split(/\s+/).slice(0, 8).join(' ');
-    return compact.length > 0 ? compact : 'Hello, how can I help?';
+    return compact.length > 0 ? compact : "I'm still here. How can I help you with your book order?";
   }
 
   private isGatherHearingDebugMode(): boolean {
@@ -1088,7 +1088,7 @@ export class TwilioWebhookService implements OnModuleInit {
         return { twiml, callSessionId, agentResolved: true };
       }
 
-      assistantResponse = 'Go ahead.';
+      assistantResponse = "Sorry, I didn't catch that. Could you please repeat it?";
       const seq2 = await this.transcriptBuffer.getNextSequence(callSessionId);
       await this.transcriptBuffer.append(callSessionId, 'agent', assistantResponse, seq2);
       this.logger.log(
@@ -1645,7 +1645,7 @@ export class TwilioWebhookService implements OnModuleInit {
           this.resolveShortPhrasePlayUrl({
             origin,
             hearingDebugEffective,
-            text: 'Just a moment.',
+            text: 'One moment while I look that up.',
             tenantId: ctx.tenantId,
             callSessionId,
             agent: ctx.agent,
@@ -1657,7 +1657,7 @@ export class TwilioWebhookService implements OnModuleInit {
         const twiml = buildDeferredVoiceMomentPleaseTwiML({
           deferPollUrl,
           playbackUrl: moment.playbackUrl,
-          sayFallbackText: 'Just a moment.',
+          sayFallbackText: 'One moment while I look that up.',
           allowTwilioSayFallback: !strictElevenLabsOnly,
           language: this.getSessionLanguage(ctx),
         });

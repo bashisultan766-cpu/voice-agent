@@ -107,8 +107,20 @@ export function shouldUseFastVoicePath(
   stage: ConversationStage,
   toolCallAllowed: boolean,
 ): boolean {
-  void userIntent;
   void stage;
-  void toolCallAllowed;
+  if (
+    userIntent === 'greeting' ||
+    userIntent === 'small_talk' ||
+    userIntent === 'store_identity_question' ||
+    userIntent === 'capability_question'
+  ) {
+    return true;
+  }
+  if (userIntent === 'purchase_confirmation') {
+    return true;
+  }
+  if (userIntent === 'product_search' && !toolCallAllowed) {
+    return true;
+  }
   return false;
 }
