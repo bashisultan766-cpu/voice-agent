@@ -8,6 +8,7 @@ export interface InboundGatherMvpTwiMLOptions {
     finalFallbackAudioUrl?: string;
     openingSayText?: string;
     finalFallbackSayText?: string;
+    includePromptInsideGather?: boolean;
 }
 export declare function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions): string;
 export declare function buildDeferredVoiceKickoffTwiML(options: {

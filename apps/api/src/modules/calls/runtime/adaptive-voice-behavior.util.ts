@@ -65,7 +65,7 @@ export function resolveAdaptiveVoiceBehavior(
       return {
         mood,
         toneHint: 'Use simple words; one clarifying question only.',
-        maxSentences: 3,
+        maxSentences: 2,
         empathyLead: 'No problem — let me clarify.',
         pacing: 'slow',
         verbosity: 'normal',
@@ -74,7 +74,7 @@ export function resolveAdaptiveVoiceBehavior(
       return {
         mood,
         toneHint: 'Match positive energy briefly; stay professional.',
-        maxSentences: 3,
+        maxSentences: 2,
         empathyLead: 'Great!',
         pacing: 'normal',
         verbosity: 'warm',
@@ -83,7 +83,7 @@ export function resolveAdaptiveVoiceBehavior(
       return {
         mood: 'neutral',
         toneHint: 'Natural, warm, concise bookstore assistant.',
-        maxSentences: 3,
+        maxSentences: 2,
         empathyLead: null,
         pacing: 'normal',
         verbosity: 'normal',

@@ -756,10 +756,11 @@ export class TwilioWebhookService implements OnModuleInit {
     const twiml = buildInboundGatherMvpTwiML({
       gatherActionUrl,
       language: hearingDebug ? 'en-US' : normalizeLanguageForTwilio(context.agent.language ?? 'en'),
-      playbackAudioUrl: undefined,
-      openingSayText: hearingDebugEffective
-        ? debugOpeningText
-        : shortGreeting,
+      playbackAudioUrl: hearingDebugEffective ? undefined : greetingPlaybackUrl,
+      openingSayText:
+        hearingDebugEffective || !greetingPlaybackUrl
+          ? shortGreeting
+          : undefined,
       finalFallbackAudioUrl: hearingDebugEffective ? undefined : finalFallbackAudioUrl,
       finalFallbackSayText:
         strictElevenLabsOnly || hearingDebugEffective || finalFallbackAudioUrl ? undefined : fallbackText,

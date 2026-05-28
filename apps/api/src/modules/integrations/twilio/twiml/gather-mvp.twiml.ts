@@ -81,7 +81,8 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
   const gatherInner = gatherInnerLines.length > 0 ? `${gatherInnerLines.join('\n')}\n` : '';
   const preGatherLines: string[] = [];
   if (!includePromptInsideGather) {
-    if (openingSayText.length > 0) preGatherLines.push(`  <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
+    if (playbackAudioUrl.length > 0) preGatherLines.push(`  <Play>${escapeXml(playbackAudioUrl)}</Play>`);
+    else if (openingSayText.length > 0) preGatherLines.push(`  <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
     else preGatherLines.push(`  <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
   }
   const preGather = preGatherLines.length > 0 ? `${preGatherLines.join('\n')}\n` : '';

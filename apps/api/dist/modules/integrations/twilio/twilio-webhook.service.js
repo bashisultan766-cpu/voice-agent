@@ -99,6 +99,29 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
     getPublicBaseUrl() {
         return this.publicBaseUrl;
     }
+    getVoiceGreetingMaxMs() {
+        const raw = `${this.config.get('VOICE_GREETING_MAX_MS') ?? process.env.VOICE_GREETING_MAX_MS ?? '1200'}`.trim();
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n <= 0)
+            return 1200;
+        return Math.max(400, Math.min(3000, Math.trunc(n)));
+    }
+    estimateGreetingAudioMs(text) {
+        const chars = text.trim().length;
+        if (chars <= 0)
+            return 0;
+        return Math.max(350, Math.min(7000, Math.trunc(chars * 55)));
+    }
+    shortenGreetingForCapture(text, maxMs) {
+        const t = text.trim();
+        if (!t)
+            return 'Hello, how can I help?';
+        if (this.estimateGreetingAudioMs(t) <= maxMs)
+            return t;
+        const sentence = t.split(/[.!?]/).map((s) => s.trim()).filter(Boolean)[0] ?? t;
+        const compact = sentence.split(/\s+/).slice(0, 8).join(' ');
+        return compact.length > 0 ? compact : 'Hello, how can I help?';
+    }
     isGatherHearingDebugMode() {
         const v = `${this.config.get('TWILIO_GATHER_HEARING_DEBUG') ?? process.env.TWILIO_GATHER_HEARING_DEBUG ?? ''}`.trim();
         return v === '1' || v.toLowerCase() === 'true';
@@ -462,6 +485,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
         const elOptsInbound = await this.loadElevenLabsTtsOptions(context);
         const greetingText = context.agent.greetingMessage ??
             `Hello, you've reached ${context.store.name}. How can I help you today?`;
+        const maxGreetingMs = this.getVoiceGreetingMaxMs();
+        const shortGreeting = this.shortenGreetingForCapture(greetingText, maxGreetingMs);
+        const estimatedGreetingMs = this.estimateGreetingAudioMs(shortGreeting);
         const fallbackText = context.agent.fallbackMessage?.trim() ??
             "We're having trouble hearing you. Please call again later. Goodbye.";
         let greetingPlaybackUrl;
@@ -469,9 +495,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
         let finalFallbackAudioUrl;
         let finalFallbackVoice = 'twilio_say_fallback';
         const shouldTryElGreeting = (!hearingDebug || forceElOnly) && elOptsInbound.voiceId && /^https:\/\//i.test(origin);
-        if (shouldTryElGreeting) {
+        if (shouldTryElGreeting && estimatedGreetingMs <= maxGreetingMs) {
             const inboundVoiceId = elOptsInbound.voiceId;
-            const openingForTts = hearingDebug && forceElOnly ? debugOpeningText : greetingText;
+            const openingForTts = hearingDebug && forceElOnly ? debugOpeningText : shortGreeting;
             const gPlay = await this.voicePromptAudio.createPhrasePlaybackUrl(origin, {
                 text: openingForTts,
                 voiceId: inboundVoiceId,
@@ -534,22 +560,28 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             gatherActionUrl,
             playAudioUrl: hearingDebugEffective ? null : (greetingPlaybackUrl ?? null),
         }));
+        this.logger.log(JSON.stringify({
+            event: 'voice.gather.capture_timing',
+            callSessionId: session.id,
+            greetingAudioMs: estimatedGreetingMs,
+            timeUntilGatherListening: 0,
+            speechDetected: false,
+            speechResultChars: 0,
+            emptySpeechRate: 0,
+        }));
         const twiml = (0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
             gatherActionUrl,
             language: hearingDebug ? 'en-US' : (0, language_intelligence_util_1.normalizeLanguageForTwilio)(context.agent.language ?? 'en'),
             playbackAudioUrl: hearingDebugEffective ? undefined : greetingPlaybackUrl,
-            openingSayText: strictElevenLabsOnly
-                ? undefined
-                : hearingDebugEffective
-                    ? debugOpeningText
-                    : greetingPlaybackUrl
-                        ? undefined
-                        : greetingText,
+            openingSayText: hearingDebugEffective || !greetingPlaybackUrl
+                ? shortGreeting
+                : undefined,
             finalFallbackAudioUrl: hearingDebugEffective ? undefined : finalFallbackAudioUrl,
             finalFallbackSayText: strictElevenLabsOnly || hearingDebugEffective || finalFallbackAudioUrl ? undefined : fallbackText,
-            timeoutSeconds: hearingDebug ? 12 : 10,
-            speechTimeout: hearingDebug ? '3' : '2',
+            timeoutSeconds: 5,
+            speechTimeout: 'auto',
             pauseBeforeListenSeconds: 0,
+            includePromptInsideGather: false,
         });
         const greetingSeq = await this.transcriptBuffer.getNextSequence(session.id);
         await this.transcriptBuffer.append(session.id, 'system', `Inbound call received from ${payload.From} to ${payload.To}.`, greetingSeq);
@@ -670,7 +702,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 callSessionId: payload.callSessionId?.trim() || null,
                 checks: {
                     spokeDuringPromptAudio: 'Twilio only starts recognition after inner Play/Say/Pause finish; speech during greeting is dropped.',
-                    timeoutTooShort: 'Gather uses timeout=10s (start speaking) and speechTimeout=2 (end of utterance).',
+                    timeoutTooShort: 'Gather uses timeout=5s (start speaking) and speechTimeout=auto for conversational flow.',
                     languageMismatch: 'Gather language is derived from agent/session; wrong code hurts recognition.',
                     enhancedOrSpeechModel: 'enhanced and speechModel removed from TwiML for compatibility.',
                     twilioPostedToGather: 'This log line confirms Twilio reached your /api/twilio/voice/gather handler for this turn.',
@@ -687,6 +719,15 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             ? ctx.metadata
             : {};
         const gatherRetryCount = Number(metadata.gatherRetryCount ?? 0);
+        this.logger.log(JSON.stringify({
+            event: 'voice.gather.capture_timing',
+            callSessionId,
+            greetingAudioMs: 0,
+            timeUntilGatherListening: 0,
+            speechDetected: speechText.length > 0,
+            speechResultChars: speechText.length,
+            emptySpeechRate: speechText.length > 0 ? 0 : Math.min(1, (gatherRetryCount + 1) / (gatherRetryCount + 2)),
+        }));
         console.log(JSON.stringify({
             event: 'twilio.voice.gather_speech_gate',
             callSessionId,
@@ -770,7 +811,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 }));
                 return { twiml, callSessionId, agentResolved: true };
             }
-            assistantResponse = 'Please speak after the beep.';
+            assistantResponse = 'Go ahead.';
             const seq2 = await this.transcriptBuffer.getNextSequence(callSessionId);
             await this.transcriptBuffer.append(callSessionId, 'agent', assistantResponse, seq2);
             this.logger.log(JSON.stringify({
@@ -1017,9 +1058,10 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             finalFallbackAudioUrl: retryFinal.playbackUrl,
             openingSayText: strictElevenLabsOnly || retryOpen.playbackUrl ? undefined : assistantResponse,
             finalFallbackSayText: strictElevenLabsOnly || retryFinal.playbackUrl ? undefined : gatherFallbackText,
-            timeoutSeconds: 10,
-            speechTimeout: '2',
+            timeoutSeconds: 5,
+            speechTimeout: 'auto',
             pauseBeforeListenSeconds: 0,
+            includePromptInsideGather: false,
         });
         const replyVerb = retryOpen.playbackUrl ? 'Play' : 'Say';
         this.logTwilioResponseMetrics('gather_retry_prompt', callSessionId, handlerStartedAt);

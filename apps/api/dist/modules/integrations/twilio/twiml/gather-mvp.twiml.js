@@ -17,10 +17,11 @@ function sayOpeningAttrs(language) {
 }
 function buildInboundGatherMvpTwiML(options) {
     const language = options.language ?? 'en-US';
-    const speechTimeout = options.speechTimeout ?? '2';
-    const timeoutSeconds = Number.isFinite(options.timeoutSeconds) ? Math.max(2, Math.trunc(options.timeoutSeconds)) : 10;
+    const speechTimeout = options.speechTimeout ?? 'auto';
+    const timeoutSeconds = Number.isFinite(options.timeoutSeconds) ? Math.max(2, Math.trunc(options.timeoutSeconds)) : 5;
     const pauseRaw = options.pauseBeforeListenSeconds;
     const pauseBeforeListen = pauseRaw === undefined ? 1 : Math.max(0, Math.min(10, Math.trunc(Number(pauseRaw))));
+    const includePromptInsideGather = options.includePromptInsideGather === true;
     const actionAttr = escapeXmlAttribute(options.gatherActionUrl);
     const playbackAudioUrl = options.playbackAudioUrl?.trim() ?? '';
     const finalFallbackAudioUrl = options.finalFallbackAudioUrl?.trim() ?? '';
@@ -28,17 +29,29 @@ function buildInboundGatherMvpTwiML(options) {
     const finalFallbackSayText = options.finalFallbackSayText?.trim() ?? '';
     const sayAttr = sayOpeningAttrs(language);
     const gatherInnerLines = [];
-    if (playbackAudioUrl.length > 0)
-        gatherInnerLines.push(`    <Play>${escapeXml(playbackAudioUrl)}</Play>`);
-    if (openingSayText.length > 0)
-        gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
-    if (gatherInnerLines.length === 0) {
-        gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
+    if (includePromptInsideGather) {
+        if (playbackAudioUrl.length > 0)
+            gatherInnerLines.push(`    <Play>${escapeXml(playbackAudioUrl)}</Play>`);
+        if (openingSayText.length > 0)
+            gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
+        if (gatherInnerLines.length === 0) {
+            gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
+        }
+        if (pauseBeforeListen > 0) {
+            gatherInnerLines.push(`    <Pause length="${pauseBeforeListen}"/>`);
+        }
     }
-    if (pauseBeforeListen > 0) {
-        gatherInnerLines.push(`    <Pause length="${pauseBeforeListen}"/>`);
+    const gatherInner = gatherInnerLines.length > 0 ? `${gatherInnerLines.join('\n')}\n` : '';
+    const preGatherLines = [];
+    if (!includePromptInsideGather) {
+        if (playbackAudioUrl.length > 0)
+            preGatherLines.push(`  <Play>${escapeXml(playbackAudioUrl)}</Play>`);
+        else if (openingSayText.length > 0)
+            preGatherLines.push(`  <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
+        else
+            preGatherLines.push(`  <Say${sayAttr}>${escapeXml('Hello, how can I help you?')}</Say>`);
     }
-    const gatherInner = `${gatherInnerLines.join('\n')}\n`;
+    const preGather = preGatherLines.length > 0 ? `${preGatherLines.join('\n')}\n` : '';
     const afterGatherLines = [];
     if (finalFallbackAudioUrl.length > 0)
         afterGatherLines.push(`  <Play>${escapeXml(finalFallbackAudioUrl)}</Play>`);
@@ -47,7 +60,7 @@ function buildInboundGatherMvpTwiML(options) {
     const afterGather = afterGatherLines.length > 0 ? `${afterGatherLines.join('\n')}\n` : '';
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" action="${actionAttr}" method="POST" speechTimeout="${escapeXmlAttribute(speechTimeout)}" timeout="${timeoutSeconds}" language="${escapeXmlAttribute(language)}" actionOnEmptyResult="true">
+${preGather}  <Gather input="speech" action="${actionAttr}" method="POST" speechTimeout="${escapeXmlAttribute(speechTimeout)}" timeout="${timeoutSeconds}" language="${escapeXmlAttribute(language)}" actionOnEmptyResult="true">
 ${gatherInner}  </Gather>
 ${afterGather}  <Hangup />
 </Response>`;

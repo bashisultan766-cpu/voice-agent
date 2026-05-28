@@ -67,6 +67,9 @@ export declare class TwilioWebhookService implements OnModuleInit {
     constructor(config: ConfigService, agentResolution: AgentResolutionService, callsService: CallsService, callEvents: CallEventsService, voiceRuntime: VoiceRuntimeService, sessionContext: SessionContextService, transcriptBuffer: TranscriptBufferService, elevenLabs: ElevenLabsService, ttsCache: TwilioTtsCacheService, voicePromptAudio: VoicePromptAudioService, prisma: PrismaService, encryption: EncryptionService, streamMetrics: VoiceStreamMetricsService, voiceCost: VoiceCostAnalyticsService, streamingSession: VoiceStreamingSessionService, elevenStreaming: ElevenLabsStreamingService);
     onModuleInit(): void;
     private getPublicBaseUrl;
+    private getVoiceGreetingMaxMs;
+    private estimateGreetingAudioMs;
+    private shortenGreetingForCapture;
     private isGatherHearingDebugMode;
     private isForceElevenLabsOnly;
     private isStrictElevenLabsOnly;
