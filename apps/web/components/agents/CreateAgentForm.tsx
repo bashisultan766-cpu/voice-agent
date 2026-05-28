@@ -904,12 +904,6 @@ export function CreateAgentForm({
           if (payload.agentStatus === initialDataRef.current.agentStatus) {
             delete payload.agentStatus;
           }
-          if (payload.useWorkspaceOpenai === initialDataRef.current.useWorkspaceOpenai) {
-            delete payload.useWorkspaceOpenai;
-          }
-          if (payload.useWorkspaceTwilio === initialDataRef.current.useWorkspaceTwilio) {
-            delete payload.useWorkspaceTwilio;
-          }
           for (const key of SECRET_KEYS) {
             const v = payload[key];
             if (typeof v === 'string' && !v.trim()) {

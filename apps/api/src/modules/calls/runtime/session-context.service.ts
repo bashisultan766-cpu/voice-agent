@@ -84,6 +84,8 @@ export interface VoiceSessionContext {
   };
   /** Agent row `updatedAt` when context was built (fresh read). */
   configUpdatedAt?: string | null;
+  configVersion?: number | null;
+  promptUpdatedAt?: string | null;
   store: {
     name: string;
     city?: string | null;
@@ -240,6 +242,20 @@ export class SessionContextService {
       normalizeShopifyDomain(store?.shopifyConnection?.shopDomain ? `https://${store.shopifyConnection.shopDomain}` : null);
 
     const configUpdatedAt = session.agent.updatedAt?.toISOString() ?? null;
+    const cfgMeta =
+      session.agent.agentConfig?.metadata &&
+      typeof session.agent.agentConfig.metadata === 'object' &&
+      !Array.isArray(session.agent.agentConfig.metadata)
+        ? (session.agent.agentConfig.metadata as Record<string, unknown>)
+        : null;
+    const configVersion =
+      typeof cfgMeta?.configVersion === 'number' && Number.isFinite(cfgMeta.configVersion)
+        ? Number(cfgMeta.configVersion)
+        : 1;
+    const promptUpdatedAt =
+      typeof cfgMeta?.promptUpdatedAt === 'string' && cfgMeta.promptUpdatedAt.trim()
+        ? cfgMeta.promptUpdatedAt
+        : session.agent.agentConfig?.updatedAt?.toISOString() ?? configUpdatedAt;
     const voiceIdEffective = session.agent.voiceId ?? workspaceElevenlabsDefaultVoiceId;
     this.log.log(
       JSON.stringify({
@@ -256,6 +272,8 @@ export class SessionContextService {
         openaiKeyPresent: Boolean(openaiApiKey?.trim()),
         elevenLabsKeyPresent: Boolean(elevenlabsApiKey?.trim()),
         configUpdatedAt,
+        configVersion,
+        promptUpdatedAt,
         fieldsUpdated: null,
         /** If both agent and tenant carry OpenAI keys, agent wins; log helps debug “Settings ignored” reports. */
         precedenceNote:
@@ -274,6 +292,8 @@ export class SessionContextService {
       fromNumber: session.fromNumber,
       toNumber: session.toNumber,
       configUpdatedAt,
+      configVersion,
+      promptUpdatedAt,
       agent: {
         name: session.agent.name,
         voice: session.agent.voice,

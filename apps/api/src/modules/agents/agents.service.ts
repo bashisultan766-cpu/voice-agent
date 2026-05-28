@@ -97,6 +97,37 @@ interface AgentSecrets {
   resendApiKey?: string;
 }
 
+type AgentConfigRowShape = {
+  businessName?: string | null;
+  supportEmail?: string | null;
+  supportPhone?: string | null;
+  askEmailBeforePaymentLink?: boolean | null;
+  checkoutMode?: string | null;
+  humanHandoffRules?: string | null;
+  shippingPolicy?: string | null;
+  returnPolicy?: string | null;
+  exchangePolicy?: string | null;
+  deliveryNotes?: string | null;
+  forbiddenBehaviors?: string | null;
+  escalationRules?: string | null;
+  fallbackHumanContact?: string | null;
+  customSystemPrompt?: string | null;
+  emailSenderName?: string | null;
+  emailSenderAddress?: string | null;
+  emailReplyTo?: string | null;
+  emailSubjectTemplate?: string | null;
+  paymentLinkEmailIntro?: string | null;
+  emailTestRecipient?: string | null;
+  useWorkspaceEmail?: boolean | null;
+  useWorkspaceShopify?: boolean | null;
+  useWorkspaceOpenai?: boolean | null;
+  useWorkspaceElevenlabs?: boolean | null;
+  useWorkspaceTwilio?: boolean | null;
+  shopifyApiVersion?: string | null;
+  metadata?: unknown;
+  updatedAt?: Date | null;
+};
+
 import {
   resolveCredentialPriority,
   type CredentialSource,
@@ -962,6 +993,125 @@ export class AgentsService {
     return out;
   }
 
+  private parseAgentConfigMetadata(metadata: unknown): Record<string, unknown> {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+    return { ...(metadata as Record<string, unknown>) };
+  }
+
+  private buildAgentConfigMetadata(args: {
+    previousMetadata: unknown;
+    promptTouched: boolean;
+    previousPromptUpdatedAt?: Date | null;
+  }): Prisma.InputJsonValue {
+    const prev = this.parseAgentConfigMetadata(args.previousMetadata);
+    const previousVersion =
+      typeof prev.configVersion === 'number' && Number.isFinite(prev.configVersion) ? prev.configVersion : 0;
+    const nowIso = new Date().toISOString();
+    const prevPromptUpdatedAt =
+      typeof prev.promptUpdatedAt === 'string' && prev.promptUpdatedAt.trim()
+        ? prev.promptUpdatedAt
+        : args.previousPromptUpdatedAt?.toISOString() ?? null;
+    return {
+      ...prev,
+      configVersion: previousVersion + 1,
+      promptUpdatedAt: args.promptTouched ? nowIso : prevPromptUpdatedAt,
+      lastSavedAt: nowIso,
+    } as Prisma.InputJsonValue;
+  }
+
+  private resolveAgentConfigReplacement(
+    dto: UpdateAgentDto,
+    previousConfig: AgentConfigRowShape | null | undefined,
+  ): Prisma.AgentConfigUncheckedUpdateInput {
+    const prev = previousConfig ?? null;
+    const fallbackHumanContactFromDto =
+      dto.escalationPhone !== undefined || dto.escalationEmail !== undefined
+        ? dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null
+        : undefined;
+    return {
+      businessName:
+        dto.businessName !== undefined ? dto.businessName?.trim() || null : (prev?.businessName ?? null),
+      supportEmail:
+        dto.supportEmail !== undefined ? dto.supportEmail?.trim() || null : (prev?.supportEmail ?? null),
+      supportPhone:
+        dto.supportPhone !== undefined ? dto.supportPhone?.trim() || null : (prev?.supportPhone ?? null),
+      askEmailBeforePaymentLink:
+        dto.askEmailBeforePaymentLink !== undefined
+          ? dto.askEmailBeforePaymentLink
+          : (prev?.askEmailBeforePaymentLink ?? true),
+      checkoutMode:
+        dto.checkoutMode !== undefined
+          ? toCheckoutModeApi(dto.checkoutMode)
+          : toCheckoutModeApi((prev?.checkoutMode as string | undefined) ?? 'STOREFRONT_CART'),
+      humanHandoffRules:
+        dto.humanHandoffRules !== undefined ? dto.humanHandoffRules?.trim() || null : (prev?.humanHandoffRules ?? null),
+      shippingPolicy:
+        dto.shippingPolicy !== undefined ? dto.shippingPolicy?.trim() || null : (prev?.shippingPolicy ?? null),
+      returnPolicy:
+        dto.returnPolicy !== undefined ? dto.returnPolicy?.trim() || null : (prev?.returnPolicy ?? null),
+      exchangePolicy:
+        dto.exchangePolicy !== undefined ? dto.exchangePolicy?.trim() || null : (prev?.exchangePolicy ?? null),
+      deliveryNotes:
+        dto.deliveryNotes !== undefined ? dto.deliveryNotes?.trim() || null : (prev?.deliveryNotes ?? null),
+      forbiddenBehaviors:
+        dto.forbiddenBehaviors !== undefined ? dto.forbiddenBehaviors?.trim() || null : (prev?.forbiddenBehaviors ?? null),
+      escalationRules:
+        dto.escalationRules !== undefined
+          ? normalizeEscalationRules(dto.escalationRules)
+          : (prev?.escalationRules ?? null),
+      fallbackHumanContact: fallbackHumanContactFromDto ?? (prev?.fallbackHumanContact ?? null),
+      customSystemPrompt:
+        dto.systemPrompt !== undefined ? dto.systemPrompt.trim() || null : (prev?.customSystemPrompt ?? null),
+      emailSenderName:
+        dto.emailSenderName !== undefined ? dto.emailSenderName?.trim() || null : (prev?.emailSenderName ?? null),
+      emailSenderAddress:
+        dto.emailSenderAddress !== undefined
+          ? dto.emailSenderAddress?.trim() || null
+          : (prev?.emailSenderAddress ?? null),
+      emailReplyTo:
+        dto.emailReplyTo !== undefined ? dto.emailReplyTo?.trim() || null : (prev?.emailReplyTo ?? null),
+      emailSubjectTemplate:
+        dto.emailSubjectTemplate !== undefined
+          ? dto.emailSubjectTemplate?.trim() || null
+          : (prev?.emailSubjectTemplate ?? null),
+      paymentLinkEmailIntro:
+        dto.paymentLinkEmailIntro !== undefined
+          ? dto.paymentLinkEmailIntro?.trim() || null
+          : (prev?.paymentLinkEmailIntro ?? null),
+      emailTestRecipient:
+        dto.emailTestRecipient !== undefined
+          ? dto.emailTestRecipient?.trim() || null
+          : (prev?.emailTestRecipient ?? null),
+      useWorkspaceEmail:
+        dto.useWorkspaceEmail !== undefined ? dto.useWorkspaceEmail === true : (prev?.useWorkspaceEmail === true),
+      useWorkspaceShopify:
+        dto.useWorkspaceShopify !== undefined
+          ? dto.useWorkspaceShopify === true
+          : (prev?.useWorkspaceShopify === true),
+      useWorkspaceOpenai:
+        dto.useWorkspaceOpenai !== undefined ? dto.useWorkspaceOpenai === true : (prev?.useWorkspaceOpenai === true),
+      useWorkspaceElevenlabs:
+        dto.useWorkspaceElevenlabs !== undefined
+          ? dto.useWorkspaceElevenlabs === true
+          : (prev?.useWorkspaceElevenlabs === true),
+      useWorkspaceTwilio:
+        dto.useWorkspaceTwilio !== undefined ? dto.useWorkspaceTwilio === true : (prev?.useWorkspaceTwilio === true),
+      shopifyApiVersion:
+        dto.shopifyApiVersion !== undefined ? dto.shopifyApiVersion?.trim() || null : (prev?.shopifyApiVersion ?? null),
+    };
+  }
+
+  private async invalidateAgentRuntimeState(tenantId: string, agentId: string): Promise<void> {
+    this.log.log(
+      JSON.stringify({
+        event: 'agent.runtime_cache.invalidate',
+        tenantId,
+        agentId,
+        message: 'Agent settings updated; runtime re-reads fresh DB config on next call/session.',
+      }),
+    );
+  }
+
   private encryptSecrets(secrets: AgentSecrets): string | null {
     if (Object.keys(secrets).length === 0) return null;
     const json = JSON.stringify(secrets);
@@ -1708,6 +1858,9 @@ export class AgentsService {
   async update(tenantId: string, id: string, dto: UpdateAgentDto, actorUserId?: string) {
     normalizeAgentDtoAliases(dto);
     await this.applyWorkspaceIntegrationFlagsOnly(tenantId, dto);
+    if (dto.systemPrompt !== undefined && !dto.systemPrompt.trim()) {
+      throw new BadRequestException('System prompt cannot be empty.');
+    }
     const existing = await this.findOne(tenantId, id);
     const currentStatus = String((existing as { status?: unknown }).status ?? '').toLowerCase();
     if (process.env.NODE_ENV === 'production') {
@@ -1986,6 +2139,14 @@ export class AgentsService {
     if (!updated) {
       throw new NotFoundException('Agent not found.');
     }
+    const previousAgentConfig = ((existing as { agentConfig?: unknown }).agentConfig ??
+      null) as AgentConfigRowShape | null;
+    const configMetadata = this.buildAgentConfigMetadata({
+      previousMetadata: previousAgentConfig?.metadata,
+      promptTouched: dto.systemPrompt !== undefined,
+      previousPromptUpdatedAt: previousAgentConfig?.updatedAt ?? null,
+    });
+    const configReplacement = this.resolveAgentConfigReplacement(dto, previousAgentConfig);
     await this.prisma.agentConfig.upsert({
       where: { agentId: id },
       create: {
@@ -2018,26 +2179,15 @@ export class AgentsService {
         useWorkspaceElevenlabs: dto.useWorkspaceElevenlabs === true,
         useWorkspaceTwilio: dto.useWorkspaceTwilio === true,
         shopifyApiVersion: dto.shopifyApiVersion?.trim() || null,
+        metadata: {
+          configVersion: 1,
+          promptUpdatedAt: dto.systemPrompt?.trim() ? new Date().toISOString() : null,
+          lastSavedAt: new Date().toISOString(),
+        } as Prisma.InputJsonValue,
       },
       update: {
-        ...(dto.businessName !== undefined && { businessName: dto.businessName?.trim() || null }),
-        ...(dto.supportEmail !== undefined && { supportEmail: dto.supportEmail?.trim() || null }),
-        ...(dto.supportPhone !== undefined && { supportPhone: dto.supportPhone?.trim() || null }),
-        ...(dto.askEmailBeforePaymentLink !== undefined && { askEmailBeforePaymentLink: dto.askEmailBeforePaymentLink }),
-        ...(dto.checkoutMode !== undefined && { checkoutMode: toCheckoutModeApi(dto.checkoutMode) }),
-        ...(dto.humanHandoffRules !== undefined && { humanHandoffRules: dto.humanHandoffRules?.trim() || null }),
-        ...(dto.shippingPolicy !== undefined && { shippingPolicy: dto.shippingPolicy?.trim() || null }),
-        ...(dto.returnPolicy !== undefined && { returnPolicy: dto.returnPolicy?.trim() || null }),
-        ...(dto.exchangePolicy !== undefined && { exchangePolicy: dto.exchangePolicy?.trim() || null }),
-        ...(dto.deliveryNotes !== undefined && { deliveryNotes: dto.deliveryNotes?.trim() || null }),
-        ...(dto.forbiddenBehaviors !== undefined && { forbiddenBehaviors: dto.forbiddenBehaviors?.trim() || null }),
-        ...(dto.escalationRules !== undefined && { escalationRules: normalizeEscalationRules(dto.escalationRules) }),
-        ...((dto.escalationPhone !== undefined || dto.escalationEmail !== undefined) && {
-          fallbackHumanContact:
-            dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
-        }),
-        ...(dto.systemPrompt !== undefined && { customSystemPrompt: dto.systemPrompt.trim() || null }),
-        ...this.agentConfigEmailFieldsFromDto(dto),
+        ...configReplacement,
+        metadata: configMetadata,
       },
     });
     await this.prisma.voiceProfile.upsert({
@@ -2168,6 +2318,7 @@ export class AgentsService {
     if (explicitClearEleven) {
       console.log({ elevenlabsKeyCleared: true, agentId: id, tenantId });
     }
+    await this.invalidateAgentRuntimeState(tenantId, id);
 
     return {
       ...this.serializeAgent(updated),
