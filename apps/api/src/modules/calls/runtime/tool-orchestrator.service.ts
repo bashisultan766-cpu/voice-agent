@@ -51,6 +51,13 @@ import {
 import { classifyConversationalObjection } from './objection-patterns.util';
 import { normalizeSpokenEmail } from './email-normalization.util';
 import { cleanVoiceProductQuery } from '../../agents/voice-product-query.util';
+import {
+  detectBookCategoryQuery,
+  formatCategorySearchVoiceSummary,
+  formatProductFoundVoiceSummary,
+  formatSimilarProductVoiceSummary,
+  type VoiceProductOfferInput,
+} from './book-sales-voice.util';
 
 const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
 
@@ -611,10 +618,13 @@ export class ToolOrchestratorService {
           return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need query before searching products.', retryable: true } };
         }
         const objection = classifyConversationalObjection(query);
+        const categoryLabel = detectBookCategoryQuery(query);
         const limit =
           objection?.type === 'wants_recommendation' || /\b(recommend|suggest|bestseller|popular)\b/i.test(query)
             ? 5
-            : 1;
+            : categoryLabel
+              ? 3
+              : 3;
         const live = await this.shopifyAgent.searchProducts(ctx.tenantId, ctx.agentId, query, limit);
         if (!live.ok) {
           return {
@@ -719,6 +729,15 @@ export class ToolOrchestratorService {
                 priceSensitivity: mem.priceSensitivity ?? undefined,
               })
             : recommendable;
+        const toOffer = (p: (typeof items)[0]): VoiceProductOfferInput => ({
+          title: p.title,
+          variants: p.variants.map((v) => ({
+            price: v.price,
+            inventory_quantity: v.inventory_quantity,
+            availableForSale: v.availableForSale,
+          })),
+        });
+
         const topLive = items.find((i) => i.productId === ranked[0]?.productId) ?? items[0];
         const top = topLive;
         const v0 = top.variants[0];
@@ -739,32 +758,53 @@ export class ToolOrchestratorService {
             price: v0.price ?? undefined,
           });
         }
-        const topMapped = {
-          id: top.productId,
-          title: top.title,
-          handle: top.handle,
-          isbn: top.isbn,
-          relevanceScore: top.relevanceScore,
-          matchReason: top.matchReason,
-          variants: top.variants.map((v) => ({
+
+        let voiceSummary = live.voiceSummary?.trim() ?? '';
+        if (!voiceSummary || !/\$|priced at|price/i.test(voiceSummary)) {
+          if (categoryLabel && items.length > 1) {
+            voiceSummary = formatCategorySearchVoiceSummary(
+              categoryLabel,
+              items.slice(0, 3).map(toOffer),
+            );
+          } else if (requiresClarification) {
+            voiceSummary = formatSimilarProductVoiceSummary(toOffer(top));
+          } else {
+            voiceSummary = formatProductFoundVoiceSummary(toOffer(top));
+          }
+        }
+
+        const mapResult = (row: (typeof items)[0]) => ({
+          id: row.productId,
+          title: row.title,
+          handle: row.handle,
+          isbn: row.isbn,
+          relevanceScore: row.relevanceScore,
+          matchReason: row.matchReason,
+          variants: row.variants.map((v) => ({
             id: v.id,
             title: v.title,
             sku: v.sku,
             isbn: v.isbn,
             price: v.price,
             inventoryQuantity: v.inventory_quantity,
+            currency: 'USD',
+            availableForSale: v.availableForSale !== false,
           })),
-        };
+          primaryVariantId: row.variants[0]?.id,
+        });
+
         return {
           ok: true,
           data: {
-            results: [topMapped],
+            results: ranked
+              .slice(0, 3)
+              .map((r) => items.find((i) => i.productId === r.productId) ?? items[0])
+              .filter(Boolean)
+              .map(mapResult),
             confidence,
             requiresClarification,
             confirmationQuestion: requiresClarification ? 'Is this the book you meant?' : null,
-            voiceSummary:
-              live.voiceSummary ??
-              `I found ${top.title}${v0?.title ? ` ${v0.title}` : ''}${v0?.price ? ` for ${v0.price}` : ''}.`,
+            voiceSummary,
           },
           meta: { source: 'shopify_live' },
         };

@@ -55,6 +55,21 @@ test('hello returns professional greeting', () => {
   });
   assert.match(reply ?? '', /Justin/i);
   assert.match(reply ?? '', /SureShot Books/i);
+  assert.match(reply ?? '', /find or order a book/i);
+});
+
+test('I need a book routes to BOOK_NEED', () => {
+  const r = route('I need a book');
+  assert.equal(r, 'BOOK_NEED');
+  const reply = buildProfessionalConversationReply(r, {
+    customerText: 'I need a book',
+    userIntent: 'product_search',
+    orderState: 'IDLE',
+    storeName: 'SureShot Books',
+    agentName: 'Justin',
+  });
+  assert.match(reply ?? '', /title/i);
+  assert.match(reply ?? '', /category/i);
 });
 
 test('atomic habits routes to product search and uses tools when query is specific', () => {
@@ -96,4 +111,5 @@ test('sanitize removes banned robotic phrases', () => {
     sanitizeBannedVoicePhrases('Just a moment, let me check that for you.'),
     /just a moment.*let me check/i,
   );
+  assert.doesNotMatch(sanitizeBannedVoicePhrases('We do dropshipping.'), /dropship/i);
 });

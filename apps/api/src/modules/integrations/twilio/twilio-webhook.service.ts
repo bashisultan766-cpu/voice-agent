@@ -50,6 +50,10 @@ import { VoiceStreamingSessionService } from '../../calls/runtime/voice-streamin
 import { ElevenLabsStreamingService } from '../elevenlabs/elevenlabs-streaming.service';
 import { firstSpeakableChunk } from '../../calls/runtime/voice-response-chunker.util';
 import { stallAcknowledgement } from '../../calls/runtime/streaming-fallback.util';
+import {
+  resolveInboundGreetingText,
+  shouldPlayInboundElevenLabsGreeting,
+} from '../../calls/runtime/book-sales-voice.util';
 
 export interface InboundCallPayload {
   CallSid: string;
@@ -669,12 +673,8 @@ export class TwilioWebhookService implements OnModuleInit {
     const strictElevenLabsOnly = this.isStrictElevenLabsOnly();
     const debugOpeningText = 'Please say your question after the beep.';
     const elOptsInbound = await this.loadElevenLabsTtsOptions(context);
-    const greetingText =
-      context.agent.greetingMessage ??
-      `Hello, you've reached ${context.store.name}. How can I help you today?`;
-    const maxGreetingMs = this.getVoiceGreetingMaxMs();
-    const shortGreeting = this.shortenGreetingForCapture(greetingText, maxGreetingMs);
-    const estimatedGreetingMs = this.estimateGreetingAudioMs(shortGreeting);
+    const inboundGreetingText = resolveInboundGreetingText(context.agent.greetingMessage);
+    const estimatedGreetingMs = this.estimateGreetingAudioMs(inboundGreetingText);
     const fallbackText =
       context.agent.fallbackMessage?.trim() ??
       "We're having trouble hearing you. Please call again later. Goodbye.";
@@ -684,11 +684,15 @@ export class TwilioWebhookService implements OnModuleInit {
     let finalFallbackAudioUrl: string | undefined;
     let finalFallbackVoice: 'elevenlabs' | 'twilio_say_fallback' = 'twilio_say_fallback';
 
-    const shouldTryElGreeting =
-      (!hearingDebug || forceElOnly) && elOptsInbound.voiceId && /^https:\/\//i.test(origin);
-    if (shouldTryElGreeting && estimatedGreetingMs <= maxGreetingMs) {
+    const shouldTryElGreeting = shouldPlayInboundElevenLabsGreeting({
+      hearingDebug,
+      forceElevenLabsOnly: forceElOnly,
+      voiceId: elOptsInbound.voiceId,
+      publicOrigin: origin,
+    });
+    if (shouldTryElGreeting) {
       const inboundVoiceId = elOptsInbound.voiceId as string;
-      const openingForTts = hearingDebug && forceElOnly ? debugOpeningText : shortGreeting;
+      const openingForTts = hearingDebug && forceElOnly ? debugOpeningText : inboundGreetingText;
       const gPlay = await this.voicePromptAudio.createPhrasePlaybackUrl(origin, {
         text: openingForTts,
         voiceId: inboundVoiceId,
@@ -698,6 +702,37 @@ export class TwilioWebhookService implements OnModuleInit {
       if (gPlay.playbackUrl) {
         greetingPlaybackUrl = gPlay.playbackUrl;
         greetingVoice = 'elevenlabs';
+        this.logger.log(
+          JSON.stringify({
+            event: 'agent.initial_greeting.played',
+            callSessionId: session.id,
+            agentId: context.agentId,
+            voiceIdUsed: inboundVoiceId,
+            greetingChars: openingForTts.length,
+            fromPhraseCache: gPlay.fromPhraseCache,
+            elevenLabsKeySource: elOptsInbound.keySource,
+          }),
+        );
+        const agentGreetingSeq = await this.transcriptBuffer.getNextSequence(session.id);
+        await this.transcriptBuffer.append(session.id, 'agent', openingForTts, agentGreetingSeq);
+      } else {
+        this.logger.error(
+          JSON.stringify({
+            event: 'agent.initial_greeting.failed',
+            callSessionId: session.id,
+            agentId: context.agentId,
+            voiceIdUsed: inboundVoiceId,
+            reason: 'elevenlabs_playback_url_missing',
+            publicOriginHost: (() => {
+              try {
+                return new URL(origin).host;
+              } catch {
+                return 'invalid';
+              }
+            })(),
+            elevenLabsKeyPresent: Boolean(elOptsInbound.apiKey?.trim()),
+          }),
+        );
       }
       const fPlay = await this.voicePromptAudio.createPhrasePlaybackUrl(origin, {
         text: fallbackText,
@@ -709,6 +744,21 @@ export class TwilioWebhookService implements OnModuleInit {
         finalFallbackAudioUrl = fPlay.playbackUrl;
         finalFallbackVoice = 'elevenlabs';
       }
+    } else {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'agent.initial_greeting.skipped',
+          callSessionId: session.id,
+          reason: !elOptsInbound.voiceId
+            ? 'missing_voice_id'
+            : !/^https:\/\//i.test(origin)
+              ? 'public_webhook_not_https'
+              : hearingDebug && !forceElOnly
+                ? 'gather_hearing_debug'
+                : 'unknown',
+          voiceIdUsed: elOptsInbound.voiceId ?? null,
+        }),
+      );
     }
 
     const strictElOnlyInbound = this.isStrictElevenLabsOnly();
@@ -775,7 +825,7 @@ export class TwilioWebhookService implements OnModuleInit {
       playbackAudioUrl: hearingDebugEffective ? undefined : greetingPlaybackUrl,
       openingSayText:
         !strictElOnlyInbound && (hearingDebugEffective || !greetingPlaybackUrl)
-          ? shortGreeting
+          ? inboundGreetingText
           : undefined,
       finalFallbackAudioUrl: hearingDebugEffective ? undefined : finalFallbackAudioUrl,
       finalFallbackSayText:

@@ -2,7 +2,10 @@
  * Human-like voice output shaping: brevity, filler reduction, empathy without verbosity.
  */
 
-import { sanitizeBannedVoicePhrases } from './professional-conversation-policy.util';
+import {
+  sanitizeBannedVoicePhrases,
+} from './professional-conversation-policy.util';
+import { sanitizeBookstoreVoicePhrases } from './book-sales-voice.util';
 
 const FILLER_RE =
   /\b(uh+|um+|erm+|like,|you know,|basically,|actually,|so,)\s*/gi;
@@ -35,9 +38,9 @@ export function truncateForVoice(text: string, opts?: VoiceSpeakingOptions): str
 }
 
 export function polishVoiceReply(text: string, opts?: VoiceSpeakingOptions): string {
-  let t = sanitizeBannedVoicePhrases(reduceFillers(text));
+  let t = sanitizeBookstoreVoicePhrases(sanitizeBannedVoicePhrases(reduceFillers(text)));
   t = truncateForVoice(t, opts);
-  return sanitizeBannedVoicePhrases(t);
+  return sanitizeBookstoreVoicePhrases(sanitizeBannedVoicePhrases(t));
 }
 
 /** Short confirmation phrases — avoid repeating the same lead twice in a row. */

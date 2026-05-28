@@ -1,5 +1,13 @@
 import type { UserUtteranceIntent } from './user-intent-classifier.util';
 import type { OrderState } from './order-state-machine.util';
+import {
+  BOOK_NEED_PROMPT,
+  EMAIL_COLLECTION_PROMPT,
+  QUANTITY_PROMPT,
+  SURESHOT_INBOUND_GREETING,
+  isGenericBookNeedUtterance,
+  sanitizeBookstoreVoicePhrases,
+} from './book-sales-voice.util';
 
 /** High-level route used before tools / OpenAI for phone-sales behavior. */
 export type ConversationRouteIntent =
@@ -17,6 +25,7 @@ export type ConversationRouteIntent =
   | 'OUT_OF_SCOPE'
   | 'WHO_ARE_YOU'
   | 'HEAR_ME'
+  | 'BOOK_NEED'
   | 'UNCLEAR';
 
 export type ProfessionalConversationContext = {
@@ -51,7 +60,7 @@ export function sanitizeBannedVoicePhrases(text: string): string {
   if (/^thank you for asking\.?$/i.test(t)) {
     return '';
   }
-  return t;
+  return sanitizeBookstoreVoicePhrases(t);
 }
 
 function norm(text: string): string {
@@ -84,6 +93,8 @@ export function classifyConversationRouteIntent(ctx: ProfessionalConversationCon
   }
 
   if (ctx.userIntent === 'greeting') return 'GREETING';
+
+  if (isGenericBookNeedUtterance(ctx.customerText)) return 'BOOK_NEED';
 
   if (ctx.userIntent === 'small_talk') return 'SMALL_TALK';
 
@@ -153,6 +164,7 @@ export function classifyConversationRouteIntent(ctx: ProfessionalConversationCon
 export function conversationRouteBlocksTools(route: ConversationRouteIntent): boolean {
   return (
     route === 'GREETING' ||
+    route === 'BOOK_NEED' ||
     route === 'SMALL_TALK' ||
     route === 'WHO_ARE_YOU' ||
     route === 'HEAR_ME' ||
@@ -188,7 +200,9 @@ export function buildProfessionalConversationReply(
 
   switch (route) {
     case 'GREETING':
-      return `Hello, this is ${agent} with ${store}. How can I help you today?`;
+      return SURESHOT_INBOUND_GREETING;
+    case 'BOOK_NEED':
+      return BOOK_NEED_PROMPT;
     case 'SMALL_TALK':
       if (/\bhow\s+(are|r)\s+(you|u|ya)\b/.test(norm(ctx.customerText))) {
         return `I'm doing well, thank you. How can I help you with your book order today?`;
@@ -233,13 +247,13 @@ export function buildProfessionalConversationReply(
 }
 
 export const PROFESSIONAL_CONVERSATION_POLICY_PROMPT = `Professional phone conversation policy (mandatory):
-- You are a trained human sales and support representative for SureShot Books Publishing LLC. Default name: Justin.
+- You are Justin, a professional phone sales representative for SureShot Books Publishing LLC.
+- The call flow greets first, then: book need → title/category → Shopify search → title + price + stock → quantity → email → payment link.
 - Speak warmly, calmly, and confidently. Keep replies to 1–2 short sentences. One question at a time.
-- Never say: "go ahead", "just a moment let me check" (unless a tool is actively running), "thank you for asking" alone, or "I am an AI assistant".
+- Never say: "go ahead", "dropshipping", "drop shipping", "just a moment let me check" (unless a tool is running), "thank you for asking" alone, or "I am an AI assistant".
 - Greetings and small talk: respond naturally without calling product or order tools.
-- "How are you?" → "I'm doing well, thank you. How can I help you with your book order today?"
-- Product search: use searchProducts with normalized titles; try fuzzy/variant queries before saying unavailable.
+- Generic "I need a book" → ask title, author, or category (history, romance, religion, fiction).
+- Product search: use searchProducts; always state title, price, and stock when Shopify returns them; ask if they want to order.
 - Multiple books in one sentence: search each title separately.
-- When the customer selects a book, move to checkout and ask for email — do not keep searching.
-- Guide toward the next useful step (title → availability → order → email → payment link).
-- Never invent products, prices, or policies — use Shopify and knowledge tools only when needed.`;
+- When the customer agrees to order, ask quantity, then email for the payment link.
+- Never invent products, prices, or policies — use Shopify tools only when needed.`;

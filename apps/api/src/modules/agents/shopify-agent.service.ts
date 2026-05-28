@@ -13,6 +13,13 @@ import {
   extractBookTitlesFromUtterance,
   type ShopifySearchAttempt,
 } from './voice-product-query.util';
+import {
+  detectBookCategoryQuery,
+  formatCategorySearchVoiceSummary,
+  formatProductFoundVoiceSummary,
+  formatSimilarProductVoiceSummary,
+  type VoiceProductOfferInput,
+} from '../calls/runtime/book-sales-voice.util';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const SHOPIFY_GRAPHQL_VERSION = '2024-10';
@@ -671,21 +678,31 @@ export class ShopifyAgentService {
         matchReason: p.matchReason,
       }));
 
+      const toOffer = (p: ShopifyProductSummary): VoiceProductOfferInput => ({
+        title: p.title,
+        variants: p.variants.map((v) => ({
+          price: v.price,
+          inventory_quantity: v.inventory_quantity,
+          availableForSale: v.availableForSale,
+        })),
+      });
+
+      const categoryLabel = detectBookCategoryQuery(productSearchInputRaw);
       let finalVoiceSummary: string;
       if (bestScore < PRODUCT_SEARCH_CONFIRM_MIN_SCORE || products.length === 0) {
         products = [];
         finalVoiceSummary = `I couldn't find an exact match, but I can check similar titles. Could you repeat the title or author?`;
+      } else if (categoryLabel && products.length > 1) {
+        finalVoiceSummary = formatCategorySearchVoiceSummary(
+          categoryLabel,
+          products.map(toOffer),
+        );
       } else if (topRankedScore < PRODUCT_SEARCH_CONFIDENT_MIN_SCORE) {
-        finalVoiceSummary = `I found something similar. Is this the one?`;
+        finalVoiceSummary = formatSimilarProductVoiceSummary(toOffer(products[0]));
       } else {
-        const lead = products[0];
-        const inStock = lead.variants.some((v) => v.inventory_quantity > 0);
-        const priced = lead.variants.find((v) => v.price) ?? lead.variants[0];
-        const priceSpoken = formatVoiceUsd(priced?.price);
-        const priceClause = priceSpoken ?? 'the listed price';
-        finalVoiceSummary = `Yes, I found ${displayTitle} for ${priceClause}. It is ${inStock ? 'in stock' : 'out of stock'}.`;
-        if (products.length > 1) {
-          finalVoiceSummary = `${finalVoiceSummary} If you meant a different edition, tell me which one.`;
+        finalVoiceSummary = formatProductFoundVoiceSummary(toOffer(products[0]));
+        if (products.length > 1 && !categoryLabel) {
+          finalVoiceSummary = `${finalVoiceSummary} I also have other matches if you want to hear them.`;
         }
       }
 

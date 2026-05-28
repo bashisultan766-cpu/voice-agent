@@ -783,7 +783,7 @@ export class VoiceRuntimeService {
     if (!ctx) return "Hello, I'm having trouble loading your session. Please try again.";
     const greeting =
       ctx.agent.greetingMessage?.trim() ??
-      'Hello, this is Justin with SureShot Books. How can I help you today?';
+      'Hello, this is Justin with SureShot Books. How can I help you find or order a book today?';
     return greeting;
   }
 
