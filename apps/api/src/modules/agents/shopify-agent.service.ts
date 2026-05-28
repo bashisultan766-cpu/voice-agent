@@ -16,10 +16,12 @@ import {
 import {
   detectBookCategoryQuery,
   formatCategorySearchVoiceSummary,
-  formatProductFoundVoiceSummary,
-  formatSimilarProductVoiceSummary,
   type VoiceProductOfferInput,
 } from '../calls/runtime/book-sales-voice.util';
+import {
+  buildProductSearchVoiceSummary,
+  pickInStockSearchPresentation,
+} from '../calls/runtime/voice-stock-sales-policy.util';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const SHOPIFY_GRAPHQL_VERSION = '2024-10';
@@ -697,12 +699,23 @@ export class ShopifyAgentService {
           categoryLabel,
           products.map(toOffer),
         );
-      } else if (topRankedScore < PRODUCT_SEARCH_CONFIDENT_MIN_SCORE) {
-        finalVoiceSummary = formatSimilarProductVoiceSummary(toOffer(products[0]));
       } else {
-        finalVoiceSummary = formatProductFoundVoiceSummary(toOffer(products[0]));
-        if (products.length > 1 && !categoryLabel) {
+        const stockPick = pickInStockSearchPresentation(products, toOffer);
+        const requiresClarification = topRankedScore < PRODUCT_SEARCH_CONFIDENT_MIN_SCORE;
+        finalVoiceSummary = buildProductSearchVoiceSummary({
+          primary: toOffer(stockPick.primary),
+          topWasOutOfStock: stockPick.topWasOutOfStock,
+          unavailableTitle: stockPick.unavailableTitle,
+          requiresClarification: requiresClarification && !stockPick.topWasOutOfStock,
+        });
+        if (products.length > 1 && !categoryLabel && !stockPick.topWasOutOfStock) {
           finalVoiceSummary = `${finalVoiceSummary} I also have other matches if you want to hear them.`;
+        }
+        if (stockPick.primary.productId !== products[0]?.productId) {
+          products = [
+            stockPick.primary,
+            ...products.filter((p) => p.productId !== stockPick.primary.productId),
+          ].slice(0, products.length);
         }
       }
 

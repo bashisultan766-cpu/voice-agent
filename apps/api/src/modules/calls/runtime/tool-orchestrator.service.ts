@@ -54,10 +54,15 @@ import { cleanVoiceProductQuery, pickVoiceProductSearchQuery } from '../../agent
 import {
   detectBookCategoryQuery,
   formatCategorySearchVoiceSummary,
-  formatProductFoundVoiceSummary,
-  formatSimilarProductVoiceSummary,
   type VoiceProductOfferInput,
 } from './book-sales-voice.util';
+import {
+  buildProductSearchVoiceSummary,
+  pickInStockSearchPresentation,
+  shouldBlockCheckoutForOutOfStock,
+  stockFieldsFromVariants,
+} from './voice-stock-sales-policy.util';
+import { parseLlmAgentState, LLM_AGENT_STATE_KEY } from './llm-agent-conversation-state.util';
 
 const MAX_TOOL_CALLS_PER_CALL = Number(process.env.MAX_TOOL_CALLS_PER_CALL) || 12;
 
@@ -755,21 +760,34 @@ export class ToolOrchestratorService {
           })),
         });
 
-        const topLive = items.find((i) => i.productId === ranked[0]?.productId) ?? items[0];
-        const top = topLive;
-        const v0 = top.variants[0];
+        const orderedItems = ranked
+          .map((r) => items.find((i) => i.productId === r.productId))
+          .filter((i): i is (typeof items)[0] => Boolean(i));
+        const searchOrder = orderedItems.length > 0 ? orderedItems : items;
+        const stockPick = pickInStockSearchPresentation(searchOrder, toOffer);
+        const primary = stockPick.primary;
+        const primaryOffer = toOffer(primary);
+        const v0 =
+          primary.variants.find((variant) => (variant.inventory_quantity ?? 0) > 0) ??
+          primary.variants[0];
         const requiresClarification =
-          topScore >= PRODUCT_SEARCH_CONFIRM_MIN_SCORE && topScore < PRODUCT_SEARCH_CONFIDENT_MIN_SCORE;
-        await this.callMemory.recordProduct(callSessionId, {
-          productId: top.productId,
-          title: top.title,
-          variantId: v0?.id,
-          price: v0?.price ?? undefined,
-        });
-        if (v0) {
+          topScore >= PRODUCT_SEARCH_CONFIRM_MIN_SCORE &&
+          topScore < PRODUCT_SEARCH_CONFIDENT_MIN_SCORE &&
+          !stockPick.topWasOutOfStock;
+
+        if (v0 && stockFieldsFromVariants(primary.variants.map((variant) => ({
+          inventory_quantity: variant.inventory_quantity,
+          availableForSale: variant.availableForSale,
+        }))).inStock) {
+          await this.callMemory.recordProduct(callSessionId, {
+            productId: primary.productId,
+            title: primary.title,
+            variantId: v0.id,
+            price: v0.price ?? undefined,
+          });
           await this.callMemory.updateCart(callSessionId, {
-            productId: top.productId,
-            title: top.title,
+            productId: primary.productId,
+            title: primary.title,
             variantId: v0.id,
             quantity: 1,
             price: v0.price ?? undefined,
@@ -777,51 +795,77 @@ export class ToolOrchestratorService {
         }
 
         let voiceSummary = live.voiceSummary?.trim() ?? '';
-        if (!voiceSummary || !/\$|priced at|price/i.test(voiceSummary)) {
-          if (categoryLabel && items.length > 1) {
+        if (!voiceSummary || !/\$|priced at|price|out of stock/i.test(voiceSummary)) {
+          if (categoryLabel && items.length > 1 && !stockPick.topWasOutOfStock) {
             voiceSummary = formatCategorySearchVoiceSummary(
               categoryLabel,
               items.slice(0, 3).map(toOffer),
             );
-          } else if (requiresClarification) {
-            voiceSummary = formatSimilarProductVoiceSummary(toOffer(top));
           } else {
-            voiceSummary = formatProductFoundVoiceSummary(toOffer(top));
+            voiceSummary = buildProductSearchVoiceSummary({
+              primary: primaryOffer,
+              topWasOutOfStock: stockPick.topWasOutOfStock,
+              unavailableTitle: stockPick.unavailableTitle,
+              requiresClarification,
+            });
           }
         }
 
-        const mapResult = (row: (typeof items)[0]) => ({
-          id: row.productId,
-          title: row.title,
-          handle: row.handle,
-          isbn: row.isbn,
-          relevanceScore: row.relevanceScore,
-          matchReason: row.matchReason,
-          variants: row.variants.map((v) => ({
-            id: v.id,
-            title: v.title,
-            sku: v.sku,
-            isbn: v.isbn,
-            price: v.price,
-            inventoryQuantity: v.inventory_quantity,
-            currency: 'USD',
-            availableForSale: v.availableForSale !== false,
+        const mapResult = (row: (typeof items)[0]) => {
+          const stockSnap = stockFieldsFromVariants(
+            row.variants.map((variant) => ({
+              inventory_quantity: variant.inventory_quantity,
+              availableForSale: variant.availableForSale,
+            })),
+          );
+          return {
+            id: row.productId,
+            title: row.title,
+            handle: row.handle,
+            isbn: row.isbn,
+            relevanceScore: row.relevanceScore,
+            matchReason: row.matchReason,
+            inventoryQuantity: stockSnap.inventoryQuantity,
+            availableForSale: stockSnap.availableForSale,
+            inStock: stockSnap.inStock,
+            variants: row.variants.map((variant) => ({
+              id: variant.id,
+              title: variant.title,
+              sku: variant.sku,
+              isbn: variant.isbn,
+              price: variant.price,
+              inventoryQuantity: variant.inventory_quantity ?? 0,
+              currency: 'USD',
+              availableForSale:
+                (variant.inventory_quantity ?? 0) > 0 && variant.availableForSale !== false,
+            })),
+            primaryVariantId: v0?.id ?? row.variants[0]?.id,
+          };
+        };
+
+        const altItems = stockPick.recommendedAlternatives.map(mapResult);
+        const primaryStock = stockFieldsFromVariants(
+          primary.variants.map((variant) => ({
+            inventory_quantity: variant.inventory_quantity,
+            availableForSale: variant.availableForSale,
           })),
-          primaryVariantId: row.variants[0]?.id,
-        });
+        );
 
         return {
           ok: true,
           data: {
-            results: ranked
-              .slice(0, 3)
-              .map((r) => items.find((i) => i.productId === r.productId) ?? items[0])
-              .filter(Boolean)
-              .map(mapResult),
+            results: [mapResult(primary), ...altItems.filter((a) => a.id !== primary.productId)].slice(
+              0,
+              3,
+            ),
+            recommendedAlternatives: altItems,
+            topMatchOutOfStock: stockPick.topWasOutOfStock,
+            unavailableTitle: stockPick.unavailableTitle ?? null,
             confidence,
             requiresClarification,
             confirmationQuestion: requiresClarification ? 'Is this the book you meant?' : null,
             voiceSummary,
+            checkoutAllowed: primaryStock.inStock,
           },
           meta: { source: 'shopify_live' },
         };
@@ -1095,6 +1139,22 @@ export class ToolOrchestratorService {
       }
       case 'createCheckoutLink': {
         const metadata = await this.getSessionMetadata(callSessionId);
+        const llmState = parseLlmAgentState(metadata[LLM_AGENT_STATE_KEY]);
+        const stockBlock = shouldBlockCheckoutForOutOfStock(llmState);
+        if (stockBlock.blocked) {
+          return {
+            ok: false,
+            error: {
+              code: 'OUT_OF_STOCK',
+              message: stockBlock.message ?? 'Selected product is out of stock.',
+              retryable: true,
+            },
+            data: {
+              voiceSummary:
+                'That title is out of stock, so I cannot start checkout for it. I can recommend another book that is in stock.',
+            },
+          };
+        }
         const currentState = normalizeOrderState(metadata.orderState);
         if (ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf(currentState) < ToolOrchestratorService.ORDER_STATE_SEQUENCE.indexOf('PRODUCT_SEARCH')) {
           return {

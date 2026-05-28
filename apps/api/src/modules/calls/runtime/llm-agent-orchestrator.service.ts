@@ -28,6 +28,7 @@ import {
 } from './voice-brain-reply.util';
 import { classifyOrderTurn } from './order-intent-classifier.util';
 import { normalizeSpokenEmail } from './email-normalization.util';
+import { shouldBlockCheckoutForOutOfStock } from './voice-stock-sales-policy.util';
 
 const MAX_TOOL_ITERATIONS = Number(process.env.MAX_TOOL_ITERATIONS_VOICE) || 8;
 const MAX_TOOL_CALLS_PER_TURN = Number(process.env.MAX_TOOL_CALLS_PER_TURN) || 4;
@@ -415,6 +416,34 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     const mappedArgs = mapLlmToolArgs(llmName as LlmAgentToolName, args, {
       fromNumber: ctx.fromNumber,
     });
+
+    if (llmName === 'CreatePaymentLink') {
+      const meta = await this.callsService.findOneById(callSessionId);
+      const sessionMeta =
+        meta.metadata && typeof meta.metadata === 'object' && !Array.isArray(meta.metadata)
+          ? (meta.metadata as Record<string, unknown>)
+          : {};
+      const preState = parseLlmAgentState(sessionMeta[LLM_AGENT_STATE_KEY]);
+      const stockBlock = shouldBlockCheckoutForOutOfStock(preState);
+      if (stockBlock.blocked) {
+        return {
+          result: {
+            ok: false,
+            toolName: llmName,
+            storeId: ctx.storeId,
+            error: {
+              code: 'OUT_OF_STOCK',
+              message: stockBlock.message ?? 'Product out of stock',
+              retryable: true,
+            },
+            data: {
+              voiceSummary:
+                'That book is out of stock, so I cannot send a payment link for it. Would you like a different title that is in stock?',
+            },
+          },
+        };
+      }
+    }
 
     let result = await this.toolOrchestrator.execute(
       ctx,

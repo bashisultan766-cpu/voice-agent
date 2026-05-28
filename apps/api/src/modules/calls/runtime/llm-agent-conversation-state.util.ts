@@ -1,4 +1,10 @@
 import type { ToolResult } from './tool-orchestrator.service';
+import {
+  canAdvanceCheckoutStage,
+  isLlmProductInStock,
+  sanitizeCheckoutStageForStock,
+  stockFieldsFromVariants,
+} from './voice-stock-sales-policy.util';
 
 export type LlmCheckoutStage =
   | 'idle'
@@ -15,6 +21,10 @@ export type LlmSelectedProduct = {
   title: string;
   price?: string | null;
   stock?: number | null;
+  inventoryQuantity?: number | null;
+  availableForSale?: boolean;
+  inStock?: boolean;
+  outOfStock?: boolean;
 };
 
 export type LlmAgentConversationState = {
@@ -89,8 +99,9 @@ export function formatStateForPrompt(state: LlmAgentConversationState): string {
         const price = p.price ? `, price ${p.price}` : '';
         const stock =
           p.stock != null ? `, stock ${p.stock}` : '';
+        const avail = p.inStock === false ? ', OUT OF STOCK' : p.inStock ? ', in stock' : '';
         const vid = p.variantId ? `, variantId ${p.variantId}` : '';
-        return `${i + 1}) ${p.title}${price}${stock}${vid}`;
+        return `${i + 1}) ${p.title}${price}${stock}${avail}${vid}`;
       })
       .join('; ');
     lines.push(`Last search results (use for "first one" / "that book"): ${list}.`);
@@ -137,12 +148,27 @@ function mapSearchResult(row: Record<string, unknown>): LlmSelectedProduct | nul
         ? row.primaryVariantId
         : undefined;
   const productId = typeof row.id === 'string' ? row.id : undefined;
+  const stockSnap = stockFieldsFromVariants(
+    variants.map((v) => ({
+      inventory_quantity:
+        typeof v.inventory_quantity === 'number'
+          ? v.inventory_quantity
+          : typeof v.inventoryQuantity === 'number'
+            ? v.inventoryQuantity
+            : 0,
+      availableForSale: v.availableForSale === true,
+    })),
+  );
   return {
     productId,
     variantId,
     title,
     price,
     stock: pickStock(variants),
+    inventoryQuantity: stockSnap.inventoryQuantity,
+    availableForSale: stockSnap.availableForSale,
+    inStock: stockSnap.inStock,
+    outOfStock: !stockSnap.inStock,
   };
 }
 
@@ -167,10 +193,13 @@ export function applyToolResultToState(
     next.lastSearchedProducts = mapped;
     next.checkoutStage = mapped.length ? 'product_discovery' : next.checkoutStage;
     next.customerIntent = 'product_search';
-    if (mapped.length === 1) {
+    if (mapped.length === 1 && isLlmProductInStock(mapped[0])) {
       next.selectedProducts = [mapped[0]!];
+      next.checkoutStage = 'product_selected';
+    } else {
+      next.selectedProducts = [];
     }
-    return next;
+    return sanitizeCheckoutStageForStock(next);
   }
 
   if (llmToolName === 'ShopifyProductDetails') {
@@ -190,14 +219,39 @@ export function applyToolResultToState(
         price: typeof v0?.price === 'string' ? v0.price : null,
         stock: pickStock(variants),
       };
-      next.selectedProducts = [entry];
-      next.checkoutStage = 'product_selected';
-      next.customerIntent = 'product_selected';
+      const stockSnap = stockFieldsFromVariants(
+        variants.map((v) => ({
+          inventory_quantity:
+            typeof v.inventory_quantity === 'number'
+              ? v.inventory_quantity
+              : typeof v.inventoryQuantity === 'number'
+                ? v.inventoryQuantity
+                : 0,
+          availableForSale: v.availableForSale === true,
+        })),
+      );
+      entry.inventoryQuantity = stockSnap.inventoryQuantity;
+      entry.availableForSale = stockSnap.availableForSale;
+      entry.inStock = stockSnap.inStock;
+      entry.outOfStock = !stockSnap.inStock;
+      entry.stock = stockSnap.inventoryQuantity;
+      if (stockSnap.inStock) {
+        next.selectedProducts = [entry];
+        next.checkoutStage = 'product_selected';
+        next.customerIntent = 'product_selected';
+      } else {
+        next.selectedProducts = [];
+        next.checkoutStage = 'product_discovery';
+        next.customerIntent = 'product_search';
+      }
     }
-    return next;
+    return sanitizeCheckoutStageForStock(next);
   }
 
   if (llmToolName === 'CreatePaymentLink') {
+    if (!canAdvanceCheckoutStage(next, 'payment')) {
+      return sanitizeCheckoutStageForStock(next);
+    }
     next.checkoutStage = 'payment';
     next.customerIntent = 'payment_link';
     return next;
@@ -223,21 +277,24 @@ export function mergeCallerSignalsIntoState(
 ): LlmAgentConversationState {
   const next = { ...state };
   if (signals.intentHint) next.customerIntent = signals.intentHint;
-  if (signals.email?.trim()) {
+  if (signals.email?.trim() && canAdvanceCheckoutStage(next, 'email')) {
     next.customerEmail = signals.email.trim();
     next.checkoutStage = 'email';
   }
-  if (signals.quantity != null && signals.quantity > 0) {
-    const sel = next.selectedProducts[0];
-    const vid =
-      sel?.variantId ??
-      next.lastSearchedProducts[0]?.variantId;
+  if (signals.quantity != null && signals.quantity > 0 && canAdvanceCheckoutStage(next, 'quantity')) {
+    const sel =
+      next.selectedProducts[0] ??
+      next.lastSearchedProducts.find((p) => isLlmProductInStock(p));
+    if (sel && !isLlmProductInStock(sel)) {
+      return sanitizeCheckoutStageForStock(next);
+    }
+    const vid = sel?.variantId;
     if (vid) {
       next.quantities = { ...next.quantities, [vid]: signals.quantity };
       next.checkoutStage = 'quantity';
     }
   }
-  return next;
+  return sanitizeCheckoutStageForStock(next);
 }
 
 export function inferIntentHintFromText(text: string): string | undefined {

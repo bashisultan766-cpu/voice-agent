@@ -58,8 +58,18 @@ test('product found response includes price and order ask', () => {
   });
   assert.match(line, /Atomic Habits/i);
   assert.match(line, /\$18\.99/);
-  assert.match(line, /12 copies/i);
+  assert.match(line, /12 copies in stock/i);
   assert.match(line, /order it/i);
+});
+
+test('product found response does not offer order when zero inventory', () => {
+  const line = formatProductFoundVoiceSummary({
+    title: 'Sold Out Title',
+    variants: [{ price: '18.99', inventory_quantity: 0 }],
+  });
+  assert.match(line, /out of stock/i);
+  assert.doesNotMatch(line, /order it/i);
+  assert.doesNotMatch(line, /0 copies available/i);
 });
 
 test('category search lists price for options', () => {

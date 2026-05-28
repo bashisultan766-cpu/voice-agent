@@ -79,16 +79,26 @@ export function totalInventory(variants: VoiceProductOfferInput['variants']): nu
   return any ? sum : null;
 }
 
-/** Single-title found — always includes price; stock when known. */
+/** Single-title found — includes price and stock; never offers order when out of stock. */
 export function formatProductFoundVoiceSummary(product: VoiceProductOfferInput): string {
+  const stock = totalInventory(product.variants);
+  const inStock =
+    product.variants.some(
+      (v) => (v.inventory_quantity ?? 0) > 0 && v.availableForSale !== false,
+    ) || (stock != null && stock > 0);
+
+  if (!inStock) {
+    const title = product.title.trim();
+    return `I'm sorry, ${title} is currently out of stock. I can look for a similar title that's available—what genre or author works for you?`;
+  }
+
   const title = product.title.trim();
   const variant = pickPrimaryVariant(product.variants);
   const priceSpoken = formatVoiceUsd(variant?.price ?? null);
-  const stock = totalInventory(product.variants);
 
-  if (priceSpoken && stock != null) {
+  if (priceSpoken && stock != null && stock > 0) {
     const copies = stock === 1 ? '1 copy' : `${stock} copies`;
-    return `Yes, we have ${title} available. It is priced at ${priceSpoken} per copy, and we currently have ${copies} available. Would you like to order it?`;
+    return `Yes, we have ${title} available. It is priced at ${priceSpoken} per copy, and we currently have ${copies} in stock. Would you like to order it?`;
   }
   if (priceSpoken) {
     return `Yes, we have ${title} available. It is priced at ${priceSpoken} per copy. Would you like to order it?`;
