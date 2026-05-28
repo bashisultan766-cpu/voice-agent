@@ -90,7 +90,7 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
   if (hasEmail && (callState === 'EMAIL_COLLECTION' || emailProvisionCue)) {
     return {
       mode: 'deferred_kickoff',
-      instantPhrase: 'Thanks.',
+      instantPhrase: null,
       ackReason: 'email_provided',
       markSessionLetMeCheck: false,
     };
@@ -111,7 +111,7 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     if (isLikelyProductCorrection(trimmed)) {
       return {
         mode: 'deferred_kickoff',
-        instantPhrase: 'Got it.',
+        instantPhrase: null,
         ackReason: 'product_correction',
         markSessionLetMeCheck: false,
         nextLastProductQuery: normQ || null,

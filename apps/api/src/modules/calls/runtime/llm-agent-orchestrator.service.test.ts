@@ -134,7 +134,7 @@ test('mocked OpenAI turn: greeting has no tool calls', async () => {
     { mergeSessionMetadata: async () => ({}) } as never,
   );
 
-  const out = await orchestrator.processTurn('sess_1', 'Hello how are you', [], {
+  const out = await orchestrator.handleTurn('sess_1', 'Hello how are you', [], {
     completionFn,
   });
   assert.equal(toolCalls.length, 0);
@@ -219,7 +219,7 @@ test('mocked OpenAI turn: history book triggers ShopifyProductSearch', async () 
     { mergeSessionMetadata: async () => ({}) } as never,
   );
 
-  const out = await orchestrator.processTurn('sess_2', 'I need a history book', [], {
+  const out = await orchestrator.handleTurn('sess_2', 'I need a history book', [], {
     completionFn,
   });
   assert.ok(internalTools.includes('searchProducts'));

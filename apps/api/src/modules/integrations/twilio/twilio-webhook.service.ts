@@ -1671,59 +1671,19 @@ export class TwilioWebhookService implements OnModuleInit {
         return { twiml, callSessionId, agentResolved: true };
       }
       if (elapsed > 1500 && !job.momentPromptPlayed) {
-        const fillerAlready = meta.fillerUsed === true;
         await this.callsService.mergeSessionMetadata(callSessionId, {
           deferredVoiceJob: { ...job, momentPromptPlayed: true },
-          ...(fillerAlready ? {} : { fillerUsed: true }),
         });
-        if (fillerAlready) {
-          const twiml = buildDeferredVoicePollPauseTwiML({ deferPollUrl, pauseSeconds: 1 });
-          this.logTwilioResponseMetrics('deferred_poll_pause_skip_filler', callSessionId, handlerStartedAt);
-          this.logger.log(
-            JSON.stringify({
-              event: 'twilio.voice.deferred_poll',
-              sub: 'pause_filler_already_used',
-              callSessionId,
-              elapsedMs: elapsed,
-              fillerUsed: true,
-              'twilio.response_latency_ms': Date.now() - handlerStartedAt,
-            }),
-          );
-          return { twiml, callSessionId, agentResolved: true };
-        }
-        const moment = await this.withTimeout(
-          this.resolveShortPhrasePlayUrl({
-            origin,
-            hearingDebugEffective,
-            text: 'One moment while I look that up.',
-            tenantId: ctx.tenantId,
-            callSessionId,
-            agent: ctx.agent,
-            logLabel: 'deferred_poll_processing_filler',
-          }),
-          900,
-          { voiceProviderActuallyUsed: 'twilio_say_fallback' as const },
-        );
-        const twiml = buildDeferredVoiceMomentPleaseTwiML({
-          deferPollUrl,
-          playbackUrl: moment.playbackUrl,
-          sayFallbackText: 'One moment while I look that up.',
-          allowTwilioSayFallback: !strictElevenLabsOnly,
-          language: this.getSessionLanguage(ctx),
-        });
-        this.logTwilioResponseMetrics('deferred_poll_moment', callSessionId, handlerStartedAt);
         this.logger.log(
           JSON.stringify({
             event: 'twilio.voice.deferred_poll',
-            sub: 'processing_filler',
+            sub: 'silent_poll_no_filler',
             callSessionId,
-            voiceProviderActuallyUsed: moment.voiceProviderActuallyUsed,
-            fillerUsed: true,
-            responseDelayMs: elapsed,
+            elapsedMs: elapsed,
+            note: 'No robotic filler; final reply comes from LlmAgentOrchestrator only.',
             'twilio.response_latency_ms': Date.now() - handlerStartedAt,
           }),
         );
-        return { twiml, callSessionId, agentResolved: true };
       }
       const twiml = buildDeferredVoicePollPauseTwiML({ deferPollUrl, pauseSeconds: 1 });
       this.logTwilioResponseMetrics('deferred_poll_pause', callSessionId, handlerStartedAt);

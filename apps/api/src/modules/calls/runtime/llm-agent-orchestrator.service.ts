@@ -22,8 +22,10 @@ import {
   type LlmAgentConversationState,
 } from './llm-agent-conversation-state.util';
 import { normalizeOpenAiChatCompletionsModel } from '../../integrations/openai/voice-tool-schema.util';
-import { sanitizeBannedVoicePhrases } from './professional-conversation-policy.util';
-import { polishVoiceReply } from './voice-speaking.util';
+import {
+  BRAIN_REWRITE_USER_PROMPT,
+  finalizeBrainReply,
+} from './voice-brain-reply.util';
 import { classifyOrderTurn } from './order-intent-classifier.util';
 import { normalizeSpokenEmail } from './email-normalization.util';
 
@@ -65,6 +67,16 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
   onModuleInit(): void {
     validateLlmAgentToolSchemas();
+  }
+
+  /** Primary entry: OpenAI is the only conversation brain after inbound greeting. */
+  async handleTurn(
+    callSessionId: string,
+    userMessage: string,
+    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
+    options?: { completionFn?: OpenAiCompletionFn },
+  ): Promise<LlmAgentTurnResult> {
+    return this.processTurn(callSessionId, userMessage, conversationHistory, options);
   }
 
   async processTurn(
@@ -114,6 +126,17 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     if (state.customerEmail) {
       await this.callMemory.setEmailState(callSessionId, state.customerEmail, 'confirmed');
     }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.brain.selected',
+        agentId: ctx.agentId,
+        sessionId: callSessionId,
+        tenantId: ctx.tenantId,
+        userText: userMessage.slice(0, 500),
+        brain: 'openai_llm_agent_orchestrator',
+      }),
+    );
 
     const memorySummary = this.callMemory.summarizeForPrompt(await this.callMemory.load(callSessionId));
     const systemPrompt = buildLlmAgentSystemPrompt({
@@ -268,12 +291,26 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       [LLM_AGENT_STATE_KEY]: state,
     });
 
-    const reply = polishVoiceReply(sanitizeBannedVoicePhrases(lastContent || ''), {
-      maxSentences: 3,
+    const reply = await finalizeBrainReply(lastContent || '', {
+      regenerate: async (draft) => this.rewriteBrainReply(client, modelToUse, draft, temperature),
     });
 
+    const finalReply = reply || "How can I help you with a book today?";
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.brain.final_reply',
+        agentId: ctx.agentId,
+        sessionId: callSessionId,
+        replyPreview: finalReply.slice(0, 240),
+        toolCallsUsed: toolNames,
+        intent: state.customerIntent ?? intentHint ?? null,
+        stateStage: state.checkoutStage,
+      }),
+    );
+
     return {
-      reply: reply || "How can I help you with a book today?",
+      reply: finalReply,
       toolCallsCount: totalToolCalls,
       toolNames,
       escalated,
@@ -285,6 +322,31 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         openaiSuccess: true,
       },
     };
+  }
+
+  private async rewriteBrainReply(
+    client: OpenAI,
+    model: string,
+    draft: string,
+    temperature: number,
+  ): Promise<string | null> {
+    const response = await client.chat.completions.create({
+      model,
+      temperature: Math.min(temperature, 0.4),
+      max_tokens: 120,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are Justin, a professional SureShot Books phone agent. Output only the rewritten spoken line.',
+        },
+        {
+          role: 'user',
+          content: `${BRAIN_REWRITE_USER_PROMPT}\n\nDraft:\n${draft}`,
+        },
+      ],
+    });
+    return response.choices[0]?.message?.content?.trim() ?? null;
   }
 
   private async loadState(callSessionId: string): Promise<LlmAgentConversationState> {
