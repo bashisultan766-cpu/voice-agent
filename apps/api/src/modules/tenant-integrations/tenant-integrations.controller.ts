@@ -3,7 +3,13 @@ import { Throttle } from '@nestjs/throttler';
 import { UserRole } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import type { z } from 'zod';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe';
 import { TenantIntegrationsService } from './tenant-integrations.service';
+import {
+  emailSaveBodySchema,
+  emailTestBodySchema,
+} from './tenant-integrations-validation';
 import { TenantId } from '../../common/decorators/tenant-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 
@@ -97,18 +103,6 @@ class ElevenlabsSaveBodyDto extends ElevenlabsTestBodyDto {
   skipConnectionTest?: boolean;
 }
 
-class EmailTestBodyDto {
-  apiKey!: string;
-  fromEmail!: string;
-}
-
-class EmailSaveBodyDto {
-  /** Omit to keep the current encrypted Resend key; `fromEmail` still updates. */
-  apiKey?: string;
-  fromEmail!: string;
-  skipConnectionTest?: boolean;
-}
-
 @Controller('tenant-integrations')
 @Roles(UserRole.MANAGER)
 export class TenantIntegrationsController {
@@ -177,13 +171,19 @@ export class TenantIntegrationsController {
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('email/test')
-  testEmail(@TenantId() tenantId: string, @Body() body: EmailTestBodyDto) {
+  testEmail(
+    @TenantId() tenantId: string,
+    @Body(new ZodValidationPipe(emailTestBodySchema)) body: z.infer<typeof emailTestBodySchema>,
+  ) {
     return this.svc.testEmail(tenantId, body);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Put('email')
-  saveEmail(@TenantId() tenantId: string, @Body() body: EmailSaveBodyDto) {
+  saveEmail(
+    @TenantId() tenantId: string,
+    @Body(new ZodValidationPipe(emailSaveBodySchema)) body: z.infer<typeof emailSaveBodySchema>,
+  ) {
     return this.svc.saveEmail(tenantId, body);
   }
 }

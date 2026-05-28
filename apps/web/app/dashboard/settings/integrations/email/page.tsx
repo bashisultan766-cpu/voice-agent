@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { z } from 'zod';
 import {
   formatIntegrationLastTested,
   getTenantIntegrationSummary,
@@ -10,10 +11,13 @@ import {
 } from '@/lib/api/tenant-integrations';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
 
+const emailSchema = z.string().trim().email();
+
 export default function EmailIntegrationSettingsPage() {
   const loadGen = useRef(0);
   const [apiKey, setApiKey] = useState('');
   const [fromEmail, setFromEmail] = useState('');
+  const [testRecipientEmail, setTestRecipientEmail] = useState('');
   const [connected, setConnected] = useState(false);
   const [keyMasked, setKeyMasked] = useState<string | null>(null);
   const [lastOk, setLastOk] = useState<boolean | null>(null);
@@ -23,8 +27,10 @@ export default function EmailIntegrationSettingsPage() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [msgTone, setMsgTone] = useState<'success' | 'error' | 'neutral' | 'warning'>('neutral');
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [saveMsgTone, setSaveMsgTone] = useState<'success' | 'error'>('success');
+  const [testMsg, setTestMsg] = useState<string | null>(null);
+  const [testMsgTone, setTestMsgTone] = useState<'success' | 'error' | 'warning'>('success');
 
   useEffect(() => {
     const id = ++loadGen.current;
@@ -50,41 +56,61 @@ export default function EmailIntegrationSettingsPage() {
       });
   }, []);
 
-  function setFeedback(tone: typeof msgTone, text: string) {
-    setMsgTone(tone);
-    setMsg(text);
-  }
-
   async function test() {
     setTesting(true);
-    setMsg(null);
+    setTestMsg(null);
     try {
       const res = await fetch('/api/tenant-integrations/email/test', {
         method: 'POST',
         credentials: 'include',
         headers: tenantIntegrationHeaders(),
-        body: JSON.stringify({ apiKey: apiKey.trim(), fromEmail: fromEmail.trim() }),
+        body: JSON.stringify({
+          apiKey: apiKey.trim(),
+          fromEmail: fromEmail.trim(),
+          testRecipientEmail: testRecipientEmail.trim(),
+        }),
       });
       const text = await res.text();
       if (!res.ok) {
-        setFeedback('error', parseApiErrorMessage(text, res.status));
+        setTestMsgTone('error');
+        setTestMsg(parseApiErrorMessage(text, res.status));
+        setLastOk(false);
         return;
       }
       const parsed = parseIntegrationTestJson(text);
       if (!parsed) {
-        setFeedback('error', 'Unexpected response from server.');
+        setTestMsgTone('error');
+        setTestMsg('Unexpected response from server.');
+        setLastOk(false);
         return;
       }
       if (!parsed.success) {
-        setFeedback('error', parsed.message);
+        setTestMsgTone('error');
+        setTestMsg(parsed.message);
+        setLastOk(false);
+        void getTenantIntegrationSummary()
+          .then((s) => {
+            setLastOk(s.email.lastTestOk);
+            setLastTestAt(s.email.lastTestAt);
+          })
+          .catch(() => {});
         return;
       }
       if (parsed.warnings?.length) {
-        setMsgTone('warning');
-        setMsg(`${parsed.message} — Note: ${parsed.warnings.join(' ')}`);
-        return;
+        setTestMsgTone('warning');
+        setTestMsg(`${parsed.message} — Note: ${parsed.warnings.join(' ')}`);
+      } else {
+        setTestMsgTone('success');
+        setTestMsg(parsed.message);
       }
-      setFeedback('success', parsed.message);
+      setLastOk(true);
+      setLastTestAt(new Date().toISOString());
+      void getTenantIntegrationSummary()
+        .then((s) => {
+          setLastOk(s.email.lastTestOk);
+          setLastTestAt(s.email.lastTestAt);
+        })
+        .catch(() => {});
     } finally {
       setTesting(false);
     }
@@ -92,7 +118,7 @@ export default function EmailIntegrationSettingsPage() {
 
   async function save() {
     setSaving(true);
-    setMsg(null);
+    setSaveMsg(null);
     try {
       const body: { apiKey?: string; fromEmail: string } = { fromEmail: fromEmail.trim() };
       if (apiKey.trim()) body.apiKey = apiKey.trim();
@@ -105,29 +131,42 @@ export default function EmailIntegrationSettingsPage() {
       });
       const text = await res.text();
       if (!res.ok) {
-        setFeedback('error', parseApiErrorMessage(text, res.status));
+        setSaveMsgTone('error');
+        setSaveMsg(parseApiErrorMessage(text, res.status));
         return;
       }
       setApiKey('');
       setConnected(true);
-      setLastOk(true);
-      setLastTestAt(new Date().toISOString());
-      setSavedFrom(fromEmail.trim().toLowerCase());
+      setSavedFrom(trimmedFromEmail.toLowerCase());
       void getTenantIntegrationSummary()
         .then((s) => {
+          setConnected(s.email.configured);
           setKeyMasked(s.email.keyMasked);
-          setLastTestAt(s.email.lastTestAt);
+          setSavedFrom(s.email.fromEmail);
+          setLastOk((prev) => (s.email.lastTestOk != null ? s.email.lastTestOk : prev));
+          setLastTestAt((prev) => s.email.lastTestAt ?? prev);
         })
         .catch(() => {});
-      setFeedback('success', 'Saved securely. Resend API key is encrypted and not shown again.');
+      setSaveMsgTone('success');
+      setSaveMsg('Saved. Resend API key is encrypted and not shown again.');
     } finally {
       setSaving(false);
     }
   }
 
   const lastTestLabel = formatIntegrationLastTested(lastTestAt);
-  const fromValid = fromEmail.trim().includes('@');
+  const trimmedFromEmail = fromEmail.trim();
+  const trimmedTestRecipient = testRecipientEmail.trim();
+  const fromValid = emailSchema.safeParse(trimmedFromEmail).success;
+  const testRecipientValid = emailSchema.safeParse(trimmedTestRecipient).success;
+  const fromEmailError =
+    trimmedFromEmail.length > 0 && !fromValid ? 'From email must be valid.' : null;
+  const testRecipientError =
+    trimmedTestRecipient.length > 0 && !testRecipientValid
+      ? 'Test recipient email must be valid.'
+      : null;
   const canSave = fromValid && (connected || Boolean(apiKey.trim()));
+  const canTest = Boolean(apiKey.trim()) && fromValid && testRecipientValid;
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
@@ -147,18 +186,30 @@ export default function EmailIntegrationSettingsPage() {
         </div>
       ) : null}
       <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-3">
-        <p className="text-sm">
-          <span className="text-muted-foreground">Status:</span>{' '}
-          {connected ? (
-            <span className="font-medium text-emerald-700 dark:text-emerald-400">Configured</span>
-          ) : (
-            <span className="font-medium text-amber-800 dark:text-amber-200">Not configured</span>
-          )}
-          {savedFrom ? <span className="ml-2 text-xs text-muted-foreground">· {savedFrom}</span> : null}
-        </p>
-        {lastTestLabel ? (
-          <p className="text-xs text-muted-foreground">Last tested: {lastTestLabel}</p>
-        ) : null}
+        <div className="space-y-1 text-sm">
+          <p>
+            <span className="text-muted-foreground">Saved:</span>{' '}
+            {connected ? (
+              <span className="font-medium text-emerald-700 dark:text-emerald-400">Yes</span>
+            ) : (
+              <span className="font-medium text-amber-800 dark:text-amber-200">No</span>
+            )}
+            {savedFrom ? <span className="ml-2 text-xs text-muted-foreground">· {savedFrom}</span> : null}
+          </p>
+          <p>
+            <span className="text-muted-foreground">Test:</span>{' '}
+            {lastOk === true ? (
+              <span className="font-medium text-emerald-700 dark:text-emerald-400">Successful</span>
+            ) : lastOk === false ? (
+              <span className="font-medium text-red-600 dark:text-red-400">Failed</span>
+            ) : (
+              <span className="font-medium text-muted-foreground">Not tested</span>
+            )}
+            {lastTestLabel ? (
+              <span className="ml-2 text-xs text-muted-foreground">· {lastTestLabel}</span>
+            ) : null}
+          </p>
+        </div>
         {keyMasked ? (
           <p className="text-xs font-mono text-muted-foreground">Saved API key: {keyMasked}</p>
         ) : null}
@@ -178,33 +229,65 @@ export default function EmailIntegrationSettingsPage() {
           <label className="block text-sm font-medium">From email</label>
           <input
             type="email"
-            className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
+            className={`mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm ${
+              fromEmailError ? 'border-red-500' : ''
+            }`}
             value={fromEmail}
             onChange={(e) => setFromEmail(e.target.value)}
             placeholder="notifications@yourdomain.com"
             autoComplete="off"
             spellCheck={false}
           />
+          {fromEmailError ? (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fromEmailError}</p>
+          ) : null}
         </div>
-        {msg ? (
+        <div>
+          <label className="block text-sm font-medium">Test recipient email</label>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Test connection sends to this address (not saved). Use your personal inbox, e.g. Gmail.
+          </p>
+          <input
+            type="email"
+            className={`mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm ${
+              testRecipientError ? 'border-red-500' : ''
+            }`}
+            value={testRecipientEmail}
+            onChange={(e) => setTestRecipientEmail(e.target.value)}
+            placeholder="you@gmail.com"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {testRecipientError ? (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">{testRecipientError}</p>
+          ) : null}
+        </div>
+        {saveMsg ? (
           <p
             className={`text-sm ${
-              msgTone === 'error'
-                ? 'text-red-600 dark:text-red-400'
-                : msgTone === 'success'
-                  ? 'text-emerald-700 dark:text-emerald-400'
-                  : msgTone === 'warning'
-                    ? 'text-amber-800 dark:text-amber-200'
-                    : 'text-muted-foreground'
+              saveMsgTone === 'error' ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'
             }`}
           >
-            {msg}
+            {saveMsg}
+          </p>
+        ) : null}
+        {testMsg ? (
+          <p
+            className={`text-sm ${
+              testMsgTone === 'error'
+                ? 'text-red-600 dark:text-red-400'
+                : testMsgTone === 'warning'
+                  ? 'text-amber-800 dark:text-amber-200'
+                  : 'text-emerald-700 dark:text-emerald-400'
+            }`}
+          >
+            {testMsg}
           </p>
         ) : null}
         <div className="flex flex-wrap gap-2 pt-2">
           <button
             type="button"
-            disabled={testing || saving || !apiKey.trim() || !fromValid}
+            disabled={testing || saving || !canTest}
             onClick={() => void test()}
             className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
           >

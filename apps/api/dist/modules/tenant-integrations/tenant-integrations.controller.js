@@ -18,7 +18,9 @@ const throttler_1 = require("@nestjs/throttler");
 const client_1 = require("@prisma/client");
 const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
+const zod_validation_pipe_1 = require("../../common/pipes/zod-validation.pipe");
 const tenant_integrations_service_1 = require("./tenant-integrations.service");
+const tenant_integrations_validation_1 = require("./tenant-integrations-validation");
 const tenant_id_decorator_1 = require("../../common/decorators/tenant-id.decorator");
 const roles_decorator_1 = require("../../common/decorators/roles.decorator");
 class ShopifyTestBodyDto {
@@ -114,10 +116,6 @@ __decorate([
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], ElevenlabsSaveBodyDto.prototype, "skipConnectionTest", void 0);
-class EmailTestBodyDto {
-}
-class EmailSaveBodyDto {
-}
 let TenantIntegrationsController = class TenantIntegrationsController {
     constructor(svc) {
         this.svc = svc;
@@ -252,18 +250,18 @@ __decorate([
     (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
     (0, common_1.Post)('email/test'),
     __param(0, (0, tenant_id_decorator_1.TenantId)()),
-    __param(1, (0, common_1.Body)()),
+    __param(1, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(tenant_integrations_validation_1.emailTestBodySchema))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, EmailTestBodyDto]),
+    __metadata("design:paramtypes", [String, void 0]),
     __metadata("design:returntype", void 0)
 ], TenantIntegrationsController.prototype, "testEmail", null);
 __decorate([
     (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
     (0, common_1.Put)('email'),
     __param(0, (0, tenant_id_decorator_1.TenantId)()),
-    __param(1, (0, common_1.Body)()),
+    __param(1, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(tenant_integrations_validation_1.emailSaveBodySchema))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, EmailSaveBodyDto]),
+    __metadata("design:paramtypes", [String, void 0]),
     __metadata("design:returntype", void 0)
 ], TenantIntegrationsController.prototype, "saveEmail", null);
 exports.TenantIntegrationsController = TenantIntegrationsController = __decorate([

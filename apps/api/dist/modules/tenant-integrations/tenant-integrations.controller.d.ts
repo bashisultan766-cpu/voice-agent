@@ -1,4 +1,6 @@
+import type { z } from 'zod';
 import { TenantIntegrationsService } from './tenant-integrations.service';
+import { emailSaveBodySchema, emailTestBodySchema } from './tenant-integrations-validation';
 declare class ShopifyTestBodyDto {
     shopDomain: string;
     accessToken?: string;
@@ -34,15 +36,6 @@ declare class ElevenlabsTestBodyDto {
 declare class ElevenlabsSaveBodyDto extends ElevenlabsTestBodyDto {
     defaultVoiceId?: string;
     defaultModel?: string;
-    skipConnectionTest?: boolean;
-}
-declare class EmailTestBodyDto {
-    apiKey: string;
-    fromEmail: string;
-}
-declare class EmailSaveBodyDto {
-    apiKey?: string;
-    fromEmail: string;
     skipConnectionTest?: boolean;
 }
 export declare class TenantIntegrationsController {
@@ -125,11 +118,11 @@ export declare class TenantIntegrationsController {
         ok: boolean;
         keyPresent: boolean;
     }>;
-    testEmail(tenantId: string, body: EmailTestBodyDto): Promise<{
+    testEmail(tenantId: string, body: z.infer<typeof emailTestBodySchema>): Promise<{
         success: boolean;
         message: string;
     }>;
-    saveEmail(tenantId: string, body: EmailSaveBodyDto): Promise<{
+    saveEmail(tenantId: string, body: z.infer<typeof emailSaveBodySchema>): Promise<{
         ok: boolean;
     }>;
 }

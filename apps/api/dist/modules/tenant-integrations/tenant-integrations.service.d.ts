@@ -123,14 +123,16 @@ export declare class TenantIntegrationsService {
     testEmail(tenantId: string, body: {
         apiKey: string;
         fromEmail: string;
+        testRecipientEmail: string;
+        fromName?: string;
     }): Promise<{
         success: boolean;
         message: string;
     }>;
+    private recordEmailTestResult;
     saveEmail(tenantId: string, body: {
         apiKey?: string;
         fromEmail: string;
-        skipConnectionTest?: boolean;
     }): Promise<{
         ok: boolean;
     }>;

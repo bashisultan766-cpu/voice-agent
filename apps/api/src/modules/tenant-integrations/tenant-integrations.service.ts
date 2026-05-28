@@ -8,6 +8,7 @@ import { TwilioConnectionTestService } from '../agents/connection-test/twilio-co
 import { OpenAIConnectionTestService } from '../agents/connection-test/openai-connection-test.service';
 import { ElevenLabsConnectionTestService } from '../agents/connection-test/elevenlabs-connection-test.service';
 import { normalizeShopifyDomain, normalizePhoneNumber } from '@bookstore-voice-agents/types';
+import { formatResendFromAddress, parseResendApiErrorMessage } from './resend-api.util';
 
 function last4(value: string | null | undefined): string | null {
   const s = value?.trim();
@@ -943,92 +944,80 @@ export class TenantIntegrationsService {
     }
   }
 
-  async testEmail(tenantId: string, body: { apiKey: string; fromEmail: string }) {
-    const apiKey = body.apiKey?.trim();
-    const fromEmail = body.fromEmail?.trim();
-    if (!apiKey) throw new BadRequestException('Resend API key is required.');
-    if (!fromEmail?.includes('@')) {
-      throw new BadRequestException('A valid from email is required.');
-    }
+  async testEmail(
+    tenantId: string,
+    body: { apiKey: string; fromEmail: string; testRecipientEmail: string; fromName?: string },
+  ) {
+    const { apiKey, fromEmail, testRecipientEmail, fromName } = body;
+    const from = formatResendFromAddress(fromEmail, fromName);
     try {
-      const res = await fetch('https://api.resend.com/domains', {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to: [testRecipientEmail],
+          subject: 'Resend connection test',
+          html: '<p>This is a test email confirming your Resend integration is working.</p>',
+          text: 'This is a test email confirming your Resend integration is working.',
+        }),
       });
-      if (!res.ok) {
-        const text = await res.text();
-        const out = {
-          success: false,
-          message: `Resend API returned ${res.status}: ${text.slice(0, 160)}`,
-        };
-        this.audit('test', 'email', tenantId, false, out.message);
-        return out;
-      }
-      const warnings: string[] = [];
-      let json: unknown;
+      const bodyText = await response.text();
+      let json: unknown = null;
       try {
-        json = await res.json();
+        json = bodyText ? JSON.parse(bodyText) : null;
       } catch {
         json = null;
       }
-      const rows = json && typeof json === 'object' && 'data' in json ? (json as { data?: unknown }).data : null;
-      const list = Array.isArray(rows) ? rows : [];
-      const host = fromEmail.split('@')[1]?.toLowerCase().trim();
-      if (host) {
-        let matched: { name?: string; status?: string } | undefined;
-        for (const item of list) {
-          if (!item || typeof item !== 'object') continue;
-          const rec = item as { name?: string; status?: string };
-          const n = rec.name?.toLowerCase().trim();
-          if (n === host) {
-            matched = rec;
-            break;
-          }
-        }
-        if (!matched) {
-          warnings.push(
-            `Sender domain "${host}" is not listed in this Resend account. Add and verify it under Resend → Domains so mail can be delivered reliably.`,
-          );
-        } else if (matched.status && String(matched.status).toLowerCase() !== 'verified') {
-          warnings.push(
-            `Domain "${host}" is present in Resend but not verified yet (status: ${matched.status}).`,
-          );
-        }
+      if (!response.ok) {
+        const message = parseResendApiErrorMessage(response.status, bodyText, json);
+        await this.recordEmailTestResult(tenantId, false);
+        const out = { success: false, message };
+        this.audit('test', 'email', tenantId, false, message);
+        return out;
       }
+      const testedAt = await this.recordEmailTestResult(tenantId, true);
       const out = {
         success: true,
-        message: 'Resend API key is valid.',
-        ...(warnings.length ? { warnings } : {}),
+        message: `Test email sent to ${testRecipientEmail}.`,
+        testedAt: testedAt.toISOString(),
       };
       this.audit('test', 'email', tenantId, true);
       return out;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      await this.recordEmailTestResult(tenantId, false);
       const out = { success: false, message: `Resend check failed: ${msg}` };
       this.audit('test', 'email', tenantId, false, msg);
       return out;
     }
   }
 
-  async saveEmail(
-    tenantId: string,
-    body: { apiKey?: string; fromEmail: string; skipConnectionTest?: boolean },
-  ) {
+  /** Persists last test outcome when workspace integration row already exists. */
+  private async recordEmailTestResult(tenantId: string, ok: boolean): Promise<Date> {
+    const testedAt = new Date();
+    await this.prisma.tenantIntegration.updateMany({
+      where: { tenantId },
+      data: { emailLastTestOk: ok, emailLastTestAt: testedAt },
+    });
+    return testedAt;
+  }
+
+  async saveEmail(tenantId: string, body: { apiKey?: string; fromEmail: string }) {
     try {
       if (!this.encryption.isAvailable()) {
         throw new BadRequestException('Encryption is not configured (ENCRYPTION_KEY).');
       }
-      const apiKeyIn = body.apiKey?.trim();
-      const fromEmail = body.fromEmail?.trim().toLowerCase();
-      if (!fromEmail?.includes('@')) throw new BadRequestException('From email must be valid.');
+      const apiKeyIn = body.apiKey;
+      const fromEmail = body.fromEmail;
 
       let enc: string;
       let keyLast4: string | null;
 
       if (apiKeyIn) {
-        if (!body.skipConnectionTest) {
-          const t = await this.testEmail(tenantId, { apiKey: apiKeyIn, fromEmail });
-          if (!t.success) throw new BadRequestException(t.message);
-        }
         const e = this.encryption.encryptToStorage(apiKeyIn);
         if (!e) throw new BadRequestException('Could not encrypt Resend API key.');
         enc = e;
@@ -1040,17 +1029,8 @@ export class TenantIntegrationsService {
         }
         enc = row.resendApiKeyEnc;
         keyLast4 = row.resendKeyLast4;
-        if (!body.skipConnectionTest) {
-          const decrypted = this.encryption.decryptFromStorage(enc);
-          if (!decrypted?.trim()) {
-            throw new BadRequestException('Could not read existing Resend key; re-enter your API key.');
-          }
-          const t = await this.testEmail(tenantId, { apiKey: decrypted, fromEmail });
-          if (!t.success) throw new BadRequestException(t.message);
-        }
       }
 
-      const now = new Date();
       await this.prisma.tenantIntegration.upsert({
         where: { tenantId },
         create: {
@@ -1058,15 +1038,11 @@ export class TenantIntegrationsService {
           resendApiKeyEnc: enc,
           resendKeyLast4: keyLast4,
           resendFromEmail: fromEmail,
-          emailLastTestOk: true,
-          emailLastTestAt: now,
         },
         update: {
           resendApiKeyEnc: enc,
           ...(keyLast4 ? { resendKeyLast4: keyLast4 } : {}),
           resendFromEmail: fromEmail,
-          emailLastTestOk: true,
-          emailLastTestAt: now,
         },
       });
       this.audit('save', 'email', tenantId, true);
