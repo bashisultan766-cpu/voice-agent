@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
@@ -9,6 +10,7 @@ import { OpenAIConnectionTestService } from '../agents/connection-test/openai-co
 import { ElevenLabsConnectionTestService } from '../agents/connection-test/elevenlabs-connection-test.service';
 import { normalizeShopifyDomain, normalizePhoneNumber } from '@bookstore-voice-agents/types';
 import { formatResendFromAddress, parseResendApiErrorMessage } from './resend-api.util';
+import { normalizePublicWebhookBaseUrl } from '../../common/public-webhook-base-url';
 
 function last4(value: string | null | undefined): string | null {
   const s = value?.trim();
@@ -34,7 +36,7 @@ function openaiKeyPrefixHint(value: string | null | undefined): string | null {
 }
 
 function isPlausibleTwilioAccountSid(sid: string): boolean {
-  return /^AC[0-9a-f]{32}$/i.test(sid.trim());
+  return /^AC[a-z0-9]{32}$/i.test(sid.trim());
 }
 
 function isE164Phone(phone: string): boolean {
@@ -133,6 +135,7 @@ export class TenantIntegrationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    private readonly config: ConfigService,
     private readonly shopifyTest: ShopifyConnectionTestService,
     private readonly twilioTest: TwilioConnectionTestService,
     private readonly openaiTest: OpenAIConnectionTestService,
@@ -218,6 +221,7 @@ export class TenantIntegrationsService {
           twilio: {
             configured: false,
             accountSidLast4: null as string | null,
+            authTokenMasked: null as string | null,
             phoneNumber: null as string | null,
             lastTestOk: null as boolean | null,
             lastTestAt: null as string | null,
@@ -264,6 +268,7 @@ export class TenantIntegrationsService {
               str(row.twilioPhoneNumber),
           ),
           accountSidLast4: last4(str(row.twilioAccountSid)),
+          authTokenMasked: str(row.twilioAuthTokenEnc) ? 'tw_****saved' : null,
           phoneNumber: str(row.twilioPhoneNumber),
           lastTestOk: bool(row.twilioLastTestOk),
           lastTestAt: dateIso(row.twilioLastTestAt),
@@ -472,13 +477,24 @@ export class TenantIntegrationsService {
 
   async testTwilio(
     tenantId: string,
-    body: { accountSid: string; authToken: string; phoneNumber?: string },
+    body: { accountSid: string; authToken?: string; phoneNumber?: string },
   ) {
+    this.log.log(
+      JSON.stringify({
+        op: 'test',
+        provider: 'twilio',
+        tenantId,
+        bodyKeys: Object.keys((body ?? {}) as Record<string, unknown>),
+        hasAccountSid: Boolean(body?.accountSid?.trim()),
+        hasAuthToken: Boolean(body?.authToken?.trim()),
+        hasPhoneNumber: Boolean(body?.phoneNumber?.trim()),
+      }),
+    );
     const sidIn = body.accountSid?.trim() ?? '';
     if (sidIn && !isPlausibleTwilioAccountSid(sidIn)) {
       const out = {
         success: false,
-        message: 'Account SID should look like AC followed by 32 hex characters.',
+        message: 'Account SID should look like AC followed by 32 letters/numbers.',
       };
       this.audit('test', 'twilio', tenantId, false, out.message);
       return out;
@@ -493,9 +509,30 @@ export class TenantIntegrationsService {
       this.audit('test', 'twilio', tenantId, false, out.message);
       return out;
     }
+    let authToken = body.authToken?.trim();
+    if (!authToken) {
+      if (!this.encryption.isAvailable()) {
+        throw new BadRequestException('Encryption is not configured (ENCRYPTION_KEY).');
+      }
+      const row = await this.prisma.tenantIntegration.findUnique({
+        where: { tenantId },
+        select: { twilioAccountSid: true, twilioAuthTokenEnc: true },
+      });
+      if (!row?.twilioAuthTokenEnc) {
+        throw new BadRequestException('Auth token is required on first save/test.');
+      }
+      if (!row.twilioAccountSid?.trim() || row.twilioAccountSid.trim() !== sidIn) {
+        throw new BadRequestException('Enter auth token when changing Account SID.');
+      }
+      const dec = this.encryption.decryptFromStorage(row.twilioAuthTokenEnc);
+      if (!dec?.trim()) {
+        throw new BadRequestException('Could not read saved auth token. Enter a new token.');
+      }
+      authToken = dec.trim();
+    }
     const r = await this.twilioTest.testConnection({
-      twilioAccountSid: body.accountSid,
-      twilioAuthToken: body.authToken,
+      twilioAccountSid: sidIn,
+      twilioAuthToken: authToken,
     });
     if (!r.success) {
       this.audit('test', 'twilio', tenantId, false, r.message);
@@ -503,8 +540,8 @@ export class TenantIntegrationsService {
     }
     if (phone) {
       const pSid = await this.twilioTest.resolveIncomingPhoneSid({
-        twilioAccountSid: body.accountSid,
-        twilioAuthToken: body.authToken,
+        twilioAccountSid: sidIn,
+        twilioAuthToken: authToken,
         twilioPhoneNumber: phone,
       });
       if (!pSid) {
@@ -525,27 +562,66 @@ export class TenantIntegrationsService {
     tenantId: string,
     body: {
       accountSid: string;
-      authToken: string;
+      authToken?: string;
       phoneNumber: string;
       skipConnectionTest?: boolean;
     },
   ) {
     try {
+      this.log.log(
+        JSON.stringify({
+          op: 'save',
+          provider: 'twilio',
+          tenantId,
+          bodyKeys: Object.keys((body ?? {}) as Record<string, unknown>),
+          hasAccountSid: Boolean(body?.accountSid?.trim()),
+          hasAuthToken: Boolean(body?.authToken?.trim()),
+          hasPhoneNumber: Boolean(body?.phoneNumber?.trim()),
+        }),
+      );
       if (!this.encryption.isAvailable()) {
         throw new BadRequestException('Encryption is not configured (ENCRYPTION_KEY).');
       }
       const accountSid = body.accountSid?.trim();
-      const authToken = body.authToken?.trim();
       const phoneNumberRaw = body.phoneNumber?.trim();
-      if (!accountSid || !authToken || !phoneNumberRaw) {
-        throw new BadRequestException('Account SID, auth token, and phone number are required.');
+      if (!accountSid || !phoneNumberRaw) {
+        throw new BadRequestException('Account SID and phone number are required.');
       }
+      const authTokenIncoming = body.authToken?.trim();
       const phoneNumber = normalizePhoneNumber(phoneNumberRaw);
       if (!isPlausibleTwilioAccountSid(accountSid)) {
-        throw new BadRequestException('Account SID should look like AC followed by 32 hex characters.');
+        throw new BadRequestException('Account SID should look like AC followed by 32 letters/numbers.');
       }
       if (!isE164Phone(phoneNumber)) {
         throw new BadRequestException('Phone number must be in E.164 format (e.g. +15551234567).');
+      }
+      const existing = await this.prisma.tenantIntegration.findUnique({
+        where: { tenantId },
+        select: {
+          twilioAccountSid: true,
+          twilioAuthTokenEnc: true,
+          twilioPhoneSid: true,
+        },
+      });
+      let authToken = authTokenIncoming;
+      let enc = '';
+      if (authToken) {
+        const encrypted = this.encryption.encryptToStorage(authToken);
+        if (!encrypted) throw new BadRequestException('Could not encrypt Twilio auth token.');
+        enc = encrypted;
+      } else {
+        if (!existing?.twilioAuthTokenEnc) {
+          throw new BadRequestException('Auth token is required on first save.');
+        }
+        if (!existing.twilioAccountSid?.trim() || existing.twilioAccountSid.trim() !== accountSid) {
+          throw new BadRequestException('Auth token is required when changing Account SID.');
+        }
+        const dec = this.encryption.decryptFromStorage(existing.twilioAuthTokenEnc);
+        if (!dec?.trim()) {
+          throw new BadRequestException('Could not read saved auth token. Enter a new token.');
+        }
+        authToken = dec.trim();
+        enc = existing.twilioAuthTokenEnc;
       }
 
       if (!body.skipConnectionTest) {
@@ -567,9 +643,6 @@ export class TenantIntegrationsService {
           );
         }
       }
-
-      const enc = this.encryption.encryptToStorage(authToken);
-      if (!enc) throw new BadRequestException('Could not encrypt Twilio auth token.');
 
       const phoneSid =
         (await this.twilioTest.resolveIncomingPhoneSid({
@@ -620,11 +693,89 @@ export class TenantIntegrationsService {
       });
 
       this.audit('save', 'twilio', tenantId, true);
-      return { ok: true };
+      return {
+        ok: true,
+        saved: true,
+        phoneNumber,
+        authTokenMasked: `tw_****${authToken.slice(-4)}`,
+      };
     } catch (e) {
       this.audit('save', 'twilio', tenantId, false, e);
       throw e;
     }
+  }
+
+  async configureTwilioWebhook(tenantId: string) {
+    const row = await this.prisma.tenantIntegration.findUnique({
+      where: { tenantId },
+      select: {
+        twilioAccountSid: true,
+        twilioAuthTokenEnc: true,
+        twilioPhoneNumber: true,
+        twilioPhoneSid: true,
+      },
+    });
+    const sid = row?.twilioAccountSid?.trim() ?? '';
+    const phoneNumber = row?.twilioPhoneNumber?.trim() ?? '';
+    if (!sid || !phoneNumber) {
+      throw new BadRequestException('Twilio Account SID and phone number must be saved first.');
+    }
+    if (!row?.twilioAuthTokenEnc) {
+      throw new BadRequestException('Twilio auth token is missing. Save credentials first.');
+    }
+    const authToken = this.encryption.decryptFromStorage(row.twilioAuthTokenEnc)?.trim();
+    if (!authToken) {
+      throw new BadRequestException('Could not read saved Twilio auth token. Re-save credentials.');
+    }
+    const baseUrl = normalizePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
+    if (!/^https:\/\//i.test(baseUrl)) {
+      throw new BadRequestException('PUBLIC_WEBHOOK_BASE_URL must be a public HTTPS URL.');
+    }
+    const inboundUrl = `${baseUrl}/api/twilio/voice/inbound`;
+    const statusUrl = `${baseUrl}/api/twilio/voice/status`;
+    let incomingPhoneSid = row.twilioPhoneSid?.trim() ?? '';
+    if (!incomingPhoneSid) {
+      incomingPhoneSid =
+        (await this.twilioTest.resolveIncomingPhoneSid({
+          twilioAccountSid: sid,
+          twilioAuthToken: authToken,
+          twilioPhoneNumber: phoneNumber,
+        })) ?? '';
+    }
+    if (!incomingPhoneSid) {
+      throw new BadRequestException('Phone number was not found in this Twilio account.');
+    }
+    const result = await this.twilioTest.updateIncomingPhoneNumberWebhook(
+      {
+        twilioAccountSid: sid,
+        twilioAuthToken: authToken,
+        twilioPhoneNumber: phoneNumber,
+      },
+      {
+        incomingPhoneSid,
+        voiceUrl: inboundUrl,
+        statusCallback: statusUrl,
+        method: 'POST',
+      },
+    );
+    if (!result.success) throw new BadRequestException(result.message);
+    await this.prisma.tenantIntegration.updateMany({
+      where: { tenantId },
+      data: { twilioPhoneSid: incomingPhoneSid },
+    });
+    return {
+      success: true,
+      message: 'Twilio webhook configured.',
+      webhook: {
+        inboundUrl,
+        statusUrl,
+        method: 'POST' as const,
+      },
+      mediaStream: {
+        enabled: false,
+        wsUrl: null,
+      },
+    };
   }
 
   async testOpenai(tenantId: string, body: { apiKey?: string }) {

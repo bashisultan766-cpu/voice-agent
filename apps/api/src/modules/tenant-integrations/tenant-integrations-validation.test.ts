@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emailSaveBodySchema, emailTestBodySchema } from './tenant-integrations-validation';
+import {
+  emailSaveBodySchema,
+  emailTestBodySchema,
+  twilioConfigureWebhookBodySchema,
+  twilioSaveBodySchema,
+  twilioTestBodySchema,
+} from './tenant-integrations-validation';
+
+const VALID_TWILIO_SID = `AC${'0'.repeat(32)}`;
 
 test('emailTestBodySchema accepts payments@mailcallcommunication.com', () => {
   const parsed = emailTestBodySchema.parse({
@@ -47,4 +55,61 @@ test('emailSaveBodySchema rejects invalid fromEmail', () => {
   if (!result.success) {
     assert.equal(result.error.issues[0]?.message, 'From email must be valid.');
   }
+});
+
+test('twilioSaveBodySchema accepts valid E.164 phone and AC sid', () => {
+  const parsed = twilioSaveBodySchema.parse({
+    accountSid: VALID_TWILIO_SID,
+    authToken: ' real-token ',
+    phoneNumber: ' +12512554549 ',
+  });
+  assert.equal(parsed.accountSid, VALID_TWILIO_SID);
+  assert.equal(parsed.authToken, 'real-token');
+  assert.equal(parsed.phoneNumber, '+12512554549');
+});
+
+test('twilioSaveBodySchema allows omitted auth token for saved-credential flow', () => {
+  const parsed = twilioSaveBodySchema.parse({
+    accountSid: VALID_TWILIO_SID,
+    phoneNumber: '+12512554549',
+  });
+  assert.equal(parsed.authToken, undefined);
+});
+
+test('twilioSaveBodySchema rejects non-E.164 phone number', () => {
+  const result = twilioSaveBodySchema.safeParse({
+    accountSid: VALID_TWILIO_SID,
+    authToken: 'token',
+    phoneNumber: '2512554549',
+  });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.error.issues[0]?.message, 'Phone number must be in E.164 format (e.g. +15551234567).');
+  }
+});
+
+test('twilioTestBodySchema trims values and keeps authToken optional', () => {
+  const parsed = twilioTestBodySchema.parse({
+    accountSid: ` ${VALID_TWILIO_SID} `,
+    phoneNumber: ' +12512554549 ',
+  });
+  assert.equal(parsed.accountSid, VALID_TWILIO_SID);
+  assert.equal(parsed.phoneNumber, '+12512554549');
+  assert.equal(parsed.authToken, undefined);
+});
+
+test('twilioSaveBodySchema rejects missing accountSid with clear error', () => {
+  const result = twilioSaveBodySchema.safeParse({
+    authToken: 'token',
+    phoneNumber: '+12512554549',
+  });
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.error.issues[0]?.message, 'Account SID is required.');
+  }
+});
+
+test('twilioConfigureWebhookBodySchema accepts empty body only', () => {
+  const parsed = twilioConfigureWebhookBodySchema.parse({});
+  assert.deepEqual(parsed, {});
 });

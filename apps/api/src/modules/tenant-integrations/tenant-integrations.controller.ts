@@ -9,6 +9,9 @@ import { TenantIntegrationsService } from './tenant-integrations.service';
 import {
   emailSaveBodySchema,
   emailTestBodySchema,
+  twilioConfigureWebhookBodySchema,
+  twilioSaveBodySchema,
+  twilioTestBodySchema,
 } from './tenant-integrations-validation';
 import { TenantId } from '../../common/decorators/tenant-id.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -36,19 +39,6 @@ class ShopifySaveBodyDto {
   @IsOptional()
   @IsBoolean()
   skipConnectionTest?: boolean;
-}
-
-class TwilioBodyDto {
-  accountSid!: string;
-  authToken!: string;
-  phoneNumber!: string;
-  skipConnectionTest?: boolean;
-}
-
-class TwilioTestBodyDto {
-  accountSid!: string;
-  authToken!: string;
-  phoneNumber?: string;
 }
 
 class OpenaiTestBodyDto {
@@ -128,14 +118,30 @@ export class TenantIntegrationsController {
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('twilio/test')
-  testTwilio(@TenantId() tenantId: string, @Body() body: TwilioTestBodyDto) {
+  testTwilio(
+    @TenantId() tenantId: string,
+    @Body(new ZodValidationPipe(twilioTestBodySchema)) body: z.infer<typeof twilioTestBodySchema>,
+  ) {
     return this.svc.testTwilio(tenantId, body);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Put('twilio')
-  saveTwilio(@TenantId() tenantId: string, @Body() body: TwilioBodyDto) {
+  saveTwilio(
+    @TenantId() tenantId: string,
+    @Body(new ZodValidationPipe(twilioSaveBodySchema)) body: z.infer<typeof twilioSaveBodySchema>,
+  ) {
     return this.svc.saveTwilio(tenantId, body);
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('twilio/configure-webhook')
+  configureTwilioWebhook(
+    @TenantId() tenantId: string,
+    @Body(new ZodValidationPipe(twilioConfigureWebhookBodySchema))
+    _body: z.infer<typeof twilioConfigureWebhookBodySchema>,
+  ) {
+    return this.svc.configureTwilioWebhook(tenantId);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })

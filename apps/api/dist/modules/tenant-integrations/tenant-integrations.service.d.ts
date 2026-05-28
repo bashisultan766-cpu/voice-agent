@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import { EncryptionService } from '../../common/encryption.service';
 import { ShopifyConnectionTestService } from '../agents/connection-test/shopify-connection-test.service';
@@ -7,6 +8,7 @@ import { ElevenLabsConnectionTestService } from '../agents/connection-test/eleve
 export declare class TenantIntegrationsService {
     private readonly prisma;
     private readonly encryption;
+    private readonly config;
     private readonly shopifyTest;
     private readonly twilioTest;
     private readonly openaiTest;
@@ -15,7 +17,7 @@ export declare class TenantIntegrationsService {
     private isSchemaDriftError;
     private buildSchemaDriftMessage;
     private mapIntegrationError;
-    constructor(prisma: PrismaService, encryption: EncryptionService, shopifyTest: ShopifyConnectionTestService, twilioTest: TwilioConnectionTestService, openaiTest: OpenAIConnectionTestService, elevenlabsTest: ElevenLabsConnectionTestService);
+    constructor(prisma: PrismaService, encryption: EncryptionService, config: ConfigService, shopifyTest: ShopifyConnectionTestService, twilioTest: TwilioConnectionTestService, openaiTest: OpenAIConnectionTestService, elevenlabsTest: ElevenLabsConnectionTestService);
     private audit;
     private getTenantIntegrationRowResilient;
     getSafeSummary(tenantId: string): Promise<{
@@ -29,6 +31,7 @@ export declare class TenantIntegrationsService {
         twilio: {
             configured: boolean;
             accountSidLast4: string | null;
+            authTokenMasked: string | null;
             phoneNumber: string | null;
             lastTestOk: boolean | null;
             lastTestAt: string | null;
@@ -74,7 +77,7 @@ export declare class TenantIntegrationsService {
     }>;
     testTwilio(tenantId: string, body: {
         accountSid: string;
-        authToken: string;
+        authToken?: string;
         phoneNumber?: string;
     }): Promise<{
         success: boolean;
@@ -82,11 +85,27 @@ export declare class TenantIntegrationsService {
     }>;
     saveTwilio(tenantId: string, body: {
         accountSid: string;
-        authToken: string;
+        authToken?: string;
         phoneNumber: string;
         skipConnectionTest?: boolean;
     }): Promise<{
         ok: boolean;
+        saved: boolean;
+        phoneNumber: string;
+        authTokenMasked: string;
+    }>;
+    configureTwilioWebhook(tenantId: string): Promise<{
+        success: boolean;
+        message: string;
+        webhook: {
+            inboundUrl: string;
+            statusUrl: string;
+            method: "POST";
+        };
+        mediaStream: {
+            enabled: boolean;
+            wsUrl: null;
+        };
     }>;
     testOpenai(tenantId: string, body: {
         apiKey?: string;

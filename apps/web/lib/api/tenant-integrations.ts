@@ -13,6 +13,7 @@ export type TenantIntegrationSummary = {
   twilio: {
     configured: boolean;
     accountSidLast4: string | null;
+    authTokenMasked: string | null;
     phoneNumber: string | null;
     lastTestOk: boolean | null;
     lastTestAt: string | null;
@@ -43,6 +44,45 @@ export type TenantIntegrationSummary = {
 /** Headers for browser → `/api/tenant-integrations/*` (Bearer + cookie for Nest when nginx proxies /api). */
 export function tenantIntegrationHeaders(): Record<string, string> {
   return getAuthenticatedHeaders() as Record<string, string>;
+}
+
+export type TwilioSavePayload = {
+  accountSid: string;
+  authToken: string;
+  phoneNumber: string;
+};
+
+export type TwilioTestPayload = {
+  accountSid: string;
+  phoneNumber: string;
+  authToken?: string;
+};
+
+export async function saveTwilioSettings(payload: TwilioSavePayload): Promise<Response> {
+  return fetch('/api/tenant-integrations/twilio', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: tenantIntegrationHeaders(),
+    body: JSON.stringify({
+      accountSid: payload.accountSid.trim(),
+      authToken: payload.authToken.trim(),
+      phoneNumber: payload.phoneNumber.trim(),
+    }),
+  });
+}
+
+export async function testTwilioSettings(payload: TwilioTestPayload): Promise<Response> {
+  const authToken = payload.authToken?.trim();
+  return fetch('/api/tenant-integrations/twilio/test', {
+    method: 'POST',
+    credentials: 'include',
+    headers: tenantIntegrationHeaders(),
+    body: JSON.stringify({
+      accountSid: payload.accountSid.trim(),
+      phoneNumber: payload.phoneNumber.trim(),
+      ...(authToken ? { authToken } : {}),
+    }),
+  });
 }
 
 export type IntegrationTestPayload = {
@@ -125,6 +165,7 @@ export async function getTenantIntegrationSummary(): Promise<TenantIntegrationSu
     twilio: {
       configured: Boolean(raw.twilio?.configured),
       accountSidLast4: raw.twilio?.accountSidLast4 ?? null,
+      authTokenMasked: raw.twilio?.authTokenMasked ?? null,
       phoneNumber: raw.twilio?.phoneNumber ?? null,
       lastTestOk: raw.twilio?.lastTestOk ?? null,
       lastTestAt: raw.twilio?.lastTestAt ?? null,

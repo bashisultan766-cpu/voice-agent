@@ -52,10 +52,6 @@ __decorate([
     (0, class_validator_1.IsBoolean)(),
     __metadata("design:type", Boolean)
 ], ShopifySaveBodyDto.prototype, "skipConnectionTest", void 0);
-class TwilioBodyDto {
-}
-class TwilioTestBodyDto {
-}
 class OpenaiTestBodyDto {
 }
 __decorate([
@@ -135,6 +131,9 @@ let TenantIntegrationsController = class TenantIntegrationsController {
     saveTwilio(tenantId, body) {
         return this.svc.saveTwilio(tenantId, body);
     }
+    configureTwilioWebhook(tenantId, _body) {
+        return this.svc.configureTwilioWebhook(tenantId);
+    }
     testOpenai(tenantId, body) {
         return this.svc.testOpenai(tenantId, body);
     }
@@ -188,20 +187,29 @@ __decorate([
     (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
     (0, common_1.Post)('twilio/test'),
     __param(0, (0, tenant_id_decorator_1.TenantId)()),
-    __param(1, (0, common_1.Body)()),
+    __param(1, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(tenant_integrations_validation_1.twilioTestBodySchema))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, TwilioTestBodyDto]),
+    __metadata("design:paramtypes", [String, void 0]),
     __metadata("design:returntype", void 0)
 ], TenantIntegrationsController.prototype, "testTwilio", null);
 __decorate([
     (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
     (0, common_1.Put)('twilio'),
     __param(0, (0, tenant_id_decorator_1.TenantId)()),
-    __param(1, (0, common_1.Body)()),
+    __param(1, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(tenant_integrations_validation_1.twilioSaveBodySchema))),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, TwilioBodyDto]),
+    __metadata("design:paramtypes", [String, void 0]),
     __metadata("design:returntype", void 0)
 ], TenantIntegrationsController.prototype, "saveTwilio", null);
+__decorate([
+    (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
+    (0, common_1.Post)('twilio/configure-webhook'),
+    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(1, (0, common_1.Body)(new zod_validation_pipe_1.ZodValidationPipe(tenant_integrations_validation_1.twilioConfigureWebhookBodySchema))),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, void 0]),
+    __metadata("design:returntype", void 0)
+], TenantIntegrationsController.prototype, "configureTwilioWebhook", null);
 __decorate([
     (0, throttler_1.Throttle)({ default: { limit: 10, ttl: 60_000 } }),
     (0, common_1.Post)('openai/test'),

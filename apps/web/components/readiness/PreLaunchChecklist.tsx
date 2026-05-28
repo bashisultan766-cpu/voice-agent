@@ -3,8 +3,10 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { getAgents, type AgentListItem } from '@/lib/api/agents';
+import { getAgentReadiness } from '@/lib/api/agents';
 import { getShopifyConnectionStatus, getShopifyWebhookHealth, type ShopifyWebhookHealth } from '@/lib/api/shopify';
 import { getSystemHealth } from '@/lib/api/system';
+import { getTenantIntegrationSummary, type TenantIntegrationSummary } from '@/lib/api/tenant-integrations';
 
 type CheckState = 'pass' | 'warn' | 'fail';
 
@@ -27,6 +29,8 @@ export function PreLaunchChecklist() {
   const [apiHealthy, setApiHealthy] = useState<boolean>(false);
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [rows, setRows] = useState<AgentReadinessRow[]>([]);
+  const [integrationSummary, setIntegrationSummary] = useState<TenantIntegrationSummary | null>(null);
+  const [activeAgentReadiness, setActiveAgentReadiness] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     async function load() {
@@ -37,8 +41,10 @@ export function PreLaunchChecklist() {
           getSystemHealth().catch(() => ({ ok: false })),
           getAgents(),
         ]);
+        const summary = await getTenantIntegrationSummary().catch(() => null);
         setApiHealthy(Boolean(health?.ok));
         setAgents(list);
+        setIntegrationSummary(summary);
 
         const detailRows: AgentReadinessRow[] = await Promise.all(
           list.map(async (a) => {
@@ -58,6 +64,21 @@ export function PreLaunchChecklist() {
           }),
         );
         setRows(detailRows);
+        const active = list.find((a) => a.status === 'active') ?? list[0] ?? null;
+        if (active) {
+          const readiness = await getAgentReadiness(active.id).catch(() => null);
+          const checks = new Map((readiness?.checks ?? []).map((c) => [c.key, c.pass]));
+          setActiveAgentReadiness({
+            activeAgentSelected: true,
+            systemPrompt: checks.get('system_prompt_present') === true,
+            shopifyTool: checks.get('catalog_ready') === true,
+            paymentLinkTool: checks.get('payment_webhook_configured') === true,
+            emailTool: checks.get('email_connected') === true,
+            twilioWebhook: checks.get('twilio_webhook_verified') === true,
+          });
+        } else {
+          setActiveAgentReadiness({ activeAgentSelected: false });
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load readiness checks.');
       } finally {
@@ -114,6 +135,21 @@ export function PreLaunchChecklist() {
         : 'Webhook freshness and failure metrics look healthy.',
     },
   ];
+  const voiceReadinessItems: Array<[string, boolean]> = [
+    ['Twilio saved', integrationSummary?.twilio.configured === true],
+    ['Twilio test successful', integrationSummary?.twilio.lastTestOk === true],
+    ['Phone number exists', Boolean(integrationSummary?.twilio.phoneNumber)],
+    ['Voice webhook configured', activeAgentReadiness.twilioWebhook === true],
+    ['Resend saved', integrationSummary?.email.configured === true],
+    ['Resend test successful', integrationSummary?.email.lastTestOk === true],
+    ['Shopify saved', integrationSummary?.shopify.configured === true],
+    ['Shopify test successful', integrationSummary?.shopify.lastTestOk === true],
+    ['Active agent selected', activeAgentReadiness.activeAgentSelected === true],
+    ['Agent has system prompt', activeAgentReadiness.systemPrompt === true],
+    ['Shopify product lookup tool', activeAgentReadiness.shopifyTool === true],
+    ['Payment link creation tool', activeAgentReadiness.paymentLinkTool === true],
+    ['Email sending tool', activeAgentReadiness.emailTool === true],
+  ];
 
   return (
     <div className="space-y-6">
@@ -138,6 +174,19 @@ export function PreLaunchChecklist() {
             <p className="mt-2 text-xs text-muted-foreground">{c.detail}</p>
           </div>
         ))}
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-5">
+        <h2 className="text-sm font-medium text-foreground">Voice agent readiness</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Live call prerequisites for current workspace and active agent.</p>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          {voiceReadinessItems.map(([label, pass]) => (
+            <div key={label} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+              <span className="text-foreground">{label}</span>
+              <span className={pass ? 'text-emerald-700' : 'text-amber-700'}>{pass ? 'Yes' : 'No'}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="rounded-xl border border-border bg-card p-5">

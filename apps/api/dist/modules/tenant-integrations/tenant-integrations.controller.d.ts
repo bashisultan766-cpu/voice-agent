@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import { TenantIntegrationsService } from './tenant-integrations.service';
-import { emailSaveBodySchema, emailTestBodySchema } from './tenant-integrations-validation';
+import { emailSaveBodySchema, emailTestBodySchema, twilioConfigureWebhookBodySchema, twilioSaveBodySchema, twilioTestBodySchema } from './tenant-integrations-validation';
 declare class ShopifyTestBodyDto {
     shopDomain: string;
     accessToken?: string;
@@ -9,17 +9,6 @@ declare class ShopifySaveBodyDto {
     shopDomain: string;
     accessToken?: string;
     skipConnectionTest?: boolean;
-}
-declare class TwilioBodyDto {
-    accountSid: string;
-    authToken: string;
-    phoneNumber: string;
-    skipConnectionTest?: boolean;
-}
-declare class TwilioTestBodyDto {
-    accountSid: string;
-    authToken: string;
-    phoneNumber?: string;
 }
 declare class OpenaiTestBodyDto {
     apiKey?: string;
@@ -52,6 +41,7 @@ export declare class TenantIntegrationsController {
         twilio: {
             configured: boolean;
             accountSidLast4: string | null;
+            authTokenMasked: string | null;
             phoneNumber: string | null;
             lastTestOk: boolean | null;
             lastTestAt: string | null;
@@ -85,15 +75,31 @@ export declare class TenantIntegrationsController {
     }>;
     saveShopify(tenantId: string, body: ShopifySaveBodyDto): Promise<{
         ok: boolean;
-        storeId: string;
+        storeId: any;
         shopDomain: string;
     }>;
-    testTwilio(tenantId: string, body: TwilioTestBodyDto): Promise<{
+    testTwilio(tenantId: string, body: z.infer<typeof twilioTestBodySchema>): Promise<{
         success: boolean;
         message: string;
     }>;
-    saveTwilio(tenantId: string, body: TwilioBodyDto): Promise<{
+    saveTwilio(tenantId: string, body: z.infer<typeof twilioSaveBodySchema>): Promise<{
         ok: boolean;
+        saved: boolean;
+        phoneNumber: string;
+        authTokenMasked: string;
+    }>;
+    configureTwilioWebhook(tenantId: string, _body: z.infer<typeof twilioConfigureWebhookBodySchema>): Promise<{
+        success: boolean;
+        message: string;
+        webhook: {
+            inboundUrl: string;
+            statusUrl: string;
+            method: "POST";
+        };
+        mediaStream: {
+            enabled: boolean;
+            wsUrl: null;
+        };
     }>;
     testOpenai(tenantId: string, body: OpenaiTestBodyDto): Promise<{
         success: boolean;

@@ -6,6 +6,8 @@ import {
   formatIntegrationLastTested,
   getTenantIntegrationSummary,
   parseIntegrationTestJson,
+  saveTwilioSettings,
+  testTwilioSettings,
   tenantIntegrationHeaders,
 } from '@/lib/api/tenant-integrations';
 import { parseApiErrorMessage } from '@/lib/api/error-message';
@@ -19,6 +21,7 @@ export default function TwilioIntegrationSettingsPage() {
   const [lastOk, setLastOk] = useState<boolean | null>(null);
   const [lastTestAt, setLastTestAt] = useState<string | null>(null);
   const [savedPhone, setSavedPhone] = useState<string | null>(null);
+  const [savedTokenMask, setSavedTokenMask] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -37,6 +40,7 @@ export default function TwilioIntegrationSettingsPage() {
         setLastOk(s.twilio.lastTestOk);
         setLastTestAt(s.twilio.lastTestAt);
         setSavedPhone(s.twilio.phoneNumber);
+        setSavedTokenMask(s.twilio.authTokenMasked);
         setPhoneNumber((prev) => (prev.trim() !== '' ? prev : s.twilio.phoneNumber || ''));
       })
       .catch((e) => {
@@ -54,19 +58,36 @@ export default function TwilioIntegrationSettingsPage() {
     setMsg(text);
   }
 
-  async function test() {
+  function validateSid(value: string): string | null {
+    if (!value.trim()) return 'Account SID is required.';
+    if (!/^AC[a-z0-9]{32}$/i.test(value.trim())) {
+      return 'Account SID should look like AC followed by 32 letters/numbers.';
+    }
+    return null;
+  }
+
+  function validatePhone(value: string): string | null {
+    if (!value.trim()) return 'Phone number is required.';
+    if (!/^\+[1-9]\d{6,14}$/.test(value.trim())) {
+      return 'Phone number must be in E.164 format (e.g. +12512554549).';
+    }
+    return null;
+  }
+
+  async function handleTestConnectionClick() {
+    const sidError = validateSid(accountSid);
+    const phoneError = phoneNumber.trim() ? validatePhone(phoneNumber) : null;
+    if (sidError || phoneError) {
+      setFeedback('error', sidError ?? phoneError ?? 'Invalid Twilio settings.');
+      return;
+    }
     setTesting(true);
     setMsg(null);
     try {
-      const res = await fetch('/api/tenant-integrations/twilio/test', {
-        method: 'POST',
-        credentials: 'include',
-        headers: tenantIntegrationHeaders(),
-        body: JSON.stringify({
-          accountSid: accountSid.trim(),
-          authToken: authToken.trim(),
-          phoneNumber: phoneNumber.trim() || undefined,
-        }),
+      const res = await testTwilioSettings({
+        accountSid: accountSid.trim(),
+        phoneNumber: phoneNumber.trim(),
+        ...(authToken.trim() ? { authToken: authToken.trim() } : {}),
       });
       const text = await res.text();
       if (!res.ok) {
@@ -88,19 +109,20 @@ export default function TwilioIntegrationSettingsPage() {
     }
   }
 
-  async function save() {
+  async function handleSaveClick() {
+    const sidError = validateSid(accountSid);
+    const phoneError = validatePhone(phoneNumber);
+    if (sidError || phoneError) {
+      setFeedback('error', sidError ?? phoneError ?? 'Invalid Twilio settings.');
+      return;
+    }
     setSaving(true);
     setMsg(null);
     try {
-      const res = await fetch('/api/tenant-integrations/twilio', {
-        method: 'PUT',
-        credentials: 'include',
-        headers: tenantIntegrationHeaders(),
-        body: JSON.stringify({
-          accountSid: accountSid.trim(),
-          authToken: authToken.trim(),
-          phoneNumber: phoneNumber.trim(),
-        }),
+      const res = await saveTwilioSettings({
+        accountSid: accountSid.trim(),
+        authToken: authToken.trim(),
+        phoneNumber: phoneNumber.trim(),
       });
       const text = await res.text();
       if (!res.ok) {
@@ -112,13 +134,36 @@ export default function TwilioIntegrationSettingsPage() {
       setLastOk(true);
       setLastTestAt(new Date().toISOString());
       setSavedPhone(phoneNumber.trim());
+      setSavedTokenMask(authToken.trim() ? `tw_****${authToken.trim().slice(-4)}` : 'tw_****saved');
       void getTenantIntegrationSummary()
-        .then((s) => setLastTestAt(s.twilio.lastTestAt))
+        .then((s) => {
+          setLastTestAt(s.twilio.lastTestAt);
+          setSavedTokenMask(s.twilio.authTokenMasked);
+        })
         .catch(() => {});
-      setFeedback('success', 'Saved securely. Auth token is encrypted and not shown again.');
+      setFeedback('success', `Saved: Yes · ${phoneNumber.trim()}`);
     } finally {
       setSaving(false);
     }
+  }
+
+  async function configureWebhook() {
+    setMsg(null);
+    const res = await fetch('/api/tenant-integrations/twilio/configure-webhook', {
+      method: 'POST',
+      credentials: 'include',
+      headers: tenantIntegrationHeaders(),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      setFeedback('error', parseApiErrorMessage(text, res.status));
+      return;
+    }
+    const payload = JSON.parse(text) as { webhook?: { inboundUrl?: string } };
+    setFeedback(
+      'success',
+      `Webhook configured (POST). Inbound URL: ${payload.webhook?.inboundUrl ?? 'set'}`,
+    );
   }
 
   const lastTestLabel = formatIntegrationLastTested(lastTestAt);
@@ -150,6 +195,7 @@ export default function TwilioIntegrationSettingsPage() {
           )}
           {savedPhone ? <span className="ml-2 text-xs text-muted-foreground">· {savedPhone}</span> : null}
         </p>
+        {savedTokenMask ? <p className="text-xs text-muted-foreground">Saved token: {savedTokenMask}</p> : null}
         {lastTestLabel ? (
           <p className="text-xs text-muted-foreground">Last tested: {lastTestLabel}</p>
         ) : null}
@@ -203,21 +249,32 @@ export default function TwilioIntegrationSettingsPage() {
         <div className="flex flex-wrap gap-2 pt-2">
           <button
             type="button"
-            disabled={testing || saving || !accountSid.trim() || !authToken.trim()}
-            onClick={() => void test()}
+            disabled={testing || saving || !accountSid.trim()}
+            onClick={() => void handleTestConnectionClick()}
             className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
           >
             {testing ? 'Testing…' : 'Test connection'}
           </button>
           <button
             type="button"
-            disabled={saving || testing || !authToken.trim()}
-            onClick={() => void save()}
+            disabled={saving || testing || !accountSid.trim() || !phoneNumber.trim()}
+            onClick={() => void handleSaveClick()}
             className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
+          <button
+            type="button"
+            disabled={saving || testing || !connected}
+            onClick={() => void configureWebhook()}
+            className="rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
+          >
+            Configure Twilio Webhook
+          </button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Webhook route: <code>/api/twilio/voice/inbound</code> (POST)
+        </p>
       </div>
     </div>
   );

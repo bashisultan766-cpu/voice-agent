@@ -32,3 +32,43 @@ export const emailSaveBodySchema = z
     fromEmail: fromEmailField,
   })
   .strict();
+
+const twilioAccountSidField = z
+  .string({ required_error: 'Account SID is required.' })
+  .trim()
+  .min(1, 'Account SID is required.')
+  .regex(
+    /^AC[a-z0-9]{32}$/i,
+    'Account SID should look like AC followed by 32 letters/numbers.',
+  );
+
+const twilioAuthTokenOptionalField = z
+  .string({ required_error: 'Auth token is required.' })
+  .trim()
+  .min(1, 'Auth token is required.')
+  .optional();
+
+const twilioPhoneNumberField = z
+  .string({ required_error: 'Phone number is required.' })
+  .trim()
+  .min(1, 'Phone number is required.')
+  .regex(/^\+[1-9]\d{6,14}$/, 'Phone number must be in E.164 format (e.g. +15551234567).');
+
+export const twilioSaveBodySchema = z
+  .object({
+    accountSid: twilioAccountSidField,
+    authToken: twilioAuthTokenOptionalField,
+    phoneNumber: twilioPhoneNumberField,
+    skipConnectionTest: z.boolean().optional(),
+  })
+  .strict();
+
+export const twilioTestBodySchema = z
+  .object({
+    accountSid: twilioAccountSidField,
+    authToken: twilioAuthTokenOptionalField,
+    phoneNumber: twilioPhoneNumberField.optional(),
+  })
+  .strict();
+
+export const twilioConfigureWebhookBodySchema = z.object({}).strict();

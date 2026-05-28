@@ -91,32 +91,52 @@ export function AgentCredentialsPanel({
     (agent.paymentLinkEmailIntro as string) ?? '',
   );
 
-  const shopifySource = sources?.shopify ?? {
-    configured: agent.shopifyConnectionStatus === 'OK',
-    source: (agent.shopifySource as CredentialSourceApi) ?? 'missing',
-    useWorkspaceShopify,
-    shopifyStoreUrlPresent: Boolean(shopifyStoreUrl.trim()),
-  };
-  const twilioSource = sources?.twilio ?? {
-    configured: agent.twilioConnectionStatus === 'OK',
-    authSource: 'missing' as CredentialSourceApi,
-    useWorkspaceTwilio,
-  };
-  const openaiSource = sources?.openai ?? {
-    configured: agent.openaiConnectionStatus === 'OK',
-    source: 'missing' as CredentialSourceApi,
-    useWorkspaceOpenai,
-  };
-  const elevenSource = sources?.elevenlabs ?? {
-    configured: agent.elevenlabsConnectionStatus === 'OK',
-    source: 'missing' as CredentialSourceApi,
-    useWorkspaceElevenlabs,
-  };
-  const resendSource = sources?.resend ?? {
-    configured: agent.resendApiKeyConfigured === true,
-    source: 'missing' as CredentialSourceApi,
-    useWorkspaceEmail,
-  };
+  const shopifySource = useMemo(
+    () =>
+      sources?.shopify ?? {
+        configured: agent.shopifyConnectionStatus === 'OK',
+        source: (agent.shopifySource as CredentialSourceApi) ?? 'missing',
+        useWorkspaceShopify,
+        shopifyStoreUrlPresent: Boolean(shopifyStoreUrl.trim()),
+      },
+    [sources?.shopify, agent.shopifyConnectionStatus, agent.shopifySource, useWorkspaceShopify, shopifyStoreUrl],
+  );
+  const twilioSource = useMemo(
+    () =>
+      sources?.twilio ?? {
+        configured: agent.twilioConnectionStatus === 'OK',
+        authSource: 'missing' as CredentialSourceApi,
+        useWorkspaceTwilio,
+      },
+    [sources?.twilio, agent.twilioConnectionStatus, useWorkspaceTwilio],
+  );
+  const openaiSource = useMemo(
+    () =>
+      sources?.openai ?? {
+        configured: agent.openaiConnectionStatus === 'OK',
+        source: 'missing' as CredentialSourceApi,
+        useWorkspaceOpenai,
+      },
+    [sources?.openai, agent.openaiConnectionStatus, useWorkspaceOpenai],
+  );
+  const elevenSource = useMemo(
+    () =>
+      sources?.elevenlabs ?? {
+        configured: agent.elevenlabsConnectionStatus === 'OK',
+        source: 'missing' as CredentialSourceApi,
+        useWorkspaceElevenlabs,
+      },
+    [sources?.elevenlabs, agent.elevenlabsConnectionStatus, useWorkspaceElevenlabs],
+  );
+  const resendSource = useMemo(
+    () =>
+      sources?.resend ?? {
+        configured: agent.resendApiKeyConfigured === true,
+        source: 'missing' as CredentialSourceApi,
+        useWorkspaceEmail,
+      },
+    [sources?.resend, agent.resendApiKeyConfigured, useWorkspaceEmail],
+  );
 
   const savedHint = useMemo(
     () => ({
