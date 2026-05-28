@@ -25,14 +25,8 @@ const REPAIR_VARIANT_BY_ID_QUERY = `
       id
       title
       sku
-      price {
-        amount
-        currencyCode
-      }
-      compareAtPrice {
-        amount
-        currencyCode
-      }
+      price
+      compareAtPrice
       inventoryQuantity
       availableForSale
       product {
@@ -66,25 +60,23 @@ const REPAIR_PRODUCT_BY_ID_QUERY = `
   }
 `;
 
-function variantMoneyAmount(
-  field: unknown,
-  legacyV2: unknown,
-): string | null {
-  const money = field as { amount?: string } | string | number | null | undefined;
-  const priceAmount =
-    money != null && typeof money === 'object' && money.amount != null
-      ? String(money.amount)
-      : typeof money === 'string' || typeof money === 'number'
-        ? String(money)
-        : null;
-  const legacy = legacyV2 as { amount?: string } | undefined;
-  const legacyAmount = legacy?.amount != null ? String(legacy.amount) : null;
-  return priceAmount ?? legacyAmount;
-}
-
 function variantPriceStrings(variant: Record<string, unknown>): { price: string | null; compareAtPrice: string | null } {
-  const price = variantMoneyAmount(variant.price, variant.priceV2);
-  const compareAtPrice = variantMoneyAmount(variant.compareAtPrice, variant.compareAtPriceV2);
+  const priceField = variant.price as string | { amount?: string } | null | undefined;
+  const compareField = variant.compareAtPrice as string | { amount?: string } | null | undefined;
+  const priceV2 = variant.priceV2 as { amount?: string } | undefined;
+  const compareAtPriceV2 = variant.compareAtPriceV2 as { amount?: string } | undefined;
+
+  const priceAmount =
+    typeof priceField === 'string'
+      ? priceField
+      : priceField?.amount ?? priceV2?.amount ?? null;
+  const compareAtAmount =
+    typeof compareField === 'string'
+      ? compareField
+      : compareField?.amount ?? compareAtPriceV2?.amount ?? null;
+
+  const price = priceAmount != null ? String(priceAmount) : null;
+  const compareAtPrice = compareAtAmount != null ? String(compareAtAmount) : null;
   return { price, compareAtPrice };
 }
 
@@ -145,14 +137,8 @@ export class ShopifyProductSyncService {
               id
               title
               sku
-              price {
-                amount
-                currencyCode
-              }
-              compareAtPrice {
-                amount
-                currencyCode
-              }
+              price
+              compareAtPrice
               inventoryQuantity
               availableForSale
               metafields(first: 25) {
@@ -407,14 +393,8 @@ export class ShopifyProductSyncService {
                     id
                     title
                     sku
-                    price {
-                      amount
-                      currencyCode
-                    }
-                    compareAtPrice {
-                      amount
-                      currencyCode
-                    }
+                    price
+                    compareAtPrice
                     inventoryQuantity
                     availableForSale
                   }
