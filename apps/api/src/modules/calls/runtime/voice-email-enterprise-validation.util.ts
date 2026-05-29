@@ -3,7 +3,7 @@
  */
 
 import { promises as dns } from 'node:dns';
-import { normalizeSpokenEmail, VOICE_EMAIL_REGEX } from './voice-email-capture.util';
+import { normalizeSpokenEmail, VOICE_EMAIL_REGEX } from './spoken-email-normalizer.util';
 
 /** Common spoken / ASR domain typos → canonical domain. */
 const DOMAIN_TYPO_MAP: Record<string, string> = {

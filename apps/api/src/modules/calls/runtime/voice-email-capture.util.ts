@@ -5,10 +5,28 @@ import {
   validateEnterpriseEmailSync,
   type EnterpriseEmailValidation,
 } from './voice-email-enterprise-validation.util';
+import {
+  replyInCustomerLanguage,
+  type CustomerLanguage,
+} from './voice-checkout-language.util';
 
-/** Production-grade email validation (RFC 5322 simplified, practical for voice capture). */
-export const VOICE_EMAIL_REGEX =
-  /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+export {
+  VOICE_EMAIL_REGEX,
+  parseDoubleTripleDigits,
+  parseDigitWords,
+  parseLetterByLetterEmail,
+  normalizeSpokenEmail,
+  extractEmailFromSpeech,
+  containsInlineEmailConfirmation,
+  formatEmailForVoiceConfirmation,
+  spellEmailForCaller,
+  isCallerAskingEmailSpellback,
+} from './spoken-email-normalizer.util';
+
+import {
+  extractEmailFromSpeech,
+  formatEmailForVoiceConfirmation,
+} from './spoken-email-normalizer.util';
 
 export const MAX_VOICE_EMAIL_RETRIES = 3;
 export const MAX_EMAIL_SEND_RETRIES = 2;
@@ -37,21 +55,27 @@ export type PaymentEmailDeliveryResult = {
   errorCode?: string;
 };
 
-/** First-time email collection only — no long spoken example on retries. */
+/** First email request — professional, not letter-by-letter (spec §3). */
+export const EMAIL_FIRST_REQUEST_PROMPT =
+  'Please tell me your email address so I can send your payment link.';
+
 export const EMAIL_SPELL_COLLECTION_PROMPT =
   'Please spell your email address slowly, letter by letter, so I can send your payment link correctly.';
 
 export const EMAIL_SPELL_COLLECTION_PROMPT_ALT =
   'Please say your email slowly, letter by letter.';
 
-/** Premium opener before spell-slowly email collection. */
-export const EMAIL_COLLECTION_WITH_CONTEXT_PROMPT = `${CHECKOUT_PRODUCT_CONFIRMED_PROMPT} ${EMAIL_SPELL_COLLECTION_PROMPT}`;
+/** Premium opener before first email request. */
+export const EMAIL_COLLECTION_WITH_CONTEXT_PROMPT = `${CHECKOUT_PRODUCT_CONFIRMED_PROMPT} ${EMAIL_FIRST_REQUEST_PROMPT}`;
 
-export const EMAIL_INVALID_VERIFY_RETRY_PROMPT =
-  "I couldn't verify that email. Please spell your email address again, letter by letter.";
+/** First invalid capture — repeat slowly, not letter-by-letter (spec §8). */
+export const EMAIL_INVALID_SLOW_RETRY_PROMPT =
+  "I couldn't verify that email. Please repeat your email address slowly.";
+
+export const EMAIL_INVALID_VERIFY_RETRY_PROMPT = EMAIL_INVALID_SLOW_RETRY_PROMPT;
 
 export const EMAIL_INVALID_CAPTURE_RETRY_PROMPT =
-  'I may have captured that incorrectly. Please spell your email again, letter by letter.';
+  'I may have captured that incorrectly. Please spell your email address letter by letter.';
 
 /** @deprecated Use EMAIL_INVALID_CAPTURE_RETRY_PROMPT */
 export const EMAIL_INVALID_CAPTURE_PROMPT = EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
@@ -59,7 +83,13 @@ export const EMAIL_INVALID_CAPTURE_PROMPT = EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
 export const POST_PAYMENT_THANK_YOU_REPLY =
   "You're welcome. Thank you for your order.";
 
-export const EMAIL_PROCESSING_PROMPT = 'Perfect. Processing your order now.';
+export const EMAIL_PROCESSING_PROMPT =
+  "One moment, I'm preparing your secure payment link.";
+
+export const PAYMENT_EMAIL_SENDING_FILLER = "I'm sending that to your inbox now.";
+
+export const PAYMENT_EMAIL_VERIFYING_FILLER =
+  'Just checking that the email was accepted successfully.';
 
 export const PAYMENT_EMAIL_SUCCESS_PROMPT =
   'Your payment link has been sent successfully. Please check your inbox.';
@@ -80,31 +110,20 @@ const PAYMENT_SUCCESS_CLAIM_PATTERNS: RegExp[] = [
 
 const DETERMINISTIC_TRANSACTIONAL_MARKERS: RegExp[] = [
   /Perfect\. I'll help you place the order/i,
-  /Just to confirm, your email is/i,
+  /Just to confirm, (I have )?your email is/i,
   /spell your email address slowly/i,
   /letter by letter/i,
   /I couldn't verify that email/i,
   /I may have captured that incorrectly/i,
   /You're welcome\. Thank you for your order/i,
-  /Perfect\. Processing your order now/i,
+  /One moment, I'm preparing your secure payment link/i,
+  /I'm sending that to your inbox now/i,
+  /Just checking that the email was accepted successfully/i,
   /Your payment link has been sent successfully/i,
   /there was an issue sending the payment link/i,
   /unable to send the payment link by email/i,
   /WhatsApp or SMS/i,
 ];
-
-const NUMBER_WORDS: Record<string, string> = {
-  zero: '0',
-  one: '1',
-  two: '2',
-  three: '3',
-  four: '4',
-  five: '5',
-  six: '6',
-  seven: '7',
-  eight: '8',
-  nine: '9',
-};
 
 export type VoiceEmailValidationResult = {
   valid: boolean;
@@ -161,23 +180,26 @@ export type VoiceEmailCaptureLogInput = {
   disposable?: boolean;
 };
 
-/** Convert spoken email fragments: "at" → "@", "dot" → ".", collapse spaces, digit words → digits. */
-export function normalizeSpokenEmail(email: string): string {
-  const cleaned = email.trim().toLowerCase();
-  if (!cleaned) return cleaned;
+export type EnterpriseEmailValidationResult = {
+  valid: boolean;
+  regexValid: boolean;
+  mxValid: boolean;
+  disposable: boolean;
+  suggestedCorrection?: string;
+  reason?: string;
+};
 
-  let normalized = cleaned
-    .replace(/\bat the rate\b/g, '@')
-    .replace(/\bat sign\b/g, '@')
-    .replace(/\bat\b/g, '@')
-    .replace(/\bdot\b/g, '.');
-
-  for (const [word, digit] of Object.entries(NUMBER_WORDS)) {
-    normalized = normalized.replace(new RegExp(`\\b${word}\\b`, 'g'), digit);
-  }
-
-  normalized = normalized.replace(/\s+/g, '');
-  return normalized;
+/** Enterprise validation facade (spec §5). */
+export function validateEmailEnterprise(email: string): EnterpriseEmailValidationResult {
+  const enterprise = validateEnterpriseEmailSync(email);
+  return {
+    valid: enterprise.valid,
+    regexValid: enterprise.regexValid,
+    mxValid: enterprise.mxValid === true,
+    disposable: enterprise.disposable,
+    suggestedCorrection: enterprise.typoSuggestion?.correctedEmail,
+    reason: enterprise.blockedReason ?? undefined,
+  };
 }
 
 export function validateVoiceEmail(raw: string): VoiceEmailValidationResult {
@@ -194,36 +216,15 @@ export function buildProductConfirmationPrompt(): string {
   return CHECKOUT_PRODUCT_CONFIRMED_PROMPT;
 }
 
-/** Extract email from direct spelling or spoken "at"/"dot" patterns. */
-export function extractEmailFromSpeech(text: string): string | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
-  const direct = trimmed.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  if (direct) return direct[0];
-
-  const spokenCue =
-    /\b(at the rate|at sign|at|dot)\b/i.test(trimmed) || trimmed.includes('@');
-  if (!spokenCue) return null;
-
-  const normalized = normalizeSpokenEmail(trimmed);
-  if (normalized.includes('@')) return normalized;
-  return null;
-}
-
-/** Spoken form for TTS — avoids pauses on @ and bare dots in ElevenLabs playback. */
-export function formatEmailForVoiceConfirmation(email: string): string {
-  const t = email.trim().toLowerCase();
-  const at = t.indexOf('@');
-  if (at < 1) return email.trim();
-  const local = t.slice(0, at).replace(/\./g, ' dot ');
-  const domain = t.slice(at + 1).replace(/\./g, ' dot ');
-  return `${local} at ${domain}`;
-}
-
-export function buildEmailConfirmationPrompt(email: string): string {
+export function buildEmailConfirmationPrompt(
+  email: string,
+  language?: CustomerLanguage | null,
+): string {
   const spoken = formatEmailForVoiceConfirmation(email);
-  return `Just to confirm, your email is ${spoken}. Is that correct?`;
+  if (language) {
+    return replyInCustomerLanguage(language, 'email_confirmation', { spoken });
+  }
+  return `Just to confirm, I have your email as ${spoken}. Is that correct?`;
 }
 
 /** After payment link sent — polite close; do not restart email collection. */
@@ -239,14 +240,31 @@ export function buildCheckoutProductConfirmedPrompt(): string {
   return CHECKOUT_PRODUCT_CONFIRMED_PROMPT;
 }
 
-export function buildEmailCollectionPrompt(retryCount = 0, withOrderContext = false): string {
-  if (retryCount >= MAX_VOICE_EMAIL_RETRIES) {
-    return EMAIL_SPELL_COLLECTION_PROMPT_ALT;
+export function buildEmailCollectionPrompt(
+  retryCount = 0,
+  withOrderContext = false,
+  language?: CustomerLanguage | null,
+): string {
+  if (retryCount >= 2) {
+    return language
+      ? replyInCustomerLanguage(language, 'email_invalid_spell_retry')
+      : EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
   }
-  if (retryCount > 0) {
-    return EMAIL_INVALID_VERIFY_RETRY_PROMPT;
+  if (retryCount === 1) {
+    return language
+      ? replyInCustomerLanguage(language, 'email_invalid_slow_retry')
+      : EMAIL_INVALID_SLOW_RETRY_PROMPT;
   }
-  return withOrderContext ? EMAIL_COLLECTION_WITH_CONTEXT_PROMPT : EMAIL_SPELL_COLLECTION_PROMPT;
+  const first = language
+    ? replyInCustomerLanguage(language, 'email_first_request')
+    : EMAIL_FIRST_REQUEST_PROMPT;
+  if (withOrderContext) {
+    const intro = language
+      ? replyInCustomerLanguage(language, 'product_checkout_intro')
+      : CHECKOUT_PRODUCT_CONFIRMED_PROMPT;
+    return `${intro} ${first}`;
+  }
+  return first;
 }
 
 export function buildTypoCorrectionPrompt(correctedEmail: string, originalEmail: string): string {
@@ -273,15 +291,45 @@ export function isFallbackChannelAffirmative(text: string): 'whatsapp' | 'sms' |
   return null;
 }
 
-export function buildInvalidEmailRetryPrompt(retryCount: number): string {
+export function buildInvalidEmailRetryPrompt(
+  retryCount: number,
+  language?: CustomerLanguage | null,
+): string {
   if (!shouldOfferEmailRetry(retryCount)) {
-    return EMAIL_SPELL_COLLECTION_PROMPT_ALT;
+    return language
+      ? replyInCustomerLanguage(language, 'email_invalid_spell_retry')
+      : EMAIL_SPELL_COLLECTION_PROMPT_ALT;
   }
-  return EMAIL_INVALID_VERIFY_RETRY_PROMPT;
+  if (retryCount >= 2) {
+    return language
+      ? replyInCustomerLanguage(language, 'email_invalid_spell_retry')
+      : EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
+  }
+  return language
+    ? replyInCustomerLanguage(language, 'email_invalid_slow_retry')
+    : EMAIL_INVALID_SLOW_RETRY_PROMPT;
 }
 
-export function buildEmailProcessingPrompt(): string {
-  return EMAIL_PROCESSING_PROMPT;
+export function buildEmailProcessingPrompt(language?: CustomerLanguage | null): string {
+  return language
+    ? replyInCustomerLanguage(language, 'payment_link_creating')
+    : EMAIL_PROCESSING_PROMPT;
+}
+
+export function buildPaymentLinkCreatingFiller(language?: CustomerLanguage | null): string {
+  return buildEmailProcessingPrompt(language);
+}
+
+export function buildPaymentEmailSendingFiller(language?: CustomerLanguage | null): string {
+  return language
+    ? replyInCustomerLanguage(language, 'payment_email_sending')
+    : PAYMENT_EMAIL_SENDING_FILLER;
+}
+
+export function buildPaymentEmailVerifyingFiller(language?: CustomerLanguage | null): string {
+  return language
+    ? replyInCustomerLanguage(language, 'payment_email_verifying')
+    : PAYMENT_EMAIL_VERIFYING_FILLER;
 }
 
 export function buildPaymentEmailSuccessPrompt(): string {

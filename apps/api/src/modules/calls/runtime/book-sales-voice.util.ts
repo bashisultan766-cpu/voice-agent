@@ -12,10 +12,10 @@ export const QUANTITY_PROMPT = 'Perfect. How many copies would you like to order
 
 import {
   buildEmailConfirmationPrompt,
-  EMAIL_SPELL_COLLECTION_PROMPT,
+  EMAIL_FIRST_REQUEST_PROMPT,
 } from './voice-email-capture.util';
 
-export const EMAIL_COLLECTION_PROMPT = EMAIL_SPELL_COLLECTION_PROMPT;
+export const EMAIL_COLLECTION_PROMPT = EMAIL_FIRST_REQUEST_PROMPT;
 
 const BOOK_CATEGORY_KEYWORDS: Record<string, string[]> = {
   history: ['history', 'historical', 'world war', 'civil war'],

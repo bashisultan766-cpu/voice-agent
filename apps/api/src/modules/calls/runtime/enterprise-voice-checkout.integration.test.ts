@@ -51,14 +51,14 @@ test('voice email capture: short short 94 at gmail dot com normalizes without ch
   const validation = validateVoiceEmail(raw!);
   assert.equal(validation.normalized, 'shortshort94@gmail.com');
   const prompt = buildEmailConfirmationPrompt(validation.normalized);
-  assert.match(prompt, /shortshort94 at gmail dot com/i);
+  assert.match(prompt, /shortshort.*(94|nine four) at gmail dot com/i);
   assert.match(prompt, /Is that correct/);
   assert.equal(isEmailConfirmationAffirmative('short short 94 at gmail dot com'), false);
 });
 
 test('voice email capture: confirmation prompt waits for explicit yes', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
-  assert.match(prompt, /Just to confirm, your email is shahbazsultan88 at gmail dot com/i);
+  assert.match(prompt, /Just to confirm, I have your email as shahbazsultan/i);
   assert.match(prompt, /Is that correct/);
   assert.equal(isEmailConfirmationAffirmative('yes that is correct'), true);
   assert.equal(isEmailConfirmationAffirmative('maybe'), false);
@@ -85,14 +85,15 @@ test('checkout state machine: cart ready goes to EMAIL_COLLECTION_REQUIRED', () 
   );
 });
 
-test('checkout lock: spell-slowly email when cart is ready', () => {
+test('checkout lock: professional email request when cart is ready', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state = mergeCallerSignalsIntoState(state, { quantity: 1 });
 
   const lock = evaluateCheckoutLock(state, { productCheckoutIntroduced: false });
   assert.match(lock.reply ?? '', /help you place the order/i);
-  assert.match(lock.reply ?? '', /spell your email address slowly/i);
+  assert.match(lock.reply ?? '', /Please tell me your email address/i);
+  assert.doesNotMatch(lock.reply ?? '', /letter by letter/i);
 });
 
 test('transactional route: spell-slowly email when cart is ready', () => {
@@ -106,13 +107,14 @@ test('transactional route: spell-slowly email when cart is ready', () => {
     emailRetryCount: 0,
     productCheckoutIntroduced: false,
   });
-  assert.match(route.reply ?? '', /spell your email address slowly/i);
+  assert.match(route.reply ?? '', /Please tell me your email address/i);
   assert.equal(route.deterministicReplyUsed, true);
   assert.equal(route.skipOpenAiGeneration, true);
 });
 
-test('email collection uses required spell-slowly copy', () => {
-  assert.match(buildEmailCollectionPrompt(0, true), /spell your email address slowly/i);
+test('email collection uses professional first-request copy', () => {
+  assert.match(buildEmailCollectionPrompt(0, true), /Please tell me your email address/i);
+  assert.doesNotMatch(buildEmailCollectionPrompt(0, true), /letter by letter/i);
 });
 
 test('delivery gate: success only when provider accepted delivery', () => {
@@ -189,7 +191,7 @@ test('hallucination prevention: guard strips false payment-success claims', () =
     },
   );
   assert.doesNotMatch(guarded, /payment link has been sent/i);
-  assert.match(guarded, /Just to confirm, your email is buyer at example dot com/i);
+  assert.match(guarded, /Just to confirm, I have your email as buyer at example dot com/i);
 });
 
 test('sanitizePaymentSuccessClaim replaces LLM hallucination on send failure', () => {

@@ -350,7 +350,7 @@ test('spoken email short short 94: confirmation only, no checkout until yes', as
   assert.equal(openAiCalls, 0);
   assert.equal(capture.proof?.openaiCalled, false);
   assert.equal(internalTools.length, 0);
-  assert.match(capture.reply, /Just to confirm, your email is shortshort94 at gmail dot com/i);
+  assert.match(capture.reply, /Just to confirm, I have your email as shortshort.*(94|nine four) at gmail dot com/i);
   assert.doesNotMatch(capture.reply, /payment link has been sent/i);
   assert.doesNotMatch(capture.reply, /check your inbox/i);
 
@@ -481,7 +481,10 @@ test('email confirmation runs checkout and sendPaymentEmail without LLM', async 
   });
   assert.equal(openAiCalls, 0, 'OpenAI should not run on email capture');
   assert.equal(internalTools.length, 0, 'Checkout must wait for confirmation');
-  assert.match(capture.reply, /Just to confirm, your email is oishisultan766 at gmail dot com/i);
+  assert.match(
+    capture.reply,
+    /Just to confirm, I have your email as oishisultan.*(766|seven six six) at gmail dot com/i,
+  );
 
   const confirmed = await orchestrator.handleTurn('sess_checkout_auto', 'yes that is correct', [], {
     completionFn,
@@ -572,7 +575,7 @@ test('transactional checkout: product selected with quantity forces deterministi
   assert.equal(out.proof?.deterministicReplyUsed, true);
   assert.equal(out.proof?.transactionalCheckoutState, 'EMAIL_COLLECTION_REQUIRED');
   assert.match(out.reply, /help you place the order/i);
-  assert.match(out.reply, /spell your email address slowly/i);
+  assert.match(out.reply, /Please tell me your email address/i);
   assert.doesNotMatch(out.reply, /share your email/i);
   assert.equal(out.state.transactionalCheckoutState, 'EMAIL_COLLECTION_REQUIRED');
 });
@@ -653,7 +656,7 @@ test('transactional checkout: product selected without quantity forces quantity 
     },
   });
   assert.equal(openAiCalls, 0);
-  assert.match(out.reply, /spell your email address slowly/i);
+  assert.match(out.reply, /Please tell me your email address/i);
   assert.equal(out.proof?.transactionalCheckoutState, 'EMAIL_COLLECTION_REQUIRED');
 });
 
@@ -738,7 +741,7 @@ test('production log: yeah just one copy for this locks checkout without OpenAI'
   assert.notEqual(out.state.checkoutStage, 'product_discovery');
   assert.notEqual(out.state.customerIntent, 'product_search');
   assert.match(out.reply, /help you place the order/i);
-  assert.match(out.reply, /spell your email address slowly/i);
+  assert.match(out.reply, /Please tell me your email address/i);
   assert.doesNotMatch(out.reply, /share your email/i);
   assert.doesNotMatch(out.reply, /prepare the payment link/i);
 });

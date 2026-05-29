@@ -90,7 +90,7 @@ test('evaluateCheckoutLock spell-slowly email when cart ready in one turn', () =
   assert.equal(lock.checkoutLockActive, true);
   assert.equal(lock.checkoutState, 'EMAIL_COLLECTION_REQUIRED');
   assert.equal(lock.skipOpenAiGeneration, true);
-  assert.match(lock.reply ?? '', /spell your email address slowly/i);
+  assert.match(lock.reply ?? '', /Please tell me your email address/i);
   assert.match(lock.reply ?? '', /help you place the order/i);
 });
 
@@ -101,7 +101,7 @@ test('evaluateCheckoutLock email collection after product introduced', () => {
   const lock = evaluateCheckoutLock(state, { productCheckoutIntroduced: true });
   assert.equal(lock.checkoutLockActive, true);
   assert.equal(lock.checkoutState, 'EMAIL_COLLECTION_REQUIRED');
-  assert.match(lock.reply ?? '', /spell your email address slowly/i);
+  assert.match(lock.reply ?? '', /Please tell me your email address/i);
 });
 
 test('assertNoOpenAiDuringTransactionalCheckout throws when OpenAI used', () => {
@@ -120,7 +120,7 @@ test('emergencyBlockLlmCheckoutReply replaces LLM checkout phrasing', () => {
     activeProductSelected: true,
     openaiCalled: true,
   });
-  assert.match(blocked, /spell your email address slowly/i);
+  assert.match(blocked, /Please tell me your email address/i);
 });
 
 test('routeTransactionalCheckoutTurn product confirmation before quantity', () => {
@@ -156,7 +156,7 @@ test('routeTransactionalCheckoutTurn forces spell-slowly email prompt', () => {
 
   assert.equal(route.handled, true);
   assert.equal(route.transactionalState, 'EMAIL_COLLECTION_REQUIRED');
-  assert.match(route.reply ?? '', /spell your email address slowly/i);
+  assert.match(route.reply ?? '', /Please tell me your email address/i);
 });
 
 test('routeTransactionalCheckoutTurn product intro then quantity when missing', () => {
@@ -218,7 +218,7 @@ test('guardTransactionalReply replaces forbidden checkout phrases', () => {
     transactionalState: 'EMAIL_COLLECTION_REQUIRED',
     emailRetryCount: 0,
   });
-  assert.match(guarded, /spell your email address slowly/i);
+  assert.match(guarded, /Please tell me your email address/i);
   assert.doesNotMatch(guarded, /share your email/i);
 });
 

@@ -9,6 +9,10 @@ import {
   type PaymentEmailDeliveryResult,
   validateVoiceEmail,
 } from './voice-email-capture.util';
+import {
+  canCreatePaymentLink,
+  flowStateFromLlm,
+} from './enterprise-checkout-state-machine.util';
 
 /** Checkout only after explicit customer confirmation — never on email capture alone. */
 export function shouldTriggerCheckoutAfterEmailConfirmed(
@@ -17,6 +21,9 @@ export function shouldTriggerCheckoutAfterEmailConfirmed(
 ): boolean {
   if (!options.emailConfirmedThisTurn) return false;
   if (state.paymentLinkSent === true || state.paymentLinkCreated === true) return false;
+
+  const flow = flowStateFromLlm(state, { emailConfirmationState: 'confirmed' });
+  if (!canCreatePaymentLink(flow)) return false;
 
   const email = state.customerEmail?.trim();
   if (!email || !validateVoiceEmail(email).valid) return false;

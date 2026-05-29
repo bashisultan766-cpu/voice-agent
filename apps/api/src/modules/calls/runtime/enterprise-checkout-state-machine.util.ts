@@ -1,0 +1,117 @@
+/**
+ * Enterprise voice checkout state machine — deterministic guards and journey logging.
+ */
+import type { LlmAgentConversationState } from './llm-agent-conversation-state.util';
+import { validateVoiceEmail } from './voice-email-capture.util';
+import { hasSelectedInStockProduct, resolveLineQuantity } from './transactional-checkout-state.util';
+
+/** Human-like checkout states (spec §14). */
+export type EnterpriseCheckoutState =
+  | 'IDLE'
+  | 'LANGUAGE_DETECTED'
+  | 'PRODUCT_SELECTED'
+  | 'QUANTITY_REQUIRED'
+  | 'QUANTITY_CONFIRMED'
+  | 'EMAIL_REQUESTED'
+  | 'EMAIL_CAPTURED'
+  | 'EMAIL_VALIDATING'
+  | 'EMAIL_INVALID_RETRY'
+  | 'EMAIL_CONFIRMATION_REQUIRED'
+  | 'EMAIL_CONFIRMED'
+  | 'PAYMENT_LINK_CREATING'
+  | 'PAYMENT_EMAIL_SENDING'
+  | 'PAYMENT_EMAIL_VERIFIED'
+  | 'CHECKOUT_COMPLETED'
+  | 'FALLBACK_DELIVERY_REQUIRED';
+
+export type EnterpriseCheckoutFlowState = {
+  productSelected: boolean;
+  quantityConfirmed: boolean;
+  emailValidated: boolean;
+  emailConfirmed: boolean;
+  paymentLinkSent?: boolean;
+  emailSendFailureCount?: number;
+};
+
+export type EnterpriseCheckoutLogEvent =
+  | 'language_detected'
+  | 'product_selected'
+  | 'quantity_confirmed'
+  | 'email_requested'
+  | 'email_captured'
+  | 'email_validation_started'
+  | 'email_validation_passed'
+  | 'email_validation_failed'
+  | 'email_confirmation_required'
+  | 'email_inline_confirmation_detected'
+  | 'customer_confirmed_email'
+  | 'payment_link_created'
+  | 'payment_email_send_started'
+  | 'payment_email_delivery_confirmed'
+  | 'checkout_completed'
+  | 'voice_provider_enforced';
+
+export function buildEnterpriseCheckoutLog(
+  event: EnterpriseCheckoutLogEvent,
+  fields: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return { event, ...fields };
+}
+
+export function flowStateFromLlm(
+  state: LlmAgentConversationState,
+  meta: {
+    emailConfirmationState?: 'pending' | 'confirmed' | null;
+    emailEnterpriseValidated?: boolean;
+    emailSendFailureCount?: number;
+  } = {},
+): EnterpriseCheckoutFlowState {
+  const email = state.customerEmail?.trim() ?? '';
+  const emailValidated =
+    meta.emailEnterpriseValidated === true ||
+    (email.length > 0 && validateVoiceEmail(email).valid);
+  return {
+    productSelected: hasSelectedInStockProduct(state),
+    quantityConfirmed: resolveLineQuantity(state) > 0,
+    emailValidated,
+    emailConfirmed: meta.emailConfirmationState === 'confirmed',
+    paymentLinkSent: state.paymentLinkSent === true,
+    emailSendFailureCount: meta.emailSendFailureCount,
+  };
+}
+
+/** Hard guard — never create payment link before confirmed email (spec §9). */
+export function canCreatePaymentLink(flow: EnterpriseCheckoutFlowState): boolean {
+  return (
+    flow.productSelected &&
+    flow.quantityConfirmed &&
+    flow.emailValidated &&
+    flow.emailConfirmed
+  );
+}
+
+export function resolveEnterpriseCheckoutState(
+  flow: EnterpriseCheckoutFlowState,
+  llmState: LlmAgentConversationState,
+): EnterpriseCheckoutState {
+  if (flow.paymentLinkSent) return 'CHECKOUT_COMPLETED';
+  if ((flow.emailSendFailureCount ?? 0) >= 2 && !flow.paymentLinkSent) {
+    return 'FALLBACK_DELIVERY_REQUIRED';
+  }
+  if (llmState.paymentLinkCreated && !flow.paymentLinkSent) return 'PAYMENT_EMAIL_SENDING';
+  if (flow.emailConfirmed && !llmState.paymentLinkCreated) return 'PAYMENT_LINK_CREATING';
+  if (flow.emailConfirmed) return 'EMAIL_CONFIRMED';
+  if (flow.emailValidated && !flow.emailConfirmed) return 'EMAIL_CONFIRMATION_REQUIRED';
+  if (flow.productSelected && !flow.quantityConfirmed) return 'QUANTITY_REQUIRED';
+  if (flow.productSelected && flow.quantityConfirmed && !flow.emailValidated) {
+    return 'EMAIL_REQUESTED';
+  }
+  if (flow.productSelected) return 'PRODUCT_SELECTED';
+  return 'IDLE';
+}
+
+export function shouldBypassOpenAiForEnterpriseState(
+  state: EnterpriseCheckoutState,
+): boolean {
+  return state !== 'IDLE' && state !== 'LANGUAGE_DETECTED' && state !== 'CHECKOUT_COMPLETED';
+}

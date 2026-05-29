@@ -4,6 +4,14 @@ export interface LanguageDetectionResult {
 }
 
 const LANGUAGE_HINTS: Array<{ code: string; words: string[] }> = [
+  {
+    code: 'ur',
+    words: ['salam', 'shukriya', 'kitab', 'email', 'payment', 'theek', 'bhai', 'ji'],
+  },
+  {
+    code: 'hi',
+    words: ['namaste', 'namaskar', 'dhanyavaad', 'kitab', 'chahiye', 'bhai', 'ji'],
+  },
   { code: 'es', words: ['hola', 'gracias', 'precio', 'quiero', 'zapatos', 'talla'] },
   { code: 'fr', words: ['bonjour', 'merci', 'prix', 'chaussure', 'taille', 'acheter'] },
   { code: 'de', words: ['hallo', 'danke', 'preis', 'schuhe', 'groesse', 'kaufen'] },
@@ -93,6 +101,18 @@ export function detectLanguageFromText(text: string): LanguageDetectionResult {
   // Cyrillic script: strongly prefer Russian unless another Cyrillic language is explicitly implemented.
   if (/[\u0400-\u04ff]/.test(t)) return { language: 'ru', confidence: 0.985 };
   if (/[ا-ے]/.test(t)) return { language: 'ur', confidence: 0.96 };
+
+  if (/\bas[- ]?salamu?\s+alaikum\b/i.test(t) || /\bassalam\b/i.test(t)) {
+    return { language: 'ur', confidence: 0.94 };
+  }
+  if (/\bnamaste\b/i.test(t) || /\bnamaskar\b/i.test(t)) {
+    return { language: 'hi', confidence: 0.94 };
+  }
+  if (/\bhola\b/i.test(t)) return { language: 'es', confidence: 0.92 };
+  if (/\bprivet\b/i.test(t)) return { language: 'ru', confidence: 0.9 };
+  if (/^hello\b/i.test(t) || /\bhello\b/.test(t)) {
+    return { language: 'en', confidence: 0.88 };
+  }
 
   let best = { language: 'en', confidence: 0.35 };
   for (const hint of LANGUAGE_HINTS) {

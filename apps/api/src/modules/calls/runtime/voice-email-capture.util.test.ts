@@ -69,18 +69,19 @@ test('extractEmailFromSpeech handles spoken and direct forms', () => {
 
 test('buildEmailConfirmationPrompt reads email back for confirmation', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
-  assert.match(prompt, /Just to confirm, your email is shahbazsultan88 at gmail dot com/i);
+  assert.match(prompt, /Just to confirm, I have your email as shahbazsultan/i);
+  assert.match(prompt, /at gmail dot com/i);
   assert.match(prompt, /Is that correct/i);
   assert.doesNotMatch(prompt, /say yes/i);
 });
 
-test('buildEmailCollectionPrompt uses premium spell-slowly copy', () => {
-  assert.match(buildEmailCollectionPrompt(0), /spell your email address slowly/i);
-  assert.match(buildEmailCollectionPrompt(0), /letter by letter/i);
-  assert.doesNotMatch(buildEmailCollectionPrompt(0), /b a s h i/i);
+test('buildEmailCollectionPrompt uses professional first request', () => {
+  assert.match(buildEmailCollectionPrompt(0), /Please tell me your email address/i);
+  assert.doesNotMatch(buildEmailCollectionPrompt(0), /letter by letter/i);
   assert.match(buildEmailCollectionPrompt(0, true), /Perfect\. I'll help you place the order/i);
   assert.match(buildEmailCollectionPrompt(1), /couldn't verify that email/i);
-  assert.doesNotMatch(buildEmailCollectionPrompt(1), /b a s h i/i);
+  assert.doesNotMatch(buildEmailCollectionPrompt(1), /letter by letter/i);
+  assert.match(buildEmailCollectionPrompt(2), /letter by letter/i);
 });
 
 test('buildInvalidEmailRetryPrompt asks caller to repeat slowly', () => {
@@ -115,7 +116,7 @@ test('payment send failure and fallback prompts', () => {
 });
 
 test('buildEmailProcessingPrompt and success prompt match product copy', () => {
-  assert.match(buildEmailProcessingPrompt(), /Processing your order now/i);
+  assert.match(buildEmailProcessingPrompt(), /preparing your secure payment link/i);
   assert.match(buildPaymentEmailSuccessPrompt(), /sent successfully.*check your inbox/i);
 });
 

@@ -25,7 +25,7 @@ export const PLATFORM_COMMERCE_RULES = `Platform commerce rules (mandatory):
 - For book questions, search Shopify first; always state title, price per copy, and stock when available; then ask if they want to order.
 - Generic "I need a book" → ask title, author, or category (history, romance, religion, fiction).
 - If customer wants to buy, ask: "How many copies would you like?" before requesting email.
-- After quantity is confirmed, say: "Sure. Please spell your email address slowly using alphabets so I can send your payment link correctly."
+- After quantity is confirmed, say: "Perfect. I'll help you place the order. Please tell me your email address so I can send your payment link." Only ask for letter-by-letter spelling after failed validation retries.
 - Read the email back: "Just to confirm, your email is [address]. Is that correct?" — only proceed after yes/correct/that's right.
 - Email normalization on voice input: convert "at" -> "@", "dot" -> ".", remove spaces, support spoken digit words, then confirm the normalized email.
 - If email is unclear or invalid, say: "I may have captured that incorrectly. Could you please repeat your email slowly?" — do not create or send checkout link until email is confirmed.

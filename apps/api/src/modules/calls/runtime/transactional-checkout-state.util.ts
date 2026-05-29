@@ -16,6 +16,10 @@ import {
 } from './llm-agent-conversation-state.util';
 import { isLlmProductInStock } from './voice-stock-sales-policy.util';
 import { QUANTITY_PROMPT } from './book-sales-voice.util';
+import {
+  replyInCustomerLanguage,
+  type CustomerLanguage,
+} from './voice-checkout-language.util';
 
 /** Hard transactional checkout states — LLM must not speak during these. */
 export type TransactionalCheckoutState =
@@ -67,6 +71,7 @@ export type TransactionalRouteInput = TransactionalCheckoutContext & {
   userMessage: string;
   emailCapturedReply?: string | null;
   emailConfirmedThisTurn?: boolean;
+  customerLanguage?: CustomerLanguage | null;
 };
 
 export type TransactionalRouteResult = {
@@ -243,6 +248,7 @@ export type CheckoutLockContext = {
   emailCapturedThisTurn?: boolean;
   emailConfirmedThisTurn?: boolean;
   emailRetryCount?: number;
+  customerLanguage?: CustomerLanguage | null;
 };
 
 /** Hard checkout lock: product + quantity confirmed → email collection only. */
@@ -274,12 +280,15 @@ export function evaluateCheckoutLock(
 
   const skipOpenAiGeneration = checkoutLockActive || shouldBypassOpenAiGeneration(checkoutState);
 
+  const lang = ctx.customerLanguage ?? null;
   const reply = checkoutLockActive
     ? checkoutState === 'EMAIL_COLLECTION_REQUIRED'
-      ? buildEmailCollectionPrompt(ctx.emailRetryCount ?? 0, true)
+      ? buildEmailCollectionPrompt(ctx.emailRetryCount ?? 0, true, lang)
       : buildCheckoutProductConfirmedPrompt()
     : checkoutState === 'QUANTITY_COLLECTION_REQUIRED'
-      ? QUANTITY_PROMPT
+      ? lang
+        ? replyInCustomerLanguage(lang, 'quantity_prompt')
+        : QUANTITY_PROMPT
       : null;
 
   return {
@@ -520,7 +529,11 @@ export function routeTransactionalCheckoutTurn(
   }
 
   if (transactionalState === 'EMAIL_COLLECTION_REQUIRED') {
-    const reply = buildEmailCollectionPrompt(emailRetryCount, true);
+    const reply = buildEmailCollectionPrompt(
+      emailRetryCount,
+      true,
+      input.customerLanguage ?? null,
+    );
     return {
       handled: true,
       reply,
@@ -544,8 +557,12 @@ export function routeTransactionalCheckoutTurn(
     return {
       handled: true,
       reply: pending
-        ? buildEmailConfirmationPrompt(pending)
-        : buildEmailCollectionPrompt(emailRetryCount),
+        ? buildEmailConfirmationPrompt(pending, input.customerLanguage ?? null)
+        : buildEmailCollectionPrompt(
+            emailRetryCount,
+            false,
+            input.customerLanguage ?? null,
+          ),
       skipOpenAiGeneration: true,
       transactionalState: 'EMAIL_CONFIRMATION_REQUIRED',
       deterministicReplyUsed: true,

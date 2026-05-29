@@ -67,6 +67,10 @@ import {
   buildEnterpriseEmailValidationLog,
   validateEnterpriseEmail,
 } from './voice-email-enterprise-validation.util';
+import {
+  canCreatePaymentLink,
+  flowStateFromLlm,
+} from './enterprise-checkout-state-machine.util';
 import { cleanVoiceProductQuery, pickVoiceProductSearchQuery } from '../../agents/voice-product-query.util';
 import { resolveVoiceSearchQueryFromMemory } from '../../search/voice/bookstore-voice-query-resolver.util';
 import {
@@ -1258,6 +1262,24 @@ export class ToolOrchestratorService {
               voiceSummary: pendingEmail
                 ? buildEmailConfirmationPrompt(pendingEmail)
                 : buildEmailCollectionPrompt(Number(metadata.emailRetryCount ?? 0)),
+              deliveryConfirmed: false,
+            },
+          };
+        }
+        const checkoutFlow = flowStateFromLlm(llmState, {
+          emailConfirmationState: 'confirmed',
+          emailEnterpriseValidated: metadata.emailEnterpriseValidated === true,
+        });
+        if (!canCreatePaymentLink(checkoutFlow)) {
+          return {
+            ok: false,
+            error: {
+              code: 'CHECKOUT_GUARD',
+              message: 'Product, quantity, validated email, and confirmation required.',
+              retryable: true,
+            },
+            data: {
+              voiceSummary: buildEmailCollectionPrompt(Number(metadata.emailRetryCount ?? 0)),
               deliveryConfirmed: false,
             },
           };
