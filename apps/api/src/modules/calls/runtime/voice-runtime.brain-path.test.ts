@@ -35,6 +35,7 @@ function buildRuntime(overrides: {
 
   const callsService = {
     mergeSessionMetadata: async () => ({}),
+    findOneById: async () => ({ metadata: {} }),
     updateSessionStatus: async () => ({}),
   } as unknown as CallsService;
 
@@ -193,7 +194,7 @@ test('history book calls handleTurn then search tool via orchestrator mock', asy
       load: async () => ({}),
       setEmailState: async () => undefined,
     } as never,
-    { mergeSessionMetadata: async () => ({}) } as never,
+    { mergeSessionMetadata: async () => ({}), findOneById: async () => ({ metadata: {} }) } as never,
   );
 
   const runtime = buildRuntime({

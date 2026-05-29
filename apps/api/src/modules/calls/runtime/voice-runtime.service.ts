@@ -1027,6 +1027,10 @@ export class VoiceRuntimeService {
         toolCallsUsed: result.toolNames,
         intent: result.state.customerIntent ?? null,
         stateStage: result.state.checkoutStage,
+        transactionalCheckoutState: result.state.transactionalCheckoutState ?? result.proof?.transactionalCheckoutState ?? null,
+        transactionalMode: result.proof?.transactionalMode ?? false,
+        skipOpenAiGeneration: result.proof?.skipOpenAiGeneration ?? false,
+        deterministicReplyUsed: result.proof?.deterministicReplyUsed ?? false,
         latencyMs: responseDelayMs,
       }),
     );
@@ -1044,10 +1048,20 @@ export class VoiceRuntimeService {
       voiceProvider: ctx.agent.voiceProvider ?? null,
       voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
       ttsProviderUsed: null as string | null,
-      flowStep: result.toolCallsCount > 0 ? 'llm_agent_tool_loop' : 'llm_agent_reply',
-      brain: 'openai_llm_agent_orchestrator',
+      flowStep: result.proof?.skipOpenAiGeneration
+        ? 'transactional_checkout'
+        : result.toolCallsCount > 0
+          ? 'llm_agent_tool_loop'
+          : 'llm_agent_reply',
+      brain: result.proof?.skipOpenAiGeneration
+        ? 'transactional_checkout_orchestrator'
+        : 'openai_llm_agent_orchestrator',
       llmTools: result.toolNames,
-      openaiUsed: true,
+      openaiUsed: result.proof?.openaiCalled ?? true,
+      transactionalMode: result.proof?.transactionalMode ?? false,
+      transactionalCheckoutState: result.proof?.transactionalCheckoutState ?? null,
+      deterministicReplyUsed: result.proof?.deterministicReplyUsed ?? false,
+      skipOpenAiGeneration: result.proof?.skipOpenAiGeneration ?? false,
     };
     this.logTurnProof(turnProof);
 

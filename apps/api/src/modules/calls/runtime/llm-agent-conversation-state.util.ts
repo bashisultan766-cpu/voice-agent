@@ -40,6 +40,7 @@ export type LlmAgentConversationState = {
   customerEmail?: string | null;
   lastSearchedProducts: LlmSelectedProduct[];
   checkoutStage: LlmCheckoutStage;
+  transactionalCheckoutState?: string | null;
   lastToolCalls: string[];
   paymentLinkCreated?: boolean;
   paymentLinkSent?: boolean;
@@ -82,6 +83,7 @@ export function parseLlmAgentState(raw: unknown): LlmAgentConversationState {
     stage === 'quantity' ||
     stage === 'email' ||
     stage === 'payment' ||
+    stage === 'payment_sent' ||
     stage === 'done'
       ? stage
       : 'idle';
@@ -92,6 +94,8 @@ export function parseLlmAgentState(raw: unknown): LlmAgentConversationState {
     customerEmail: typeof o.customerEmail === 'string' ? o.customerEmail : null,
     lastSearchedProducts: searched,
     checkoutStage,
+    transactionalCheckoutState:
+      typeof o.transactionalCheckoutState === 'string' ? o.transactionalCheckoutState : null,
     lastToolCalls: Array.isArray(o.lastToolCalls)
       ? o.lastToolCalls.filter((x): x is string => typeof x === 'string')
       : [],

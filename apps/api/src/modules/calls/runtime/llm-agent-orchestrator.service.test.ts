@@ -131,7 +131,7 @@ test('mocked OpenAI turn: greeting has no tool calls', async () => {
       load: async () => ({}),
       setEmailState: async () => undefined,
     } as never,
-    { mergeSessionMetadata: async () => ({}) } as never,
+    { mergeSessionMetadata: async () => ({}), findOneById: async () => ({ metadata: {} }) } as never,
   );
 
   const out = await orchestrator.handleTurn('sess_1', 'Hello how are you', [], {
@@ -216,7 +216,7 @@ test('mocked OpenAI turn: history book triggers ShopifyProductSearch', async () 
       load: async () => ({}),
       setEmailState: async () => undefined,
     } as never,
-    { mergeSessionMetadata: async () => ({}) } as never,
+    { mergeSessionMetadata: async () => ({}), findOneById: async () => ({ metadata: {} }) } as never,
   );
 
   const out = await orchestrator.handleTurn('sess_2', 'I need a history book', [], {
@@ -241,6 +241,7 @@ test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', a
   const internalTools: string[] = [];
   let openAiCalls = 0;
   let memoryState: Record<string, unknown> = {};
+  let sessionMetadata: Record<string, unknown> = { emailRetryCount: 0, emailSendFailureCount: 0 };
 
   const completionFn: OpenAiCompletionFn = async () => {
     openAiCalls += 1;
@@ -330,8 +331,11 @@ test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', a
       },
     } as never,
     {
-      findOneById: async () => ({ metadata: { emailRetryCount: 0, emailSendFailureCount: 0 } }),
-      mergeSessionMetadata: async () => ({}),
+      findOneById: async () => ({ metadata: sessionMetadata }),
+      mergeSessionMetadata: async (_id: string, patch: Record<string, unknown>) => {
+        sessionMetadata = { ...sessionMetadata, ...patch };
+        return {};
+      },
     } as never,
   );
 
@@ -354,4 +358,143 @@ test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', a
   assert.equal(confirmed.state.paymentLinkSent, true);
   assert.equal(confirmed.state.checkoutStage, 'payment_sent');
   assert.equal(confirmed.toolCallsCount, 2);
+});
+
+test('transactional checkout: product selected with quantity forces deterministic email prompt without OpenAI', async () => {
+  const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
+  let openAiCalls = 0;
+
+  const completionFn: OpenAiCompletionFn = async () => {
+    openAiCalls += 1;
+    return {
+      choices: [{ message: { role: 'assistant', content: 'Please share your email address.' } }],
+    } as OpenAI.Chat.ChatCompletion;
+  };
+
+  const orchestrator = new LlmAgentOrchestratorService(
+    { get: () => undefined } as never,
+    {
+      load: async () =>
+        ({
+          tenantId: 't1',
+          agentId: 'a1',
+          storeId: 's1',
+          fromNumber: '+15551234567',
+          metadata: {
+            llmAgentState: {
+              selectedProducts: [
+                {
+                  title: 'World History Vol 1',
+                  variantId: 'gid://shopify/ProductVariant/99',
+                  inStock: true,
+                  stock: 8,
+                },
+              ],
+              quantities: { 'gid://shopify/ProductVariant/99': 2 },
+              checkoutStage: 'product_selected',
+              customerEmail: null,
+              lastSearchedProducts: [],
+              lastToolCalls: [],
+            },
+          },
+          agent: {
+            openaiApiKey: 'sk-test-key-1234567890',
+            model: 'gpt-4o-mini',
+            enabledTools: ['searchProducts', 'createCheckoutLink', 'sendPaymentEmail'],
+            toolPermissions: null,
+            runtimeCredentialHints: { openaiKeySource: 'test' },
+          },
+          store: { name: 'SureShot Books' },
+        }) as never,
+    } as never,
+    { execute: async () => ({ ok: false, toolName: 'n/a', storeId: 's1', error: { code: 'UNEXPECTED', message: 'n/a', retryable: false } }) } as never,
+    {
+      summarizeForPrompt: () => '',
+      load: async () => ({}),
+      setEmailState: async () => undefined,
+    } as never,
+    {
+      findOneById: async () => ({ metadata: { emailRetryCount: 0 } }),
+      mergeSessionMetadata: async () => ({}),
+    } as never,
+  );
+
+  const out = await orchestrator.handleTurn('sess_tx_email', 'yes I want to order', [], { completionFn });
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(out.proof?.openaiCalled, false);
+  assert.equal(out.proof?.transactionalMode, true);
+  assert.equal(out.proof?.skipOpenAiGeneration, true);
+  assert.equal(out.proof?.deterministicReplyUsed, true);
+  assert.match(out.reply, /spell your email address slowly/i);
+  assert.doesNotMatch(out.reply, /share your email/i);
+  assert.equal(out.state.transactionalCheckoutState, 'EMAIL_COLLECTION_REQUIRED');
+});
+
+test('transactional checkout: product selected without quantity forces quantity prompt without OpenAI', async () => {
+  const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
+  let openAiCalls = 0;
+
+  const orchestrator = new LlmAgentOrchestratorService(
+    { get: () => undefined } as never,
+    {
+      load: async () =>
+        ({
+          tenantId: 't1',
+          agentId: 'a1',
+          storeId: 's1',
+          fromNumber: '+15551234567',
+          metadata: {
+            llmAgentState: {
+              selectedProducts: [
+                {
+                  title: 'World History Vol 1',
+                  variantId: 'gid://shopify/ProductVariant/99',
+                  inStock: true,
+                  stock: 8,
+                },
+              ],
+              checkoutStage: 'product_selected',
+              customerEmail: null,
+              lastSearchedProducts: [],
+              lastToolCalls: [],
+              quantities: {},
+            },
+          },
+          agent: {
+            openaiApiKey: 'sk-test-key-1234567890',
+            model: 'gpt-4o-mini',
+            enabledTools: ['searchProducts'],
+            runtimeCredentialHints: { openaiKeySource: 'test' },
+          },
+          store: { name: 'SureShot Books' },
+        }) as never,
+    } as never,
+    { execute: async () => ({ ok: false, toolName: 'n/a', storeId: 's1', error: { code: 'UNEXPECTED', message: 'n/a', retryable: false } }) } as never,
+    {
+      summarizeForPrompt: () => '',
+      load: async () => ({}),
+      setEmailState: async () => undefined,
+    } as never,
+    {
+      findOneById: async () => ({ metadata: {} }),
+      mergeSessionMetadata: async () => ({}),
+    } as never,
+  );
+
+  const out = await orchestrator.handleTurn(
+    'sess_tx_qty',
+    'yes the first one',
+    [],
+    {
+      completionFn: async () => {
+        openAiCalls += 1;
+        return { choices: [{ message: { role: 'assistant', content: 'How many?' } }] } as OpenAI.Chat.ChatCompletion;
+      },
+    },
+  );
+
+  assert.equal(openAiCalls, 0);
+  assert.match(out.reply, /How many copies/i);
+  assert.equal(out.proof?.transactionalCheckoutState, 'QUANTITY_COLLECTION_REQUIRED');
 });
