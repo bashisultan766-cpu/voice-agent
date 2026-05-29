@@ -35,14 +35,14 @@ test('resolveTransactionalCheckoutState requires quantity before email collectio
   );
 });
 
-test('resolveTransactionalCheckoutState product confirmed before email when cart ready', () => {
+test('resolveTransactionalCheckoutState email collection when cart ready', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state.quantities = { [inStockProduct.variantId]: 1 };
   state.checkoutStage = 'product_selected';
   assert.equal(
     resolveTransactionalCheckoutState({ llmState: state, productCheckoutIntroduced: false }),
-    'PRODUCT_CONFIRMED',
+    'EMAIL_COLLECTION_REQUIRED',
   );
 });
 
@@ -82,14 +82,15 @@ test('parseCheckoutQuantityFromSpeech handles one copy phrasing', () => {
   assert.equal(parseCheckoutQuantityFromSpeech('2 copies please'), 2);
 });
 
-test('evaluateCheckoutLock product confirmation before email collection', () => {
+test('evaluateCheckoutLock spell-slowly email when cart ready in one turn', () => {
   let state = emptyLlmAgentState();
   state.lastSearchedProducts = [inStockProduct];
   state = applyCheckoutSignalsFromSpeech(state, 'yeah just one copy for this');
   const lock = evaluateCheckoutLock(state, { productCheckoutIntroduced: false });
   assert.equal(lock.checkoutLockActive, true);
-  assert.equal(lock.checkoutState, 'PRODUCT_CONFIRMED');
+  assert.equal(lock.checkoutState, 'EMAIL_COLLECTION_REQUIRED');
   assert.equal(lock.skipOpenAiGeneration, true);
+  assert.match(lock.reply ?? '', /spell your email address slowly/i);
   assert.match(lock.reply ?? '', /help you place the order/i);
 });
 
@@ -122,10 +123,9 @@ test('emergencyBlockLlmCheckoutReply replaces LLM checkout phrasing', () => {
   assert.match(blocked, /spell your email address slowly/i);
 });
 
-test('routeTransactionalCheckoutTurn product confirmation before email', () => {
+test('routeTransactionalCheckoutTurn product confirmation before quantity', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
-  state.quantities = { [inStockProduct.variantId]: 2 };
   state.checkoutStage = 'product_selected';
 
   const route = routeTransactionalCheckoutTurn({

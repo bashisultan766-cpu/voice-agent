@@ -198,9 +198,19 @@ export function extractEmailFromSpeech(text: string): string | null {
   return null;
 }
 
+/** Spoken form for TTS — avoids pauses on @ and bare dots in ElevenLabs playback. */
+export function formatEmailForVoiceConfirmation(email: string): string {
+  const t = email.trim().toLowerCase();
+  const at = t.indexOf('@');
+  if (at < 1) return email.trim();
+  const local = t.slice(0, at).replace(/\./g, ' dot ');
+  const domain = t.slice(at + 1).replace(/\./g, ' dot ');
+  return `${local} at ${domain}`;
+}
+
 export function buildEmailConfirmationPrompt(email: string): string {
-  const safe = email.trim();
-  return `Just to confirm, your email is ${safe}. Is that correct?`;
+  const spoken = formatEmailForVoiceConfirmation(email);
+  return `Just to confirm, your email is ${spoken}. Is that correct? Please say yes if that is right, or no if I should try again.`;
 }
 
 export function buildCheckoutProductConfirmedPrompt(): string {
@@ -270,6 +280,8 @@ export function buildPaymentEmailFallbackDeliveryPrompt(): string {
 export function isEmailConfirmationAffirmative(text: string): boolean {
   const t = text.toLowerCase().trim();
   if (!t) return false;
+  /** Utterance with a new email is capture/correction, not a simple yes. */
+  if (extractEmailFromSpeech(text)) return false;
   if (/\b(no|not|wrong|incorrect|change|different|nope|nah)\b/.test(t)) return false;
   if (/\b(that'?s|yes).{0,24}my email\b/.test(t)) return true;
   return (
@@ -408,6 +420,12 @@ export function containsPaymentSuccessClaim(text: string): boolean {
 
 /** Strip hallucinated payment-success claims when delivery was not confirmed. */
 export function sanitizePaymentSuccessClaim(text: string, deliveryConfirmed: boolean): string {
-  if (deliveryConfirmed || !containsPaymentSuccessClaim(text)) return text.trim();
+  if (deliveryConfirmed) {
+    if (containsPaymentSuccessClaim(text) && /@/.test(text)) {
+      return buildPaymentEmailSuccessPrompt();
+    }
+    return text.trim();
+  }
+  if (!containsPaymentSuccessClaim(text)) return text.trim();
   return buildPaymentEmailSendFailurePrompt();
 }

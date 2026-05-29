@@ -51,6 +51,7 @@ import {
   PRODUCT_CHECKOUT_INTRODUCED_KEY,
   parsePaymentEmailDeliveryFromToolData,
   isPaymentEmailDeliveryConfirmed,
+  sanitizePaymentSuccessClaim,
   type PaymentEmailDeliveryResult,
 } from './voice-email-capture.util';
 import {
@@ -218,7 +219,14 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         sessionMetaAtStart.emailConfirmationState === 'pending') &&
       pendingEmailForConfirm.length > 0;
 
-    if (awaitingEmailConfirmation && isEmailConfirmationAffirmative(userMessage)) {
+    const emailInUtteranceWhileConfirming =
+      awaitingEmailConfirmation ? extractEmailFromSpeech(userMessage) : null;
+
+    if (
+      awaitingEmailConfirmation &&
+      !emailInUtteranceWhileConfirming &&
+      isEmailConfirmationAffirmative(userMessage)
+    ) {
       const confirmedEmail = pendingEmailForConfirm;
       await this.callMemory.setEmailState(callSessionId, confirmedEmail, 'confirmed');
       await this.callsService.mergeSessionMetadata(callSessionId, {
@@ -520,12 +528,15 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     ) {
       const lockCheckoutState = checkoutLock.checkoutState;
       const introducingProduct = lockCheckoutState === 'PRODUCT_CONFIRMED';
+      const emailCollectionLocked = lockCheckoutState === 'EMAIL_COLLECTION_REQUIRED';
       state = {
         ...state,
         checkoutStage: introducingProduct ? 'product_selected' : 'email',
         customerIntent: introducingProduct ? 'checkout_confirmation' : 'email_collection',
         transactionalCheckoutState: lockCheckoutState,
-        ...(introducingProduct ? { checkoutProductAcknowledged: true } : {}),
+        ...(introducingProduct || emailCollectionLocked
+          ? { checkoutProductAcknowledged: true }
+          : {}),
       };
       await this.persistState(callSessionId, state);
       await this.callsService.mergeSessionMetadata(callSessionId, {
@@ -534,7 +545,9 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         [TRANSACTIONAL_CHECKOUT_STATE_KEY]: lockCheckoutState,
         [CHECKOUT_LOCK_ACTIVE_KEY]: true,
         orderState: introducingProduct ? 'PRODUCT_CONFIRMED' : 'EMAIL_COLLECTING',
-        ...(introducingProduct ? { [PRODUCT_CHECKOUT_INTRODUCED_KEY]: true } : {}),
+        ...((introducingProduct || emailCollectionLocked)
+          ? { [PRODUCT_CHECKOUT_INTRODUCED_KEY]: true }
+          : {}),
       });
 
       const finalReply = checkoutLock.reply;
@@ -763,7 +776,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         [TRANSACTIONAL_CHECKOUT_STATE_KEY]: transactionalState,
       });
 
-      const guardedReply =
+      const guardedReply = sanitizePaymentSuccessClaim(
         emailConfirmedThisTurn && lastContent.trim()
           ? lastContent.trim()
           : guardTransactionalReply(lastContent || '', {
@@ -771,7 +784,9 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
               deliveryConfirmed: deliveryConfirmedThisTurn,
               emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
               pendingEmail: memoryForRouting.collectedEmail ?? state.customerEmail ?? null,
-            });
+            }),
+        deliveryConfirmedThisTurn,
+      );
 
       const reply = await finalizeBrainReply(guardedReply, {
         skipRewrite: true,
@@ -1023,12 +1038,15 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     });
 
     const finalReply = emergencyBlockLlmCheckoutReply(
-      guardTransactionalReply(reply || '', {
-        transactionalState,
-        deliveryConfirmed: deliveryConfirmedThisTurn,
-        emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
-        pendingEmail: memoryForRouting.collectedEmail ?? state.customerEmail ?? null,
-      }) || "How can I help you with a book today?",
+      sanitizePaymentSuccessClaim(
+        guardTransactionalReply(reply || '', {
+          transactionalState,
+          deliveryConfirmed: deliveryConfirmedThisTurn,
+          emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
+          pendingEmail: memoryForRouting.collectedEmail ?? state.customerEmail ?? null,
+        }) || "How can I help you with a book today?",
+        deliveryConfirmedThisTurn,
+      ),
       {
         activeProductSelected: hasSelectedInStockProduct(state),
         openaiCalled,
@@ -1268,6 +1286,18 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     await this.callsService.mergeSessionMetadata(callSessionId, {
       orderState: 'PAYMENT_LINK_CREATING',
     });
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.checkout.confirmed_email_checkout',
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        email: maskEmailForLog(linkArgs.email),
+        itemCount: linkArgs.items.length,
+        checkoutStage: state.checkoutStage,
+      }),
+    );
 
     const { result: checkoutResult, emailDelivery, emailSendFailureCount } =
       await this.executeCreatePaymentLinkWithEmail(

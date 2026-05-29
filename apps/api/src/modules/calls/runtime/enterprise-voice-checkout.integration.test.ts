@@ -51,14 +51,14 @@ test('voice email capture: short short 94 at gmail dot com normalizes without ch
   const validation = validateVoiceEmail(raw!);
   assert.equal(validation.normalized, 'shortshort94@gmail.com');
   const prompt = buildEmailConfirmationPrompt(validation.normalized);
-  assert.match(prompt, /shortshort94@gmail.com/);
+  assert.match(prompt, /shortshort94 at gmail dot com/i);
   assert.match(prompt, /Is that correct/);
   assert.equal(isEmailConfirmationAffirmative('short short 94 at gmail dot com'), false);
 });
 
 test('voice email capture: confirmation prompt waits for explicit yes', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
-  assert.match(prompt, /Just to confirm, your email is shahbazsultan88@gmail.com/);
+  assert.match(prompt, /Just to confirm, your email is shahbazsultan88 at gmail dot com/i);
   assert.match(prompt, /Is that correct/);
   assert.equal(isEmailConfirmationAffirmative('yes that is correct'), true);
   assert.equal(isEmailConfirmationAffirmative('maybe'), false);
@@ -74,39 +74,28 @@ test('enterprise validation: gmial typo then correction path', async () => {
   assert.equal(fixed.valid, true);
 });
 
-test('checkout state machine: PRODUCT_CONFIRMED then EMAIL_COLLECTION_REQUIRED', () => {
+test('checkout state machine: cart ready goes to EMAIL_COLLECTION_REQUIRED', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state.quantities = { [inStockProduct.variantId]: 1 };
 
   assert.equal(
     resolveTransactionalCheckoutState({ llmState: state, productCheckoutIntroduced: false }),
-    'PRODUCT_CONFIRMED',
-  );
-
-  state.checkoutProductAcknowledged = true;
-  assert.equal(
-    resolveTransactionalCheckoutState({
-      llmState: state,
-      productCheckoutIntroduced: true,
-    }),
     'EMAIL_COLLECTION_REQUIRED',
   );
 });
 
-test('checkout lock: premium product confirmation then spell-slowly email', () => {
+test('checkout lock: spell-slowly email when cart is ready', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state = mergeCallerSignalsIntoState(state, { quantity: 1 });
 
-  const intro = evaluateCheckoutLock(state, { productCheckoutIntroduced: false });
-  assert.match(intro.reply ?? '', /help you place the order/i);
-
-  const email = evaluateCheckoutLock(state, { productCheckoutIntroduced: true });
-  assert.match(email.reply ?? '', /spell your email address slowly/i);
+  const lock = evaluateCheckoutLock(state, { productCheckoutIntroduced: false });
+  assert.match(lock.reply ?? '', /help you place the order/i);
+  assert.match(lock.reply ?? '', /spell your email address slowly/i);
 });
 
-test('transactional route: product confirmation is deterministic', () => {
+test('transactional route: spell-slowly email when cart is ready', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state.quantities = { [inStockProduct.variantId]: 1 };
@@ -117,7 +106,7 @@ test('transactional route: product confirmation is deterministic', () => {
     emailRetryCount: 0,
     productCheckoutIntroduced: false,
   });
-  assert.equal(route.reply, buildCheckoutProductConfirmedPrompt());
+  assert.match(route.reply ?? '', /spell your email address slowly/i);
   assert.equal(route.deterministicReplyUsed, true);
   assert.equal(route.skipOpenAiGeneration, true);
 });
@@ -200,7 +189,7 @@ test('hallucination prevention: guard strips false payment-success claims', () =
     },
   );
   assert.doesNotMatch(guarded, /payment link has been sent/i);
-  assert.match(guarded, /Just to confirm, your email is buyer@example.com/);
+  assert.match(guarded, /Just to confirm, your email is buyer at example dot com/i);
 });
 
 test('sanitizePaymentSuccessClaim replaces LLM hallucination on send failure', () => {

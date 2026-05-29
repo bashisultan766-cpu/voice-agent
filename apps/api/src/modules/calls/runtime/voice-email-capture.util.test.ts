@@ -68,10 +68,9 @@ test('extractEmailFromSpeech handles spoken and direct forms', () => {
 
 test('buildEmailConfirmationPrompt reads email back for confirmation', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
-  assert.match(
-    prompt,
-    /Just to confirm, your email is shahbazsultan88@gmail.com\. Is that correct\?/,
-  );
+  assert.match(prompt, /Just to confirm, your email is shahbazsultan88 at gmail dot com/i);
+  assert.match(prompt, /Is that correct/i);
+  assert.match(prompt, /say yes/i);
 });
 
 test('buildEmailCollectionPrompt uses premium spell-slowly copy', () => {
@@ -91,6 +90,10 @@ test('confirmation helpers distinguish yes and no', () => {
   assert.equal(isEmailConfirmationAffirmative("that's right"), true);
   assert.equal(isEmailConfirmationAffirmative("yes that's my email"), true);
   assert.equal(isEmailConfirmationAffirmative('no that is wrong'), false);
+  assert.equal(
+    isEmailConfirmationAffirmative('my address is sur.shop924@gmail.com'),
+    false,
+  );
   assert.equal(isEmailConfirmationNegative('no please change it'), true);
 });
 
@@ -152,6 +155,14 @@ test('sanitizePaymentSuccessClaim strips false success claims', () => {
 test('sanitizePaymentSuccessClaim preserves text when delivery confirmed', () => {
   const original = 'Your payment link has been sent successfully. Please check your inbox.';
   assert.equal(sanitizePaymentSuccessClaim(original, true), original);
+});
+
+test('sanitizePaymentSuccessClaim replaces LLM email readback with inbox prompt', () => {
+  const llm = "I've sent the secure payment link to sur. shop924@gmail. com.";
+  assert.equal(
+    sanitizePaymentSuccessClaim(llm, true),
+    buildPaymentEmailSuccessPrompt(),
+  );
 });
 
 test('isDeterministicTransactionalReply protects checkout copy from rewrite', () => {

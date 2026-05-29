@@ -263,10 +263,10 @@ export function evaluateCheckoutLock(
     productCheckoutIntroduced: ctx.productCheckoutIntroduced,
   });
 
+  const cartReady = isCheckoutCartReady(state);
+
   if (activeProductSelected && quantityConfirmed && !emailFlowActive) {
-    checkoutState = ctx.productCheckoutIntroduced
-      ? 'EMAIL_COLLECTION_REQUIRED'
-      : 'PRODUCT_CONFIRMED';
+    checkoutState = cartReady ? 'EMAIL_COLLECTION_REQUIRED' : 'PRODUCT_CONFIRMED';
   }
 
   const checkoutLockActive =
@@ -275,7 +275,7 @@ export function evaluateCheckoutLock(
   const skipOpenAiGeneration = checkoutLockActive || shouldBypassOpenAiGeneration(checkoutState);
 
   const reply = checkoutLockActive
-    ? ctx.productCheckoutIntroduced
+    ? checkoutState === 'EMAIL_COLLECTION_REQUIRED'
       ? buildEmailCollectionPrompt(ctx.emailRetryCount ?? 0, true)
       : buildCheckoutProductConfirmedPrompt()
     : checkoutState === 'QUANTITY_COLLECTION_REQUIRED'
@@ -307,6 +307,8 @@ const EMERGENCY_LLM_CHECKOUT_PATTERNS: RegExp[] = [
   /\bemail address\b/i,
   /\bshare your email\b/i,
   /\bprovide your email\b/i,
+  /\bcould you please provide\b/i,
+  /\bgreat choice\b/i,
 ];
 
 /** Block LLM checkout phrasing when product is already selected. */
@@ -361,12 +363,6 @@ export function resolveTransactionalCheckoutState(
   }
 
   if (isCheckoutCartReady(llmState)) {
-    if (
-      ctx.productCheckoutIntroduced !== true &&
-      llmState.checkoutProductAcknowledged !== true
-    ) {
-      return 'PRODUCT_CONFIRMED';
-    }
     return 'EMAIL_COLLECTION_REQUIRED';
   }
 
