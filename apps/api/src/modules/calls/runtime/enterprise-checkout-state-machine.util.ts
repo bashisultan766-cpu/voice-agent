@@ -2,27 +2,15 @@
  * Enterprise voice checkout state machine — deterministic guards and journey logging.
  */
 import type { LlmAgentConversationState } from './llm-agent-conversation-state.util';
+import {
+  CheckoutState,
+  type EnterpriseCheckoutState,
+} from './checkout-state.types';
 import { validateVoiceEmail } from './voice-email-capture.util';
 import { hasSelectedInStockProduct, resolveLineQuantity } from './transactional-checkout-state.util';
 
-/** Human-like checkout states (spec §14). */
-export type EnterpriseCheckoutState =
-  | 'IDLE'
-  | 'LANGUAGE_DETECTED'
-  | 'PRODUCT_SELECTED'
-  | 'QUANTITY_REQUIRED'
-  | 'QUANTITY_CONFIRMED'
-  | 'EMAIL_REQUESTED'
-  | 'EMAIL_CAPTURED'
-  | 'EMAIL_VALIDATING'
-  | 'EMAIL_INVALID_RETRY'
-  | 'EMAIL_CONFIRMATION_REQUIRED'
-  | 'EMAIL_CONFIRMED'
-  | 'PAYMENT_LINK_CREATING'
-  | 'PAYMENT_EMAIL_SENDING'
-  | 'PAYMENT_EMAIL_VERIFIED'
-  | 'CHECKOUT_COMPLETED'
-  | 'FALLBACK_DELIVERY_REQUIRED';
+export type { EnterpriseCheckoutState } from './checkout-state.types';
+export { CheckoutState, assertValidCheckoutState, isVoiceCheckoutState } from './checkout-state.types';
 
 export type EnterpriseCheckoutFlowState = {
   productSelected: boolean;
@@ -117,8 +105,8 @@ export function resolveEnterpriseCheckoutStateAfterConfirmation(
 ): EnterpriseCheckoutState {
   if (emailConfirmationState === 'rejected') {
     return flow.productSelected && flow.quantityConfirmed
-      ? 'EMAIL_COLLECTION_REQUIRED'
-      : 'EMAIL_REQUESTED';
+      ? CheckoutState.EMAIL_COLLECTION_REQUIRED
+      : CheckoutState.EMAIL_REQUESTED;
   }
   return resolveEnterpriseCheckoutState(flow, llmState);
 }
@@ -127,24 +115,34 @@ export function resolveEnterpriseCheckoutState(
   flow: EnterpriseCheckoutFlowState,
   llmState: LlmAgentConversationState,
 ): EnterpriseCheckoutState {
-  if (flow.paymentLinkSent) return 'CHECKOUT_COMPLETED';
+  if (flow.paymentLinkSent) return CheckoutState.CHECKOUT_COMPLETED;
   if ((flow.emailSendFailureCount ?? 0) >= 2 && !flow.paymentLinkSent) {
-    return 'FALLBACK_DELIVERY_REQUIRED';
+    return CheckoutState.FALLBACK_DELIVERY_REQUIRED;
   }
-  if (llmState.paymentLinkCreated && !flow.paymentLinkSent) return 'PAYMENT_EMAIL_SENDING';
-  if (flow.emailConfirmed && !llmState.paymentLinkCreated) return 'PAYMENT_LINK_CREATING';
-  if (flow.emailConfirmed) return 'EMAIL_CONFIRMED';
-  if (flow.emailValidated && !flow.emailConfirmed) return 'EMAIL_CONFIRMATION_REQUIRED';
-  if (flow.productSelected && !flow.quantityConfirmed) return 'QUANTITY_REQUIRED';
+  if (llmState.paymentLinkCreated && !flow.paymentLinkSent) {
+    return CheckoutState.PAYMENT_EMAIL_SENDING;
+  }
+  if (flow.emailConfirmed && !llmState.paymentLinkCreated) {
+    return CheckoutState.PAYMENT_LINK_CREATING;
+  }
+  if (flow.emailConfirmed) return CheckoutState.EMAIL_CONFIRMED;
+  if (flow.emailValidated && !flow.emailConfirmed) {
+    return CheckoutState.EMAIL_CONFIRMATION_REQUIRED;
+  }
+  if (flow.productSelected && !flow.quantityConfirmed) return CheckoutState.QUANTITY_REQUIRED;
   if (flow.productSelected && flow.quantityConfirmed && !flow.emailValidated) {
-    return 'EMAIL_REQUESTED';
+    return CheckoutState.EMAIL_REQUESTED;
   }
-  if (flow.productSelected) return 'PRODUCT_SELECTED';
-  return 'IDLE';
+  if (flow.productSelected) return CheckoutState.PRODUCT_SELECTED;
+  return CheckoutState.IDLE;
 }
 
 export function shouldBypassOpenAiForEnterpriseState(
   state: EnterpriseCheckoutState,
 ): boolean {
-  return state !== 'IDLE' && state !== 'LANGUAGE_DETECTED' && state !== 'CHECKOUT_COMPLETED';
+  return (
+    state !== CheckoutState.IDLE &&
+    state !== CheckoutState.LANGUAGE_DETECTED &&
+    state !== CheckoutState.CHECKOUT_COMPLETED
+  );
 }

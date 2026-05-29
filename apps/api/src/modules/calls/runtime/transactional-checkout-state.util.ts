@@ -20,19 +20,15 @@ import {
   replyInCustomerLanguage,
   type CustomerLanguage,
 } from './voice-checkout-language.util';
+import {
+  CheckoutState,
+  isCheckoutInactive,
+  isTransactionalCheckoutActive as isSharedTransactionalCheckoutActive,
+  type TransactionalCheckoutState,
+} from './checkout-state.types';
 
-/** Hard transactional checkout states — LLM must not speak during these. */
-export type TransactionalCheckoutState =
-  | 'INACTIVE'
-  | 'PRODUCT_CONFIRMED'
-  | 'QUANTITY_COLLECTION_REQUIRED'
-  | 'EMAIL_COLLECTION_REQUIRED'
-  | 'EMAIL_CAPTURED'
-  | 'EMAIL_VALIDATED'
-  | 'EMAIL_CONFIRMATION_REQUIRED'
-  | 'EMAIL_CONFIRMED'
-  | 'PAYMENT_LINK_CREATING'
-  | 'PAYMENT_LINK_SENT';
+export type { TransactionalCheckoutState } from './checkout-state.types';
+export { CheckoutState, assertValidCheckoutState, isVoiceCheckoutState } from './checkout-state.types';
 
 export const TRANSACTIONAL_CHECKOUT_STATE_KEY = 'transactionalCheckoutState';
 export const CHECKOUT_LOCK_ACTIVE_KEY = 'CHECKOUT_LOCK_ACTIVE';
@@ -349,27 +345,31 @@ export function resolveTransactionalCheckoutState(
   const emailConfirmationState = normalizeEmailConfirmationState(ctx.emailConfirmationState);
 
   if (llmState.paymentLinkSent === true || orderState === 'PAYMENT_LINK_SENT') {
-    return 'PAYMENT_LINK_SENT';
+    return CheckoutState.PAYMENT_LINK_SENT;
   }
   if (orderState === 'PAYMENT_LINK_CREATING' || llmState.paymentLinkCreated === true) {
-    return 'PAYMENT_LINK_CREATING';
+    return CheckoutState.PAYMENT_LINK_CREATING;
   }
   if (emailConfirmationState === 'confirmed' || orderState === 'EMAIL_CONFIRMED') {
-    return 'EMAIL_CONFIRMED';
+    return CheckoutState.EMAIL_CONFIRMED;
   }
   if (ctx.emailConfirmationState === 'rejected') {
-    return isCheckoutCartReady(llmState) ? 'EMAIL_COLLECTION_REQUIRED' : 'EMAIL_REQUESTED';
+    return isCheckoutCartReady(llmState)
+      ? CheckoutState.EMAIL_COLLECTION_REQUIRED
+      : CheckoutState.EMAIL_REQUESTED;
   }
   if (emailConfirmationState === 'pending' && collectedEmail?.trim()) {
-    return 'EMAIL_CONFIRMATION_REQUIRED';
+    return CheckoutState.EMAIL_CONFIRMATION_REQUIRED;
   }
 
   if (llmState.customerEmail?.trim() && emailConfirmationState == null) {
-    return ctx.emailEnterpriseValidated === true ? 'EMAIL_VALIDATED' : 'EMAIL_CAPTURED';
+    return ctx.emailEnterpriseValidated === true
+      ? CheckoutState.EMAIL_VALIDATED
+      : CheckoutState.EMAIL_CAPTURED;
   }
 
   if (!hasSelectedInStockProduct(llmState)) {
-    return 'INACTIVE';
+    return CheckoutState.INACTIVE;
   }
 
   if (resolveLineQuantity(llmState) < 1) {
@@ -377,33 +377,39 @@ export function resolveTransactionalCheckoutState(
       llmState.checkoutProductAcknowledged !== true &&
       ctx.productCheckoutIntroduced !== true
     ) {
-      return 'PRODUCT_CONFIRMED';
+      return CheckoutState.PRODUCT_CONFIRMED;
     }
-    return 'QUANTITY_COLLECTION_REQUIRED';
+    return CheckoutState.QUANTITY_COLLECTION_REQUIRED;
   }
 
   if (isCheckoutCartReady(llmState)) {
-    return 'EMAIL_COLLECTION_REQUIRED';
+    return CheckoutState.EMAIL_COLLECTION_REQUIRED;
   }
 
-  return 'INACTIVE';
+  return CheckoutState.INACTIVE;
 }
 
 export function isTransactionalCheckoutActive(state: TransactionalCheckoutState): boolean {
-  return state !== 'INACTIVE';
+  return isSharedTransactionalCheckoutActive(state);
 }
 
 export function shouldBypassOpenAiGeneration(state: TransactionalCheckoutState): boolean {
+  if (isCheckoutInactive(state)) return false;
   return (
-    state === 'PRODUCT_CONFIRMED' ||
-    state === 'QUANTITY_COLLECTION_REQUIRED' ||
-    state === 'EMAIL_COLLECTION_REQUIRED' ||
-    state === 'EMAIL_CAPTURED' ||
-    state === 'EMAIL_VALIDATED' ||
-    state === 'EMAIL_CONFIRMATION_REQUIRED' ||
-    state === 'EMAIL_CONFIRMED' ||
-    state === 'PAYMENT_LINK_CREATING' ||
-    state === 'PAYMENT_LINK_SENT'
+    state === CheckoutState.PRODUCT_CONFIRMED ||
+    state === CheckoutState.QUANTITY_COLLECTION_REQUIRED ||
+    state === CheckoutState.QUANTITY_REQUIRED ||
+    state === CheckoutState.EMAIL_COLLECTION_REQUIRED ||
+    state === CheckoutState.EMAIL_REQUESTED ||
+    state === CheckoutState.EMAIL_CAPTURED ||
+    state === CheckoutState.EMAIL_VALIDATED ||
+    state === CheckoutState.EMAIL_VALIDATING ||
+    state === CheckoutState.EMAIL_INVALID_RETRY ||
+    state === CheckoutState.EMAIL_CONFIRMATION_REQUIRED ||
+    state === CheckoutState.EMAIL_CONFIRMED ||
+    state === CheckoutState.PAYMENT_LINK_CREATING ||
+    state === CheckoutState.PAYMENT_LINK_SENT ||
+    state === CheckoutState.PAYMENT_EMAIL_SENDING
   );
 }
 

@@ -98,8 +98,8 @@ import {
   resolveTransactionalCheckoutState,
   routeTransactionalCheckoutTurn,
   TRANSACTIONAL_CHECKOUT_STATE_KEY,
-  type TransactionalCheckoutState,
 } from './transactional-checkout-state.util';
+import type { TransactionalCheckoutState } from './checkout-state.types';
 import {
   voiceFastModeMaxToolIterations,
   voiceFastModeParallelToolCalls,

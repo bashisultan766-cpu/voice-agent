@@ -44,6 +44,7 @@ const product_recommendation_util_1 = require("./product-recommendation.util");
 const objection_patterns_util_1 = require("./objection-patterns.util");
 const voice_email_capture_util_1 = require("./voice-email-capture.util");
 const voice_email_enterprise_validation_util_1 = require("./voice-email-enterprise-validation.util");
+const enterprise_checkout_state_machine_util_1 = require("./enterprise-checkout-state-machine.util");
 const voice_product_query_util_1 = require("../../agents/voice-product-query.util");
 const bookstore_voice_query_resolver_util_1 = require("../../search/voice/bookstore-voice-query-resolver.util");
 const book_sales_voice_util_1 = require("./book-sales-voice.util");
@@ -1069,6 +1070,25 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                             voiceSummary: pendingEmail
                                 ? (0, voice_email_capture_util_1.buildEmailConfirmationPrompt)(pendingEmail)
                                 : (0, voice_email_capture_util_1.buildEmailCollectionPrompt)(Number(metadata.emailRetryCount ?? 0)),
+                            deliveryConfirmed: false,
+                        },
+                    };
+                }
+                (0, enterprise_checkout_state_machine_util_1.assertEmailConfirmedBeforeCheckout)(metadata.emailConfirmationState);
+                const checkoutFlow = (0, enterprise_checkout_state_machine_util_1.flowStateFromLlm)(llmState, {
+                    emailConfirmationState: 'confirmed',
+                    emailEnterpriseValidated: metadata.emailEnterpriseValidated === true,
+                });
+                if (!(0, enterprise_checkout_state_machine_util_1.canCreatePaymentLink)(checkoutFlow)) {
+                    return {
+                        ok: false,
+                        error: {
+                            code: 'CHECKOUT_GUARD',
+                            message: 'Product, quantity, validated email, and confirmation required.',
+                            retryable: true,
+                        },
+                        data: {
+                            voiceSummary: (0, voice_email_capture_util_1.buildEmailCollectionPrompt)(Number(metadata.emailRetryCount ?? 0)),
                             deliveryConfirmed: false,
                         },
                     };

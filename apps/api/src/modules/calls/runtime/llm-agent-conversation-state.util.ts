@@ -1,5 +1,9 @@
 import type { ToolResult } from './tool-orchestrator.service';
 import {
+  isVoiceCheckoutState,
+  type VoiceCheckoutState,
+} from './checkout-state.types';
+import {
   canAdvanceCheckoutStage,
   isLlmProductInStock,
   sanitizeCheckoutStageForStock,
@@ -40,7 +44,7 @@ export type LlmAgentConversationState = {
   customerEmail?: string | null;
   lastSearchedProducts: LlmSelectedProduct[];
   checkoutStage: LlmCheckoutStage;
-  transactionalCheckoutState?: string | null;
+  transactionalCheckoutState?: VoiceCheckoutState | null;
   lastToolCalls: string[];
   paymentLinkCreated?: boolean;
   paymentLinkSent?: boolean;
@@ -96,8 +100,9 @@ export function parseLlmAgentState(raw: unknown): LlmAgentConversationState {
     customerEmail: typeof o.customerEmail === 'string' ? o.customerEmail : null,
     lastSearchedProducts: searched,
     checkoutStage,
-    transactionalCheckoutState:
-      typeof o.transactionalCheckoutState === 'string' ? o.transactionalCheckoutState : null,
+    transactionalCheckoutState: isVoiceCheckoutState(o.transactionalCheckoutState)
+      ? o.transactionalCheckoutState
+      : null,
     checkoutProductAcknowledged: o.checkoutProductAcknowledged === true,
     lastToolCalls: Array.isArray(o.lastToolCalls)
       ? o.lastToolCalls.filter((x): x is string => typeof x === 'string')
