@@ -45,6 +45,17 @@ test('voice email capture: spoken shahbazsultan88 at gmail dot com', () => {
   assert.equal(validation.normalized, 'shahbazsultan88@gmail.com');
 });
 
+test('voice email capture: short short 94 at gmail dot com normalizes without checkout', () => {
+  const raw = extractEmailFromSpeech('short short 94 at gmail dot com');
+  assert.equal(raw, 'shortshort94@gmail.com');
+  const validation = validateVoiceEmail(raw!);
+  assert.equal(validation.normalized, 'shortshort94@gmail.com');
+  const prompt = buildEmailConfirmationPrompt(validation.normalized);
+  assert.match(prompt, /shortshort94@gmail.com/);
+  assert.match(prompt, /Is that correct/);
+  assert.equal(isEmailConfirmationAffirmative('short short 94 at gmail dot com'), false);
+});
+
 test('voice email capture: confirmation prompt waits for explicit yes', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
   assert.match(prompt, /Just to confirm, your email is shahbazsultan88@gmail.com/);

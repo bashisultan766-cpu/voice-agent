@@ -110,7 +110,7 @@ test('assertNoOpenAiDuringTransactionalCheckout throws when OpenAI used', () => 
         transactionalCheckoutMode: true,
         openaiCalled: true,
       }),
-    /CRITICAL: OpenAI called during deterministic checkout flow/,
+    /CRITICAL: OpenAI used during checkout flow/,
   );
 });
 
@@ -203,8 +203,8 @@ test('applyDeterministicProductSelection picks first in-stock search result', ()
 test('shouldBypassOpenAiGeneration during checkout email states', () => {
   assert.equal(shouldBypassOpenAiGeneration('EMAIL_COLLECTION_REQUIRED'), true);
   assert.equal(shouldBypassOpenAiGeneration('EMAIL_CONFIRMATION_REQUIRED'), true);
+  assert.equal(shouldBypassOpenAiGeneration('PAYMENT_LINK_SENT'), true);
   assert.equal(shouldBypassOpenAiGeneration('INACTIVE'), false);
-  assert.equal(shouldBypassOpenAiGeneration('PAYMENT_LINK_SENT'), false);
 });
 
 test('containsForbiddenCheckoutPhrase flags generic LLM checkout copy', () => {

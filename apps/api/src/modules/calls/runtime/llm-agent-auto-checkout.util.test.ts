@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyPaymentFlowToState,
-  buildAutoCheckoutConfirmationReply,
+  buildConfirmedEmailCheckoutReply,
   buildCreatePaymentLinkArgsFromState,
-  shouldAutoTriggerCheckoutAfterEmail,
+  shouldTriggerCheckoutAfterEmailConfirmed,
 } from './llm-agent-auto-checkout.util';
 import { emptyLlmAgentState, mergeCallerSignalsIntoState } from './llm-agent-conversation-state.util';
 import { MAX_EMAIL_SEND_RETRIES } from './voice-email-capture.util';
@@ -16,46 +16,46 @@ const inStockProduct = {
   stock: 8,
 };
 
-test('shouldAutoTriggerCheckoutAfterEmail when email confirmed with product and quantity', () => {
+test('shouldTriggerCheckoutAfterEmailConfirmed when email confirmed with product and quantity', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state = mergeCallerSignalsIntoState(state, { quantity: 2 });
   state = mergeCallerSignalsIntoState(state, { email: 'buyer@example.com' });
   assert.equal(
-    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: true }),
+    shouldTriggerCheckoutAfterEmailConfirmed(state, { emailConfirmedThisTurn: true }),
     true,
   );
 });
 
-test('shouldAutoTriggerCheckoutAfterEmail does not run on capture alone', () => {
+test('shouldTriggerCheckoutAfterEmailConfirmed does not run on capture alone', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state = mergeCallerSignalsIntoState(state, { email: 'buyer@example.com' });
   assert.equal(
-    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: false }),
+    shouldTriggerCheckoutAfterEmailConfirmed(state, { emailConfirmedThisTurn: false }),
     false,
   );
 });
 
-test('shouldAutoTriggerCheckoutAfterEmail rejects invalid email', () => {
+test('shouldTriggerCheckoutAfterEmailConfirmed rejects invalid email', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state.customerEmail = 'not-an-email';
   state.checkoutStage = 'email';
   assert.equal(
-    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: true }),
+    shouldTriggerCheckoutAfterEmailConfirmed(state, { emailConfirmedThisTurn: true }),
     false,
   );
 });
 
-test('shouldAutoTriggerCheckoutAfterEmail does not run when payment already sent', () => {
+test('shouldTriggerCheckoutAfterEmailConfirmed does not run when payment already sent', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state.paymentLinkSent = true;
   state.customerEmail = 'buyer@example.com';
   state.checkoutStage = 'email';
   assert.equal(
-    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: true }),
+    shouldTriggerCheckoutAfterEmailConfirmed(state, { emailConfirmedThisTurn: true }),
     false,
   );
 });
@@ -91,8 +91,8 @@ test('applyPaymentFlowToState marks payment_sent when email delivered', () => {
   assert.equal(next.paymentLinkSent, true);
 });
 
-test('buildAutoCheckoutConfirmationReply on success only when emailApiResult.success', () => {
-  const msg = buildAutoCheckoutConfirmationReply({
+test('buildConfirmedEmailCheckoutReply on success only when emailApiResult.success', () => {
+  const msg = buildConfirmedEmailCheckoutReply({
     email: 'buyer@example.com',
     checkoutOk: true,
     emailOk: true,
@@ -109,8 +109,8 @@ test('buildAutoCheckoutConfirmationReply on success only when emailApiResult.suc
   assert.doesNotMatch(msg, /issue sending/i);
 });
 
-test('buildAutoCheckoutConfirmationReply does not claim success without emailApiResult', () => {
-  const msg = buildAutoCheckoutConfirmationReply({
+test('buildConfirmedEmailCheckoutReply does not claim success without emailApiResult', () => {
+  const msg = buildConfirmedEmailCheckoutReply({
     email: 'buyer@example.com',
     checkoutOk: true,
     emailOk: false,
@@ -125,8 +125,8 @@ test('buildAutoCheckoutConfirmationReply does not claim success without emailApi
   assert.doesNotMatch(msg, /sent successfully/i);
 });
 
-test('buildAutoCheckoutConfirmationReply on email failure does not claim delivery', () => {
-  const msg = buildAutoCheckoutConfirmationReply({
+test('buildConfirmedEmailCheckoutReply on email failure does not claim delivery', () => {
+  const msg = buildConfirmedEmailCheckoutReply({
     email: 'buyer@example.com',
     checkoutOk: true,
     emailOk: false,
@@ -137,8 +137,8 @@ test('buildAutoCheckoutConfirmationReply on email failure does not claim deliver
   assert.doesNotMatch(msg, /sent successfully/i);
 });
 
-test('buildAutoCheckoutConfirmationReply offers fallback after max send failures', () => {
-  const msg = buildAutoCheckoutConfirmationReply({
+test('buildConfirmedEmailCheckoutReply offers fallback after max send failures', () => {
+  const msg = buildConfirmedEmailCheckoutReply({
     email: 'buyer@example.com',
     checkoutOk: true,
     emailOk: false,

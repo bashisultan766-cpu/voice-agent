@@ -35,6 +35,7 @@ import {
   buildMxRejectPrompt,
   buildPaymentEmailFallbackDeliveryPrompt,
   buildTypoCorrectionPrompt,
+  buildCheckoutJourneyLog,
   buildVoiceEmailCaptureLog,
   isDeterministicTransactionalReply,
   isEmailConfirmationAffirmative,
@@ -59,9 +60,9 @@ import {
 import { shouldBlockCheckoutForOutOfStock } from './voice-stock-sales-policy.util';
 import {
   applyPaymentFlowToState,
-  buildAutoCheckoutConfirmationReply,
+  buildConfirmedEmailCheckoutReply,
   buildCreatePaymentLinkArgsFromState,
-  shouldAutoTriggerCheckoutAfterEmail,
+  shouldTriggerCheckoutAfterEmailConfirmed,
 } from './llm-agent-auto-checkout.util';
 import {
   applyCheckoutSignalsFromSpeech,
@@ -230,6 +231,16 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       emailConfirmedThisTurn = true;
       this.logger.log(
         JSON.stringify(
+          buildCheckoutJourneyLog('customer_confirmed_email', {
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            maskedEmail: maskEmailForLog(confirmedEmail),
+          }),
+        ),
+      );
+      this.logger.log(
+        JSON.stringify(
           buildVoiceEmailCaptureLog({
             event: 'voice.email.confirmed',
             callSessionId,
@@ -304,6 +315,16 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         const enterprise = await validateEnterpriseEmail(spokenEmail, {
           skipMx: options?.skipMxValidation === true,
         });
+        this.logger.log(
+          JSON.stringify(
+            buildCheckoutJourneyLog('email_captured', {
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              maskedEmail: maskEmailForLog(enterprise.normalized),
+            }),
+          ),
+        );
         this.logger.log(
           JSON.stringify(
             buildVoiceEmailCaptureLog({
@@ -392,6 +413,26 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           });
           emailCapturedReply = buildEmailConfirmationPrompt(enterprise.normalized);
           skipBrainRewrite = true;
+          this.logger.log(
+            JSON.stringify(
+              buildCheckoutJourneyLog('email_validation_passed', {
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                maskedEmail: maskEmailForLog(enterprise.normalized),
+              }),
+            ),
+          );
+          this.logger.log(
+            JSON.stringify(
+              buildCheckoutJourneyLog('email_confirmation_required', {
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                maskedEmail: maskEmailForLog(enterprise.normalized),
+              }),
+            ),
+          );
           this.logger.log(
             JSON.stringify(
               buildVoiceEmailCaptureLog({
@@ -499,6 +540,18 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       const finalReply = checkoutLock.reply;
       deterministicReplyUsed = true;
 
+      if (lockCheckoutState === 'EMAIL_COLLECTION_REQUIRED') {
+        this.logger.log(
+          JSON.stringify(
+            buildCheckoutJourneyLog('email_collection_prompt_sent', {
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+            }),
+          ),
+        );
+      }
+
       this.logger.log(
         JSON.stringify(
           buildTransactionalCheckoutLog({
@@ -599,12 +652,12 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     let lastContent = emailCapturedReply ?? '';
     let skipLlmToolLoop = emailCapturedReply != null;
 
-    if (shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn })) {
-      const autoResult = await this.runDeterministicCheckoutAfterEmail(
+    if (shouldTriggerCheckoutAfterEmailConfirmed(state, { emailConfirmedThisTurn })) {
+      const autoResult = await this.runDeterministicCheckoutAfterConfirmedEmail(
         ctx,
         callSessionId,
         state,
-        'auto_email_capture',
+        'confirmed_email_checkout',
       );
       state = autoResult.state;
       totalToolCalls = autoResult.toolCallsCount;
@@ -816,6 +869,11 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       let response: OpenAI.Chat.ChatCompletion;
       try {
         openaiCalled = true;
+        assertNoOpenAiDuringTransactionalCheckout({
+          transactionalCheckoutMode:
+            transactionalCheckoutMode || checkoutLockActive || transactionalMode,
+          openaiCalled: true,
+        });
         response = await complete({
           model: modelToUse,
           messages,
@@ -1182,7 +1240,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     return { result };
   }
 
-  private async runDeterministicCheckoutAfterEmail(
+  private async runDeterministicCheckoutAfterConfirmedEmail(
     ctx: VoiceSessionContext,
     callSessionId: string,
     state: LlmAgentConversationState,
@@ -1206,18 +1264,6 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         checkoutSucceeded: false,
       };
     }
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'voice.checkout.auto_triggered_after_email',
-        callSessionId,
-        tenantId: ctx.tenantId,
-        agentId: ctx.agentId,
-        email: linkArgs.email.replace(/^(.).+(@.*)$/, '$1***$2'),
-        itemCount: linkArgs.items.length,
-        checkoutStage: state.checkoutStage,
-      }),
-    );
 
     await this.callsService.mergeSessionMetadata(callSessionId, {
       orderState: 'PAYMENT_LINK_CREATING',
@@ -1266,7 +1312,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       toolCallsCount += 1;
     }
 
-    const reply = buildAutoCheckoutConfirmationReply({
+    const reply = buildConfirmedEmailCheckoutReply({
       email: linkArgs.email,
       checkoutOk,
       emailOk,
@@ -1334,13 +1380,14 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
     const checkoutData = (checkoutResult.data ?? {}) as Record<string, unknown>;
     this.logger.log(
-      JSON.stringify({
-        event: 'voice.checkout.payment_link_created',
-        callSessionId,
-        tenantId: ctx.tenantId,
-        agentId: ctx.agentId,
-        checkoutLinkId: checkoutData.checkoutLinkId ?? null,
-      }),
+      JSON.stringify(
+        buildCheckoutJourneyLog('payment_link_created', {
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          checkoutLinkId: checkoutData.checkoutLinkId ?? null,
+        }),
+      ),
     );
 
     const sessionRow = await this.callsService.findOneById(callSessionId);
@@ -1445,6 +1492,18 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     if (emailOk) {
       this.logger.log(
         JSON.stringify(
+          buildCheckoutJourneyLog('payment_email_delivery_confirmed', {
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            maskedEmail: maskEmailForLog(email),
+            providerSuccess: delivery.providerSuccess,
+            deliveryQueued: delivery.deliveryQueued,
+          }),
+        ),
+      );
+      this.logger.log(
+        JSON.stringify(
           buildVoiceEmailCaptureLog({
             event: 'voice.email.delivery_confirmed',
             callSessionId,
@@ -1487,7 +1546,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         : {};
     const emailSendFailureCount = Number(sessionMeta.emailSendFailureCount ?? (emailOk ? 0 : 1));
 
-    const voiceSummary = buildAutoCheckoutConfirmationReply({
+    const voiceSummary = buildConfirmedEmailCheckoutReply({
       email,
       checkoutOk: true,
       emailOk,

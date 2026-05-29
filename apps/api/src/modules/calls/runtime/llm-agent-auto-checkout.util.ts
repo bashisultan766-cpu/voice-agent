@@ -10,7 +10,8 @@ import {
   validateVoiceEmail,
 } from './voice-email-capture.util';
 
-export function shouldAutoTriggerCheckoutAfterEmail(
+/** Checkout only after explicit customer confirmation — never on email capture alone. */
+export function shouldTriggerCheckoutAfterEmailConfirmed(
   state: LlmAgentConversationState,
   options: { emailConfirmedThisTurn: boolean },
 ): boolean {
@@ -39,6 +40,9 @@ export function shouldAutoTriggerCheckoutAfterEmail(
     stage === 'payment';
   return stageReady;
 }
+
+/** @deprecated Use shouldTriggerCheckoutAfterEmailConfirmed */
+export const shouldAutoTriggerCheckoutAfterEmail = shouldTriggerCheckoutAfterEmailConfirmed;
 
 export function buildCreatePaymentLinkArgsFromState(
   state: LlmAgentConversationState,
@@ -76,7 +80,7 @@ export function applyPaymentFlowToState(
   };
 }
 
-export function buildAutoCheckoutConfirmationReply(args: {
+export function buildConfirmedEmailCheckoutReply(args: {
   email: string;
   checkoutOk: boolean;
   emailOk: boolean;
@@ -99,3 +103,6 @@ export function buildAutoCheckoutConfirmationReply(args: {
   }
   return "I'm having trouble generating the checkout link right now, but a human assistant will follow up shortly.";
 }
+
+/** @deprecated Use buildConfirmedEmailCheckoutReply */
+export const buildAutoCheckoutConfirmationReply = buildConfirmedEmailCheckoutReply;

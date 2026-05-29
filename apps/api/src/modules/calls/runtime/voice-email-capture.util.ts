@@ -38,7 +38,7 @@ export type PaymentEmailDeliveryResult = {
 };
 
 export const EMAIL_SPELL_COLLECTION_PROMPT =
-  'Please spell your email address slowly using alphabets so I can send your payment link correctly.';
+  'Please spell your email address slowly using alphabets, character by character, so I can send your payment link correctly. For example: b a s h i, s u l t a n, seven six six, at gmail dot com.';
 
 export const EMAIL_SPELL_COLLECTION_PROMPT_ALT =
   'Please say your email slowly, character by character.';
@@ -111,6 +111,16 @@ export type VoiceEmailCaptureLogEvent =
   | 'voice.email.delivery_confirmed'
   | 'voice.email.fallback_offered'
   | 'voice.email.typo_suggested';
+
+/** Structured checkout journey events (grep-friendly, no auto-checkout semantics). */
+export type CheckoutJourneyLogEvent =
+  | 'email_collection_prompt_sent'
+  | 'email_captured'
+  | 'email_validation_passed'
+  | 'email_confirmation_required'
+  | 'customer_confirmed_email'
+  | 'payment_link_created'
+  | 'payment_email_delivery_confirmed';
 
 export type VoiceEmailCaptureLogInput = {
   event: VoiceEmailCaptureLogEvent;
@@ -261,6 +271,7 @@ export function isEmailConfirmationAffirmative(text: string): boolean {
   const t = text.toLowerCase().trim();
   if (!t) return false;
   if (/\b(no|not|wrong|incorrect|change|different|nope|nah)\b/.test(t)) return false;
+  if (/\b(that'?s|yes).{0,24}my email\b/.test(t)) return true;
   return (
     /\b(yes|yeah|yep|correct|that'?s right|right|exactly|confirmed|confirm|perfect|absolutely|sure)\b/.test(
       t,
@@ -285,6 +296,13 @@ export function maskRawSpeechForLog(text: string): string {
   const extracted = extractEmailFromSpeech(text);
   if (!extracted) return text.slice(0, 80);
   return text.replace(extracted, maskEmailForLog(extracted)).slice(0, 80);
+}
+
+export function buildCheckoutJourneyLog(
+  event: CheckoutJourneyLogEvent,
+  fields: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return { event, ...fields };
 }
 
 export function buildVoiceEmailCaptureLog(input: VoiceEmailCaptureLogInput): Record<string, unknown> {

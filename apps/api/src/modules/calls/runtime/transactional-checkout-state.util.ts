@@ -298,7 +298,7 @@ export function assertNoOpenAiDuringTransactionalCheckout(args: {
   openaiCalled: boolean;
 }): void {
   if (args.transactionalCheckoutMode && args.openaiCalled) {
-    throw new Error('CRITICAL: OpenAI called during deterministic checkout flow');
+    throw new Error('CRITICAL: OpenAI used during checkout flow');
   }
 }
 
@@ -386,7 +386,8 @@ export function shouldBypassOpenAiGeneration(state: TransactionalCheckoutState):
     state === 'EMAIL_VALIDATED' ||
     state === 'EMAIL_CONFIRMATION_REQUIRED' ||
     state === 'EMAIL_CONFIRMED' ||
-    state === 'PAYMENT_LINK_CREATING'
+    state === 'PAYMENT_LINK_CREATING' ||
+    state === 'PAYMENT_LINK_SENT'
   );
 }
 
@@ -417,9 +418,9 @@ export function guardTransactionalReply(
 
   if (containsPaymentSuccessClaim(trimmed) && args.deliveryConfirmed !== true) {
     if (
-      args.transactionalState === 'EMAIL_CONFIRMED' ||
-      args.transactionalState === 'PAYMENT_LINK_CREATING' ||
-      isDeterministicTransactionalReply(trimmed)
+      isDeterministicTransactionalReply(trimmed) &&
+      (args.transactionalState === 'PAYMENT_LINK_SENT' ||
+        args.transactionalState === 'PAYMENT_LINK_CREATING')
     ) {
       return trimmed;
     }

@@ -19,7 +19,7 @@ export function buildPremiumSearchVoiceSummary(input: {
   if (!exactMatchFound && similarAlternatives?.length) {
     const alt = similarAlternatives[0]!;
     const by = alt.vendor ? ` by ${alt.vendor}` : primaryVendor ? ` by ${primaryVendor}` : '';
-    const lead = `I couldn't find an exact match for ${queryDisplay}, but I found ${alt.title}${by}. Would you like that one instead?`;
+    const lead = `I couldn't find the exact title, but I found similar books. The closest is ${alt.title}${by}. Would you like me to check those?`;
     if (similarAlternatives.length > 1) {
       const also = similarAlternatives
         .slice(1, 3)
@@ -41,5 +41,5 @@ export function buildPremiumSearchVoiceSummary(input: {
 
 export function buildSimilarBooksVoiceLead(count: number): string {
   if (count <= 0) return `I couldn't find that exact title. Could you repeat the book name or author?`;
-  return `I found some similar books you might like.`;
+  return `I couldn't find the exact title, but I found similar books. Would you like me to check those?`;
 }

@@ -28,6 +28,10 @@ import {
 
 test('normalizeSpokenEmail converts at, dot, spaces, and digit words', () => {
   assert.equal(
+    normalizeSpokenEmail('short short 94 at gmail dot com'),
+    'shortshort94@gmail.com',
+  );
+  assert.equal(
     normalizeSpokenEmail('bashi sultan seven six six at gmail dot com'),
     'bashisultan766@gmail.com',
   );
@@ -85,6 +89,7 @@ test('confirmation helpers distinguish yes and no', () => {
   assert.equal(isEmailConfirmationAffirmative('yes that is correct'), true);
   assert.equal(isEmailConfirmationAffirmative('correct'), true);
   assert.equal(isEmailConfirmationAffirmative("that's right"), true);
+  assert.equal(isEmailConfirmationAffirmative("yes that's my email"), true);
   assert.equal(isEmailConfirmationAffirmative('no that is wrong'), false);
   assert.equal(isEmailConfirmationNegative('no please change it'), true);
 });

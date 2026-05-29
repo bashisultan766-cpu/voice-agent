@@ -236,7 +236,135 @@ test('banned phrase sanitizer strips go ahead and dropshipping', () => {
   assert.doesNotMatch(sanitizeBannedVoicePhrases('We offer dropshipping.'), /dropship/i);
 });
 
-test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', async () => {
+test('spoken email short short 94: confirmation only, no checkout until yes', async () => {
+  const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
+  const internalTools: string[] = [];
+  let openAiCalls = 0;
+  let memoryState: Record<string, unknown> = {};
+  let sessionMetadata: Record<string, unknown> = { emailRetryCount: 0, productCheckoutIntroduced: true };
+
+  const completionFn: OpenAiCompletionFn = async () => {
+    openAiCalls += 1;
+    return {
+      choices: [{ message: { role: 'assistant', content: 'Payment link sent to your inbox.' } }],
+    } as OpenAI.Chat.ChatCompletion;
+  };
+
+  const orchestrator = new LlmAgentOrchestratorService(
+    { get: () => undefined } as never,
+    {
+      load: async () =>
+        ({
+          tenantId: 't1',
+          agentId: 'a1',
+          storeId: 's1',
+          fromNumber: '+15551234567',
+          metadata: {
+            ...sessionMetadata,
+            llmAgentState: {
+              selectedProducts: [
+                {
+                  title: 'World History Vol 1',
+                  variantId: 'gid://shopify/ProductVariant/99',
+                  inStock: true,
+                  stock: 8,
+                },
+              ],
+              quantities: { 'gid://shopify/ProductVariant/99': 1 },
+              checkoutStage: 'email',
+              customerEmail: memoryState.collectedEmail ?? null,
+              lastSearchedProducts: [],
+              lastToolCalls: [],
+            },
+          },
+          agent: {
+            openaiApiKey: 'sk-test-key-1234567890',
+            model: 'gpt-4o-mini',
+            enabledTools: ['searchProducts', 'createCheckoutLink', 'sendPaymentEmail'],
+            runtimeCredentialHints: { openaiKeySource: 'test' },
+          },
+          store: { name: 'SureShot Books' },
+        }) as never,
+    } as never,
+    {
+      execute: async (_ctx: unknown, name: string) => {
+        internalTools.push(name);
+        if (name === 'createCheckoutLink') {
+          return {
+            ok: true,
+            toolName: name,
+            storeId: 's1',
+            data: {
+              checkoutLinkId: 'chk_short_1',
+              checkoutUrl: 'https://demo.myshopify.com/cart/short',
+              mode: 'STOREFRONT_CART',
+            },
+          };
+        }
+        if (name === 'sendPaymentEmail') {
+          return {
+            ok: true,
+            toolName: name,
+            storeId: 's1',
+            data: {
+              deliveryConfirmed: true,
+              emailApiResult: {
+                success: true,
+                smtpAccepted: true,
+                providerSuccess: true,
+                deliveryQueued: true,
+              },
+            },
+          };
+        }
+        return { ok: false, toolName: name, storeId: 's1', error: { code: 'UNEXPECTED', message: 'n/a', retryable: false } };
+      },
+    } as never,
+    {
+      summarizeForPrompt: () => '',
+      load: async () => memoryState,
+      setEmailState: async (_id: string, email: string, state: 'pending' | 'confirmed') => {
+        memoryState = {
+          collectedEmail: email,
+          emailConfirmationState: state,
+          emailCollected: state === 'confirmed',
+        };
+      },
+    } as never,
+    {
+      findOneById: async () => ({ metadata: sessionMetadata }),
+      mergeSessionMetadata: async (_id: string, patch: Record<string, unknown>) => {
+        sessionMetadata = { ...sessionMetadata, ...patch };
+        return {};
+      },
+    } as never,
+  );
+
+  const capture = await orchestrator.handleTurn(
+    'sess_shortshort94',
+    'short short 94 at gmail dot com',
+    [],
+    { completionFn, skipMxValidation: true },
+  );
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(capture.proof?.openaiCalled, false);
+  assert.equal(internalTools.length, 0);
+  assert.match(capture.reply, /Just to confirm, your email is shortshort94@gmail.com/i);
+  assert.doesNotMatch(capture.reply, /payment link has been sent/i);
+  assert.doesNotMatch(capture.reply, /check your inbox/i);
+
+  const confirmed = await orchestrator.handleTurn('sess_shortshort94', 'yes', [], {
+    completionFn,
+    skipMxValidation: true,
+  });
+  assert.equal(confirmed.proof?.openaiCalled, false);
+  assert.ok(internalTools.includes('createCheckoutLink'));
+  assert.ok(internalTools.includes('sendPaymentEmail'));
+  assert.match(confirmed.reply, /sent successfully/i);
+});
+
+test('email confirmation runs checkout and sendPaymentEmail without LLM', async () => {
   const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
   const internalTools: string[] = [];
   let openAiCalls = 0;
