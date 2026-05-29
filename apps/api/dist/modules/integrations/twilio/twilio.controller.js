@@ -175,9 +175,11 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
         if (!audio)
             throw new common_1.BadRequestException('TTS audio is missing or expired');
         this.logger.log(JSON.stringify({
-            event: 'twilio.voice.tts_audio_served',
+            event: 'voice.tts.playback_started',
+            provider: 'elevenlabs',
             tokenPrefix: trimmed.slice(0, 8),
             audioBytes: audio.length,
+            contentType: 'audio/mpeg',
         }));
         res.setHeader('Content-Type', 'audio/mpeg');
         res.setHeader('Cache-Control', 'no-store');

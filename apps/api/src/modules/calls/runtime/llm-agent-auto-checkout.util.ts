@@ -1,12 +1,13 @@
 import type { LlmAgentConversationState } from './llm-agent-conversation-state.util';
 import { resolveCheckoutLineItemsFromLlmState } from './voice-checkout-flow.util';
 import { shouldBlockCheckoutForOutOfStock, isLlmProductInStock } from './voice-stock-sales-policy.util';
+import { buildPaymentEmailSendFailurePrompt } from './voice-email-capture.util';
 
 export function shouldAutoTriggerCheckoutAfterEmail(
   state: LlmAgentConversationState,
-  options: { emailCapturedThisTurn: boolean },
+  options: { emailConfirmedThisTurn: boolean },
 ): boolean {
-  if (!options.emailCapturedThisTurn) return false;
+  if (!options.emailConfirmedThisTurn) return false;
   if (state.paymentLinkSent === true || state.paymentLinkCreated === true) return false;
 
   const email = state.customerEmail?.trim();
@@ -78,8 +79,8 @@ export function buildAutoCheckoutConfirmationReply(args: {
   if (args.checkoutOk && args.emailOk) {
     return `I've sent the secure payment link to ${email}. Please check your inbox.`;
   }
-  if (args.checkoutOk && args.checkoutUrl) {
-    return `Your secure checkout link is ready. I had trouble emailing it just now, but you can complete payment using the link we generated. Please check your spam folder, or a team member can follow up at ${email}.`;
+  if (args.checkoutOk) {
+    return buildPaymentEmailSendFailurePrompt();
   }
   return "I'm having trouble generating the checkout link right now, but a human assistant will follow up shortly.";
 }

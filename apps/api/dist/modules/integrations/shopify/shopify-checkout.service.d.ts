@@ -2,6 +2,8 @@ import { PrismaService } from '../../../database/prisma.service';
 import { ShopifyCartCheckoutService } from './cart-checkout';
 import { ShopifyDraftOrderService } from './draft-order';
 import { ShopifyClientService } from './client';
+import { ShopifyProductSyncService } from './product-sync';
+import { ShopifyProductSyncQueueService } from './product-sync.queue';
 export interface CheckoutLinkCreateResult {
     checkoutUrl: string;
     itemCount: number;
@@ -32,7 +34,10 @@ export declare class ShopifyCheckoutService {
     private readonly shopifyClient;
     private readonly cartCheckout;
     private readonly draftOrderCheckout;
-    constructor(prisma: PrismaService, shopifyClient: ShopifyClientService, cartCheckout: ShopifyCartCheckoutService, draftOrderCheckout: ShopifyDraftOrderService);
+    private readonly productSync;
+    private readonly syncQueue;
+    private readonly logger;
+    constructor(prisma: PrismaService, shopifyClient: ShopifyClientService, cartCheckout: ShopifyCartCheckoutService, draftOrderCheckout: ShopifyDraftOrderService, productSync: ShopifyProductSyncService, syncQueue: ShopifyProductSyncQueueService);
     createCheckoutLink(tenantId: string, agentId: string, input: {
         items: CheckoutItem[];
         customer?: CheckoutCustomer;
@@ -44,6 +49,10 @@ export declare class ShopifyCheckoutService {
     }): Promise<CheckoutLinkCreateResult>;
     private buildFingerprint;
     private findReusableCheckoutLink;
-    private resolveLineFromCache;
+    private resolveLineItem;
+    private repairVariantCache;
+    private enqueueCatalogHeal;
+    private lookupVariantInCache;
+    private toResolvedLine;
 }
 export {};

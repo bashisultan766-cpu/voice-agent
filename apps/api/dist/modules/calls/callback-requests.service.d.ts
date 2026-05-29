@@ -13,12 +13,12 @@ export declare class CallbackRequestsService {
     private readonly prisma;
     constructor(prisma: PrismaService);
     create(input: CreateCallbackRequestInput): Promise<{
-        id: string;
-        tenantId: string;
-        phone: string;
         status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
+        phone: string;
         agentId: string;
         callSessionId: string | null;
         notes: string | null;
@@ -29,12 +29,12 @@ export declare class CallbackRequestsService {
         status?: CallbackRequestStatus;
         limit?: number;
     }): Promise<{
-        id: string;
-        tenantId: string;
-        phone: string;
         status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
+        phone: string;
         agentId: string;
         callSessionId: string | null;
         notes: string | null;
@@ -42,12 +42,12 @@ export declare class CallbackRequestsService {
         priority: string | null;
     }[]>;
     updateStatus(tenantId: string, id: string, status: CallbackRequestStatus): Promise<{
-        id: string;
-        tenantId: string;
-        phone: string;
         status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
+        phone: string;
         agentId: string;
         callSessionId: string | null;
         notes: string | null;

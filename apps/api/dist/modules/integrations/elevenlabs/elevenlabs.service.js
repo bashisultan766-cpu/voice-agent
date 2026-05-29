@@ -24,9 +24,10 @@ let ElevenLabsService = class ElevenLabsService {
         const trimmed = text.trim().slice(0, 2500);
         if (!trimmed)
             throw new common_1.BadRequestException('Text is required');
-        const vid = voiceId?.trim() ||
-            this.config.get('ELEVENLABS_DEFAULT_VOICE_ID')?.trim() ||
-            '21m00Tcm4TlvDq8ikWAM';
+        const vid = voiceId?.trim();
+        if (!vid) {
+            throw new common_1.BadRequestException('ElevenLabs voice ID is required on the agent. Save a single voice ID in agent settings.');
+        }
         const modelId = options?.modelId?.trim() ||
             this.config.get('ELEVENLABS_MODEL_ID')?.trim() ||
             'eleven_multilingual_v2';
@@ -34,13 +35,12 @@ let ElevenLabsService = class ElevenLabsService {
         const body = JSON.stringify({
             text: trimmed,
             model_id: modelId,
-            ...(options?.styleNotes?.trim()
-                ? {
-                    voice_settings: {
-                        style: 0.45,
-                    },
-                }
-                : {}),
+            voice_settings: {
+                stability: 0.5,
+                similarity_boost: 0.8,
+                style: 0,
+                use_speaker_boost: true,
+            },
         });
         let lastNetworkError;
         for (let attempt = 0; attempt < 3; attempt++) {

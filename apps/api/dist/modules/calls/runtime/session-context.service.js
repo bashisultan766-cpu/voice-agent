@@ -151,7 +151,27 @@ let SessionContextService = SessionContextService_1 = class SessionContextServic
         const shopDomain = (0, types_1.normalizeShopifyDomain)(shopifyResolved?.shopifyStoreUrl ?? session.agent.shopifyStoreUrl) ||
             (0, types_1.normalizeShopifyDomain)(store?.shopifyConnection?.shopDomain ? `https://${store.shopifyConnection.shopDomain}` : null);
         const configUpdatedAt = session.agent.updatedAt?.toISOString() ?? null;
-        const voiceIdEffective = session.agent.voiceId ?? workspaceElevenlabsDefaultVoiceId;
+        const cfgMeta = session.agent.agentConfig?.metadata &&
+            typeof session.agent.agentConfig.metadata === 'object' &&
+            !Array.isArray(session.agent.agentConfig.metadata)
+            ? session.agent.agentConfig.metadata
+            : null;
+        const configVersion = typeof cfgMeta?.configVersion === 'number' && Number.isFinite(cfgMeta.configVersion)
+            ? Number(cfgMeta.configVersion)
+            : 1;
+        const promptUpdatedAt = typeof cfgMeta?.promptUpdatedAt === 'string' && cfgMeta.promptUpdatedAt.trim()
+            ? cfgMeta.promptUpdatedAt
+            : session.agent.agentConfig?.updatedAt?.toISOString() ?? configUpdatedAt;
+        const voiceIdEffective = session.agent.voiceId?.trim() || null;
+        const personality = session.agent.voiceProfile?.providerConfig
+            ?.personality ?? null;
+        const voiceEnergy = personality && typeof personality.voiceEnergy === 'number' ? personality.voiceEnergy : null;
+        const speakingSpeed = personality && typeof personality.speakingSpeed === 'number' ? personality.speakingSpeed : null;
+        const politeness = personality && typeof personality.politeness === 'number' ? personality.politeness : null;
+        const upsellLevel = personality && typeof personality.upsellAggressiveness === 'number'
+            ? personality.upsellAggressiveness
+            : null;
+        const humorLevel = personality && typeof personality.humorLevel === 'number' ? personality.humorLevel : null;
         this.log.log(JSON.stringify({
             event: 'voice.session_context.loaded_fresh',
             message: 'Loaded fresh agent config for call',
@@ -166,6 +186,15 @@ let SessionContextService = SessionContextService_1 = class SessionContextServic
             openaiKeyPresent: Boolean(openaiApiKey?.trim()),
             elevenLabsKeyPresent: Boolean(elevenlabsApiKey?.trim()),
             configUpdatedAt,
+            configVersion,
+            promptUpdatedAt,
+            voiceId: voiceIdEffective ?? null,
+            voiceEnergy,
+            speakingSpeed,
+            politeness,
+            upsellLevel,
+            humorLevel,
+            source: 'database/runtime_config',
             fieldsUpdated: null,
             precedenceNote: openaiKeySource === 'agent' && workspace?.openaiApiKey
                 ? 'active_openai_from_agent_secrets_workspace_key_present_but_not_used'
@@ -180,11 +209,13 @@ let SessionContextService = SessionContextService_1 = class SessionContextServic
             fromNumber: session.fromNumber,
             toNumber: session.toNumber,
             configUpdatedAt,
+            configVersion,
+            promptUpdatedAt,
             agent: {
                 name: session.agent.name,
                 voice: session.agent.voice,
                 voiceProvider: session.agent.voiceProvider,
-                voiceId: session.agent.voiceId ?? workspaceElevenlabsDefaultVoiceId,
+                voiceId: session.agent.voiceId?.trim() || null,
                 voiceStyle: session.agent.voiceStyle,
                 language: session.agent.language,
                 baseSystemPrompt: session.agent.baseSystemPrompt,

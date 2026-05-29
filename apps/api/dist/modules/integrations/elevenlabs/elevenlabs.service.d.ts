@@ -5,6 +5,5 @@ export declare class ElevenLabsService {
     textToSpeech(text: string, voiceId?: string, options?: {
         apiKey?: string;
         modelId?: string;
-        styleNotes?: string;
     }): Promise<Buffer>;
 }

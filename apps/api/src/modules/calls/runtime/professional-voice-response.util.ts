@@ -4,6 +4,10 @@ import {
   responseIncludesPaymentSuggestion,
   type ConversationTone,
 } from './conversation-tone.util';
+import {
+  buildEmailCollectionPrompt,
+  buildEmailConfirmationPrompt,
+} from './voice-email-capture.util';
 import { normalizeProductFollowUpKey } from './product-follow-up.util';
 
 export type ProfessionalProduct = { title: string; price: string | null };
@@ -64,6 +68,14 @@ export function buildProfessionalResponse(args: {
   }
 
   if (trimmedEmail) {
+    if (state === 'EMAIL_CONFIRMING') {
+      return {
+        text: buildEmailConfirmationPrompt(trimmedEmail),
+        templateKey: 'email_confirm',
+        toneLeadUsed: null,
+        paymentSuggestionUsed: false,
+      };
+    }
     if (tone) {
       const { lead, toneLeadUsed } = resolveToneLead({
         slot: 'email_ack',
@@ -88,16 +100,15 @@ export function buildProfessionalResponse(args: {
     };
   }
 
-  if (state === 'EMAIL_COLLECTION') {
+  if (state === 'EMAIL_COLLECTION' || state === 'EMAIL_COLLECTING') {
     if (tone) {
       const { lead, toneLeadUsed } = resolveToneLead({
         slot: 'email',
         conversationTone: tone.conversationTone,
         lastToneLeadUsed: tone.lastToneLeadUsed,
       });
-      const text = lead
-        ? `${lead} what's the best email to send the payment link to?`
-        : `What's the best email to send the payment link to?`;
+      const collectionPrompt = buildEmailCollectionPrompt();
+      const text = lead ? `${lead} ${collectionPrompt}` : collectionPrompt;
       return {
         text,
         templateKey: 'ask_email',
@@ -106,7 +117,7 @@ export function buildProfessionalResponse(args: {
       };
     }
     return {
-      text: "What's the best email to send the payment link to?",
+      text: buildEmailCollectionPrompt(),
       templateKey: 'ask_email',
       toneLeadUsed: null,
       paymentSuggestionUsed: false,

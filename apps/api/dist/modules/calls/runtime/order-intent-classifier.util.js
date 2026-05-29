@@ -73,14 +73,33 @@ function classifyOrderTurn(text) {
             return { ...base, intent: 'quantity_provided', confidence: 0.55, extracted: { quantity: qty } };
         }
     }
-    if (hasAny(t, ['that one', 'this one', 'the first one', 'the second one', 'top one', 'yes that', 'quello', 'questo', 'il primo', 'il secondo', 'тот', 'этот', 'первый', 'второй'])) {
-        return { ...base, intent: 'product_confirmed', confidence: 0.6 };
+    if (hasAny(t, [
+        'that one',
+        'this one',
+        'the first one',
+        'the second one',
+        'top one',
+        'yes that',
+        "i'll take",
+        'ill take',
+        'order that',
+        'add it',
+        'want this one',
+        'quello',
+        'questo',
+        'il primo',
+        'il secondo',
+        'тот',
+        'этот',
+        'первый',
+        'второй',
+    ])) {
+        return { ...base, intent: 'product_confirmed', confidence: 0.75 };
     }
     if (hasAny(t, [
         'yes',
         'confirm',
         'place the order',
-        'go ahead',
         'that is correct',
         'va bene',
         'confermo',

@@ -49,8 +49,6 @@ export declare class ToolOrchestratorService {
     private readonly transcriptBuffer;
     private readonly logger;
     private static readonly ORDER_STATE_SEQUENCE;
-    private static readonly SENSITIVE_PAYMENT_KEYS;
-    private static readonly SENSITIVE_PAYMENT_PATTERN;
     constructor(prisma: PrismaService, toolRegistry: OpenAIToolRegistryService, retrieval: RetrievalService, retrievalOrchestrator: RetrievalOrchestratorService, callMemory: CallMemoryService, callEvents: CallEventsService, shopifyAgent: ShopifyAgentService, callbacks: CallbackRequestsService, booking: OrderBookingService, checkout: ShopifyCheckoutService, twilioSms: TwilioSmsService, agentsService: AgentsService, productSearch: ShopifyProductSearchService, resendEmail: ResendEmailService, agentEmailConfig: AgentEmailConfigService, transcriptBuffer: TranscriptBufferService);
     private mapLiveSummaryToDetailsProduct;
     private getStringArg;
@@ -63,7 +61,6 @@ export declare class ToolOrchestratorService {
     private normalizeEmail;
     private getSessionMetadata;
     private updateOrderStateMetadata;
-    private hasSensitivePaymentInput;
     execute(ctx: VoiceSessionContext, toolName: string, args: Record<string, unknown>, callSessionId: string, requestId?: string): Promise<ToolResult>;
     private runTool;
     private logAndReturn;

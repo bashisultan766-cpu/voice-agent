@@ -36,6 +36,9 @@ function classifyUserIntent(text) {
         /^thanks?\s+(a lot|so much)\b/i.test(t)) {
         return 'small_talk';
     }
+    if (/\b(can you hear me|do you hear me|are you there|can you hear)\b/.test(t)) {
+        return 'small_talk';
+    }
     if (/\bhow\s+(are|r)\s+(you|u|ya)\b/.test(t) ||
         /\bhow('?s| is)\s+(it|everything|things|your day)\b/.test(t) ||
         /\bwhat'?s\s+up\b/.test(t) ||
@@ -62,6 +65,9 @@ function classifyUserIntent(text) {
     }
     if (/\b(is this book|does it include|what edition|paperback|hardcover|language|summary|author|publisher)\b/i.test(t)) {
         return 'product_question';
+    }
+    if (/\b(i want (the )?(first|second|third|this|that) one|i'?ll take|ill take|order that|add it|yes that book|this one|that one|the first one)\b/i.test(raw)) {
+        return 'purchase_confirmation';
     }
     const orderFlowPhrase = /\b(want to buy|wanna buy|would like to buy|like to buy|going to buy|ready to (pay|checkout|order)|place (an |my |the )?order|start (an |my )?order|complete (my |the )?purchase|checkout|pay now|buy something)\b/i.test(t);
     const onlyBuyIntent = /^i\s+(want|would like|need)\s+to\s+buy[\s!.?]*$/i.test(raw) ||

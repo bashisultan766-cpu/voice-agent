@@ -198,6 +198,7 @@ async function testCheckoutMetadataSaved() {
                 sku: 'SKU-100',
                 availableForSale: true,
                 inventoryQuantity: 10,
+                syncedAt: new Date(),
                 product: { title: 'Sample Product', shopifyProductId: 'gid://shopify/Product/10' },
             }),
         },
@@ -224,7 +225,13 @@ async function testCheckoutMetadataSaved() {
             throw new Error('should not be called');
         },
     };
-    const svc = new shopify_checkout_service_1.ShopifyCheckoutService(fakePrisma, fakeClient, fakeCart, fakeDraft);
+    const fakeProductSync = {
+        repairVariantCacheFromShopify: async () => null,
+    };
+    const fakeSyncQueue = {
+        enqueue: async () => undefined,
+    };
+    const svc = new shopify_checkout_service_1.ShopifyCheckoutService(fakePrisma, fakeClient, fakeCart, fakeDraft, fakeProductSync, fakeSyncQueue);
     await svc.createCheckoutLink('tenant_1', 'agent_1', {
         customer: { email: 'buyer@example.com' },
         items: [{ variantId: 'gid://shopify/ProductVariant/100', quantity: 1 }],
@@ -241,7 +248,7 @@ async function testShopifyErrorsHandled() {
     const validation = new shopify_errors_1.ShopifyCheckoutValidationError('NO_LINE_ITEMS', 'Need line items.');
     strict_1.default.match((0, shopify_errors_1.formatShopifyErrorForCaller)(gqlRetryable), /temporary limit/i);
     strict_1.default.match((0, shopify_errors_1.formatShopifyErrorForCaller)(restFatal), /Shopify returned an error/i);
-    strict_1.default.equal((0, shopify_errors_1.formatShopifyErrorForCaller)(validation), 'Need line items.');
+    strict_1.default.match((0, shopify_errors_1.formatShopifyErrorForCaller)(validation), /confirm the exact book/i);
     logOk('Shopify error mapping returns caller-safe messages');
 }
 async function main() {

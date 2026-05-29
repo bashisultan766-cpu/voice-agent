@@ -16,6 +16,8 @@ const agents_service_1 = require("./agents.service");
 const shopify_ids_1 = require("../integrations/shopify/shopify-ids");
 const shopify_product_relevance_util_1 = require("./shopify-product-relevance.util");
 const voice_product_query_util_1 = require("./voice-product-query.util");
+const book_sales_voice_util_1 = require("../calls/runtime/book-sales-voice.util");
+const voice_stock_sales_policy_util_1 = require("../calls/runtime/voice-stock-sales-policy.util");
 const SHOPIFY_API_VERSION = '2024-01';
 const SHOPIFY_GRAPHQL_VERSION = '2024-10';
 const VOICE_PRODUCT_SEARCH_QUERY = `
@@ -407,6 +409,51 @@ let ShopifyAgentService = ShopifyAgentService_1 = class ShopifyAgentService {
                 searchVoiceLog,
             };
         }
+        const titlePhrases = (0, voice_product_query_util_1.extractBookTitlesFromUtterance)(productSearchInputRaw);
+        if (titlePhrases.length > 1) {
+            const merged = [];
+            const seenIds = new Set();
+            const summaries = [];
+            for (const phrase of titlePhrases.slice(0, 4)) {
+                const one = await this.searchProducts(tenantId, agentId, phrase, Math.max(2, Math.ceil(limit / titlePhrases.length)));
+                if (!one.ok) {
+                    return one;
+                }
+                for (const p of one.products ?? []) {
+                    if (!seenIds.has(p.productId)) {
+                        seenIds.add(p.productId);
+                        merged.push(p);
+                    }
+                }
+                if (one.voiceSummary?.trim())
+                    summaries.push(one.voiceSummary.trim());
+            }
+            return {
+                ok: true,
+                products: merged.slice(0, limit),
+                voiceSummary: summaries.length > 0
+                    ? summaries.join(' ')
+                    : merged.length > 0
+                        ? `I found ${merged.length} titles from your list. Which one would you like?`
+                        : `I couldn't find an exact match for those titles. Could you repeat the title or author?`,
+                searchVoiceLog: {
+                    productSearchInputRaw,
+                    cleanedQuery: titlePhrases.join(' | '),
+                    probableTitle: titlePhrases[0] ?? '',
+                    shopifyQueriesTried: titlePhrases.map((t) => ({ label: 'multi_title', query: t })),
+                    productsReturned: merged.length,
+                    productsReturnedCount: merged.length,
+                    productsAfterRanking: merged.length,
+                    rankedProducts: [],
+                    topProduct: merged[0]?.title ?? null,
+                    topProductTitle: merged[0]?.title ?? null,
+                    topScore: merged[0]?.relevanceScore ?? null,
+                    topMatchReason: 'multi_title_merge',
+                    lowConfidenceSearch: merged.length === 0,
+                    finalVoiceSummary: summaries[0] ?? '',
+                },
+            };
+        }
         const { cleanedQuery, probableTitle } = (0, voice_product_query_util_1.cleanVoiceProductQuery)(productSearchInputRaw);
         const attempts = (0, voice_product_query_util_1.buildShopifyProductSearchAttempts)({
             probableTitle,
@@ -429,23 +476,40 @@ let ShopifyAgentService = ShopifyAgentService_1 = class ShopifyAgentService {
                 relevanceScore: p.relevanceScore,
                 matchReason: p.matchReason,
             }));
+            const toOffer = (p) => ({
+                title: p.title,
+                variants: p.variants.map((v) => ({
+                    price: v.price,
+                    inventory_quantity: v.inventory_quantity,
+                    availableForSale: v.availableForSale,
+                })),
+            });
+            const categoryLabel = (0, book_sales_voice_util_1.detectBookCategoryQuery)(productSearchInputRaw);
             let finalVoiceSummary;
             if (bestScore < shopify_product_relevance_util_1.PRODUCT_SEARCH_CONFIRM_MIN_SCORE || products.length === 0) {
                 products = [];
-                finalVoiceSummary = `I couldn't find that exact book. Could you spell the title or give me the ISBN?`;
+                finalVoiceSummary = `I couldn't find an exact match, but I can check similar titles. Could you repeat the title or author?`;
             }
-            else if (topRankedScore < shopify_product_relevance_util_1.PRODUCT_SEARCH_CONFIDENT_MIN_SCORE) {
-                finalVoiceSummary = `I found something similar. Is this the one?`;
+            else if (categoryLabel && products.length > 1) {
+                finalVoiceSummary = (0, book_sales_voice_util_1.formatCategorySearchVoiceSummary)(categoryLabel, products.map(toOffer));
             }
             else {
-                const lead = products[0];
-                const inStock = lead.variants.some((v) => v.inventory_quantity > 0);
-                const priced = lead.variants.find((v) => v.price) ?? lead.variants[0];
-                const priceSpoken = formatVoiceUsd(priced?.price);
-                const priceClause = priceSpoken ?? 'the listed price';
-                finalVoiceSummary = `Yes, I found ${displayTitle} for ${priceClause}. It is ${inStock ? 'in stock' : 'out of stock'}.`;
-                if (products.length > 1) {
-                    finalVoiceSummary = `${finalVoiceSummary} If you meant a different edition, tell me which one.`;
+                const stockPick = (0, voice_stock_sales_policy_util_1.pickInStockSearchPresentation)(products, toOffer);
+                const requiresClarification = topRankedScore < shopify_product_relevance_util_1.PRODUCT_SEARCH_CONFIDENT_MIN_SCORE;
+                finalVoiceSummary = (0, voice_stock_sales_policy_util_1.buildProductSearchVoiceSummary)({
+                    primary: toOffer(stockPick.primary),
+                    topWasOutOfStock: stockPick.topWasOutOfStock,
+                    unavailableTitle: stockPick.unavailableTitle,
+                    requiresClarification: requiresClarification && !stockPick.topWasOutOfStock,
+                });
+                if (products.length > 1 && !categoryLabel && !stockPick.topWasOutOfStock) {
+                    finalVoiceSummary = `${finalVoiceSummary} I also have other matches if you want to hear them.`;
+                }
+                if (stockPick.primary.productId !== products[0]?.productId) {
+                    products = [
+                        stockPick.primary,
+                        ...products.filter((p) => p.productId !== stockPick.primary.productId),
+                    ].slice(0, products.length);
                 }
             }
             const searchVoiceLog = {

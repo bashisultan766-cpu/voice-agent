@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cleanVoiceProductQuery = cleanVoiceProductQuery;
+exports.extractBookTitlesFromUtterance = extractBookTitlesFromUtterance;
+exports.pickVoiceProductSearchQuery = pickVoiceProductSearchQuery;
 exports.slugifyProductHandleHint = slugifyProductHandleHint;
 exports.buildShopifyProductSearchAttempts = buildShopifyProductSearchAttempts;
 const FILLER_PHRASES = /\b(i\s+need|i\s+want|i'?m\s+looking\s+for|looking\s+for|show\s+me|can\s+you\s+get|give\s+me|do\s+you\s+have\s+it|do\s+you\s+have|could\s+you\s+check|is\s+it\s+available|got\s+any|uh|um|er|ah|like|please|thanks|thank\s+you)\b/gi;
@@ -31,6 +33,45 @@ function cleanVoiceProductQuery(raw) {
         cleanedQuery: s.trim(),
         probableTitle: probableTitle.trim(),
     };
+}
+const TITLE_CONNECTOR = /\s+(?:and|&|plus)\s+/i;
+function extractBookTitlesFromUtterance(raw) {
+    const text = `${raw ?? ''}`.trim();
+    if (!text)
+        return [];
+    const quoted = [...text.matchAll(/["“”']([^"“”']{2,120})["“”']/g)]
+        .map((m) => m[1]?.trim())
+        .filter((q) => Boolean(q && q.length >= 2));
+    if (quoted.length >= 2)
+        return [...new Set(quoted)];
+    const { cleanedQuery, probableTitle } = cleanVoiceProductQuery(text);
+    const base = probableTitle || cleanedQuery;
+    if (!base)
+        return [];
+    const parts = base
+        .split(TITLE_CONNECTOR)
+        .map((p) => p.trim())
+        .filter((p) => p.length >= 3);
+    if (parts.length >= 2)
+        return [...new Set(parts)];
+    return [base];
+}
+function pickVoiceProductSearchQuery(toolQuery, metadata) {
+    const q = `${toolQuery ?? ''}`.trim();
+    const raw = typeof metadata?.lastRawTranscript === 'string' ? metadata.lastRawTranscript.trim() : '';
+    const normalized = typeof metadata?.lastNormalizedTranscript === 'string'
+        ? metadata.lastNormalizedTranscript.trim()
+        : '';
+    if (!normalized)
+        return q;
+    if (!q)
+        return normalized;
+    if (raw && (q === raw || q.toLowerCase() === raw.toLowerCase()))
+        return normalized;
+    if (raw && raw.toLowerCase().includes(q.toLowerCase()) && q.length < raw.length * 0.9) {
+        return normalized;
+    }
+    return q;
 }
 function slugifyProductHandleHint(title) {
     return title

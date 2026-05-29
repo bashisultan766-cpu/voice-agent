@@ -74,6 +74,7 @@ export declare class TwilioWebhookService implements OnModuleInit {
     private isForceElevenLabsOnly;
     private isStrictElevenLabsOnly;
     private resolveGatherHearingDebugEffective;
+    private logHiddenReplyDetected;
     private resolveShortPhrasePlayUrl;
     private loadAgentWorkspaceFlags;
     private decryptAgentSecrets;

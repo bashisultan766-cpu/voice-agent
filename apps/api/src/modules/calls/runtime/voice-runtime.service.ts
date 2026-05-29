@@ -52,6 +52,11 @@ import {
   type ConversationTone,
 } from './conversation-tone.util';
 import type { ProfessionalResponseToneInput } from './professional-voice-response.util';
+import {
+  buildEmailConfirmationPrompt,
+  buildInvalidEmailRetryPrompt,
+  buildPaymentEmailSendFailurePrompt,
+} from './voice-email-capture.util';
 
 /**
  * Voice runtime: assembles prompt, handles conversation flow.
@@ -581,7 +586,7 @@ export class VoiceRuntimeService {
     }
     if (trace?.sendPaymentEmail && trace.sendPaymentEmail.ok === false) {
       return {
-        text: "I wasn't able to send that email just now—want to try the same address again in a moment?",
+        text: buildPaymentEmailSendFailurePrompt(),
         templateKey: 'payment_email_failed',
         toneLeadUsed: null,
         paymentSuggestionUsed: false,
@@ -634,8 +639,22 @@ export class VoiceRuntimeService {
         args.orderStateAfter === 'EMAIL_COLLECTION')
     ) {
       return {
-        text: 'Hmm, that does not sound like a complete email—could you give it to me one more time?',
+        text: buildInvalidEmailRetryPrompt(1),
         templateKey: 'invalid_email',
+        toneLeadUsed: null,
+        paymentSuggestionUsed: false,
+        followUpTriggered: false,
+        followUpOfferedProductKey: null,
+      };
+    }
+    if (
+      trace?.validateEmail?.valid === true &&
+      trace.validateEmail.email &&
+      (args.orderStateAfter === 'EMAIL_CONFIRMING' || args.orderStateAfter === 'EMAIL_COLLECTING')
+    ) {
+      return {
+        text: buildEmailConfirmationPrompt(trace.validateEmail.email),
+        templateKey: 'email_confirm',
         toneLeadUsed: null,
         paymentSuggestionUsed: false,
         followUpTriggered: false,

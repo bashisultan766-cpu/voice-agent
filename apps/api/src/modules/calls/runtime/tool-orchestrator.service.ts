@@ -49,7 +49,15 @@ import {
   type RecommendableProduct,
 } from './product-recommendation.util';
 import { classifyConversationalObjection } from './objection-patterns.util';
-import { normalizeSpokenEmail } from './email-normalization.util';
+import {
+  buildEmailConfirmationPrompt,
+  buildInvalidEmailRetryPrompt,
+  buildPaymentEmailSendFailurePrompt,
+  buildVoiceEmailCaptureLog,
+  maskEmailForLog,
+  normalizeSpokenEmail,
+  validateVoiceEmail,
+} from './voice-email-capture.util';
 import { cleanVoiceProductQuery, pickVoiceProductSearchQuery } from '../../agents/voice-product-query.util';
 import {
   detectBookCategoryQuery,
@@ -229,13 +237,6 @@ export class ToolOrchestratorService {
     return { allowed: true, reason: null };
   }
 
-  private maskEmailForLog(email: string): string {
-    const t = email.trim().toLowerCase();
-    const at = t.indexOf('@');
-    if (at < 1) return '***';
-    return `${t[0]}***${t.slice(at)}`;
-  }
-
   private normalizeItems(raw: unknown): Array<{ productId: string; variantId?: string; title?: string; quantity: number }> {
     if (!Array.isArray(raw)) return [];
     return raw
@@ -279,6 +280,7 @@ export class ToolOrchestratorService {
       languageConfidence: number;
       normalizedEmail: string;
       emailRetryCount: number;
+      emailConfirmationState: 'pending' | 'confirmed';
       productMatchConfidence: number;
       productMatchName: string;
       paymentLink: string;
@@ -546,8 +548,9 @@ export class ToolOrchestratorService {
       }
       case 'validateEmail': {
         const emailInput = this.getStringArg(input, 'email');
-        const email = this.normalizeEmail(emailInput);
-        const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        const validation = validateVoiceEmail(emailInput);
+        const email = validation.normalized;
+        const isValid = validation.valid;
         const metadata = await this.getSessionMetadata(callSessionId);
         const currentState = normalizeOrderState(metadata.orderState);
         if (currentState !== 'EMAIL_COLLECTING' && currentState !== 'EMAIL_CONFIRMING') {
@@ -571,15 +574,20 @@ export class ToolOrchestratorService {
           normalizedEmail: isValid ? email : '',
           emailRetryCount: nextRetries,
           orderState: isValid ? 'EMAIL_CONFIRMING' : 'EMAIL_COLLECTING',
+          emailConfirmationState: isValid ? 'pending' : (metadata.emailConfirmationState as 'pending' | 'confirmed' | undefined) ?? 'pending',
         });
         this.logger.log(
-          JSON.stringify({
-            event: 'voice.email.normalized',
-            callSessionId,
-            originalPreview: emailInput.slice(0, 80),
-            normalizedPreview: email.slice(0, 80),
-            valid: isValid,
-          }),
+          JSON.stringify(
+            buildVoiceEmailCaptureLog({
+              event: 'voice.email.validated',
+              callSessionId,
+              rawPreview: emailInput,
+              normalizedPreview: email,
+              maskedEmail: isValid ? maskEmailForLog(email) : undefined,
+              valid: isValid,
+              retryCount: nextRetries,
+            }),
+          ),
         );
         return {
           ok: true,
@@ -588,10 +596,8 @@ export class ToolOrchestratorService {
             normalizedEmail: isValid ? email : null,
             retryCount: nextRetries,
             voiceSummary: isValid
-              ? `I heard ${email}. Is that correct?`
-              : nextRetries >= 2
-                ? 'That email still looks invalid. Please say it clearly one final time so I can send your payment link.'
-                : 'That email format does not look valid. Please spell it again slowly.',
+              ? buildEmailConfirmationPrompt(email)
+              : buildInvalidEmailRetryPrompt(nextRetries),
           },
           meta: { source: 'system' },
         };
@@ -1419,7 +1425,33 @@ export class ToolOrchestratorService {
               },
             },
           });
-          throw err;
+          const errorMessage = err instanceof Error ? err.message.slice(0, 300) : 'unknown_error';
+          this.logger.error(
+            JSON.stringify(
+              buildVoiceEmailCaptureLog({
+                event: 'voice.email.send_error',
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                maskedEmail: maskEmailForLog(email),
+                sendOk: false,
+                errorCode: 'EMAIL_SEND_FAILED',
+                errorMessage,
+              }),
+            ),
+          );
+          return {
+            ok: false,
+            error: {
+              code: 'EMAIL_SEND_FAILED',
+              message: errorMessage,
+              retryable: true,
+            },
+            data: {
+              voiceSummary: buildPaymentEmailSendFailurePrompt(),
+              deliveryConfirmed: false,
+            },
+          };
         }
         if (!sendResult.deduplicated) {
           await this.prisma.leadCapture.create({
@@ -1440,6 +1472,18 @@ export class ToolOrchestratorService {
           });
         }
         this.logger.log(
+          JSON.stringify(
+            buildVoiceEmailCaptureLog({
+              event: 'voice.email.send_status',
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              maskedEmail: maskEmailForLog(email),
+              sendOk: true,
+            }),
+          ),
+        );
+        this.logger.log(
           JSON.stringify({
             event: 'voice.tool.payment_email_sent',
             eventJourney: 'voice.journey.payment_email_sent',
@@ -1447,7 +1491,7 @@ export class ToolOrchestratorService {
             tenantId: ctx.tenantId,
             agentId: ctx.agentId,
             checkoutLinkId: link.id,
-            recipientEmailMasked: this.maskEmailForLog(email),
+            recipientEmailMasked: maskEmailForLog(email),
             deduplicated: sendResult.deduplicated === true,
           }),
         );

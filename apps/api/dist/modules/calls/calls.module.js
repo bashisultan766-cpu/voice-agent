@@ -14,6 +14,8 @@ const voice_runtime_controller_1 = require("./runtime/voice-runtime.controller")
 const voice_config_check_controller_1 = require("./runtime/voice-config-check.controller");
 const voice_config_check_service_1 = require("./runtime/voice-config-check.service");
 const voice_runtime_service_1 = require("./runtime/voice-runtime.service");
+const llm_agent_orchestrator_service_1 = require("./runtime/llm-agent-orchestrator.service");
+const transcript_normalizer_service_1 = require("./runtime/transcript-normalizer.service");
 const session_context_service_1 = require("./runtime/session-context.service");
 const transcript_buffer_service_1 = require("./runtime/transcript-buffer.service");
 const tool_orchestrator_service_1 = require("./runtime/tool-orchestrator.service");
@@ -58,6 +60,8 @@ exports.CallsModule = CallsModule = __decorate([
         providers: [
             calls_service_1.CallsService,
             voice_runtime_service_1.VoiceRuntimeService,
+            llm_agent_orchestrator_service_1.LlmAgentOrchestratorService,
+            transcript_normalizer_service_1.TranscriptNormalizerService,
             voice_config_check_service_1.VoiceConfigCheckService,
             session_context_service_1.SessionContextService,
             transcript_buffer_service_1.TranscriptBufferService,
@@ -80,6 +84,7 @@ exports.CallsModule = CallsModule = __decorate([
             calls_service_1.CallsService,
             session_context_service_1.SessionContextService,
             voice_runtime_service_1.VoiceRuntimeService,
+            llm_agent_orchestrator_service_1.LlmAgentOrchestratorService,
             callback_requests_service_1.CallbackRequestsService,
             transcript_buffer_service_1.TranscriptBufferService,
             tool_orchestrator_service_1.ToolOrchestratorService,

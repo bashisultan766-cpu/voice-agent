@@ -1,7 +1,8 @@
 import { SessionContextService } from './session-context.service';
 import { CallsService } from '../calls.service';
-import { OpenAIVoiceService } from '../../integrations/openai/openai-voice.service';
 import { OpenAIPromptBuilderService } from '../../integrations/openai/openai-prompt-builder.service';
+import { LlmAgentOrchestratorService } from './llm-agent-orchestrator.service';
+import { TranscriptNormalizerService } from './transcript-normalizer.service';
 import { CallEventsService } from '../../analytics/call-events.service';
 import { CallOutcomeService } from '../../analytics/call-outcome.service';
 import { TranscriptBufferService } from './transcript-buffer.service';
@@ -14,7 +15,8 @@ import { PolicyContextPrefetchService } from './policy-context-prefetch.service'
 export declare class VoiceRuntimeService {
     private readonly sessionContext;
     private readonly callsService;
-    private readonly openaiVoice;
+    private readonly llmAgent;
+    private readonly transcriptNormalizer;
     private readonly tools;
     private readonly callEvents;
     private readonly callOutcome;
@@ -26,7 +28,7 @@ export declare class VoiceRuntimeService {
     private readonly callMemory;
     private readonly policyPrefetch;
     private readonly logger;
-    constructor(sessionContext: SessionContextService, callsService: CallsService, openaiVoice: OpenAIVoiceService, tools: ToolOrchestratorService, callEvents: CallEventsService, callOutcome: CallOutcomeService, transcriptBuffer: TranscriptBufferService, promptBuilder: OpenAIPromptBuilderService, runtimeSafety: RuntimeSafetyService, conversationFlow: ConversationFlowEngineService, conversationAnalytics: ConversationAnalyticsService, callMemory: CallMemoryService, policyPrefetch: PolicyContextPrefetchService);
+    constructor(sessionContext: SessionContextService, callsService: CallsService, llmAgent: LlmAgentOrchestratorService, transcriptNormalizer: TranscriptNormalizerService, tools: ToolOrchestratorService, callEvents: CallEventsService, callOutcome: CallOutcomeService, transcriptBuffer: TranscriptBufferService, promptBuilder: OpenAIPromptBuilderService, runtimeSafety: RuntimeSafetyService, conversationFlow: ConversationFlowEngineService, conversationAnalytics: ConversationAnalyticsService, callMemory: CallMemoryService, policyPrefetch: PolicyContextPrefetchService);
     private deterministicFallbackEnabled;
     private resolveInterruptIntent;
     private professionalReplyFromSearchTool;
@@ -38,6 +40,7 @@ export declare class VoiceRuntimeService {
     private applyRepeatGuard;
     private buildNonRepeatingVariant;
     private buildConciseIdentityOrCapabilityReply;
+    private logResponsePath;
     private resolveSpokenReplyAfterOpenAI;
     private buildTemplateReply;
     private isDeliveryQuestion;

@@ -14,6 +14,7 @@ const common_1 = require("@nestjs/common");
 const crypto_1 = require("crypto");
 const elevenlabs_service_1 = require("../elevenlabs/elevenlabs.service");
 const twilio_tts_cache_service_1 = require("./twilio-tts-cache.service");
+const voice_elevenlabs_playback_util_1 = require("./voice-elevenlabs-playback.util");
 let VoicePromptAudioService = class VoicePromptAudioService {
     constructor(elevenLabs, ttsCache) {
         this.elevenLabs = elevenLabs;
@@ -46,7 +47,6 @@ let VoicePromptAudioService = class VoicePromptAudioService {
                 buffer = await this.elevenLabs.textToSpeech(text, vid, {
                     apiKey: opts.apiKey,
                     modelId,
-                    styleNotes: opts.styleNotes,
                 });
                 this.phraseBuffers.set(k, { buffer, expiresAt: now + this.phraseTtlMs });
             }
@@ -54,8 +54,12 @@ let VoicePromptAudioService = class VoicePromptAudioService {
                 return { playbackUrl: undefined, fromPhraseCache: false };
             }
         }
+        const validation = (0, voice_elevenlabs_playback_util_1.validateTtsAudioBuffer)(buffer);
+        if (!validation.valid) {
+            return { playbackUrl: undefined, fromPhraseCache };
+        }
         const token = this.ttsCache.put(buffer);
-        const playbackUrl = `${publicOrigin}/api/twilio/voice/tts/${encodeURIComponent(token)}`;
+        const playbackUrl = (0, voice_elevenlabs_playback_util_1.buildTtsPlaybackUrl)(publicOrigin, token);
         return { playbackUrl, fromPhraseCache };
     }
 };

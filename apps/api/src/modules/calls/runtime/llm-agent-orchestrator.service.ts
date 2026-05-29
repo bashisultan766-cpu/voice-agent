@@ -27,7 +27,15 @@ import {
   finalizeBrainReply,
 } from './voice-brain-reply.util';
 import { classifyOrderTurn } from './order-intent-classifier.util';
-import { normalizeSpokenEmail } from './email-normalization.util';
+import {
+  buildEmailConfirmationPrompt,
+  buildInvalidEmailRetryPrompt,
+  buildVoiceEmailCaptureLog,
+  isEmailConfirmationAffirmative,
+  isEmailConfirmationNegative,
+  maskEmailForLog,
+  validateVoiceEmail,
+} from './voice-email-capture.util';
 import { shouldBlockCheckoutForOutOfStock } from './voice-stock-sales-policy.util';
 import {
   applyPaymentFlowToState,
@@ -124,24 +132,126 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
     let state = await this.loadState(callSessionId);
     const cls = classifyOrderTurn(userMessage);
+    const memory = await this.callMemory.load(callSessionId);
     const intentHint = inferIntentHintFromText(userMessage) ?? state.customerIntent;
-    state = mergeCallerSignalsIntoState(state, {
-      intentHint,
-      quantity: cls.extracted?.quantity,
-      email: cls.extracted?.email ? normalizeSpokenEmail(cls.extracted.email) : undefined,
-    });
-    if (state.customerEmail) {
-      await this.callMemory.setEmailState(callSessionId, state.customerEmail, 'confirmed');
+    let emailConfirmedThisTurn = false;
+    let emailCapturedReply: string | null = null;
+
+    if (
+      memory.emailConfirmationState === 'pending' &&
+      memory.collectedEmail?.trim() &&
+      isEmailConfirmationAffirmative(userMessage)
+    ) {
+      const confirmedEmail = memory.collectedEmail.trim();
+      await this.callMemory.setEmailState(callSessionId, confirmedEmail, 'confirmed');
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        orderState: 'EMAIL_CONFIRMING',
+        normalizedEmail: confirmedEmail,
+        emailConfirmationState: 'confirmed',
+      });
+      state = mergeCallerSignalsIntoState(state, { email: confirmedEmail });
+      emailConfirmedThisTurn = true;
+      this.logger.log(
+        JSON.stringify(
+          buildVoiceEmailCaptureLog({
+            event: 'voice.email.confirmed',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            maskedEmail: maskEmailForLog(confirmedEmail),
+          }),
+        ),
+      );
+    } else if (
+      memory.emailConfirmationState === 'pending' &&
+      isEmailConfirmationNegative(userMessage)
+    ) {
+      const sessionRow = await this.callsService.findOneById(callSessionId);
+      const sessionMeta =
+        sessionRow.metadata &&
+        typeof sessionRow.metadata === 'object' &&
+        !Array.isArray(sessionRow.metadata)
+          ? (sessionRow.metadata as Record<string, unknown>)
+          : {};
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        orderState: 'EMAIL_COLLECTING',
+        normalizedEmail: '',
+        emailConfirmationState: 'pending',
+        emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0) + 1,
+      });
+      emailCapturedReply = buildInvalidEmailRetryPrompt(1);
+      this.logger.log(
+        JSON.stringify(
+          buildVoiceEmailCaptureLog({
+            event: 'voice.email.rejected',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+          }),
+        ),
+      );
+    } else if (cls.extracted?.email) {
+      const validation = validateVoiceEmail(cls.extracted.email);
+      this.logger.log(
+        JSON.stringify(
+          buildVoiceEmailCaptureLog({
+            event: 'voice.email.captured',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            rawPreview: cls.extracted.email,
+            normalizedPreview: validation.normalized,
+            valid: validation.valid,
+          }),
+        ),
+      );
+      if (validation.valid) {
+        state = mergeCallerSignalsIntoState(state, { email: validation.normalized });
+        await this.callMemory.setEmailState(callSessionId, validation.normalized, 'pending');
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+          orderState: 'EMAIL_CONFIRMING',
+          normalizedEmail: validation.normalized,
+          emailConfirmationState: 'pending',
+        });
+        emailCapturedReply = buildEmailConfirmationPrompt(validation.normalized);
+      } else {
+        const sessionMeta = (await this.callsService.findOneById(callSessionId)).metadata as Record<string, unknown>;
+        const retryCount = Number(sessionMeta.emailRetryCount ?? 0) + 1;
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+          orderState: 'EMAIL_COLLECTING',
+          emailRetryCount: retryCount,
+          emailConfirmationState: 'pending',
+        });
+        emailCapturedReply = buildInvalidEmailRetryPrompt(retryCount);
+        this.logger.log(
+          JSON.stringify(
+            buildVoiceEmailCaptureLog({
+              event: 'voice.email.validated',
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              rawPreview: cls.extracted.email,
+              normalizedPreview: validation.normalized,
+              valid: false,
+              retryCount,
+            }),
+          ),
+        );
+      }
+    } else {
+      state = mergeCallerSignalsIntoState(state, {
+        intentHint,
+        quantity: cls.extracted?.quantity,
+      });
     }
 
-    const emailCapturedThisTurn = Boolean(cls.extracted?.email && state.customerEmail);
     let totalToolCalls = 0;
     const toolNames: string[] = [];
     let escalated = false;
-    let lastContent = '';
-    let skipLlmToolLoop = false;
+    let lastContent = emailCapturedReply ?? '';
+    let skipLlmToolLoop = emailCapturedReply != null;
 
-    if (shouldAutoTriggerCheckoutAfterEmail(state, { emailCapturedThisTurn })) {
+    if (shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn })) {
       const autoResult = await this.runDeterministicCheckoutAfterEmail(
         ctx,
         callSessionId,

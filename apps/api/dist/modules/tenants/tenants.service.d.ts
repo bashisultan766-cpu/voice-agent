@@ -6,16 +6,16 @@ export declare class TenantsService {
         name: string;
         slug: string;
     }): Promise<{
-        id: string;
         name: string;
+        id: string;
         slug: string;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
     }>;
     findOne(id: string): Promise<{
-        id: string;
         name: string;
+        id: string;
         slug: string;
         createdAt: Date;
         updatedAt: Date;

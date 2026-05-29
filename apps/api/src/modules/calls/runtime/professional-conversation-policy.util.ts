@@ -1,8 +1,8 @@
 import type { UserUtteranceIntent } from './user-intent-classifier.util';
 import type { OrderState } from './order-state-machine.util';
+import { EMAIL_SPELL_COLLECTION_PROMPT } from './voice-email-capture.util';
 import {
   BOOK_NEED_PROMPT,
-  EMAIL_COLLECTION_PROMPT,
   QUANTITY_PROMPT,
   SURESHOT_INBOUND_GREETING,
   isGenericBookNeedUtterance,
@@ -219,11 +219,11 @@ export function buildProfessionalConversationReply(
       return `Absolutely. What book title or author are you looking for?`;
     case 'PRODUCT_SELECTED':
       if (title) {
-        return `Perfect. I've selected ${title} for you. Please share your email address, and I'll send the payment link.`;
+        return `Perfect. I've selected ${title} for you. ${EMAIL_SPELL_COLLECTION_PROMPT}`;
       }
-      return `Perfect. Please share your email address, and I'll send the payment link.`;
+      return `Perfect. ${EMAIL_SPELL_COLLECTION_PROMPT}`;
     case 'CHECKOUT':
-      return `What's the best email to send your secure payment link to?`;
+      return EMAIL_SPELL_COLLECTION_PROMPT;
     case 'ORDER_STATUS':
       return `I can help with that. Do you have your order number, or the email you used when you ordered?`;
     case 'REFUND_POLICY':

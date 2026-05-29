@@ -79,6 +79,27 @@ export declare class ShopifyProductSearchService {
     } | null>;
     private mapProduct;
     private normalizeProductQuery;
+    searchWithFuzzyFallback(tenantId: string, agentId: string, query: string, limit?: number, shopDomain?: string | null): Promise<{
+        productId: string;
+        title: string;
+        handle: string | null;
+        vendor: string | null;
+        productType: string | null;
+        status: string | null;
+        tags: string | null;
+        isbn: string | null;
+        variants: {
+            variantId: string;
+            title: string | null;
+            sku: string | null;
+            isbn: string | null;
+            price: string | null;
+            compareAtPrice: string | null;
+            inventoryQuantity: number;
+            availableForSale: boolean;
+        }[];
+        syncedAt: Date;
+    }[]>;
     private synonymsForToken;
     private scoreMatch;
     private similarity;

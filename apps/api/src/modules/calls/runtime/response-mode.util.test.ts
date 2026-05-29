@@ -56,7 +56,31 @@ test('uses openai for product question with existing context', () => {
   assert.equal(mode, 'openai');
 });
 
-test('uses openai for payment email tool trace (success or failure)', () => {
+test('uses template for valid email confirmation from validateEmail tool', () => {
+  const mode = decideResponseMode({
+    intent: 'email_provided',
+    state: 'EMAIL_COLLECTING',
+    toolResult: {
+      validateEmail: { valid: true, email: 'reader@example.com' },
+    },
+    customerText: 'reader at example dot com',
+  });
+  assert.equal(mode, 'template');
+});
+
+test('uses template for payment email send failure', () => {
+  const mode = decideResponseMode({
+    intent: 'email_provided',
+    state: 'PAYMENT_LINK_CREATING',
+    toolResult: {
+      sendPaymentEmail: { ok: false, email: 'reader@example.com' },
+    },
+    customerText: 'yes',
+  });
+  assert.equal(mode, 'template');
+});
+
+test('uses openai for payment email tool trace success', () => {
   const modeOk = decideResponseMode({
     intent: 'email_provided',
     state: 'EMAIL_COLLECTION',
@@ -69,19 +93,6 @@ test('uses openai for payment email tool trace (success or failure)', () => {
     },
   });
   assert.equal(modeOk, 'openai');
-
-  const modeFail = decideResponseMode({
-    intent: 'email_provided',
-    state: 'EMAIL_COLLECTION',
-    customerText: 'reader@example.com',
-    toolResult: {
-      sendPaymentEmail: {
-        ok: false,
-        email: 'reader@example.com',
-      },
-    },
-  });
-  assert.equal(modeFail, 'openai');
 });
 
 test('uses openai for Shopify catalog hard failure', () => {

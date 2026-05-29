@@ -121,8 +121,8 @@ function buildProfessionalResponse(args) {
         }
         return {
             text: pickVariant(`not_found_${state}`, [
-                "I couldn't find that title in the catalog. Please share the ISBN and I'll check again.",
-                "That title didn't match in the catalog. Send me the ISBN and I'll run a precise check.",
+                "I couldn't find an exact match, but I can check similar titles. Could you repeat the title or author?",
+                "That exact title didn't come up. Could you spell it or share the author name?",
             ]),
             templateKey: 'product_not_found',
             toneLeadUsed: null,

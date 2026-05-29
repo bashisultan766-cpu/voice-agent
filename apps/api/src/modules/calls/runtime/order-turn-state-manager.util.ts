@@ -1,5 +1,9 @@
 import { normalizeOrderState, type OrderState } from './order-state-machine.util';
 import type { OrderTurnClassification, OrderTurnIntent } from './order-intent-classifier.util';
+import {
+  buildInvalidEmailRetryPrompt,
+  isEmailConfirmationNegative,
+} from './voice-email-capture.util';
 
 export type OrderTurnUpdate = {
   nextState: OrderState;
@@ -161,6 +165,10 @@ export function applyTurnToOrderState(
     }
     case 'EMAIL_CONFIRMING': {
       if (intent === 'order_confirmed') return { nextState: 'PAYMENT_LINK_CREATING' };
+      if (intent === 'email_provided') return { nextState: 'EMAIL_CONFIRMING' };
+      if (isEmailConfirmationNegative(t)) {
+        return { nextState: 'EMAIL_COLLECTING', recoveryPrompt: { key: 'INVALID_EMAIL' } };
+      }
       if (intent === 'product_search') return { nextState: 'PRODUCT_SEARCH' };
       return { nextState: 'EMAIL_CONFIRMING' };
     }
@@ -190,9 +198,9 @@ export function recoveryPromptText(languageCode: string | null | undefined, key:
       );
     case 'INVALID_EMAIL':
       return L(
-        'Could you spell the email one more time slowly?',
-        'Scusa, non mi è sembrata un’email completa—puoi ripeterla?',
-        'Похоже, email получился неполным — повторите, пожалуйста?',
+        buildInvalidEmailRetryPrompt(1),
+        'Scusa, non mi è sembrata un’email completa—puoi ripeterla lentamente?',
+        'Похоже, email получился неполным — повторите медленно, пожалуйста.',
       );
     case 'CHANGED_MIND':
       return L(

@@ -689,6 +689,10 @@ let AgentsService = AgentsService_1 = class AgentsService {
     serializeAgent(agent) {
         const config = agent.agentConfig ?? null;
         const voiceProfile = agent.voiceProfile ?? null;
+        const voiceProfileConfig = voiceProfile?.providerConfig ?? null;
+        const voicePersonality = voiceProfile?.personality ??
+            voiceProfileConfig?.personality ??
+            null;
         return {
             ...agent,
             businessName: config?.businessName ?? null,
@@ -722,6 +726,12 @@ let AgentsService = AgentsService_1 = class AgentsService {
             voiceProfileLanguage: voiceProfile?.language ?? null,
             voiceProfileTone: voiceProfile?.tone ?? null,
             voiceProfileGreetingMessage: voiceProfile?.greetingMessage ?? null,
+            voiceProfile: voiceProfile
+                ? {
+                    ...voiceProfile,
+                    personality: voicePersonality,
+                }
+                : null,
         };
     }
     agentConfigEmailFieldsFromDto(dto) {
@@ -813,6 +823,85 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 out[key] = v;
         }
         return out;
+    }
+    parseAgentConfigMetadata(metadata) {
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+            return {};
+        return { ...metadata };
+    }
+    buildAgentConfigMetadata(args) {
+        const prev = this.parseAgentConfigMetadata(args.previousMetadata);
+        const previousVersion = typeof prev.configVersion === 'number' && Number.isFinite(prev.configVersion) ? prev.configVersion : 0;
+        const nowIso = new Date().toISOString();
+        const prevPromptUpdatedAt = typeof prev.promptUpdatedAt === 'string' && prev.promptUpdatedAt.trim()
+            ? prev.promptUpdatedAt
+            : args.previousPromptUpdatedAt?.toISOString() ?? null;
+        return {
+            ...prev,
+            configVersion: previousVersion + 1,
+            promptUpdatedAt: args.promptTouched ? nowIso : prevPromptUpdatedAt,
+            lastSavedAt: nowIso,
+        };
+    }
+    resolveAgentConfigReplacement(dto, previousConfig) {
+        const prev = previousConfig ?? null;
+        const fallbackHumanContactFromDto = dto.escalationPhone !== undefined || dto.escalationEmail !== undefined
+            ? dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null
+            : undefined;
+        return {
+            businessName: dto.businessName !== undefined ? dto.businessName?.trim() || null : (prev?.businessName ?? null),
+            supportEmail: dto.supportEmail !== undefined ? dto.supportEmail?.trim() || null : (prev?.supportEmail ?? null),
+            supportPhone: dto.supportPhone !== undefined ? dto.supportPhone?.trim() || null : (prev?.supportPhone ?? null),
+            askEmailBeforePaymentLink: dto.askEmailBeforePaymentLink !== undefined
+                ? dto.askEmailBeforePaymentLink
+                : (prev?.askEmailBeforePaymentLink ?? true),
+            checkoutMode: dto.checkoutMode !== undefined
+                ? (0, types_1.toCheckoutModeApi)(dto.checkoutMode)
+                : (0, types_1.toCheckoutModeApi)(prev?.checkoutMode ?? 'STOREFRONT_CART'),
+            humanHandoffRules: dto.humanHandoffRules !== undefined ? dto.humanHandoffRules?.trim() || null : (prev?.humanHandoffRules ?? null),
+            shippingPolicy: dto.shippingPolicy !== undefined ? dto.shippingPolicy?.trim() || null : (prev?.shippingPolicy ?? null),
+            returnPolicy: dto.returnPolicy !== undefined ? dto.returnPolicy?.trim() || null : (prev?.returnPolicy ?? null),
+            exchangePolicy: dto.exchangePolicy !== undefined ? dto.exchangePolicy?.trim() || null : (prev?.exchangePolicy ?? null),
+            deliveryNotes: dto.deliveryNotes !== undefined ? dto.deliveryNotes?.trim() || null : (prev?.deliveryNotes ?? null),
+            forbiddenBehaviors: dto.forbiddenBehaviors !== undefined ? dto.forbiddenBehaviors?.trim() || null : (prev?.forbiddenBehaviors ?? null),
+            escalationRules: dto.escalationRules !== undefined
+                ? normalizeEscalationRules(dto.escalationRules)
+                : (prev?.escalationRules ?? null),
+            fallbackHumanContact: fallbackHumanContactFromDto ?? (prev?.fallbackHumanContact ?? null),
+            customSystemPrompt: dto.systemPrompt !== undefined ? dto.systemPrompt.trim() || null : (prev?.customSystemPrompt ?? null),
+            emailSenderName: dto.emailSenderName !== undefined ? dto.emailSenderName?.trim() || null : (prev?.emailSenderName ?? null),
+            emailSenderAddress: dto.emailSenderAddress !== undefined
+                ? dto.emailSenderAddress?.trim() || null
+                : (prev?.emailSenderAddress ?? null),
+            emailReplyTo: dto.emailReplyTo !== undefined ? dto.emailReplyTo?.trim() || null : (prev?.emailReplyTo ?? null),
+            emailSubjectTemplate: dto.emailSubjectTemplate !== undefined
+                ? dto.emailSubjectTemplate?.trim() || null
+                : (prev?.emailSubjectTemplate ?? null),
+            paymentLinkEmailIntro: dto.paymentLinkEmailIntro !== undefined
+                ? dto.paymentLinkEmailIntro?.trim() || null
+                : (prev?.paymentLinkEmailIntro ?? null),
+            emailTestRecipient: dto.emailTestRecipient !== undefined
+                ? dto.emailTestRecipient?.trim() || null
+                : (prev?.emailTestRecipient ?? null),
+            useWorkspaceEmail: dto.useWorkspaceEmail !== undefined ? dto.useWorkspaceEmail === true : (prev?.useWorkspaceEmail === true),
+            useWorkspaceShopify: dto.useWorkspaceShopify !== undefined
+                ? dto.useWorkspaceShopify === true
+                : (prev?.useWorkspaceShopify === true),
+            useWorkspaceOpenai: dto.useWorkspaceOpenai !== undefined ? dto.useWorkspaceOpenai === true : (prev?.useWorkspaceOpenai === true),
+            useWorkspaceElevenlabs: dto.useWorkspaceElevenlabs !== undefined
+                ? dto.useWorkspaceElevenlabs === true
+                : (prev?.useWorkspaceElevenlabs === true),
+            useWorkspaceTwilio: dto.useWorkspaceTwilio !== undefined ? dto.useWorkspaceTwilio === true : (prev?.useWorkspaceTwilio === true),
+            shopifyApiVersion: dto.shopifyApiVersion !== undefined ? dto.shopifyApiVersion?.trim() || null : (prev?.shopifyApiVersion ?? null),
+        };
+    }
+    async invalidateAgentRuntimeState(tenantId, agentId) {
+        this.log.log(JSON.stringify({
+            event: 'agent.runtime_cache.invalidate',
+            tenantId,
+            agentId,
+            message: 'Agent settings updated; runtime re-reads fresh DB config on next call/session.',
+        }));
     }
     encryptSecrets(secrets) {
         if (Object.keys(secrets).length === 0)
@@ -1507,6 +1596,9 @@ let AgentsService = AgentsService_1 = class AgentsService {
     async update(tenantId, id, dto, actorUserId) {
         normalizeAgentDtoAliases(dto);
         await this.applyWorkspaceIntegrationFlagsOnly(tenantId, dto);
+        if (dto.systemPrompt !== undefined && !dto.systemPrompt.trim()) {
+            throw new common_1.BadRequestException('System prompt cannot be empty.');
+        }
         const existing = await this.findOne(tenantId, id);
         const currentStatus = String(existing.status ?? '').toLowerCase();
         if (process.env.NODE_ENV === 'production') {
@@ -1755,6 +1847,14 @@ let AgentsService = AgentsService_1 = class AgentsService {
         if (!updated) {
             throw new common_1.NotFoundException('Agent not found.');
         }
+        const previousAgentConfig = (existing.agentConfig ??
+            null);
+        const configMetadata = this.buildAgentConfigMetadata({
+            previousMetadata: previousAgentConfig?.metadata,
+            promptTouched: dto.systemPrompt !== undefined,
+            previousPromptUpdatedAt: previousAgentConfig?.updatedAt ?? null,
+        });
+        const configReplacement = this.resolveAgentConfigReplacement(dto, previousAgentConfig);
         await this.prisma.agentConfig.upsert({
             where: { agentId: id },
             create: {
@@ -1786,25 +1886,15 @@ let AgentsService = AgentsService_1 = class AgentsService {
                 useWorkspaceElevenlabs: dto.useWorkspaceElevenlabs === true,
                 useWorkspaceTwilio: dto.useWorkspaceTwilio === true,
                 shopifyApiVersion: dto.shopifyApiVersion?.trim() || null,
+                metadata: {
+                    configVersion: 1,
+                    promptUpdatedAt: dto.systemPrompt?.trim() ? new Date().toISOString() : null,
+                    lastSavedAt: new Date().toISOString(),
+                },
             },
             update: {
-                ...(dto.businessName !== undefined && { businessName: dto.businessName?.trim() || null }),
-                ...(dto.supportEmail !== undefined && { supportEmail: dto.supportEmail?.trim() || null }),
-                ...(dto.supportPhone !== undefined && { supportPhone: dto.supportPhone?.trim() || null }),
-                ...(dto.askEmailBeforePaymentLink !== undefined && { askEmailBeforePaymentLink: dto.askEmailBeforePaymentLink }),
-                ...(dto.checkoutMode !== undefined && { checkoutMode: (0, types_1.toCheckoutModeApi)(dto.checkoutMode) }),
-                ...(dto.humanHandoffRules !== undefined && { humanHandoffRules: dto.humanHandoffRules?.trim() || null }),
-                ...(dto.shippingPolicy !== undefined && { shippingPolicy: dto.shippingPolicy?.trim() || null }),
-                ...(dto.returnPolicy !== undefined && { returnPolicy: dto.returnPolicy?.trim() || null }),
-                ...(dto.exchangePolicy !== undefined && { exchangePolicy: dto.exchangePolicy?.trim() || null }),
-                ...(dto.deliveryNotes !== undefined && { deliveryNotes: dto.deliveryNotes?.trim() || null }),
-                ...(dto.forbiddenBehaviors !== undefined && { forbiddenBehaviors: dto.forbiddenBehaviors?.trim() || null }),
-                ...(dto.escalationRules !== undefined && { escalationRules: normalizeEscalationRules(dto.escalationRules) }),
-                ...((dto.escalationPhone !== undefined || dto.escalationEmail !== undefined) && {
-                    fallbackHumanContact: dto.escalationPhone?.trim() || dto.escalationEmail?.trim() || null,
-                }),
-                ...(dto.systemPrompt !== undefined && { customSystemPrompt: dto.systemPrompt.trim() || null }),
-                ...this.agentConfigEmailFieldsFromDto(dto),
+                ...configReplacement,
+                metadata: configMetadata,
             },
         });
         await this.prisma.voiceProfile.upsert({
@@ -1929,6 +2019,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
         if (explicitClearEleven) {
             console.log({ elevenlabsKeyCleared: true, agentId: id, tenantId });
         }
+        await this.invalidateAgentRuntimeState(tenantId, id);
         return {
             ...this.serializeAgent(updated),
             updatedSecrets,
@@ -2659,119 +2750,52 @@ let AgentsService = AgentsService_1 = class AgentsService {
         };
     }
     async getRuntimeDebug(tenantId, agentId, callSessionId) {
-        const agent = await this.findOne(tenantId, agentId);
-        const perms = (0, tool_permissions_util_1.normalizeToolPermissions)(agent.toolPermissions);
-        const enabledTools = this.toolRegistry.resolveEnabledToolNames({
-            toolPermissions: perms,
-            enabledTools: Array.isArray(agent.enabledTools)
-                ? agent.enabledTools
-                : null,
-        });
-        const personality = agent
-            .voiceProfile?.providerConfig?.personality ?? null;
-        const promptInput = {
-            agentId: agent.id,
-            agentName: agent.name,
-            storeName: agent.storeName || 'Store',
-            language: agent.language || 'en',
-            baseSystemPrompt: agent.baseSystemPrompt,
-            agentRole: agent.agentRole,
-            agentGoal: agent.agentGoal,
-            toneOfVoice: agent.toneOfVoice,
-            config: agent.agentConfig,
-        };
-        const enterpriseLayers = (0, build_agent_runtime_prompt_1.buildEnterpriseRuntimePromptLayers)(promptInput, {
-            personality,
-            enabledTools,
-        });
-        const livePrompt = enterpriseLayers.combined;
-        let lastToolCalls = [];
-        let runtimeContextPreview = null;
-        if (callSessionId) {
-            const session = await this.prisma.callSession.findFirst({
-                where: { id: callSessionId, tenantId, agentId },
-                include: {
-                    toolExecutions: { orderBy: { createdAt: 'desc' }, take: 10 },
-                    emailEvents: { orderBy: { createdAt: 'desc' }, take: 5 },
+        void callSessionId;
+        const agent = await this.prisma.agent.findFirst({
+            where: { id: agentId, tenantId, deletedAt: null },
+            select: {
+                id: true,
+                storeName: true,
+                voiceId: true,
+                baseSystemPrompt: true,
+                updatedAt: true,
+                agentConfig: {
+                    select: {
+                        metadata: true,
+                        updatedAt: true,
+                    },
                 },
-            });
-            if (session) {
-                lastToolCalls = session.toolExecutions.map((t) => ({
-                    toolName: t.toolName,
-                    status: t.status,
-                    latencyMs: t.latencyMs,
-                    createdAt: t.createdAt,
-                    inputPreview: JSON.stringify(t.inputJson).slice(0, 200),
-                    outputPreview: JSON.stringify(t.outputJson).slice(0, 300),
-                }));
-                runtimeContextPreview = {
-                    callSessionId: session.id,
-                    metadata: session.metadata,
-                    emailEvents: session.emailEvents.map((e) => ({
-                        status: e.status,
-                        createdAt: e.createdAt,
-                    })),
-                };
-            }
-        }
-        const credentialSources = await this.getCredentialSourcesSummary(tenantId, agentId);
-        const agentRow = agent;
-        let liveMonitor = null;
-        if (callSessionId) {
-            try {
-                const session = await this.prisma.callSession.findFirst({
-                    where: { id: callSessionId, tenantId, agentId },
-                    select: { metadata: true },
-                });
-                if (session?.metadata) {
-                    const m = session.metadata;
-                    liveMonitor = {
-                        conversationStage: m.conversationMemory?.conversationStage ??
-                            m.conversationStage,
-                        streamingStatus: m.voiceStreamMetrics?.streamingStatus ?? 'idle',
-                        voiceStreamMetrics: m.voiceStreamMetrics ?? null,
-                        voiceCostMetrics: m.voiceCostMetrics ?? null,
-                        deferredJobPhase: m.deferredVoiceJob?.phase ?? null,
-                        bargeInRequested: m.bargeInRequested === true,
-                        runtimeScores: m.runtimeScores ?? null,
-                        runtimeAnalytics: m.runtimeAnalytics ?? null,
-                    };
-                }
-            }
-            catch {
-                liveMonitor = null;
-            }
-        }
+                voiceProfile: {
+                    select: {
+                        providerConfig: true,
+                    },
+                },
+            },
+        });
+        if (!agent)
+            throw new common_1.NotFoundException('Agent not found.');
+        const cfgMeta = agent.agentConfig?.metadata &&
+            typeof agent.agentConfig.metadata === 'object' &&
+            !Array.isArray(agent.agentConfig.metadata)
+            ? agent.agentConfig.metadata
+            : null;
+        const configVersion = typeof cfgMeta?.configVersion === 'number' && Number.isFinite(cfgMeta.configVersion)
+            ? Number(cfgMeta.configVersion)
+            : 1;
+        const promptUpdatedAt = typeof cfgMeta?.promptUpdatedAt === 'string' && cfgMeta.promptUpdatedAt.trim()
+            ? cfgMeta.promptUpdatedAt
+            : agent.agentConfig?.updatedAt?.toISOString() ?? agent.updatedAt.toISOString();
+        const providerConfig = agent.voiceProfile?.providerConfig ?? null;
+        const voicePersonality = providerConfig?.personality ?? null;
         return {
-            agentId,
-            toolsEnabled: enabledTools,
-            toolPermissions: perms,
-            personality,
-            livePromptPreview: livePrompt.slice(0, 8000),
-            promptBudget: enterpriseLayers.budget,
-            promptLayers: {
-                platform: enterpriseLayers.platform,
-                agentIdentity: enterpriseLayers.agentIdentity,
-                storePolicyKnowledge: enterpriseLayers.storePolicyKnowledge,
-                runtimeTools: enterpriseLayers.runtimeTools,
-                shopifyTruth: enterpriseLayers.shopifyTruth,
-                knowledgeRetrieval: enterpriseLayers.knowledgeRetrieval,
-                runtimeContext: enterpriseLayers.runtimeContext,
-            },
-            activeRestrictions: {
-                blockedTopics: agentRow.restrictedActions ?? null,
-                allowedTopics: agentRow.allowedActions ?? null,
-                forbiddenBehaviors: agent.agentConfig?.forbiddenBehaviors ??
-                    null,
-            },
-            lastToolCalls,
-            runtimeContextPreview,
-            credentialSources,
-            liveMonitor,
-            toolCatalog: this.toolRegistry.getCatalog().map((t) => ({
-                name: t.name,
-                permissionGroups: t.permissionGroups,
-            })),
+            agentId: agent.id,
+            configVersion,
+            promptUpdatedAt,
+            voiceId: agent.voiceId ?? null,
+            voicePersonality,
+            storeName: agent.storeName ?? 'Store',
+            systemPromptPreview: (agent.baseSystemPrompt ?? '').slice(0, 200),
+            updatedAt: agent.updatedAt.toISOString(),
         };
     }
     async getPersistenceDiagnostics(tenantId, agentId) {

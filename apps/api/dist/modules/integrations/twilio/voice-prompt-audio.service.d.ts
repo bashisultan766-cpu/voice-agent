@@ -12,7 +12,6 @@ export declare class VoicePromptAudioService {
         voiceId: string;
         apiKey?: string;
         modelId?: string;
-        styleNotes?: string;
     }): Promise<{
         playbackUrl?: string;
         fromPhraseCache: boolean;

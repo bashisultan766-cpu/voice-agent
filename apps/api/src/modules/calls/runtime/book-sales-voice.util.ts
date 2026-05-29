@@ -10,8 +10,12 @@ export const BOOK_NEED_PROMPT =
 
 export const QUANTITY_PROMPT = 'Perfect. How many copies would you like to order?';
 
-export const EMAIL_COLLECTION_PROMPT =
-  'Great. Please share your email address, and I’ll send you the payment link.';
+import {
+  buildEmailConfirmationPrompt,
+  EMAIL_SPELL_COLLECTION_PROMPT,
+} from './voice-email-capture.util';
+
+export const EMAIL_COLLECTION_PROMPT = EMAIL_SPELL_COLLECTION_PROMPT;
 
 const BOOK_CATEGORY_KEYWORDS: Record<string, string[]> = {
   history: ['history', 'historical', 'world war', 'civil war'],
@@ -173,7 +177,7 @@ export function isGenericBookNeedUtterance(text: string): boolean {
 }
 
 export function formatEmailConfirmationVoice(email: string): string {
-  return `Thank you. I have your email as ${email}. I'll send the payment link there.`;
+  return buildEmailConfirmationPrompt(email);
 }
 
 export function formatPaymentLinkPendingVoice(): string {

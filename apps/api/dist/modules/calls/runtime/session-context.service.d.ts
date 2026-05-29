@@ -69,6 +69,8 @@ export interface VoiceSessionContext {
         };
     };
     configUpdatedAt?: string | null;
+    configVersion?: number | null;
+    promptUpdatedAt?: string | null;
     store: {
         name: string;
         city?: string | null;

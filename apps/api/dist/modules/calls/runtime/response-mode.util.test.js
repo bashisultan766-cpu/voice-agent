@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const node_test_1 = require("node:test");
 const strict_1 = require("node:assert/strict");
 const response_mode_util_1 = require("./response-mode.util");
-(0, node_test_1.default)('uses template for exact catalog match (safe price/title)', () => {
+(0, node_test_1.default)('uses openai for exact catalog match (natural conversation)', () => {
     const mode = (0, response_mode_util_1.decideResponseMode)({
         intent: 'product_search',
         state: 'PRODUCT_DISCOVERY',
@@ -18,7 +18,7 @@ const response_mode_util_1 = require("./response-mode.util");
         },
         customerText: 'Do you have Atomic Habits?',
     });
-    strict_1.default.equal(mode, 'template');
+    strict_1.default.equal(mode, 'openai');
 });
 (0, node_test_1.default)('uses openai in email collection without tool trace', () => {
     const mode = (0, response_mode_util_1.decideResponseMode)({
@@ -52,7 +52,7 @@ const response_mode_util_1 = require("./response-mode.util");
     });
     strict_1.default.equal(mode, 'openai');
 });
-(0, node_test_1.default)('uses template for payment email tool trace (success or failure)', () => {
+(0, node_test_1.default)('uses openai for payment email tool trace (success or failure)', () => {
     const modeOk = (0, response_mode_util_1.decideResponseMode)({
         intent: 'email_provided',
         state: 'EMAIL_COLLECTION',
@@ -64,7 +64,7 @@ const response_mode_util_1 = require("./response-mode.util");
             },
         },
     });
-    strict_1.default.equal(modeOk, 'template');
+    strict_1.default.equal(modeOk, 'openai');
     const modeFail = (0, response_mode_util_1.decideResponseMode)({
         intent: 'email_provided',
         state: 'EMAIL_COLLECTION',
@@ -76,9 +76,9 @@ const response_mode_util_1 = require("./response-mode.util");
             },
         },
     });
-    strict_1.default.equal(modeFail, 'template');
+    strict_1.default.equal(modeFail, 'openai');
 });
-(0, node_test_1.default)('uses template for Shopify catalog hard failure', () => {
+(0, node_test_1.default)('uses openai for Shopify catalog hard failure', () => {
     const mode = (0, response_mode_util_1.decideResponseMode)({
         intent: 'product_search',
         state: 'PRODUCT_DISCOVERY',
@@ -92,7 +92,7 @@ const response_mode_util_1 = require("./response-mode.util");
         },
         customerText: 'Dune',
     });
-    strict_1.default.equal(mode, 'template');
+    strict_1.default.equal(mode, 'openai');
 });
 (0, node_test_1.default)('uses openai when search tool blocked by policy (not a catalog outage)', () => {
     const mode = (0, response_mode_util_1.decideResponseMode)({

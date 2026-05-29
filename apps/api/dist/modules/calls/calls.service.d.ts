@@ -14,13 +14,14 @@ export declare class CallsService {
     private readonly prisma;
     constructor(prisma: PrismaService);
     createSession(input: CreateCallSessionInput): Promise<{
-        id: string;
-        tenantId: string;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
+        metadata: Prisma.JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -37,7 +38,6 @@ export declare class CallsService {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
-        metadata: Prisma.JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }>;
@@ -51,13 +51,14 @@ export declare class CallsService {
         escalated?: boolean;
         metadata?: Record<string, unknown>;
     }): Promise<{
-        id: string;
-        tenantId: string;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
+        metadata: Prisma.JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -74,7 +75,6 @@ export declare class CallsService {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
-        metadata: Prisma.JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }>;
@@ -84,13 +84,14 @@ export declare class CallsService {
         durationSeconds?: number;
     }): Promise<Prisma.BatchPayload>;
     findAllForTenant(tenantId: string): Promise<{
-        id: string;
-        tenantId: string;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
+        metadata: Prisma.JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -107,16 +108,15 @@ export declare class CallsService {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
-        metadata: Prisma.JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }[]>;
     findOneForTenant(tenantId: string, id: string): Promise<{
         toolExecutions: {
-            id: string;
-            tenantId: string;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            id: string;
             createdAt: Date;
+            tenantId: string;
             agentId: string;
             callSessionId: string | null;
             toolName: string;
@@ -130,19 +130,20 @@ export declare class CallsService {
             id: string;
             createdAt: Date;
             callSessionId: string;
+            sequenceNumber: number;
             role: string;
             content: string;
-            sequenceNumber: number;
             timestampMs: number | null;
         }[];
     } & {
-        id: string;
-        tenantId: string;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
+        metadata: Prisma.JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -159,16 +160,15 @@ export declare class CallsService {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
-        metadata: Prisma.JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }>;
     findOneById(id: string): Promise<{
         toolExecutions: {
-            id: string;
-            tenantId: string;
             status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            id: string;
             createdAt: Date;
+            tenantId: string;
             agentId: string;
             callSessionId: string | null;
             toolName: string;
@@ -182,19 +182,20 @@ export declare class CallsService {
             id: string;
             createdAt: Date;
             callSessionId: string;
+            sequenceNumber: number;
             role: string;
             content: string;
-            sequenceNumber: number;
             timestampMs: number | null;
         }[];
     } & {
-        id: string;
-        tenantId: string;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
+        metadata: Prisma.JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -211,18 +212,18 @@ export declare class CallsService {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
-        metadata: Prisma.JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }>;
     findOneByTwilioCallSid(twilioCallSid: string): Promise<{
-        id: string;
-        tenantId: string;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
+        metadata: Prisma.JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -239,18 +240,18 @@ export declare class CallsService {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
-        metadata: Prisma.JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     } | null>;
     mergeSessionMetadata(callSessionId: string, patch: Record<string, unknown>): Promise<{
-        id: string;
-        tenantId: string;
         status: import("@prisma/client").$Enums.CallStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
         storeId: string | null;
         agentId: string;
+        metadata: Prisma.JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -267,7 +268,6 @@ export declare class CallsService {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
-        metadata: Prisma.JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     }>;

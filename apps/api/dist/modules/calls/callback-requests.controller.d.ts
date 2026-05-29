@@ -5,12 +5,12 @@ export declare class CallbackRequestsController {
     private readonly callbacks;
     constructor(callbacks: CallbackRequestsService);
     list(tenantId: string, query: z.infer<typeof callbackListQuerySchema>): Promise<{
-        id: string;
-        tenantId: string;
-        phone: string;
         status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
+        phone: string;
         agentId: string;
         callSessionId: string | null;
         notes: string | null;
@@ -18,12 +18,12 @@ export declare class CallbackRequestsController {
         priority: string | null;
     }[]>;
     updateStatus(tenantId: string, id: string, body: z.infer<typeof callbackPatchStatusBodySchema>): Promise<{
-        id: string;
-        tenantId: string;
-        phone: string;
         status: import("@prisma/client").$Enums.CallbackRequestStatus;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
+        tenantId: string;
+        phone: string;
         agentId: string;
         callSessionId: string | null;
         notes: string | null;

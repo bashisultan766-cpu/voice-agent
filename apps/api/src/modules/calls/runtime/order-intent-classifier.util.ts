@@ -9,6 +9,8 @@ export type OrderTurnIntent =
   | 'cancel_order'
   | 'general_question';
 
+import { extractEmailFromSpeech } from './voice-email-capture.util';
+
 export type OrderTurnClassification = {
   intent: OrderTurnIntent;
   confidence: number;
@@ -25,9 +27,7 @@ function normalize(text: string): string {
 }
 
 function extractEmail(text: string): string | null {
-  const t = text.trim();
-  const m = t.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return m ? m[0] : null;
+  return extractEmailFromSpeech(text);
 }
 
 function extractQuantity(text: string): number | null {

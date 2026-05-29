@@ -15,14 +15,24 @@ const inStockProduct = {
   stock: 8,
 };
 
-test('shouldAutoTriggerCheckoutAfterEmail when email captured with product and quantity', () => {
+test('shouldAutoTriggerCheckoutAfterEmail when email confirmed with product and quantity', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state = mergeCallerSignalsIntoState(state, { quantity: 2 });
   state = mergeCallerSignalsIntoState(state, { email: 'buyer@example.com' });
   assert.equal(
-    shouldAutoTriggerCheckoutAfterEmail(state, { emailCapturedThisTurn: true }),
+    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: true }),
     true,
+  );
+});
+
+test('shouldAutoTriggerCheckoutAfterEmail does not run on capture alone', () => {
+  let state = emptyLlmAgentState();
+  state.selectedProducts = [inStockProduct];
+  state = mergeCallerSignalsIntoState(state, { email: 'buyer@example.com' });
+  assert.equal(
+    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: false }),
+    false,
   );
 });
 
@@ -33,7 +43,7 @@ test('shouldAutoTriggerCheckoutAfterEmail does not run when payment already sent
   state.customerEmail = 'buyer@example.com';
   state.checkoutStage = 'email';
   assert.equal(
-    shouldAutoTriggerCheckoutAfterEmail(state, { emailCapturedThisTurn: true }),
+    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: true }),
     false,
   );
 });
@@ -62,13 +72,13 @@ test('applyPaymentFlowToState marks payment_sent when email delivered', () => {
   assert.equal(next.paymentLinkSent, true);
 });
 
-test('buildAutoCheckoutConfirmationReply on email failure still mentions checkout', () => {
+test('buildAutoCheckoutConfirmationReply on email failure asks to retry send', () => {
   const msg = buildAutoCheckoutConfirmationReply({
     email: 'buyer@example.com',
     checkoutOk: true,
     emailOk: false,
     checkoutUrl: 'https://store.example/cart',
   });
-  assert.match(msg, /checkout link/i);
-  assert.match(msg, /buyer@example.com/);
+  assert.match(msg, /issue sending the payment link/i);
+  assert.doesNotMatch(msg, /sent the secure payment link/i);
 });
