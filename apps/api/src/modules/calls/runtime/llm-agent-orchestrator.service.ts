@@ -60,6 +60,7 @@ import {
   type PaymentEmailDeliveryResult,
 } from './voice-email-capture.util';
 import {
+  assertEmailConfirmedBeforeCheckout,
   buildEnterpriseCheckoutLog,
 } from './enterprise-checkout-state-machine.util';
 import {
@@ -308,7 +309,100 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     const emailInUtteranceWhileConfirming =
       awaitingEmailConfirmation ? extractEmailFromSpeech(userMessage) : null;
 
-    if (containsInlineEmailConfirmation(userMessage)) {
+    if (isEmailConfirmationNegative(userMessage)) {
+      const correctionEmail = extractEmailFromSpeech(userMessage);
+      const nextRetry = nextEmailRetryCount(await loadEmailRetryCount(), false);
+
+      this.logger.log(
+        JSON.stringify(
+          buildEnterpriseCheckoutLog('negative_confirmation_detected', {
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            hasCorrectionEmail: Boolean(correctionEmail),
+          }),
+        ),
+      );
+      this.logger.log(
+        JSON.stringify(
+          buildEnterpriseCheckoutLog('email_confirmation_rejected', {
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            maskedEmail: pendingEmailForConfirm ? maskEmailForLog(pendingEmailForConfirm) : undefined,
+          }),
+        ),
+      );
+
+      await this.callMemory.setEmailState(callSessionId, '', 'pending');
+      state = mergeCallerSignalsIntoState(state, { email: '' });
+
+      if (correctionEmail) {
+        this.logger.log(
+          JSON.stringify(
+            buildEnterpriseCheckoutLog('email_recollection_started', {
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+            }),
+          ),
+        );
+        const enterprise = await validateEnterpriseEmail(correctionEmail, {
+          skipMx: options?.skipMxValidation === true,
+        });
+        if (enterprise.valid) {
+          state = mergeCallerSignalsIntoState(state, { email: enterprise.normalized });
+          await this.callMemory.setEmailState(callSessionId, enterprise.normalized, 'pending');
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_CONFIRMING',
+            normalizedEmail: enterprise.normalized,
+            emailConfirmationState: 'pending',
+            emailEnterpriseValidated: true,
+            emailRetryCount: nextRetry,
+            pendingTypoCorrection: null,
+            [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_CONFIRMATION_REQUIRED',
+          });
+          emailCapturedReply = buildEmailConfirmationPrompt(
+            enterprise.normalized,
+            customerLanguage,
+          );
+        } else {
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_COLLECTING',
+            normalizedEmail: '',
+            emailConfirmationState: 'rejected',
+            emailRetryCount: nextRetry,
+          });
+          emailCapturedReply = buildInvalidEmailRetryPrompt(nextRetry, customerLanguage);
+        }
+      } else {
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+          orderState: 'EMAIL_COLLECTING',
+          normalizedEmail: '',
+          emailConfirmationState: 'rejected',
+          emailRetryCount: nextRetry,
+          [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_COLLECTION_REQUIRED',
+        });
+        emailCapturedReply = shouldOfferEmailRetry(nextRetry)
+          ? buildInvalidEmailRetryPrompt(nextRetry, customerLanguage)
+          : buildEmailCollectionPrompt(nextRetry, false, customerLanguage);
+      }
+
+      skipBrainRewrite = true;
+      deterministicReplyUsed = true;
+      this.logger.log(
+        JSON.stringify(
+          buildVoiceEmailCaptureLog({
+            event: 'voice.email.rejected',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            confirmationStatus: 'rejected',
+            retryCount: nextRetry,
+          }),
+        ),
+      );
+    } else if (containsInlineEmailConfirmation(userMessage)) {
       const inlineEmail = extractEmailFromSpeech(userMessage);
       if (inlineEmail) {
         const enterprise = await validateEnterpriseEmail(inlineEmail, {
@@ -410,31 +504,6 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           skipBrainRewrite = true;
         }
       }
-    } else if (awaitingEmailConfirmation && isEmailConfirmationNegative(userMessage)) {
-      const nextRetry = nextEmailRetryCount(await loadEmailRetryCount(), false);
-      await this.callMemory.setEmailState(callSessionId, '', 'pending');
-      await this.callsService.mergeSessionMetadata(callSessionId, {
-        orderState: 'EMAIL_COLLECTING',
-        normalizedEmail: '',
-        emailConfirmationState: 'pending',
-        emailRetryCount: nextRetry,
-      });
-      emailCapturedReply = shouldOfferEmailRetry(nextRetry)
-        ? buildInvalidEmailRetryPrompt(nextRetry, customerLanguage)
-        : buildEmailCollectionPrompt(nextRetry, false, customerLanguage);
-      skipBrainRewrite = true;
-      this.logger.log(
-        JSON.stringify(
-          buildVoiceEmailCaptureLog({
-            event: 'voice.email.rejected',
-            callSessionId,
-            tenantId: ctx.tenantId,
-            agentId: ctx.agentId,
-            confirmationStatus: 'rejected',
-            retryCount: nextRetry,
-          }),
-        ),
-      );
     } else {
       const spokenEmail = extractEmailFromSpeech(userMessage);
       if (spokenEmail) {
@@ -790,6 +859,12 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     let skipLlmToolLoop = emailCapturedReply != null;
 
     if (shouldTriggerCheckoutAfterEmailConfirmed(state, { emailConfirmedThisTurn })) {
+      const confirmMem = await this.callMemory.load(callSessionId);
+      const confirmMeta = await loadSessionMeta();
+      assertEmailConfirmedBeforeCheckout(
+        (confirmMem.emailConfirmationState ??
+          confirmMeta.emailConfirmationState) as 'pending' | 'confirmed' | 'rejected' | null,
+      );
       const autoResult = await this.runDeterministicCheckoutAfterConfirmedEmail(
         ctx,
         callSessionId,
@@ -1396,6 +1471,22 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     checkoutAttempted: boolean;
     checkoutSucceeded: boolean;
   }> {
+    const sessionRow = await this.callsService.findOneById(callSessionId);
+    const sessionMeta =
+      sessionRow.metadata &&
+      typeof sessionRow.metadata === 'object' &&
+      !Array.isArray(sessionRow.metadata)
+        ? (sessionRow.metadata as Record<string, unknown>)
+        : {};
+    const callMem = await this.callMemory.load(callSessionId);
+    assertEmailConfirmedBeforeCheckout(
+      (callMem.emailConfirmationState ?? sessionMeta.emailConfirmationState) as
+        | 'pending'
+        | 'confirmed'
+        | 'rejected'
+        | null,
+    );
+
     const linkArgs = buildCreatePaymentLinkArgsFromState(state);
     if (!linkArgs) {
       return {

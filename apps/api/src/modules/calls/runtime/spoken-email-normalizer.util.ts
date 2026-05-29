@@ -132,15 +132,91 @@ export function extractEmailFromSpeech(text: string): string | null {
   return null;
 }
 
+/** Negative phrases always override positive email-confirmation detection. */
+export function isEmailConfirmationNegative(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+
+  const negativePatterns: RegExp[] = [
+    /\bno\b/i,
+    /\bnope\b/i,
+    /\bnah\b/i,
+    /\bnot correct\b/i,
+    /\bincorrect\b/i,
+    /\bwrong\b/i,
+    /\bthat'?s wrong\b/i,
+    /\bnot right\b/i,
+    /\bchange it\b/i,
+    /\bchange that\b/i,
+    /\brepeat it\b/i,
+    /\blet me repeat\b/i,
+    /\bspell it again\b/i,
+    /\btry again\b/i,
+    /\bretry\b/i,
+    /\bthat is wrong\b/i,
+    /\bthat'?s not\b/i,
+    /\bit'?s not correct\b/i,
+    /دوبارہ/,
+    /غلط/,
+    /نہیں/,
+  ];
+
+  if (negativePatterns.some((re) => re.test(lower) || re.test(t))) return true;
+
+  /** "not" + positive cue (e.g. "not correct") without matching a full negative phrase above. */
+  if (/\bnot\b/i.test(lower) && /\b(correct|right|my email)\b/i.test(lower)) return true;
+
+  return false;
+}
+
+export function isEmailConfirmationAffirmative(text: string): boolean {
+  if (isEmailConfirmationNegative(text)) return false;
+
+  const t = text.toLowerCase().trim();
+  if (!t) return false;
+
+  /** Utterance with a new email is capture/correction, not a simple yes. */
+  if (extractEmailFromSpeech(text)) return false;
+
+  if (/\b(that'?s|yes).{0,24}my email\b/.test(t)) return true;
+
+  const affirmativePatterns: RegExp[] = [
+    /\b(yes|yeah|yep)\b/i,
+    /\b(that'?s right|that is right)\b/i,
+    /\b(this is correct|that'?s correct|that is correct)\b/i,
+    /\b(exactly|absolutely|confirmed|confirm)\b/i,
+    /^(ok|okay|si|sì|да|ок)\.?$/i,
+  ];
+
+  if (affirmativePatterns.some((re) => re.test(t))) return true;
+
+  /** Standalone "correct" / "right" only when not negated (negative check already ran). */
+  if (/^(correct|right)\.?$/i.test(t)) return true;
+
+  return false;
+}
+
 export function containsInlineEmailConfirmation(text: string): boolean {
+  if (isEmailConfirmationNegative(text)) return false;
+
   const email = extractEmailFromSpeech(text);
   if (!email) return false;
+
   const t = text.toLowerCase();
-  return (
-    /\b(this is correct|that's correct|that is correct|correct email|yes that'?s my email|that'?s my email|is correct|exactly)\b/.test(
-      t,
-    ) || /\b(correct|right)\b/.test(t)
-  );
+  const inlineAffirmativePatterns: RegExp[] = [
+    /\bthis is correct\b/,
+    /\bthat'?s correct\b/,
+    /\bthat is correct\b/,
+    /\bcorrect email\b/,
+    /\byes that'?s my email\b/,
+    /\bthat'?s my email\b/,
+    /\bis correct\b/,
+    /\bexactly\b/,
+    /\byes[, ]+that'?s right\b/,
+  ];
+
+  return inlineAffirmativePatterns.some((re) => re.test(t));
 }
 
 export function formatEmailForVoiceConfirmation(email: string): string {

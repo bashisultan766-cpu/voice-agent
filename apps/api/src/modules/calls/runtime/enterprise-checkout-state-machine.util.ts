@@ -44,6 +44,9 @@ export type EnterpriseCheckoutLogEvent =
   | 'email_validation_failed'
   | 'email_confirmation_required'
   | 'email_inline_confirmation_detected'
+  | 'email_confirmation_rejected'
+  | 'negative_confirmation_detected'
+  | 'email_recollection_started'
   | 'customer_confirmed_email'
   | 'payment_link_created'
   | 'payment_email_send_started'
@@ -88,6 +91,36 @@ export function canCreatePaymentLink(flow: EnterpriseCheckoutFlowState): boolean
     flow.emailValidated &&
     flow.emailConfirmed
   );
+}
+
+export type EmailConfirmationState = 'pending' | 'confirmed' | 'rejected' | 'none' | null;
+
+export function isEmailExplicitlyConfirmed(state: EmailConfirmationState | undefined): boolean {
+  return state === 'confirmed';
+}
+
+/** Hard guard — checkout must never run without explicit positive confirmation. */
+export function assertEmailConfirmedBeforeCheckout(
+  emailConfirmationState: EmailConfirmationState | undefined,
+): void {
+  if (!isEmailExplicitlyConfirmed(emailConfirmationState)) {
+    throw new Error(
+      'CRITICAL: checkout attempted without explicit positive email confirmation',
+    );
+  }
+}
+
+export function resolveEnterpriseCheckoutStateAfterConfirmation(
+  flow: EnterpriseCheckoutFlowState,
+  llmState: LlmAgentConversationState,
+  emailConfirmationState: EmailConfirmationState,
+): EnterpriseCheckoutState {
+  if (emailConfirmationState === 'rejected') {
+    return flow.productSelected && flow.quantityConfirmed
+      ? 'EMAIL_COLLECTION_REQUIRED'
+      : 'EMAIL_REQUESTED';
+  }
+  return resolveEnterpriseCheckoutState(flow, llmState);
 }
 
 export function resolveEnterpriseCheckoutState(

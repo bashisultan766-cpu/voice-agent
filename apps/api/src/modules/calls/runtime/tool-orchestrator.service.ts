@@ -68,6 +68,7 @@ import {
   validateEnterpriseEmail,
 } from './voice-email-enterprise-validation.util';
 import {
+  assertEmailConfirmedBeforeCheckout,
   canCreatePaymentLink,
   flowStateFromLlm,
 } from './enterprise-checkout-state-machine.util';
@@ -1266,6 +1267,9 @@ export class ToolOrchestratorService {
             },
           };
         }
+        assertEmailConfirmedBeforeCheckout(
+          metadata.emailConfirmationState as 'pending' | 'confirmed' | 'rejected' | null,
+        );
         const checkoutFlow = flowStateFromLlm(llmState, {
           emailConfirmationState: 'confirmed',
           emailEnterpriseValidated: metadata.emailEnterpriseValidated === true,

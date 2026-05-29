@@ -5,6 +5,7 @@ import {
   buildEmailCollectionPrompt,
   buildEmailProcessingPrompt,
   buildInvalidEmailRetryPrompt,
+  containsInlineEmailConfirmation,
   isPostPaymentClosingUtterance,
   buildPaymentEmailFallbackDeliveryPrompt,
   buildPaymentEmailSendFailurePrompt,
@@ -107,6 +108,10 @@ test('confirmation helpers distinguish yes and no', () => {
     false,
   );
   assert.equal(isEmailConfirmationNegative('no please change it'), true);
+  assert.equal(
+    containsInlineEmailConfirmation("No, it's not correct. user at gmail dot com"),
+    false,
+  );
 });
 
 test('payment send failure and fallback prompts', () => {

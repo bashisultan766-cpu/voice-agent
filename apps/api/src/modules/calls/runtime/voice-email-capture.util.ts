@@ -21,11 +21,15 @@ export {
   formatEmailForVoiceConfirmation,
   spellEmailForCaller,
   isCallerAskingEmailSpellback,
+  isEmailConfirmationNegative,
+  isEmailConfirmationAffirmative,
 } from './spoken-email-normalizer.util';
 
 import {
   extractEmailFromSpeech,
   formatEmailForVoiceConfirmation,
+  isEmailConfirmationAffirmative,
+  isEmailConfirmationNegative,
 } from './spoken-email-normalizer.util';
 
 export const MAX_VOICE_EMAIL_RETRIES = 3;
@@ -345,26 +349,6 @@ export function buildPaymentEmailSendFailurePrompt(failureCount = 1): string {
 
 export function buildPaymentEmailFallbackDeliveryPrompt(): string {
   return PAYMENT_EMAIL_FALLBACK_DELIVERY_PROMPT;
-}
-
-export function isEmailConfirmationAffirmative(text: string): boolean {
-  const t = text.toLowerCase().trim();
-  if (!t) return false;
-  /** Utterance with a new email is capture/correction, not a simple yes. */
-  if (extractEmailFromSpeech(text)) return false;
-  if (/\b(no|not|wrong|incorrect|change|different|nope|nah)\b/.test(t)) return false;
-  if (/\b(that'?s|yes).{0,24}my email\b/.test(t)) return true;
-  return (
-    /\b(yes|yeah|yep|correct|that'?s right|right|exactly|confirmed|confirm|perfect|absolutely|sure)\b/.test(
-      t,
-    ) || /^(ok|okay|si|sì|да|ок)\.?$/i.test(t)
-  );
-}
-
-export function isEmailConfirmationNegative(text: string): boolean {
-  const t = text.toLowerCase().trim();
-  if (!t) return false;
-  return /\b(no|wrong|incorrect|not correct|not right|change|different|try again|nope|nah)\b/.test(t);
 }
 
 export function maskEmailForLog(email: string): string {

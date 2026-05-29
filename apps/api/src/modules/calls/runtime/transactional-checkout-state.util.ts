@@ -52,7 +52,7 @@ const SPOKEN_QUANTITY_WORDS: Record<string, number> = {
 
 export type TransactionalCheckoutContext = {
   llmState: LlmAgentConversationState;
-  emailConfirmationState?: 'pending' | 'confirmed' | 'none' | null;
+  emailConfirmationState?: EmailConfirmationStateValue;
   collectedEmail?: string | null;
   orderState?: string | null;
   emailRetryCount?: number;
@@ -60,11 +60,19 @@ export type TransactionalCheckoutContext = {
   productCheckoutIntroduced?: boolean;
 };
 
+export type EmailConfirmationStateValue = 'pending' | 'confirmed' | 'rejected' | 'none' | null;
+
 export function normalizeEmailConfirmationState(
-  state?: 'pending' | 'confirmed' | 'none' | null,
+  state?: EmailConfirmationStateValue,
 ): 'pending' | 'confirmed' | null {
   if (state === 'pending' || state === 'confirmed') return state;
   return null;
+}
+
+export function isEmailConfirmationRejected(
+  state?: EmailConfirmationStateValue,
+): boolean {
+  return state === 'rejected';
 }
 
 export type TransactionalRouteInput = TransactionalCheckoutContext & {
@@ -348,6 +356,9 @@ export function resolveTransactionalCheckoutState(
   }
   if (emailConfirmationState === 'confirmed' || orderState === 'EMAIL_CONFIRMED') {
     return 'EMAIL_CONFIRMED';
+  }
+  if (ctx.emailConfirmationState === 'rejected') {
+    return isCheckoutCartReady(llmState) ? 'EMAIL_COLLECTION_REQUIRED' : 'EMAIL_REQUESTED';
   }
   if (emailConfirmationState === 'pending' && collectedEmail?.trim()) {
     return 'EMAIL_CONFIRMATION_REQUIRED';

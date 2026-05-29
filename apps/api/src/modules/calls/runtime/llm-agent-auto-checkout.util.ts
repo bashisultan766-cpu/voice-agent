@@ -9,10 +9,7 @@ import {
   type PaymentEmailDeliveryResult,
   validateVoiceEmail,
 } from './voice-email-capture.util';
-import {
-  canCreatePaymentLink,
-  flowStateFromLlm,
-} from './enterprise-checkout-state-machine.util';
+import { canCreatePaymentLink, flowStateFromLlm } from './enterprise-checkout-state-machine.util';
 
 /** Checkout only after explicit customer confirmation — never on email capture alone. */
 export function shouldTriggerCheckoutAfterEmailConfirmed(
