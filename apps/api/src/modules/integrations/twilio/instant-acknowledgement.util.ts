@@ -47,6 +47,8 @@ export type SelectInstantAcknowledgementInput = {
   speechText: string;
   callState: string;
   metadata: Record<string, unknown>;
+  /** When true, never play Twilio Say instant ack — silent deferred kickoff only. */
+  forceElevenLabsOnly?: boolean;
 };
 
 /**
@@ -54,7 +56,7 @@ export type SelectInstantAcknowledgementInput = {
  * Voice consistency rule: prefer deferred kickoff so final speech is rendered via ElevenLabs.
  */
 export function selectInstantAcknowledgement(input: SelectInstantAcknowledgementInput): InstantAckSelection {
-  const { intent, speechText, callState, metadata } = input;
+  const { intent, speechText, callState, metadata, forceElevenLabsOnly = false } = input;
   const trimmed = speechText.trim();
   const normQ = normalizeQuery(trimmed);
   const prevProduct = typeof metadata.lastProductQuery === 'string' ? metadata.lastProductQuery : null;
@@ -109,15 +111,16 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     }
   }
 
-  const fastInstant = isVoiceCommerceFastMode() ? DEFERRED_INSTANT_ACK_PHRASE : null;
+  const fastInstant =
+    !forceElevenLabsOnly && isVoiceCommerceFastMode() ? DEFERRED_INSTANT_ACK_PHRASE : null;
 
   if (intent === 'product_search') {
     if (isLikelyProductCorrection(trimmed)) {
       return {
         mode: 'deferred_kickoff',
-        instantPhrase: fastInstant ?? 'Got it — checking that title instead.',
+        instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'Got it — checking that title instead.'),
         ackReason: 'product_correction',
-        markSessionLetMeCheck: true,
+        markSessionLetMeCheck: !forceElevenLabsOnly,
         nextLastProductQuery: normQ || null,
       };
     }
@@ -142,9 +145,9 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
   if (intent === 'payment_question' || intent === 'product_question') {
     return {
       mode: 'deferred_kickoff',
-      instantPhrase: fastInstant ?? 'One moment while I look that up.',
+      instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'One moment while I look that up.'),
       ackReason: 'question_requires_direct_answer_deferred',
-      markSessionLetMeCheck: Boolean(fastInstant),
+      markSessionLetMeCheck: Boolean(fastInstant) && !forceElevenLabsOnly,
     };
   }
 

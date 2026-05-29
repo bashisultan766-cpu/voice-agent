@@ -46,6 +46,12 @@ import {
   voiceSearchFillerThresholdMs,
 } from '../../calls/runtime/voice-commerce-fast-mode.util';
 import { pickVoiceSearchFillerPhrase } from '../../search/voice/voice-search-filler.util';
+import {
+  buildVoiceProviderEnforcedLog,
+  resolveVoiceProviderPolicy,
+  shouldPlayDeferredSearchFiller,
+  type VoiceProviderPolicy,
+} from './voice-provider-policy.util';
 import type { UserUtteranceIntent } from '../../calls/runtime/user-intent-classifier.util';
 import {
   buildMediaStreamConnectTwiML,
@@ -230,8 +236,11 @@ export class TwilioWebhookService implements OnModuleInit {
   }
 
   private isForceElevenLabsOnly(): boolean {
-    const v = `${this.config.get<string>('FORCE_ELEVENLABS_ONLY') ?? process.env.FORCE_ELEVENLABS_ONLY ?? ''}`.trim();
-    return v === '1' || v.toLowerCase() === 'true';
+    return this.voiceProviderPolicy().forceElevenLabsOnly;
+  }
+
+  private isForceTwilioFallback(): boolean {
+    return this.voiceProviderPolicy().forceTwilioFallback;
   }
 
   /**
@@ -239,13 +248,40 @@ export class TwilioWebhookService implements OnModuleInit {
    * Default is enabled to prevent Twilio <Say> voice drift.
    */
   private isStrictElevenLabsOnly(): boolean {
-    const v = `${this.config.get<string>('STRICT_ELEVENLABS_ONLY') ?? process.env.STRICT_ELEVENLABS_ONLY ?? 'true'}`.trim();
-    return !(v === '0' || v.toLowerCase() === 'false');
+    return this.voiceProviderPolicy().twilioSayBlocked;
   }
 
-  /** When true, short prompts use Twilio Say unless FORCE_ELEVENLABS_ONLY overrides. */
+  private voiceProviderPolicy(): VoiceProviderPolicy {
+    return resolveVoiceProviderPolicy({
+      FORCE_ELEVENLABS_ONLY:
+        this.config.get<string>('FORCE_ELEVENLABS_ONLY') ?? process.env.FORCE_ELEVENLABS_ONLY,
+      STRICT_ELEVENLABS_ONLY:
+        this.config.get<string>('STRICT_ELEVENLABS_ONLY') ?? process.env.STRICT_ELEVENLABS_ONLY,
+      FORCE_TWILIO_FALLBACK:
+        this.config.get<string>('FORCE_TWILIO_FALLBACK') ?? process.env.FORCE_TWILIO_FALLBACK,
+    });
+  }
+
+  private logVoiceProviderEnforced(callSessionId: string, route: string): void {
+    const policy = this.voiceProviderPolicy();
+    if (!policy.twilioSayBlocked) return;
+    this.logger.log(
+      JSON.stringify({
+        ...buildVoiceProviderEnforcedLog(policy),
+        callSessionId,
+        route,
+      }),
+    );
+  }
+
+  /** When true, short prompts use Twilio Say unless ElevenLabs-only policy overrides. */
   private resolveGatherHearingDebugEffective(): boolean {
-    return this.isGatherHearingDebugMode() && !this.isForceElevenLabsOnly() && !this.isStrictElevenLabsOnly();
+    if (this.voiceProviderPolicy().twilioSayBlocked) return false;
+    return this.isGatherHearingDebugMode();
+  }
+
+  private allowTwilioSayFallback(): boolean {
+    return !this.voiceProviderPolicy().twilioSayBlocked;
   }
 
   /**
@@ -284,6 +320,9 @@ export class TwilioWebhookService implements OnModuleInit {
     logLabel: string;
     allowWhenLlmReplyActive?: boolean;
   }): Promise<{ playbackUrl?: string; voiceProviderActuallyUsed: 'elevenlabs' | 'twilio_say_fallback' }> {
+    const policy = this.voiceProviderPolicy();
+    const blockTwilioSay = policy.twilioSayBlocked;
+
     const sessionRow = await this.callsService.findOneById(params.callSessionId);
     const sessionMeta =
       sessionRow.metadata && typeof sessionRow.metadata === 'object' && !Array.isArray(sessionRow.metadata)
@@ -302,13 +341,15 @@ export class TwilioWebhookService implements OnModuleInit {
         sourceFunction: blocked.sourceFunction,
         reason: blocked.reason,
       });
-      return { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+      return blockTwilioSay
+        ? { voiceProviderActuallyUsed: 'elevenlabs' }
+        : { voiceProviderActuallyUsed: 'twilio_say_fallback' };
     }
 
     const voiceId = this.resolveElevenLabsVoiceId(params.agent);
     const voiceProviderRequested = 'elevenlabs';
-    const forceElOnly = this.isForceElevenLabsOnly();
-    const strictElOnly = this.isStrictElevenLabsOnly();
+    const forceElOnly = policy.forceElevenLabsOnly;
+    const strictElOnly = blockTwilioSay;
 
     if (params.hearingDebugEffective && strictElOnly) {
       this.logger.warn(
@@ -352,18 +393,24 @@ export class TwilioWebhookService implements OnModuleInit {
           voiceFallbackToTwilioSay: !strictElOnly,
           fallbackReason: !voiceId ? 'no_elevenlabs_voice_id' : 'webhook_base_not_https',
           strictElevenLabsOnly: strictElOnly,
+          twilioSayBlocked: blockTwilioSay,
         }),
       );
       return strictElOnly
         ? { playbackUrl: undefined, voiceProviderActuallyUsed: 'elevenlabs' }
         : { voiceProviderActuallyUsed: 'twilio_say_fallback' };
     }
-    const r = await this.voicePromptAudio.createPhrasePlaybackUrl(params.origin, {
+
+    const phraseOpts = {
       text: params.text,
       voiceId,
       apiKey: params.agent.elevenlabsApiKey ?? undefined,
       modelId: params.agent.elevenlabsModel ?? undefined,
-    });
+    };
+    let r = await this.voicePromptAudio.createPhrasePlaybackUrl(params.origin, phraseOpts);
+    if (!r.playbackUrl && blockTwilioSay) {
+      r = await this.voicePromptAudio.createPhrasePlaybackUrl(params.origin, phraseOpts);
+    }
     if (!r.playbackUrl) {
       this.logger.warn(
         JSON.stringify({
@@ -377,6 +424,7 @@ export class TwilioWebhookService implements OnModuleInit {
           voiceFallbackToTwilioSay: !strictElOnly,
           fallbackReason: 'elevenlabs_phrase_failed',
           strictElevenLabsOnly: strictElOnly,
+          twilioSayBlocked: blockTwilioSay,
         }),
       );
       return strictElOnly
@@ -1242,11 +1290,15 @@ export class TwilioWebhookService implements OnModuleInit {
           ? metadata.orderState.trim()
           : 'IDLE';
       const userIntent = classifyUserIntent(speechText);
+      const voicePolicy = this.voiceProviderPolicy();
+      this.logVoiceProviderEnforced(callSessionId, 'gather');
+
       const ackSelection = selectInstantAcknowledgement({
         intent: userIntent,
         speechText,
         callState: orderStateForAck,
         metadata,
+        forceElevenLabsOnly: voicePolicy.twilioSayBlocked,
       });
       const letMeCheckUsedBefore = metadata.letMeCheckUsed === true;
 
@@ -1395,7 +1447,7 @@ export class TwilioWebhookService implements OnModuleInit {
         );
       }
 
-      const allowKickSayFallback = kickText.length > 0;
+      const allowKickSayFallback = kickText.length > 0 && this.allowTwilioSayFallback();
       this.logger.log(
         JSON.stringify({
           event: 'voice.runtime.url_summary',
@@ -1743,7 +1795,12 @@ export class TwilioWebhookService implements OnModuleInit {
         return { twiml, callSessionId, agentResolved: true };
       }
       const fillerThresholdMs = voiceSearchFillerThresholdMs();
-      if (elapsed > fillerThresholdMs && !job.momentPromptPlayed) {
+      const voicePolicyPoll = this.voiceProviderPolicy();
+      if (
+        elapsed > fillerThresholdMs &&
+        !job.momentPromptPlayed &&
+        shouldPlayDeferredSearchFiller(voicePolicyPoll)
+      ) {
         await this.callsService.mergeSessionMetadata(callSessionId, {
           deferredVoiceJob: { ...job, momentPromptPlayed: true },
         });
@@ -1770,7 +1827,7 @@ export class TwilioWebhookService implements OnModuleInit {
           deferPollUrl,
           playbackUrl: fillerPlay.playbackUrl,
           sayFallbackText: fillerText,
-          allowTwilioSayFallback: true,
+          allowTwilioSayFallback: this.allowTwilioSayFallback(),
           language: this.getSessionLanguage(ctx),
         });
         this.logTwilioResponseMetrics('deferred_poll_filler', callSessionId, handlerStartedAt);
@@ -2376,13 +2433,17 @@ export class TwilioWebhookService implements OnModuleInit {
         }),
       );
 
-      const audio = await this.elevenLabs.textToSpeech(speechText, opts.voiceId, {
+      const ttsOpts = {
         apiKey: opts.elevenlabsApiKey,
         modelId: opts.elevenlabsModel,
-      });
+      };
+      let audio = await this.elevenLabs.textToSpeech(speechText, opts.voiceId, ttsOpts);
+      let validation = validateTtsAudioBuffer(audio);
+      if (!validation.valid && this.voiceProviderPolicy().twilioSayBlocked) {
+        audio = await this.elevenLabs.textToSpeech(speechText, opts.voiceId, ttsOpts);
+        validation = validateTtsAudioBuffer(audio);
+      }
       const tts_generation_time_ms = Date.now() - ttsStart;
-
-      const validation = validateTtsAudioBuffer(audio);
       if (!validation.valid) {
         this.logger.warn(
           JSON.stringify({

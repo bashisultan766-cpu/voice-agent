@@ -742,3 +742,63 @@ test('production log: yeah just one copy for this locks checkout without OpenAI'
   assert.doesNotMatch(out.reply, /share your email/i);
   assert.doesNotMatch(out.reply, /prepare the payment link/i);
 });
+
+test('post payment thank you returns closing reply without email collection', async () => {
+  const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
+  let openAiCalls = 0;
+
+  const orchestrator = new LlmAgentOrchestratorService(
+    { get: () => undefined } as never,
+    {
+      load: async () =>
+        ({
+          tenantId: 't1',
+          agentId: 'a1',
+          storeId: 's1',
+          agent: {
+            openaiApiKey: 'sk-test-key-1234567890',
+            model: 'gpt-4o-mini',
+            enabledTools: [],
+            runtimeCredentialHints: { openaiKeySource: 'test' },
+          },
+          store: { name: 'SureShot Books' },
+        }) as never,
+    } as never,
+    { execute: async () => ({ ok: false, toolName: 'n/a', storeId: 's1', error: { code: 'UNEXPECTED', message: 'n/a', retryable: false } }) } as never,
+    {
+      summarizeForPrompt: () => '',
+      load: async () => ({ emailConfirmationState: 'confirmed' }),
+      setEmailState: async () => undefined,
+    } as never,
+    {
+      findOneById: async () => ({
+        metadata: {
+          orderState: 'PAYMENT_LINK_SENT',
+          llmAgentState: {
+            checkoutStage: 'payment_sent',
+            paymentLinkSent: true,
+            paymentLinkCreated: true,
+            selectedProducts: [],
+            lastSearchedProducts: [],
+            quantities: {},
+            customerEmail: 'buyer@example.com',
+          },
+        },
+      }),
+      mergeSessionMetadata: async () => ({}),
+    } as never,
+  );
+
+  const out = await orchestrator.handleTurn('sess_post_pay', 'thank you', [], {
+    completionFn: async () => {
+      openAiCalls += 1;
+      return { choices: [{ message: { role: 'assistant', content: 'Please spell your email.' } }] } as never;
+    },
+    skipMxValidation: true,
+  });
+
+  assert.equal(openAiCalls, 0);
+  assert.match(out.reply, /You're welcome/i);
+  assert.match(out.reply, /Thank you for your order/i);
+  assert.doesNotMatch(out.reply, /spell your email/i);
+});

@@ -5,6 +5,7 @@ import {
   buildEmailCollectionPrompt,
   buildEmailProcessingPrompt,
   buildInvalidEmailRetryPrompt,
+  isPostPaymentClosingUtterance,
   buildPaymentEmailFallbackDeliveryPrompt,
   buildPaymentEmailSendFailurePrompt,
   buildPaymentEmailSuccessPrompt,
@@ -70,18 +71,28 @@ test('buildEmailConfirmationPrompt reads email back for confirmation', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
   assert.match(prompt, /Just to confirm, your email is shahbazsultan88 at gmail dot com/i);
   assert.match(prompt, /Is that correct/i);
-  assert.match(prompt, /say yes/i);
+  assert.doesNotMatch(prompt, /say yes/i);
 });
 
 test('buildEmailCollectionPrompt uses premium spell-slowly copy', () => {
   assert.match(buildEmailCollectionPrompt(0), /spell your email address slowly/i);
+  assert.match(buildEmailCollectionPrompt(0), /letter by letter/i);
+  assert.doesNotMatch(buildEmailCollectionPrompt(0), /b a s h i/i);
   assert.match(buildEmailCollectionPrompt(0, true), /Perfect\. I'll help you place the order/i);
-  assert.match(buildEmailCollectionPrompt(1), /did not quite catch/i);
+  assert.match(buildEmailCollectionPrompt(1), /couldn't verify that email/i);
+  assert.doesNotMatch(buildEmailCollectionPrompt(1), /b a s h i/i);
 });
 
 test('buildInvalidEmailRetryPrompt asks caller to repeat slowly', () => {
-  assert.match(buildInvalidEmailRetryPrompt(1), /captured that incorrectly/i);
-  assert.match(buildInvalidEmailRetryPrompt(MAX_VOICE_EMAIL_RETRIES), /character by character/i);
+  assert.match(buildInvalidEmailRetryPrompt(1), /couldn't verify that email/i);
+  assert.doesNotMatch(buildInvalidEmailRetryPrompt(1), /b a s h i/i);
+  assert.match(buildInvalidEmailRetryPrompt(MAX_VOICE_EMAIL_RETRIES), /letter by letter/i);
+});
+
+test('isPostPaymentClosingUtterance recognizes thank-you without restarting checkout', () => {
+  assert.equal(isPostPaymentClosingUtterance('thank you'), true);
+  assert.equal(isPostPaymentClosingUtterance('okay thanks'), true);
+  assert.equal(isPostPaymentClosingUtterance('sureshot924@gmail.com'), false);
 });
 
 test('confirmation helpers distinguish yes and no', () => {

@@ -37,17 +37,27 @@ export type PaymentEmailDeliveryResult = {
   errorCode?: string;
 };
 
+/** First-time email collection only — no long spoken example on retries. */
 export const EMAIL_SPELL_COLLECTION_PROMPT =
-  'Please spell your email address slowly using alphabets, character by character, so I can send your payment link correctly. For example: b a s h i, s u l t a n, seven six six, at gmail dot com.';
+  'Please spell your email address slowly, letter by letter, so I can send your payment link correctly.';
 
 export const EMAIL_SPELL_COLLECTION_PROMPT_ALT =
-  'Please say your email slowly, character by character.';
+  'Please say your email slowly, letter by letter.';
 
 /** Premium opener before spell-slowly email collection. */
 export const EMAIL_COLLECTION_WITH_CONTEXT_PROMPT = `${CHECKOUT_PRODUCT_CONFIRMED_PROMPT} ${EMAIL_SPELL_COLLECTION_PROMPT}`;
 
-export const EMAIL_INVALID_CAPTURE_PROMPT =
-  'I may have captured that incorrectly. Could you please repeat your email slowly?';
+export const EMAIL_INVALID_VERIFY_RETRY_PROMPT =
+  "I couldn't verify that email. Please spell your email address again, letter by letter.";
+
+export const EMAIL_INVALID_CAPTURE_RETRY_PROMPT =
+  'I may have captured that incorrectly. Please spell your email again, letter by letter.';
+
+/** @deprecated Use EMAIL_INVALID_CAPTURE_RETRY_PROMPT */
+export const EMAIL_INVALID_CAPTURE_PROMPT = EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
+
+export const POST_PAYMENT_THANK_YOU_REPLY =
+  "You're welcome. Thank you for your order.";
 
 export const EMAIL_PROCESSING_PROMPT = 'Perfect. Processing your order now.';
 
@@ -72,8 +82,10 @@ const DETERMINISTIC_TRANSACTIONAL_MARKERS: RegExp[] = [
   /Perfect\. I'll help you place the order/i,
   /Just to confirm, your email is/i,
   /spell your email address slowly/i,
-  /say your email slowly, character by character/i,
+  /letter by letter/i,
+  /I couldn't verify that email/i,
   /I may have captured that incorrectly/i,
+  /You're welcome\. Thank you for your order/i,
   /Perfect\. Processing your order now/i,
   /Your payment link has been sent successfully/i,
   /there was an issue sending the payment link/i,
@@ -210,7 +222,16 @@ export function formatEmailForVoiceConfirmation(email: string): string {
 
 export function buildEmailConfirmationPrompt(email: string): string {
   const spoken = formatEmailForVoiceConfirmation(email);
-  return `Just to confirm, your email is ${spoken}. Is that correct? Please say yes if that is right, or no if I should try again.`;
+  return `Just to confirm, your email is ${spoken}. Is that correct?`;
+}
+
+/** After payment link sent — polite close; do not restart email collection. */
+export function isPostPaymentClosingUtterance(text: string): boolean {
+  const t = text.toLowerCase().trim();
+  if (!t) return false;
+  if (extractEmailFromSpeech(text)) return false;
+  if (/\b(email|checkout|order another|another book|payment link)\b/.test(t)) return false;
+  return /\b(thank you|thanks|thankyou|ok|okay|alright|got it|appreciate it|perfect|great)\b/.test(t);
 }
 
 export function buildCheckoutProductConfirmedPrompt(): string {
@@ -219,10 +240,10 @@ export function buildCheckoutProductConfirmedPrompt(): string {
 
 export function buildEmailCollectionPrompt(retryCount = 0, withOrderContext = false): string {
   if (retryCount >= MAX_VOICE_EMAIL_RETRIES) {
-    return `${EMAIL_SPELL_COLLECTION_PROMPT_ALT} I want to make sure I have this right.`;
+    return EMAIL_SPELL_COLLECTION_PROMPT_ALT;
   }
   if (retryCount > 0) {
-    return 'I apologize—I did not quite catch that. Please spell your email address slowly using alphabets.';
+    return EMAIL_INVALID_VERIFY_RETRY_PROMPT;
   }
   return withOrderContext ? EMAIL_COLLECTION_WITH_CONTEXT_PROMPT : EMAIL_SPELL_COLLECTION_PROMPT;
 }
@@ -253,9 +274,9 @@ export function isFallbackChannelAffirmative(text: string): 'whatsapp' | 'sms' |
 
 export function buildInvalidEmailRetryPrompt(retryCount: number): string {
   if (!shouldOfferEmailRetry(retryCount)) {
-    return `${EMAIL_INVALID_CAPTURE_PROMPT} ${EMAIL_SPELL_COLLECTION_PROMPT_ALT}`;
+    return EMAIL_SPELL_COLLECTION_PROMPT_ALT;
   }
-  return EMAIL_INVALID_CAPTURE_PROMPT;
+  return EMAIL_INVALID_VERIFY_RETRY_PROMPT;
 }
 
 export function buildEmailProcessingPrompt(): string {

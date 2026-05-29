@@ -51,6 +51,8 @@ import {
   PRODUCT_CHECKOUT_INTRODUCED_KEY,
   parsePaymentEmailDeliveryFromToolData,
   isPaymentEmailDeliveryConfirmed,
+  isPostPaymentClosingUtterance,
+  POST_PAYMENT_THANK_YOU_REPLY,
   sanitizePaymentSuccessClaim,
   type PaymentEmailDeliveryResult,
 } from './voice-email-capture.util';
@@ -193,8 +195,57 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     const memory = await this.callMemory.load(callSessionId);
     const sessionMetaAtStart = await loadSessionMeta();
 
+    const paymentLinkSent =
+      state.paymentLinkSent === true || sessionMetaAtStart.orderState === 'PAYMENT_LINK_SENT';
+
+    if (paymentLinkSent && isPostPaymentClosingUtterance(userMessage)) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.checkout.post_payment_closing',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+        }),
+      );
+      return {
+        reply: POST_PAYMENT_THANK_YOU_REPLY,
+        toolCallsCount: 0,
+        toolNames: [],
+        escalated: false,
+        state,
+        proof: {
+          openaiKeySource,
+          modelUsed: 'n/a',
+          openaiCalled: false,
+          openaiSuccess: true,
+          transactionalMode: false,
+          deterministicReplyUsed: true,
+          skipOpenAiGeneration: true,
+        },
+      };
+    }
+
     /** PRIORITY 1: checkout signals before intent classification or OpenAI. */
     state = applyCheckoutSignalsFromSpeech(state, userMessage);
+
+    if (paymentLinkSent && extractEmailFromSpeech(userMessage)) {
+      return {
+        reply: POST_PAYMENT_THANK_YOU_REPLY,
+        toolCallsCount: 0,
+        toolNames: [],
+        escalated: false,
+        state,
+        proof: {
+          openaiKeySource,
+          modelUsed: 'n/a',
+          openaiCalled: false,
+          openaiSuccess: true,
+          deterministicMode: false,
+          deterministicReplyUsed: true,
+          skipOpenAiGeneration: true,
+        },
+      };
+    }
 
     let emailConfirmedThisTurn = false;
     let emailCapturedReply: string | null = null;
