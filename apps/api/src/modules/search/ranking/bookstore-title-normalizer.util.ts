@@ -64,6 +64,20 @@ export function romanToArabicToken(token: string): string {
   return n != null ? String(n) : token;
 }
 
+/** Common speech-to-text confusions in book titles (voice commerce). */
+const VOICE_STT_EQUIVALENTS: Record<string, string[]> = {
+  kitchen: ['chicken'],
+  chicken: ['kitchen'],
+  soap: ['soup'],
+  soup: ['soap'],
+  soul: ['souls'],
+  souls: ['soul'],
+  prisoner: ['prisoners'],
+  prisoners: ['prisoner'],
+  fire: ['fires'],
+  ice: ['ices'],
+};
+
 export function expandQueryTokens(query: string): string[] {
   const norm = normalizeBookTitleForSearch(query);
   const base = norm.split(/\s+/).filter((t) => t.length > 0);
@@ -71,6 +85,7 @@ export function expandQueryTokens(query: string): string[] {
   for (const t of base) {
     const asNum = romanToArabicToken(t);
     if (asNum !== t) expanded.push(asNum);
+    for (const alt of VOICE_STT_EQUIVALENTS[t] ?? []) expanded.push(alt);
   }
   const vol = extractVolumeNumber(query);
   if (vol != null) expanded.push(String(vol));

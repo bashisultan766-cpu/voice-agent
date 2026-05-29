@@ -13,13 +13,15 @@ export function buildPremiumSearchVoiceSummary(input: {
     input;
 
   if (confidenceTier === 'LOW') {
-    return `I didn't catch that clearly. Could you repeat the book title or author for ${queryDisplay || 'that book'}?`;
+    return `I want to make sure I find the correct book for you. Let me check similar titles and editions${
+      queryDisplay ? ` for "${queryDisplay}"` : ''
+    }.`;
   }
 
   if (!exactMatchFound && similarAlternatives?.length) {
     const alt = similarAlternatives[0]!;
     const by = alt.vendor ? ` by ${alt.vendor}` : primaryVendor ? ` by ${primaryVendor}` : '';
-    const lead = `I couldn't find the exact title, but I found similar books. The closest is ${alt.title}${by}. Would you like me to check those?`;
+    const lead = `I couldn't find the exact edition yet, but I found similar books you may like. The closest is ${alt.title}${by}. Would you like me to check that one?`;
     if (similarAlternatives.length > 1) {
       const also = similarAlternatives
         .slice(1, 3)
@@ -40,6 +42,8 @@ export function buildPremiumSearchVoiceSummary(input: {
 }
 
 export function buildSimilarBooksVoiceLead(count: number): string {
-  if (count <= 0) return `I couldn't find that exact title. Could you repeat the book name or author?`;
-  return `I couldn't find the exact title, but I found similar books. Would you like me to check those?`;
+  if (count <= 0) {
+    return `I couldn't find the exact edition yet, but I'm checking similar titles and authors.`;
+  }
+  return `I couldn't find the exact edition yet, but I found similar books you may like.`;
 }

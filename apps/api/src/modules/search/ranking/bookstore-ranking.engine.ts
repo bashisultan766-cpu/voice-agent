@@ -6,7 +6,12 @@ import {
   scoreCatalogProduct,
 } from '../../agents/shopify-product-relevance.util';
 import type { BookstoreConfidenceTier, BookstoreRankedProduct } from '../types/bookstore-search.types';
-import { buildTitleEmbedding, cosineSimilarity } from './bookstore-semantic.util';
+import {
+  buildAuthorEmbedding,
+  buildCategoryEmbedding,
+  buildTitleEmbedding,
+  cosineSimilarity,
+} from './bookstore-semantic.util';
 import { deriveSeriesKey, extractVolumeNumber, seriesMatchBoost } from './bookstore-series.util';
 import {
   expandQueryTokens,
@@ -22,6 +27,11 @@ export interface BookstoreRankingInput {
   maxResults: number;
   queryEmbedding?: Float32Array;
   indexEmbeddings?: Map<string, Float32Array>;
+  indexAuthorEmbeddings?: Map<string, Float32Array>;
+  indexCategoryEmbeddings?: Map<string, Float32Array>;
+  indexDescriptionEmbeddings?: Map<string, Float32Array>;
+  /** When true, semantic similarity always counts toward semanticSearchUsed. */
+  catalogSemanticRecovery?: boolean;
 }
 
 export interface BookstoreRankingOutput {
@@ -42,6 +52,10 @@ export interface BookstoreRankingOutput {
   }>;
   fuzzySearchActivated: boolean;
   semanticSearchUsed: boolean;
+  semanticSearchActivated: boolean;
+  semanticConfidence: number;
+  semanticMatchReason: string | null;
+  rerankScore: number;
 }
 
 const POPULAR_SERIES_HINTS: Record<string, string[]> = {
@@ -87,6 +101,12 @@ export function rankBookstoreProducts(input: BookstoreRankingInput): BookstoreRa
 
   let fuzzySearchActivated = false;
   let semanticSearchUsed = false;
+  let semanticSearchActivated = Boolean(input.catalogSemanticRecovery);
+  let topSemanticConfidence = 0;
+  let topSemanticReason: string | null = null;
+
+  const queryAuthorEmb = buildAuthorEmbedding(queryAuthor ?? '');
+  const queryCategoryEmb = buildCategoryEmbedding(null, input.probableTitle || input.queryOriginal);
 
   const scored = input.products.map((p) => {
     const legacy = scoreCatalogProduct(input.queryOriginal, input.probableTitle, p);
@@ -96,8 +116,38 @@ export function rankBookstoreProducts(input: BookstoreRankingInput): BookstoreRa
     const productEmbedding =
       input.indexEmbeddings?.get((p as { productId?: string }).productId ?? p.title) ??
       buildTitleEmbedding(p.title);
-    const semantic = cosineSimilarity(queryEmbedding, productEmbedding);
-    if (semantic > 0.35) semanticSearchUsed = true;
+    const pid = (p as { productId?: string }).productId ?? p.title;
+    const authorEmb =
+      input.indexAuthorEmbeddings?.get(pid) ?? buildAuthorEmbedding(p.vendor ?? '');
+    const catEmb =
+      input.indexCategoryEmbeddings?.get(pid) ??
+      buildCategoryEmbedding(p.productType ?? null, (p.tags ?? []).join(' '));
+    const descEmb = input.indexDescriptionEmbeddings?.get(pid);
+    const titleSemantic = cosineSimilarity(queryEmbedding, productEmbedding);
+    const authorSemantic = cosineSimilarity(queryAuthorEmb, authorEmb);
+    const categorySemantic = cosineSimilarity(queryCategoryEmb, catEmb);
+    const descSemantic = descEmb ? cosineSimilarity(queryEmbedding, descEmb) : 0;
+    const semantic = Math.max(
+      titleSemantic,
+      authorSemantic * 0.85,
+      categorySemantic * 0.75,
+      descSemantic * 0.8,
+    );
+    if (semantic > topSemanticConfidence) {
+      topSemanticConfidence = semantic;
+      topSemanticReason =
+        titleSemantic >= authorSemantic && titleSemantic >= categorySemantic
+          ? 'semantic_title'
+          : authorSemantic >= categorySemantic
+            ? 'semantic_author'
+            : categorySemantic >= descSemantic
+              ? 'semantic_category'
+              : 'semantic_description';
+    }
+    if (semantic > 0.35 || (input.catalogSemanticRecovery && semantic > 0.28)) {
+      semanticSearchUsed = true;
+      semanticSearchActivated = true;
+    }
 
     const seriesKey = deriveSeriesKey(p.title);
     const volumeNumber = extractVolumeNumber(p.title);
@@ -174,10 +224,15 @@ export function rankBookstoreProducts(input: BookstoreRankingInput): BookstoreRa
     .slice(0, 15)
     .map((p) => ({ title: p.title, score: p.relevanceScore, matchReason: p.matchReason }));
 
-  const considered = scored.filter((p) => p.relevanceScore >= PRODUCT_SEARCH_MIN_CONSIDER_SCORE);
+  const minConsiderScore = input.catalogSemanticRecovery ? 320 : PRODUCT_SEARCH_MIN_CONSIDER_SCORE;
+  const considered = scored.filter((p) => p.relevanceScore >= minConsiderScore);
   const confidentBand = considered.filter((p) => p.relevanceScore >= PRODUCT_SEARCH_CONFIRM_MIN_SCORE);
   const take = Math.max(1, Math.min(5, input.maxResults));
-  const capped = confidentBand.slice(0, take);
+  const capped = (
+    input.catalogSemanticRecovery && confidentBand.length === 0
+      ? considered
+      : confidentBand
+  ).slice(0, take);
 
   const bestScore = scored[0]?.relevanceScore ?? 0;
   const bestReason = scored[0]?.matchReason ?? null;
@@ -222,6 +277,10 @@ export function rankBookstoreProducts(input: BookstoreRankingInput): BookstoreRa
     diagnostics,
     fuzzySearchActivated,
     semanticSearchUsed,
+    semanticSearchActivated,
+    semanticConfidence: topSemanticConfidence,
+    semanticMatchReason: topSemanticReason,
+    rerankScore: bestScore,
   };
 }
 
@@ -233,13 +292,19 @@ export function pickSimilarRecommendations(
 ): Array<{ title: string; score: number; matchReason: string; vendor?: string | null }> {
   const querySeries = deriveSeriesKey(query);
   const queryAuthor = detectAuthorInQuery(query);
-  const pool = allRanked.filter((p) => p.relevanceScore >= 400);
+  const pool = allRanked.filter((p) => p.relevanceScore >= 280);
   const similar = pool.filter((p) => {
     if (querySeries && p.seriesKey && (p.seriesKey.includes(querySeries) || querySeries.includes(p.seriesKey))) {
       return true;
     }
     if (queryAuthor && p.vendor && normalizeBookTitleForSearch(p.vendor).includes(queryAuthor)) return true;
-    return p.relevanceScore >= 550 && p.matchReason.includes('semantic');
+    return (
+      p.relevanceScore >= 400 &&
+      (p.matchReason.includes('semantic') ||
+        p.matchReason.includes('fuzzy') ||
+        p.matchReason.includes('catalog') ||
+        p.matchReason.includes('author'))
+    );
   });
   return similar.slice(0, limit).map((p) => ({
     title: p.title,

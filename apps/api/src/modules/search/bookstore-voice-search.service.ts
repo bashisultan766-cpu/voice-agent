@@ -23,10 +23,13 @@ import type { VoiceProductOfferInput } from '../calls/runtime/book-sales-voice.u
 import { detectBookCategoryQuery, formatCategorySearchVoiceSummary } from '../calls/runtime/book-sales-voice.util';
 import { BookstoreProductIndexService } from './bookstore-product-index.service';
 import { BookstoreSearchCacheService, POPULAR_WARM_QUERIES } from './bookstore-search-cache.service';
+import { retrieveFromCatalogIndex } from './ranking/bookstore-catalog-retrieval.util';
 import {
   pickSimilarRecommendations,
   rankBookstoreProducts,
 } from './ranking/bookstore-ranking.engine';
+import type { BookstoreIndexProduct } from './types/bookstore-search.types';
+import type { BookstoreSearchFallbackStage } from './types/bookstore-search.types';
 import { normalizeBookTitleForSearch } from './ranking/bookstore-title-normalizer.util';
 import type {
   BookstoreConfidenceTier,
@@ -199,9 +202,54 @@ export class BookstoreVoiceSearchService {
 
     const localIds = this.index.localCandidateIds(indexProducts, probableTitle || cleanedQuery);
 
-    const boosted = this.prioritizeLocalHits(rawProducts, localIds);
+    let boosted = this.prioritizeLocalHits(rawProducts, localIds);
+    let fallbackStage: BookstoreSearchFallbackStage =
+      rawProducts.length > 0 ? 'shopify_live' : 'none';
+    let vectorLatencyMs = 0;
+    let catalogSemanticConfidence = 0;
+    let catalogSemanticReason: string | null = null;
+    let catalogRerankScore = 0;
+    let catalogSemanticActivated = false;
+
+    const needsCatalogRecovery =
+      indexProducts.length > 0 &&
+      (rawProducts.length === 0 ||
+        localIds.length === 0 ||
+        (rawProducts.length > 0 && rawProducts.length < 3));
+
+    if (needsCatalogRecovery) {
+      const catalogResult = retrieveFromCatalogIndex(
+        indexProducts,
+        productSearchInputRaw,
+        probableTitle || cleanedQuery || productSearchInputRaw,
+        20,
+      );
+      vectorLatencyMs = catalogResult.vectorLatencyMs;
+      catalogSemanticConfidence = catalogResult.semanticConfidence;
+      catalogSemanticReason = catalogResult.semanticMatchReason;
+      catalogSemanticActivated = catalogResult.semanticSearchActivated;
+      catalogRerankScore = catalogResult.candidates[0]?.rerankScore ?? 0;
+      if (catalogResult.fallbackStage !== 'none') {
+        fallbackStage =
+          rawProducts.length > 0 ? 'combined' : (catalogResult.fallbackStage as BookstoreSearchFallbackStage);
+      }
+
+      const hydrateIds = catalogResult.candidates.slice(0, 12).map((c) => c.productId);
+      const hydrated = await this.index.hydrateProducts(
+        input.tenantId,
+        input.agentId,
+        input.shopDomain,
+        hydrateIds,
+      );
+      boosted = this.mergeUniqueProducts(boosted, hydrated);
+      if (boosted.length > 0 && rawProducts.length === 0) {
+        boosted = this.prioritizeLocalHits(boosted, hydrateIds);
+      }
+    }
+
     const normalizedQuery = normalizeForMatch(probableTitle || cleanedQuery || productSearchInputRaw);
     const maxVoiceHits = Math.min(5, Math.max(1, input.limit));
+    const embeddingMaps = this.buildEmbeddingMaps(indexProducts);
 
     const rankingStarted = Date.now();
     const ranking = rankBookstoreProducts({
@@ -210,6 +258,10 @@ export class BookstoreVoiceSearchService {
       products: boosted,
       maxResults: maxVoiceHits,
       indexEmbeddings: embeddings,
+      indexAuthorEmbeddings: embeddingMaps.author,
+      indexCategoryEmbeddings: embeddingMaps.category,
+      indexDescriptionEmbeddings: embeddingMaps.description,
+      catalogSemanticRecovery: catalogSemanticActivated || rawProducts.length === 0,
     });
     const semanticRankingLatencyMs = Date.now() - rankingStarted;
 
@@ -251,7 +303,16 @@ export class BookstoreVoiceSearchService {
     const confidenceTier = ranking.confidenceTier;
     let finalVoiceSummary: string;
 
-    if (ranking.bestScore < PRODUCT_SEARCH_CONFIRM_MIN_SCORE || productsOut.length === 0) {
+    if (
+      ranking.bestScore < PRODUCT_SEARCH_CONFIRM_MIN_SCORE ||
+      productsOut.length === 0
+    ) {
+      if (productsOut.length === 0 && ranking.ranked.length > 0) {
+        productsOut = ranking.ranked
+          .map((r) => boosted.find((b) => b.productId === r.productId))
+          .filter((p): p is ShopifyProductSummary => Boolean(p))
+          .slice(0, 3);
+      }
       if (similar.length > 0) {
         const altProducts = similar
           .map((s) => boosted.find((b) => b.title === s.title))
@@ -321,9 +382,16 @@ export class BookstoreVoiceSearchService {
     const searchLatencyMs = Date.now() - started;
     const slowPath =
       searchLatencyMs >= 2000 || shopifyLatencyMs >= 1500 || semanticRankingLatencyMs >= 400;
+    const semanticSearchUsed = ranking.semanticSearchUsed || catalogSemanticActivated;
     const bookstoreSearch: BookstoreSearchDiagnostics = {
       fuzzySearchActivated: ranking.fuzzySearchActivated,
-      semanticSearchUsed: ranking.semanticSearchUsed,
+      semanticSearchUsed,
+      semanticSearchActivated: ranking.semanticSearchActivated || catalogSemanticActivated,
+      semanticConfidence: Math.max(ranking.semanticConfidence, catalogSemanticConfidence),
+      semanticMatchReason: ranking.semanticMatchReason ?? catalogSemanticReason,
+      rerankScore: Math.max(ranking.rerankScore, catalogRerankScore),
+      vectorLatencyMs,
+      fallbackStage,
       cacheHit: false,
       memoryHit: false,
       redisHit: false,
@@ -402,6 +470,34 @@ export class BookstoreVoiceSearchService {
     void this.cache.setRedis(input.tenantId, input.agentId, normalizedCacheKey, result);
 
     return result;
+  }
+
+  private buildEmbeddingMaps(indexProducts: BookstoreIndexProduct[]): {
+    author: Map<string, Float32Array>;
+    category: Map<string, Float32Array>;
+    description: Map<string, Float32Array>;
+  } {
+    const author = new Map<string, Float32Array>();
+    const category = new Map<string, Float32Array>();
+    const description = new Map<string, Float32Array>();
+    for (const p of indexProducts) {
+      author.set(p.productId, p.authorEmbedding);
+      category.set(p.productId, p.categoryEmbedding);
+      description.set(p.productId, p.descriptionEmbedding);
+    }
+    return { author, category, description };
+  }
+
+  private mergeUniqueProducts(
+    primary: ShopifyProductSummary[],
+    extra: ShopifyProductSummary[],
+  ): ShopifyProductSummary[] {
+    const byId = new Map<string, ShopifyProductSummary>();
+    for (const p of primary) byId.set(p.productId, p);
+    for (const p of extra) {
+      if (!byId.has(p.productId)) byId.set(p.productId, p);
+    }
+    return [...byId.values()];
   }
 
   private prioritizeLocalHits(

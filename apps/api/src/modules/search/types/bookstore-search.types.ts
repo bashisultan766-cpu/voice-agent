@@ -20,9 +20,26 @@ export interface BookstoreRankedProduct {
   volumeNumber?: number | null;
 }
 
+export type BookstoreSearchFallbackStage =
+  | 'shopify_live'
+  | 'exact_title'
+  | 'fuzzy_local'
+  | 'semantic_vector'
+  | 'author_category'
+  | 'combined'
+  | 'cache'
+  | 'none';
+
 export interface BookstoreSearchDiagnostics {
   fuzzySearchActivated: boolean;
   semanticSearchUsed: boolean;
+  /** True when catalog vector or semantic ranking stage fired. */
+  semanticSearchActivated?: boolean;
+  semanticConfidence?: number;
+  semanticMatchReason?: string | null;
+  rerankScore?: number;
+  vectorLatencyMs?: number;
+  fallbackStage?: BookstoreSearchFallbackStage;
   cacheHit: boolean;
   memoryHit: boolean;
   redisHit?: boolean;
@@ -68,4 +85,6 @@ export interface BookstoreIndexProduct {
   embedding: Float32Array;
   authorEmbedding: Float32Array;
   categoryEmbedding: Float32Array;
+  descriptionEmbedding: Float32Array;
+  descriptionSnippet: string;
 }

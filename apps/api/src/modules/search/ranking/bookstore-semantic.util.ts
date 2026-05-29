@@ -46,6 +46,18 @@ export function buildCategoryEmbedding(productType: string | null, tags: string 
   return buildTitleEmbedding(`category:${combined}`);
 }
 
+/** Strip HTML and embed description + tags for semantic recovery. */
+export function buildDescriptionEmbedding(bodyHtml: string | null, tags: string | null): Float32Array {
+  const plain = (bodyHtml ?? '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 600);
+  const combined = [plain, tags ?? ''].filter(Boolean).join(' ');
+  if (!combined.trim()) return new Float32Array(VOCAB_SIZE);
+  return buildTitleEmbedding(`desc:${combined}`);
+}
+
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0;
   const len = Math.min(a.length, b.length);
