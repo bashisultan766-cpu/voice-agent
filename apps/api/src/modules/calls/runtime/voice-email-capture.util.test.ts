@@ -71,7 +71,8 @@ test('buildEmailConfirmationPrompt reads email back for confirmation', () => {
 });
 
 test('buildEmailCollectionPrompt uses premium spell-slowly copy', () => {
-  assert.match(buildEmailCollectionPrompt(0), /Perfect\. Please spell your email address slowly/i);
+  assert.match(buildEmailCollectionPrompt(0), /spell your email address slowly/i);
+  assert.match(buildEmailCollectionPrompt(0, true), /Perfect\. I'll help you place the order/i);
   assert.match(buildEmailCollectionPrompt(1), /did not quite catch/i);
 });
 

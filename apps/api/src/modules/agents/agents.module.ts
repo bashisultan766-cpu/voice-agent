@@ -12,9 +12,10 @@ import { OpenAIConnectionTestService } from './connection-test/openai-connection
 import { ElevenLabsConnectionTestService } from './connection-test/elevenlabs-connection-test.service';
 import { OrderBookingService } from './order-booking.service';
 import { ShopifyProductSyncQueueService } from '../integrations/shopify/product-sync.queue';
+import { BookstoreSearchModule } from '../search/bookstore-search.module';
 
 @Module({
-  imports: [ToolsModule, EmailModule],
+  imports: [ToolsModule, EmailModule, BookstoreSearchModule],
   controllers: [AgentsController, PublicAgentsController],
   providers: [
     AgentsService,

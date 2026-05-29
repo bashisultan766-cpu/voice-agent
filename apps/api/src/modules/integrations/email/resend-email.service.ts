@@ -44,11 +44,17 @@ function appendSendAttempt(metadata: unknown, attempt: Record<string, unknown>):
   return { ...base, attempts } as Prisma.InputJsonValue;
 }
 
-type SendPaymentEmailResult = {
-  emailEventId: string;
+export type PaymentEmailDeliveryProof = {
+  success: boolean;
+  smtpAccepted: boolean;
+  providerSuccess: boolean;
+  deliveryQueued: boolean;
   providerMessageId: string | null;
+  emailEventId: string;
   deduplicated?: boolean;
 };
+
+type SendPaymentEmailResult = PaymentEmailDeliveryProof;
 
 @Injectable()
 export class ResendEmailService {
@@ -265,6 +271,10 @@ export class ResendEmailService {
         },
       });
       return {
+        success: true,
+        smtpAccepted: true,
+        providerSuccess: true,
+        deliveryQueued: true,
         emailEventId: txResult.duplicate.id,
         providerMessageId: txResult.duplicate.providerMessageId ?? null,
         deduplicated: true,
@@ -395,7 +405,27 @@ export class ResendEmailService {
               } as Prisma.InputJsonValue,
             },
           });
-          return { emailEventId, providerMessageId: lastPayload.id ?? null };
+          this.logger.log(
+            JSON.stringify({
+              event: 'payment_email.delivery_confirmed',
+              tenantId: input.tenantId,
+              agentId: input.agentId,
+              checkoutLinkId: input.checkoutLinkId,
+              emailEventId,
+              providerMessageId: lastPayload.id ?? null,
+              smtpAccepted: true,
+              providerSuccess: true,
+              deliveryQueued: true,
+            }),
+          );
+          return {
+            success: true,
+            smtpAccepted: true,
+            providerSuccess: true,
+            deliveryQueued: true,
+            emailEventId,
+            providerMessageId: lastPayload.id ?? null,
+          };
         }
 
         const transient = isTransientSendFailure(response.status);

@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AgentsService } from './agents.service';
 import { toProductGid, toProductVariantGid } from '../integrations/shopify/shopify-ids';
 import {
-  normalizeForMatch,
   PRODUCT_SEARCH_CONFIDENT_MIN_SCORE,
   PRODUCT_SEARCH_CONFIRM_MIN_SCORE,
   rankCatalogProductsForVoice,
@@ -13,18 +12,41 @@ import {
   extractBookTitlesFromUtterance,
   type ShopifySearchAttempt,
 } from './voice-product-query.util';
-import {
-  detectBookCategoryQuery,
-  formatCategorySearchVoiceSummary,
-  type VoiceProductOfferInput,
-} from '../calls/runtime/book-sales-voice.util';
-import {
-  buildProductSearchVoiceSummary,
-  pickInStockSearchPresentation,
-} from '../calls/runtime/voice-stock-sales-policy.util';
+import { BookstoreVoiceSearchService } from '../search/bookstore-voice-search.service';
+import { isVoiceCommerceFastMode } from '../calls/runtime/voice-commerce-fast-mode.util';
 
 const SHOPIFY_API_VERSION = '2024-01';
 const SHOPIFY_GRAPHQL_VERSION = '2024-10';
+
+/** Reduced payload for VOICE_COMMERCE_FAST_MODE (voice search hot path). */
+const VOICE_PRODUCT_SEARCH_QUERY_FAST = `
+  query VoiceProductSearchFast($first: Int!, $query: String!) {
+    products(first: $first, query: $query) {
+      nodes {
+        id
+        title
+        handle
+        status
+        tags
+        vendor
+        productType
+        variants(first: 8) {
+          edges {
+            node {
+              id
+              title
+              sku
+              barcode
+              price
+              inventoryQuantity
+              availableForSale
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
 const VOICE_PRODUCT_SEARCH_QUERY = `
   query VoiceProductSearch($first: Int!, $query: String!) {
@@ -226,6 +248,8 @@ export interface ShopifyProductSearchVoiceLog {
   /** @deprecated */ productsReturnedByShopify?: number;
   /** @deprecated */ topRelevanceScore?: number | null;
   /** @deprecated */ matchReason?: string | null;
+  bookstoreSearch?: import('../search/types/bookstore-search.types').BookstoreSearchDiagnostics;
+  confidenceTier?: import('../search/types/bookstore-search.types').BookstoreConfidenceTier;
 }
 
 type GraphqlVariantNode = {
@@ -261,7 +285,10 @@ export class ShopifyAgentService {
 
   private readonly logger = new Logger(ShopifyAgentService.name);
 
-  constructor(private readonly agentsService: AgentsService) {}
+  constructor(
+    private readonly agentsService: AgentsService,
+    private readonly bookstoreVoiceSearch: BookstoreVoiceSearchService,
+  ) {}
 
   private normalizeAdminDomain(storeUrl: string): string {
     return storeUrl
@@ -424,6 +451,40 @@ export class ShopifyAgentService {
     return { products: [...byId.values()], shopifyQueriesTried: tried };
   }
 
+  /** Parallel Shopify attempts for sub-2s voice search latency. */
+  private async fetchProductsMergedSearchParallel(
+    storeUrl: string,
+    token: string,
+    attempts: ShopifySearchAttempt[],
+    limitPerQuery: number,
+  ): Promise<{ products: ShopifyProductSummary[]; shopifyQueriesTried: ShopifySearchAttempt[] }> {
+    const cap = Math.min(Math.max(limitPerQuery, 1), 25);
+    const valid = attempts.filter((a) => a.query.trim());
+    const tried: ShopifySearchAttempt[] = [...valid];
+
+    const queryDoc = isVoiceCommerceFastMode() ? VOICE_PRODUCT_SEARCH_QUERY_FAST : VOICE_PRODUCT_SEARCH_QUERY;
+    const batches = await Promise.all(
+      valid.map((attempt) =>
+        this.adminGraphql<{ products: { nodes: GraphqlProductNode[] } }>(
+          storeUrl,
+          token,
+          queryDoc,
+          { first: cap, query: attempt.query },
+        ).then((data) => ({ attempt, nodes: data.products?.nodes ?? [] })),
+      ),
+    );
+
+    const byId = new Map<string, ShopifyProductSummary>();
+    for (const { nodes } of batches) {
+      for (const n of nodes) {
+        const p = this.mapGraphqlProductNode(n);
+        if (p && !byId.has(p.productId)) byId.set(p.productId, p);
+      }
+    }
+
+    return { products: [...byId.values()], shopifyQueriesTried: tried };
+  }
+
   private async fetchShopify<T>(
     storeUrl: string,
     token: string,
@@ -548,8 +609,8 @@ export class ShopifyAgentService {
     products?: ShopifyProductSummary[];
     voiceSummary?: string;
     error?: string;
-    searchVoiceLog?: ShopifyProductSearchVoiceLog;
-  }> {
+  searchVoiceLog?: ShopifyProductSearchVoiceLog;
+}> {
     const config = await this.agentsService.getShopifyConfig(tenantId, agentId);
     if (!config) {
       return { ok: false, error: 'Shopify not connected for this agent.' };
@@ -596,8 +657,11 @@ export class ShopifyAgentService {
       const merged: ShopifyProductSummary[] = [];
       const seenIds = new Set<string>();
       const summaries: string[] = [];
-      for (const phrase of titlePhrases.slice(0, 4)) {
-        const one = await this.searchProducts(tenantId, agentId, phrase, Math.max(2, Math.ceil(limit / titlePhrases.length)));
+      const perPhrase = Math.max(2, Math.ceil(limit / titlePhrases.length));
+      const phraseResults = await Promise.all(
+        titlePhrases.slice(0, 4).map((phrase) => this.searchProducts(tenantId, agentId, phrase, perPhrase)),
+      );
+      for (const one of phraseResults) {
         if (!one.ok) {
           return one;
         }
@@ -637,121 +701,53 @@ export class ShopifyAgentService {
       };
     }
 
-    const { cleanedQuery, probableTitle } = cleanVoiceProductQuery(productSearchInputRaw);
-    const attempts = buildShopifyProductSearchAttempts({
-      probableTitle,
-      cleanedQuery,
-      productSearchInputRaw,
-    });
-    if (attempts.length === 0) {
-      return { ok: true, products: [], voiceSummary: 'No products found in Shopify store.' };
-    }
     try {
-      const internalFetchCap = 25;
-      const { products: rawProducts, shopifyQueriesTried } = await this.fetchProductsMergedSearch(
+      this.bookstoreVoiceSearch.warmPopularQueries(tenantId, agentId);
+      const shopDomain = this.normalizeAdminDomain(config.shopifyStoreUrl);
+      this.bookstoreVoiceSearch.schedulePopularQueryPrefetch(
+        tenantId,
+        agentId,
+        shopDomain,
         config.shopifyStoreUrl,
         config.shopifyAdminToken,
-        attempts,
-        internalFetchCap,
+        async (args) => this.fetchProductsMergedSearchParallel(args.storeUrl, args.token, args.attempts, args.limitPerQuery),
       );
-      const normalizedQuery = normalizeForMatch(probableTitle || cleanedQuery || productSearchInputRaw);
-      const maxVoiceHits = Math.min(3, Math.max(1, limit));
-      const {
-        ranked,
-        rankedForLog,
-        bestScore,
-        bestReason,
-        lowConfidence,
-        productsAfterRanking,
-        topProduct,
-      } = rankCatalogProductsForVoice(
-        productSearchInputRaw,
-        probableTitle || cleanedQuery || productSearchInputRaw,
-        rawProducts,
-        maxVoiceHits,
-      );
-
-      const topRankedScore = ranked[0]?.relevanceScore ?? 0;
-      const displayTitle = probableTitle || cleanedQuery || productSearchInputRaw || 'that title';
-
-      let products: ShopifyProductSummary[] = ranked.map((p) => ({
-        ...p,
-        relevanceScore: p.relevanceScore,
-        matchReason: p.matchReason,
-      }));
-
-      const toOffer = (p: ShopifyProductSummary): VoiceProductOfferInput => ({
-        title: p.title,
-        variants: p.variants.map((v) => ({
-          price: v.price,
-          inventory_quantity: v.inventory_quantity,
-          availableForSale: v.availableForSale,
-        })),
+      const bookstoreResult = await this.bookstoreVoiceSearch.search({
+        tenantId,
+        agentId,
+        query: productSearchInputRaw,
+        limit,
+        shopDomain,
+        storeUrl: config.shopifyStoreUrl,
+        token: config.shopifyAdminToken,
+        fetchLive: async ({ storeUrl, token, attempts, limitPerQuery }) =>
+          this.fetchProductsMergedSearchParallel(storeUrl, token, attempts, limitPerQuery),
       });
 
-      const categoryLabel = detectBookCategoryQuery(productSearchInputRaw);
-      let finalVoiceSummary: string;
-      if (bestScore < PRODUCT_SEARCH_CONFIRM_MIN_SCORE || products.length === 0) {
-        products = [];
-        finalVoiceSummary = `I couldn't find an exact match, but I can check similar titles. Could you repeat the title or author?`;
-      } else if (categoryLabel && products.length > 1) {
-        finalVoiceSummary = formatCategorySearchVoiceSummary(
-          categoryLabel,
-          products.map(toOffer),
-        );
-      } else {
-        const stockPick = pickInStockSearchPresentation(products, toOffer);
-        const requiresClarification = topRankedScore < PRODUCT_SEARCH_CONFIDENT_MIN_SCORE;
-        finalVoiceSummary = buildProductSearchVoiceSummary({
-          primary: toOffer(stockPick.primary),
-          topWasOutOfStock: stockPick.topWasOutOfStock,
-          unavailableTitle: stockPick.unavailableTitle,
-          requiresClarification: requiresClarification && !stockPick.topWasOutOfStock,
-        });
-        if (products.length > 1 && !categoryLabel && !stockPick.topWasOutOfStock) {
-          finalVoiceSummary = `${finalVoiceSummary} I also have other matches if you want to hear them.`;
-        }
-        if (stockPick.primary.productId !== products[0]?.productId) {
-          products = [
-            stockPick.primary,
-            ...products.filter((p) => p.productId !== stockPick.primary.productId),
-          ].slice(0, products.length);
-        }
-      }
-
-      const searchVoiceLog: ShopifyProductSearchVoiceLog = {
-        productSearchInputRaw,
-        cleanedQuery,
-        probableTitle,
-        shopifyQueriesTried: shopifyQueriesTried.map((a) => ({ label: a.label, query: a.query })),
-        productsReturned: rawProducts.length,
-        productsReturnedCount: rawProducts.length,
-        productsAfterRanking,
-        rankedProducts: rankedForLog,
-        topProduct,
-        topProductTitle: topProduct,
-        topScore: bestScore,
-        topMatchReason: bestReason,
-        lowConfidenceSearch: lowConfidence || bestScore < PRODUCT_SEARCH_CONFIRM_MIN_SCORE,
-        finalVoiceSummary,
-        queryOriginal: productSearchInputRaw,
-        normalizedQuery,
-        productsReturnedByShopify: rawProducts.length,
-        topRelevanceScore: bestScore,
-        matchReason: bestReason,
-      };
-
+      const searchVoiceLog = bookstoreResult.searchVoiceLog;
       this.logger.log(
         JSON.stringify({
           event: 'shopify.voice.product_search_live',
           tenantId,
           agentId,
-          productsFound: products.length,
-          ...searchVoiceLog,
+          productsFound: bookstoreResult.products?.length ?? 0,
+          ...(searchVoiceLog ?? {}),
+          fuzzySearchActivated: searchVoiceLog?.bookstoreSearch?.fuzzySearchActivated,
+          semanticSearchUsed: searchVoiceLog?.bookstoreSearch?.semanticSearchUsed,
+          cacheHit: searchVoiceLog?.bookstoreSearch?.cacheHit,
+          searchLatencyMs: searchVoiceLog?.bookstoreSearch?.searchLatencyMs,
+          confidenceTier: searchVoiceLog?.confidenceTier ?? searchVoiceLog?.bookstoreSearch?.confidenceTier,
+          recommendedBooks: searchVoiceLog?.bookstoreSearch?.recommendedBooks,
         }),
       );
 
-      return { ok: true, products, voiceSummary: finalVoiceSummary, searchVoiceLog };
+      return {
+        ok: bookstoreResult.ok,
+        products: bookstoreResult.products,
+        voiceSummary: bookstoreResult.voiceSummary,
+        searchVoiceLog: bookstoreResult.searchVoiceLog,
+        error: bookstoreResult.error,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Shopify request failed';
       this.logger.warn(

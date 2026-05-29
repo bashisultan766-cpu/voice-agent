@@ -31,7 +31,18 @@ test('resolveTransactionalCheckoutState requires quantity before email collectio
   state.checkoutStage = 'product_selected';
   assert.equal(
     resolveTransactionalCheckoutState({ llmState: state }),
-    'QUANTITY_COLLECTION_REQUIRED',
+    'PRODUCT_CONFIRMED',
+  );
+});
+
+test('resolveTransactionalCheckoutState product confirmed before email when cart ready', () => {
+  let state = emptyLlmAgentState();
+  state.selectedProducts = [inStockProduct];
+  state.quantities = { [inStockProduct.variantId]: 1 };
+  state.checkoutStage = 'product_selected';
+  assert.equal(
+    resolveTransactionalCheckoutState({ llmState: state, productCheckoutIntroduced: false }),
+    'PRODUCT_CONFIRMED',
   );
 });
 
@@ -40,8 +51,12 @@ test('resolveTransactionalCheckoutState enters email collection when cart is rea
   state.selectedProducts = [inStockProduct];
   state.quantities = { [inStockProduct.variantId]: 1 };
   state.checkoutStage = 'product_selected';
+  state.checkoutProductAcknowledged = true;
   assert.equal(
-    resolveTransactionalCheckoutState({ llmState: state }),
+    resolveTransactionalCheckoutState({
+      llmState: state,
+      productCheckoutIntroduced: true,
+    }),
     'EMAIL_COLLECTION_REQUIRED',
   );
 });
@@ -52,8 +67,12 @@ test('resolveTransactionalCheckoutState enters email collection when cart is rea
   state.quantities = { [inStockProduct.variantId]: 1 };
   state.checkoutStage = 'product_discovery';
   state.customerIntent = 'product_search';
+  state.checkoutProductAcknowledged = true;
   assert.equal(
-    resolveTransactionalCheckoutState({ llmState: state }),
+    resolveTransactionalCheckoutState({
+      llmState: state,
+      productCheckoutIntroduced: true,
+    }),
     'EMAIL_COLLECTION_REQUIRED',
   );
 });
@@ -63,14 +82,24 @@ test('parseCheckoutQuantityFromSpeech handles one copy phrasing', () => {
   assert.equal(parseCheckoutQuantityFromSpeech('2 copies please'), 2);
 });
 
-test('evaluateCheckoutLock activates when product and quantity confirmed', () => {
+test('evaluateCheckoutLock product confirmation before email collection', () => {
   let state = emptyLlmAgentState();
   state.lastSearchedProducts = [inStockProduct];
   state = applyCheckoutSignalsFromSpeech(state, 'yeah just one copy for this');
-  const lock = evaluateCheckoutLock(state);
+  const lock = evaluateCheckoutLock(state, { productCheckoutIntroduced: false });
+  assert.equal(lock.checkoutLockActive, true);
+  assert.equal(lock.checkoutState, 'PRODUCT_CONFIRMED');
+  assert.equal(lock.skipOpenAiGeneration, true);
+  assert.match(lock.reply ?? '', /help you place the order/i);
+});
+
+test('evaluateCheckoutLock email collection after product introduced', () => {
+  let state = emptyLlmAgentState();
+  state.lastSearchedProducts = [inStockProduct];
+  state = applyCheckoutSignalsFromSpeech(state, 'yeah just one copy for this');
+  const lock = evaluateCheckoutLock(state, { productCheckoutIntroduced: true });
   assert.equal(lock.checkoutLockActive, true);
   assert.equal(lock.checkoutState, 'EMAIL_COLLECTION_REQUIRED');
-  assert.equal(lock.skipOpenAiGeneration, true);
   assert.match(lock.reply ?? '', /spell your email address slowly/i);
 });
 
@@ -90,10 +119,10 @@ test('emergencyBlockLlmCheckoutReply replaces LLM checkout phrasing', () => {
     activeProductSelected: true,
     openaiCalled: true,
   });
-  assert.match(blocked, /Perfect\. Please spell your email/i);
+  assert.match(blocked, /spell your email address slowly/i);
 });
 
-test('routeTransactionalCheckoutTurn forces spell-slowly email prompt', () => {
+test('routeTransactionalCheckoutTurn product confirmation before email', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state.quantities = { [inStockProduct.variantId]: 2 };
@@ -103,26 +132,61 @@ test('routeTransactionalCheckoutTurn forces spell-slowly email prompt', () => {
     llmState: state,
     userMessage: 'yes I want it',
     emailRetryCount: 0,
+    productCheckoutIntroduced: false,
   });
 
   assert.equal(route.handled, true);
-  assert.equal(route.skipOpenAiGeneration, true);
-  assert.equal(route.deterministicReplyUsed, true);
-  assert.equal(route.transactionalState, 'EMAIL_COLLECTION_REQUIRED');
-  assert.equal(route.reply, EMAIL_SPELL_COLLECTION_PROMPT);
+  assert.equal(route.transactionalState, 'PRODUCT_CONFIRMED');
+  assert.match(route.reply ?? '', /help you place the order/i);
 });
 
-test('routeTransactionalCheckoutTurn asks quantity when missing', () => {
+test('routeTransactionalCheckoutTurn forces spell-slowly email prompt', () => {
+  let state = emptyLlmAgentState();
+  state.selectedProducts = [inStockProduct];
+  state.quantities = { [inStockProduct.variantId]: 2 };
+  state.checkoutStage = 'product_selected';
+  state.checkoutProductAcknowledged = true;
+
+  const route = routeTransactionalCheckoutTurn({
+    llmState: state,
+    userMessage: 'ok',
+    emailRetryCount: 0,
+    productCheckoutIntroduced: true,
+  });
+
+  assert.equal(route.handled, true);
+  assert.equal(route.transactionalState, 'EMAIL_COLLECTION_REQUIRED');
+  assert.match(route.reply ?? '', /spell your email address slowly/i);
+});
+
+test('routeTransactionalCheckoutTurn product intro then quantity when missing', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
   state.checkoutStage = 'product_selected';
 
+  const intro = routeTransactionalCheckoutTurn({
+    llmState: state,
+    userMessage: 'I want that book',
+    emailRetryCount: 0,
+    productCheckoutIntroduced: false,
+  });
+  assert.match(intro.reply ?? '', /help you place the order/i);
+  assert.equal(intro.transactionalState, 'PRODUCT_CONFIRMED');
+
+  state.checkoutProductAcknowledged = true;
+  assert.equal(
+    resolveTransactionalCheckoutState({
+      llmState: state,
+      productCheckoutIntroduced: true,
+    }),
+    'QUANTITY_COLLECTION_REQUIRED',
+  );
   const route = routeTransactionalCheckoutTurn({
     llmState: state,
-    userMessage: 'yes the first one',
+    userMessage: 'ok',
     emailRetryCount: 0,
+    productCheckoutIntroduced: true,
   });
-
   assert.equal(route.reply, QUANTITY_PROMPT);
   assert.equal(route.transactionalState, 'QUANTITY_COLLECTION_REQUIRED');
   assert.equal(route.skipOpenAiGeneration, true);

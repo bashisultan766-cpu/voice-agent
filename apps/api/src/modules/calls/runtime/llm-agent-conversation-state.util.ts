@@ -46,6 +46,8 @@ export type LlmAgentConversationState = {
   paymentLinkSent?: boolean;
   checkoutLinkId?: string | null;
   checkoutUrl?: string | null;
+  /** Caller heard "Perfect. I'll help you place the order." before quantity/email. */
+  checkoutProductAcknowledged?: boolean;
 };
 
 export const LLM_AGENT_STATE_KEY = 'llmAgentState';
@@ -96,6 +98,7 @@ export function parseLlmAgentState(raw: unknown): LlmAgentConversationState {
     checkoutStage,
     transactionalCheckoutState:
       typeof o.transactionalCheckoutState === 'string' ? o.transactionalCheckoutState : null,
+    checkoutProductAcknowledged: o.checkoutProductAcknowledged === true,
     lastToolCalls: Array.isArray(o.lastToolCalls)
       ? o.lastToolCalls.filter((x): x is string => typeof x === 'string')
       : [],

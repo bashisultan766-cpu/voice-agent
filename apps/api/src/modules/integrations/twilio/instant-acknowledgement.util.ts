@@ -1,4 +1,6 @@
 import type { UserUtteranceIntent } from '../../calls/runtime/user-intent-classifier.util';
+import { isVoiceCommerceFastMode } from '../../calls/runtime/voice-commerce-fast-mode.util';
+import { DEFERRED_INSTANT_ACK_PHRASE } from '../../search/voice/voice-search-filler.util';
 
 export type InstantAckSelection =
   | {
@@ -107,20 +109,22 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     }
   }
 
+  const fastInstant = isVoiceCommerceFastMode() ? DEFERRED_INSTANT_ACK_PHRASE : null;
+
   if (intent === 'product_search') {
     if (isLikelyProductCorrection(trimmed)) {
       return {
         mode: 'deferred_kickoff',
-        instantPhrase: null,
+        instantPhrase: fastInstant ?? 'Got it — checking that title instead.',
         ackReason: 'product_correction',
-        markSessionLetMeCheck: false,
+        markSessionLetMeCheck: true,
         nextLastProductQuery: normQ || null,
       };
     }
     if (prevProduct && normQ === prevProduct) {
       return {
         mode: 'deferred_kickoff',
-        instantPhrase: null,
+        instantPhrase: fastInstant,
         ackReason: 'product_search_repeat_same_query',
         markSessionLetMeCheck: false,
         nextLastProductQuery: normQ || null,
@@ -128,9 +132,9 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     }
     return {
       mode: 'deferred_kickoff',
-      instantPhrase: null,
-      ackReason: 'product_search_silent_kickoff',
-      markSessionLetMeCheck: false,
+      instantPhrase: fastInstant,
+      ackReason: fastInstant ? 'product_search_instant_ack' : 'product_search_silent_kickoff',
+      markSessionLetMeCheck: Boolean(fastInstant),
       nextLastProductQuery: normQ || null,
     };
   }
@@ -138,9 +142,9 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
   if (intent === 'payment_question' || intent === 'product_question') {
     return {
       mode: 'deferred_kickoff',
-      instantPhrase: null,
+      instantPhrase: fastInstant ?? 'One moment while I look that up.',
       ackReason: 'question_requires_direct_answer_deferred',
-      markSessionLetMeCheck: false,
+      markSessionLetMeCheck: Boolean(fastInstant),
     };
   }
 

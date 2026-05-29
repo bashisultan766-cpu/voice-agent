@@ -313,7 +313,15 @@ test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', a
             ok: true,
             toolName: name,
             storeId: 's1',
-            data: { voiceSummary: 'Email sent.' },
+            data: {
+              deliveryConfirmed: true,
+              emailApiResult: {
+                success: true,
+                smtpAccepted: true,
+                providerSuccess: true,
+                deliveryQueued: true,
+              },
+            },
           };
         }
         return { ok: false, toolName: name, storeId: 's1', error: { code: 'UNEXPECTED', message: 'n/a', retryable: false } };
@@ -341,6 +349,7 @@ test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', a
 
   const capture = await orchestrator.handleTurn('sess_checkout_auto', 'oishisultan766@gmail.com', [], {
     completionFn,
+    skipMxValidation: true,
   });
   assert.equal(openAiCalls, 0, 'OpenAI should not run on email capture');
   assert.equal(internalTools.length, 0, 'Checkout must wait for confirmation');
@@ -348,6 +357,7 @@ test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', a
 
   const confirmed = await orchestrator.handleTurn('sess_checkout_auto', 'yes that is correct', [], {
     completionFn,
+    skipMxValidation: true,
   });
   assert.equal(openAiCalls, 0, 'OpenAI should not run when auto-checkout handles confirmation');
   assert.ok(internalTools.includes('createCheckoutLink'));
@@ -363,6 +373,7 @@ test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', a
 test('transactional checkout: product selected with quantity forces deterministic email prompt without OpenAI', async () => {
   const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
   let openAiCalls = 0;
+  let sessionMeta: Record<string, unknown> = { emailRetryCount: 0 };
 
   const completionFn: OpenAiCompletionFn = async () => {
     openAiCalls += 1;
@@ -370,6 +381,8 @@ test('transactional checkout: product selected with quantity forces deterministi
       choices: [{ message: { role: 'assistant', content: 'Please share your email address.' } }],
     } as OpenAI.Chat.ChatCompletion;
   };
+
+  let sessionMetadata: Record<string, unknown> = { emailRetryCount: 0 };
 
   const orchestrator = new LlmAgentOrchestratorService(
     { get: () => undefined } as never,
@@ -381,6 +394,7 @@ test('transactional checkout: product selected with quantity forces deterministi
           storeId: 's1',
           fromNumber: '+15551234567',
           metadata: {
+            ...sessionMetadata,
             llmAgentState: {
               selectedProducts: [
                 {
@@ -414,19 +428,26 @@ test('transactional checkout: product selected with quantity forces deterministi
       setEmailState: async () => undefined,
     } as never,
     {
-      findOneById: async () => ({ metadata: { emailRetryCount: 0 } }),
-      mergeSessionMetadata: async () => ({}),
+      findOneById: async () => ({ metadata: sessionMetadata }),
+      mergeSessionMetadata: async (_id: string, patch: Record<string, unknown>) => {
+        sessionMetadata = { ...sessionMetadata, ...patch };
+        return {};
+      },
     } as never,
   );
 
-  const out = await orchestrator.handleTurn('sess_tx_email', 'yes I want to order', [], { completionFn });
+  const step1 = await orchestrator.handleTurn('sess_tx_email', 'yes I want to order', [], { completionFn });
+  assert.equal(openAiCalls, 0);
+  assert.match(step1.reply, /help you place the order/i);
+  assert.equal(step1.proof?.transactionalCheckoutState, 'PRODUCT_CONFIRMED');
 
+  const out = await orchestrator.handleTurn('sess_tx_email', 'ok', [], { completionFn });
   assert.equal(openAiCalls, 0);
   assert.equal(out.proof?.openaiCalled, false);
   assert.equal(out.proof?.transactionalMode, true);
   assert.equal(out.proof?.skipOpenAiGeneration, true);
   assert.equal(out.proof?.deterministicReplyUsed, true);
-  assert.match(out.reply, /Perfect\. Please spell your email address slowly/i);
+  assert.match(out.reply, /spell your email address slowly/i);
   assert.doesNotMatch(out.reply, /share your email/i);
   assert.equal(out.state.transactionalCheckoutState, 'EMAIL_COLLECTION_REQUIRED');
 });
@@ -434,6 +455,7 @@ test('transactional checkout: product selected with quantity forces deterministi
 test('transactional checkout: product selected without quantity forces quantity prompt without OpenAI', async () => {
   const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
   let openAiCalls = 0;
+  let sessionMeta: Record<string, unknown> = { productCheckoutIntroduced: false };
 
   const orchestrator = new LlmAgentOrchestratorService(
     { get: () => undefined } as never,
@@ -477,12 +499,15 @@ test('transactional checkout: product selected without quantity forces quantity 
       setEmailState: async () => undefined,
     } as never,
     {
-      findOneById: async () => ({ metadata: {} }),
-      mergeSessionMetadata: async () => ({}),
+      findOneById: async () => ({ metadata: sessionMeta }),
+      mergeSessionMetadata: async (_id: string, patch: Record<string, unknown>) => {
+        sessionMeta = { ...sessionMeta, ...patch };
+        return {};
+      },
     } as never,
   );
 
-  const out = await orchestrator.handleTurn(
+  const intro = await orchestrator.handleTurn(
     'sess_tx_qty',
     'yes the first one',
     [],
@@ -493,10 +518,18 @@ test('transactional checkout: product selected without quantity forces quantity 
       },
     },
   );
-
   assert.equal(openAiCalls, 0);
-  assert.match(out.reply, /How many copies/i);
-  assert.equal(out.proof?.transactionalCheckoutState, 'QUANTITY_COLLECTION_REQUIRED');
+  assert.match(intro.reply, /help you place the order/i);
+
+  const out = await orchestrator.handleTurn('sess_tx_qty', 'two copies', [], {
+    completionFn: async () => {
+      openAiCalls += 1;
+      return { choices: [{ message: { role: 'assistant', content: 'How many?' } }] } as OpenAI.Chat.ChatCompletion;
+    },
+  });
+  assert.equal(openAiCalls, 0);
+  assert.match(out.reply, /spell your email address slowly/i);
+  assert.equal(out.proof?.transactionalCheckoutState, 'EMAIL_COLLECTION_REQUIRED');
 });
 
 test('production log: yeah just one copy for this locks checkout without OpenAI', async () => {
@@ -576,11 +609,10 @@ test('production log: yeah just one copy for this locks checkout without OpenAI'
   assert.equal(out.proof?.openaiCalled, false);
   assert.equal(out.proof?.transactionalMode, true);
   assert.equal(out.proof?.skipOpenAiGeneration, true);
-  assert.equal(out.state.checkoutStage, 'email');
-  assert.equal(out.state.customerIntent, 'email_collection');
+  assert.equal(out.state.checkoutStage, 'product_selected');
   assert.notEqual(out.state.checkoutStage, 'product_discovery');
   assert.notEqual(out.state.customerIntent, 'product_search');
-  assert.match(out.reply, /Perfect\. Please spell your email address slowly/i);
+  assert.match(out.reply, /help you place the order/i);
   assert.doesNotMatch(out.reply, /share your email/i);
   assert.doesNotMatch(out.reply, /prepare the payment link/i);
 });

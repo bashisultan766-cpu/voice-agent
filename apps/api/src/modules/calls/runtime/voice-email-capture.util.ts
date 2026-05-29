@@ -1,6 +1,10 @@
 /**
  * Production voice email capture — normalization, validation, prompts, logging, and retry policy.
  */
+import {
+  validateEnterpriseEmailSync,
+  type EnterpriseEmailValidation,
+} from './voice-email-enterprise-validation.util';
 
 /** Production-grade email validation (RFC 5322 simplified, practical for voice capture). */
 export const VOICE_EMAIL_REGEX =
@@ -9,11 +13,38 @@ export const VOICE_EMAIL_REGEX =
 export const MAX_VOICE_EMAIL_RETRIES = 3;
 export const MAX_EMAIL_SEND_RETRIES = 2;
 
+export const CHECKOUT_PRODUCT_CONFIRMED_PROMPT =
+  "Perfect. I'll help you place the order.";
+
+/** @deprecated Use CHECKOUT_PRODUCT_CONFIRMED_PROMPT */
+export const PRODUCT_CONFIRMATION_PROMPT = CHECKOUT_PRODUCT_CONFIRMED_PROMPT;
+
+export const PRODUCT_CHECKOUT_INTRODUCED_KEY = 'productCheckoutIntroduced';
+
+export const EMAIL_DISPOSABLE_REJECT_PROMPT =
+  'That email domain cannot receive payment links. Please provide a personal email address you check regularly, spelled slowly.';
+
+export const EMAIL_MX_REJECT_PROMPT =
+  'I could not verify that email domain. Please spell your email address again slowly, character by character.';
+
+export type PaymentEmailDeliveryResult = {
+  success: boolean;
+  smtpAccepted: boolean;
+  providerSuccess: boolean;
+  deliveryQueued: boolean;
+  providerMessageId?: string | null;
+  deduplicated?: boolean;
+  errorCode?: string;
+};
+
 export const EMAIL_SPELL_COLLECTION_PROMPT =
-  'Perfect. Please spell your email address slowly using alphabets so I can send your payment link correctly.';
+  'Please spell your email address slowly using alphabets so I can send your payment link correctly.';
 
 export const EMAIL_SPELL_COLLECTION_PROMPT_ALT =
   'Please say your email slowly, character by character.';
+
+/** Premium opener before spell-slowly email collection. */
+export const EMAIL_COLLECTION_WITH_CONTEXT_PROMPT = `${CHECKOUT_PRODUCT_CONFIRMED_PROMPT} ${EMAIL_SPELL_COLLECTION_PROMPT}`;
 
 export const EMAIL_INVALID_CAPTURE_PROMPT =
   'I may have captured that incorrectly. Could you please repeat your email slowly?';
@@ -38,6 +69,7 @@ const PAYMENT_SUCCESS_CLAIM_PATTERNS: RegExp[] = [
 ];
 
 const DETERMINISTIC_TRANSACTIONAL_MARKERS: RegExp[] = [
+  /Perfect\. I'll help you place the order/i,
   /Just to confirm, your email is/i,
   /spell your email address slowly/i,
   /say your email slowly, character by character/i,
@@ -66,6 +98,7 @@ export type VoiceEmailValidationResult = {
   valid: boolean;
   normalized: string;
   raw: string;
+  enterprise?: EnterpriseEmailValidation;
 };
 
 export type VoiceEmailCaptureLogEvent =
@@ -74,7 +107,10 @@ export type VoiceEmailCaptureLogEvent =
   | 'voice.email.confirmed'
   | 'voice.email.rejected'
   | 'voice.email.send_status'
-  | 'voice.email.send_error';
+  | 'voice.email.send_error'
+  | 'voice.email.delivery_confirmed'
+  | 'voice.email.fallback_offered'
+  | 'voice.email.typo_suggested';
 
 export type VoiceEmailCaptureLogInput = {
   event: VoiceEmailCaptureLogEvent;
@@ -91,6 +127,15 @@ export type VoiceEmailCaptureLogInput = {
   sendFailureCount?: number;
   errorCode?: string;
   errorMessage?: string;
+  smtpAccepted?: boolean;
+  providerSuccess?: boolean;
+  deliveryQueued?: boolean;
+  fallbackOffered?: boolean;
+  retryAttempt?: number;
+  validationFailureReason?: string;
+  typoCorrected?: boolean;
+  mxValid?: boolean | null;
+  disposable?: boolean;
 };
 
 /** Convert spoken email fragments: "at" → "@", "dot" → ".", collapse spaces, digit words → digits. */
@@ -113,12 +158,17 @@ export function normalizeSpokenEmail(email: string): string {
 }
 
 export function validateVoiceEmail(raw: string): VoiceEmailValidationResult {
-  const normalized = normalizeSpokenEmail(raw);
+  const enterprise = validateEnterpriseEmailSync(raw);
   return {
-    valid: VOICE_EMAIL_REGEX.test(normalized),
-    normalized,
+    valid: enterprise.valid,
+    normalized: enterprise.normalized,
     raw: raw.trim(),
+    enterprise,
   };
+}
+
+export function buildProductConfirmationPrompt(): string {
+  return CHECKOUT_PRODUCT_CONFIRMED_PROMPT;
 }
 
 /** Extract email from direct spelling or spoken "at"/"dot" patterns. */
@@ -143,14 +193,42 @@ export function buildEmailConfirmationPrompt(email: string): string {
   return `Just to confirm, your email is ${safe}. Is that correct?`;
 }
 
-export function buildEmailCollectionPrompt(retryCount = 0): string {
+export function buildCheckoutProductConfirmedPrompt(): string {
+  return CHECKOUT_PRODUCT_CONFIRMED_PROMPT;
+}
+
+export function buildEmailCollectionPrompt(retryCount = 0, withOrderContext = false): string {
   if (retryCount >= MAX_VOICE_EMAIL_RETRIES) {
     return `${EMAIL_SPELL_COLLECTION_PROMPT_ALT} I want to make sure I have this right.`;
   }
   if (retryCount > 0) {
     return 'I apologize—I did not quite catch that. Please spell your email address slowly using alphabets.';
   }
-  return EMAIL_SPELL_COLLECTION_PROMPT;
+  return withOrderContext ? EMAIL_COLLECTION_WITH_CONTEXT_PROMPT : EMAIL_SPELL_COLLECTION_PROMPT;
+}
+
+export function buildTypoCorrectionPrompt(correctedEmail: string, originalEmail: string): string {
+  return `Just to double-check, did you mean ${correctedEmail}? I heard ${originalEmail}.`;
+}
+
+export function buildDisposableEmailRejectPrompt(): string {
+  return EMAIL_DISPOSABLE_REJECT_PROMPT;
+}
+
+export function buildMxRejectPrompt(): string {
+  return EMAIL_MX_REJECT_PROMPT;
+}
+
+export function isFallbackChannelAffirmative(text: string): 'whatsapp' | 'sms' | null {
+  const t = text.toLowerCase().trim();
+  if (!t || /\b(no|not|email instead)\b/.test(t)) return null;
+  if (/\b(whatsapp|whats app|what'?s app)\b/.test(t)) return 'whatsapp';
+  if (/\b(sms|text message|text me|text it)\b/.test(t)) return 'sms';
+  if (/\b(yes|yeah|sure|please|ok|okay)\b/.test(t)) {
+    if (/\bwhatsapp\b/.test(t)) return 'whatsapp';
+    if (/\b(sms|text)\b/.test(t)) return 'sms';
+  }
+  return null;
 }
 
 export function buildInvalidEmailRetryPrompt(retryCount: number): string {
@@ -227,7 +305,65 @@ export function buildVoiceEmailCaptureLog(input: VoiceEmailCaptureLogInput): Rec
     ...(input.sendFailureCount != null ? { sendFailureCount: input.sendFailureCount } : {}),
     ...(input.errorCode ? { errorCode: input.errorCode } : {}),
     ...(input.errorMessage ? { errorMessage: input.errorMessage.slice(0, 300) } : {}),
+    ...(input.smtpAccepted != null ? { smtpAccepted: input.smtpAccepted } : {}),
+    ...(input.providerSuccess != null ? { providerSuccess: input.providerSuccess } : {}),
+    ...(input.deliveryQueued != null ? { deliveryQueued: input.deliveryQueued } : {}),
+    ...(input.fallbackOffered != null ? { fallbackOffered: input.fallbackOffered } : {}),
+    ...(input.retryAttempt != null ? { retryAttempt: input.retryAttempt } : {}),
+    ...(input.validationFailureReason
+      ? { validationFailureReason: input.validationFailureReason }
+      : {}),
+    ...(input.typoCorrected != null ? { typoCorrected: input.typoCorrected } : {}),
+    ...(input.mxValid !== undefined ? { mxValid: input.mxValid } : {}),
+    ...(input.disposable != null ? { disposable: input.disposable } : {}),
   };
+}
+
+/** Parse sendPaymentEmail tool payload into a delivery gate for voice replies. */
+export function parsePaymentEmailDeliveryFromToolData(
+  data: Record<string, unknown> | null | undefined,
+  toolOk: boolean,
+): PaymentEmailDeliveryResult {
+  const deduplicated = data?.deduplicated === true;
+  const api = data?.emailApiResult;
+  if (api && typeof api === 'object' && !Array.isArray(api)) {
+    const row = api as Record<string, unknown>;
+    const success = row.success === true && toolOk;
+    return {
+      success,
+      smtpAccepted: row.smtpAccepted === true,
+      providerSuccess: row.providerSuccess === true,
+      deliveryQueued: row.deliveryQueued === true,
+      providerMessageId:
+        typeof row.providerMessageId === 'string' ? row.providerMessageId : null,
+      deduplicated,
+    };
+  }
+
+  const deliveryConfirmed = data?.deliveryConfirmed === true;
+  const providerMessageId =
+    typeof data?.providerMessageId === 'string' ? data.providerMessageId : null;
+  const success = toolOk && deliveryConfirmed;
+  return {
+    success,
+    smtpAccepted: success,
+    providerSuccess: success,
+    deliveryQueued: success && !deduplicated,
+    providerMessageId,
+    deduplicated,
+  };
+}
+
+/** Only true when provider accepted the message — never claim success without this. */
+export function isPaymentEmailDeliveryConfirmed(
+  delivery: PaymentEmailDeliveryResult | null | undefined,
+): boolean {
+  if (!delivery) return false;
+  return (
+    delivery.success === true &&
+    delivery.providerSuccess === true &&
+    (delivery.smtpAccepted === true || delivery.deliveryQueued === true)
+  );
 }
 
 export function nextEmailRetryCount(current: number, valid: boolean): number {

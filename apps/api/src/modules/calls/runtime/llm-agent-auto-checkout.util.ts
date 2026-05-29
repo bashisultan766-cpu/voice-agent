@@ -2,9 +2,11 @@ import type { LlmAgentConversationState } from './llm-agent-conversation-state.u
 import { resolveCheckoutLineItemsFromLlmState } from './voice-checkout-flow.util';
 import { shouldBlockCheckoutForOutOfStock, isLlmProductInStock } from './voice-stock-sales-policy.util';
 import {
-  buildEmailProcessingPrompt,
+  buildPaymentEmailFallbackDeliveryPrompt,
   buildPaymentEmailSendFailurePrompt,
   buildPaymentEmailSuccessPrompt,
+  isPaymentEmailDeliveryConfirmed,
+  type PaymentEmailDeliveryResult,
   validateVoiceEmail,
 } from './voice-email-capture.util';
 
@@ -78,14 +80,22 @@ export function buildAutoCheckoutConfirmationReply(args: {
   email: string;
   checkoutOk: boolean;
   emailOk: boolean;
+  emailApiResult?: PaymentEmailDeliveryResult | null;
   checkoutUrl?: string;
   emailSendFailureCount?: number;
 }): string {
-  if (args.checkoutOk && args.emailOk) {
-    return `${buildEmailProcessingPrompt()} Your payment link has been sent successfully. Please check your inbox.`;
+  const deliveryConfirmed = isPaymentEmailDeliveryConfirmed(
+    args.emailApiResult ?? (args.emailOk ? { success: true } : { success: false }),
+  );
+  if (args.checkoutOk && deliveryConfirmed) {
+    return buildPaymentEmailSuccessPrompt();
   }
   if (args.checkoutOk) {
-    return buildPaymentEmailSendFailurePrompt(args.emailSendFailureCount ?? 1);
+    const failures = args.emailSendFailureCount ?? 1;
+    if (failures >= 2) {
+      return buildPaymentEmailFallbackDeliveryPrompt();
+    }
+    return buildPaymentEmailSendFailurePrompt(failures);
   }
   return "I'm having trouble generating the checkout link right now, but a human assistant will follow up shortly.";
 }

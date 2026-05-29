@@ -1,10 +1,12 @@
 import {
+  buildCheckoutProductConfirmedPrompt,
   buildEmailCollectionPrompt,
   buildEmailConfirmationPrompt,
   buildInvalidEmailRetryPrompt,
   containsPaymentSuccessClaim,
   extractEmailFromSpeech,
   isDeterministicTransactionalReply,
+  PRODUCT_CHECKOUT_INTRODUCED_KEY,
   shouldOfferEmailRetry,
 } from './voice-email-capture.util';
 import {
@@ -18,9 +20,11 @@ import { QUANTITY_PROMPT } from './book-sales-voice.util';
 /** Hard transactional checkout states — LLM must not speak during these. */
 export type TransactionalCheckoutState =
   | 'INACTIVE'
+  | 'PRODUCT_CONFIRMED'
   | 'QUANTITY_COLLECTION_REQUIRED'
   | 'EMAIL_COLLECTION_REQUIRED'
   | 'EMAIL_CAPTURED'
+  | 'EMAIL_VALIDATED'
   | 'EMAIL_CONFIRMATION_REQUIRED'
   | 'EMAIL_CONFIRMED'
   | 'PAYMENT_LINK_CREATING'
@@ -48,6 +52,8 @@ export type TransactionalCheckoutContext = {
   collectedEmail?: string | null;
   orderState?: string | null;
   emailRetryCount?: number;
+  emailEnterpriseValidated?: boolean;
+  productCheckoutIntroduced?: boolean;
 };
 
 export function normalizeEmailConfirmationState(
@@ -242,7 +248,7 @@ export type CheckoutLockContext = {
 /** Hard checkout lock: product + quantity confirmed → email collection only. */
 export function evaluateCheckoutLock(
   state: LlmAgentConversationState,
-  ctx: CheckoutLockContext = {},
+  ctx: CheckoutLockContext & { productCheckoutIntroduced?: boolean } = {},
 ): CheckoutLockEvaluation {
   const activeProductSelected = hasSelectedInStockProduct(state);
   const quantityConfirmed = resolveLineQuantity(state) > 0;
@@ -252,10 +258,15 @@ export function evaluateCheckoutLock(
     ctx.emailConfirmedThisTurn === true ||
     Boolean(state.customerEmail?.trim());
 
-  let checkoutState = resolveTransactionalCheckoutState({ llmState: state });
+  let checkoutState = resolveTransactionalCheckoutState({
+    llmState: state,
+    productCheckoutIntroduced: ctx.productCheckoutIntroduced,
+  });
 
   if (activeProductSelected && quantityConfirmed && !emailFlowActive) {
-    checkoutState = 'EMAIL_COLLECTION_REQUIRED';
+    checkoutState = ctx.productCheckoutIntroduced
+      ? 'EMAIL_COLLECTION_REQUIRED'
+      : 'PRODUCT_CONFIRMED';
   }
 
   const checkoutLockActive =
@@ -263,12 +274,13 @@ export function evaluateCheckoutLock(
 
   const skipOpenAiGeneration = checkoutLockActive || shouldBypassOpenAiGeneration(checkoutState);
 
-  const reply =
-    checkoutLockActive
-      ? buildEmailCollectionPrompt(ctx.emailRetryCount ?? 0)
-      : checkoutState === 'QUANTITY_COLLECTION_REQUIRED'
-        ? QUANTITY_PROMPT
-        : null;
+  const reply = checkoutLockActive
+    ? ctx.productCheckoutIntroduced
+      ? buildEmailCollectionPrompt(ctx.emailRetryCount ?? 0, true)
+      : buildCheckoutProductConfirmedPrompt()
+    : checkoutState === 'QUANTITY_COLLECTION_REQUIRED'
+      ? QUANTITY_PROMPT
+      : null;
 
   return {
     checkoutLockActive,
@@ -326,14 +338,12 @@ export function resolveTransactionalCheckoutState(
   if (emailConfirmationState === 'confirmed' || orderState === 'EMAIL_CONFIRMED') {
     return 'EMAIL_CONFIRMED';
   }
-  if (
-    emailConfirmationState === 'pending' &&
-    collectedEmail?.trim()
-  ) {
+  if (emailConfirmationState === 'pending' && collectedEmail?.trim()) {
     return 'EMAIL_CONFIRMATION_REQUIRED';
   }
+
   if (llmState.customerEmail?.trim() && emailConfirmationState == null) {
-    return 'EMAIL_CAPTURED';
+    return ctx.emailEnterpriseValidated === true ? 'EMAIL_VALIDATED' : 'EMAIL_CAPTURED';
   }
 
   if (!hasSelectedInStockProduct(llmState)) {
@@ -341,10 +351,22 @@ export function resolveTransactionalCheckoutState(
   }
 
   if (resolveLineQuantity(llmState) < 1) {
+    if (
+      llmState.checkoutProductAcknowledged !== true &&
+      ctx.productCheckoutIntroduced !== true
+    ) {
+      return 'PRODUCT_CONFIRMED';
+    }
     return 'QUANTITY_COLLECTION_REQUIRED';
   }
 
   if (isCheckoutCartReady(llmState)) {
+    if (
+      ctx.productCheckoutIntroduced !== true &&
+      llmState.checkoutProductAcknowledged !== true
+    ) {
+      return 'PRODUCT_CONFIRMED';
+    }
     return 'EMAIL_COLLECTION_REQUIRED';
   }
 
@@ -357,9 +379,11 @@ export function isTransactionalCheckoutActive(state: TransactionalCheckoutState)
 
 export function shouldBypassOpenAiGeneration(state: TransactionalCheckoutState): boolean {
   return (
+    state === 'PRODUCT_CONFIRMED' ||
     state === 'QUANTITY_COLLECTION_REQUIRED' ||
     state === 'EMAIL_COLLECTION_REQUIRED' ||
     state === 'EMAIL_CAPTURED' ||
+    state === 'EMAIL_VALIDATED' ||
     state === 'EMAIL_CONFIRMATION_REQUIRED' ||
     state === 'EMAIL_CONFIRMED' ||
     state === 'PAYMENT_LINK_CREATING'
@@ -459,6 +483,26 @@ export function routeTransactionalCheckoutTurn(
     };
   }
 
+  if (transactionalState === 'PRODUCT_CONFIRMED') {
+    return {
+      handled: true,
+      reply: buildCheckoutProductConfirmedPrompt(),
+      skipOpenAiGeneration: true,
+      transactionalState,
+      deterministicReplyUsed: true,
+      statePatch: {
+        checkoutStage: 'product_selected',
+        customerIntent: 'product_selected',
+        checkoutProductAcknowledged: true,
+      },
+      sessionMetaPatch: {
+        [TRANSACTIONAL_CHECKOUT_STATE_KEY]: transactionalState,
+        [PRODUCT_CHECKOUT_INTRODUCED_KEY]: true,
+        orderState: 'PRODUCT_CONFIRMED',
+      },
+    };
+  }
+
   if (transactionalState === 'QUANTITY_COLLECTION_REQUIRED') {
     return {
       handled: true,
@@ -466,7 +510,11 @@ export function routeTransactionalCheckoutTurn(
       skipOpenAiGeneration: true,
       transactionalState,
       deterministicReplyUsed: true,
-      statePatch: { checkoutStage: 'product_selected', customerIntent: 'quantity_selection' },
+      statePatch: {
+        checkoutStage: 'product_selected',
+        customerIntent: 'quantity_selection',
+        checkoutProductAcknowledged: true,
+      },
       sessionMetaPatch: {
         [TRANSACTIONAL_CHECKOUT_STATE_KEY]: transactionalState,
         orderState: 'QUANTITY_COLLECTED',
@@ -475,7 +523,7 @@ export function routeTransactionalCheckoutTurn(
   }
 
   if (transactionalState === 'EMAIL_COLLECTION_REQUIRED') {
-    const reply = buildEmailCollectionPrompt(emailRetryCount);
+    const reply = buildEmailCollectionPrompt(emailRetryCount, true);
     return {
       handled: true,
       reply,
@@ -492,7 +540,8 @@ export function routeTransactionalCheckoutTurn(
 
   if (
     transactionalState === 'EMAIL_CONFIRMATION_REQUIRED' ||
-    transactionalState === 'EMAIL_CAPTURED'
+    transactionalState === 'EMAIL_CAPTURED' ||
+    transactionalState === 'EMAIL_VALIDATED'
   ) {
     const pending = input.collectedEmail?.trim() || input.llmState.customerEmail?.trim() || '';
     return {

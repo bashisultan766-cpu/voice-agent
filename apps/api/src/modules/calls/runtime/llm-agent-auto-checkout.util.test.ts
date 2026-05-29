@@ -91,16 +91,38 @@ test('applyPaymentFlowToState marks payment_sent when email delivered', () => {
   assert.equal(next.paymentLinkSent, true);
 });
 
-test('buildAutoCheckoutConfirmationReply on success includes processing and delivery copy', () => {
+test('buildAutoCheckoutConfirmationReply on success only when emailApiResult.success', () => {
   const msg = buildAutoCheckoutConfirmationReply({
     email: 'buyer@example.com',
     checkoutOk: true,
     emailOk: true,
+    emailApiResult: {
+      success: true,
+      smtpAccepted: true,
+      providerSuccess: true,
+      deliveryQueued: true,
+    },
     checkoutUrl: 'https://store.example/cart',
   });
-  assert.match(msg, /Processing your order now/i);
   assert.match(msg, /sent successfully/i);
   assert.match(msg, /check your inbox/i);
+  assert.doesNotMatch(msg, /issue sending/i);
+});
+
+test('buildAutoCheckoutConfirmationReply does not claim success without emailApiResult', () => {
+  const msg = buildAutoCheckoutConfirmationReply({
+    email: 'buyer@example.com',
+    checkoutOk: true,
+    emailOk: false,
+    emailApiResult: {
+      success: false,
+      smtpAccepted: false,
+      providerSuccess: false,
+      deliveryQueued: false,
+    },
+    checkoutUrl: 'https://store.example/cart',
+  });
+  assert.doesNotMatch(msg, /sent successfully/i);
 });
 
 test('buildAutoCheckoutConfirmationReply on email failure does not claim delivery', () => {

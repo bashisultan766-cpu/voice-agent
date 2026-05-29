@@ -41,6 +41,13 @@ import { VoicePromptAudioService } from './voice-prompt-audio.service';
 import { classifyUserIntent } from '../../calls/runtime/user-intent-classifier.util';
 import { buildInstantAckMetadataPatch, selectInstantAcknowledgement } from './instant-acknowledgement.util';
 import {
+  isVoiceCommerceFastMode,
+  voiceDeferredPollPauseSeconds,
+  voiceSearchFillerThresholdMs,
+} from '../../calls/runtime/voice-commerce-fast-mode.util';
+import { pickVoiceSearchFillerPhrase } from '../../search/voice/voice-search-filler.util';
+import type { UserUtteranceIntent } from '../../calls/runtime/user-intent-classifier.util';
+import {
   buildMediaStreamConnectTwiML,
   isMediaStreamInboundEnabled,
 } from './twiml/media-stream.twiml';
@@ -1342,8 +1349,8 @@ export class TwilioWebhookService implements OnModuleInit {
         };
       }
 
-      // Silent deferred kickoff only — no phrase_audio before orchestrator finishes.
-      const kickText = '';
+      const kickText =
+        ackSelection.mode === 'deferred_kickoff' ? (ackSelection.instantPhrase?.trim() ?? '') : '';
       const deferredPatch = buildInstantAckMetadataPatch({
         selection: ackSelection,
         intent: userIntent,
@@ -1388,7 +1395,7 @@ export class TwilioWebhookService implements OnModuleInit {
         );
       }
 
-      const allowKickSayFallback = false;
+      const allowKickSayFallback = kickText.length > 0;
       this.logger.log(
         JSON.stringify({
           event: 'voice.runtime.url_summary',
@@ -1735,22 +1742,55 @@ export class TwilioWebhookService implements OnModuleInit {
         this.logTwilioResponseMetrics('deferred_poll_timeout', callSessionId, handlerStartedAt);
         return { twiml, callSessionId, agentResolved: true };
       }
-      if (elapsed > 1500 && !job.momentPromptPlayed) {
+      const fillerThresholdMs = voiceSearchFillerThresholdMs();
+      if (elapsed > fillerThresholdMs && !job.momentPromptPlayed) {
         await this.callsService.mergeSessionMetadata(callSessionId, {
           deferredVoiceJob: { ...job, momentPromptPlayed: true },
         });
+        const lastIntent =
+          typeof meta.lastIntentDetected === 'string'
+            ? (meta.lastIntentDetected as UserUtteranceIntent)
+            : 'product_search';
+        const fillerText = pickVoiceSearchFillerPhrase({
+          callSessionId,
+          intent: lastIntent,
+          queryPreview:
+            typeof meta.lastProductQuery === 'string' ? meta.lastProductQuery : undefined,
+        });
+        const fillerPlay = await this.resolveShortPhrasePlayUrl({
+          origin,
+          hearingDebugEffective,
+          text: fillerText,
+          tenantId: ctx.tenantId,
+          callSessionId,
+          agent: ctx.agent,
+          logLabel: 'deferred_poll_search_filler',
+        });
+        const twimlFiller = buildDeferredVoiceMomentPleaseTwiML({
+          deferPollUrl,
+          playbackUrl: fillerPlay.playbackUrl,
+          sayFallbackText: fillerText,
+          allowTwilioSayFallback: true,
+          language: this.getSessionLanguage(ctx),
+        });
+        this.logTwilioResponseMetrics('deferred_poll_filler', callSessionId, handlerStartedAt);
         this.logger.log(
           JSON.stringify({
             event: 'twilio.voice.deferred_poll',
-            sub: 'silent_poll_no_filler',
+            sub: 'search_filler',
             callSessionId,
             elapsedMs: elapsed,
-            note: 'No robotic filler; final reply comes from LlmAgentOrchestrator only.',
+            fillerText: fillerText.slice(0, 120),
+            voiceProvider: fillerPlay.voiceProviderActuallyUsed,
             'twilio.response_latency_ms': Date.now() - handlerStartedAt,
           }),
         );
+        return { twiml: twimlFiller, callSessionId, agentResolved: true };
       }
-      const twiml = buildDeferredVoicePollPauseTwiML({ deferPollUrl, pauseSeconds: 1 });
+      const twiml = buildDeferredVoicePollPauseTwiML({
+        deferPollUrl,
+        pauseSeconds: voiceDeferredPollPauseSeconds(),
+      });
       this.logTwilioResponseMetrics('deferred_poll_pause', callSessionId, handlerStartedAt);
       this.logger.log(
         JSON.stringify({
@@ -2006,6 +2046,7 @@ export class TwilioWebhookService implements OnModuleInit {
       return;
     }
 
+    const turnStarted = Date.now();
     try {
       const llmStarted = Date.now();
       const utter = await this.voiceRuntime.processUtterance(callSessionId, speechText, []);
@@ -2055,12 +2096,25 @@ export class TwilioWebhookService implements OnModuleInit {
       const tts = await this.buildElevenLabsPlaybackUrl(origin, assistantResponse, voiceOpts);
       const ttsGenerationTimeMs = tts.tts_generation_time_ms ?? Date.now() - ttsStart;
       await this.voiceCost.recordElevenLabsUsage(callSessionId, assistantResponse.length);
+      const totalVoiceTurnLatencyMs = Date.now() - turnStarted;
       await this.streamMetrics.merge(callSessionId, {
         ttsLatencyMs: ttsGenerationTimeMs,
+        totalVoiceTurnLatencyMs,
         chunksEmitted: 1,
         streamingStatus: 'speaking',
         agentSpeaking: true,
       });
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.turn.latency',
+          callSessionId,
+          jobId,
+          llmLatencyMs,
+          ttsGenerationTimeMs,
+          totalVoiceTurnLatencyMs,
+          fastMode: isVoiceCommerceFastMode(),
+        }),
+      );
 
       const row = await this.callsService.findOneById(callSessionId);
       const meta =

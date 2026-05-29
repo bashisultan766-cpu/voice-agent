@@ -102,6 +102,8 @@ export interface VoiceStreamMetrics {
   llmTimeToFirstTokenMs?: number | null;
   ttsLatencyMs?: number | null;
   toolLatencyMs?: number | null;
+  searchLatencyMs?: number | null;
+  totalVoiceTurnLatencyMs?: number | null;
   silenceDurationMs?: number | null;
   interruptionCount?: number;
   partialTranscript?: string | null;

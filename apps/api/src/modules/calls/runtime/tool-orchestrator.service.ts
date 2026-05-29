@@ -59,8 +59,16 @@ import {
   maskEmailForLog,
   normalizeSpokenEmail,
   validateVoiceEmail,
+  buildDisposableEmailRejectPrompt,
+  buildMxRejectPrompt,
+  buildTypoCorrectionPrompt,
 } from './voice-email-capture.util';
+import {
+  buildEnterpriseEmailValidationLog,
+  validateEnterpriseEmail,
+} from './voice-email-enterprise-validation.util';
 import { cleanVoiceProductQuery, pickVoiceProductSearchQuery } from '../../agents/voice-product-query.util';
+import { resolveVoiceSearchQueryFromMemory } from '../../search/voice/bookstore-voice-query-resolver.util';
 import {
   detectBookCategoryQuery,
   formatCategorySearchVoiceSummary,
@@ -551,8 +559,9 @@ export class ToolOrchestratorService {
       case 'validateEmail': {
         const emailInput = this.getStringArg(input, 'email');
         const validation = validateVoiceEmail(emailInput);
-        const email = validation.normalized;
-        const isValid = validation.valid;
+        const enterprise = await validateEnterpriseEmail(emailInput);
+        const email = enterprise.normalized;
+        const isValid = enterprise.valid;
         const metadata = await this.getSessionMetadata(callSessionId);
         const currentState = normalizeOrderState(metadata.orderState);
         if (currentState !== 'EMAIL_COLLECTING' && currentState !== 'EMAIL_CONFIRMING') {
@@ -591,15 +600,48 @@ export class ToolOrchestratorService {
             }),
           ),
         );
+        this.logger.log(
+          JSON.stringify(
+            buildEnterpriseEmailValidationLog({
+              callSessionId,
+              maskedEmail: maskEmailForLog(email),
+              regexValid: enterprise.regexValid,
+              disposable: enterprise.disposable,
+              mxValid: enterprise.mxValid,
+              mxChecked: enterprise.mxChecked,
+              valid: enterprise.valid,
+              blockedReason: enterprise.blockedReason,
+            }),
+          ),
+        );
+
+        let voiceSummary = buildInvalidEmailRetryPrompt(nextRetries);
+        if (enterprise.typoSuggestion) {
+          voiceSummary = buildTypoCorrectionPrompt(
+            enterprise.typoSuggestion.correctedEmail,
+            enterprise.normalized,
+          );
+        } else if (enterprise.disposable) {
+          voiceSummary = buildDisposableEmailRejectPrompt();
+        } else if (enterprise.blockedReason === 'mx_missing') {
+          voiceSummary = buildMxRejectPrompt();
+        } else if (isValid) {
+          voiceSummary = buildEmailConfirmationPrompt(email);
+        }
+
         return {
           ok: true,
           data: {
             valid: isValid,
             normalizedEmail: isValid ? email : null,
             retryCount: nextRetries,
-            voiceSummary: isValid
-              ? buildEmailConfirmationPrompt(email)
-              : buildInvalidEmailRetryPrompt(nextRetries),
+            enterpriseValidation: {
+              disposable: enterprise.disposable,
+              mxValid: enterprise.mxValid,
+              mxChecked: enterprise.mxChecked,
+              blockedReason: enterprise.blockedReason,
+            },
+            voiceSummary,
           },
           meta: { source: 'system' },
         };
@@ -609,7 +651,14 @@ export class ToolOrchestratorService {
         if (!query) {
           return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need query before searching products.', retryable: true } };
         }
-        const effectiveQuery = pickVoiceProductSearchQuery(query, ctx.metadata);
+        let effectiveQuery = pickVoiceProductSearchQuery(query, ctx.metadata);
+        const llmState = parseLlmAgentState(
+          (ctx.metadata as Record<string, unknown> | undefined)?.[LLM_AGENT_STATE_KEY],
+        );
+        const memoryResolved = resolveVoiceSearchQueryFromMemory(effectiveQuery, llmState);
+        if (memoryResolved.memoryHit) {
+          effectiveQuery = memoryResolved.effectiveQuery;
+        }
         if (effectiveQuery !== query.trim()) {
           this.logger.log(
             JSON.stringify({
@@ -617,6 +666,7 @@ export class ToolOrchestratorService {
               callSessionId,
               toolQuery: query.slice(0, 200),
               effectiveQuery: effectiveQuery.slice(0, 200),
+              voiceSearchMemoryHit: memoryResolved.memoryHit,
             }),
           );
         }
@@ -665,7 +715,7 @@ export class ToolOrchestratorService {
             agentId: ctx.agentId,
             query,
             productsFound: items.length,
-            source: 'shopify_live',
+            source: 'bookstore_voice_search',
             productSearchInputRaw: slog?.productSearchInputRaw ?? slog?.queryOriginal,
             probableTitle: slog?.probableTitle,
             shopifyQueriesTried: slog?.shopifyQueriesTried,
@@ -679,6 +729,16 @@ export class ToolOrchestratorService {
             topMatchReason: slog?.topMatchReason ?? slog?.matchReason,
             lowConfidenceSearch: slog?.lowConfidenceSearch ?? items.length === 0,
             finalVoiceSummary: slog?.finalVoiceSummary,
+            fuzzySearchActivated: slog?.bookstoreSearch?.fuzzySearchActivated,
+            semanticSearchUsed: slog?.bookstoreSearch?.semanticSearchUsed,
+            cacheHit: slog?.bookstoreSearch?.cacheHit,
+            searchLatencyMs: slog?.bookstoreSearch?.searchLatencyMs,
+            shopifyLatencyMs: slog?.bookstoreSearch?.shopifyLatencyMs,
+            semanticRankingLatencyMs: slog?.bookstoreSearch?.semanticRankingLatencyMs,
+            cacheLookupMs: slog?.bookstoreSearch?.cacheLookupMs,
+            slowPath: slog?.bookstoreSearch?.slowPath,
+            confidenceTier: slog?.confidenceTier ?? slog?.bookstoreSearch?.confidenceTier,
+            recommendedBooks: slog?.bookstoreSearch?.recommendedBooks,
           }),
         );
         await this.updateOrderStateMetadata(callSessionId, {
@@ -1513,15 +1573,24 @@ export class ToolOrchestratorService {
             },
           });
         }
+        const emailApiResult = {
+          success: true,
+          smtpAccepted: true,
+          providerSuccess: Boolean(sendResult.providerMessageId) || sendResult.deduplicated === true,
+          deliveryQueued: sendResult.deduplicated !== true,
+        };
         this.logger.log(
           JSON.stringify(
             buildVoiceEmailCaptureLog({
-              event: 'voice.email.send_status',
+              event: 'voice.email.delivery_confirmed',
               callSessionId,
               tenantId: ctx.tenantId,
               agentId: ctx.agentId,
               maskedEmail: maskEmailForLog(email),
-              sendOk: true,
+              sendOk: emailApiResult.success,
+              smtpAccepted: emailApiResult.smtpAccepted,
+              providerSuccess: emailApiResult.providerSuccess,
+              deliveryQueued: emailApiResult.deliveryQueued,
             }),
           ),
         );
@@ -1549,13 +1618,17 @@ export class ToolOrchestratorService {
           }),
         );
         return {
-          ok: true,
+          ok: emailApiResult.success,
           data: {
             deduplicated: sendResult.deduplicated === true,
-            deliveryConfirmed: true,
-            voiceSummary: sendResult.deduplicated === true
-              ? `That payment link was already sent to your email. Please check your inbox.`
-              : buildPaymentEmailSuccessPrompt(),
+            deliveryConfirmed: emailApiResult.success,
+            emailApiResult,
+            voiceSummary:
+              emailApiResult.success && sendResult.deduplicated === true
+                ? `That payment link was already sent to your email. Please check your inbox.`
+                : emailApiResult.success
+                  ? buildPaymentEmailSuccessPrompt()
+                  : buildPaymentEmailSendFailurePrompt(),
           },
           meta: { source: 'resend' },
         };

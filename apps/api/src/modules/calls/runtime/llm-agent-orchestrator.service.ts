@@ -28,13 +28,18 @@ import {
 } from './voice-brain-reply.util';
 import { classifyOrderTurn } from './order-intent-classifier.util';
 import {
+  buildDisposableEmailRejectPrompt,
   buildEmailCollectionPrompt,
   buildEmailConfirmationPrompt,
   buildInvalidEmailRetryPrompt,
+  buildMxRejectPrompt,
+  buildPaymentEmailFallbackDeliveryPrompt,
+  buildTypoCorrectionPrompt,
   buildVoiceEmailCaptureLog,
   isDeterministicTransactionalReply,
   isEmailConfirmationAffirmative,
   isEmailConfirmationNegative,
+  isFallbackChannelAffirmative,
   maskEmailForLog,
   maskRawSpeechForLog,
   MAX_EMAIL_SEND_RETRIES,
@@ -42,7 +47,15 @@ import {
   shouldOfferEmailRetry,
   validateVoiceEmail,
   extractEmailFromSpeech,
+  PRODUCT_CHECKOUT_INTRODUCED_KEY,
+  parsePaymentEmailDeliveryFromToolData,
+  isPaymentEmailDeliveryConfirmed,
+  type PaymentEmailDeliveryResult,
 } from './voice-email-capture.util';
+import {
+  buildEnterpriseEmailValidationLog,
+  validateEnterpriseEmail,
+} from './voice-email-enterprise-validation.util';
 import { shouldBlockCheckoutForOutOfStock } from './voice-stock-sales-policy.util';
 import {
   applyPaymentFlowToState,
@@ -68,8 +81,13 @@ import {
   TRANSACTIONAL_CHECKOUT_STATE_KEY,
   type TransactionalCheckoutState,
 } from './transactional-checkout-state.util';
+import {
+  voiceFastModeMaxToolIterations,
+  voiceFastModeParallelToolCalls,
+  voiceLlmMaxTokens,
+} from './voice-commerce-fast-mode.util';
 
-const MAX_TOOL_ITERATIONS = Number(process.env.MAX_TOOL_ITERATIONS_VOICE) || 8;
+const MAX_TOOL_ITERATIONS = voiceFastModeMaxToolIterations(Number(process.env.MAX_TOOL_ITERATIONS_VOICE) || 8);
 const MAX_TOOL_CALLS_PER_TURN = Number(process.env.MAX_TOOL_CALLS_PER_TURN) || 4;
 const VOICE_COMMERCE_TEMPERATURE_DEFAULT = Number(process.env.VOICE_COMMERCE_TEMPERATURE_DEFAULT) || 0.35;
 const VOICE_COMMERCE_TEMPERATURE_CAP = Number(process.env.VOICE_COMMERCE_TEMPERATURE_CAP) || 0.45;
@@ -118,7 +136,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     callSessionId: string,
     userMessage: string,
     conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
-    options?: { completionFn?: OpenAiCompletionFn },
+    options?: { completionFn?: OpenAiCompletionFn; skipMxValidation?: boolean },
   ): Promise<LlmAgentTurnResult> {
     return this.processTurn(callSessionId, userMessage, conversationHistory, options);
   }
@@ -127,7 +145,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     callSessionId: string,
     userMessage: string,
     conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
-    options?: { completionFn?: OpenAiCompletionFn },
+    options?: { completionFn?: OpenAiCompletionFn; skipMxValidation?: boolean },
   ): Promise<LlmAgentTurnResult> {
     const ctx = await this.sessionContext.load(callSessionId);
     if (!ctx) {
@@ -223,6 +241,36 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         ),
       );
       skipBrainRewrite = true;
+    } else if (
+      sessionMetaAtStart.pendingTypoCorrection &&
+      typeof sessionMetaAtStart.pendingTypoCorrection === 'object' &&
+      sessionMetaAtStart.pendingTypoCorrection !== null &&
+      isEmailConfirmationAffirmative(userMessage)
+    ) {
+      const typo = sessionMetaAtStart.pendingTypoCorrection as {
+        correctedEmail?: string;
+        originalEmail?: string;
+      };
+      const corrected = typo.correctedEmail?.trim();
+      if (corrected && validateVoiceEmail(corrected).valid) {
+        const enterprise = await validateEnterpriseEmail(corrected, {
+          skipMx: options?.skipMxValidation === true,
+        });
+        if (enterprise.valid) {
+          state = mergeCallerSignalsIntoState(state, { email: enterprise.normalized });
+          await this.callMemory.setEmailState(callSessionId, enterprise.normalized, 'pending');
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_CONFIRMING',
+            normalizedEmail: enterprise.normalized,
+            emailConfirmationState: 'pending',
+            emailEnterpriseValidated: true,
+            pendingTypoCorrection: null,
+            [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_CONFIRMATION_REQUIRED',
+          });
+          emailCapturedReply = buildEmailConfirmationPrompt(enterprise.normalized);
+          skipBrainRewrite = true;
+        }
+      }
     } else if (awaitingEmailConfirmation && isEmailConfirmationNegative(userMessage)) {
       const nextRetry = nextEmailRetryCount(await loadEmailRetryCount(), false);
       await this.callMemory.setEmailState(callSessionId, '', 'pending');
@@ -253,6 +301,9 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       if (spokenEmail) {
         const emailRetryCount = await loadEmailRetryCount();
         const validation = validateVoiceEmail(spokenEmail);
+        const enterprise = await validateEnterpriseEmail(spokenEmail, {
+          skipMx: options?.skipMxValidation === true,
+        });
         this.logger.log(
           JSON.stringify(
             buildVoiceEmailCaptureLog({
@@ -261,23 +312,98 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
               tenantId: ctx.tenantId,
               agentId: ctx.agentId,
               rawPreview: maskRawSpeechForLog(spokenEmail),
-              normalizedPreview: validation.normalized,
-              maskedEmail: maskEmailForLog(validation.normalized),
-              valid: validation.valid,
+              normalizedPreview: enterprise.normalized,
+              maskedEmail: maskEmailForLog(enterprise.normalized),
+              valid: enterprise.valid,
               retryCount: emailRetryCount,
             }),
           ),
         );
-        if (validation.valid) {
-          state = mergeCallerSignalsIntoState(state, { email: validation.normalized });
-          await this.callMemory.setEmailState(callSessionId, validation.normalized, 'pending');
+        this.logger.log(
+          JSON.stringify(
+            buildEnterpriseEmailValidationLog({
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              maskedEmail: maskEmailForLog(enterprise.normalized),
+              regexValid: enterprise.regexValid,
+              disposable: enterprise.disposable,
+              mxValid: enterprise.mxValid,
+              mxChecked: enterprise.mxChecked,
+              typoFromDomain: enterprise.typoSuggestion?.fromDomain,
+              typoToDomain: enterprise.typoSuggestion?.toDomain,
+              valid: enterprise.valid,
+              blockedReason: enterprise.blockedReason,
+            }),
+          ),
+        );
+
+        if (enterprise.typoSuggestion) {
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_COLLECTING',
+            pendingTypoCorrection: {
+              correctedEmail: enterprise.typoSuggestion.correctedEmail,
+              originalEmail: enterprise.normalized,
+            },
+            [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_CAPTURED',
+          });
+          emailCapturedReply = buildTypoCorrectionPrompt(
+            enterprise.typoSuggestion.correctedEmail,
+            enterprise.normalized,
+          );
+          skipBrainRewrite = true;
+          this.logger.log(
+            JSON.stringify(
+              buildVoiceEmailCaptureLog({
+                event: 'voice.email.typo_suggested',
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                maskedEmail: maskEmailForLog(enterprise.typoSuggestion.correctedEmail),
+              }),
+            ),
+          );
+        } else if (enterprise.disposable) {
+          const retryCount = nextEmailRetryCount(emailRetryCount, false);
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_COLLECTING',
+            emailRetryCount: retryCount,
+          });
+          emailCapturedReply = buildDisposableEmailRejectPrompt();
+          skipBrainRewrite = true;
+        } else if (enterprise.blockedReason === 'mx_missing') {
+          const retryCount = nextEmailRetryCount(emailRetryCount, false);
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_COLLECTING',
+            emailRetryCount: retryCount,
+          });
+          emailCapturedReply = buildMxRejectPrompt();
+          skipBrainRewrite = true;
+        } else if (enterprise.valid) {
+          state = mergeCallerSignalsIntoState(state, { email: enterprise.normalized });
+          await this.callMemory.setEmailState(callSessionId, enterprise.normalized, 'pending');
           await this.callsService.mergeSessionMetadata(callSessionId, {
             orderState: 'EMAIL_CONFIRMING',
-            normalizedEmail: validation.normalized,
+            normalizedEmail: enterprise.normalized,
             emailConfirmationState: 'pending',
+            emailEnterpriseValidated: true,
+            pendingTypoCorrection: null,
+            [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_CONFIRMATION_REQUIRED',
           });
-          emailCapturedReply = buildEmailConfirmationPrompt(validation.normalized);
+          emailCapturedReply = buildEmailConfirmationPrompt(enterprise.normalized);
           skipBrainRewrite = true;
+          this.logger.log(
+            JSON.stringify(
+              buildVoiceEmailCaptureLog({
+                event: 'voice.email.validated',
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                maskedEmail: maskEmailForLog(enterprise.normalized),
+                valid: true,
+              }),
+            ),
+          );
         } else {
           const retryCount = nextEmailRetryCount(emailRetryCount, false);
           await this.callsService.mergeSessionMetadata(callSessionId, {
@@ -302,14 +428,45 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
             ),
           );
         }
+      } else if (
+        sessionMetaAtStart.emailSendFailureCount != null &&
+        Number(sessionMetaAtStart.emailSendFailureCount) >= MAX_EMAIL_SEND_RETRIES
+      ) {
+        const fallback = isFallbackChannelAffirmative(userMessage);
+        if (fallback) {
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            paymentLinkFallbackChannel: fallback,
+          });
+          emailCapturedReply =
+            fallback === 'whatsapp'
+              ? 'Understood. I will send your secure payment link on WhatsApp shortly.'
+              : 'Understood. I will text your secure payment link by SMS shortly.';
+          skipBrainRewrite = true;
+          this.logger.log(
+            JSON.stringify(
+              buildVoiceEmailCaptureLog({
+                event: 'voice.email.fallback_offered',
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                fallbackChannel: fallback,
+              }),
+            ),
+          );
+        }
       }
     }
+
+    const productCheckoutIntroduced =
+      sessionMetaAtStart[PRODUCT_CHECKOUT_INTRODUCED_KEY] === true ||
+      sessionMetaAtStart.productCheckoutIntroduced === true;
 
     const checkoutLock = evaluateCheckoutLock(state, {
       awaitingEmailConfirmation,
       emailCapturedThisTurn: emailCapturedReply != null,
       emailConfirmedThisTurn,
       emailRetryCount: Number(sessionMetaAtStart.emailRetryCount ?? 0),
+      productCheckoutIntroduced,
     });
     checkoutLockActive = checkoutLock.checkoutLockActive;
     transactionalCheckoutMode = checkoutLock.transactionalCheckoutMode;
@@ -320,19 +477,23 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       !emailConfirmedThisTurn &&
       checkoutLock.reply
     ) {
+      const lockCheckoutState = checkoutLock.checkoutState;
+      const introducingProduct = lockCheckoutState === 'PRODUCT_CONFIRMED';
       state = {
         ...state,
-        checkoutStage: 'email',
-        customerIntent: 'email_collection',
-        transactionalCheckoutState: 'EMAIL_COLLECTION_REQUIRED',
+        checkoutStage: introducingProduct ? 'product_selected' : 'email',
+        customerIntent: introducingProduct ? 'checkout_confirmation' : 'email_collection',
+        transactionalCheckoutState: lockCheckoutState,
+        ...(introducingProduct ? { checkoutProductAcknowledged: true } : {}),
       };
       await this.persistState(callSessionId, state);
       await this.callsService.mergeSessionMetadata(callSessionId, {
-        lastUserIntent: 'email_collection',
+        lastUserIntent: introducingProduct ? 'checkout_confirmation' : 'email_collection',
         [LLM_AGENT_STATE_KEY]: state,
-        [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_COLLECTION_REQUIRED',
+        [TRANSACTIONAL_CHECKOUT_STATE_KEY]: lockCheckoutState,
         [CHECKOUT_LOCK_ACTIVE_KEY]: true,
-        orderState: 'EMAIL_COLLECTING',
+        orderState: introducingProduct ? 'PRODUCT_CONFIRMED' : 'EMAIL_COLLECTING',
+        ...(introducingProduct ? { [PRODUCT_CHECKOUT_INTRODUCED_KEY]: true } : {}),
       });
 
       const finalReply = checkoutLock.reply;
@@ -346,7 +507,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
             agentId: ctx.agentId,
             transactionalMode: true,
             transactionalCheckoutMode: true,
-            checkoutState: 'EMAIL_COLLECTION_REQUIRED',
+            checkoutState: lockCheckoutState,
             deterministicReplyUsed: true,
             skipOpenAiGeneration: true,
             activeProductSelected: checkoutLock.activeProductSelected,
@@ -378,7 +539,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           toolCallsUsed: [],
           intent: 'email_collection',
           stateStage: state.checkoutStage,
-          transactionalCheckoutState: 'EMAIL_COLLECTION_REQUIRED',
+          transactionalCheckoutState: lockCheckoutState,
           transactionalMode: true,
           skipOpenAiGeneration: true,
           deterministicReplyUsed: true,
@@ -403,7 +564,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           openaiCalled: false,
           openaiSuccess: true,
           transactionalMode: true,
-          transactionalCheckoutState: 'EMAIL_COLLECTION_REQUIRED',
+          transactionalCheckoutState: lockCheckoutState,
           deterministicReplyUsed: true,
           skipOpenAiGeneration: true,
         },
@@ -463,6 +624,10 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       collectedEmail: memoryForRouting.collectedEmail ?? null,
       orderState: typeof sessionMeta.orderState === 'string' ? sessionMeta.orderState : null,
       emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
+      emailEnterpriseValidated: sessionMeta.emailEnterpriseValidated === true,
+      productCheckoutIntroduced:
+        sessionMeta[PRODUCT_CHECKOUT_INTRODUCED_KEY] === true ||
+        sessionMeta.productCheckoutIntroduced === true,
     });
 
     const transactionalRoute =
@@ -484,6 +649,10 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
             collectedEmail: memoryForRouting.collectedEmail ?? null,
             orderState: typeof sessionMeta.orderState === 'string' ? sessionMeta.orderState : null,
             emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
+            emailEnterpriseValidated: sessionMeta.emailEnterpriseValidated === true,
+            productCheckoutIntroduced:
+              sessionMeta[PRODUCT_CHECKOUT_INTRODUCED_KEY] === true ||
+              sessionMeta.productCheckoutIntroduced === true,
             userMessage,
             emailCapturedReply,
             emailConfirmedThisTurn,
@@ -651,8 +820,8 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           model: modelToUse,
           messages,
           tools: LLM_AGENT_TOOLS as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming['tools'],
-          parallel_tool_calls: false,
-          max_tokens: 400,
+          parallel_tool_calls: voiceFastModeParallelToolCalls(),
+          max_tokens: voiceLlmMaxTokens(400),
           temperature,
         });
       } catch (err) {
@@ -1065,7 +1234,11 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     let nextState = applyToolResultToState(state, 'CreatePaymentLink', checkoutResult);
     const checkoutData = (checkoutResult.data ?? {}) as Record<string, unknown>;
     const checkoutOk = checkoutResult.ok === true;
-    const emailOk = emailDelivery?.ok === true;
+    const emailDeliveryParsed = parsePaymentEmailDeliveryFromToolData(
+      (emailDelivery?.data ?? {}) as Record<string, unknown>,
+      emailDelivery?.ok === true,
+    );
+    const emailOk = isPaymentEmailDeliveryConfirmed(emailDeliveryParsed);
     const checkoutUrl =
       typeof checkoutData.checkoutUrl === 'string' ? checkoutData.checkoutUrl : undefined;
     const checkoutLinkId =
@@ -1097,6 +1270,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       email: linkArgs.email,
       checkoutOk,
       emailOk,
+      emailApiResult: emailDeliveryParsed,
       checkoutUrl,
       emailSendFailureCount,
     });
@@ -1263,17 +1437,24 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       `${requestId}-email`,
     );
 
-    const emailOk = emailResult.ok === true;
+    const delivery = parsePaymentEmailDeliveryFromToolData(
+      (emailResult.data ?? {}) as Record<string, unknown>,
+      emailResult.ok === true,
+    );
+    const emailOk = isPaymentEmailDeliveryConfirmed(delivery);
     if (emailOk) {
       this.logger.log(
         JSON.stringify(
           buildVoiceEmailCaptureLog({
-            event: 'voice.email.send_status',
+            event: 'voice.email.delivery_confirmed',
             callSessionId,
             tenantId: ctx.tenantId,
             agentId: ctx.agentId,
             maskedEmail: maskEmailForLog(email),
             sendOk: true,
+            smtpAccepted: delivery.smtpAccepted,
+            providerSuccess: delivery.providerSuccess,
+            deliveryQueued: delivery.deliveryQueued,
             confirmationStatus: 'confirmed',
           }),
         ),
@@ -1310,6 +1491,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       email,
       checkoutOk: true,
       emailOk,
+      emailApiResult: delivery,
       checkoutUrl,
       emailSendFailureCount,
     });
