@@ -11,8 +11,20 @@ import {
 } from './voice-checkout-language.util';
 
 export {
-  VOICE_EMAIL_REGEX,
+  VOICE_MODE_KEY,
+  VOICE_MODE_SPELLING_CAPTURE,
   EMAIL_CAPTURE_MIN_CONFIDENCE,
+  isSpellingCaptureActive,
+  activateSpellingCaptureModePatch,
+  captureEmailWithTelephonySpelling,
+  buildTelephonyEmailConfirmationPrompt,
+  TELEPHONY_SPELLING_LOW_CONFIDENCE_PROMPT,
+  formatEmailForTelephonySpellback,
+  resolveGatherTwiMLOptions,
+} from './telephony-spelling-capture.util';
+
+export {
+  VOICE_EMAIL_REGEX,
   parseDoubleTripleDigits,
   parseDigitWords,
   parseLetterByLetterEmail,
@@ -34,23 +46,25 @@ export {
 } from './spoken-email-normalizer.util';
 
 import {
+  buildTelephonyEmailConfirmationPrompt,
+  captureEmailWithTelephonySpelling,
+  formatEmailForTelephonySpellback,
+  isSpellingCaptureActive,
+} from './telephony-spelling-capture.util';
+import {
   captureEmailFromVoice,
   extractEmailFromSpeech,
   formatEmailForVoiceConfirmation,
   isEmailCaptureConfidenceSufficient,
   isEmailConfirmationAffirmative,
   isEmailConfirmationNegative,
-  EMAIL_CAPTURE_MIN_CONFIDENCE,
 } from './spoken-email-normalizer.util';
+import { EMAIL_CAPTURE_MIN_CONFIDENCE } from './telephony-spelling-capture.util';
 
 export const EMAIL_CAPTURE_MODE_KEY = 'emailCaptureMode';
 
 export function resolveEmailCaptureMode(sessionMeta: Record<string, unknown>): import('./spoken-email-normalizer.util').EmailCaptureMode {
-  if (sessionMeta[EMAIL_CAPTURE_MODE_KEY] === 'spelling') return 'spelling';
-  const orderState = sessionMeta.orderState;
-  if (orderState === 'EMAIL_COLLECTING' || orderState === 'EMAIL_CONFIRMING') {
-    return 'spelling';
-  }
+  if (isSpellingCaptureActive(sessionMeta)) return 'spelling';
   return 'normal';
 }
 
@@ -103,7 +117,7 @@ export const EMAIL_INVALID_VERIFY_RETRY_PROMPT = EMAIL_INVALID_SLOW_RETRY_PROMPT
 export const EMAIL_INVALID_CAPTURE_RETRY_PROMPT =
   'I may not have captured that correctly. Please spell your email again, one character at a time.';
 
-export const EMAIL_LOW_CONFIDENCE_PROMPT = EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
+export { TELEPHONY_SPELLING_LOW_CONFIDENCE_PROMPT as EMAIL_LOW_CONFIDENCE_PROMPT } from './telephony-spelling-capture.util';
 
 /** @deprecated Use EMAIL_INVALID_CAPTURE_RETRY_PROMPT */
 export const EMAIL_INVALID_CAPTURE_PROMPT = EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
@@ -247,12 +261,18 @@ export function buildProductConfirmationPrompt(): string {
 export function buildEmailConfirmationPrompt(
   email: string,
   language?: CustomerLanguage | null,
+  options?: { telephonySpellback?: boolean },
 ): string {
-  const spoken = formatEmailForVoiceConfirmation(email);
+  const spoken = options?.telephonySpellback
+    ? formatEmailForTelephonySpellback(email).spoken
+    : formatEmailForVoiceConfirmation(email);
   if (language) {
     return replyInCustomerLanguage(language, 'email_confirmation', { spoken });
   }
-  return `Just to confirm, I have your email as ${spoken}. Is that correct?`;
+  if (options?.telephonySpellback) {
+    return buildTelephonyEmailConfirmationPrompt(email);
+  }
+  return `Just to confirm, I captured your email as ${spoken}. Is that correct?`;
 }
 
 /** After payment link sent — polite close; do not restart email collection. */

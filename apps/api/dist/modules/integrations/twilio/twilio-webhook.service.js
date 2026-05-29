@@ -50,6 +50,7 @@ const streaming_fallback_util_1 = require("../../calls/runtime/streaming-fallbac
 const voice_single_reply_pipeline_util_1 = require("../../calls/runtime/voice-single-reply-pipeline.util");
 const book_sales_voice_util_1 = require("../../calls/runtime/book-sales-voice.util");
 const gather_speech_gate_util_1 = require("./gather-speech-gate.util");
+const telephony_spelling_capture_util_1 = require("../../calls/runtime/telephony-spelling-capture.util");
 function maskPhoneForLog(value) {
     const digits = value.replace(/\D/g, '');
     if (digits.length < 4)
@@ -1043,7 +1044,10 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             }));
         }
         else {
-            await this.callsService.mergeSessionMetadata(callSessionId, { gatherRetryCount: 0 });
+            await this.callsService.mergeSessionMetadata(callSessionId, {
+                gatherRetryCount: 0,
+                rawSpeechTranscript: speechText,
+            });
             this.logger.log(JSON.stringify({
                 event: 'voice.journey.twilio_speech_received',
                 callSessionId,
@@ -1051,6 +1055,7 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 agentId: ctx.agentId,
                 speechCharCount: speechText.length,
                 voicePipeline: 'deferred_async',
+                spellingModeActive: metadata.voiceMode === 'SPELLING_CAPTURE' || metadata.orderState === 'EMAIL_COLLECTING',
             }));
             const originEarly = this.getPublicBaseUrl();
             const orderStateForAck = typeof metadata.orderState === 'string' && metadata.orderState.trim()
@@ -1118,6 +1123,17 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     playAudioUrl: mainPlay.playbackUrl ?? null,
                 }));
                 const syncPlayback = this.voicePlaybackFields(Boolean(mainPlay.playbackUrl));
+                const sessionAfterSync = await this.callsService.findOneById(callSessionId);
+                const metaAfterSync = sessionAfterSync.metadata &&
+                    typeof sessionAfterSync.metadata === 'object' &&
+                    !Array.isArray(sessionAfterSync.metadata)
+                    ? sessionAfterSync.metadata
+                    : metadata;
+                const syncGatherTiming = (0, telephony_spelling_capture_util_1.resolveGatherTwiMLOptions)(metaAfterSync, {
+                    speechTimeout: '2',
+                    timeoutSeconds: 10,
+                    pauseBeforeListenSeconds: 0,
+                });
                 const twimlSync = this.finalizeTwiml((0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
                     gatherActionUrl: gatherActionUrlSync,
                     language: this.getSessionLanguage(ctx),
@@ -1125,9 +1141,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     finalFallbackAudioUrl: finalFbSync.playbackUrl,
                     openingSayText: strictElevenLabsOnly || mainPlay.playbackUrl ? undefined : utter.reply,
                     finalFallbackSayText: strictElevenLabsOnly || finalFbSync.playbackUrl ? undefined : gatherFallbackTextSync,
-                    timeoutSeconds: 10,
-                    speechTimeout: '2',
-                    pauseBeforeListenSeconds: 0,
+                    timeoutSeconds: syncGatherTiming.timeoutSeconds,
+                    speechTimeout: syncGatherTiming.speechTimeout,
+                    pauseBeforeListenSeconds: syncGatherTiming.pauseBeforeListenSeconds,
                     blockTwilioSay: this.blockTwilioSay(),
                 }), 'gather_sync_social_reply');
                 this.logTwilioResponseMetrics('gather_sync_social_reply', callSessionId, handlerStartedAt);
@@ -1279,6 +1295,11 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             playAudioUrl: retryOpen.playbackUrl ?? null,
         }));
         const retryPlaybackLog = this.voicePlaybackFields(Boolean(retryOpen.playbackUrl));
+        const gatherTiming = (0, telephony_spelling_capture_util_1.resolveGatherTwiMLOptions)(metadata, {
+            speechTimeout: '2',
+            timeoutSeconds: 10,
+            pauseBeforeListenSeconds: 0,
+        });
         const twiml = this.finalizeTwiml((0, gather_mvp_twiml_1.buildInboundGatherMvpTwiML)({
             gatherActionUrl,
             language: this.getSessionLanguage(ctx),
@@ -1286,9 +1307,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             finalFallbackAudioUrl: retryFinal.playbackUrl,
             openingSayText: strictElevenLabsOnly || retryOpen.playbackUrl ? undefined : assistantResponse,
             finalFallbackSayText: strictElevenLabsOnly || retryFinal.playbackUrl ? undefined : gatherFallbackText,
-            timeoutSeconds: 5,
-            speechTimeout: 'auto',
-            pauseBeforeListenSeconds: 0,
+            timeoutSeconds: gatherTiming.timeoutSeconds,
+            speechTimeout: gatherTiming.speechTimeout,
+            pauseBeforeListenSeconds: gatherTiming.pauseBeforeListenSeconds,
             includePromptInsideGather: false,
             blockTwilioSay: this.blockTwilioSay(),
         }), 'gather_retry');
@@ -1392,6 +1413,11 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
         const meta = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
             ? row.metadata
             : {};
+        const deferredGatherTiming = (0, telephony_spelling_capture_util_1.resolveGatherTwiMLOptions)(meta, {
+            speechTimeout: '2',
+            timeoutSeconds: 10,
+            pauseBeforeListenSeconds: 0,
+        });
         const jobRaw = meta.deferredVoiceJob;
         const job = jobRaw && typeof jobRaw === 'object' && !Array.isArray(jobRaw) ? jobRaw : null;
         const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(callSessionId)}`;
@@ -1433,9 +1459,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 finalFallbackAudioUrl: missB.playbackUrl,
                 openingSayText: strictElevenLabsOnly || missA.playbackUrl ? undefined : missOpen,
                 finalFallbackSayText: strictElevenLabsOnly || missB.playbackUrl ? undefined : gatherFallbackText,
-                timeoutSeconds: 10,
-                speechTimeout: '2',
-                pauseBeforeListenSeconds: 0,
+                timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+                speechTimeout: deferredGatherTiming.speechTimeout,
+                pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
                 blockTwilioSay: this.blockTwilioSay(),
             }), 'deferred_poll_recover');
             this.logTwilioResponseMetrics('deferred_poll_recover', callSessionId, handlerStartedAt);
@@ -1485,9 +1511,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                     finalFallbackAudioUrl: toB.playbackUrl,
                     openingSayText: strictElevenLabsOnly || toA.playbackUrl ? undefined : timeoutOpen,
                     finalFallbackSayText: strictElevenLabsOnly || toB.playbackUrl ? undefined : gatherFallbackText,
-                    timeoutSeconds: 10,
-                    speechTimeout: '2',
-                    pauseBeforeListenSeconds: 0,
+                    timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+                    speechTimeout: deferredGatherTiming.speechTimeout,
+                    pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
                     blockTwilioSay: this.blockTwilioSay(),
                 }), 'deferred_poll_timeout');
                 this.logTwilioResponseMetrics('deferred_poll_timeout', callSessionId, handlerStartedAt);
@@ -1587,9 +1613,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
                 finalFallbackAudioUrl: failB.playbackUrl,
                 openingSayText: strictElevenLabsOnly || failA.playbackUrl ? undefined : msg,
                 finalFallbackSayText: strictElevenLabsOnly || failB.playbackUrl ? undefined : gatherFallbackText,
-                timeoutSeconds: 10,
-                speechTimeout: '2',
-                pauseBeforeListenSeconds: 0,
+                timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+                speechTimeout: deferredGatherTiming.speechTimeout,
+                pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
                 blockTwilioSay: this.blockTwilioSay(),
             }), 'deferred_poll_failed');
             this.logTwilioResponseMetrics('deferred_poll_failed', callSessionId, handlerStartedAt);
@@ -1634,9 +1660,9 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             finalFallbackAudioUrl,
             openingSayText: strictElevenLabsOnly || playbackAudioUrl ? undefined : job.assistantResponse,
             finalFallbackSayText: strictElevenLabsOnly || finalFallbackAudioUrl ? undefined : playbackAudioUrl ? undefined : gatherFallbackText,
-            timeoutSeconds: 10,
-            speechTimeout: '2',
-            pauseBeforeListenSeconds: 0,
+            timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+            speechTimeout: deferredGatherTiming.speechTimeout,
+            pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
             blockTwilioSay: this.blockTwilioSay(),
         }), 'deferred_poll_ready');
         this.logTwilioResponseMetrics('deferred_poll_ready', callSessionId, handlerStartedAt);

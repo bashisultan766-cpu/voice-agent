@@ -78,6 +78,7 @@ import {
   shouldPlayInboundElevenLabsGreeting,
 } from '../../calls/runtime/book-sales-voice.util';
 import { computeGatherSpeechGate } from './gather-speech-gate.util';
+import { resolveGatherTwiMLOptions } from '../../calls/runtime/telephony-spelling-capture.util';
 
 export interface InboundCallPayload {
   CallSid: string;
@@ -1379,7 +1380,10 @@ export class TwilioWebhookService implements OnModuleInit {
         }),
       );
     } else {
-      await this.callsService.mergeSessionMetadata(callSessionId, { gatherRetryCount: 0 });
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        gatherRetryCount: 0,
+        rawSpeechTranscript: speechText,
+      });
       this.logger.log(
         JSON.stringify({
           event: 'voice.journey.twilio_speech_received',
@@ -1388,6 +1392,8 @@ export class TwilioWebhookService implements OnModuleInit {
           agentId: ctx.agentId,
           speechCharCount: speechText.length,
           voicePipeline: 'deferred_async',
+          spellingModeActive:
+            metadata.voiceMode === 'SPELLING_CAPTURE' || metadata.orderState === 'EMAIL_COLLECTING',
         }),
       );
 
@@ -1473,6 +1479,18 @@ export class TwilioWebhookService implements OnModuleInit {
           }),
         );
         const syncPlayback = this.voicePlaybackFields(Boolean(mainPlay.playbackUrl));
+        const sessionAfterSync = await this.callsService.findOneById(callSessionId);
+        const metaAfterSync =
+          sessionAfterSync.metadata &&
+          typeof sessionAfterSync.metadata === 'object' &&
+          !Array.isArray(sessionAfterSync.metadata)
+            ? (sessionAfterSync.metadata as Record<string, unknown>)
+            : metadata;
+        const syncGatherTiming = resolveGatherTwiMLOptions(metaAfterSync, {
+          speechTimeout: '2',
+          timeoutSeconds: 10,
+          pauseBeforeListenSeconds: 0,
+        });
         const twimlSync = this.finalizeTwiml(
           buildInboundGatherMvpTwiML({
             gatherActionUrl: gatherActionUrlSync,
@@ -1482,9 +1500,9 @@ export class TwilioWebhookService implements OnModuleInit {
             openingSayText: strictElevenLabsOnly || mainPlay.playbackUrl ? undefined : utter.reply,
             finalFallbackSayText:
               strictElevenLabsOnly || finalFbSync.playbackUrl ? undefined : gatherFallbackTextSync,
-            timeoutSeconds: 10,
-            speechTimeout: '2',
-            pauseBeforeListenSeconds: 0,
+            timeoutSeconds: syncGatherTiming.timeoutSeconds,
+            speechTimeout: syncGatherTiming.speechTimeout,
+            pauseBeforeListenSeconds: syncGatherTiming.pauseBeforeListenSeconds,
             blockTwilioSay: this.blockTwilioSay(),
           }),
           'gather_sync_social_reply',
@@ -1681,6 +1699,11 @@ export class TwilioWebhookService implements OnModuleInit {
       }),
     );
     const retryPlaybackLog = this.voicePlaybackFields(Boolean(retryOpen.playbackUrl));
+    const gatherTiming = resolveGatherTwiMLOptions(metadata, {
+      speechTimeout: '2',
+      timeoutSeconds: 10,
+      pauseBeforeListenSeconds: 0,
+    });
     const twiml = this.finalizeTwiml(
       buildInboundGatherMvpTwiML({
         gatherActionUrl,
@@ -1689,9 +1712,9 @@ export class TwilioWebhookService implements OnModuleInit {
         finalFallbackAudioUrl: retryFinal.playbackUrl,
         openingSayText: strictElevenLabsOnly || retryOpen.playbackUrl ? undefined : assistantResponse,
         finalFallbackSayText: strictElevenLabsOnly || retryFinal.playbackUrl ? undefined : gatherFallbackText,
-        timeoutSeconds: 5,
-        speechTimeout: 'auto',
-        pauseBeforeListenSeconds: 0,
+        timeoutSeconds: gatherTiming.timeoutSeconds,
+        speechTimeout: gatherTiming.speechTimeout,
+        pauseBeforeListenSeconds: gatherTiming.pauseBeforeListenSeconds,
         includePromptInsideGather: false,
         blockTwilioSay: this.blockTwilioSay(),
       }),
@@ -1830,6 +1853,11 @@ export class TwilioWebhookService implements OnModuleInit {
       row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
         ? (row.metadata as Record<string, unknown>)
         : {};
+    const deferredGatherTiming = resolveGatherTwiMLOptions(meta, {
+      speechTimeout: '2',
+      timeoutSeconds: 10,
+      pauseBeforeListenSeconds: 0,
+    });
     const jobRaw = meta.deferredVoiceJob;
     const job = jobRaw && typeof jobRaw === 'object' && !Array.isArray(jobRaw) ? (jobRaw as DeferredVoiceJobMetadata) : null;
 
@@ -1877,9 +1905,9 @@ export class TwilioWebhookService implements OnModuleInit {
           finalFallbackAudioUrl: missB.playbackUrl,
           openingSayText: strictElevenLabsOnly || missA.playbackUrl ? undefined : missOpen,
           finalFallbackSayText: strictElevenLabsOnly || missB.playbackUrl ? undefined : gatherFallbackText,
-          timeoutSeconds: 10,
-          speechTimeout: '2',
-          pauseBeforeListenSeconds: 0,
+          timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+          speechTimeout: deferredGatherTiming.speechTimeout,
+          pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
           blockTwilioSay: this.blockTwilioSay(),
         }),
         'deferred_poll_recover',
@@ -1938,9 +1966,9 @@ export class TwilioWebhookService implements OnModuleInit {
             finalFallbackAudioUrl: toB.playbackUrl,
             openingSayText: strictElevenLabsOnly || toA.playbackUrl ? undefined : timeoutOpen,
             finalFallbackSayText: strictElevenLabsOnly || toB.playbackUrl ? undefined : gatherFallbackText,
-            timeoutSeconds: 10,
-            speechTimeout: '2',
-            pauseBeforeListenSeconds: 0,
+            timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+            speechTimeout: deferredGatherTiming.speechTimeout,
+            pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
             blockTwilioSay: this.blockTwilioSay(),
           }),
           'deferred_poll_timeout',
@@ -2060,9 +2088,9 @@ export class TwilioWebhookService implements OnModuleInit {
           finalFallbackAudioUrl: failB.playbackUrl,
           openingSayText: strictElevenLabsOnly || failA.playbackUrl ? undefined : msg,
           finalFallbackSayText: strictElevenLabsOnly || failB.playbackUrl ? undefined : gatherFallbackText,
-          timeoutSeconds: 10,
-          speechTimeout: '2',
-          pauseBeforeListenSeconds: 0,
+          timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+          speechTimeout: deferredGatherTiming.speechTimeout,
+          pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
           blockTwilioSay: this.blockTwilioSay(),
         }),
         'deferred_poll_failed',
@@ -2116,9 +2144,9 @@ export class TwilioWebhookService implements OnModuleInit {
         openingSayText: strictElevenLabsOnly || playbackAudioUrl ? undefined : job.assistantResponse,
         finalFallbackSayText:
           strictElevenLabsOnly || finalFallbackAudioUrl ? undefined : playbackAudioUrl ? undefined : gatherFallbackText,
-        timeoutSeconds: 10,
-        speechTimeout: '2',
-        pauseBeforeListenSeconds: 0,
+        timeoutSeconds: deferredGatherTiming.timeoutSeconds,
+        speechTimeout: deferredGatherTiming.speechTimeout,
+        pauseBeforeListenSeconds: deferredGatherTiming.pauseBeforeListenSeconds,
         blockTwilioSay: this.blockTwilioSay(),
       }),
       'deferred_poll_ready',

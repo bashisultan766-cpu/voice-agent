@@ -5,7 +5,8 @@
 export const VOICE_EMAIL_REGEX =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
-export const EMAIL_CAPTURE_MIN_CONFIDENCE = 0.85;
+/** Telephony spelling capture requires ≥0.92 before validation/checkout. */
+export const EMAIL_CAPTURE_MIN_CONFIDENCE = 0.92;
 
 export type EmailCaptureMode = 'normal' | 'spelling';
 
@@ -199,7 +200,16 @@ export function parseEmailTokenStream(text: string): { email: string | null; tok
   const parsedLocal: string[] = [];
   for (const tok of localTokens) {
     const ch = tokenToChar(tok);
-    if (ch) parsedLocal.push(ch);
+    if (ch) {
+      parsedLocal.push(ch);
+      continue;
+    }
+    if (
+      /^[a-z0-9]{2,}$/i.test(tok) &&
+      !['gmail', 'yahoo', 'hotmail', 'outlook', 'dot', 'com', 'org', 'net'].includes(tok.toLowerCase())
+    ) {
+      parsedLocal.push(tok.toLowerCase());
+    }
   }
 
   const parsedDomain: string[] = [];

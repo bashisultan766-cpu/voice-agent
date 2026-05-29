@@ -47,11 +47,12 @@ import {
   nextEmailRetryCount,
   shouldOfferEmailRetry,
   validateVoiceEmail,
-  captureEmailFromVoice,
-  EMAIL_CAPTURE_MODE_KEY,
+  activateSpellingCaptureModePatch,
+  captureEmailWithTelephonySpelling,
   EMAIL_LOW_CONFIDENCE_PROMPT,
   extractEmailFromSpeech,
   isEmailCaptureConfidenceSufficient,
+  isSpellingCaptureActive,
   buildEmailRecollectionAfterRejectPrompt,
   PRODUCT_CHECKOUT_INTRODUCED_KEY,
   resolveEmailCaptureMode,
@@ -353,8 +354,16 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         sessionMetaAtStart.emailConfirmationState === 'pending') &&
       pendingEmailForConfirm.length > 0;
 
-    const captureFromUtterance = (text: string) =>
-      captureEmailFromVoice(text, { mode: emailCaptureMode });
+    const emailRetryForSpelling = Number(sessionMetaAtStart.emailRetryCount ?? 0);
+    const captureFromUtterance = (text: string) => {
+      if (isSpellingCaptureActive(sessionMetaAtStart) || emailCaptureMode === 'spelling') {
+        return captureEmailWithTelephonySpelling(text, {
+          mode: 'spelling',
+          retryCount: emailRetryForSpelling,
+        });
+      }
+      return captureEmailWithTelephonySpelling(text, { mode: 'normal', retryCount: emailRetryForSpelling });
+    };
 
     const emailInUtteranceWhileConfirming = awaitingEmailConfirmation
       ? captureFromUtterance(userMessage).email
@@ -416,6 +425,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           emailCapturedReply = buildEmailConfirmationPrompt(
             enterprise.normalized,
             customerLanguage,
+            { telephonySpellback: true },
           );
         } else {
           await this.callsService.mergeSessionMetadata(callSessionId, {
@@ -579,7 +589,9 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
             pendingTypoCorrection: null,
             [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_CONFIRMATION_REQUIRED',
           });
-          emailCapturedReply = buildEmailConfirmationPrompt(enterprise.normalized);
+          emailCapturedReply = buildEmailConfirmationPrompt(enterprise.normalized, null, {
+            telephonySpellback: true,
+          });
           skipBrainRewrite = true;
         }
       }
@@ -588,12 +600,18 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       const spokenEmail = voiceCapture.email;
       if (spokenEmail) {
         const emailRetryCount = await loadEmailRetryCount();
-        if (!isEmailCaptureConfidenceSufficient(voiceCapture.confidence)) {
+        const spellingConfidence = voiceCapture.spellingConfidence;
+        const telephonyLog =
+          'telephony' in voiceCapture
+            ? (voiceCapture as { telephony: { logFields: Record<string, unknown> } }).telephony.logFields
+            : {};
+
+        if (!isEmailCaptureConfidenceSufficient(spellingConfidence)) {
           const retryCount = nextEmailRetryCount(emailRetryCount, false);
           await this.callsService.mergeSessionMetadata(callSessionId, {
             orderState: 'EMAIL_COLLECTING',
             emailRetryCount: retryCount,
-            emailCaptureMode: 'spelling',
+            ...activateSpellingCaptureModePatch(),
           });
           emailCapturedReply = EMAIL_LOW_CONFIDENCE_PROMPT;
           skipBrainRewrite = true;
@@ -603,9 +621,10 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
               callSessionId,
               tenantId: ctx.tenantId,
               agentId: ctx.agentId,
-              emailCaptureConfidence: voiceCapture.confidence,
+              emailCaptureConfidence: spellingConfidence,
               parseMethod: voiceCapture.parseMethod,
               tokenStreamLength: voiceCapture.tokenStream.length,
+              ...telephonyLog,
             }),
           );
         } else {
@@ -730,6 +749,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           emailCapturedReply = buildEmailConfirmationPrompt(
             enterprise.normalized,
             customerLanguage,
+            { telephonySpellback: isSpellingCaptureActive(sessionMetaAtStart) },
           );
           skipBrainRewrite = true;
           this.logger.log(
@@ -870,11 +890,12 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
       if (lockCheckoutState === 'EMAIL_COLLECTION_REQUIRED') {
         await this.callsService.mergeSessionMetadata(callSessionId, {
-          emailCaptureMode: 'spelling',
+          ...activateSpellingCaptureModePatch(),
         });
         this.logger.log(
           JSON.stringify({
             event: 'email_spelling_mode_started',
+            spellingModeActive: true,
             callSessionId,
             tenantId: ctx.tenantId,
             agentId: ctx.agentId,

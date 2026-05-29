@@ -70,9 +70,9 @@ test('extractEmailFromSpeech handles spoken and direct forms', () => {
 
 test('buildEmailConfirmationPrompt reads email back for confirmation', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
-  assert.match(prompt, /Just to confirm, I have your email as/i);
+  assert.match(prompt, /Just to confirm, I captured your email as/i);
   assert.match(prompt, /s h a h b a z/i);
-  assert.match(prompt, /g m a i l dot com/i);
+  assert.match(prompt, /g m a i l dot c o m/i);
   assert.match(prompt, /Is that correct/i);
   assert.doesNotMatch(prompt, /say yes/i);
 });

@@ -36,8 +36,8 @@ test('double and triple digit parsing in email', () => {
 });
 
 test('low confidence blocks sufficient gate', () => {
-  assert.equal(isEmailCaptureConfidenceSufficient(0.84), false);
-  assert.equal(isEmailCaptureConfidenceSufficient(0.85), true);
+  assert.equal(isEmailCaptureConfidenceSufficient(0.91), false);
+  assert.equal(isEmailCaptureConfidenceSufficient(0.92), true);
 });
 
 test('wrong email negative confirmation', () => {

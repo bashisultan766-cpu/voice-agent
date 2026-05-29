@@ -13,9 +13,9 @@ export declare class OpsController {
         twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         openaiConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         voiceProfile: {
+            id: string;
             tenantId: string;
             agentId: string;
-            id: string;
             createdAt: Date;
             updatedAt: Date;
             language: string;
@@ -32,11 +32,11 @@ export declare class OpsController {
             name: string;
         };
     } & {
-        tenantId: string;
-        agentId: string;
         id: string;
         twilioCallSid: string | null;
+        tenantId: string;
         storeId: string | null;
+        agentId: string;
         phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
@@ -60,9 +60,9 @@ export declare class OpsController {
         updatedAt: Date;
     })[]>;
     getTranscripts(tenantId: string, callSessionId: string): import("@prisma/client").Prisma.PrismaPromise<{
-        callSessionId: string;
         id: string;
         createdAt: Date;
+        callSessionId: string;
         role: string;
         content: string;
         sequenceNumber: number;
@@ -75,14 +75,14 @@ export declare class OpsController {
         };
     } & {
         mode: import("@prisma/client").$Enums.CheckoutMode;
-        callSessionId: string | null;
+        id: string;
         tenantId: string;
         agentId: string;
-        id: string;
         status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
+        callSessionId: string | null;
         customerEmail: string | null;
         checkoutUrl: string;
         checkoutFingerprint: string | null;
@@ -99,19 +99,19 @@ export declare class OpsController {
             name: string;
         };
     } & {
-        callSessionId: string | null;
+        id: string;
         tenantId: string;
         agentId: string;
-        intent: string | null;
-        id: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
-        notes: string | null;
+        callSessionId: string | null;
+        intent: string | null;
         customerEmail: string | null;
         customerName: string | null;
         customerPhone: string | null;
         interestedItems: import("@prisma/client/runtime/client").JsonValue | null;
+        notes: string | null;
     })[]>;
     getEmailEvents(tenantId: string): import("@prisma/client").Prisma.PrismaPromise<({
         agent: {
@@ -119,16 +119,16 @@ export declare class OpsController {
             name: string;
         };
     } & {
-        callSessionId: string | null;
+        id: string;
         tenantId: string;
         agentId: string;
-        providerMessageId: string | null;
-        id: string;
         status: import("@prisma/client").$Enums.EmailDeliveryStatus;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
+        callSessionId: string | null;
         provider: string;
+        providerMessageId: string | null;
         checkoutLinkId: string | null;
         sentAt: Date | null;
         idempotencyKey: string | null;
@@ -142,18 +142,18 @@ export declare class OpsController {
             name: string;
         };
         checkoutLink: {
-            callSessionId: string | null;
             id: string;
+            callSessionId: string | null;
             checkoutUrl: string;
         };
     } & {
-        callSessionId: string | null;
+        id: string;
         tenantId: string;
         agentId: string;
-        id: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
+        callSessionId: string | null;
         customerEmail: string | null;
         checkoutLinkId: string;
         shopifyOrderId: string | null;

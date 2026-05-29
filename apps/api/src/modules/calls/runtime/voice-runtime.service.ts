@@ -56,7 +56,9 @@ import {
   buildEmailConfirmationPrompt,
   buildInvalidEmailRetryPrompt,
   buildPaymentEmailSendFailurePrompt,
+  isSpellingCaptureActive,
 } from './voice-email-capture.util';
+import { processTelephonySpellingPipeline } from './telephony-spelling-capture.util';
 
 /**
  * Voice runtime: assembles prompt, handles conversation flow.
@@ -950,20 +952,64 @@ export class VoiceRuntimeService {
         ? conversationHistory
         : await this.transcriptBuffer.getConversationHistory(callSessionId, 24);
 
-    const normalization = await this.transcriptNormalizer.normalizeTranscript(trimmedUserText, {
-      tenantId: ctx.tenantId,
-      agentId: ctx.agentId,
-      callSessionId,
-      conversationHistory: historyFromDb,
-    });
-    const orchestratorSpeech = normalization.normalized;
+    const sessionRow = await this.callsService.findOneById(callSessionId);
+    const sessionMeta =
+      sessionRow.metadata &&
+      typeof sessionRow.metadata === 'object' &&
+      !Array.isArray(sessionRow.metadata)
+        ? (sessionRow.metadata as Record<string, unknown>)
+        : {};
 
-    await this.callsService.mergeSessionMetadata(callSessionId, {
-      lastRawTranscript: normalization.raw,
-      lastNormalizedTranscript: normalization.normalized,
-      transcriptNormalizeConfidence: normalization.confidence,
-      transcriptNormalizeCorrected: normalization.corrected,
-    });
+    let orchestratorSpeech = trimmedUserText;
+    let rawTranscriptForLog = trimmedUserText;
+
+    if (isSpellingCaptureActive(sessionMeta)) {
+      const spellingPipeline = processTelephonySpellingPipeline(trimmedUserText, {
+        retryCount: Number(sessionMeta.emailRetryCount ?? 0),
+        forceSpellingMode: true,
+      });
+      orchestratorSpeech = spellingPipeline.orchestratorText;
+      rawTranscriptForLog = spellingPipeline.rawSpeechTranscript;
+
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        rawSpeechTranscript: spellingPipeline.rawSpeechTranscript,
+        normalizedConversationTranscript: spellingPipeline.normalizedConversationTranscript,
+        normalizedSpellingTranscript: spellingPipeline.normalizedSpellingTranscript,
+        lastRawTranscript: spellingPipeline.rawSpeechTranscript,
+        lastNormalizedTranscript: spellingPipeline.normalizedSpellingTranscript,
+        transcriptNormalizeSkipped: true,
+        transcriptNormalizeSkipReason: 'spelling_capture_mode',
+        ...spellingPipeline.logFields,
+      });
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.spelling.pipeline',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          ...spellingPipeline.logFields,
+        }),
+      );
+    } else {
+      const normalization = await this.transcriptNormalizer.normalizeTranscript(trimmedUserText, {
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        callSessionId,
+        conversationHistory: historyFromDb,
+      });
+      orchestratorSpeech = normalization.normalized;
+      rawTranscriptForLog = normalization.raw;
+
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        rawSpeechTranscript: normalization.raw,
+        normalizedConversationTranscript: normalization.normalized,
+        lastRawTranscript: normalization.raw,
+        lastNormalizedTranscript: normalization.normalized,
+        transcriptNormalizeConfidence: normalization.confidence,
+        transcriptNormalizeCorrected: normalization.corrected,
+      });
+    }
 
     const userSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
     await this.transcriptBuffer.append(callSessionId, 'user', orchestratorSpeech, userSeq);
@@ -975,8 +1021,8 @@ export class VoiceRuntimeService {
         sessionId: callSessionId,
         tenantId: ctx.tenantId,
         userText: orchestratorSpeech.slice(0, 500),
-        rawTranscript: normalization.raw.slice(0, 500),
-        transcriptCorrected: normalization.corrected,
+        rawTranscript: rawTranscriptForLog.slice(0, 500),
+        spellingCaptureMode: isSpellingCaptureActive(sessionMeta),
         brain: 'openai_llm_agent_orchestrator',
       }),
     );
