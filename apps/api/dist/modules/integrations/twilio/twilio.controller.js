@@ -32,6 +32,7 @@ const agents_service_1 = require("../../agents/agents.service");
 const twilio_tts_cache_service_1 = require("./twilio-tts-cache.service");
 const public_webhook_base_url_1 = require("../../../common/public-webhook-base-url");
 const conversation_relay_twiml_1 = require("./twiml/conversation-relay.twiml");
+const voice_provider_policy_util_1 = require("./voice-provider-policy.util");
 const gather_speech_gate_util_1 = require("./gather-speech-gate.util");
 const inboundSchema = zod_1.z.object({
     CallSid: zod_1.z.string().trim().min(1),
@@ -61,6 +62,13 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
         this.voiceWebhooks = voiceWebhooks;
         this.agents = agents;
         this.logger = new common_1.Logger(TwilioVoiceController_1.name);
+    }
+    blockTwilioSayInVoice() {
+        return (0, voice_provider_policy_util_1.resolveVoiceProviderPolicy)({
+            FORCE_ELEVENLABS_ONLY: this.config.get('FORCE_ELEVENLABS_ONLY') ?? process.env.FORCE_ELEVENLABS_ONLY,
+            STRICT_ELEVENLABS_ONLY: this.config.get('STRICT_ELEVENLABS_ONLY') ?? process.env.STRICT_ELEVENLABS_ONLY,
+            FORCE_TWILIO_FALLBACK: this.config.get('FORCE_TWILIO_FALLBACK') ?? process.env.FORCE_TWILIO_FALLBACK,
+        }).twilioSayBlocked;
     }
     configCheck() {
         const baseUrlRaw = this.config.get('PUBLIC_WEBHOOK_BASE_URL') ?? '';
@@ -318,7 +326,9 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             console.error(error);
             if (error instanceof common_1.BadRequestException)
                 throw error;
-            const twiml = (0, conversation_relay_twiml_1.buildFallbackTwiML)('Sorry, something went wrong. Please try your call again.');
+            const twiml = (0, conversation_relay_twiml_1.buildFallbackTwiML)('Sorry, something went wrong. Please try your call again.', {
+                blockTwilioSay: this.blockTwilioSayInVoice(),
+            });
             res.type('text/xml; charset=utf-8').send(twiml);
         }
     }
@@ -356,7 +366,9 @@ let TwilioVoiceController = TwilioVoiceController_1 = class TwilioVoiceControlle
             console.error(error);
             if (error instanceof common_1.BadRequestException)
                 throw error;
-            const twiml = (0, conversation_relay_twiml_1.buildFallbackTwiML)('Sorry, something went wrong. Please try your call again.');
+            const twiml = (0, conversation_relay_twiml_1.buildFallbackTwiML)('Sorry, something went wrong. Please try your call again.', {
+                blockTwilioSay: this.blockTwilioSayInVoice(),
+            });
             res.type('text/xml; charset=utf-8').send(twiml);
         }
     }

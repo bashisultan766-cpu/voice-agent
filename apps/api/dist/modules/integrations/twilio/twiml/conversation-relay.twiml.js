@@ -11,7 +11,13 @@ function buildConversationRelayTwiML(websocketUrl) {
   </Connect>
 </Response>`;
 }
-function buildFallbackTwiML(message) {
+function buildFallbackTwiML(message, options) {
+    if (options?.blockTwilioSay) {
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Hangup />
+</Response>`;
+    }
     const say = message ?? "We're sorry, this line is not configured. Please try again later.";
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

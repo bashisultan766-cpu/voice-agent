@@ -15,8 +15,18 @@ export function buildConversationRelayTwiML(websocketUrl: string): string {
 
 /**
  * Fallback TwiML when no agent is found.
+ * When `blockTwilioSay` is true, hang up silently (no Twilio TTS).
  */
-export function buildFallbackTwiML(message?: string): string {
+export function buildFallbackTwiML(
+  message?: string,
+  options?: { blockTwilioSay?: boolean },
+): string {
+  if (options?.blockTwilioSay) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Hangup />
+</Response>`;
+  }
   const say = message ?? "We're sorry, this line is not configured. Please try again later.";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

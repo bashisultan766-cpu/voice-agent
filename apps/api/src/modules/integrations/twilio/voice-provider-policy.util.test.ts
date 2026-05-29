@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  assertNoTwilioSayInTwiml,
+  buildElevenLabsOnlyModeActiveLog,
+  buildTwilioSayBlockedLog,
   buildVoiceProviderEnforcedLog,
+  resolvePlaybackLogKind,
+  resolveVoiceProviderActuallyUsed,
   resolveVoiceProviderPolicy,
   shouldPlayDeferredSearchFiller,
 } from './voice-provider-policy.util';
@@ -13,11 +18,24 @@ test('FORCE_ELEVENLABS_ONLY=true blocks Twilio Say', () => {
     STRICT_ELEVENLABS_ONLY: 'false',
   });
   assert.equal(policy.twilioSayBlocked, true);
+  assert.equal(policy.disableTwilioSayCompletely, true);
   assert.equal(policy.forceElevenLabsOnly, true);
   const log = buildVoiceProviderEnforcedLog(policy);
   assert.equal(log.event, 'voice_provider_enforced');
   assert.equal(log.provider, 'elevenlabs');
   assert.equal(log.twilioSayBlocked, true);
+  assert.equal(resolveVoiceProviderActuallyUsed(false, policy), 'elevenlabs_silent_wait');
+  assert.equal(resolvePlaybackLogKind(false, policy), 'silent_wait');
+  assert.equal(buildElevenLabsOnlyModeActiveLog(policy).event, 'voice.elevenlabs_only_mode_active');
+  assert.equal(buildTwilioSayBlockedLog({ route: 'test', reason: 'x' }).event, 'voice.twilio_say_blocked');
+  assert.throws(
+    () =>
+      assertNoTwilioSayInTwiml(
+        '<?xml version="1.0"?><Response><Say>hi</Say></Response>',
+        policy,
+      ),
+    /Twilio SAY blocked/,
+  );
 });
 
 test('FORCE_TWILIO_FALLBACK=true allows Twilio Say even with FORCE_ELEVENLABS_ONLY', () => {

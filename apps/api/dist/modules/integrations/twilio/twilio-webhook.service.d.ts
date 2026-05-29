@@ -78,6 +78,10 @@ export declare class TwilioWebhookService implements OnModuleInit {
     private logVoiceProviderEnforced;
     private resolveGatherHearingDebugEffective;
     private allowTwilioSayFallback;
+    private blockTwilioSay;
+    private finalizeTwiml;
+    private voicePlaybackFields;
+    private logTwilioSayWouldHaveBeenUsed;
     private logHiddenReplyDetected;
     private resolveShortPhrasePlayUrl;
     private loadAgentWorkspaceFlags;

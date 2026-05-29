@@ -42,6 +42,7 @@ test('deferred kickoff with FORCE_ELEVENLABS_ONLY style has no Twilio Say', () =
     deferPollUrl: 'https://agent.example.com/api/twilio/voice/deferred-poll?callSessionId=abc',
     instantSayText: 'One moment please.',
     allowTwilioSayFallback: false,
+    blockTwilioSay: true,
   });
   assert.doesNotMatch(xml, /<Say/);
   assert.match(xml, /<Redirect/);

@@ -1,4 +1,7 @@
-export interface InboundGatherMvpTwiMLOptions {
+export type TwilioSayBlockOption = {
+    blockTwilioSay?: boolean;
+};
+export interface InboundGatherMvpTwiMLOptions extends TwilioSayBlockOption {
     gatherActionUrl: string;
     language?: string;
     speechTimeout?: string;
@@ -17,7 +20,7 @@ export declare function buildDeferredVoiceKickoffTwiML(options: {
     instantSayText?: string;
     allowTwilioSayFallback?: boolean;
     language?: string;
-}): string;
+} & TwilioSayBlockOption): string;
 export declare function buildDeferredVoicePollPauseTwiML(options: {
     deferPollUrl: string;
     pauseSeconds?: number;
@@ -28,11 +31,11 @@ export declare function buildDeferredVoiceMomentPleaseTwiML(options: {
     sayFallbackText?: string;
     allowTwilioSayFallback?: boolean;
     language?: string;
-}): string;
+} & TwilioSayBlockOption): string;
 export declare function buildVoiceTerminalTwiml(options: {
     playbackAudioUrl?: string;
     sayText?: string;
     language?: string;
-}): string;
+} & TwilioSayBlockOption): string;
 export declare function escapeXml(text: string): string;
 export declare function escapeXmlAttribute(value: string): string;

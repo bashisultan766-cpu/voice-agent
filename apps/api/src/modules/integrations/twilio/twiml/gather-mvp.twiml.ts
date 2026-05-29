@@ -15,7 +15,10 @@ function sayOpeningAttrs(language: string): string {
   return ` language="${escapeXmlAttribute(lang)}"`;
 }
 
-export interface InboundGatherMvpTwiMLOptions {
+/** When true, never emit &lt;Say&gt; (ElevenLabs Play or silent Gather only). */
+export type TwilioSayBlockOption = { blockTwilioSay?: boolean };
+
+export interface InboundGatherMvpTwiMLOptions extends TwilioSayBlockOption {
   /**
    * Absolute HTTPS URL Twilio POSTs to with speech results (e.g. /api/twilio/voice/gather?callSessionId=...).
    * Must be a full URL; query strings with & must be valid for XML attributes (caller should pass a safe URL).
@@ -63,14 +66,15 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
   const actionAttr = escapeXmlAttribute(options.gatherActionUrl);
   const playbackAudioUrl = options.playbackAudioUrl?.trim() ?? '';
   const finalFallbackAudioUrl = options.finalFallbackAudioUrl?.trim() ?? '';
-  const openingSayText = options.openingSayText?.trim() ?? '';
-  const finalFallbackSayText = options.finalFallbackSayText?.trim() ?? '';
+  const blockTwilioSay = options.blockTwilioSay === true;
+  const openingSayText = blockTwilioSay ? '' : (options.openingSayText?.trim() ?? '');
+  const finalFallbackSayText = blockTwilioSay ? '' : (options.finalFallbackSayText?.trim() ?? '');
 
   const sayAttr = sayOpeningAttrs(language);
   const gatherInnerLines: string[] = [];
   if (includePromptInsideGather) {
     if (playbackAudioUrl.length > 0) gatherInnerLines.push(`    <Play>${escapeXml(playbackAudioUrl)}</Play>`);
-    if (openingSayText.length > 0) gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
+    if (!blockTwilioSay && openingSayText.length > 0) gatherInnerLines.push(`    <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
     if (pauseBeforeListen > 0) {
       gatherInnerLines.push(`    <Pause length="${pauseBeforeListen}"/>`);
     }
@@ -79,13 +83,13 @@ export function buildInboundGatherMvpTwiML(options: InboundGatherMvpTwiMLOptions
   const preGatherLines: string[] = [];
   if (!includePromptInsideGather) {
     if (playbackAudioUrl.length > 0) preGatherLines.push(`  <Play>${escapeXml(playbackAudioUrl)}</Play>`);
-    else if (openingSayText.length > 0) preGatherLines.push(`  <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
+    else if (!blockTwilioSay && openingSayText.length > 0) preGatherLines.push(`  <Say${sayAttr}>${escapeXml(openingSayText)}</Say>`);
   }
   const preGather = preGatherLines.length > 0 ? `${preGatherLines.join('\n')}\n` : '';
 
   const afterGatherLines: string[] = [];
   if (finalFallbackAudioUrl.length > 0) afterGatherLines.push(`  <Play>${escapeXml(finalFallbackAudioUrl)}</Play>`);
-  if (finalFallbackSayText.length > 0) afterGatherLines.push(`  <Say${sayAttr}>${escapeXml(finalFallbackSayText)}</Say>`);
+  if (!blockTwilioSay && finalFallbackSayText.length > 0) afterGatherLines.push(`  <Say${sayAttr}>${escapeXml(finalFallbackSayText)}</Say>`);
   const afterGather = afterGatherLines.length > 0 ? `${afterGatherLines.join('\n')}\n` : '';
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -112,7 +116,7 @@ export function buildDeferredVoiceKickoffTwiML(options: {
   allowTwilioSayFallback?: boolean;
   /** BCP-47 for optional Say fallback. */
   language?: string;
-}): string {
+} & TwilioSayBlockOption): string {
   const play = options.instantPlaybackUrl?.trim() ?? '';
   if (play.length > 0) {
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -121,7 +125,7 @@ export function buildDeferredVoiceKickoffTwiML(options: {
   <Redirect method="POST">${escapeXmlAttribute(options.deferPollUrl)}</Redirect>
 </Response>`;
   }
-  if (options.allowTwilioSayFallback) {
+  if (!options.blockTwilioSay && options.allowTwilioSayFallback) {
     const lang = options.language ?? 'en-US';
     const sayAttr = sayOpeningAttrs(lang);
     const say = (options.instantSayText ?? 'One moment.').trim();
@@ -157,7 +161,7 @@ export function buildDeferredVoiceMomentPleaseTwiML(options: {
   /** When false and no playback, silent redirect (no default female Say). */
   allowTwilioSayFallback?: boolean;
   language?: string;
-}): string {
+} & TwilioSayBlockOption): string {
   const play = options.playbackUrl?.trim() ?? '';
   if (play.length > 0) {
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -166,7 +170,7 @@ export function buildDeferredVoiceMomentPleaseTwiML(options: {
   <Redirect method="POST">${escapeXmlAttribute(options.deferPollUrl)}</Redirect>
 </Response>`;
   }
-  if (options.allowTwilioSayFallback) {
+  if (!options.blockTwilioSay && options.allowTwilioSayFallback) {
     const lang = options.language ?? 'en-US';
     const sayAttr = sayOpeningAttrs(lang);
     const say = (options.sayFallbackText ?? 'One moment please.').trim();
@@ -189,14 +193,14 @@ export function buildVoiceTerminalTwiml(options: {
   playbackAudioUrl?: string;
   sayText?: string;
   language?: string;
-}): string {
+} & TwilioSayBlockOption): string {
   const play = options.playbackAudioUrl?.trim() ?? '';
-  const say = options.sayText?.trim() ?? '';
+  const say = options.blockTwilioSay ? '' : (options.sayText?.trim() ?? '');
   const lang = options.language ?? 'en-US';
   const sayAttr = sayOpeningAttrs(lang);
   const lines: string[] = [];
   if (play.length > 0) lines.push(`  <Play>${escapeXml(play)}</Play>`);
-  if (say.length > 0) lines.push(`  <Say${sayAttr}>${escapeXml(say)}</Say>`);
+  if (!options.blockTwilioSay && say.length > 0) lines.push(`  <Say${sayAttr}>${escapeXml(say)}</Say>`);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
 ${lines.join('\n')}

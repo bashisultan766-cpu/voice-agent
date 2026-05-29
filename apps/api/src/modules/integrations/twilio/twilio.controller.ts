@@ -30,6 +30,7 @@ import { AgentsService } from '../../agents/agents.service';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
 import { normalizePublicWebhookBaseUrl, validatePublicWebhookBaseUrl } from '../../../common/public-webhook-base-url';
 import { buildFallbackTwiML } from './twiml/conversation-relay.twiml';
+import { resolveVoiceProviderPolicy } from './voice-provider-policy.util';
 import { computeGatherSpeechGate } from './gather-speech-gate.util';
 
 const inboundSchema = z.object({
@@ -65,6 +66,17 @@ export class TwilioVoiceController {
     private readonly agents: AgentsService,
   ) {}
   private readonly logger = new Logger(TwilioVoiceController.name);
+
+  private blockTwilioSayInVoice(): boolean {
+    return resolveVoiceProviderPolicy({
+      FORCE_ELEVENLABS_ONLY:
+        this.config.get<string>('FORCE_ELEVENLABS_ONLY') ?? process.env.FORCE_ELEVENLABS_ONLY,
+      STRICT_ELEVENLABS_ONLY:
+        this.config.get<string>('STRICT_ELEVENLABS_ONLY') ?? process.env.STRICT_ELEVENLABS_ONLY,
+      FORCE_TWILIO_FALLBACK:
+        this.config.get<string>('FORCE_TWILIO_FALLBACK') ?? process.env.FORCE_TWILIO_FALLBACK,
+    }).twilioSayBlocked;
+  }
 
   /**
    * Twilio configuration readiness check.
@@ -409,13 +421,15 @@ export class TwilioVoiceController {
     } catch (error) {
       console.error(error);
       if (error instanceof BadRequestException) throw error;
-      const twiml = buildFallbackTwiML('Sorry, something went wrong. Please try your call again.');
+      const twiml = buildFallbackTwiML('Sorry, something went wrong. Please try your call again.', {
+        blockTwilioSay: this.blockTwilioSayInVoice(),
+      });
       res.type('text/xml; charset=utf-8').send(twiml);
     }
   }
 
   /**
-   * Deferred voice poll: cheap TwiML only (Pause / Say / Redirect) until async OpenAI + ElevenLabs complete.
+   * Deferred voice poll: cheap TwiML only (Pause / Redirect) until async OpenAI + ElevenLabs complete.
    */
   @Public()
   @SkipThrottle()
@@ -459,7 +473,9 @@ export class TwilioVoiceController {
     } catch (error) {
       console.error(error);
       if (error instanceof BadRequestException) throw error;
-      const twiml = buildFallbackTwiML('Sorry, something went wrong. Please try your call again.');
+      const twiml = buildFallbackTwiML('Sorry, something went wrong. Please try your call again.', {
+        blockTwilioSay: this.blockTwilioSayInVoice(),
+      });
       res.type('text/xml; charset=utf-8').send(twiml);
     }
   }

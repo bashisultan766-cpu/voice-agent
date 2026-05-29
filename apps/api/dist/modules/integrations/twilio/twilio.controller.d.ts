@@ -15,6 +15,7 @@ export declare class TwilioVoiceController {
     private readonly agents;
     constructor(signature: TwilioSignatureService, statusCallback: TwilioStatusCallbackService, config: ConfigService, ttsCache: TwilioTtsCacheService, voiceWebhooks: TwilioWebhookService, agents: AgentsService);
     private readonly logger;
+    private blockTwilioSayInVoice;
     configCheck(): {
         status: string;
         ready: boolean;
