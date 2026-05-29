@@ -21,12 +21,13 @@ const openai_connection_test_service_1 = require("./connection-test/openai-conne
 const elevenlabs_connection_test_service_1 = require("./connection-test/elevenlabs-connection-test.service");
 const order_booking_service_1 = require("./order-booking.service");
 const product_sync_queue_1 = require("../integrations/shopify/product-sync.queue");
+const bookstore_search_module_1 = require("../search/bookstore-search.module");
 let AgentsModule = class AgentsModule {
 };
 exports.AgentsModule = AgentsModule;
 exports.AgentsModule = AgentsModule = __decorate([
     (0, common_1.Module)({
-        imports: [tools_module_1.ToolsModule, email_module_1.EmailModule],
+        imports: [tools_module_1.ToolsModule, email_module_1.EmailModule, bookstore_search_module_1.BookstoreSearchModule],
         controllers: [agents_controller_1.AgentsController, public_agents_controller_1.PublicAgentsController],
         providers: [
             agents_service_1.AgentsService,

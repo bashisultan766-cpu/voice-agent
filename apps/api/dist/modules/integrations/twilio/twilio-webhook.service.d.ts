@@ -72,8 +72,12 @@ export declare class TwilioWebhookService implements OnModuleInit {
     private shortenGreetingForCapture;
     private isGatherHearingDebugMode;
     private isForceElevenLabsOnly;
+    private isForceTwilioFallback;
     private isStrictElevenLabsOnly;
+    private voiceProviderPolicy;
+    private logVoiceProviderEnforced;
     private resolveGatherHearingDebugEffective;
+    private allowTwilioSayFallback;
     private logHiddenReplyDetected;
     private resolveShortPhrasePlayUrl;
     private loadAgentWorkspaceFlags;

@@ -16,6 +16,7 @@ export type SelectInstantAcknowledgementInput = {
     speechText: string;
     callState: string;
     metadata: Record<string, unknown>;
+    forceElevenLabsOnly?: boolean;
 };
 export declare function selectInstantAcknowledgement(input: SelectInstantAcknowledgementInput): InstantAckSelection;
 export declare function buildInstantAckMetadataPatch(args: {

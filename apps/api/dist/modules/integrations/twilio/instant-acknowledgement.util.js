@@ -4,6 +4,8 @@ exports.isYesNoOnlyUtterance = isYesNoOnlyUtterance;
 exports.isLikelyProductCorrection = isLikelyProductCorrection;
 exports.selectInstantAcknowledgement = selectInstantAcknowledgement;
 exports.buildInstantAckMetadataPatch = buildInstantAckMetadataPatch;
+const voice_commerce_fast_mode_util_1 = require("../../calls/runtime/voice-commerce-fast-mode.util");
+const voice_search_filler_util_1 = require("../../search/voice/voice-search-filler.util");
 const ORDER_DETAIL_STATES = new Set(['EMAIL_COLLECTION']);
 function normalizeQuery(s) {
     return s.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200);
@@ -20,7 +22,7 @@ function isLikelyProductCorrection(text) {
     return (/\b(no|nope|not)\b.*\b(mean|meant|actually)\b|\bi mean\b|\b(instead|rather)\b|\bwrong (book|one|title|item)\b|\bnot that\b|\bdifferent (book|one|title)\b/i.test(t) || /^no,?\s+i\s+mean\b/i.test(t));
 }
 function selectInstantAcknowledgement(input) {
-    const { intent, speechText, callState, metadata } = input;
+    const { intent, speechText, callState, metadata, forceElevenLabsOnly = false } = input;
     const trimmed = speechText.trim();
     const normQ = normalizeQuery(trimmed);
     const prevProduct = typeof metadata.lastProductQuery === 'string' ? metadata.lastProductQuery : null;
@@ -68,20 +70,21 @@ function selectInstantAcknowledgement(input) {
             };
         }
     }
+    const fastInstant = !forceElevenLabsOnly && (0, voice_commerce_fast_mode_util_1.isVoiceCommerceFastMode)() ? voice_search_filler_util_1.DEFERRED_INSTANT_ACK_PHRASE : null;
     if (intent === 'product_search') {
         if (isLikelyProductCorrection(trimmed)) {
             return {
                 mode: 'deferred_kickoff',
-                instantPhrase: null,
+                instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'Got it — checking that title instead.'),
                 ackReason: 'product_correction',
-                markSessionLetMeCheck: false,
+                markSessionLetMeCheck: !forceElevenLabsOnly,
                 nextLastProductQuery: normQ || null,
             };
         }
         if (prevProduct && normQ === prevProduct) {
             return {
                 mode: 'deferred_kickoff',
-                instantPhrase: null,
+                instantPhrase: fastInstant,
                 ackReason: 'product_search_repeat_same_query',
                 markSessionLetMeCheck: false,
                 nextLastProductQuery: normQ || null,
@@ -89,18 +92,18 @@ function selectInstantAcknowledgement(input) {
         }
         return {
             mode: 'deferred_kickoff',
-            instantPhrase: null,
-            ackReason: 'product_search_silent_kickoff',
-            markSessionLetMeCheck: false,
+            instantPhrase: fastInstant,
+            ackReason: fastInstant ? 'product_search_instant_ack' : 'product_search_silent_kickoff',
+            markSessionLetMeCheck: Boolean(fastInstant),
             nextLastProductQuery: normQ || null,
         };
     }
     if (intent === 'payment_question' || intent === 'product_question') {
         return {
             mode: 'deferred_kickoff',
-            instantPhrase: null,
+            instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'One moment while I look that up.'),
             ackReason: 'question_requires_direct_answer_deferred',
-            markSessionLetMeCheck: false,
+            markSessionLetMeCheck: Boolean(fastInstant) && !forceElevenLabsOnly,
         };
     }
     if (intent === 'purchase_confirmation') {

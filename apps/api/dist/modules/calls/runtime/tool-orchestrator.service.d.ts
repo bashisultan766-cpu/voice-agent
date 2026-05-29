@@ -56,7 +56,6 @@ export declare class ToolOrchestratorService {
     private normalizeProductQueryText;
     private hasSpecificProductSignal;
     private getSearchToolPolicy;
-    private maskEmailForLog;
     private normalizeItems;
     private normalizeEmail;
     private getSessionMetadata;

@@ -89,7 +89,20 @@ export function buildConfirmedEmailCheckoutReply(args: {
   emailSendFailureCount?: number;
 }): string {
   const deliveryConfirmed = isPaymentEmailDeliveryConfirmed(
-    args.emailApiResult ?? (args.emailOk ? { success: true } : { success: false }),
+    args.emailApiResult ??
+      (args.emailOk
+        ? {
+            success: true,
+            smtpAccepted: true,
+            providerSuccess: true,
+            deliveryQueued: true,
+          }
+        : {
+            success: false,
+            smtpAccepted: false,
+            providerSuccess: false,
+            deliveryQueued: false,
+          }),
   );
   if (args.checkoutOk && deliveryConfirmed) {
     return buildPaymentEmailSuccessPrompt();

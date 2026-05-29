@@ -42,8 +42,10 @@ const order_state_machine_util_1 = require("./order-state-machine.util");
 const shopify_errors_1 = require("../../integrations/shopify/shopify-errors");
 const product_recommendation_util_1 = require("./product-recommendation.util");
 const objection_patterns_util_1 = require("./objection-patterns.util");
-const email_normalization_util_1 = require("./email-normalization.util");
+const voice_email_capture_util_1 = require("./voice-email-capture.util");
+const voice_email_enterprise_validation_util_1 = require("./voice-email-enterprise-validation.util");
 const voice_product_query_util_1 = require("../../agents/voice-product-query.util");
+const bookstore_voice_query_resolver_util_1 = require("../../search/voice/bookstore-voice-query-resolver.util");
 const book_sales_voice_util_1 = require("./book-sales-voice.util");
 const voice_stock_sales_policy_util_1 = require("./voice-stock-sales-policy.util");
 const llm_agent_conversation_state_util_1 = require("./llm-agent-conversation-state.util");
@@ -178,13 +180,6 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
         }
         return { allowed: true, reason: null };
     }
-    maskEmailForLog(email) {
-        const t = email.trim().toLowerCase();
-        const at = t.indexOf('@');
-        if (at < 1)
-            return '***';
-        return `${t[0]}***${t.slice(at)}`;
-    }
     normalizeItems(raw) {
         if (!Array.isArray(raw))
             return [];
@@ -210,7 +205,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
             .filter((item) => item !== null);
     }
     normalizeEmail(email) {
-        return (0, email_normalization_util_1.normalizeSpokenEmail)(email);
+        return (0, voice_email_capture_util_1.normalizeSpokenEmail)(email);
     }
     async getSessionMetadata(callSessionId) {
         const session = await this.prisma.callSession.findUnique({
@@ -429,8 +424,10 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
             }
             case 'validateEmail': {
                 const emailInput = this.getStringArg(input, 'email');
-                const email = this.normalizeEmail(emailInput);
-                const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+                const validation = (0, voice_email_capture_util_1.validateVoiceEmail)(emailInput);
+                const enterprise = await (0, voice_email_enterprise_validation_util_1.validateEnterpriseEmail)(emailInput);
+                const email = enterprise.normalized;
+                const isValid = enterprise.valid;
                 const metadata = await this.getSessionMetadata(callSessionId);
                 const currentState = (0, order_state_machine_util_1.normalizeOrderState)(metadata.orderState);
                 if (currentState !== 'EMAIL_COLLECTING' && currentState !== 'EMAIL_CONFIRMING') {
@@ -454,25 +451,53 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     normalizedEmail: isValid ? email : '',
                     emailRetryCount: nextRetries,
                     orderState: isValid ? 'EMAIL_CONFIRMING' : 'EMAIL_COLLECTING',
+                    emailConfirmationState: isValid ? 'pending' : metadata.emailConfirmationState ?? 'pending',
                 });
-                this.logger.log(JSON.stringify({
-                    event: 'voice.email.normalized',
+                this.logger.log(JSON.stringify((0, voice_email_capture_util_1.buildVoiceEmailCaptureLog)({
+                    event: 'voice.email.validated',
                     callSessionId,
-                    originalPreview: emailInput.slice(0, 80),
-                    normalizedPreview: email.slice(0, 80),
+                    rawPreview: emailInput,
+                    normalizedPreview: email,
+                    maskedEmail: isValid ? (0, voice_email_capture_util_1.maskEmailForLog)(email) : undefined,
                     valid: isValid,
-                }));
+                    retryCount: nextRetries,
+                })));
+                this.logger.log(JSON.stringify((0, voice_email_enterprise_validation_util_1.buildEnterpriseEmailValidationLog)({
+                    callSessionId,
+                    maskedEmail: (0, voice_email_capture_util_1.maskEmailForLog)(email),
+                    regexValid: enterprise.regexValid,
+                    disposable: enterprise.disposable,
+                    mxValid: enterprise.mxValid,
+                    mxChecked: enterprise.mxChecked,
+                    valid: enterprise.valid,
+                    blockedReason: enterprise.blockedReason,
+                })));
+                let voiceSummary = (0, voice_email_capture_util_1.buildInvalidEmailRetryPrompt)(nextRetries);
+                if (enterprise.typoSuggestion) {
+                    voiceSummary = (0, voice_email_capture_util_1.buildTypoCorrectionPrompt)(enterprise.typoSuggestion.correctedEmail, enterprise.normalized);
+                }
+                else if (enterprise.disposable) {
+                    voiceSummary = (0, voice_email_capture_util_1.buildDisposableEmailRejectPrompt)();
+                }
+                else if (enterprise.blockedReason === 'mx_missing') {
+                    voiceSummary = (0, voice_email_capture_util_1.buildMxRejectPrompt)();
+                }
+                else if (isValid) {
+                    voiceSummary = (0, voice_email_capture_util_1.buildEmailConfirmationPrompt)(email);
+                }
                 return {
                     ok: true,
                     data: {
                         valid: isValid,
                         normalizedEmail: isValid ? email : null,
                         retryCount: nextRetries,
-                        voiceSummary: isValid
-                            ? `I heard ${email}. Is that correct?`
-                            : nextRetries >= 2
-                                ? 'That email still looks invalid. Please say it clearly one final time so I can send your payment link.'
-                                : 'That email format does not look valid. Please spell it again slowly.',
+                        enterpriseValidation: {
+                            disposable: enterprise.disposable,
+                            mxValid: enterprise.mxValid,
+                            mxChecked: enterprise.mxChecked,
+                            blockedReason: enterprise.blockedReason,
+                        },
+                        voiceSummary,
                     },
                     meta: { source: 'system' },
                 };
@@ -482,13 +507,19 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 if (!query) {
                     return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need query before searching products.', retryable: true } };
                 }
-                const effectiveQuery = (0, voice_product_query_util_1.pickVoiceProductSearchQuery)(query, ctx.metadata);
+                let effectiveQuery = (0, voice_product_query_util_1.pickVoiceProductSearchQuery)(query, ctx.metadata);
+                const llmState = (0, llm_agent_conversation_state_util_1.parseLlmAgentState)(ctx.metadata?.[llm_agent_conversation_state_util_1.LLM_AGENT_STATE_KEY]);
+                const memoryResolved = (0, bookstore_voice_query_resolver_util_1.resolveVoiceSearchQueryFromMemory)(effectiveQuery, llmState);
+                if (memoryResolved.memoryHit) {
+                    effectiveQuery = memoryResolved.effectiveQuery;
+                }
                 if (effectiveQuery !== query.trim()) {
                     this.logger.log(JSON.stringify({
                         event: 'voice.transcript.search_query_boost',
                         callSessionId,
                         toolQuery: query.slice(0, 200),
                         effectiveQuery: effectiveQuery.slice(0, 200),
+                        voiceSearchMemoryHit: memoryResolved.memoryHit,
                     }));
                 }
                 const objection = (0, objection_patterns_util_1.classifyConversationalObjection)(effectiveQuery);
@@ -531,7 +562,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     agentId: ctx.agentId,
                     query,
                     productsFound: items.length,
-                    source: 'shopify_live',
+                    source: 'bookstore_voice_search',
                     productSearchInputRaw: slog?.productSearchInputRaw ?? slog?.queryOriginal,
                     probableTitle: slog?.probableTitle,
                     shopifyQueriesTried: slog?.shopifyQueriesTried,
@@ -545,6 +576,16 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     topMatchReason: slog?.topMatchReason ?? slog?.matchReason,
                     lowConfidenceSearch: slog?.lowConfidenceSearch ?? items.length === 0,
                     finalVoiceSummary: slog?.finalVoiceSummary,
+                    fuzzySearchActivated: slog?.bookstoreSearch?.fuzzySearchActivated,
+                    semanticSearchUsed: slog?.bookstoreSearch?.semanticSearchUsed,
+                    cacheHit: slog?.bookstoreSearch?.cacheHit,
+                    searchLatencyMs: slog?.bookstoreSearch?.searchLatencyMs,
+                    shopifyLatencyMs: slog?.bookstoreSearch?.shopifyLatencyMs,
+                    semanticRankingLatencyMs: slog?.bookstoreSearch?.semanticRankingLatencyMs,
+                    cacheLookupMs: slog?.bookstoreSearch?.cacheLookupMs,
+                    slowPath: slog?.bookstoreSearch?.slowPath,
+                    confidenceTier: slog?.confidenceTier ?? slog?.bookstoreSearch?.confidenceTier,
+                    recommendedBooks: slog?.bookstoreSearch?.recommendedBooks,
                 }));
                 await this.updateOrderStateMetadata(callSessionId, {
                     orderState: 'PRODUCT_SEARCH',
@@ -993,6 +1034,45 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 if (!email) {
                     return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need customer email before creating checkout.', retryable: true } };
                 }
+                const emailValidation = (0, voice_email_capture_util_1.validateVoiceEmail)(email);
+                if (!emailValidation.valid) {
+                    const retryCount = Number(metadata.emailRetryCount ?? 0) + 1;
+                    await this.updateOrderStateMetadata(callSessionId, {
+                        emailRetryCount: retryCount,
+                        orderState: 'EMAIL_COLLECTING',
+                    });
+                    return {
+                        ok: false,
+                        error: {
+                            code: 'INVALID_EMAIL',
+                            message: 'Email address failed validation.',
+                            retryable: true,
+                        },
+                        data: {
+                            voiceSummary: (0, voice_email_capture_util_1.buildInvalidEmailRetryPrompt)(retryCount),
+                            deliveryConfirmed: false,
+                        },
+                    };
+                }
+                const emailConfirmed = metadata.emailConfirmationState === 'confirmed';
+                if (!emailConfirmed) {
+                    const pendingEmail = (typeof metadata.normalizedEmail === 'string' ? metadata.normalizedEmail.trim() : '') ||
+                        emailValidation.normalized;
+                    return {
+                        ok: false,
+                        error: {
+                            code: 'EMAIL_NOT_CONFIRMED',
+                            message: 'Customer must confirm email before checkout.',
+                            retryable: true,
+                        },
+                        data: {
+                            voiceSummary: pendingEmail
+                                ? (0, voice_email_capture_util_1.buildEmailConfirmationPrompt)(pendingEmail)
+                                : (0, voice_email_capture_util_1.buildEmailCollectionPrompt)(Number(metadata.emailRetryCount ?? 0)),
+                            deliveryConfirmed: false,
+                        },
+                    };
+                }
                 let itemsRaw = this.normalizeItems(input.items);
                 if (itemsRaw.length === 0) {
                     itemsRaw = (0, voice_checkout_flow_util_1.resolveCheckoutLineItemsFromLlmState)(llmState).map((row) => ({
@@ -1043,7 +1123,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 try {
                     checkout = await this.checkout.createCheckoutLink(ctx.tenantId, ctx.agentId, {
                         callSessionId,
-                        customer: { email },
+                        customer: { email: emailValidation.normalized },
                         items,
                         mode: configuredMode,
                         forceNewCheckout,
@@ -1102,7 +1182,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                 }));
                 await this.updateOrderStateMetadata(callSessionId, {
                     orderState: 'PAYMENT_LINK_CREATING',
-                    normalizedEmail: this.normalizeEmail(email),
+                    normalizedEmail: this.normalizeEmail(emailValidation.normalized),
                     paymentLink: link.checkoutUrl,
                 });
                 this.logger.log(JSON.stringify({
@@ -1119,8 +1199,8 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                         mode: link.mode,
                         reusedExisting: checkout.reusedExisting === true,
                         voiceSummary: checkout.reusedExisting === true
-                            ? `You already have an open checkout for this cart; I'm using that same secure link for ${email}.`
-                            : `I created a secure payment link and can send it to ${email}.`,
+                            ? `You already have an open checkout for this cart. Once your email is confirmed, I can resend the secure link.`
+                            : `I've prepared your secure checkout. I'll send the payment link to your confirmed email shortly.`,
                     },
                     meta: { source: 'shopify_checkout' },
                 };
@@ -1234,7 +1314,29 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                             },
                         },
                     });
-                    throw err;
+                    const errorMessage = err instanceof Error ? err.message.slice(0, 300) : 'unknown_error';
+                    this.logger.error(JSON.stringify((0, voice_email_capture_util_1.buildVoiceEmailCaptureLog)({
+                        event: 'voice.email.send_error',
+                        callSessionId,
+                        tenantId: ctx.tenantId,
+                        agentId: ctx.agentId,
+                        maskedEmail: (0, voice_email_capture_util_1.maskEmailForLog)(email),
+                        sendOk: false,
+                        errorCode: 'EMAIL_SEND_FAILED',
+                        errorMessage,
+                    })));
+                    return {
+                        ok: false,
+                        error: {
+                            code: 'EMAIL_SEND_FAILED',
+                            message: errorMessage,
+                            retryable: true,
+                        },
+                        data: {
+                            voiceSummary: (0, voice_email_capture_util_1.buildPaymentEmailSendFailurePrompt)(),
+                            deliveryConfirmed: false,
+                        },
+                    };
                 }
                 if (!sendResult.deduplicated) {
                     await this.prisma.leadCapture.create({
@@ -1253,6 +1355,23 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                         },
                     });
                 }
+                const emailApiResult = {
+                    success: true,
+                    smtpAccepted: true,
+                    providerSuccess: Boolean(sendResult.providerMessageId) || sendResult.deduplicated === true,
+                    deliveryQueued: sendResult.deduplicated !== true,
+                };
+                this.logger.log(JSON.stringify((0, voice_email_capture_util_1.buildVoiceEmailCaptureLog)({
+                    event: 'voice.email.delivery_confirmed',
+                    callSessionId,
+                    tenantId: ctx.tenantId,
+                    agentId: ctx.agentId,
+                    maskedEmail: (0, voice_email_capture_util_1.maskEmailForLog)(email),
+                    sendOk: emailApiResult.success,
+                    smtpAccepted: emailApiResult.smtpAccepted,
+                    providerSuccess: emailApiResult.providerSuccess,
+                    deliveryQueued: emailApiResult.deliveryQueued,
+                })));
                 this.logger.log(JSON.stringify({
                     event: 'voice.tool.payment_email_sent',
                     eventJourney: 'voice.journey.payment_email_sent',
@@ -1260,7 +1379,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     tenantId: ctx.tenantId,
                     agentId: ctx.agentId,
                     checkoutLinkId: link.id,
-                    recipientEmailMasked: this.maskEmailForLog(email),
+                    recipientEmailMasked: (0, voice_email_capture_util_1.maskEmailForLog)(email),
                     deduplicated: sendResult.deduplicated === true,
                 }));
                 await this.updateOrderStateMetadata(callSessionId, {
@@ -1273,13 +1392,16 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     deduplicated: sendResult.deduplicated === true,
                 }));
                 return {
-                    ok: true,
+                    ok: emailApiResult.success,
                     data: {
                         deduplicated: sendResult.deduplicated === true,
-                        deliveryConfirmed: true,
-                        voiceSummary: sendResult.deduplicated === true
-                            ? `That link was already sent to ${email}. Check your inbox.`
-                            : `You’ll receive the payment link shortly. Let me know if you need anything else.`,
+                        deliveryConfirmed: emailApiResult.success,
+                        emailApiResult,
+                        voiceSummary: emailApiResult.success && sendResult.deduplicated === true
+                            ? `That payment link was already sent to your email. Please check your inbox.`
+                            : emailApiResult.success
+                                ? (0, voice_email_capture_util_1.buildPaymentEmailSuccessPrompt)()
+                                : (0, voice_email_capture_util_1.buildPaymentEmailSendFailurePrompt)(),
                     },
                     meta: { source: 'resend' },
                 };

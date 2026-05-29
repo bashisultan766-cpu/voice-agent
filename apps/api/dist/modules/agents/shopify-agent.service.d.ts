@@ -1,4 +1,5 @@
 import { AgentsService } from './agents.service';
+import { BookstoreVoiceSearchService } from '../search/bookstore-voice-search.service';
 export interface ShopifyOrderSummary {
     id: string;
     name: string;
@@ -58,12 +59,15 @@ export interface ShopifyProductSearchVoiceLog {
     productsReturnedByShopify?: number;
     topRelevanceScore?: number | null;
     matchReason?: string | null;
+    bookstoreSearch?: import('../search/types/bookstore-search.types').BookstoreSearchDiagnostics;
+    confidenceTier?: import('../search/types/bookstore-search.types').BookstoreConfidenceTier;
 }
 export declare class ShopifyAgentService {
     private readonly agentsService;
+    private readonly bookstoreVoiceSearch;
     private static shopifyScalarPriceQueryLogged;
     private readonly logger;
-    constructor(agentsService: AgentsService);
+    constructor(agentsService: AgentsService, bookstoreVoiceSearch: BookstoreVoiceSearchService);
     private normalizeAdminDomain;
     private adminGraphql;
     private metafieldList;
@@ -74,6 +78,7 @@ export declare class ShopifyAgentService {
     private moneyScalarToString;
     private mapGraphqlProductNode;
     private fetchProductsMergedSearch;
+    private fetchProductsMergedSearchParallel;
     private fetchShopify;
     getOrderStatus(tenantId: string, agentId: string, orderNumberOrPhone: string): Promise<{
         ok: boolean;

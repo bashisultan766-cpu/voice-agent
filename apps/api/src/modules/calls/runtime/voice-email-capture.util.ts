@@ -153,6 +153,7 @@ export type VoiceEmailCaptureLogInput = {
   providerSuccess?: boolean;
   deliveryQueued?: boolean;
   fallbackOffered?: boolean;
+  fallbackChannel?: string | null;
   retryAttempt?: number;
   validationFailureReason?: string;
   typoCorrected?: boolean;
@@ -360,6 +361,7 @@ export function buildVoiceEmailCaptureLog(input: VoiceEmailCaptureLogInput): Rec
     ...(input.providerSuccess != null ? { providerSuccess: input.providerSuccess } : {}),
     ...(input.deliveryQueued != null ? { deliveryQueued: input.deliveryQueued } : {}),
     ...(input.fallbackOffered != null ? { fallbackOffered: input.fallbackOffered } : {}),
+    ...(input.fallbackChannel != null ? { fallbackChannel: input.fallbackChannel } : {}),
     ...(input.retryAttempt != null ? { retryAttempt: input.retryAttempt } : {}),
     ...(input.validationFailureReason
       ? { validationFailureReason: input.validationFailureReason }

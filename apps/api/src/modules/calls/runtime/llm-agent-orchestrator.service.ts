@@ -110,6 +110,7 @@ export type LlmAgentTurnResult = {
     openaiSuccess: boolean;
     transactionalMode?: boolean;
     transactionalCheckoutState?: TransactionalCheckoutState;
+    deterministicMode?: boolean;
     deterministicReplyUsed?: boolean;
     skipOpenAiGeneration?: boolean;
   };

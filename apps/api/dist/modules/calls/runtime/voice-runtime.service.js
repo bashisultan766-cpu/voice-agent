@@ -34,6 +34,7 @@ const policy_context_prefetch_service_1 = require("./policy-context-prefetch.ser
 const professional_voice_response_util_1 = require("./professional-voice-response.util");
 const response_mode_util_1 = require("./response-mode.util");
 const context_aware_reply_util_1 = require("./context-aware-reply.util");
+const voice_email_capture_util_1 = require("./voice-email-capture.util");
 let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
     constructor(sessionContext, callsService, llmAgent, transcriptNormalizer, tools, callEvents, callOutcome, transcriptBuffer, promptBuilder, runtimeSafety, conversationFlow, conversationAnalytics, callMemory, policyPrefetch) {
         this.sessionContext = sessionContext;
@@ -412,7 +413,7 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         }
         if (trace?.sendPaymentEmail && trace.sendPaymentEmail.ok === false) {
             return {
-                text: "I wasn't able to send that email just now—want to try the same address again in a moment?",
+                text: (0, voice_email_capture_util_1.buildPaymentEmailSendFailurePrompt)(),
                 templateKey: 'payment_email_failed',
                 toneLeadUsed: null,
                 paymentSuggestionUsed: false,
@@ -461,8 +462,20 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
                 args.orderStateAfter === 'EMAIL_CONFIRMING' ||
                 args.orderStateAfter === 'EMAIL_COLLECTION')) {
             return {
-                text: 'Hmm, that does not sound like a complete email—could you give it to me one more time?',
+                text: (0, voice_email_capture_util_1.buildInvalidEmailRetryPrompt)(1),
                 templateKey: 'invalid_email',
+                toneLeadUsed: null,
+                paymentSuggestionUsed: false,
+                followUpTriggered: false,
+                followUpOfferedProductKey: null,
+            };
+        }
+        if (trace?.validateEmail?.valid === true &&
+            trace.validateEmail.email &&
+            (args.orderStateAfter === 'EMAIL_CONFIRMING' || args.orderStateAfter === 'EMAIL_COLLECTING')) {
+            return {
+                text: (0, voice_email_capture_util_1.buildEmailConfirmationPrompt)(trace.validateEmail.email),
+                templateKey: 'email_confirm',
                 toneLeadUsed: null,
                 paymentSuggestionUsed: false,
                 followUpTriggered: false,
@@ -750,6 +763,10 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             toolCallsUsed: result.toolNames,
             intent: result.state.customerIntent ?? null,
             stateStage: result.state.checkoutStage,
+            transactionalCheckoutState: result.state.transactionalCheckoutState ?? result.proof?.transactionalCheckoutState ?? null,
+            transactionalMode: result.proof?.transactionalMode ?? false,
+            skipOpenAiGeneration: result.proof?.skipOpenAiGeneration ?? false,
+            deterministicReplyUsed: result.proof?.deterministicReplyUsed ?? false,
             latencyMs: responseDelayMs,
         }));
         const turnProof = {
@@ -765,10 +782,21 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             voiceProvider: ctx.agent.voiceProvider ?? null,
             voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
             ttsProviderUsed: null,
-            flowStep: result.toolCallsCount > 0 ? 'llm_agent_tool_loop' : 'llm_agent_reply',
-            brain: 'openai_llm_agent_orchestrator',
+            flowStep: result.proof?.skipOpenAiGeneration
+                ? 'transactional_checkout'
+                : result.toolCallsCount > 0
+                    ? 'llm_agent_tool_loop'
+                    : 'llm_agent_reply',
+            brain: result.proof?.skipOpenAiGeneration
+                ? 'transactional_checkout_orchestrator'
+                : 'openai_llm_agent_orchestrator',
             llmTools: result.toolNames,
-            openaiUsed: true,
+            openaiUsed: result.proof?.openaiCalled ?? true,
+            transactionalMode: result.proof?.transactionalMode ?? false,
+            transactionalCheckoutState: result.proof?.transactionalCheckoutState ?? null,
+            CHECKOUT_LOCK_ACTIVE: result.proof?.transactionalMode === true,
+            deterministicReplyUsed: result.proof?.deterministicReplyUsed ?? false,
+            skipOpenAiGeneration: result.proof?.skipOpenAiGeneration ?? false,
         };
         this.logTurnProof(turnProof);
         return { reply, turnProof };

@@ -5,41 +5,40 @@ export declare class OpsController {
     private readonly ops;
     constructor(ops: OpsService);
     getAgents(tenantId: string): import("@prisma/client").Prisma.PrismaPromise<{
+        id: string;
         name: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
+        twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
+        openaiConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
+        updatedAt: Date;
         voiceProfile: {
             id: string;
+            tenantId: string;
             language: string;
             voice: string | null;
             greetingMessage: string | null;
             createdAt: Date;
             updatedAt: Date;
-            tenantId: string;
             agentId: string;
             provider: string;
             tone: string | null;
             providerConfig: import("@prisma/client/runtime/client").JsonValue | null;
         } | null;
-        status: import("@prisma/client").$Enums.AgentStatus;
-        id: string;
-        shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
-        twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
-        openaiConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
-        updatedAt: Date;
     }[]>;
     getCalls(tenantId: string): import("@prisma/client").Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
-        status: import("@prisma/client").$Enums.CallStatus;
         id: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string | null;
+        status: import("@prisma/client").$Enums.CallStatus;
+        createdAt: Date;
+        updatedAt: Date;
         agentId: string;
-        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         phoneNumberId: string | null;
         twilioCallSid: string | null;
         twilioStreamSid: string | null;
@@ -56,6 +55,7 @@ export declare class OpsController {
         escalated: boolean;
         recordingUrl: string | null;
         lastEventAt: Date | null;
+        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         openaiSessionId: string | null;
         endedReason: string | null;
     })[]>;
@@ -63,29 +63,29 @@ export declare class OpsController {
         id: string;
         createdAt: Date;
         callSessionId: string;
-        sequenceNumber: number;
         role: string;
         content: string;
+        sequenceNumber: number;
         timestampMs: number | null;
     }[]>;
     getCheckoutLinks(tenantId: string): import("@prisma/client").Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
-        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         id: string;
+        tenantId: string;
+        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         agentId: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
         callSessionId: string | null;
-        checkoutUrl: string;
         checkoutFingerprint: string | null;
         shopifyConnectionId: string | null;
         mode: import("@prisma/client").$Enums.CheckoutMode;
+        checkoutUrl: string;
         customerEmail: string | null;
         itemsJson: import("@prisma/client/runtime/client").JsonValue | null;
         providerRef: string | null;
@@ -95,38 +95,38 @@ export declare class OpsController {
     })[]>;
     getLeads(tenantId: string): import("@prisma/client").Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         agentId: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
         callSessionId: string | null;
         customerEmail: string | null;
-        notes: string | null;
         customerName: string | null;
         customerPhone: string | null;
         intent: string | null;
         interestedItems: import("@prisma/client/runtime/client").JsonValue | null;
+        notes: string | null;
     })[]>;
     getEmailEvents(tenantId: string): import("@prisma/client").Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
-        status: import("@prisma/client").$Enums.EmailDeliveryStatus;
         id: string;
+        tenantId: string;
+        status: import("@prisma/client").$Enums.EmailDeliveryStatus;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         agentId: string;
-        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         provider: string;
+        metadata: import("@prisma/client/runtime/client").JsonValue | null;
         callSessionId: string | null;
         sentAt: Date | null;
         checkoutLinkId: string | null;
@@ -138,8 +138,8 @@ export declare class OpsController {
     })[]>;
     getPayments(tenantId: string): import("@prisma/client").Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
         checkoutLink: {
             id: string;
@@ -148,9 +148,9 @@ export declare class OpsController {
         };
     } & {
         id: string;
+        tenantId: string;
         createdAt: Date;
         updatedAt: Date;
-        tenantId: string;
         agentId: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
         callSessionId: string | null;

@@ -52,7 +52,29 @@ const response_mode_util_1 = require("./response-mode.util");
     });
     strict_1.default.equal(mode, 'openai');
 });
-(0, node_test_1.default)('uses openai for payment email tool trace (success or failure)', () => {
+(0, node_test_1.default)('uses template for valid email confirmation from validateEmail tool', () => {
+    const mode = (0, response_mode_util_1.decideResponseMode)({
+        intent: 'email_provided',
+        state: 'EMAIL_COLLECTING',
+        toolResult: {
+            validateEmail: { valid: true, email: 'reader@example.com' },
+        },
+        customerText: 'reader at example dot com',
+    });
+    strict_1.default.equal(mode, 'template');
+});
+(0, node_test_1.default)('uses template for payment email send failure', () => {
+    const mode = (0, response_mode_util_1.decideResponseMode)({
+        intent: 'email_provided',
+        state: 'PAYMENT_LINK_CREATING',
+        toolResult: {
+            sendPaymentEmail: { ok: false, email: 'reader@example.com' },
+        },
+        customerText: 'yes',
+    });
+    strict_1.default.equal(mode, 'template');
+});
+(0, node_test_1.default)('uses openai for payment email tool trace success', () => {
     const modeOk = (0, response_mode_util_1.decideResponseMode)({
         intent: 'email_provided',
         state: 'EMAIL_COLLECTION',
@@ -65,18 +87,6 @@ const response_mode_util_1 = require("./response-mode.util");
         },
     });
     strict_1.default.equal(modeOk, 'openai');
-    const modeFail = (0, response_mode_util_1.decideResponseMode)({
-        intent: 'email_provided',
-        state: 'EMAIL_COLLECTION',
-        customerText: 'reader@example.com',
-        toolResult: {
-            sendPaymentEmail: {
-                ok: false,
-                email: 'reader@example.com',
-            },
-        },
-    });
-    strict_1.default.equal(modeFail, 'openai');
 });
 (0, node_test_1.default)('uses openai for Shopify catalog hard failure', () => {
     const mode = (0, response_mode_util_1.decideResponseMode)({

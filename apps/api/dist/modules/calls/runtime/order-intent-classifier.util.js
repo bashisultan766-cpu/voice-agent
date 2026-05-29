@@ -1,13 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.classifyOrderTurn = classifyOrderTurn;
+const voice_email_capture_util_1 = require("./voice-email-capture.util");
 function normalize(text) {
     return text.toLowerCase().trim();
 }
 function extractEmail(text) {
-    const t = text.trim();
-    const m = t.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-    return m ? m[0] : null;
+    return (0, voice_email_capture_util_1.extractEmailFromSpeech)(text);
 }
 function extractQuantity(text) {
     const t = normalize(text);

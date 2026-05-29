@@ -226,6 +226,10 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
                 },
             });
             return {
+                success: true,
+                smtpAccepted: true,
+                providerSuccess: true,
+                deliveryQueued: true,
                 emailEventId: txResult.duplicate.id,
                 providerMessageId: txResult.duplicate.providerMessageId ?? null,
                 deduplicated: true,
@@ -343,7 +347,25 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
                             },
                         },
                     });
-                    return { emailEventId, providerMessageId: lastPayload.id ?? null };
+                    this.logger.log(JSON.stringify({
+                        event: 'payment_email.delivery_confirmed',
+                        tenantId: input.tenantId,
+                        agentId: input.agentId,
+                        checkoutLinkId: input.checkoutLinkId,
+                        emailEventId,
+                        providerMessageId: lastPayload.id ?? null,
+                        smtpAccepted: true,
+                        providerSuccess: true,
+                        deliveryQueued: true,
+                    }));
+                    return {
+                        success: true,
+                        smtpAccepted: true,
+                        providerSuccess: true,
+                        deliveryQueued: true,
+                        emailEventId,
+                        providerMessageId: lastPayload.id ?? null,
+                    };
                 }
                 const transient = isTransientSendFailure(response.status);
                 const metaRow = await this.prisma.emailEvent.findUniqueOrThrow({ where: { id: emailEventId } });

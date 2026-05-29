@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildProfessionalResponse = buildProfessionalResponse;
 const conversation_tone_util_1 = require("./conversation-tone.util");
+const voice_email_capture_util_1 = require("./voice-email-capture.util");
 const product_follow_up_util_1 = require("./product-follow-up.util");
 const PAYMENT_SUGGESTION_PHRASES = [
     'Want me to email you the checkout link?',
@@ -30,6 +31,14 @@ function buildProfessionalResponse(args) {
         };
     }
     if (trimmedEmail) {
+        if (state === 'EMAIL_CONFIRMING') {
+            return {
+                text: (0, voice_email_capture_util_1.buildEmailConfirmationPrompt)(trimmedEmail),
+                templateKey: 'email_confirm',
+                toneLeadUsed: null,
+                paymentSuggestionUsed: false,
+            };
+        }
         if (tone) {
             const { lead, toneLeadUsed } = (0, conversation_tone_util_1.resolveToneLead)({
                 slot: 'email_ack',
@@ -53,16 +62,15 @@ function buildProfessionalResponse(args) {
             paymentSuggestionUsed: false,
         };
     }
-    if (state === 'EMAIL_COLLECTION') {
+    if (state === 'EMAIL_COLLECTION' || state === 'EMAIL_COLLECTING') {
         if (tone) {
             const { lead, toneLeadUsed } = (0, conversation_tone_util_1.resolveToneLead)({
                 slot: 'email',
                 conversationTone: tone.conversationTone,
                 lastToneLeadUsed: tone.lastToneLeadUsed,
             });
-            const text = lead
-                ? `${lead} what's the best email to send the payment link to?`
-                : `What's the best email to send the payment link to?`;
+            const collectionPrompt = (0, voice_email_capture_util_1.buildEmailCollectionPrompt)();
+            const text = lead ? `${lead} ${collectionPrompt}` : collectionPrompt;
             return {
                 text,
                 templateKey: 'ask_email',
@@ -71,7 +79,7 @@ function buildProfessionalResponse(args) {
             };
         }
         return {
-            text: "What's the best email to send the payment link to?",
+            text: (0, voice_email_capture_util_1.buildEmailCollectionPrompt)(),
             templateKey: 'ask_email',
             toneLeadUsed: null,
             paymentSuggestionUsed: false,
