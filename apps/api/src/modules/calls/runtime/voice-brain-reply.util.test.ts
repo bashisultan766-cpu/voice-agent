@@ -28,6 +28,24 @@ test('finalizeBrainReply falls back to clean line when still banned', async () =
   assert.equal(out, BRAIN_CLEAN_FALLBACK_REPLY);
 });
 
+test('finalizeBrainReply skips rewrite for deterministic transactional replies', async () => {
+  const deterministic =
+    'Just to confirm, your email is buyer@example.com. Is that correct?';
+  const out = await finalizeBrainReply(deterministic, {
+    regenerate: async () => 'This should not be used.',
+  });
+  assert.equal(out, deterministic);
+});
+
+test('finalizeBrainReply respects skipRewrite flag', async () => {
+  const draft = 'Your order is ready for checkout.';
+  const out = await finalizeBrainReply(draft, {
+    skipRewrite: true,
+    regenerate: async () => 'This should not be used.',
+  });
+  assert.equal(out, draft);
+});
+
 test('containsBannedVoicePhrase flags one moment', () => {
   assert.equal(containsBannedVoicePhrase('One moment while I look that up.'), true);
 });

@@ -7,6 +7,7 @@ import {
   shouldAutoTriggerCheckoutAfterEmail,
 } from './llm-agent-auto-checkout.util';
 import { emptyLlmAgentState, mergeCallerSignalsIntoState } from './llm-agent-conversation-state.util';
+import { MAX_EMAIL_SEND_RETRIES } from './voice-email-capture.util';
 
 const inStockProduct = {
   title: 'World History Vol 1',
@@ -36,6 +37,17 @@ test('shouldAutoTriggerCheckoutAfterEmail does not run on capture alone', () => 
   );
 });
 
+test('shouldAutoTriggerCheckoutAfterEmail rejects invalid email', () => {
+  let state = emptyLlmAgentState();
+  state.selectedProducts = [inStockProduct];
+  state.customerEmail = 'not-an-email';
+  state.checkoutStage = 'email';
+  assert.equal(
+    shouldAutoTriggerCheckoutAfterEmail(state, { emailConfirmedThisTurn: true }),
+    false,
+  );
+});
+
 test('shouldAutoTriggerCheckoutAfterEmail does not run when payment already sent', () => {
   let state = emptyLlmAgentState();
   state.selectedProducts = [inStockProduct];
@@ -61,6 +73,13 @@ test('buildCreatePaymentLinkArgsFromState includes variant and quantity', () => 
   assert.equal(args!.items[0]!.quantity, 2);
 });
 
+test('buildCreatePaymentLinkArgsFromState returns null for invalid email', () => {
+  let state = emptyLlmAgentState();
+  state.selectedProducts = [inStockProduct];
+  state.customerEmail = 'invalid-email';
+  assert.equal(buildCreatePaymentLinkArgsFromState(state), null);
+});
+
 test('applyPaymentFlowToState marks payment_sent when email delivered', () => {
   const next = applyPaymentFlowToState(emptyLlmAgentState(), {
     paymentLinkCreated: true,
@@ -72,13 +91,36 @@ test('applyPaymentFlowToState marks payment_sent when email delivered', () => {
   assert.equal(next.paymentLinkSent, true);
 });
 
-test('buildAutoCheckoutConfirmationReply on email failure asks to retry send', () => {
+test('buildAutoCheckoutConfirmationReply on success includes processing and delivery copy', () => {
+  const msg = buildAutoCheckoutConfirmationReply({
+    email: 'buyer@example.com',
+    checkoutOk: true,
+    emailOk: true,
+    checkoutUrl: 'https://store.example/cart',
+  });
+  assert.match(msg, /Processing your order now/i);
+  assert.match(msg, /sent successfully/i);
+  assert.match(msg, /check your inbox/i);
+});
+
+test('buildAutoCheckoutConfirmationReply on email failure does not claim delivery', () => {
   const msg = buildAutoCheckoutConfirmationReply({
     email: 'buyer@example.com',
     checkoutOk: true,
     emailOk: false,
     checkoutUrl: 'https://store.example/cart',
+    emailSendFailureCount: 1,
   });
   assert.match(msg, /issue sending the payment link/i);
-  assert.doesNotMatch(msg, /sent the secure payment link/i);
+  assert.doesNotMatch(msg, /sent successfully/i);
+});
+
+test('buildAutoCheckoutConfirmationReply offers fallback after max send failures', () => {
+  const msg = buildAutoCheckoutConfirmationReply({
+    email: 'buyer@example.com',
+    checkoutOk: true,
+    emailOk: false,
+    emailSendFailureCount: MAX_EMAIL_SEND_RETRIES,
+  });
+  assert.match(msg, /WhatsApp or SMS/i);
 });

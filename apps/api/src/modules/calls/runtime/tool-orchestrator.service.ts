@@ -50,9 +50,11 @@ import {
 } from './product-recommendation.util';
 import { classifyConversationalObjection } from './objection-patterns.util';
 import {
+  buildEmailCollectionPrompt,
   buildEmailConfirmationPrompt,
   buildInvalidEmailRetryPrompt,
   buildPaymentEmailSendFailurePrompt,
+  buildPaymentEmailSuccessPrompt,
   buildVoiceEmailCaptureLog,
   maskEmailForLog,
   normalizeSpokenEmail,
@@ -1160,6 +1162,46 @@ export class ToolOrchestratorService {
         if (!email) {
           return { ok: false, error: { code: 'MISSING_INPUT', message: 'Need customer email before creating checkout.', retryable: true } };
         }
+        const emailValidation = validateVoiceEmail(email);
+        if (!emailValidation.valid) {
+          const retryCount = Number(metadata.emailRetryCount ?? 0) + 1;
+          await this.updateOrderStateMetadata(callSessionId, {
+            emailRetryCount: retryCount,
+            orderState: 'EMAIL_COLLECTING',
+          });
+          return {
+            ok: false,
+            error: {
+              code: 'INVALID_EMAIL',
+              message: 'Email address failed validation.',
+              retryable: true,
+            },
+            data: {
+              voiceSummary: buildInvalidEmailRetryPrompt(retryCount),
+              deliveryConfirmed: false,
+            },
+          };
+        }
+        const emailConfirmed = metadata.emailConfirmationState === 'confirmed';
+        if (!emailConfirmed) {
+          const pendingEmail =
+            (typeof metadata.normalizedEmail === 'string' ? metadata.normalizedEmail.trim() : '') ||
+            emailValidation.normalized;
+          return {
+            ok: false,
+            error: {
+              code: 'EMAIL_NOT_CONFIRMED',
+              message: 'Customer must confirm email before checkout.',
+              retryable: true,
+            },
+            data: {
+              voiceSummary: pendingEmail
+                ? buildEmailConfirmationPrompt(pendingEmail)
+                : buildEmailCollectionPrompt(Number(metadata.emailRetryCount ?? 0)),
+              deliveryConfirmed: false,
+            },
+          };
+        }
         let itemsRaw = this.normalizeItems(input.items);
         if (itemsRaw.length === 0) {
           itemsRaw = resolveCheckoutLineItemsFromLlmState(llmState).map((row) => ({
@@ -1215,7 +1257,7 @@ export class ToolOrchestratorService {
         try {
           checkout = await this.checkout.createCheckoutLink(ctx.tenantId, ctx.agentId, {
             callSessionId,
-            customer: { email },
+            customer: { email: emailValidation.normalized },
             items,
             mode: configuredMode,
             forceNewCheckout,
@@ -1280,7 +1322,7 @@ export class ToolOrchestratorService {
         );
         await this.updateOrderStateMetadata(callSessionId, {
           orderState: 'PAYMENT_LINK_CREATING',
-          normalizedEmail: this.normalizeEmail(email),
+          normalizedEmail: this.normalizeEmail(emailValidation.normalized),
           paymentLink: link.checkoutUrl,
         });
         this.logger.log(
@@ -1300,8 +1342,8 @@ export class ToolOrchestratorService {
             reusedExisting: checkout.reusedExisting === true,
             voiceSummary:
               checkout.reusedExisting === true
-                ? `You already have an open checkout for this cart; I'm using that same secure link for ${email}.`
-                : `I created a secure payment link and can send it to ${email}.`,
+                ? `You already have an open checkout for this cart. Once your email is confirmed, I can resend the secure link.`
+                : `I've prepared your secure checkout. I'll send the payment link to your confirmed email shortly.`,
           },
           meta: { source: 'shopify_checkout' },
         };
@@ -1511,10 +1553,9 @@ export class ToolOrchestratorService {
           data: {
             deduplicated: sendResult.deduplicated === true,
             deliveryConfirmed: true,
-            voiceSummary:
-              sendResult.deduplicated === true
-                ? `That link was already sent to ${email}. Check your inbox.`
-                : `You’ll receive the payment link shortly. Let me know if you need anything else.`,
+            voiceSummary: sendResult.deduplicated === true
+              ? `That payment link was already sent to your email. Please check your inbox.`
+              : buildPaymentEmailSuccessPrompt(),
           },
           meta: { source: 'resend' },
         };

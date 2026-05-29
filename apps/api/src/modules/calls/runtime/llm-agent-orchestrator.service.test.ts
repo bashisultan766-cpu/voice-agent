@@ -236,10 +236,11 @@ test('banned phrase sanitizer strips go ahead and dropshipping', () => {
   assert.doesNotMatch(sanitizeBannedVoicePhrases('We offer dropshipping.'), /dropship/i);
 });
 
-test('email capture auto-runs checkout and sendPaymentEmail without another LLM turn', async () => {
+test('email confirmation auto-runs checkout and sendPaymentEmail without LLM', async () => {
   const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
   const internalTools: string[] = [];
   let openAiCalls = 0;
+  let memoryState: Record<string, unknown> = {};
 
   const completionFn: OpenAiCompletionFn = async () => {
     openAiCalls += 1;
@@ -276,7 +277,7 @@ test('email capture auto-runs checkout and sendPaymentEmail without another LLM 
               ],
               quantities: { 'gid://shopify/ProductVariant/99': 2 },
               checkoutStage: 'quantity',
-              customerEmail: null,
+              customerEmail: memoryState.collectedEmail ?? null,
               lastSearchedProducts: [],
               lastToolCalls: [],
             },
@@ -319,23 +320,38 @@ test('email capture auto-runs checkout and sendPaymentEmail without another LLM 
     } as never,
     {
       summarizeForPrompt: () => '',
-      load: async () => ({}),
-      setEmailState: async () => undefined,
+      load: async () => memoryState,
+      setEmailState: async (_id: string, email: string, state: 'pending' | 'confirmed') => {
+        memoryState = {
+          collectedEmail: email,
+          emailConfirmationState: state,
+          emailCollected: state === 'confirmed',
+        };
+      },
     } as never,
-    { mergeSessionMetadata: async () => ({}) } as never,
+    {
+      findOneById: async () => ({ metadata: { emailRetryCount: 0, emailSendFailureCount: 0 } }),
+      mergeSessionMetadata: async () => ({}),
+    } as never,
   );
 
-  const out = await orchestrator.handleTurn('sess_checkout_auto', 'oishisultan766@gmail.com', [], {
+  const capture = await orchestrator.handleTurn('sess_checkout_auto', 'oishisultan766@gmail.com', [], {
     completionFn,
   });
+  assert.equal(openAiCalls, 0, 'OpenAI should not run on email capture');
+  assert.equal(internalTools.length, 0, 'Checkout must wait for confirmation');
+  assert.match(capture.reply, /Just to confirm, your email is oishisultan766@gmail.com/i);
 
-  assert.equal(openAiCalls, 0, 'OpenAI should not run when auto-checkout handles the email turn');
+  const confirmed = await orchestrator.handleTurn('sess_checkout_auto', 'yes that is correct', [], {
+    completionFn,
+  });
+  assert.equal(openAiCalls, 0, 'OpenAI should not run when auto-checkout handles confirmation');
   assert.ok(internalTools.includes('createCheckoutLink'));
   assert.ok(internalTools.includes('sendPaymentEmail'));
-  assert.match(out.reply, /sent the secure payment link/i);
-  assert.match(out.reply, /oishisultan766@gmail.com/);
-  assert.equal(out.state.paymentLinkCreated, true);
-  assert.equal(out.state.paymentLinkSent, true);
-  assert.equal(out.state.checkoutStage, 'payment_sent');
-  assert.equal(out.toolCallsCount, 2);
+  assert.match(confirmed.reply, /sent successfully/i);
+  assert.match(confirmed.reply, /check your inbox/i);
+  assert.equal(confirmed.state.paymentLinkCreated, true);
+  assert.equal(confirmed.state.paymentLinkSent, true);
+  assert.equal(confirmed.state.checkoutStage, 'payment_sent');
+  assert.equal(confirmed.toolCallsCount, 2);
 });

@@ -1,7 +1,12 @@
 import type { LlmAgentConversationState } from './llm-agent-conversation-state.util';
 import { resolveCheckoutLineItemsFromLlmState } from './voice-checkout-flow.util';
 import { shouldBlockCheckoutForOutOfStock, isLlmProductInStock } from './voice-stock-sales-policy.util';
-import { buildPaymentEmailSendFailurePrompt } from './voice-email-capture.util';
+import {
+  buildEmailProcessingPrompt,
+  buildPaymentEmailSendFailurePrompt,
+  buildPaymentEmailSuccessPrompt,
+  validateVoiceEmail,
+} from './voice-email-capture.util';
 
 export function shouldAutoTriggerCheckoutAfterEmail(
   state: LlmAgentConversationState,
@@ -11,7 +16,7 @@ export function shouldAutoTriggerCheckoutAfterEmail(
   if (state.paymentLinkSent === true || state.paymentLinkCreated === true) return false;
 
   const email = state.customerEmail?.trim();
-  if (!email || !email.includes('@')) return false;
+  if (!email || !validateVoiceEmail(email).valid) return false;
 
   const lines = resolveCheckoutLineItemsFromLlmState(state);
   if (lines.length === 0 || lines.some((l) => !l.variantId || l.quantity < 1)) return false;
@@ -37,7 +42,7 @@ export function buildCreatePaymentLinkArgsFromState(
   state: LlmAgentConversationState,
 ): { email: string; items: Array<{ variantId: string; quantity: number }> } | null {
   const email = state.customerEmail?.trim();
-  if (!email) return null;
+  if (!email || !validateVoiceEmail(email).valid) return null;
   const lines = resolveCheckoutLineItemsFromLlmState(state);
   if (!lines.length) return null;
   return {
@@ -74,13 +79,13 @@ export function buildAutoCheckoutConfirmationReply(args: {
   checkoutOk: boolean;
   emailOk: boolean;
   checkoutUrl?: string;
+  emailSendFailureCount?: number;
 }): string {
-  const email = args.email.trim();
   if (args.checkoutOk && args.emailOk) {
-    return `I've sent the secure payment link to ${email}. Please check your inbox.`;
+    return `${buildEmailProcessingPrompt()} Your payment link has been sent successfully. Please check your inbox.`;
   }
   if (args.checkoutOk) {
-    return buildPaymentEmailSendFailurePrompt();
+    return buildPaymentEmailSendFailurePrompt(args.emailSendFailureCount ?? 1);
   }
   return "I'm having trouble generating the checkout link right now, but a human assistant will follow up shortly.";
 }

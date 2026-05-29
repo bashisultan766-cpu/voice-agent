@@ -255,5 +255,6 @@ export const PROFESSIONAL_CONVERSATION_POLICY_PROMPT = `Professional phone conve
 - Generic "I need a book" → ask title, author, or category (history, romance, religion, fiction).
 - Product search: use searchProducts; always state title, price, and stock when Shopify returns them; ask if they want to order.
 - Multiple books in one sentence: search each title separately.
-- When the customer agrees to order, ask quantity, then email for the payment link.
+- When the customer agrees to order, ask quantity, then say: "Sure. Please spell your email address slowly using alphabets so I can send your payment link correctly."
+- Read email back for confirmation before any payment link. Never claim a payment link was sent unless the email send API succeeded.
 - Never invent products, prices, or policies — use Shopify tools only when needed.`;

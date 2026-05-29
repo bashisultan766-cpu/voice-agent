@@ -1,5 +1,6 @@
 import { sanitizeBannedVoicePhrases } from './professional-conversation-policy.util';
 import { sanitizeBookstoreVoicePhrases } from './book-sales-voice.util';
+import { isDeterministicTransactionalReply } from './voice-email-capture.util';
 
 const BANNED_REPLY_PATTERNS: RegExp[] = [
   /\blet me check\b/i,
@@ -53,9 +54,13 @@ export async function finalizeBrainReply(
   reply: string,
   opts?: {
     regenerate?: (draft: string) => Promise<string | null>;
+    skipRewrite?: boolean;
   },
 ): Promise<string> {
   let t = sanitizeBrainReply(reply);
+  if (opts?.skipRewrite || isDeterministicTransactionalReply(t || reply)) {
+    return truncateBrainReply(t || reply.trim(), 4);
+  }
   if (t && !containsBannedVoicePhrase(t)) {
     return truncateBrainReply(t);
   }
