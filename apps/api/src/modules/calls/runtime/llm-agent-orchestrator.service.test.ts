@@ -426,7 +426,7 @@ test('transactional checkout: product selected with quantity forces deterministi
   assert.equal(out.proof?.transactionalMode, true);
   assert.equal(out.proof?.skipOpenAiGeneration, true);
   assert.equal(out.proof?.deterministicReplyUsed, true);
-  assert.match(out.reply, /spell your email address slowly/i);
+  assert.match(out.reply, /Perfect\. Please spell your email address slowly/i);
   assert.doesNotMatch(out.reply, /share your email/i);
   assert.equal(out.state.transactionalCheckoutState, 'EMAIL_COLLECTION_REQUIRED');
 });
@@ -497,4 +497,90 @@ test('transactional checkout: product selected without quantity forces quantity 
   assert.equal(openAiCalls, 0);
   assert.match(out.reply, /How many copies/i);
   assert.equal(out.proof?.transactionalCheckoutState, 'QUANTITY_COLLECTION_REQUIRED');
+});
+
+test('production log: yeah just one copy for this locks checkout without OpenAI', async () => {
+  const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
+  let openAiCalls = 0;
+
+  const completionFn: OpenAiCompletionFn = async () => {
+    openAiCalls += 1;
+    return {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: "I'll prepare the payment link right away. Please share your email address.",
+          },
+        },
+      ],
+    } as OpenAI.Chat.ChatCompletion;
+  };
+
+  const orchestrator = new LlmAgentOrchestratorService(
+    { get: () => undefined } as never,
+    {
+      load: async () =>
+        ({
+          tenantId: 't1',
+          agentId: 'a1',
+          storeId: 's1',
+          fromNumber: '+15551234567',
+          metadata: {
+            llmAgentState: {
+              selectedProducts: [],
+              lastSearchedProducts: [
+                {
+                  title: 'World History Vol 1',
+                  variantId: 'gid://shopify/ProductVariant/99',
+                  inStock: true,
+                  stock: 8,
+                  price: '24.99',
+                },
+              ],
+              quantities: {},
+              checkoutStage: 'product_discovery',
+              customerIntent: 'product_search',
+              lastToolCalls: ['ShopifyProductSearch'],
+            },
+          },
+          agent: {
+            openaiApiKey: 'sk-test-key-1234567890',
+            model: 'gpt-4o-mini',
+            enabledTools: ['searchProducts', 'createCheckoutLink', 'sendPaymentEmail'],
+            runtimeCredentialHints: { openaiKeySource: 'test' },
+          },
+          store: { name: 'SureShot Books' },
+        }) as never,
+    } as never,
+    { execute: async () => ({ ok: false, toolName: 'n/a', storeId: 's1', error: { code: 'UNEXPECTED', message: 'n/a', retryable: false } }) } as never,
+    {
+      summarizeForPrompt: () => '',
+      load: async () => ({}),
+      setEmailState: async () => undefined,
+    } as never,
+    {
+      findOneById: async () => ({ metadata: { emailRetryCount: 0 } }),
+      mergeSessionMetadata: async () => ({}),
+    } as never,
+  );
+
+  const out = await orchestrator.handleTurn(
+    'sess_prod_log',
+    'yeah just one copy for this',
+    [],
+    { completionFn },
+  );
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(out.proof?.openaiCalled, false);
+  assert.equal(out.proof?.transactionalMode, true);
+  assert.equal(out.proof?.skipOpenAiGeneration, true);
+  assert.equal(out.state.checkoutStage, 'email');
+  assert.equal(out.state.customerIntent, 'email_collection');
+  assert.notEqual(out.state.checkoutStage, 'product_discovery');
+  assert.notEqual(out.state.customerIntent, 'product_search');
+  assert.match(out.reply, /Perfect\. Please spell your email address slowly/i);
+  assert.doesNotMatch(out.reply, /share your email/i);
+  assert.doesNotMatch(out.reply, /prepare the payment link/i);
 });

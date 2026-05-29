@@ -41,6 +41,7 @@ import {
   nextEmailRetryCount,
   shouldOfferEmailRetry,
   validateVoiceEmail,
+  extractEmailFromSpeech,
 } from './voice-email-capture.util';
 import { shouldBlockCheckoutForOutOfStock } from './voice-stock-sales-policy.util';
 import {
@@ -50,9 +51,16 @@ import {
   shouldAutoTriggerCheckoutAfterEmail,
 } from './llm-agent-auto-checkout.util';
 import {
+  applyCheckoutSignalsFromSpeech,
   applyDeterministicProductSelection,
+  assertNoOpenAiDuringTransactionalCheckout,
   buildTransactionalCheckoutLog,
+  CHECKOUT_LOCK_ACTIVE_KEY,
+  emergencyBlockLlmCheckoutReply,
+  evaluateCheckoutLock,
   guardTransactionalReply,
+  hasSelectedInStockProduct,
+  isCheckoutLockedUtterance,
   isTransactionalCheckoutActive,
   normalizeEmailConfirmationState,
   resolveTransactionalCheckoutState,
@@ -152,7 +160,6 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     }
 
     let state = await this.loadState(callSessionId);
-    const cls = classifyOrderTurn(userMessage);
 
     const loadSessionMeta = async (): Promise<Record<string, unknown>> => {
       const sessionRow = await this.callsService.findOneById(callSessionId);
@@ -165,26 +172,22 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
     const memory = await this.callMemory.load(callSessionId);
     const sessionMetaAtStart = await loadSessionMeta();
-    const intentHint = inferIntentHintFromText(userMessage) ?? state.customerIntent;
+
+    /** PRIORITY 1: checkout signals before intent classification or OpenAI. */
+    state = applyCheckoutSignalsFromSpeech(state, userMessage);
+
     let emailConfirmedThisTurn = false;
     let emailCapturedReply: string | null = null;
     let skipBrainRewrite = false;
     let deterministicReplyUsed = false;
     let deliveryConfirmedThisTurn = false;
+    let checkoutLockActive = false;
+    let transactionalCheckoutMode = false;
 
     const loadEmailRetryCount = async (): Promise<number> => {
       const sessionMeta = await loadSessionMeta();
       return Number(sessionMeta.emailRetryCount ?? 0);
     };
-
-    if (cls.intent === 'product_confirmed') {
-      state = applyDeterministicProductSelection(state);
-    }
-
-    state = mergeCallerSignalsIntoState(state, {
-      intentHint,
-      quantity: cls.extracted?.quantity,
-    });
 
     const pendingEmailForConfirm =
       memory.collectedEmail?.trim() ||
@@ -245,58 +248,188 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           }),
         ),
       );
-    } else if (cls.extracted?.email) {
-      const emailRetryCount = await loadEmailRetryCount();
-      const validation = validateVoiceEmail(cls.extracted.email);
-      this.logger.log(
-        JSON.stringify(
-          buildVoiceEmailCaptureLog({
-            event: 'voice.email.captured',
-            callSessionId,
-            tenantId: ctx.tenantId,
-            agentId: ctx.agentId,
-            rawPreview: maskRawSpeechForLog(cls.extracted.email),
-            normalizedPreview: validation.normalized,
-            maskedEmail: maskEmailForLog(validation.normalized),
-            valid: validation.valid,
-            retryCount: emailRetryCount,
-          }),
-        ),
-      );
-      if (validation.valid) {
-        state = mergeCallerSignalsIntoState(state, { email: validation.normalized });
-        await this.callMemory.setEmailState(callSessionId, validation.normalized, 'pending');
-        await this.callsService.mergeSessionMetadata(callSessionId, {
-          orderState: 'EMAIL_CONFIRMING',
-          normalizedEmail: validation.normalized,
-          emailConfirmationState: 'pending',
-        });
-        emailCapturedReply = buildEmailConfirmationPrompt(validation.normalized);
-        skipBrainRewrite = true;
-      } else {
-        const retryCount = nextEmailRetryCount(emailRetryCount, false);
-        await this.callsService.mergeSessionMetadata(callSessionId, {
-          orderState: 'EMAIL_COLLECTING',
-          emailRetryCount: retryCount,
-          emailConfirmationState: 'pending',
-        });
-        emailCapturedReply = buildInvalidEmailRetryPrompt(retryCount);
-        skipBrainRewrite = true;
+    } else {
+      const spokenEmail = extractEmailFromSpeech(userMessage);
+      if (spokenEmail) {
+        const emailRetryCount = await loadEmailRetryCount();
+        const validation = validateVoiceEmail(spokenEmail);
         this.logger.log(
           JSON.stringify(
             buildVoiceEmailCaptureLog({
-              event: 'voice.email.validated',
+              event: 'voice.email.captured',
               callSessionId,
               tenantId: ctx.tenantId,
               agentId: ctx.agentId,
-              rawPreview: maskRawSpeechForLog(cls.extracted.email),
+              rawPreview: maskRawSpeechForLog(spokenEmail),
               normalizedPreview: validation.normalized,
-              valid: false,
-              retryCount,
+              maskedEmail: maskEmailForLog(validation.normalized),
+              valid: validation.valid,
+              retryCount: emailRetryCount,
             }),
           ),
         );
+        if (validation.valid) {
+          state = mergeCallerSignalsIntoState(state, { email: validation.normalized });
+          await this.callMemory.setEmailState(callSessionId, validation.normalized, 'pending');
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_CONFIRMING',
+            normalizedEmail: validation.normalized,
+            emailConfirmationState: 'pending',
+          });
+          emailCapturedReply = buildEmailConfirmationPrompt(validation.normalized);
+          skipBrainRewrite = true;
+        } else {
+          const retryCount = nextEmailRetryCount(emailRetryCount, false);
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_COLLECTING',
+            emailRetryCount: retryCount,
+            emailConfirmationState: 'pending',
+          });
+          emailCapturedReply = buildInvalidEmailRetryPrompt(retryCount);
+          skipBrainRewrite = true;
+          this.logger.log(
+            JSON.stringify(
+              buildVoiceEmailCaptureLog({
+                event: 'voice.email.validated',
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                rawPreview: maskRawSpeechForLog(spokenEmail),
+                normalizedPreview: validation.normalized,
+                valid: false,
+                retryCount,
+              }),
+            ),
+          );
+        }
       }
+    }
+
+    const checkoutLock = evaluateCheckoutLock(state, {
+      awaitingEmailConfirmation,
+      emailCapturedThisTurn: emailCapturedReply != null,
+      emailConfirmedThisTurn,
+      emailRetryCount: Number(sessionMetaAtStart.emailRetryCount ?? 0),
+    });
+    checkoutLockActive = checkoutLock.checkoutLockActive;
+    transactionalCheckoutMode = checkoutLock.transactionalCheckoutMode;
+
+    if (
+      checkoutLockActive &&
+      !emailCapturedReply &&
+      !emailConfirmedThisTurn &&
+      checkoutLock.reply
+    ) {
+      state = {
+        ...state,
+        checkoutStage: 'email',
+        customerIntent: 'email_collection',
+        transactionalCheckoutState: 'EMAIL_COLLECTION_REQUIRED',
+      };
+      await this.persistState(callSessionId, state);
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        lastUserIntent: 'email_collection',
+        [LLM_AGENT_STATE_KEY]: state,
+        [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_COLLECTION_REQUIRED',
+        [CHECKOUT_LOCK_ACTIVE_KEY]: true,
+        orderState: 'EMAIL_COLLECTING',
+      });
+
+      const finalReply = checkoutLock.reply;
+      deterministicReplyUsed = true;
+
+      this.logger.log(
+        JSON.stringify(
+          buildTransactionalCheckoutLog({
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            transactionalMode: true,
+            transactionalCheckoutMode: true,
+            checkoutState: 'EMAIL_COLLECTION_REQUIRED',
+            deterministicReplyUsed: true,
+            skipOpenAiGeneration: true,
+            activeProductSelected: checkoutLock.activeProductSelected,
+            quantityConfirmed: checkoutLock.quantityConfirmed,
+            llmCheckoutStage: state.checkoutStage,
+          }),
+        ),
+      );
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.checkout_lock.proof',
+          CHECKOUT_LOCK_ACTIVE: true,
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          activeProductSelected: checkoutLock.activeProductSelected,
+          quantityConfirmed: checkoutLock.quantityConfirmed,
+          openaiCalled: false,
+        }),
+      );
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.brain.final_reply',
+          agentId: ctx.agentId,
+          sessionId: callSessionId,
+          replyPreview: finalReply.slice(0, 240),
+          toolCallsUsed: [],
+          intent: 'email_collection',
+          stateStage: state.checkoutStage,
+          transactionalCheckoutState: 'EMAIL_COLLECTION_REQUIRED',
+          transactionalMode: true,
+          skipOpenAiGeneration: true,
+          deterministicReplyUsed: true,
+          CHECKOUT_LOCK_ACTIVE: true,
+        }),
+      );
+
+      assertNoOpenAiDuringTransactionalCheckout({
+        transactionalCheckoutMode: true,
+        openaiCalled: false,
+      });
+
+      return {
+        reply: finalReply,
+        toolCallsCount: 0,
+        toolNames: [],
+        escalated: false,
+        state,
+        proof: {
+          openaiKeySource,
+          modelUsed: 'n/a',
+          openaiCalled: false,
+          openaiSuccess: true,
+          transactionalMode: true,
+          transactionalCheckoutState: 'EMAIL_COLLECTION_REQUIRED',
+          deterministicReplyUsed: true,
+          skipOpenAiGeneration: true,
+        },
+      };
+    }
+
+    const skipProductSearchRouting = isCheckoutLockedUtterance(userMessage, state);
+    const cls = skipProductSearchRouting
+      ? { intent: 'quantity_provided' as const, confidence: 0.9, extracted: undefined, rawText: userMessage }
+      : classifyOrderTurn(userMessage);
+
+    const intentHint = skipProductSearchRouting
+      ? (state.customerIntent ?? 'email_collection')
+      : inferIntentHintFromText(userMessage, state) ?? state.customerIntent;
+
+    if (!skipProductSearchRouting && cls.intent === 'product_confirmed') {
+      state = applyDeterministicProductSelection(state);
+    }
+
+    if (!skipProductSearchRouting && cls.extracted?.quantity) {
+      state = mergeCallerSignalsIntoState(state, {
+        intentHint: 'quantity_selection',
+        quantity: cls.extracted.quantity,
+      });
+    } else if (!skipProductSearchRouting && intentHint) {
+      state = mergeCallerSignalsIntoState(state, { intentHint });
     }
 
     let totalToolCalls = 0;
@@ -463,6 +596,11 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       };
     }
 
+    assertNoOpenAiDuringTransactionalCheckout({
+      transactionalCheckoutMode: checkoutLockActive || transactionalCheckoutMode,
+      openaiCalled: false,
+    });
+
     this.logger.log(
       JSON.stringify({
         event: 'voice.brain.selected',
@@ -503,10 +641,12 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
     let modelToUse = model;
     const fallbackMini = 'gpt-4o-mini';
+    let openaiCalled = false;
 
     if (!skipLlmToolLoop) for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
       let response: OpenAI.Chat.ChatCompletion;
       try {
+        openaiCalled = true;
         response = await complete({
           model: modelToUse,
           messages,
@@ -655,12 +795,24 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       regenerate: async (draft) => this.rewriteBrainReply(client, modelToUse, draft, temperature),
     });
 
-    const finalReply = guardTransactionalReply(reply || '', {
-      transactionalState,
-      deliveryConfirmed: deliveryConfirmedThisTurn,
-      emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
-      pendingEmail: memoryForRouting.collectedEmail ?? state.customerEmail ?? null,
-    }) || "How can I help you with a book today?";
+    const finalReply = emergencyBlockLlmCheckoutReply(
+      guardTransactionalReply(reply || '', {
+        transactionalState,
+        deliveryConfirmed: deliveryConfirmedThisTurn,
+        emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
+        pendingEmail: memoryForRouting.collectedEmail ?? state.customerEmail ?? null,
+      }) || "How can I help you with a book today?",
+      {
+        activeProductSelected: hasSelectedInStockProduct(state),
+        openaiCalled,
+        emailRetryCount: Number(sessionMeta.emailRetryCount ?? 0),
+      },
+    );
+
+    assertNoOpenAiDuringTransactionalCheckout({
+      transactionalCheckoutMode: checkoutLockActive || transactionalCheckoutMode,
+      openaiCalled,
+    });
 
     this.logger.log(
       JSON.stringify({

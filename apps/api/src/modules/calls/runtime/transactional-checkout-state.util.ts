@@ -1,14 +1,19 @@
-import type { LlmAgentConversationState, LlmSelectedProduct } from './llm-agent-conversation-state.util';
-import { isLlmProductInStock } from './voice-stock-sales-policy.util';
-import { QUANTITY_PROMPT } from './book-sales-voice.util';
 import {
   buildEmailCollectionPrompt,
   buildEmailConfirmationPrompt,
   buildInvalidEmailRetryPrompt,
   containsPaymentSuccessClaim,
+  extractEmailFromSpeech,
   isDeterministicTransactionalReply,
   shouldOfferEmailRetry,
 } from './voice-email-capture.util';
+import {
+  mergeCallerSignalsIntoState,
+  type LlmAgentConversationState,
+  type LlmSelectedProduct,
+} from './llm-agent-conversation-state.util';
+import { isLlmProductInStock } from './voice-stock-sales-policy.util';
+import { QUANTITY_PROMPT } from './book-sales-voice.util';
 
 /** Hard transactional checkout states — LLM must not speak during these. */
 export type TransactionalCheckoutState =
@@ -22,6 +27,20 @@ export type TransactionalCheckoutState =
   | 'PAYMENT_LINK_SENT';
 
 export const TRANSACTIONAL_CHECKOUT_STATE_KEY = 'transactionalCheckoutState';
+export const CHECKOUT_LOCK_ACTIVE_KEY = 'CHECKOUT_LOCK_ACTIVE';
+
+const SPOKEN_QUANTITY_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
 
 export type TransactionalCheckoutContext = {
   llmState: LlmAgentConversationState;
@@ -108,6 +127,190 @@ export function applyDeterministicProductSelection(
   };
 }
 
+/** Parse quantity from spoken checkout utterances (e.g. "just one copy for this"). */
+export function parseCheckoutQuantityFromSpeech(text: string): number | null {
+  const t = text.toLowerCase().trim();
+  if (!t) return null;
+
+  const digitCopy = t.match(/\b(\d{1,2})\s*(?:copies|copy|books?)\b/);
+  if (digitCopy) {
+    const n = Number(digitCopy[1]);
+    return Number.isFinite(n) && n > 0 ? Math.min(99, n) : null;
+  }
+
+  for (const [word, n] of Object.entries(SPOKEN_QUANTITY_WORDS)) {
+    if (new RegExp(`\\b${word}\\s+(?:copies|copy|books?)\\b`, 'i').test(t)) {
+      return n;
+    }
+  }
+
+  if (/\b(?:just|only)\s+one\b/i.test(t) || /\bone\s+(?:copy|book)\b/i.test(t)) {
+    return 1;
+  }
+
+  const bare = t.match(/\b(\d{1,3})\b/);
+  if (bare && t.split(/\s+/).length <= 4) {
+    const n = Number(bare[1]);
+    return Number.isFinite(n) && n > 0 ? Math.min(99, n) : null;
+  }
+
+  return null;
+}
+
+/** Caller affirms product / quantity during checkout (not a new catalog search). */
+export function isCheckoutProductAffirmation(text: string): boolean {
+  const t = text.toLowerCase().trim();
+  if (!t) return false;
+  if (parseCheckoutQuantityFromSpeech(text) != null) return true;
+  return /\b(yes|yeah|yep|sure|ok|okay|order|buy|this one|that one|for this|first one|i want|i'll take|ill take|add it|get it)\b/i.test(
+    t,
+  );
+}
+
+/** True when utterance must not be routed as product_search / product_discovery. */
+export function isCheckoutLockedUtterance(text: string, state: LlmAgentConversationState): boolean {
+  if (extractEmailFromSpeech(text)) return false;
+  if (!state.lastSearchedProducts.length && !state.selectedProducts.length) return false;
+  return isCheckoutProductAffirmation(text) || parseCheckoutQuantityFromSpeech(text) != null;
+}
+
+/**
+ * Apply product + quantity from speech BEFORE intent classification / OpenAI.
+ * PRODUCT_SELECTED → QUANTITY_CONFIRMED → EMAIL_COLLECTION_REQUIRED stage hints.
+ */
+export function applyCheckoutSignalsFromSpeech(
+  state: LlmAgentConversationState,
+  userMessage: string,
+): LlmAgentConversationState {
+  let next = state;
+  const qty = parseCheckoutQuantityFromSpeech(userMessage);
+  const affirm = isCheckoutProductAffirmation(userMessage);
+  const hasCatalogContext =
+    next.lastSearchedProducts.length > 0 || next.selectedProducts.length > 0;
+
+  if (!hasCatalogContext) return next;
+
+  if (affirm || qty != null) {
+    next = applyDeterministicProductSelection(next);
+  }
+
+  if (qty != null) {
+    next = mergeCallerSignalsIntoState(next, {
+      quantity: qty,
+      intentHint: 'quantity_selection',
+    });
+  }
+
+  if (isCheckoutCartReady(next)) {
+    next = {
+      ...next,
+      checkoutStage: 'email',
+      customerIntent: 'email_collection',
+      transactionalCheckoutState: 'EMAIL_COLLECTION_REQUIRED',
+    };
+  } else if (affirm || qty != null) {
+    next = {
+      ...next,
+      customerIntent: qty != null ? 'quantity_selection' : 'product_selected',
+      checkoutStage:
+        next.checkoutStage === 'product_discovery' || next.checkoutStage === 'idle'
+          ? 'product_selected'
+          : next.checkoutStage,
+    };
+  }
+
+  return next;
+}
+
+export type CheckoutLockEvaluation = {
+  checkoutLockActive: boolean;
+  transactionalCheckoutMode: boolean;
+  activeProductSelected: boolean;
+  quantityConfirmed: boolean;
+  checkoutState: TransactionalCheckoutState;
+  skipOpenAiGeneration: boolean;
+  reply: string | null;
+};
+
+export type CheckoutLockContext = {
+  awaitingEmailConfirmation?: boolean;
+  emailCapturedThisTurn?: boolean;
+  emailConfirmedThisTurn?: boolean;
+  emailRetryCount?: number;
+};
+
+/** Hard checkout lock: product + quantity confirmed → email collection only. */
+export function evaluateCheckoutLock(
+  state: LlmAgentConversationState,
+  ctx: CheckoutLockContext = {},
+): CheckoutLockEvaluation {
+  const activeProductSelected = hasSelectedInStockProduct(state);
+  const quantityConfirmed = resolveLineQuantity(state) > 0;
+  const emailFlowActive =
+    ctx.awaitingEmailConfirmation === true ||
+    ctx.emailCapturedThisTurn === true ||
+    ctx.emailConfirmedThisTurn === true ||
+    Boolean(state.customerEmail?.trim());
+
+  let checkoutState = resolveTransactionalCheckoutState({ llmState: state });
+
+  if (activeProductSelected && quantityConfirmed && !emailFlowActive) {
+    checkoutState = 'EMAIL_COLLECTION_REQUIRED';
+  }
+
+  const checkoutLockActive =
+    activeProductSelected && quantityConfirmed && !emailFlowActive;
+
+  const skipOpenAiGeneration = checkoutLockActive || shouldBypassOpenAiGeneration(checkoutState);
+
+  const reply =
+    checkoutLockActive
+      ? buildEmailCollectionPrompt(ctx.emailRetryCount ?? 0)
+      : checkoutState === 'QUANTITY_COLLECTION_REQUIRED'
+        ? QUANTITY_PROMPT
+        : null;
+
+  return {
+    checkoutLockActive,
+    transactionalCheckoutMode: checkoutLockActive,
+    activeProductSelected,
+    quantityConfirmed,
+    checkoutState,
+    skipOpenAiGeneration,
+    reply,
+  };
+}
+
+export function assertNoOpenAiDuringTransactionalCheckout(args: {
+  transactionalCheckoutMode: boolean;
+  openaiCalled: boolean;
+}): void {
+  if (args.transactionalCheckoutMode && args.openaiCalled) {
+    throw new Error('CRITICAL: OpenAI called during deterministic checkout flow');
+  }
+}
+
+const EMERGENCY_LLM_CHECKOUT_PATTERNS: RegExp[] = [
+  /\bpayment link\b/i,
+  /\bemail address\b/i,
+  /\bshare your email\b/i,
+  /\bprovide your email\b/i,
+];
+
+/** Block LLM checkout phrasing when product is already selected. */
+export function emergencyBlockLlmCheckoutReply(
+  reply: string,
+  args: { activeProductSelected: boolean; openaiCalled: boolean; emailRetryCount?: number },
+): string {
+  if (!args.activeProductSelected || !args.openaiCalled) return reply.trim();
+  const t = reply.trim();
+  if (!t) return buildEmailCollectionPrompt(args.emailRetryCount ?? 0);
+  if (EMERGENCY_LLM_CHECKOUT_PATTERNS.some((re) => re.test(t))) {
+    return buildEmailCollectionPrompt(args.emailRetryCount ?? 0);
+  }
+  return t;
+}
+
 export function resolveTransactionalCheckoutState(
   ctx: TransactionalCheckoutContext,
 ): TransactionalCheckoutState {
@@ -141,12 +344,7 @@ export function resolveTransactionalCheckoutState(
     return 'QUANTITY_COLLECTION_REQUIRED';
   }
 
-  if (
-    llmState.checkoutStage === 'product_selected' ||
-    llmState.checkoutStage === 'quantity' ||
-    llmState.checkoutStage === 'email' ||
-    llmState.checkoutStage === 'payment'
-  ) {
+  if (isCheckoutCartReady(llmState)) {
     return 'EMAIL_COLLECTION_REQUIRED';
   }
 
@@ -336,19 +534,29 @@ export function buildTransactionalCheckoutLog(args: {
   tenantId?: string;
   agentId?: string;
   transactionalMode: boolean;
+  transactionalCheckoutMode?: boolean;
   checkoutState: TransactionalCheckoutState;
   deterministicReplyUsed: boolean;
   skipOpenAiGeneration?: boolean;
+  activeProductSelected?: boolean;
+  quantityConfirmed?: boolean;
   llmCheckoutStage?: string;
 }): Record<string, unknown> {
+  const transactionalCheckoutMode = args.transactionalCheckoutMode ?? args.transactionalMode;
   const base: Record<string, unknown> = {
-    event: args.transactionalMode
+    event: transactionalCheckoutMode
       ? 'transactional_checkout_mode_activated'
       : 'transactional_checkout_mode_inactive',
     transactionalMode: args.transactionalMode,
+    transactionalCheckoutMode,
     checkoutState: args.checkoutState,
     deterministicReplyUsed: args.deterministicReplyUsed,
     ...(args.skipOpenAiGeneration != null ? { skipOpenAiGeneration: args.skipOpenAiGeneration } : {}),
+    ...(args.activeProductSelected != null
+      ? { activeProductSelected: args.activeProductSelected }
+      : {}),
+    ...(args.quantityConfirmed != null ? { quantityConfirmed: args.quantityConfirmed } : {}),
+    ...(transactionalCheckoutMode ? { [CHECKOUT_LOCK_ACTIVE_KEY]: true } : {}),
     ...(args.llmCheckoutStage ? { llmCheckoutStage: args.llmCheckoutStage } : {}),
     ...(args.callSessionId ? { callSessionId: args.callSessionId } : {}),
     ...(args.tenantId ? { tenantId: args.tenantId } : {}),

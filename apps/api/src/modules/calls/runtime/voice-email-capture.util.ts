@@ -10,7 +10,7 @@ export const MAX_VOICE_EMAIL_RETRIES = 3;
 export const MAX_EMAIL_SEND_RETRIES = 2;
 
 export const EMAIL_SPELL_COLLECTION_PROMPT =
-  'Sure. Please spell your email address slowly using alphabets so I can send your payment link correctly.';
+  'Perfect. Please spell your email address slowly using alphabets so I can send your payment link correctly.';
 
 export const EMAIL_SPELL_COLLECTION_PROMPT_ALT =
   'Please say your email slowly, character by character.';

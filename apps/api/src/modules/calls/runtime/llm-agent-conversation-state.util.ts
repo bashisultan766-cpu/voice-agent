@@ -316,7 +316,7 @@ export function mergeCallerSignalsIntoState(
     next.customerEmail = signals.email.trim();
     next.checkoutStage = 'email';
   }
-  if (signals.quantity != null && signals.quantity > 0 && canAdvanceCheckoutStage(next, 'quantity')) {
+  if (signals.quantity != null && signals.quantity > 0) {
     const sel =
       next.selectedProducts[0] ??
       next.lastSearchedProducts.find((p) => isLlmProductInStock(p));
@@ -326,24 +326,50 @@ export function mergeCallerSignalsIntoState(
     const vid = sel?.variantId;
     if (vid) {
       next.quantities = { ...next.quantities, [vid]: signals.quantity };
+      if (!next.selectedProducts.length && sel) {
+        next.selectedProducts = [sel];
+      }
       next.checkoutStage = 'quantity';
+      next.customerIntent = 'quantity_selection';
     }
   }
   return sanitizeCheckoutStageForStock(next);
 }
 
-export function inferIntentHintFromText(text: string): string | undefined {
+export function inferIntentHintFromText(
+  text: string,
+  state?: LlmAgentConversationState,
+): string | undefined {
   const t = text.toLowerCase().trim();
   if (!t) return undefined;
+
+  const checkoutAffirm =
+    /\b(yes|yeah|yep|sure|ok|order|buy|this one|that one|for this|first one|just one|one copy)\b/i.test(
+      text,
+    );
+  const hasCatalog =
+    (state?.lastSearchedProducts.length ?? 0) > 0 || (state?.selectedProducts.length ?? 0) > 0;
+  const qtyDigit = /\b(\d{1,2})\s*(?:copies|copy|books?)\b/i.test(t);
+  const qtyWord = /\b(?:one|two|three|four|five)\s+(?:copies|copy|books?)\b/i.test(t);
+
+  if (state && hasCatalog && (checkoutAffirm || qtyDigit || qtyWord)) {
+    const product = state.selectedProducts[0] ?? state.lastSearchedProducts[0];
+    const vid = product?.variantId;
+    const q = vid ? Number(state.quantities[vid] ?? 0) : 0;
+    if (product && q > 0) return 'email_collection';
+    if (qtyDigit || qtyWord) return 'quantity_selection';
+    return 'product_selected';
+  }
+
   if (/^(hi|hello|hey|good morning|good afternoon)\b/.test(t)) return 'greeting';
   if (/\b(how are you|what'?s up|nice to meet)\b/.test(t)) return 'small_talk';
   if (/\b(order status|where is my order|track)\b/.test(t)) return 'order_status';
   if (/\b(refund|return policy)\b/.test(t)) return 'refund_policy';
   if (/\b(shipping|delivery)\b/.test(t)) return 'shipping_policy';
   if (/\b(speak to|human|representative|manager)\b/.test(t)) return 'human_handoff';
-  if (/\b(history|romance|fiction|book|title|author|isbn)\b/.test(t)) return 'product_search';
   if (/\b(yes|first one|that one|order this|add this|i want)\b/.test(t)) return 'product_selected';
   if (/\b\d+\s*(copies|books|quantity)\b/.test(t) || /^\d{1,3}$/.test(t)) return 'quantity_selection';
   if (/@/.test(t) || /\b(at|dot)\s+\w+/.test(t)) return 'email_collection';
+  if (/\b(history|romance|fiction|book|title|author|isbn)\b/.test(t)) return 'product_search';
   return undefined;
 }

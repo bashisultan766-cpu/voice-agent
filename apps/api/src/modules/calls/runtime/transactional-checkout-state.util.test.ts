@@ -4,10 +4,15 @@ import { emptyLlmAgentState, mergeCallerSignalsIntoState } from './llm-agent-con
 import { EMAIL_SPELL_COLLECTION_PROMPT } from './voice-email-capture.util';
 import { QUANTITY_PROMPT } from './book-sales-voice.util';
 import {
+  applyCheckoutSignalsFromSpeech,
   applyDeterministicProductSelection,
+  assertNoOpenAiDuringTransactionalCheckout,
   containsForbiddenCheckoutPhrase,
+  emergencyBlockLlmCheckoutReply,
+  evaluateCheckoutLock,
   guardTransactionalReply,
   isCheckoutCartReady,
+  parseCheckoutQuantityFromSpeech,
   resolveTransactionalCheckoutState,
   routeTransactionalCheckoutTurn,
   shouldBypassOpenAiGeneration,
@@ -39,6 +44,53 @@ test('resolveTransactionalCheckoutState enters email collection when cart is rea
     resolveTransactionalCheckoutState({ llmState: state }),
     'EMAIL_COLLECTION_REQUIRED',
   );
+});
+
+test('resolveTransactionalCheckoutState enters email collection when cart is ready in product_discovery', () => {
+  let state = emptyLlmAgentState();
+  state.selectedProducts = [inStockProduct];
+  state.quantities = { [inStockProduct.variantId]: 1 };
+  state.checkoutStage = 'product_discovery';
+  state.customerIntent = 'product_search';
+  assert.equal(
+    resolveTransactionalCheckoutState({ llmState: state }),
+    'EMAIL_COLLECTION_REQUIRED',
+  );
+});
+
+test('parseCheckoutQuantityFromSpeech handles one copy phrasing', () => {
+  assert.equal(parseCheckoutQuantityFromSpeech('yeah just one copy for this'), 1);
+  assert.equal(parseCheckoutQuantityFromSpeech('2 copies please'), 2);
+});
+
+test('evaluateCheckoutLock activates when product and quantity confirmed', () => {
+  let state = emptyLlmAgentState();
+  state.lastSearchedProducts = [inStockProduct];
+  state = applyCheckoutSignalsFromSpeech(state, 'yeah just one copy for this');
+  const lock = evaluateCheckoutLock(state);
+  assert.equal(lock.checkoutLockActive, true);
+  assert.equal(lock.checkoutState, 'EMAIL_COLLECTION_REQUIRED');
+  assert.equal(lock.skipOpenAiGeneration, true);
+  assert.match(lock.reply ?? '', /spell your email address slowly/i);
+});
+
+test('assertNoOpenAiDuringTransactionalCheckout throws when OpenAI used', () => {
+  assert.throws(
+    () =>
+      assertNoOpenAiDuringTransactionalCheckout({
+        transactionalCheckoutMode: true,
+        openaiCalled: true,
+      }),
+    /CRITICAL: OpenAI called during deterministic checkout flow/,
+  );
+});
+
+test('emergencyBlockLlmCheckoutReply replaces LLM checkout phrasing', () => {
+  const blocked = emergencyBlockLlmCheckoutReply('Please share your email address.', {
+    activeProductSelected: true,
+    openaiCalled: true,
+  });
+  assert.match(blocked, /Perfect\. Please spell your email/i);
 });
 
 test('routeTransactionalCheckoutTurn forces spell-slowly email prompt', () => {

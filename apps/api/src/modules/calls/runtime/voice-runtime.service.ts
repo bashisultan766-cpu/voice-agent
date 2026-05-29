@@ -1059,8 +1059,9 @@ export class VoiceRuntimeService {
       llmTools: result.toolNames,
       openaiUsed: result.proof?.openaiCalled ?? true,
       transactionalMode: result.proof?.transactionalMode ?? false,
-      transactionalCheckoutState: result.proof?.transactionalCheckoutState ?? null,
-      deterministicReplyUsed: result.proof?.deterministicReplyUsed ?? false,
+        transactionalCheckoutState: result.proof?.transactionalCheckoutState ?? null,
+        CHECKOUT_LOCK_ACTIVE: result.proof?.transactionalMode === true,
+        deterministicReplyUsed: result.proof?.deterministicReplyUsed ?? false,
       skipOpenAiGeneration: result.proof?.skipOpenAiGeneration ?? false,
     };
     this.logTurnProof(turnProof);
