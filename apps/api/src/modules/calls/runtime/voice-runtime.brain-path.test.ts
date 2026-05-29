@@ -88,7 +88,40 @@ function buildRuntime(overrides: {
   );
 }
 
-test('how are you uses only LlmAgentOrchestratorService.handleTurn', async () => {
+test('hello reply without OpenAI', async () => {
+  let handleTurnCalls = 0;
+  const runtime = buildRuntime({
+    handleTurn: async () => {
+      handleTurnCalls += 1;
+      return {
+        reply: 'should not be called',
+        toolCallsCount: 0,
+        toolNames: [],
+        state: {
+          selectedProducts: [],
+          quantities: {},
+          lastSearchedProducts: [],
+          checkoutStage: 'idle',
+          lastToolCalls: [],
+        },
+        proof: {
+          openaiKeySource: 'test',
+          modelUsed: 'gpt-4o-mini',
+          openaiCalled: true,
+          openaiSuccess: true,
+        },
+      };
+    },
+  });
+
+  const { reply, turnProof } = await runtime.processUtterance('sess_brain_hello', 'hello', []);
+  assert.equal(handleTurnCalls, 0);
+  assert.match(reply, /Hello/i);
+  assert.equal(turnProof?.openaiCalled, false);
+  assert.equal(turnProof?.instant_reply_used, true);
+});
+
+test('how are you reply without OpenAI', async () => {
   let handleTurnCalls = 0;
   const runtime = buildRuntime({
     handleTurn: async () => {
@@ -114,9 +147,10 @@ test('how are you uses only LlmAgentOrchestratorService.handleTurn', async () =>
     },
   });
 
-  const { reply } = await runtime.processUtterance('sess_brain_1', 'how are you', []);
-  assert.equal(handleTurnCalls, 1);
-  assert.match(reply, /book/i);
+  const { reply, turnProof } = await runtime.processUtterance('sess_brain_1', 'how are you', []);
+  assert.equal(handleTurnCalls, 0);
+  assert.match(reply, /doing great|help/i);
+  assert.equal(turnProof?.openaiCalled, false);
   for (const bad of ['let me check', 'thank you for asking', 'go ahead', 'one moment']) {
     assert.doesNotMatch(reply.toLowerCase(), new RegExp(bad, 'i'));
   }

@@ -59,6 +59,12 @@ import {
   isSpellingCaptureActive,
 } from './voice-email-capture.util';
 import { processTelephonySpellingPipeline } from './telephony-spelling-capture.util';
+import {
+  buildInstantReply,
+  shouldUseInstantReply,
+  shortenVoiceReply,
+} from './instant-reply.util';
+import { logVoiceTurnPerformance } from './voice-turn-performance.util';
 
 /**
  * Voice runtime: assembles prompt, handles conversation flow.
@@ -899,9 +905,12 @@ export class VoiceRuntimeService {
     reply: string;
     turnProof?: Record<string, unknown>;
   }> {
+    const turnStartedAt = Date.now();
     const safeText = redactPaymentLikePatterns(text);
     const trimmedUserText = safeText.trim();
     let reply = '';
+    let openaiLatencyMs: number | undefined;
+    let intentLatencyMs: number | undefined;
     const safety = this.runtimeSafety.checkUserInput(safeText);
     if (safety.blocked) {
       reply = this.runtimeSafety.refusalReply(safety.category);
@@ -952,13 +961,109 @@ export class VoiceRuntimeService {
         ? conversationHistory
         : await this.transcriptBuffer.getConversationHistory(callSessionId, 24);
 
-    const sessionRow = await this.callsService.findOneById(callSessionId);
-    const sessionMeta =
-      sessionRow.metadata &&
-      typeof sessionRow.metadata === 'object' &&
-      !Array.isArray(sessionRow.metadata)
-        ? (sessionRow.metadata as Record<string, unknown>)
+    const sessionRowEarly = await this.callsService.findOneById(callSessionId);
+    const sessionMetaEarly =
+      sessionRowEarly.metadata &&
+      typeof sessionRowEarly.metadata === 'object' &&
+      !Array.isArray(sessionRowEarly.metadata)
+        ? (sessionRowEarly.metadata as Record<string, unknown>)
         : {};
+
+    const intentStartedAt = Date.now();
+    const [userIntent, langCode] = await Promise.all([
+      Promise.resolve(classifyUserIntent(trimmedUserText)),
+      Promise.resolve(detectLanguageFromText(trimmedUserText).language),
+    ]);
+    intentLatencyMs = Date.now() - intentStartedAt;
+
+    const orderStateForInstant =
+      typeof sessionMetaEarly.orderState === 'string' ? sessionMetaEarly.orderState : 'IDLE';
+    if (
+      shouldUseInstantReply(trimmedUserText, orderStateForInstant) &&
+      !isSpellingCaptureActive(sessionMetaEarly)
+    ) {
+      const storeName = ctx.store?.name ?? 'SureShot Books';
+      reply = shortenVoiceReply(
+        polishVoiceReply(buildInstantReply(trimmedUserText, storeName), { maxSentences: 2, maxChars: 160 }),
+        20,
+      );
+      const userSeqInstant = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(callSessionId, 'user', trimmedUserText, userSeqInstant);
+      const agentSeqInstant = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeqInstant);
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        ...buildLlmReplyMetadataPatch(reply),
+        instant_reply_used: true,
+        openaiCalled: false,
+        lastIntentDetected: userIntent,
+      });
+
+      const totalTurnLatencyMs = Date.now() - turnStartedAt;
+      logVoiceTurnPerformance({
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        totalTurnLatencyMs,
+        intentLatencyMs,
+        openaiLatencyMs: 0,
+        instantReplyUsed: true,
+        openaiCalled: false,
+        cacheHit: false,
+        slowPathReason: totalTurnLatencyMs >= 2000 ? 'instant_path_slow' : null,
+      });
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.brain.selected',
+          agentId: ctx.agentId,
+          sessionId: callSessionId,
+          tenantId: ctx.tenantId,
+          brain: 'instant_reply',
+          instant_reply_used: true,
+          openaiCalled: false,
+          userIntent,
+          langCode,
+        }),
+      );
+
+      const turnProof = {
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        userSpeechText: safeText.slice(0, 500),
+        openaiCalled: false,
+        openaiSuccess: true,
+        instant_reply_used: true,
+        instantReplyUsed: true,
+        replyPreview: reply.slice(0, 240),
+        flowStep: 'instant_reply',
+        brain: 'instant_reply',
+        totalTurnLatencyMs,
+        intentLatencyMs,
+      };
+      this.logTurnProof({
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        userSpeechText: safeText.slice(0, 500),
+        openaiKeySource: 'none',
+        modelUsed: 'n/a',
+        openaiCalled: false,
+        openaiSuccess: true,
+        replyPreview: reply.slice(0, 240),
+        voiceProvider: ctx.agent.voiceProvider ?? null,
+        voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+        ttsProviderUsed: null,
+        intentDetected: userIntent,
+        flowStep: 'instant_reply',
+        responseDelayMs: totalTurnLatencyMs,
+        openaiUsed: false,
+      });
+      return { reply, turnProof };
+    }
+
+    const sessionRow = sessionRowEarly;
+    const sessionMeta = sessionMetaEarly;
 
     let orchestratorSpeech = trimmedUserText;
     let rawTranscriptForLog = trimmedUserText;
@@ -1029,7 +1134,8 @@ export class VoiceRuntimeService {
 
     const llmStartedAt = Date.now();
     const result = await this.llmAgent.handleTurn(callSessionId, orchestratorSpeech, historyFromDb);
-    const responseDelayMs = Date.now() - llmStartedAt;
+    openaiLatencyMs = Date.now() - llmStartedAt;
+    const responseDelayMs = openaiLatencyMs;
 
     if (result.toolCallsCount > 0) {
       await this.conversationAnalytics.recordToolLatency(
@@ -1112,7 +1218,39 @@ export class VoiceRuntimeService {
     };
     this.logTurnProof(turnProof);
 
-    return { reply, turnProof };
+    const totalTurnLatencyMs = Date.now() - turnStartedAt;
+    const slowPathReason =
+      totalTurnLatencyMs >= 2000
+        ? result.toolNames.some((n) => /search|shopify/i.test(n))
+          ? 'shopify_tools'
+          : result.proof?.openaiCalled
+            ? 'openai'
+            : 'llm_pipeline'
+        : null;
+
+    logVoiceTurnPerformance({
+      callSessionId,
+      tenantId: ctx.tenantId,
+      agentId: ctx.agentId,
+      totalTurnLatencyMs,
+      intentLatencyMs,
+      openaiLatencyMs: result.proof?.openaiCalled ? openaiLatencyMs : 0,
+      instantReplyUsed: false,
+      openaiCalled: result.proof?.openaiCalled ?? true,
+      cacheHit: false,
+      slowPathReason,
+    });
+
+    return {
+      reply,
+      turnProof: {
+        ...turnProof,
+        totalTurnLatencyMs,
+        intentLatencyMs,
+        openaiLatencyMs: result.proof?.openaiCalled ? openaiLatencyMs : 0,
+        instantReplyUsed: false,
+      },
+    };
   }
 
   private logTurnProof(p: {

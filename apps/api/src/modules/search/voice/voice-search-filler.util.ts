@@ -32,4 +32,4 @@ export function pickVoiceSearchFillerPhrase(args: {
   return hashPick(seed, GENERIC_FILLERS);
 }
 
-export const DEFERRED_INSTANT_ACK_PHRASE = 'One moment while I check that for you.';
+export const DEFERRED_INSTANT_ACK_PHRASE = 'Sure, let me check that for you.';

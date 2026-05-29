@@ -118,6 +118,11 @@ import {
   voiceFastModeParallelToolCalls,
   voiceLlmMaxTokens,
 } from './voice-commerce-fast-mode.util';
+import {
+  buildInstantReply,
+  shouldUseInstantReply,
+  shortenVoiceReply,
+} from './instant-reply.util';
 
 const MAX_TOOL_ITERATIONS = voiceFastModeMaxToolIterations(Number(process.env.MAX_TOOL_ITERATIONS_VOICE) || 8);
 const MAX_TOOL_CALLS_PER_TURN = Number(process.env.MAX_TOOL_CALLS_PER_TURN) || 4;
@@ -223,6 +228,38 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
     const memory = await this.callMemory.load(callSessionId);
     const sessionMetaAtStart = await loadSessionMeta();
+
+    const trimmedMessage = userMessage.trim();
+    const orderStateEarly =
+      typeof sessionMetaAtStart.orderState === 'string' ? sessionMetaAtStart.orderState : 'IDLE';
+    if (shouldUseInstantReply(trimmedMessage, orderStateEarly)) {
+      const storeName = ctx.store?.name ?? 'SureShot Books';
+      const instantReply = shortenVoiceReply(buildInstantReply(trimmedMessage, storeName), 20);
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.llm.instant_reply_bypass',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          instant_reply_used: true,
+          openaiCalled: false,
+        }),
+      );
+      return {
+        reply: instantReply,
+        toolCallsCount: 0,
+        toolNames: [],
+        state,
+        proof: {
+          openaiKeySource,
+          modelUsed: 'n/a',
+          openaiCalled: false,
+          openaiSuccess: true,
+          deterministicReplyUsed: true,
+          skipOpenAiGeneration: true,
+        },
+      };
+    }
 
     const priorLanguage = sessionMetaAtStart[SESSION_LANGUAGE_KEY] as CustomerLanguage | undefined;
     const explicitLanguageSwitch = detectExplicitLanguageSwitch(userMessage);

@@ -178,22 +178,58 @@ export class BookstoreVoiceSearchService {
     this.cache.logCacheMiss(input.tenantId, input.agentId, normalizedCacheKey);
 
     const indexStarted = Date.now();
-    const indexPromise = this.index.getIndex(input.tenantId, input.agentId, input.shopDomain);
-    const shopifyStarted = Date.now();
-    const shopifyPromise = input.fetchLive({
-      storeUrl: input.storeUrl,
-      token: input.token,
-      attempts,
-      limitPerQuery: voiceShopifySearchFirst(),
+    const { products: indexProducts, embeddings } = await this.index.getIndex(
+      input.tenantId,
+      input.agentId,
+      input.shopDomain,
+    );
+    const indexLoadMs = Date.now() - indexStarted;
+
+    let shopifyLatencyMs = 0;
+    let rawProducts: ShopifyProductSummary[] = [];
+    let shopifyQueriesTried: ShopifySearchAttempt[] = [];
+    let shopifySkipped = false;
+
+    const localFirst = await this.tryLocalCatalogOnlySearch({
+      tenantId: input.tenantId,
+      agentId: input.agentId,
+      shopDomain: input.shopDomain,
+      indexProducts,
+      embeddings,
+      productSearchInputRaw,
+      probableTitle,
+      cleanedQuery,
+      limit: input.limit,
     });
 
-    const [{ products: indexProducts, embeddings }, shopifyResult] = await Promise.all([
-      indexPromise,
-      shopifyPromise,
-    ]);
-    const indexLoadMs = Date.now() - indexStarted;
-    const shopifyLatencyMs = Date.now() - shopifyStarted;
-    const { products: rawProducts, shopifyQueriesTried } = shopifyResult;
+    if (localFirst.sufficient) {
+      rawProducts = localFirst.products;
+      shopifySkipped = true;
+      this.logger.log(
+        JSON.stringify({
+          event: 'bookstore.search.local_first_hit',
+          tenantId: input.tenantId,
+          agentId: input.agentId,
+          query: productSearchInputRaw.slice(0, 80),
+          products: rawProducts.length,
+          bestScore: localFirst.bestScore,
+        }),
+      );
+    } else {
+      const shopifyStarted = Date.now();
+      const shopifyResult = await input.fetchLive({
+        storeUrl: input.storeUrl,
+        token: input.token,
+        attempts,
+        limitPerQuery: voiceShopifySearchFirst(),
+      });
+      shopifyLatencyMs = Date.now() - shopifyStarted;
+      rawProducts = shopifyResult.products;
+      shopifyQueriesTried = shopifyResult.shopifyQueriesTried;
+      if (localFirst.products.length > 0 && rawProducts.length === 0) {
+        rawProducts = localFirst.products;
+      }
+    }
     const parallelMs = shopifyLatencyMs;
 
     if (input.shopDomain) {
@@ -203,8 +239,11 @@ export class BookstoreVoiceSearchService {
     const localIds = this.index.localCandidateIds(indexProducts, probableTitle || cleanedQuery);
 
     let boosted = this.prioritizeLocalHits(rawProducts, localIds);
-    let fallbackStage: BookstoreSearchFallbackStage =
-      rawProducts.length > 0 ? 'shopify_live' : 'none';
+    let fallbackStage: BookstoreSearchFallbackStage = shopifySkipped
+      ? 'fuzzy_local'
+      : rawProducts.length > 0
+        ? 'shopify_live'
+        : 'none';
     let vectorLatencyMs = 0;
     let catalogSemanticConfidence = 0;
     let catalogSemanticReason: string | null = null;
@@ -511,6 +550,73 @@ export class BookstoreVoiceSearchService {
       const bi = order.get(b.productId) ?? 999;
       return ai - bi;
     });
+  }
+
+  /**
+   * Search in-memory productCache index before any live Shopify GraphQL call.
+   */
+  private async tryLocalCatalogOnlySearch(args: {
+    tenantId: string;
+    agentId: string;
+    shopDomain?: string | null;
+    indexProducts: BookstoreIndexProduct[];
+    embeddings: Map<string, Float32Array>;
+    productSearchInputRaw: string;
+    probableTitle: string;
+    cleanedQuery: string;
+    limit: number;
+  }): Promise<{ sufficient: boolean; products: ShopifyProductSummary[]; bestScore: number }> {
+    if (args.indexProducts.length === 0) {
+      return { sufficient: false, products: [], bestScore: 0 };
+    }
+
+    const queryKey = args.probableTitle || args.cleanedQuery || args.productSearchInputRaw;
+    const localIds = this.index.localCandidateIds(args.indexProducts, queryKey);
+    const catalogResult = retrieveFromCatalogIndex(
+      args.indexProducts,
+      args.productSearchInputRaw,
+      queryKey,
+      20,
+    );
+    const hydrateIds = catalogResult.candidates.slice(0, 12).map((c) => c.productId);
+    const hydrated = await this.index.hydrateProducts(
+      args.tenantId,
+      args.agentId,
+      args.shopDomain,
+      hydrateIds.length > 0 ? hydrateIds : localIds.slice(0, 12),
+    );
+    let boosted = this.prioritizeLocalHits(hydrated, localIds.length > 0 ? localIds : hydrateIds);
+    if (boosted.length === 0) {
+      return { sufficient: false, products: [], bestScore: 0 };
+    }
+
+    const embeddingMaps = this.buildEmbeddingMaps(args.indexProducts);
+    const ranking = rankBookstoreProducts({
+      queryOriginal: args.productSearchInputRaw,
+      probableTitle: queryKey,
+      products: boosted,
+      maxResults: Math.min(5, Math.max(1, args.limit)),
+      indexEmbeddings: args.embeddings,
+      indexAuthorEmbeddings: embeddingMaps.author,
+      indexCategoryEmbeddings: embeddingMaps.category,
+      indexDescriptionEmbeddings: embeddingMaps.description,
+      catalogSemanticRecovery: true,
+    });
+
+    const products: ShopifyProductSummary[] = [];
+    for (const r of ranking.ranked) {
+      const full = boosted.find((b) => b.productId === r.productId);
+      if (!full) continue;
+      products.push({
+        ...full,
+        relevanceScore: r.relevanceScore,
+        matchReason: r.matchReason,
+      });
+    }
+
+    const sufficient =
+      products.length > 0 && ranking.bestScore >= PRODUCT_SEARCH_CONFIRM_MIN_SCORE;
+    return { sufficient, products, bestScore: ranking.bestScore };
   }
 
   private emptyQueryResult(): BookstoreVoiceSearchResult {

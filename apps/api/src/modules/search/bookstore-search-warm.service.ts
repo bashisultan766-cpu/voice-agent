@@ -14,10 +14,6 @@ export class BookstoreSearchWarmService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (!isVoiceCommerceFastMode()) {
-      this.logger.log('Bookstore warm cache skipped (VOICE_COMMERCE_FAST_MODE is off)');
-      return;
-    }
     void this.warmFromProductCache().catch((err) => {
       this.logger.warn(
         `Bookstore warm cache failed: ${err instanceof Error ? err.message.slice(0, 200) : 'unknown'}`,
@@ -43,7 +39,8 @@ export class BookstoreSearchWarmService implements OnModuleInit {
       JSON.stringify({
         event: 'bookstore.search.warm_complete',
         agentsWarmed: agents.length,
-        fastMode: true,
+        fastMode: isVoiceCommerceFastMode(),
+        catalogPreloaded: true,
       }),
     );
   }

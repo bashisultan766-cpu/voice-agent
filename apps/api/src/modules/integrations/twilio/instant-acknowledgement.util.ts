@@ -1,6 +1,5 @@
 import type { UserUtteranceIntent } from '../../calls/runtime/user-intent-classifier.util';
-import { isVoiceCommerceFastMode } from '../../calls/runtime/voice-commerce-fast-mode.util';
-import { DEFERRED_INSTANT_ACK_PHRASE } from '../../search/voice/voice-search-filler.util';
+import { PRODUCT_SEARCH_FAST_ACK, shouldUseInstantReply } from '../../calls/runtime/instant-reply.util';
 
 export type InstantAckSelection =
   | {
@@ -58,8 +57,20 @@ export type SelectInstantAcknowledgementInput = {
 export function selectInstantAcknowledgement(input: SelectInstantAcknowledgementInput): InstantAckSelection {
   const { intent, speechText, callState, metadata, forceElevenLabsOnly = false } = input;
   const trimmed = speechText.trim();
+  const orderState = callState.trim() || 'IDLE';
   const normQ = normalizeQuery(trimmed);
   const prevProduct = typeof metadata.lastProductQuery === 'string' ? metadata.lastProductQuery : null;
+
+  if (
+    (intent === 'greeting' || intent === 'small_talk') &&
+    shouldUseInstantReply(trimmed, orderState) &&
+    orderState === 'IDLE'
+  ) {
+    return {
+      mode: 'sync_full_reply',
+      ackReason: 'instant_social_sync_reply',
+    };
+  }
 
   if (intent === 'greeting' || intent === 'small_talk') {
     return {
@@ -111,14 +122,13 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     }
   }
 
-  const fastInstant =
-    !forceElevenLabsOnly && isVoiceCommerceFastMode() ? DEFERRED_INSTANT_ACK_PHRASE : null;
+  const productSearchAck = !forceElevenLabsOnly ? PRODUCT_SEARCH_FAST_ACK : null;
 
   if (intent === 'product_search') {
     if (isLikelyProductCorrection(trimmed)) {
       return {
         mode: 'deferred_kickoff',
-        instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'Got it — checking that title instead.'),
+        instantPhrase: forceElevenLabsOnly ? null : 'Got it — checking that title instead.',
         ackReason: 'product_correction',
         markSessionLetMeCheck: !forceElevenLabsOnly,
         nextLastProductQuery: normQ || null,
@@ -127,7 +137,7 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     if (prevProduct && normQ === prevProduct) {
       return {
         mode: 'deferred_kickoff',
-        instantPhrase: fastInstant,
+        instantPhrase: productSearchAck,
         ackReason: 'product_search_repeat_same_query',
         markSessionLetMeCheck: false,
         nextLastProductQuery: normQ || null,
@@ -135,9 +145,9 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     }
     return {
       mode: 'deferred_kickoff',
-      instantPhrase: fastInstant,
-      ackReason: fastInstant ? 'product_search_instant_ack' : 'product_search_silent_kickoff',
-      markSessionLetMeCheck: Boolean(fastInstant),
+      instantPhrase: productSearchAck,
+      ackReason: productSearchAck ? 'product_search_instant_ack' : 'product_search_silent_kickoff',
+      markSessionLetMeCheck: Boolean(productSearchAck),
       nextLastProductQuery: normQ || null,
     };
   }
@@ -145,9 +155,9 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
   if (intent === 'payment_question' || intent === 'product_question') {
     return {
       mode: 'deferred_kickoff',
-      instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'One moment while I look that up.'),
+      instantPhrase: forceElevenLabsOnly ? null : PRODUCT_SEARCH_FAST_ACK,
       ackReason: 'question_requires_direct_answer_deferred',
-      markSessionLetMeCheck: Boolean(fastInstant) && !forceElevenLabsOnly,
+      markSessionLetMeCheck: !forceElevenLabsOnly,
     };
   }
 

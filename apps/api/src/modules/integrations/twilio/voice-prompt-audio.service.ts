@@ -9,6 +9,17 @@ interface PhraseEntry {
   expiresAt: number;
 }
 
+/** Pre-warm at startup / first call to cut ElevenLabs latency on hot paths. */
+export const VOICE_PRELOADED_PHRASES = [
+  'Hello! How can I help you today?',
+  "You're welcome. What else can I help with?",
+  'Of course. What would you like me to repeat?',
+  'Sure, let me check that for you.',
+  'Please tell me your email address so I can send your payment link.',
+  'Is that email correct?',
+  'Great. What would you like to do next?',
+] as const;
+
 /**
  * Long-lived in-memory cache of ElevenLabs audio for short fixed prompts (greeting, defer kickoff, etc.).
  * Each webhook issues a fresh Twilio TTS token via {@link TwilioTtsCacheService}; phrase cache avoids repeat EL API calls.
@@ -22,6 +33,29 @@ export class VoicePromptAudioService {
     private readonly elevenLabs: ElevenLabsService,
     private readonly ttsCache: TwilioTtsCacheService,
   ) {}
+
+  /** Fire-and-forget preload of common phrases (no-op without voiceId/apiKey). */
+  warmPreloadedPhrases(opts: { voiceId: string; apiKey?: string; modelId?: string }): void {
+    const vid = opts.voiceId?.trim();
+    if (!vid) return;
+    for (const text of VOICE_PRELOADED_PHRASES) {
+      void this.ensurePhraseBuffer(text, vid, opts.apiKey, opts.modelId).catch(() => undefined);
+    }
+  }
+
+  private async ensurePhraseBuffer(
+    text: string,
+    voiceId: string,
+    apiKey?: string,
+    modelId?: string,
+  ): Promise<void> {
+    const model = modelId?.trim() || 'eleven_multilingual_v2';
+    const k = this.cacheKey(voiceId, model, text);
+    const hit = this.phraseBuffers.get(k);
+    if (hit && hit.expiresAt > Date.now()) return;
+    const buffer = await this.elevenLabs.textToSpeech(text, voiceId, { apiKey, modelId: model });
+    this.phraseBuffers.set(k, { buffer, expiresAt: Date.now() + this.phraseTtlMs });
+  }
 
   private cacheKey(voiceId: string, modelId: string, text: string): string {
     const t = text.trim().slice(0, 2000);
