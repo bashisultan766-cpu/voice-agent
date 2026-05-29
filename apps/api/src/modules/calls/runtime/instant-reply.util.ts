@@ -4,6 +4,28 @@
 
 export const PRODUCT_SEARCH_FAST_ACK = 'Sure, let me check that for you.';
 
+/** Word limits for TTS latency (per response type). */
+export const VOICE_WORD_LIMITS = {
+  simple: 8,
+  productAck: 7,
+  checkoutPrompt: 15,
+  productResult: 25,
+} as const;
+
+/** Canonical phrases pre-generated for ElevenLabs audio cache. */
+export const VOICE_CACHED_PHRASES = {
+  greeting: 'Hello, how can I help you today?',
+  salam: 'Wa alaikum salam. How can I help you today?',
+  howAreYou: "I'm doing great, thank you.",
+  searchAck: PRODUCT_SEARCH_FAST_ACK,
+  emailPrompt: 'Please tell me your email address.',
+  emailSpell: 'Please spell your email one character at a time.',
+  emailConfirm: 'Just to confirm, is that email correct?',
+  thankYouOrder: "You're welcome. Thank you for your order.",
+  repeat: 'Of course. What would you like me to repeat?',
+  speakEnglish: "Sure, I'll speak in English. How can I help?",
+} as const;
+
 const INSTANT_GREETING_PATTERNS: RegExp[] = [
   /^(hi|hello|hey|howdy|yo|greetings)\b/i,
   /^good\s+(morning|afternoon|evening|day)\b/i,
@@ -87,33 +109,50 @@ export function classifyInstantReplyKind(text: string): InstantReplyKind | null 
   return null;
 }
 
-/** Deterministic reply text for instant intents (keep under ~20 words). */
+/** Deterministic reply text for instant intents. */
 export function buildInstantReply(text: string, storeName = 'SureShot Books'): string {
   const kind = classifyInstantReplyKind(text);
+  let reply: string;
   switch (kind) {
     case 'greeting':
-      return 'Hello! How can I help you today?';
+      reply = VOICE_CACHED_PHRASES.greeting;
+      break;
     case 'how_are_you':
-      return "I'm doing great, thank you. How can I help?";
+      reply = VOICE_CACHED_PHRASES.howAreYou;
+      break;
     case 'thanks':
-      return "You're welcome. What else can I help with?";
+      reply = "You're welcome. What else can I help?";
+      break;
     case 'yes':
-      return 'Great. What would you like to do next?';
+      reply = 'Great. What would you like next?';
+      break;
     case 'no':
-      return 'No problem. What can I help you with instead?';
+      reply = 'No problem. What can I help with?';
+      break;
     case 'okay':
-      return 'Sounds good. How can I help?';
+      reply = 'Sounds good. How can I help?';
+      break;
     case 'repeat':
-      return 'Of course. What would you like me to repeat?';
+      reply = VOICE_CACHED_PHRASES.repeat;
+      break;
     case 'speak_english':
-      return "Sure, I'll speak in English. How can I help you today?";
+      reply = VOICE_CACHED_PHRASES.speakEnglish;
+      break;
     case 'assalamu_alaikum':
-      return 'Wa alaikum salam. How can I help you today?';
+      reply = VOICE_CACHED_PHRASES.salam;
+      break;
     case 'namaste':
-      return 'Namaste. How can I help you today?';
+      reply = 'Namaste. How can I help you today?';
+      break;
     default:
-      return `Hello! How can I help you at ${storeName} today?`;
+      reply = VOICE_CACHED_PHRASES.greeting;
   }
+  return shortenVoiceReply(reply, VOICE_WORD_LIMITS.simple);
+}
+
+/** Map instant reply to pre-cached audio phrase when available. */
+export function instantReplyAudioPhrase(text: string): string {
+  return buildInstantReply(text);
 }
 
 /** Cap voice replies at maxWords for faster TTS. */

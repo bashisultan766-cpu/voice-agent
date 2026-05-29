@@ -63,8 +63,10 @@ import {
   buildInstantReply,
   shouldUseInstantReply,
   shortenVoiceReply,
+  VOICE_WORD_LIMITS,
 } from './instant-reply.util';
 import { logVoiceTurnPerformance } from './voice-turn-performance.util';
+import { logVoiceLatencyBreakdown } from './voice-latency-breakdown.util';
 
 /**
  * Voice runtime: assembles prompt, handles conversation flow.
@@ -808,6 +810,27 @@ export class VoiceRuntimeService {
     };
   }
 
+  /** Persist instant turn in background — not on Twilio hot path. */
+  async recordInstantTurn(args: {
+    callSessionId: string;
+    userText: string;
+    reply: string;
+    userIntent: UserUtteranceIntent;
+  }): Promise<number> {
+    const dbStart = Date.now();
+    const userSeq = await this.transcriptBuffer.getNextSequence(args.callSessionId);
+    await this.transcriptBuffer.append(args.callSessionId, 'user', args.userText, userSeq);
+    const agentSeq = await this.transcriptBuffer.getNextSequence(args.callSessionId);
+    await this.transcriptBuffer.append(args.callSessionId, 'agent', args.reply, agentSeq);
+    await this.callsService.mergeSessionMetadata(args.callSessionId, {
+      ...buildLlmReplyMetadataPatch(args.reply),
+      instant_reply_used: true,
+      openaiCalled: false,
+      lastIntentDetected: args.userIntent,
+    });
+    return Date.now() - dbStart;
+  }
+
   async getGreeting(callSessionId: string): Promise<string> {
     const ctx = await this.sessionContext.load(callSessionId);
     if (!ctx) return "Hello, I'm having trouble loading your session. Please try again.";
@@ -984,8 +1007,8 @@ export class VoiceRuntimeService {
     ) {
       const storeName = ctx.store?.name ?? 'SureShot Books';
       reply = shortenVoiceReply(
-        polishVoiceReply(buildInstantReply(trimmedUserText, storeName), { maxSentences: 2, maxChars: 160 }),
-        20,
+        polishVoiceReply(buildInstantReply(trimmedUserText, storeName), { maxSentences: 2, maxChars: 120 }),
+        VOICE_WORD_LIMITS.simple,
       );
       const userSeqInstant = await this.transcriptBuffer.getNextSequence(callSessionId);
       await this.transcriptBuffer.append(callSessionId, 'user', trimmedUserText, userSeqInstant);
@@ -999,6 +1022,21 @@ export class VoiceRuntimeService {
       });
 
       const totalTurnLatencyMs = Date.now() - turnStartedAt;
+      logVoiceLatencyBreakdown({
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        route: 'instant_reply',
+        intentDetectionMs: intentLatencyMs,
+        instantReplyMs: Date.now() - turnStartedAt - intentLatencyMs,
+        normalizationMs: 0,
+        openaiMs: 0,
+        totalCallerWaitMs: totalTurnLatencyMs,
+        instantReplyUsed: true,
+        openaiCalled: false,
+        ttsGenerated: false,
+        openaiSkippedReason: 'instant_deterministic_reply',
+      });
       logVoiceTurnPerformance({
         callSessionId,
         tenantId: ctx.tenantId,

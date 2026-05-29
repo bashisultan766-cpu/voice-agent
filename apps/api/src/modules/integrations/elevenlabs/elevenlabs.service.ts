@@ -11,7 +11,7 @@ export class ElevenLabsService {
   async textToSpeech(
     text: string,
     voiceId?: string,
-    options?: { apiKey?: string; modelId?: string },
+    options?: { apiKey?: string; modelId?: string; latencyMode?: boolean },
   ): Promise<Buffer> {
     const key = options?.apiKey?.trim();
     if (!key) {
@@ -29,18 +29,24 @@ export class ElevenLabsService {
     }
     const modelId =
       options?.modelId?.trim() ||
+      (options?.latencyMode
+        ? this.config.get<string>('ELEVENLABS_LATENCY_MODEL_ID')?.trim()
+        : undefined) ||
       this.config.get<string>('ELEVENLABS_MODEL_ID')?.trim() ||
-      'eleven_multilingual_v2';
+      (options?.latencyMode ? 'eleven_turbo_v2_5' : 'eleven_multilingual_v2');
+    const latencyMode = options?.latencyMode === true;
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vid)}`;
     const body = JSON.stringify({
       text: trimmed,
       model_id: modelId,
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.8,
-        style: 0,
-        use_speaker_boost: true,
-      },
+      voice_settings: latencyMode
+        ? { stability: 0.35, similarity_boost: 0.75, style: 0, use_speaker_boost: false }
+        : {
+            stability: 0.5,
+            similarity_boost: 0.8,
+            style: 0,
+            use_speaker_boost: true,
+          },
     });
 
     let lastNetworkError: unknown;

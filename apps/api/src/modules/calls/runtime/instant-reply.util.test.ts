@@ -8,7 +8,7 @@ import {
 
 test('hello uses instant reply without catalog signals', () => {
   assert.equal(shouldUseInstantReply('hello'), true);
-  assert.match(buildInstantReply('hello'), /Hello/i);
+  assert.match(buildInstantReply('hello'), /help you today/i);
 });
 
 test('how are you uses instant reply', () => {

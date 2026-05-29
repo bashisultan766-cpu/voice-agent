@@ -61,14 +61,10 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
   const normQ = normalizeQuery(trimmed);
   const prevProduct = typeof metadata.lastProductQuery === 'string' ? metadata.lastProductQuery : null;
 
-  if (
-    (intent === 'greeting' || intent === 'small_talk') &&
-    shouldUseInstantReply(trimmed, orderState) &&
-    orderState === 'IDLE'
-  ) {
+  if (shouldUseInstantReply(trimmed, orderState) && orderState === 'IDLE' && !forceElevenLabsOnly) {
     return {
       mode: 'sync_full_reply',
-      ackReason: 'instant_social_sync_reply',
+      ackReason: 'instant_deterministic_sync',
     };
   }
 

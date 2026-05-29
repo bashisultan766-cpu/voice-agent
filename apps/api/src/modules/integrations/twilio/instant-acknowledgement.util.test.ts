@@ -52,4 +52,7 @@ test('greeting in idle uses sync full reply for instant social', () => {
     forceElevenLabsOnly: false,
   });
   assert.equal(sel.mode, 'sync_full_reply');
+  if (sel.mode === 'sync_full_reply') {
+    assert.equal(sel.ackReason, 'instant_deterministic_sync');
+  }
 });

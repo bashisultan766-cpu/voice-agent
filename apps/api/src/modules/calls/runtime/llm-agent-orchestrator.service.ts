@@ -122,6 +122,7 @@ import {
   buildInstantReply,
   shouldUseInstantReply,
   shortenVoiceReply,
+  VOICE_WORD_LIMITS,
 } from './instant-reply.util';
 
 const MAX_TOOL_ITERATIONS = voiceFastModeMaxToolIterations(Number(process.env.MAX_TOOL_ITERATIONS_VOICE) || 8);
@@ -234,7 +235,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       typeof sessionMetaAtStart.orderState === 'string' ? sessionMetaAtStart.orderState : 'IDLE';
     if (shouldUseInstantReply(trimmedMessage, orderStateEarly)) {
       const storeName = ctx.store?.name ?? 'SureShot Books';
-      const instantReply = shortenVoiceReply(buildInstantReply(trimmedMessage, storeName), 20);
+      const instantReply = shortenVoiceReply(buildInstantReply(trimmedMessage, storeName), VOICE_WORD_LIMITS.simple);
       this.logger.log(
         JSON.stringify({
           event: 'voice.llm.instant_reply_bypass',
@@ -243,6 +244,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           agentId: ctx.agentId,
           instant_reply_used: true,
           openaiCalled: false,
+          openaiSkippedReason: 'instant_deterministic_reply',
         }),
       );
       return {

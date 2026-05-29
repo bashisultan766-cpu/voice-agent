@@ -41,6 +41,9 @@ import {
   buildSimilarBooksVoiceLead,
 } from './voice/bookstore-voice-copy.util';
 import { logVoiceSearchLatency } from './voice-search-performance.util';
+import {
+  LOCAL_SEARCH_SKIP_SHOPIFY_MIN_SCORE,
+} from './bookstore-local-first.util';
 
 export interface BookstoreLiveFetchInput {
   storeUrl: string;
@@ -213,6 +216,7 @@ export class BookstoreVoiceSearchService {
           query: productSearchInputRaw.slice(0, 80),
           products: rawProducts.length,
           bestScore: localFirst.bestScore,
+          shopifySkipped: true,
         }),
       );
     } else {
@@ -615,7 +619,7 @@ export class BookstoreVoiceSearchService {
     }
 
     const sufficient =
-      products.length > 0 && ranking.bestScore >= PRODUCT_SEARCH_CONFIRM_MIN_SCORE;
+      products.length > 0 && ranking.bestScore >= LOCAL_SEARCH_SKIP_SHOPIFY_MIN_SCORE;
     return { sufficient, products, bestScore: ranking.bestScore };
   }
 
