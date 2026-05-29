@@ -92,9 +92,7 @@ export function assertEmailConfirmedBeforeCheckout(
   emailConfirmationState: EmailConfirmationState | undefined,
 ): void {
   if (!isEmailExplicitlyConfirmed(emailConfirmationState)) {
-    throw new Error(
-      'CRITICAL: checkout attempted without explicit positive email confirmation',
-    );
+    throw new Error('Checkout blocked: email not confirmed');
   }
 }
 

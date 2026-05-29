@@ -52,11 +52,11 @@ test('positive: inline email with explicit affirmation', () => {
 test('assertEmailConfirmedBeforeCheckout throws when not confirmed', () => {
   assert.throws(
     () => assertEmailConfirmedBeforeCheckout('pending'),
-    /CRITICAL: checkout attempted without explicit positive email confirmation/,
+    /Checkout blocked: email not confirmed/,
   );
   assert.throws(
     () => assertEmailConfirmedBeforeCheckout('rejected'),
-    /CRITICAL: checkout attempted without explicit positive email confirmation/,
+    /Checkout blocked: email not confirmed/,
   );
   assert.doesNotThrow(() => assertEmailConfirmedBeforeCheckout('confirmed'));
 });

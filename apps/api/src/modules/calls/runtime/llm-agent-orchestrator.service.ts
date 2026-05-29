@@ -47,8 +47,14 @@ import {
   nextEmailRetryCount,
   shouldOfferEmailRetry,
   validateVoiceEmail,
+  captureEmailFromVoice,
+  EMAIL_CAPTURE_MODE_KEY,
+  EMAIL_LOW_CONFIDENCE_PROMPT,
   extractEmailFromSpeech,
+  isEmailCaptureConfidenceSufficient,
+  buildEmailRecollectionAfterRejectPrompt,
   PRODUCT_CHECKOUT_INTRODUCED_KEY,
+  resolveEmailCaptureMode,
   parsePaymentEmailDeliveryFromToolData,
   isPaymentEmailDeliveryConfirmed,
   isPostPaymentClosingUtterance,
@@ -64,10 +70,16 @@ import {
   buildEnterpriseCheckoutLog,
 } from './enterprise-checkout-state-machine.util';
 import {
-  buildLanguageDetectedLog,
-  detectCustomerLanguage,
+  buildLanguageDetectedPerTurnLog,
+  buildLanguageSwitchRequestedLog,
+  buildLanguageSwitchedLog,
+  buildLanguageSwitchAcknowledgment,
+  prependLanguageSwitchAcknowledgment,
+  buildReplyLanguageSelectedLog,
+  detectExplicitLanguageSwitch,
+  detectLanguageEveryTurn,
   sessionLanguagePatch,
-  setSessionLanguage,
+  updateSessionLanguage,
   type CustomerLanguage,
   SESSION_LANGUAGE_KEY,
 } from './voice-checkout-language.util';
@@ -211,25 +223,60 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     const memory = await this.callMemory.load(callSessionId);
     const sessionMetaAtStart = await loadSessionMeta();
 
-    const langDetection = detectCustomerLanguage(userMessage);
     const priorLanguage = sessionMetaAtStart[SESSION_LANGUAGE_KEY] as CustomerLanguage | undefined;
-    const customerLanguage = setSessionLanguage(
-      priorLanguage,
-      langDetection.customerLanguage,
-      langDetection.confidence,
-    );
-    if (!priorLanguage || priorLanguage !== customerLanguage) {
+    const explicitLanguageSwitch = detectExplicitLanguageSwitch(userMessage);
+    const turnLang = detectLanguageEveryTurn(userMessage);
+    const langUpdate = updateSessionLanguage(priorLanguage, turnLang, explicitLanguageSwitch);
+    const customerLanguage = langUpdate.language;
+    let languageSwitchAck: string | null = null;
+
+    if (langUpdate.language !== priorLanguage || !priorLanguage) {
       await this.callsService.mergeSessionMetadata(callSessionId, sessionLanguagePatch(customerLanguage));
+    }
+
+    this.logger.log(
+      JSON.stringify(
+        buildLanguageDetectedPerTurnLog({
+          callSessionId,
+          language: customerLanguage,
+          confidence: turnLang.languageConfidenceScore,
+          previousLanguage: priorLanguage ?? null,
+        }),
+      ),
+    );
+    this.logger.log(
+      JSON.stringify(
+        buildReplyLanguageSelectedLog({
+          callSessionId,
+          replyLanguage: langUpdate.replyLanguageSelected,
+        }),
+      ),
+    );
+    if (langUpdate.switched && priorLanguage) {
       this.logger.log(
         JSON.stringify(
-          buildLanguageDetectedLog({
+          buildLanguageSwitchedLog({
             callSessionId,
-            language: customerLanguage,
-            confidence: langDetection.confidence,
+            from: priorLanguage,
+            to: customerLanguage,
           }),
         ),
       );
     }
+    if (langUpdate.languageSwitchRequested) {
+      this.logger.log(
+        JSON.stringify(
+          buildLanguageSwitchRequestedLog({
+            callSessionId,
+            requested: customerLanguage,
+            phrase: explicitLanguageSwitch.phrase,
+          }),
+        ),
+      );
+      languageSwitchAck = buildLanguageSwitchAcknowledgment(customerLanguage);
+    }
+
+    const emailCaptureMode = resolveEmailCaptureMode(sessionMetaAtStart);
 
     const paymentLinkSent =
       state.paymentLinkSent === true || sessionMetaAtStart.orderState === 'PAYMENT_LINK_SENT';
@@ -306,11 +353,15 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         sessionMetaAtStart.emailConfirmationState === 'pending') &&
       pendingEmailForConfirm.length > 0;
 
-    const emailInUtteranceWhileConfirming =
-      awaitingEmailConfirmation ? extractEmailFromSpeech(userMessage) : null;
+    const captureFromUtterance = (text: string) =>
+      captureEmailFromVoice(text, { mode: emailCaptureMode });
+
+    const emailInUtteranceWhileConfirming = awaitingEmailConfirmation
+      ? captureFromUtterance(userMessage).email
+      : null;
 
     if (isEmailConfirmationNegative(userMessage)) {
-      const correctionEmail = extractEmailFromSpeech(userMessage);
+      const correctionEmail = captureFromUtterance(userMessage).email;
       const nextRetry = nextEmailRetryCount(await loadEmailRetryCount(), false);
 
       this.logger.log(
@@ -383,13 +434,23 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           emailRetryCount: nextRetry,
           [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_COLLECTION_REQUIRED',
         });
-        emailCapturedReply = shouldOfferEmailRetry(nextRetry)
-          ? buildInvalidEmailRetryPrompt(nextRetry, customerLanguage)
-          : buildEmailCollectionPrompt(nextRetry, false, customerLanguage);
+        emailCapturedReply = buildEmailRecollectionAfterRejectPrompt();
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+          emailCaptureMode: 'spelling',
+        });
       }
 
       skipBrainRewrite = true;
       deterministicReplyUsed = true;
+      this.logger.log(
+        JSON.stringify(
+          buildEnterpriseCheckoutLog('email_recollection_started', {
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+          }),
+        ),
+      );
       this.logger.log(
         JSON.stringify(
           buildVoiceEmailCaptureLog({
@@ -436,6 +497,15 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
       emailCapturedReply = spellEmailForCaller(pendingEmailForConfirm);
       skipBrainRewrite = true;
       deterministicReplyUsed = true;
+      this.logger.log(
+        JSON.stringify({
+          event: 'email_spellback_requested',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          maskedEmail: maskEmailForLog(pendingEmailForConfirm),
+        }),
+      );
     } else if (
       awaitingEmailConfirmation &&
       !emailInUtteranceWhileConfirming &&
@@ -460,6 +530,15 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
             maskedEmail: maskEmailForLog(confirmedEmail),
           }),
         ),
+      );
+      this.logger.log(
+        JSON.stringify({
+          event: 'email_confirmed_for_checkout',
+          callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          maskedEmail: maskEmailForLog(confirmedEmail),
+        }),
       );
       this.logger.log(
         JSON.stringify(
@@ -505,13 +584,44 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         }
       }
     } else {
-      const spokenEmail = extractEmailFromSpeech(userMessage);
+      const voiceCapture = captureFromUtterance(userMessage);
+      const spokenEmail = voiceCapture.email;
       if (spokenEmail) {
         const emailRetryCount = await loadEmailRetryCount();
+        if (!isEmailCaptureConfidenceSufficient(voiceCapture.confidence)) {
+          const retryCount = nextEmailRetryCount(emailRetryCount, false);
+          await this.callsService.mergeSessionMetadata(callSessionId, {
+            orderState: 'EMAIL_COLLECTING',
+            emailRetryCount: retryCount,
+            emailCaptureMode: 'spelling',
+          });
+          emailCapturedReply = EMAIL_LOW_CONFIDENCE_PROMPT;
+          skipBrainRewrite = true;
+          this.logger.log(
+            JSON.stringify({
+              event: 'email_capture_low_confidence',
+              callSessionId,
+              tenantId: ctx.tenantId,
+              agentId: ctx.agentId,
+              emailCaptureConfidence: voiceCapture.confidence,
+              parseMethod: voiceCapture.parseMethod,
+              tokenStreamLength: voiceCapture.tokenStream.length,
+            }),
+          );
+        } else {
         const validation = validateVoiceEmail(spokenEmail);
         const enterprise = await validateEnterpriseEmail(spokenEmail, {
           skipMx: options?.skipMxValidation === true,
         });
+        this.logger.log(
+          JSON.stringify({
+            event: 'email_token_stream_parsed',
+            callSessionId,
+            parseMethod: voiceCapture.parseMethod,
+            tokenCount: voiceCapture.tokenStream.length,
+            emailCaptureConfidence: voiceCapture.confidence,
+          }),
+        );
         this.logger.log(
           JSON.stringify(
             buildCheckoutJourneyLog('email_captured', {
@@ -519,6 +629,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
               tenantId: ctx.tenantId,
               agentId: ctx.agentId,
               maskedEmail: maskEmailForLog(enterprise.normalized),
+              emailCaptureConfidence: voiceCapture.confidence,
             }),
           ),
         );
@@ -536,6 +647,14 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
               retryCount: emailRetryCount,
             }),
           ),
+        );
+        this.logger.log(
+          JSON.stringify({
+            event: 'email_capture_confidence',
+            callSessionId,
+            emailCaptureConfidence: voiceCapture.confidence,
+            parseMethod: voiceCapture.parseMethod,
+          }),
         );
         this.logger.log(
           JSON.stringify(
@@ -669,6 +788,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
             ),
           );
         }
+        }
       } else if (
         sessionMetaAtStart.emailSendFailureCount != null &&
         Number(sessionMetaAtStart.emailSendFailureCount) >= MAX_EMAIL_SEND_RETRIES
@@ -743,10 +863,23 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           : {}),
       });
 
-      const finalReply = checkoutLock.reply;
+      const finalReply = prependLanguageSwitchAcknowledgment(checkoutLock.reply ?? '', languageSwitchAck, {
+        switchRequested: langUpdate.languageSwitchRequested,
+      });
       deterministicReplyUsed = true;
 
       if (lockCheckoutState === 'EMAIL_COLLECTION_REQUIRED') {
+        await this.callsService.mergeSessionMetadata(callSessionId, {
+          emailCaptureMode: 'spelling',
+        });
+        this.logger.log(
+          JSON.stringify({
+            event: 'email_spelling_mode_started',
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+          }),
+        );
         this.logger.log(
           JSON.stringify(
             buildCheckoutJourneyLog('email_collection_prompt_sent', {
@@ -992,11 +1125,14 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         skipRewrite: true,
       });
 
-      const finalReply =
+      const finalReply = prependLanguageSwitchAcknowledgment(
         reply ||
-        (emailConfirmedThisTurn && lastContent.trim()
-          ? lastContent.trim()
-          : buildEmailCollectionPrompt(Number(sessionMeta.emailRetryCount ?? 0)));
+          (emailConfirmedThisTurn && lastContent.trim()
+            ? lastContent.trim()
+            : buildEmailCollectionPrompt(Number(sessionMeta.emailRetryCount ?? 0), false, customerLanguage)),
+        languageSwitchAck,
+        { switchRequested: langUpdate.languageSwitchRequested },
+      );
 
       this.logger.log(
         JSON.stringify({
@@ -1011,6 +1147,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           transactionalMode: true,
           skipOpenAiGeneration: true,
           deterministicReplyUsed,
+          replyLanguage: customerLanguage,
         }),
       );
 
@@ -1274,7 +1411,9 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     );
 
     return {
-      reply: finalReply,
+      reply: prependLanguageSwitchAcknowledgment(finalReply, languageSwitchAck, {
+        switchRequested: langUpdate.languageSwitchRequested,
+      }),
       toolCallsCount: totalToolCalls,
       toolNames,
       escalated,

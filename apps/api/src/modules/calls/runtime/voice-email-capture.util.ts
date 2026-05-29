@@ -12,25 +12,47 @@ import {
 
 export {
   VOICE_EMAIL_REGEX,
+  EMAIL_CAPTURE_MIN_CONFIDENCE,
   parseDoubleTripleDigits,
   parseDigitWords,
   parseLetterByLetterEmail,
+  parseEmailTokenStream,
+  expandPhoneticSpelling,
+  captureEmailFromVoice,
   normalizeSpokenEmail,
   extractEmailFromSpeech,
+  isEmailCaptureConfidenceSufficient,
   containsInlineEmailConfirmation,
   formatEmailForVoiceConfirmation,
   spellEmailForCaller,
+  buildEmailRecollectionAfterRejectPrompt,
   isCallerAskingEmailSpellback,
   isEmailConfirmationNegative,
   isEmailConfirmationAffirmative,
+  type EmailCaptureMode,
+  type EmailCaptureResult,
 } from './spoken-email-normalizer.util';
 
 import {
+  captureEmailFromVoice,
   extractEmailFromSpeech,
   formatEmailForVoiceConfirmation,
+  isEmailCaptureConfidenceSufficient,
   isEmailConfirmationAffirmative,
   isEmailConfirmationNegative,
+  EMAIL_CAPTURE_MIN_CONFIDENCE,
 } from './spoken-email-normalizer.util';
+
+export const EMAIL_CAPTURE_MODE_KEY = 'emailCaptureMode';
+
+export function resolveEmailCaptureMode(sessionMeta: Record<string, unknown>): import('./spoken-email-normalizer.util').EmailCaptureMode {
+  if (sessionMeta[EMAIL_CAPTURE_MODE_KEY] === 'spelling') return 'spelling';
+  const orderState = sessionMeta.orderState;
+  if (orderState === 'EMAIL_COLLECTING' || orderState === 'EMAIL_CONFIRMING') {
+    return 'spelling';
+  }
+  return 'normal';
+}
 
 export const MAX_VOICE_EMAIL_RETRIES = 3;
 export const MAX_EMAIL_SEND_RETRIES = 2;
@@ -79,7 +101,9 @@ export const EMAIL_INVALID_SLOW_RETRY_PROMPT =
 export const EMAIL_INVALID_VERIFY_RETRY_PROMPT = EMAIL_INVALID_SLOW_RETRY_PROMPT;
 
 export const EMAIL_INVALID_CAPTURE_RETRY_PROMPT =
-  'I may have captured that incorrectly. Please spell your email address letter by letter.';
+  'I may not have captured that correctly. Please spell your email again, one character at a time.';
+
+export const EMAIL_LOW_CONFIDENCE_PROMPT = EMAIL_INVALID_CAPTURE_RETRY_PROMPT;
 
 /** @deprecated Use EMAIL_INVALID_CAPTURE_RETRY_PROMPT */
 export const EMAIL_INVALID_CAPTURE_PROMPT = EMAIL_INVALID_CAPTURE_RETRY_PROMPT;

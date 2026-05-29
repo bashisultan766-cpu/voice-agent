@@ -5,6 +5,10 @@
 export const VOICE_EMAIL_REGEX =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
+export const EMAIL_CAPTURE_MIN_CONFIDENCE = 0.85;
+
+export type EmailCaptureMode = 'normal' | 'spelling';
+
 const NUMBER_WORDS: Record<string, string> = {
   zero: '0',
   one: '1',
@@ -21,6 +25,77 @@ const NUMBER_WORDS: Record<string, string> = {
 export const DIGIT_TO_WORD: Record<string, string> = Object.fromEntries(
   Object.entries(NUMBER_WORDS).map(([word, digit]) => [digit, word]),
 );
+
+/** NATO / common phonetic alphabet → letter */
+export const PHONETIC_TO_LETTER: Record<string, string> = {
+  alpha: 'a',
+  apple: 'a',
+  boy: 'b',
+  bravo: 'b',
+  cat: 'c',
+  charlie: 'c',
+  dog: 'd',
+  delta: 'd',
+  echo: 'e',
+  elephant: 'e',
+  fish: 'f',
+  foxtrot: 'f',
+  golf: 'g',
+  goat: 'g',
+  hotel: 'h',
+  india: 'i',
+  joker: 'j',
+  juliet: 'j',
+  king: 'k',
+  kilo: 'k',
+  lima: 'l',
+  lion: 'l',
+  mike: 'm',
+  mother: 'm',
+  november: 'n',
+  orange: 'o',
+  oscar: 'o',
+  papa: 'p',
+  peter: 'p',
+  quebec: 'q',
+  queen: 'q',
+  romeo: 'r',
+  rabbit: 'r',
+  sierra: 's',
+  sugar: 's',
+  tango: 't',
+  tiger: 't',
+  uniform: 'u',
+  umbrella: 'u',
+  victor: 'v',
+  whiskey: 'w',
+  xray: 'x',
+  yankee: 'y',
+  yellow: 'y',
+  zebra: 'z',
+  zulu: 'z',
+};
+
+const SPELLING_FILLER = new Set([
+  'um',
+  'uh',
+  'like',
+  'please',
+  'my',
+  'email',
+  'is',
+  'the',
+  'okay',
+  'ok',
+  'yeah',
+  'yes',
+  'no',
+  'so',
+  'and',
+  'it',
+  'its',
+  "it's",
+]);
 
 const FILLER_WORDS =
   /\b(um|uh|like|please|my|email|is|the|a|an|okay|ok|yeah|yes|no)\b/gi;
@@ -63,8 +138,18 @@ export function parseDigitWords(text: string): string {
   return normalized;
 }
 
+/** Expand "b for boy", "a for apple", and standalone phonetic words. */
+export function expandPhoneticSpelling(text: string): string {
+  let s = text.toLowerCase().replace(/[,;]/g, ' ');
+  s = s.replace(/\b([a-z])\s+for\s+[a-z]+\b/gi, '$1');
+  for (const [word, letter] of Object.entries(PHONETIC_TO_LETTER)) {
+    s = s.replace(new RegExp(`\\b${word}\\b`, 'gi'), ` ${letter} `);
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 function preprocessSpokenEmailInput(email: string): string {
-  const trimmed = email.trim().toLowerCase();
+  const trimmed = expandPhoneticSpelling(email.trim().toLowerCase());
   if (trimmed.includes('@')) {
     return trimmed;
   }
@@ -77,8 +162,75 @@ function preprocessSpokenEmailInput(email: string): string {
     .replace(/<<atsign>>/gi, 'at sign');
 }
 
+function tokenToChar(tok: string): string | null {
+  if (!tok) return null;
+  if (SPELLING_FILLER.has(tok)) return null;
+  if (tok.length === 1 && /[a-z0-9]/.test(tok)) return tok;
+  if (NUMBER_WORDS[tok]) return NUMBER_WORDS[tok];
+  if (PHONETIC_TO_LETTER[tok]) return PHONETIC_TO_LETTER[tok];
+  if (/^\d+$/.test(tok)) return tok;
+  return null;
+}
+
+/** Parse spaced single-letter stream: "b a s h i r ... at gmail dot com". */
+export function parseEmailTokenStream(text: string): { email: string | null; tokens: string[] } {
+  const trimmed = expandPhoneticSpelling(text.trim().toLowerCase());
+  const atMatch = trimmed.match(/\b(at the rate|at sign|at)\b/);
+  if (!atMatch || atMatch.index == null || atMatch.index < 1) {
+    return { email: null, tokens: [] };
+  }
+
+  const localRaw = trimmed.slice(0, atMatch.index);
+  const domainRaw = trimmed
+    .slice(atMatch.index)
+    .replace(/\bat the rate\b/g, '')
+    .replace(/\bat sign\b/g, '')
+    .replace(/\bat\b/g, '');
+
+  const localTokens = parseDigitWords(parseDoubleTripleDigits(localRaw))
+    .split(/\s+/)
+    .filter(Boolean);
+  const domainTokens = parseDigitWords(parseDoubleTripleDigits(domainRaw))
+    .replace(/\bdot\b/g, ' . ')
+    .replace(/\bperiod\b/g, ' . ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const parsedLocal: string[] = [];
+  for (const tok of localTokens) {
+    const ch = tokenToChar(tok);
+    if (ch) parsedLocal.push(ch);
+  }
+
+  const parsedDomain: string[] = [];
+  for (const tok of domainTokens) {
+    if (tok === '.') {
+      parsedDomain.push('.');
+      continue;
+    }
+    const ch = tokenToChar(tok);
+    if (ch) parsedDomain.push(ch);
+    else if (['gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'proton', 'live'].includes(tok)) {
+      parsedDomain.push(tok);
+    } else if (['com', 'org', 'net', 'edu', 'co', 'uk', 'pk', 'io'].includes(tok)) {
+      parsedDomain.push(tok);
+    }
+  }
+
+  const local = parsedLocal.join('');
+  let domain = parsedDomain.join('').replace(/\s+/g, '');
+  domain = domain.replace(/\.+/g, '.').replace(/^\./, '');
+  if (!local || !domain.includes('.')) {
+    return { email: null, tokens: [...localTokens, 'at', ...domainTokens] };
+  }
+  return { email: `${local}@${domain}`, tokens: [...localTokens, 'at', ...domainTokens] };
+}
+
 export function parseLetterByLetterEmail(text: string): string | null {
-  const trimmed = text.trim().toLowerCase();
+  const stream = parseEmailTokenStream(text);
+  if (stream.email) return stream.email;
+
+  const trimmed = expandPhoneticSpelling(text.trim().toLowerCase());
   if (!/\b(at the rate|at sign|at)\b/.test(trimmed)) return null;
   const atIdx = trimmed.search(/\b(at the rate|at sign|at)\b/);
   if (atIdx < 1) return null;
@@ -90,8 +242,7 @@ export function parseLetterByLetterEmail(text: string): string | null {
     .replace(/\bat\b/g, '')
     .replace(/\bdot\b/g, '.')
     .replace(/\bperiod\b/g, '.');
-  const local = parseDigitWords(parseDoubleTripleDigits(localRaw))
-    .replace(/\s+/g, '');
+  const local = parseDigitWords(parseDoubleTripleDigits(localRaw)).replace(/\s+/g, '');
   const domain = parseDigitWords(parseDoubleTripleDigits(domainRaw.replace(/\s+/g, '')));
   if (!local || !domain.includes('.')) return null;
   return `${local}@${domain.replace(/\s+/g, '')}`;
@@ -112,24 +263,130 @@ export function normalizeSpokenEmail(email: string): string {
   return normalized.replace(/\s+/g, '');
 }
 
-export function extractEmailFromSpeech(text: string): string | null {
+export type EmailCaptureResult = {
+  email: string | null;
+  confidence: number;
+  mode: EmailCaptureMode;
+  parseMethod: string;
+  tokenStream: string[];
+};
+
+export function scoreEmailCaptureConfidence(
+  email: string | null,
+  parseMethod: string,
+  tokenStream: string[],
+): number {
+  if (!email || !VOICE_EMAIL_REGEX.test(email)) return 0;
+  let score = 0.72;
+  if (parseMethod === 'direct') score = 0.96;
+  else if (parseMethod === 'token_stream') score = 0.9;
+  else if (parseMethod === 'phonetic_spelling') score = 0.88;
+  else if (parseMethod === 'spoken_normalize') score = 0.84;
+  else if (parseMethod === 'letter_by_letter') score = 0.86;
+
+  const [local, domain] = email.split('@');
+  if (local && local.length >= 3) score += 0.04;
+  if (domain && domain.includes('.') && domain.split('.').pop()!.length >= 2) score += 0.06;
+
+  if (tokenStream.length > 0) {
+    const unknown = tokenStream.filter(
+      (t) => !tokenToChar(t) && !['at', 'dot', 'gmail', 'com', 'org'].includes(t),
+    ).length;
+    score -= (unknown / Math.max(tokenStream.length, 1)) * 0.2;
+  }
+
+  return Math.min(1, Math.max(0, score));
+}
+
+/** Dedicated capture path for voice spelling mode. */
+export function captureEmailFromVoice(
+  text: string,
+  options?: { mode?: EmailCaptureMode },
+): EmailCaptureResult {
+  const mode = options?.mode ?? 'normal';
   const trimmed = text.trim();
-  if (!trimmed) return null;
+  if (!trimmed) {
+    return { email: null, confidence: 0, mode, parseMethod: 'empty', tokenStream: [] };
+  }
 
   const direct = trimmed.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  if (direct) return direct[0];
+  if (direct) {
+    const email = direct[0].toLowerCase();
+    return {
+      email,
+      confidence: scoreEmailCaptureConfidence(email, 'direct', []),
+      mode,
+      parseMethod: 'direct',
+      tokenStream: [],
+    };
+  }
+
+  const phoneticExpanded = expandPhoneticSpelling(trimmed);
+  const hasPhonetic = /\bfor\b/i.test(trimmed) || /\b(alpha|bravo|charlie|boy|apple|sugar)\b/i.test(trimmed);
+
+  const stream = parseEmailTokenStream(
+    mode === 'spelling' || /\b(at the rate|at sign|at)\b/i.test(phoneticExpanded)
+      ? phoneticExpanded
+      : trimmed,
+  );
+  if (stream.email) {
+    return {
+      email: stream.email,
+      confidence: scoreEmailCaptureConfidence(stream.email, 'token_stream', stream.tokens),
+      mode,
+      parseMethod: 'token_stream',
+      tokenStream: stream.tokens,
+    };
+  }
+
+  if (hasPhonetic || mode === 'spelling') {
+    const normalized = normalizeSpokenEmail(phoneticExpanded);
+    if (normalized.includes('@')) {
+      return {
+        email: normalized,
+        confidence: scoreEmailCaptureConfidence(normalized, 'phonetic_spelling', stream.tokens),
+        mode,
+        parseMethod: 'phonetic_spelling',
+        tokenStream: stream.tokens,
+      };
+    }
+  }
 
   const spokenCue =
     /\b(at the rate|at sign|at|dot)\b/i.test(trimmed) || trimmed.includes('@');
   if (spokenCue) {
     const normalized = normalizeSpokenEmail(trimmed);
-    if (normalized.includes('@')) return normalized;
+    if (normalized.includes('@')) {
+      return {
+        email: normalized,
+        confidence: scoreEmailCaptureConfidence(normalized, 'spoken_normalize', []),
+        mode,
+        parseMethod: 'spoken_normalize',
+        tokenStream: [],
+      };
+    }
   }
 
   const letterByLetter = parseLetterByLetterEmail(trimmed);
-  if (letterByLetter) return letterByLetter;
+  if (letterByLetter) {
+    return {
+      email: letterByLetter,
+      confidence: scoreEmailCaptureConfidence(letterByLetter, 'letter_by_letter', stream.tokens),
+      mode,
+      parseMethod: 'letter_by_letter',
+      tokenStream: stream.tokens,
+    };
+  }
 
-  return null;
+  return { email: null, confidence: 0, mode, parseMethod: 'none', tokenStream: stream.tokens };
+}
+
+export function extractEmailFromSpeech(text: string, options?: { mode?: EmailCaptureMode }): string | null {
+  return captureEmailFromVoice(text, options).email;
+}
+
+export function isEmailCaptureConfidenceSufficient(confidence: number): boolean {
+  return confidence >= EMAIL_CAPTURE_MIN_CONFIDENCE;
 }
 
 /** Negative phrases always override positive email-confirmation detection. */
@@ -146,6 +403,7 @@ export function isEmailConfirmationNegative(text: string): boolean {
     /\bincorrect\b/i,
     /\bwrong\b/i,
     /\bthat'?s wrong\b/i,
+    /\bnot my email\b/i,
     /\bnot right\b/i,
     /\bchange it\b/i,
     /\bchange that\b/i,
@@ -164,7 +422,6 @@ export function isEmailConfirmationNegative(text: string): boolean {
 
   if (negativePatterns.some((re) => re.test(lower) || re.test(t))) return true;
 
-  /** "not" + positive cue (e.g. "not correct") without matching a full negative phrase above. */
   if (/\bnot\b/i.test(lower) && /\b(correct|right|my email)\b/i.test(lower)) return true;
 
   return false;
@@ -176,7 +433,6 @@ export function isEmailConfirmationAffirmative(text: string): boolean {
   const t = text.toLowerCase().trim();
   if (!t) return false;
 
-  /** Utterance with a new email is capture/correction, not a simple yes. */
   if (extractEmailFromSpeech(text)) return false;
 
   if (/\b(that'?s|yes).{0,24}my email\b/.test(t)) return true;
@@ -191,7 +447,6 @@ export function isEmailConfirmationAffirmative(text: string): boolean {
 
   if (affirmativePatterns.some((re) => re.test(t))) return true;
 
-  /** Standalone "correct" / "right" only when not negated (negative check already ran). */
   if (/^(correct|right)\.?$/i.test(t)) return true;
 
   return false;
@@ -223,53 +478,34 @@ export function formatEmailForVoiceConfirmation(email: string): string {
   const t = email.trim().toLowerCase();
   const at = t.indexOf('@');
   if (at < 1) return email.trim();
-  const speakSegment = (segment: string): string => {
-    const parts: string[] = [];
-    let letters = '';
-    for (const ch of segment) {
-      if (/\d/.test(ch)) {
-        if (letters) {
-          parts.push(letters);
-          letters = '';
-        }
-        parts.push(DIGIT_TO_WORD[ch] ?? ch);
-      } else if (ch === '.') {
-        if (letters) {
-          parts.push(letters);
-          letters = '';
-        }
-        parts.push('dot');
-      } else {
-        letters += ch;
-      }
-    }
-    if (letters) parts.push(letters);
-    return parts.join(' ');
-  };
-  return `${speakSegment(t.slice(0, at))} at ${speakSegment(t.slice(at + 1))}`;
-}
-
-export function spellEmailForCaller(email: string): string {
-  const t = email.trim().toLowerCase();
-  const at = t.indexOf('@');
-  const local = at < 1 ? t : t.slice(0, at);
-  const domain = at < 1 ? '' : t.slice(at + 1);
-  const spellChar = (ch: string): string => {
+  const speakChar = (ch: string): string => {
     if (/\d/.test(ch)) return DIGIT_TO_WORD[ch] ?? ch;
     if (ch === '.') return 'dot';
     return ch;
   };
-  const spelledLocal = [...local].map(spellChar).join(' ');
-  const spelledDomain = domain.replace(/\./g, ' dot ');
-  return `I captured: ${spelledLocal} at ${spelledDomain}.`;
+  const speakSegment = (segment: string): string =>
+    [...segment].map(speakChar).join(' ');
+  return `${speakSegment(t.slice(0, at))} at ${speakSegment(t.slice(at + 1))}`;
+}
+
+export function spellEmailForCaller(email: string): string {
+  const spoken = formatEmailForVoiceConfirmation(email);
+  return `Just to confirm, I captured your email as ${spoken}. Is that correct?`;
+}
+
+export function buildEmailRecollectionAfterRejectPrompt(): string {
+  return 'No problem. Please spell it again, one character at a time.';
 }
 
 export function isCallerAskingEmailSpellback(text: string): boolean {
   const t = text.toLowerCase().trim();
   if (!t) return false;
   return (
+    /\brepeat\s+my\s+email\b/i.test(t) ||
+    /\bwhat email did you (capture|get|hear|record)\b/i.test(t) ||
+    /\bspell\s+it\s+back\b/i.test(t) ||
+    /\btell\s+me\s+letter\s+by\s+letter\b/i.test(t) ||
     /\b(spell|repeat).{0,40}(email|captured|back)\b/i.test(t) ||
-    /\bwhat email did you (capture|get|hear)\b/i.test(t) ||
     (/\bletter by letter\b/i.test(t) && /\b(you|captured|have|repeat)\b/i.test(t))
   );
 }

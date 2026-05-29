@@ -70,8 +70,9 @@ test('extractEmailFromSpeech handles spoken and direct forms', () => {
 
 test('buildEmailConfirmationPrompt reads email back for confirmation', () => {
   const prompt = buildEmailConfirmationPrompt('shahbazsultan88@gmail.com');
-  assert.match(prompt, /Just to confirm, I have your email as shahbazsultan/i);
-  assert.match(prompt, /at gmail dot com/i);
+  assert.match(prompt, /Just to confirm, I have your email as/i);
+  assert.match(prompt, /s h a h b a z/i);
+  assert.match(prompt, /g m a i l dot com/i);
   assert.match(prompt, /Is that correct/i);
   assert.doesNotMatch(prompt, /say yes/i);
 });
@@ -82,7 +83,7 @@ test('buildEmailCollectionPrompt uses professional first request', () => {
   assert.match(buildEmailCollectionPrompt(0, true), /Perfect\. I'll help you place the order/i);
   assert.match(buildEmailCollectionPrompt(1), /couldn't verify that email/i);
   assert.doesNotMatch(buildEmailCollectionPrompt(1), /letter by letter/i);
-  assert.match(buildEmailCollectionPrompt(2), /letter by letter/i);
+  assert.match(buildEmailCollectionPrompt(2), /one character at a time/i);
 });
 
 test('buildInvalidEmailRetryPrompt asks caller to repeat slowly', () => {
