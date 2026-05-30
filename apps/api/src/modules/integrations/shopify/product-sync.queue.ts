@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
+import { normalizeRedisUrl } from '../../../common/redis-client.util';
 
 @Injectable()
 export class ShopifyProductSyncQueueService {
@@ -10,7 +11,7 @@ export class ShopifyProductSyncQueueService {
 
   private getQueue(): Queue {
     if (this.queue) return this.queue;
-    const connection = this.config.get<string>('REDIS_URL')?.trim();
+    const connection = normalizeRedisUrl(this.config.get<string>('REDIS_URL'));
     if (!connection) throw new Error('REDIS_URL is not configured for product sync queue.');
     this.queue = new Queue('shopify-product-sync', { connection: { url: connection } });
     return this.queue;

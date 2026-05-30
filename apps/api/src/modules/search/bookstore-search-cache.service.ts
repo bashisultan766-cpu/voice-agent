@@ -1,6 +1,12 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
+import {
+  createRedisClient,
+  resolveRedisUrlFromConfig,
+  safeRedisGet,
+  safeRedisSetex,
+} from '../../common/redis-client.util';
 import { isVoiceCommerceFastMode } from '../calls/runtime/voice-commerce-fast-mode.util';
 import type { BookstoreVoiceSearchResult } from './types/bookstore-search.types';
 
@@ -36,22 +42,27 @@ export class BookstoreSearchCacheService implements OnModuleInit, OnModuleDestro
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
-    const url = this.config.get<string>('REDIS_URL')?.trim();
+    const url = resolveRedisUrlFromConfig((key: string) => this.config.get<string>(key));
     if (!url) return;
     try {
-      this.redis = new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: true });
-      void this.redis.connect().catch((err) => {
-        this.logger.warn(`Redis search cache unavailable: ${err instanceof Error ? err.message : err}`);
-        this.redis = null;
-      });
+      const { client } = createRedisClient(url, this.logger, 'BookstoreSearchCacheService');
+      this.redis = client;
     } catch (err) {
-      this.logger.warn(`Redis search cache init failed: ${err instanceof Error ? err.message : err}`);
+      this.logger.warn(
+        JSON.stringify({
+          event: 'redis.error',
+          service: 'BookstoreSearchCacheService',
+          phase: 'init',
+          message: err instanceof Error ? err.message : 'unknown',
+          note: 'Continuing with in-memory search cache only',
+        }),
+      );
       this.redis = null;
     }
   }
 
   onModuleDestroy(): void {
-    void this.redis?.quit();
+    void this.redis?.quit().catch(() => undefined);
   }
 
   private cacheKey(tenantId: string, agentId: string, normalizedQuery: string): string {
@@ -146,10 +157,9 @@ export class BookstoreSearchCacheService implements OnModuleInit, OnModuleDestro
     agentId: string,
     normalizedQuery: string,
   ): Promise<BookstoreVoiceSearchResult | null> {
-    if (!this.redis) return null;
+    const raw = await safeRedisGet(this.redis, this.cacheKey(tenantId, agentId, normalizedQuery));
+    if (!raw) return null;
     try {
-      const raw = await this.redis.get(this.cacheKey(tenantId, agentId, normalizedQuery));
-      if (!raw) return null;
       const parsed = JSON.parse(raw) as BookstoreVoiceSearchResult;
       return this.isServeableHit(parsed) ? parsed : null;
     } catch {
@@ -163,16 +173,12 @@ export class BookstoreSearchCacheService implements OnModuleInit, OnModuleDestro
     normalizedQuery: string,
     payload: BookstoreVoiceSearchResult,
   ): Promise<void> {
-    if (!this.redis) return;
-    try {
-      await this.redis.setex(
-        this.cacheKey(tenantId, agentId, normalizedQuery),
-        REDIS_TTL_SEC,
-        JSON.stringify(payload),
-      );
-    } catch (err) {
-      this.logger.debug(`Redis search cache write skipped: ${err instanceof Error ? err.message : err}`);
-    }
+    await safeRedisSetex(
+      this.redis,
+      this.cacheKey(tenantId, agentId, normalizedQuery),
+      REDIS_TTL_SEC,
+      JSON.stringify(payload),
+    );
   }
 
   recordRecentSearch(tenantId: string, agentId: string, normalizedQuery: string): void {
@@ -192,16 +198,12 @@ export class BookstoreSearchCacheService implements OnModuleInit, OnModuleDestro
     shopDomain: string,
     indexSize: number,
   ): Promise<void> {
-    if (!this.redis) return;
-    try {
-      await this.redis.setex(
-        this.catalogSnapshotKey(tenantId, agentId, shopDomain),
-        CATALOG_SNAPSHOT_TTL_SEC,
-        JSON.stringify({ indexSize, builtAt: Date.now() }),
-      );
-    } catch {
-      /* optional */
-    }
+    await safeRedisSetex(
+      this.redis,
+      this.catalogSnapshotKey(tenantId, agentId, shopDomain),
+      CATALOG_SNAPSHOT_TTL_SEC,
+      JSON.stringify({ indexSize, builtAt: Date.now() }),
+    );
   }
 
   /** Marks query as in-flight warm (not returned to callers). */

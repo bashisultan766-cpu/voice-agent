@@ -3,7 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
+import {
+  createRedisClient,
+  resolveRedisUrlFromConfig,
+  safeRedisGetBuffer,
+  safeRedisSetex,
+  type RedisLifecycleState,
+} from '../../../common/redis-client.util';
 
 const DEFAULT_REDIS_TTL_SEC = 7 * 24 * 60 * 60;
 
@@ -11,14 +18,17 @@ type CacheLayer = 'memory' | 'redis' | 'disk' | 'miss';
 
 /**
  * Multi-tier voice audio cache: in-process (via VoicePromptAudioService), Redis, local disk.
+ * Redis failures never crash voice runtime — falls back to memory → disk → ElevenLabs.
  */
 @Injectable()
 export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(VoiceAudioCacheService.name);
   private redis: Redis | null = null;
+  private redisState: RedisLifecycleState = { connected: false, ready: false };
   private readonly diskDir: string | null;
   private readonly redisTtlSec: number;
   private readonly cacheEnabled: boolean;
+
   lastHitLayer: CacheLayer = 'miss';
 
   constructor(private readonly config: ConfigService) {
@@ -32,6 +42,10 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
 
   isEnabled(): boolean {
     return this.cacheEnabled;
+  }
+
+  isRedisReady(): boolean {
+    return this.redisState.ready;
   }
 
   private resolveCacheEnabled(): boolean {
@@ -55,26 +69,34 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
       );
       return;
     }
-    const url = this.config.get<string>('REDIS_URL')?.trim();
+
+    const url = resolveRedisUrlFromConfig((key) => this.config.get<string>(key));
     if (!url) {
       this.logger.warn(
         JSON.stringify({
           event: 'voice.audio_cache_redis_skipped',
-          reason: 'REDIS_URL unset — disk + memory only',
+          reason: 'REDIS_URL unset — memory + disk only',
         }),
       );
     } else {
       try {
-        this.redis = new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: true });
-        this.redis.on('error', (err) => {
-          this.logger.warn(`Voice audio Redis cache unavailable: ${err.message}`);
-        });
+        const { client, state } = createRedisClient(url, this.logger, 'VoiceAudioCacheService');
+        this.redis = client;
+        this.redisState = state;
       } catch (err) {
         this.logger.warn(
-          `Voice audio Redis init failed: ${err instanceof Error ? err.message : 'unknown'}`,
+          JSON.stringify({
+            event: 'redis.error',
+            service: 'VoiceAudioCacheService',
+            phase: 'init',
+            message: err instanceof Error ? err.message : 'unknown',
+            note: 'Continuing with memory + disk cache only',
+          }),
         );
+        this.redis = null;
       }
     }
+
     if (this.diskDir) {
       void mkdir(this.diskDir, { recursive: true }).catch(() => undefined);
       this.logger.log(
@@ -95,19 +117,22 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
     return createHash('sha256').update(`${voiceId}\0${modelId}\0${t}`, 'utf8').digest('hex');
   }
 
-  /** Read cached mp3 from Redis then disk. */
+  /** Read cached mp3: Redis → disk. Never throws. */
   async getBuffer(audioHash: string): Promise<Buffer | null> {
     if (!this.cacheEnabled) return null;
+
     const fromRedis = await this.getFromRedis(audioHash);
     if (fromRedis) {
       this.lastHitLayer = 'redis';
       return fromRedis;
     }
+
     const fromDisk = await this.getFromDisk(audioHash);
     if (fromDisk) {
       this.lastHitLayer = 'disk';
       return fromDisk;
     }
+
     this.lastHitLayer = 'miss';
     return null;
   }
@@ -130,6 +155,7 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
         audioCacheMiss: !hit,
         audioHash: audioHash.slice(0, 16),
         layer,
+        redisReady: this.redisState.ready,
         callSessionId: callSessionId ?? null,
       }),
     );
@@ -158,6 +184,7 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
         cacheEnabled: this.cacheEnabled,
         diskDir: this.diskDir,
         redisConfigured: Boolean(this.redis),
+        redisReady: this.redisState.ready,
       }),
     );
   }
@@ -172,22 +199,17 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async getFromRedis(hash: string): Promise<Buffer | null> {
-    if (!this.redis) return null;
-    try {
-      const raw = await this.redis.getBuffer(this.redisKey(hash));
-      return raw && raw.length > 0 ? raw : null;
-    } catch {
-      return null;
-    }
+    return safeRedisGetBuffer(this.redis, this.redisKey(hash));
   }
 
   private async setRedis(hash: string, buffer: Buffer): Promise<void> {
-    if (!this.redis) return;
-    try {
-      await this.redis.setex(this.redisKey(hash), this.redisTtlSec, buffer);
-    } catch (err) {
+    const ok = await safeRedisSetex(this.redis, this.redisKey(hash), this.redisTtlSec, buffer);
+    if (!ok) {
       this.logger.debug(
-        `Voice audio Redis write skipped: ${err instanceof Error ? err.message : 'unknown'}`,
+        JSON.stringify({
+          event: 'voice.audio_cache_redis_write_skipped',
+          audioHash: hash.slice(0, 16),
+        }),
       );
     }
   }
@@ -210,7 +232,10 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
       await writeFile(path, buffer);
     } catch (err) {
       this.logger.debug(
-        `Voice audio disk write skipped: ${err instanceof Error ? err.message : 'unknown'}`,
+        JSON.stringify({
+          event: 'voice.audio_cache_disk_write_skipped',
+          message: err instanceof Error ? err.message : 'unknown',
+        }),
       );
     }
   }

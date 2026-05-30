@@ -234,15 +234,28 @@ export class TwilioWebhookService implements OnModuleInit {
       orderBy: { updatedAt: 'desc' },
     });
     const modelId = this.voicePromptAudio.resolveLatencyModelId(null);
-    let totalWarmed = 0;
-    for (const agent of agents) {
-      const voiceId = agent.voiceId?.trim();
-      if (!voiceId) continue;
-      const { warmed } = await this.voicePromptAudio.warmPreloadedPhrases({
-        voiceId,
-        apiKey: apiKey || undefined,
-      });
-      totalWarmed += warmed;
+    const warmResults = await Promise.allSettled(
+      agents.map(async (agent) => {
+        const voiceId = agent.voiceId?.trim();
+        if (!voiceId) return 0;
+        const { warmed } = await this.voicePromptAudio.warmPreloadedPhrases({
+          voiceId,
+          apiKey: apiKey || undefined,
+        });
+        return warmed;
+      }),
+    );
+    const totalWarmed = warmResults.reduce((sum, r) => sum + (r.status === 'fulfilled' ? r.value : 0), 0);
+    for (const r of warmResults) {
+      if (r.status === 'rejected') {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.audio_cache_warm_agent_failed',
+            message: r.reason instanceof Error ? r.reason.message.slice(0, 200) : 'unknown',
+            note: 'Other agents and memory/disk cache continue',
+          }),
+        );
+      }
     }
     this.voicePromptAudio.logWarmComplete({
       agents: agents.length,

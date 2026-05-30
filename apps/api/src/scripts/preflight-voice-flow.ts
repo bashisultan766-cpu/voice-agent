@@ -1,4 +1,9 @@
 import Redis from 'ioredis';
+import {
+  createRedisClient,
+  normalizeRedisUrl,
+  REDIS_CLIENT_OPTIONS,
+} from '../common/redis-client.util';
 import { AgentsService } from '../modules/agents/agents.service';
 import { PrismaService } from '../database/prisma.service';
 import { assertTenantAgentContext, optionalEnv, requireEnv, withDevAppContext } from './dev-script-context';
@@ -11,18 +16,19 @@ type CheckResult = {
 };
 
 async function checkRedis(redisUrl: string | undefined): Promise<CheckResult> {
-  if (!redisUrl?.trim()) {
+  const normalized = normalizeRedisUrl(redisUrl);
+  if (!normalized) {
     return {
       key: 'redis_url_configured',
       pass: false,
       details: 'REDIS_URL is empty.',
-      fix: 'Set REDIS_URL to a reachable Redis instance (e.g. redis://localhost:6379).',
+      fix: 'Set REDIS_URL to a reachable Redis instance (e.g. redis://127.0.0.1:6379).',
     };
   }
-  const client = new Redis(redisUrl, {
+  const client = new Redis(normalized, {
+    ...REDIS_CLIENT_OPTIONS,
     maxRetriesPerRequest: 1,
     connectTimeout: 1500,
-    lazyConnect: true,
   });
   client.on('error', () => {
     // avoid noisy unhandled error events; detailed message is captured by check result

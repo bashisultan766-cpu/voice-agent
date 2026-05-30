@@ -5,6 +5,12 @@ import { AppModule } from './app.module';
 import * as express from 'express';
 import { assertProductionEnvOrExit } from './common/env-validation';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
+import { normalizeRedisUrl } from './common/redis-client.util';
+
+if (process.env.REDIS_URL) {
+  const normalized = normalizeRedisUrl(process.env.REDIS_URL);
+  if (normalized) process.env.REDIS_URL = normalized;
+}
 
 async function bootstrap() {
   assertProductionEnvOrExit();
