@@ -1140,11 +1140,20 @@ export class VoiceRuntimeService {
 
     if (voiceTurnBypass.useConversationalSupport) {
       const storeName = ctx.store?.name ?? 'SureShot Books';
+      const lastProductQuery =
+        typeof sessionMetaEarly.lastProductQuery === 'string'
+          ? sessionMetaEarly.lastProductQuery
+          : null;
+      const lastAgentReply =
+        typeof sessionMetaEarly.lastAgentReply === 'string' ? sessionMetaEarly.lastAgentReply : null;
       reply = shortenVoiceReply(
-        polishVoiceReply(buildConversationalSupportReply(trimmedUserText, userIntent, storeName), {
-          maxSentences: 2,
-          maxChars: 200,
-        }),
+        polishVoiceReply(
+          buildConversationalSupportReply(trimmedUserText, userIntent, storeName, 'Justin', {
+            lastProductQuery,
+            lastAgentReply,
+          }),
+          { maxSentences: 2, maxChars: 200 },
+        ),
         VOICE_WORD_LIMITS.simple + 10,
       );
       const userSeqSupport = await this.transcriptBuffer.getNextSequence(callSessionId);

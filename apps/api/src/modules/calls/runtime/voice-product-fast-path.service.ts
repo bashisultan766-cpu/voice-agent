@@ -12,6 +12,10 @@ import {
   shouldSkipShopifyForFastPath,
 } from './voice-product-fast-path.util';
 import {
+  isWeakProductSearchQuery,
+  PRODUCT_FAST_PATH_MIN_RESULT_CONFIDENCE,
+} from './voice-product-query.util';
+import {
   buildIntentFirewallBlockPayload,
   evaluateProductSearchGate,
   isConversationalSupportQuery,
@@ -121,7 +125,7 @@ export class VoiceProductFastPathService {
       ? discussedTitle
       : extractProductSearchQuery(input.speechText);
 
-    if (!query.trim()) return miss;
+    if (!query.trim() || isWeakProductSearchQuery(query)) return miss;
 
     const searchStarted = Date.now();
     const search = await this.shopifyAgent.searchProducts(
@@ -134,6 +138,25 @@ export class VoiceProductFastPathService {
 
     const topScore = search.searchVoiceLog?.topScore ?? search.products?.[0]?.relevanceScore ?? 0;
     const productFastPathConfidence = normalizeProductFastPathConfidence(topScore);
+
+    const products = search.products ?? [];
+    if (
+      products.length === 0 ||
+      productFastPathConfidence < PRODUCT_FAST_PATH_MIN_RESULT_CONFIDENCE
+    ) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.product_fast_path.low_confidence_miss',
+          callSessionId: input.callSessionId,
+          query: query.slice(0, 120),
+          productFastPathConfidence,
+          productsFound: products.length,
+          topScore,
+        }),
+      );
+      return miss;
+    }
+
     const shopifySkipped = search.searchVoiceLog?.bookstoreSearch?.shopifyLatencyMs === 0 ||
       search.searchVoiceLog?.bookstoreSearch?.fallbackStage === 'fuzzy_local' ||
       search.searchVoiceLog?.bookstoreSearch?.fallbackStage === 'cache' ||
@@ -141,7 +164,7 @@ export class VoiceProductFastPathService {
       shouldSkipShopifyForFastPath(productFastPathConfidence);
 
     const reply = buildDeterministicProductReply({
-      products: search.products ?? [],
+      products,
       topScore,
       discussedTitle,
       priceOnly,

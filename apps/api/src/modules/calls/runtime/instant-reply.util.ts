@@ -58,6 +58,7 @@ const INSTANT_GOODBYE_PATTERNS: RegExp[] = [
 ];
 
 const INSTANT_SMALL_TALK_PATTERNS: RegExp[] = [
+  /\bwhat\s+are\s+you\s+doing\b/i,
   /\bhow\s+(are|r)\s+(you|u|ya)\b/i,
   /\bhow('?s| is)\s+(it|everything|things)\b/i,
   /^thanks?\b/i,
@@ -122,7 +123,9 @@ export function classifyInstantReplyKind(text: string): InstantReplyKind | null 
   if (!t) return null;
   if (/^assalamu\s*alaikum|^as\s*salamu\s*alaikum|^salam\b/i.test(t)) return 'assalamu_alaikum';
   if (/^namaste\b/i.test(t)) return 'namaste';
+  if (/\bwhat\s+are\s+you\s+doing\b/.test(t)) return 'how_are_you';
   if (/\bhow\s+(are|r)\s+(you|u|ya)\b/.test(t)) return 'how_are_you';
+  if (/\b(say\s+(it|that)\s+again|which\s+(one|1)\s+say|say\s+again)\b/i.test(t)) return 'repeat';
   if (/^(thanks|thank you|thx|ty)\b/i.test(t)) return 'thanks';
   if (/^(yes|yeah|yep|yup)\.?$/i.test(t)) return 'yes';
   if (/^(no|nope|nah)\.?$/i.test(t)) return 'no';

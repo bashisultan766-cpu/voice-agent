@@ -37,6 +37,13 @@ test('Who are you routes to conversational support', () => {
   assert.equal(bypass.useProductFastPath, false);
 });
 
+test('What are you doing now is not product search', () => {
+  const text = 'What are you doing now?';
+  const intent = classifyUserIntent(text);
+  assert.equal(intent, 'small_talk');
+  assert.equal(isProductFastPathQuery({ text, intent }), false);
+});
+
 test('Can you help me routes to conversational support', () => {
   const text = 'Can you help me?';
   const intent = classifyUserIntent(text);

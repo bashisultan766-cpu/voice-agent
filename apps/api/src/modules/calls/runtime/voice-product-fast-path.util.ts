@@ -1,6 +1,9 @@
 import type { ShopifyProductSummary } from '../../agents/shopify-agent.service';
 import type { UserUtteranceIntent } from './user-intent-classifier.util';
 import { shortenVoiceReply, VOICE_WORD_LIMITS } from './instant-reply.util';
+import { extractProductSearchQuery } from './voice-product-query.util';
+
+export { extractProductSearchQuery } from './voice-product-query.util';
 import {
   buildIntentFirewallBlockPayload,
   evaluateProductSearchGate,
@@ -41,28 +44,6 @@ export type ShouldBypassOpenAiForVoiceTurnResult = {
 
 export function isProductFastPathQuery(input: ProductFastPathDetectInput): boolean {
   return evaluateProductSearchGate(input).allowProductSearch;
-}
-
-export function extractProductSearchQuery(text: string): string {
-  const raw = text.trim();
-  const patterns: RegExp[] = [
-    /\bdo you have (.+?)[?.!]*$/i,
-    /\bhave you got (.+?)[?.!]*$/i,
-    /\bis (.+?) available[?.!]*$/i,
-    /\bi need (.+?)[?.!]*$/i,
-    /\bi want (.+?)[?.!]*$/i,
-    /\blooking for (.+?)[?.!]*$/i,
-    /\bcan i get (.+?)[?.!]*$/i,
-    /\bcan i order (.+?)[?.!]*$/i,
-  ];
-  for (const re of patterns) {
-    const m = raw.match(re);
-    if (m?.[1]?.trim()) return m[1].trim().replace(/\b(please|thanks|thank you)\b/gi, '').trim();
-  }
-  return raw
-    .replace(/^(do you have|have you got|i need|i want|looking for|can i get|can i order)\s+/i, '')
-    .replace(/[?.!]+$/g, '')
-    .trim();
 }
 
 export function shouldSkipNormalizationForProductFastPath(

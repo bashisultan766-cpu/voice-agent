@@ -5,6 +5,14 @@ import {
   classifyConversationRouteIntent,
   sanitizeBannedVoicePhrases,
 } from './professional-conversation-policy.util';
+import {
+  extractProductSearchQuery,
+  isContextualAcknowledgment,
+  isRepeatOrClarificationRequest,
+  isWeakProductSearchQuery,
+  requiresOpenAiProductReasoning,
+  stripVoiceFillerPrefixes,
+} from './voice-product-query.util';
 
 export const PRODUCT_INTENT_CONFIDENCE_THRESHOLD = 0.75;
 
@@ -23,6 +31,15 @@ export const NON_PRODUCT_SEARCH_PATTERNS: RegExp[] = [
   /\bwhat('s| is) this (about|for)\b/i,
   /\bwhat kind of (store|business|service)\b/i,
   /\bare you (a |an )?(bot|ai|robot|real person)\b/i,
+  /\bwhat are you doing\b/i,
+  /\bwhat('s| is) up\b/i,
+  /\b(check and )?tell me[.!?\s]*$/i,
+  /\bplease check and tell me\b/i,
+  /\bsay (it|that) again\b/i,
+  /\bwhich (one|1)\b/i,
+  /\bsimilar (titles?|books?)\b/i,
+  /\b(a |the )?similar book\b/i,
+  /\bgive me (a |the )?similar\b/i,
 ];
 
 const COMMERCE_VERB_PATTERNS: RegExp[] = [
@@ -42,8 +59,9 @@ const COMMERCE_VERB_PATTERNS: RegExp[] = [
 ];
 
 const OPENAI_REQUIRED_PATTERNS: RegExp[] = [
-  /\b(recommend|suggest|similar to|compare|which is better|objection|too expensive|not sure if)\b/i,
+  /\b(recommend|suggest|similar to|similar titles?|similar books?|compare|which is better|objection|too expensive|not sure if)\b/i,
   /\b(why should i|convince me|tell me more about the story)\b/i,
+  /\b(give me|show me|find me)\s+(a |the )?similar\b/i,
 ];
 
 const CONVERSATIONAL_SUPPORT_INTENTS: UserUtteranceIntent[] = [
@@ -90,50 +108,33 @@ export function hasCommerceVerb(text: string): boolean {
   return COMMERCE_VERB_PATTERNS.some((re) => re.test(text));
 }
 
-function extractProductEntity(text: string): string {
-  const raw = text.trim();
-  const patterns: RegExp[] = [
-    /\bdo you have (.+?)[?.!]*$/i,
-    /\bhave you got (.+?)[?.!]*$/i,
-    /\bis (.+?) available[?.!]*$/i,
-    /\bi need (.+?)[?.!]*$/i,
-    /\bi want (.+?)[?.!]*$/i,
-    /\blooking for (.+?)[?.!]*$/i,
-    /\bcan i get (.+?)[?.!]*$/i,
-    /\bcan i order (.+?)[?.!]*$/i,
-  ];
-  for (const re of patterns) {
-    const m = raw.match(re);
-    if (m?.[1]?.trim()) {
-      return m[1].trim().replace(/\b(please|thanks|thank you)\b/gi, '').trim();
-    }
-  }
-  return raw
-    .replace(/^(do you have|have you got|i need|i want|looking for|can i get|can i order)\s+/i, '')
-    .replace(/[?.!]+$/g, '')
-    .trim();
-}
-
 /** True when utterance carries an explicit book title, ISBN, or commerce + catalog signal. */
 export function detectBookTitleOrCommerceSignal(text: string, hasDiscussedProduct = false): boolean {
-  const raw = text.trim();
+  const raw = stripVoiceFillerPrefixes(text);
   if (!raw) return false;
+
+  if (isRepeatOrClarificationRequest(raw)) return false;
+  if (isContextualAcknowledgment(raw)) return false;
+  if (requiresOpenAiProductReasoning(raw)) return false;
 
   if (/\b(find|search)\s+(a\s+)?book\b/i.test(raw)) return true;
   if (/\b\d{10,13}\b/.test(raw)) return true;
 
-  const extracted = extractProductEntity(raw);
+  const extracted = extractProductSearchQuery(raw);
+  if (isWeakProductSearchQuery(extracted)) return false;
+
   const extractedWords = extracted.split(/\s+/).filter(Boolean);
   if (extractedWords.length >= 2) {
-    const genericOnly = /^(a|an|the|some|any|book|books)$/i;
-    if (extractedWords.some((w) => !genericOnly.test(w))) return true;
+    const genericOnly = /^(a|an|the|some|any|book|books|okay|cardinal)$/i;
+    const substantive = extractedWords.filter((w) => !genericOnly.test(w));
+    if (substantive.length >= 2) return true;
   }
 
   if (hasCommerceVerb(raw)) {
     const remainder = extracted.trim();
-    if (remainder.length >= 3 && !matchNonProductSearchPattern(remainder).matched) {
+    if (remainder.length >= 4 && !isWeakProductSearchQuery(remainder)) {
       const words = remainder.split(/\s+/).filter(Boolean);
-      if (words.length >= 1 && !/^(help|service|yourself|store)$/i.test(words[0]!)) {
+      if (words.length >= 2 && !/^(help|service|yourself|store|tell|check|similar)$/i.test(words[0]!)) {
         return true;
       }
     }
@@ -161,6 +162,9 @@ export function computeProductIntentConfidence(
   if (!t) return 0;
 
   if (matchNonProductSearchPattern(t).matched) return 0;
+  if (isRepeatOrClarificationRequest(t)) return 0;
+  if (isContextualAcknowledgment(t)) return 0;
+  if (requiresOpenAiProductReasoning(t)) return 0;
   if (CONVERSATIONAL_SUPPORT_INTENTS.includes(intent)) return 0;
   if (intent === 'greeting' || intent === 'small_talk' || intent === 'store_policy_question') {
     return 0;
@@ -195,7 +199,10 @@ export function wouldLegacyProductFastPath(input: ProductSearchGateInput): boole
   const intent = input.intent ?? classifyUserIntent(text);
   const orderState = (input.orderState ?? 'IDLE').trim() || 'IDLE';
 
-  if (OPENAI_REQUIRED_PATTERNS.some((re) => re.test(text))) return false;
+  if (OPENAI_REQUIRED_PATTERNS.some((re) => re.test(text)) || requiresOpenAiProductReasoning(text)) {
+    return false;
+  }
+  if (isRepeatOrClarificationRequest(text) || isContextualAcknowledgment(text)) return false;
   if (intent === 'product_search') return true;
 
   if (intent === 'product_question') {
@@ -232,11 +239,39 @@ export function evaluateProductSearchGate(input: ProductSearchGateInput): Produc
     };
   }
 
-  if (OPENAI_REQUIRED_PATTERNS.some((re) => re.test(text))) {
+  if (OPENAI_REQUIRED_PATTERNS.some((re) => re.test(text)) || requiresOpenAiProductReasoning(text)) {
     return {
       allowProductSearch: false,
       confidence: 0,
       blockedReason: 'openai_required',
+      matchedPattern: null,
+    };
+  }
+
+  if (isRepeatOrClarificationRequest(text)) {
+    return {
+      allowProductSearch: false,
+      confidence: 0,
+      blockedReason: 'repeat_or_clarification',
+      matchedPattern: null,
+    };
+  }
+
+  if (isContextualAcknowledgment(text)) {
+    return {
+      allowProductSearch: false,
+      confidence: 0,
+      blockedReason: 'contextual_acknowledgment',
+      matchedPattern: null,
+    };
+  }
+
+  const extracted = extractProductSearchQuery(text);
+  if (isWeakProductSearchQuery(extracted)) {
+    return {
+      allowProductSearch: false,
+      confidence: 0,
+      blockedReason: 'weak_search_query',
       matchedPattern: null,
     };
   }
@@ -329,6 +364,9 @@ export function isConversationalSupportQuery(text: string, intent: UserUtterance
   if (!trimmed) return false;
 
   if (matchNonProductSearchPattern(trimmed).matched) return true;
+  if (isContextualAcknowledgment(trimmed)) return true;
+  if (requiresOpenAiProductReasoning(trimmed)) return true;
+  if (intent === 'small_talk') return true;
   if (CONVERSATIONAL_SUPPORT_INTENTS.includes(intent)) return true;
 
   if (
@@ -341,12 +379,41 @@ export function isConversationalSupportQuery(text: string, intent: UserUtterance
   return false;
 }
 
+export type ConversationalSupportContext = {
+  lastProductQuery?: string | null;
+  lastAgentReply?: string | null;
+};
+
 export function buildConversationalSupportReply(
   text: string,
   intent: UserUtteranceIntent,
   storeName = 'SureShot Books',
   agentName = 'Justin',
+  context: ConversationalSupportContext = {},
 ): string {
+  const t = text.trim().toLowerCase();
+  if (isContextualAcknowledgment(text) && context.lastProductQuery?.trim()) {
+    const titleHint = context.lastProductQuery.slice(0, 80);
+    return sanitizeBannedVoicePhrases(
+      `Sure. I'm still checking "${titleHint}". Can you spell the title slowly, or say the author name?`,
+    );
+  }
+  if (requiresOpenAiProductReasoning(text)) {
+    const prior = context.lastProductQuery?.trim();
+    if (prior) {
+      return sanitizeBannedVoicePhrases(
+        `I can suggest books similar to your last search. What did you like about "${prior.slice(0, 60)}"?`,
+      );
+    }
+    return sanitizeBannedVoicePhrases(
+      'I can suggest similar books once you tell me a title or author you enjoyed.',
+    );
+  }
+  if (/\bwhat are you doing\b/i.test(t)) {
+    return sanitizeBannedVoicePhrases(
+      `I'm here to help you find books and place orders with ${storeName}. What title can I look up for you?`,
+    );
+  }
   const route = classifyConversationRouteIntent({
     customerText: text,
     userIntent: intent,

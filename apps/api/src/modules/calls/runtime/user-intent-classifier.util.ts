@@ -61,9 +61,10 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
   }
 
   if (
-    /\b(what is your service|tell me about yourself|explain your service|what are you|what kind of store)\b/.test(
+    /\b(what is your service|tell me about yourself|explain your service|what kind of store)\b/.test(
       t,
-    )
+    ) ||
+    /\bwhat are you\b(?! doing)/.test(t)
   ) {
     return 'capability_question';
   }
@@ -89,6 +90,10 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
   }
 
   if (/\b(can you hear me|do you hear me|are you there|can you hear)\b/.test(t)) {
+    return 'small_talk';
+  }
+
+  if (/\bwhat are you doing\b/.test(t) || /\bwhat('s| is) going on\b/.test(t)) {
     return 'small_talk';
   }
 
