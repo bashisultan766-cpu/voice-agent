@@ -15,10 +15,10 @@ test('looksLikeSku accepts compact codes', () => {
   assert.equal(looksLikeSku('Atomic Habits'), false);
 });
 
-test('buildShopifyProductSearchQueries includes title and broad', () => {
+test('buildShopifyProductSearchQueries includes title and token AND', () => {
   const q = buildShopifyProductSearchQueries('Atomic Habits');
   assert.ok(q.some((x) => x.includes('title:"Atomic Habits"')));
-  assert.ok(q.includes('Atomic Habits'));
+  assert.ok(q.some((x) => x.includes('atomic AND habits')));
 });
 
 test('buildShopifyProductSearchQueries adds barcode for ISBN utterance', () => {

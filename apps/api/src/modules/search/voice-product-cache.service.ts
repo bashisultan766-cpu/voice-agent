@@ -8,6 +8,7 @@ import {
   safeRedisSetex,
 } from '../../common/redis-client.util';
 import type { VoiceCatalogProduct } from '../shopify/types/voice-product.types';
+import { normalizeVoiceCacheKey } from '../shopify/voice-text-normalize.util';
 
 const DEFAULT_TTL_SEC = 60;
 const MEMORY_MAX_ENTRIES = 500;
@@ -39,8 +40,8 @@ export class VoiceProductCacheService implements OnModuleDestroy {
   }
 
   cacheKey(tenantId: string, agentId: string, query: string): string {
-    const normalized = query.trim().toLowerCase().replace(/\s+/g, ' ');
-    return `voice:search:v2:${tenantId}:${agentId}:${normalized}`;
+    const normalized = normalizeVoiceCacheKey(query);
+    return `voice:search:v3:${tenantId}:${agentId}:${normalized}`;
   }
 
   async get(key: string): Promise<VoiceCatalogProduct[] | null> {

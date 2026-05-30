@@ -4,6 +4,7 @@ import { AgentStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { ShopifySearchService } from '../shopify/shopify-search.service';
 import { VoiceProductCacheService } from '../search/voice-product-cache.service';
+import { normalizeVoiceCacheKey, normalizeVoiceText } from '../shopify/voice-text-normalize.util';
 import type { SearchProductResponseDto } from './dto/search-product.dto';
 
 @Injectable()
@@ -29,6 +30,7 @@ export class VoiceSearchService {
       throw new BadRequestException('query is required');
     }
 
+    const normalizedQuery = normalizeVoiceText(query);
     const { tenantId, agentId } = await this.resolveAgentContext(args.tenantId, args.agentId);
     const limit = args.limit ?? 5;
 
@@ -38,6 +40,7 @@ export class VoiceSearchService {
         tenantId,
         agentId,
         query: query.slice(0, 80),
+        normalizedQuery,
         limit,
       }),
     );
@@ -46,6 +49,12 @@ export class VoiceSearchService {
     const cached = await this.cache.get(cacheKey);
     if (cached) {
       const latencyMs = Date.now() - started;
+      this.logRankingDiagnostics({
+        cacheHit: true,
+        normalizedQuery: normalizeVoiceCacheKey(query),
+        products: cached,
+        latencyMs,
+      });
       this.logger.log(
         JSON.stringify({
           event: 'voice.search.success',
@@ -53,9 +62,16 @@ export class VoiceSearchService {
           matchCount: cached.length,
           latencyMs,
           benchmarkMs: latencyMs,
+          normalizedQuery,
         }),
       );
-      return { success: true, products: cached, cacheHit: true, latencyMs };
+      return {
+        success: true,
+        products: cached,
+        cacheHit: true,
+        latencyMs,
+        normalizedQuery,
+      };
     }
 
     try {
@@ -63,6 +79,13 @@ export class VoiceSearchService {
       await this.cache.set(cacheKey, result.products);
 
       const latencyMs = Date.now() - started;
+      this.logRankingDiagnostics({
+        cacheHit: false,
+        normalizedQuery: result.normalizedQuery,
+        products: result.products,
+        ranking: result.ranking,
+        latencyMs,
+      });
       this.logger.log(
         JSON.stringify({
           event: 'voice.search.success',
@@ -71,6 +94,7 @@ export class VoiceSearchService {
           shopifyLatencyMs: result.shopifyLatencyMs,
           latencyMs,
           benchmarkMs: latencyMs,
+          normalizedQuery: result.normalizedQuery,
           queriesTried: result.queriesTried,
         }),
       );
@@ -80,6 +104,7 @@ export class VoiceSearchService {
         products: result.products,
         cacheHit: false,
         latencyMs,
+        normalizedQuery: result.normalizedQuery,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -88,6 +113,7 @@ export class VoiceSearchService {
           event: 'voice.search.failed',
           message: message.slice(0, 400),
           latencyMs: Date.now() - started,
+          normalizedQuery,
         }),
       );
       return {
@@ -95,8 +121,44 @@ export class VoiceSearchService {
         products: [],
         error: message,
         latencyMs: Date.now() - started,
+        normalizedQuery,
       };
     }
+  }
+
+  private logRankingDiagnostics(args: {
+    cacheHit: boolean;
+    normalizedQuery: string;
+    products: SearchProductResponseDto['products'];
+    ranking?: {
+      queryTokens: string[];
+      typoVariants: string[];
+      topScore: number | null;
+      rankedCount: number;
+    };
+    latencyMs: number;
+  }): void {
+    const top = args.products[0];
+    if (!top) return;
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.search.ranking',
+        cacheHit: args.cacheHit,
+        normalizedQuery: args.normalizedQuery,
+        matchedTokens: top.matchedTokens ?? [],
+        normalizedTitle: top.normalizedTitle ?? null,
+        scoreBreakdown: top.scoreBreakdown ?? null,
+        topProduct: {
+          title: top.title.slice(0, 120),
+          score: top.score,
+        },
+        queryTokens: args.ranking?.queryTokens,
+        typoVariants: args.ranking?.typoVariants,
+        rankedCount: args.ranking?.rankedCount,
+        latencyMs: args.latencyMs,
+      }),
+    );
   }
 
   private async resolveAgentContext(

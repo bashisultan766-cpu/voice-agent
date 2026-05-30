@@ -1,5 +1,6 @@
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
+import type { VoiceProductScoreBreakdown } from '../../shopify/voice-product-ranking.util';
 
 export class SearchProductDto {
   @IsString()
@@ -36,8 +37,13 @@ export type SearchProductResponseDto = {
     image: string | null;
     sku: string | null;
     inStock: boolean;
+    score: number;
+    scoreBreakdown?: VoiceProductScoreBreakdown;
+    matchedTokens?: string[];
+    normalizedTitle?: string;
   }>;
   cacheHit?: boolean;
   latencyMs?: number;
+  normalizedQuery?: string;
   error?: string;
 };

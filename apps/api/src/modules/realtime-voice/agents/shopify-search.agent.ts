@@ -10,6 +10,7 @@ export type NormalizedVoiceProduct = {
   title: string;
   price?: string;
   inStock: boolean;
+  score?: number;
 };
 
 @Injectable()
@@ -70,6 +71,7 @@ export class ShopifySearchAgent {
       title: p.title,
       price: p.price ?? undefined,
       inStock: p.inStock,
+      score: p.score,
     }));
   }
 }

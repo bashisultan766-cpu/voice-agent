@@ -2,6 +2,8 @@
  * Build parallel Shopify Admin `products(query:)` strings for voice search.
  */
 
+import { generateTypoQueryVariants, normalizeVoiceText } from './voice-text-normalize.util';
+
 const ISBN_DIGITS_RE = /\b(?:97[89])?\d{9}[\dXx]\b|\b\d{13}\b|\b\d{10}\b/;
 
 export function extractIsbnDigits(raw: string): string | null {
@@ -23,10 +25,12 @@ function escapeShopifyQueryTerm(term: string): string {
   return term.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-/** Up to 4 parallel Admin search queries (title, ISBN/barcode, SKU, broad). */
-export function buildShopifyProductSearchQueries(rawQuery: string): string[] {
-  const query = rawQuery.trim();
-  if (!query) return [];
+/**
+ * Parallel Admin search queries — ISBN/SKU first, then title + token AND + broad.
+ */
+export function buildShopifyProductSearchQueries(rawQuery: string, maxQueries = 4): string[] {
+  const trimmed = rawQuery.trim();
+  if (!trimmed) return [];
 
   const seen = new Set<string>();
   const out: string[] = [];
@@ -37,20 +41,32 @@ export function buildShopifyProductSearchQueries(rawQuery: string): string[] {
     out.push(q.trim());
   };
 
-  const escaped = escapeShopifyQueryTerm(query);
-  push(`title:"${escaped}"`);
-  push(`"${escaped}"`);
-
-  const isbn = extractIsbnDigits(query);
+  const isbn = extractIsbnDigits(trimmed);
   if (isbn) {
     push(`barcode:${isbn}`);
     push(`sku:${isbn}`);
   }
-
-  if (looksLikeSku(query)) {
-    push(`sku:${query}`);
+  if (looksLikeSku(trimmed)) {
+    push(`sku:${trimmed}`);
   }
 
-  push(query);
-  return out.slice(0, 4);
+  const variants = generateTypoQueryVariants(trimmed, 1);
+  const primary = variants[0] ?? trimmed;
+  const escaped = escapeShopifyQueryTerm(primary);
+  push(`title:"${escaped}"`);
+
+  const tokens = normalizeVoiceText(primary).split(' ').filter((t) => t.length >= 3);
+  if (tokens.length >= 2) {
+    push(tokens.join(' AND '));
+  }
+
+  push(`"${escaped}"`);
+  push(primary);
+
+  for (const variant of variants.slice(1)) {
+    if (out.length >= maxQueries) break;
+    push(`title:"${escapeShopifyQueryTerm(variant)}"`);
+  }
+
+  return out.slice(0, maxQueries);
 }

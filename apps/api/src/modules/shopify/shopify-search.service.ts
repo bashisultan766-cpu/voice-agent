@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ShopifyClientService } from '../integrations/shopify/client';
 import { VOICE_CATALOG_SEARCH_QUERY } from './shopify-graphql.constants';
-import { buildShopifyProductSearchQueries } from './shopify-query-builder.util';
+import { buildShopifyProductSearchQueries, extractIsbnDigits } from './shopify-query-builder.util';
+import {
+  rankVoiceProducts,
+  type RankableVoiceProduct,
+} from './voice-product-ranking.util';
+import { normalizeVoiceText } from './voice-text-normalize.util';
 import type { ShopifySearchResult, VoiceCatalogProduct } from './types/voice-product.types';
 
 type GraphqlVariantNode = {
@@ -20,6 +25,9 @@ type GraphqlProductNode = {
   variants?: { edges?: { node: GraphqlVariantNode }[] | null } | null;
 };
 
+const GRAPHQL_FETCH_CAP = 20;
+const MAX_PARALLEL_QUERIES = 4;
+
 function formatUsd(price: string | null | undefined): string | null {
   if (price == null || price === '') return null;
   const n = Number(price);
@@ -27,7 +35,7 @@ function formatUsd(price: string | null | undefined): string | null {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
 }
 
-function mapProductNode(node: GraphqlProductNode): VoiceCatalogProduct | null {
+function mapProductNode(node: GraphqlProductNode): RankableVoiceProduct | null {
   if (!node?.id) return null;
   const variants =
     node.variants?.edges?.map((e) => e.node).filter((v): v is GraphqlVariantNode => Boolean(v?.id)) ??
@@ -37,6 +45,10 @@ function mapProductNode(node: GraphqlProductNode): VoiceCatalogProduct | null {
 
   const inventory = Number(variant.inventoryQuantity ?? 0);
   const inStock = inventory > 0 || variant.availableForSale !== false;
+  const skus = variants.map((v) => v.sku).filter((s): s is string => Boolean(s?.trim()));
+  const barcodes = variants
+    .map((v) => v.barcode)
+    .filter((b): b is string => Boolean(b?.trim()));
 
   return {
     productId: node.id,
@@ -47,6 +59,8 @@ function mapProductNode(node: GraphqlProductNode): VoiceCatalogProduct | null {
     image: node.featuredImage?.url ?? null,
     sku: variant.sku ?? null,
     inStock,
+    skus,
+    barcodes,
   };
 }
 
@@ -62,17 +76,24 @@ export class ShopifySearchService {
     rawQuery: string,
     limit = 5,
   ): Promise<ShopifySearchResult> {
-    const queries = buildShopifyProductSearchQueries(rawQuery);
+    const normalizedQuery = normalizeVoiceText(rawQuery);
+    const queries = buildShopifyProductSearchQueries(rawQuery, MAX_PARALLEL_QUERIES);
     if (!queries.length) {
-      return { products: [], shopifyLatencyMs: 0, queriesTried: [] };
+      return {
+        products: [],
+        shopifyLatencyMs: 0,
+        queriesTried: [],
+        normalizedQuery,
+      };
     }
 
     const { domain, token, apiVersion } = await this.shopifyClient.getAgentShopifyConfig(
       tenantId,
       agentId,
     );
-    const cap = Math.min(Math.max(limit, 1), 12);
+    const fetchCap = Math.max(GRAPHQL_FETCH_CAP, Math.min(limit * 4, 24));
     const started = Date.now();
+    const isbn = extractIsbnDigits(rawQuery);
 
     const batches = await Promise.all(
       queries.map(async (query) => {
@@ -80,7 +101,7 @@ export class ShopifySearchService {
         try {
           const data = await this.shopifyClient.adminGraphql<{
             products: { nodes: GraphqlProductNode[] };
-          }>(domain, token, VOICE_CATALOG_SEARCH_QUERY, { first: cap, query }, apiVersion);
+          }>(domain, token, VOICE_CATALOG_SEARCH_QUERY, { first: fetchCap, query }, apiVersion);
           const latencyMs = Date.now() - qStart;
           this.logger.log(
             JSON.stringify({
@@ -107,7 +128,7 @@ export class ShopifySearchService {
     );
 
     const shopifyLatencyMs = Date.now() - started;
-    const byProductId = new Map<string, VoiceCatalogProduct>();
+    const byProductId = new Map<string, RankableVoiceProduct>();
     for (const { nodes } of batches) {
       for (const node of nodes) {
         const mapped = mapProductNode(node);
@@ -117,10 +138,34 @@ export class ShopifySearchService {
       }
     }
 
+    const { products: ranked, diagnostics } = rankVoiceProducts(
+      rawQuery,
+      [...byProductId.values()],
+      isbn,
+      limit,
+    );
+
+    const products: VoiceCatalogProduct[] = ranked.map((p) => ({
+      productId: p.productId,
+      variantId: p.variantId,
+      title: p.title,
+      price: p.price,
+      inventory: p.inventory,
+      image: p.image,
+      sku: p.sku,
+      inStock: p.inStock,
+      score: p.score,
+      scoreBreakdown: p.scoreBreakdown,
+      matchedTokens: p.matchedTokens,
+      normalizedTitle: p.normalizedTitle,
+    }));
+
     return {
-      products: [...byProductId.values()].slice(0, limit),
+      products,
       shopifyLatencyMs,
       queriesTried: queries,
+      normalizedQuery,
+      ranking: diagnostics,
     };
   }
 }
