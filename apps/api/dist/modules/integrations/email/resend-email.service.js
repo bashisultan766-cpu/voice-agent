@@ -17,6 +17,7 @@ const prisma_service_1 = require("../../../database/prisma.service");
 const client_1 = require("@prisma/client");
 const payment_email_templates_1 = require("./payment-email-templates");
 const payment_email_idempotency_1 = require("../../../common/payment-email-idempotency");
+const client_demo_safety_util_1 = require("../../../common/client-demo-safety.util");
 function assertHttpsCheckoutUrl(raw) {
     let url;
     try {
@@ -68,6 +69,7 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
         if (!cleanTo.includes('@')) {
             throw new Error('A valid customer email is required.');
         }
+        (0, client_demo_safety_util_1.assertPaymentEmailRecipientAllowed)(cleanTo);
         const tmpl = (0, payment_email_templates_1.buildPaymentEmailContent)({
             businessName: input.businessName.trim() || 'Our store',
             supportEmail: input.supportEmail,

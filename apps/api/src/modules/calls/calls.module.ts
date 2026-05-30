@@ -77,6 +77,7 @@ import { RealtimeVoiceModule } from '../realtime-voice/realtime-voice.module';
   exports: [
     CallsService,
     SessionContextService,
+    CallMemoryService,
     VoiceRuntimeService,
     LlmAgentOrchestratorService,
     CallbackRequestsService,

@@ -89,6 +89,7 @@ exports.CallsModule = CallsModule = __decorate([
         exports: [
             calls_service_1.CallsService,
             session_context_service_1.SessionContextService,
+            call_memory_service_1.CallMemoryService,
             voice_runtime_service_1.VoiceRuntimeService,
             llm_agent_orchestrator_service_1.LlmAgentOrchestratorService,
             callback_requests_service_1.CallbackRequestsService,
