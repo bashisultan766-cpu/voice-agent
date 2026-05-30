@@ -31,6 +31,8 @@ export class SendPaymentLinkDto {
 export type SendPaymentLinkResponseDto = {
   success: boolean;
   message: string;
+  /** Exact phrase the voice agent should speak after success. */
+  agentMessage?: string;
   draftOrderId?: string;
   invoiceUrl?: string;
   error?: string;

@@ -1,0 +1,58 @@
+# ElevenLabs ConvAI — SureShot Books purchase flow
+
+Configure the ElevenLabs Conversational AI agent for Twilio inbound (`POST /api/elevenlabs/inbound`).
+
+## Quick setup
+
+1. Fetch agent config from your API (after deploy):
+
+   `GET https://<your-host>/api/elevenlabs/convai/agent-config`
+
+2. Copy `systemPrompt` into the ElevenLabs agent **System prompt**.
+3. Set **First message** to the `openingLine` from the config.
+4. Add **Server tools** (names must match exactly):
+
+| Tool name | Method | URL |
+|-----------|--------|-----|
+| `SureShotBooksProduct` | POST | `https://<your-host>/api/voice/search-product` |
+| `SendPaymentLink` | POST | `https://<your-host>/api/voice/send-payment-link` |
+
+5. If `VOICE_COMMERCE_API_KEY` is set, add header `x-voice-api-key` on both tools in ElevenLabs.
+
+## Purchase flow (mandatory)
+
+When the customer confirms they want to buy:
+
+1. Use the **selected product** from the latest `SureShotBooksProduct` result.
+2. Keep **`variantId`** from that result (do not guess).
+3. Ask for **email**.
+4. **Repeat email back** and wait for confirmation.
+5. After confirmation, **always** call `SendPaymentLink` with `email`, `variantId`, `quantity`.
+6. Never end the turn before calling `SendPaymentLink`.
+7. On `success: true`, say: **"I've sent the payment link to your email."** (also returned as `agentMessage`).
+
+## Tool bodies
+
+**SureShotBooksProduct**
+
+```json
+{ "query": "Atomic Habits", "limit": 5 }
+```
+
+**SendPaymentLink**
+
+```json
+{
+  "email": "customer@gmail.com",
+  "variantId": "gid://shopify/ProductVariant/48502554689773",
+  "quantity": 1
+}
+```
+
+## Source of truth
+
+Prompt and tool specs live in:
+
+`apps/api/src/modules/integrations/elevenlabs/elevenlabs-convai-sureshot.config.ts`
+
+Update that file when changing agent behavior, then refresh the ElevenLabs dashboard from `GET /api/elevenlabs/convai/agent-config`.

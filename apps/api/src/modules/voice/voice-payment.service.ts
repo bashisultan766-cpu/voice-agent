@@ -69,6 +69,7 @@ export class VoicePaymentService {
       return {
         success: true,
         message: 'Payment link sent successfully.',
+        agentMessage: "I've sent the payment link to your email.",
         draftOrderId: result.draftOrderId,
         invoiceUrl: result.invoiceUrl,
         latencyMs: Date.now() - started,
