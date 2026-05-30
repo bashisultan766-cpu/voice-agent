@@ -1,12 +1,12 @@
 import { Controller, Get } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../database/prisma.service';
 import { Public } from '../../common/decorators/public.decorator';
 import { resolveRedisUrlFromConfig } from '../../common/redis-client.util';
+import { PrismaService } from '../../database/prisma.service';
 
 @Public()
-@Controller('health')
-export class HealthController {
+@Controller('voice/health')
+export class VoiceHealthController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -17,29 +17,24 @@ export class HealthController {
     const checks: Record<string, string> = {};
     try {
       await this.prisma.$queryRaw`SELECT 1`;
-      checks.database = 'connected';
+      checks.database = 'ok';
     } catch {
-      checks.database = 'disconnected';
+      checks.database = 'error';
     }
+
     const redisUrl = resolveRedisUrlFromConfig((k) => this.config.get<string>(k));
     checks.redis = redisUrl ? 'configured' : 'not_configured';
-    checks.voiceCommerce = 'enabled';
 
-    const ok = checks.database === 'connected';
+    const shopifyDefault =
+      Boolean(this.config.get<string>('VOICE_DEFAULT_AGENT_ID')?.trim()) ||
+      Boolean(this.config.get<string>('SHOPIFY_ADMIN_API_TOKEN')?.trim());
+    checks.shopify = shopifyDefault ? 'configured' : 'agent_credentials_required';
+
+    const ok = checks.database === 'ok';
     return {
       status: ok ? 'ok' : 'degraded',
-      ...checks,
-      env: this.config.get<string>('NODE_ENV') ?? 'development',
+      service: 'voice-commerce',
+      checks,
     };
-  }
-
-  @Get('ready')
-  async ready() {
-    try {
-      await this.prisma.$queryRaw`SELECT 1`;
-      return { status: 'ok' };
-    } catch {
-      return { status: 'error', reason: 'database' };
-    }
   }
 }

@@ -1,8 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import {
-  RealtimeVoiceProductSearchService,
-  REALTIME_SLOW_SEARCH_FILLER,
-} from '../../search/realtime/realtime-voice-product-search.service';
+import { VoiceSearchService } from '../../voice/voice-search.service';
 import { ShopifySearchAgent } from './shopify-search.agent';
 import type { AgentTaskResult, VoiceGraphState } from '../types/voice-turn.types';
 
@@ -13,7 +10,7 @@ export class IsbnSearchAgent {
   private readonly logger = new Logger(IsbnSearchAgent.name);
 
   constructor(
-    private readonly productSearch: RealtimeVoiceProductSearchService,
+    private readonly voiceSearch: VoiceSearchService,
     private readonly shopifySearch: ShopifySearchAgent,
   ) {}
 
@@ -32,23 +29,27 @@ export class IsbnSearchAgent {
 
     const { tenantId, agentId } = state.context;
     try {
-      const result = await this.productSearch.search(tenantId, agentId, isbn, 3);
+      const result = await this.voiceSearch.searchProduct({
+        query: isbn,
+        tenantId,
+        agentId,
+        limit: 3,
+      });
       const products = this.shopifySearch.normalizeProducts(result.products ?? []).map((p) => ({
         ...p,
         isbn,
       }));
       return {
         agent: 'isbn_search',
-        ok: products.length > 0 || result.slowSearchFiller,
+        ok: result.success && products.length > 0,
         data: {
           products,
           isbn,
-          source: result.source,
-          slowSearchFiller: result.slowSearchFiller,
-          slowSearchMessage: result.slowSearchFiller ? REALTIME_SLOW_SEARCH_FILLER : undefined,
+          source: 'shopify_graphql',
+          cacheHit: result.cacheHit ?? false,
           exactIsbnMatch: products.length === 1,
         },
-        latencyMs: Math.max(result.latencyMs, Date.now() - started),
+        latencyMs: Math.max(result.latencyMs ?? 0, Date.now() - started),
       };
     } catch (err) {
       this.logger.warn(`IsbnSearchAgent: ${(err as Error).message}`);

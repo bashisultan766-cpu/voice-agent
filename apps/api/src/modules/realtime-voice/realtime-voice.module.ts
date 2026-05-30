@@ -21,7 +21,7 @@ import { OpenAiRealtimeService } from './streaming/openai-realtime.service';
 import { LegacyVoiceBridgeService } from './bridge/legacy-voice-bridge.service';
 import { CallsModule } from '../calls/calls.module';
 import { AgentsModule } from '../agents/agents.module';
-import { BookstoreSearchModule } from '../search/bookstore-search.module';
+import { VoiceModule } from '../voice/voice.module';
 import { ShopifyModule } from '../integrations/shopify/shopify.module';
 import { EmailModule } from '../integrations/email/email.module';
 import { ElevenLabsModule } from '../integrations/elevenlabs/elevenlabs.module';
@@ -41,7 +41,7 @@ import { RealtimeVoicePipelineBootstrapService } from './config/realtime-voice-p
     forwardRef(() => CallsModule),
     PrismaModule,
     AgentsModule,
-    BookstoreSearchModule,
+    VoiceModule,
     ShopifyModule,
     EmailModule,
     ElevenLabsModule,

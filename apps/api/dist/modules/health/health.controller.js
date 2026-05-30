@@ -14,6 +14,7 @@ const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../../database/prisma.service");
 const public_decorator_1 = require("../../common/decorators/public.decorator");
+const redis_client_util_1 = require("../../common/redis-client.util");
 let HealthController = class HealthController {
     constructor(prisma, config) {
         this.prisma = prisma;
@@ -28,6 +29,9 @@ let HealthController = class HealthController {
         catch {
             checks.database = 'disconnected';
         }
+        const redisUrl = (0, redis_client_util_1.resolveRedisUrlFromConfig)((k) => this.config.get(k));
+        checks.redis = redisUrl ? 'configured' : 'not_configured';
+        checks.voiceCommerce = 'enabled';
         const ok = checks.database === 'connected';
         return {
             status: ok ? 'ok' : 'degraded',
