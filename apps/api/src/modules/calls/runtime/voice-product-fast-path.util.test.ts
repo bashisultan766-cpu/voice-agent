@@ -80,3 +80,15 @@ test('one copy in checkout does not use product search fast path', () => {
   });
   assert.equal(bypass.useProductFastPath, false);
 });
+
+test('What is your service does not use product fast path', () => {
+  assert.equal(isProductFastPathQuery({ text: 'What is your service?' }), false);
+});
+
+test('Can you help me does not use product fast path', () => {
+  assert.equal(isProductFastPathQuery({ text: 'Can you help me?' }), false);
+});
+
+test('I want Harry Potter uses product fast path', () => {
+  assert.equal(isProductFastPathQuery({ text: 'I want Harry Potter' }), true);
+});

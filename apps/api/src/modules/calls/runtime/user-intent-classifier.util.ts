@@ -56,7 +56,15 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
     return 'store_category_question';
   }
 
-  if (/\b(what can you do|how can you help|what do you do|how do you help)\b/.test(t)) {
+  if (/\b(what can you do|how can you help|what do you do|how do you help|can you help me)\b/.test(t)) {
+    return 'capability_question';
+  }
+
+  if (
+    /\b(what is your service|tell me about yourself|explain your service|what are you|what kind of store)\b/.test(
+      t,
+    )
+  ) {
     return 'capability_question';
   }
 
@@ -176,11 +184,14 @@ export function classifyUserIntent(text: string): UserUtteranceIntent {
     return 'product_search';
   }
 
-  // Longer utterances are often titles — but not policy/FAQ questions
+  // Longer utterances are often titles — but not policy/FAQ or support questions
   if (
     words.length >= 5 &&
     !/^(yes|no|ok|okay|sure|uh|um)\b/i.test(t) &&
-    !isStorePolicyQuestion(t)
+    !isStorePolicyQuestion(t) &&
+    !/\b(what is your service|who are you|tell me about yourself|what can you do|can you help me|how does this work|explain your service)\b/.test(
+      t,
+    )
   ) {
     return 'product_search';
   }

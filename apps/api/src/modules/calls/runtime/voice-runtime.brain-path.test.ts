@@ -80,6 +80,13 @@ function buildRuntime(overrides: {
     recordToolLatency: async () => undefined,
   } as unknown as import('./conversation-analytics.service').ConversationAnalyticsService;
 
+  const callMemory = {
+    load: async () => ({
+      discussedProducts: [],
+      mentionedProducts: [],
+    }),
+  } as unknown as import('./call-memory.service').CallMemoryService;
+
   return new VoiceRuntimeService(
     sessionContext,
     callsService,
@@ -93,7 +100,7 @@ function buildRuntime(overrides: {
     runtimeSafety,
     {} as never,
     conversationAnalytics,
-    {} as never,
+    callMemory,
     {} as never,
     { recordBreakdown: () => 'unknown' } as never,
     {
@@ -224,4 +231,146 @@ test('containsBannedVoicePhrase detects robotic fillers', () => {
   assert.equal(containsBannedVoicePhrase('Just a moment, let me check that.'), true);
   assert.equal(containsBannedVoicePhrase('Thank you for asking.'), true);
   assert.equal(containsBannedVoicePhrase('Sure thing, I got you.'), true);
+});
+
+test('What is your service uses conversational support without OpenAI or Shopify', async () => {
+  let handleTurnCalls = 0;
+  let productFastPathCalls = 0;
+  const runtime = buildRuntime({
+    handleTurn: async () => {
+      handleTurnCalls += 1;
+      return {
+        reply: 'should not run',
+        toolCallsCount: 0,
+        toolNames: [],
+        state: { checkoutStage: 'idle' } as never,
+      };
+    },
+    productFastPathExecute: async () => {
+      productFastPathCalls += 1;
+      return {
+        used: true,
+        reply: 'should not search',
+        openaiCalled: false,
+        product_fast_path_used: true,
+        brain: 'deterministic_product_fast_path',
+      };
+    },
+  });
+
+  const { reply, turnProof } = await runtime.processUtterance(
+    'sess_brain_service',
+    'What is your service?',
+    [],
+  );
+  assert.equal(handleTurnCalls, 0);
+  assert.equal(productFastPathCalls, 0);
+  assert.equal(turnProof?.openaiCalled, false);
+  assert.equal(turnProof?.brain, 'conversational_support');
+  assert.equal(turnProof?.shopifyCalled, false);
+  assert.match(reply, /help|book|order/i);
+});
+
+test('Who are you uses conversational support', async () => {
+  let handleTurnCalls = 0;
+  const runtime = buildRuntime({
+    handleTurn: async () => {
+      handleTurnCalls += 1;
+      return {
+        reply: 'should not run',
+        toolCallsCount: 0,
+        toolNames: [],
+        state: { checkoutStage: 'idle' } as never,
+      };
+    },
+  });
+
+  const { turnProof } = await runtime.processUtterance('sess_brain_who', 'Who are you?', []);
+  assert.equal(handleTurnCalls, 0);
+  assert.equal(turnProof?.brain, 'conversational_support');
+  assert.equal(turnProof?.shopifyCalled, false);
+});
+
+test('Can you help me uses conversational support', async () => {
+  let handleTurnCalls = 0;
+  const runtime = buildRuntime({
+    handleTurn: async () => {
+      handleTurnCalls += 1;
+      return {
+        reply: 'should not run',
+        toolCallsCount: 0,
+        toolNames: [],
+        state: { checkoutStage: 'idle' } as never,
+      };
+    },
+  });
+
+  const { turnProof } = await runtime.processUtterance('sess_brain_help', 'Can you help me?', []);
+  assert.equal(handleTurnCalls, 0);
+  assert.equal(turnProof?.brain, 'conversational_support');
+  assert.equal(turnProof?.shopifyCalled, false);
+});
+
+test('Do you have Atomic Habits uses product fast path', async () => {
+  let handleTurnCalls = 0;
+  let productFastPathCalls = 0;
+  const runtime = buildRuntime({
+    handleTurn: async () => {
+      handleTurnCalls += 1;
+      return {
+        reply: 'should not run',
+        toolCallsCount: 0,
+        toolNames: [],
+        state: { checkoutStage: 'idle' } as never,
+      };
+    },
+    productFastPathExecute: async () => {
+      productFastPathCalls += 1;
+      return {
+        used: true,
+        reply: 'Yes, I found Atomic Habits. The price is 14.99.',
+        localProductSearchMs: 120,
+        shopifySkipped: true,
+        productFastPathConfidence: 0.9,
+        openaiCalled: false,
+        product_fast_path_used: true,
+        brain: 'deterministic_product_fast_path',
+      };
+    },
+  });
+
+  const { turnProof } = await runtime.processUtterance(
+    'sess_brain_atomic',
+    'Do you have Atomic Habits?',
+    [],
+  );
+  assert.equal(handleTurnCalls, 0);
+  assert.equal(productFastPathCalls, 1);
+  assert.equal(turnProof?.brain, 'deterministic_product_fast_path');
+});
+
+test('I want Harry Potter uses product fast path', async () => {
+  let productFastPathCalls = 0;
+  const runtime = buildRuntime({
+    handleTurn: async () => ({
+      reply: 'should not run',
+      toolCallsCount: 0,
+      toolNames: [],
+      state: { checkoutStage: 'idle' } as never,
+    }),
+    productFastPathExecute: async () => {
+      productFastPathCalls += 1;
+      return {
+        used: true,
+        reply: 'Yes, I found Harry Potter. The price is 9.99.',
+        openaiCalled: false,
+        product_fast_path_used: true,
+        brain: 'deterministic_product_fast_path',
+      };
+    },
+  });
+
+  const { turnProof } = await runtime.processUtterance('sess_brain_hp', 'I want Harry Potter', []);
+  assert.equal(productFastPathCalls, 1);
+  assert.equal(turnProof?.brain, 'deterministic_product_fast_path');
 });

@@ -11,6 +11,12 @@ import {
   PRODUCT_FAST_PATH_SLA_MS,
   shouldSkipShopifyForFastPath,
 } from './voice-product-fast-path.util';
+import {
+  buildIntentFirewallBlockPayload,
+  evaluateProductSearchGate,
+  isConversationalSupportQuery,
+  wouldLegacyProductFastPath,
+} from './voice-intent-firewall.util';
 
 export type ProductFastPathExecuteInput = {
   callSessionId: string;
@@ -55,6 +61,13 @@ export class VoiceProductFastPathService {
     const hasDiscussedProduct = discussed.length > 0;
     const discussedTitle = discussed[discussed.length - 1]?.title ?? null;
 
+    const gateInput = {
+      text: input.speechText,
+      intent: input.intent,
+      orderState: input.orderState,
+      hasDiscussedProduct,
+    };
+
     if (
       !isProductFastPathQuery({
         text: input.speechText,
@@ -63,6 +76,39 @@ export class VoiceProductFastPathService {
         hasDiscussedProduct,
       })
     ) {
+      if (wouldLegacyProductFastPath(gateInput)) {
+        const gate = evaluateProductSearchGate(gateInput);
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.intent.firewall.blocked_product_search',
+            callSessionId: input.callSessionId,
+            tenantId: input.tenantId,
+            agentId: input.agentId,
+            ...buildIntentFirewallBlockPayload(
+              input.speechText,
+              gate,
+              isConversationalSupportQuery(input.speechText, input.intent)
+                ? 'conversational_support'
+                : 'openai_fallback',
+            ),
+          }),
+        );
+      }
+      return miss;
+    }
+
+    if (isConversationalSupportQuery(input.speechText, input.intent)) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'voice.intent.firewall.sla_violation',
+          callSessionId: input.callSessionId,
+          tenantId: input.tenantId,
+          agentId: input.agentId,
+          violation: 'shopify_called_on_conversational_query',
+          shopifyCalled: false,
+          originalSpeech: input.speechText.slice(0, 500),
+        }),
+      );
       return miss;
     }
 

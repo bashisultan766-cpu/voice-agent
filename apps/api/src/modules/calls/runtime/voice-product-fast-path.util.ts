@@ -1,35 +1,18 @@
 import type { ShopifyProductSummary } from '../../agents/shopify-agent.service';
 import type { UserUtteranceIntent } from './user-intent-classifier.util';
-import { classifyUserIntent } from './user-intent-classifier.util';
 import { shortenVoiceReply, VOICE_WORD_LIMITS } from './instant-reply.util';
+import {
+  buildIntentFirewallBlockPayload,
+  evaluateProductSearchGate,
+  isConversationalSupportQuery,
+  type IntentFirewallBlockPayload,
+  wouldLegacyProductFastPath,
+} from './voice-intent-firewall.util';
 
 export const PRODUCT_FAST_PATH_SLA_MS = 1200;
 export const PRODUCT_FAST_PATH_ACK_SLA_MS = 300;
 export const PRODUCT_FAST_PATH_LOCAL_SLA_MS = 900;
 export const PRODUCT_FAST_PATH_SKIP_SHOPIFY_MIN = 0.7;
-
-const PRODUCT_AVAILABILITY_PATTERNS: RegExp[] = [
-  /\bdo you have\b/i,
-  /\bhave you got\b/i,
-  /\bis .+ available\b/i,
-  /\bcan i (get|order|buy)\b/i,
-  /\bi need\b/i,
-  /\bi want\b/i,
-  /\blooking for\b/i,
-  /\bsearch(ing)? for\b/i,
-  /\bprice of\b/i,
-  /\bhow much is\b/i,
-  /\bhow much does\b/i,
-  /\bone copy\b/i,
-  /\btwo copies\b/i,
-  /\bthree copies\b/i,
-  /\b\d+\s+copies?\b/i,
-];
-
-const OPENAI_REQUIRED_PATTERNS: RegExp[] = [
-  /\b(recommend|suggest|similar to|compare|which is better|objection|too expensive|not sure if)\b/i,
-  /\b(why should i|convince me|tell me more about the story)\b/i,
-];
 
 export type ProductFastPathDetectInput = {
   text: string;
@@ -51,35 +34,13 @@ export type ShouldBypassOpenAiForVoiceTurnInput = {
 export type ShouldBypassOpenAiForVoiceTurnResult = {
   bypassOpenAI: boolean;
   useProductFastPath: boolean;
+  useConversationalSupport?: boolean;
   openaiSkippedReason: string | null;
+  firewallBlock?: IntentFirewallBlockPayload | null;
 };
 
 export function isProductFastPathQuery(input: ProductFastPathDetectInput): boolean {
-  const text = input.text.trim();
-  if (!text) return false;
-  const intent = input.intent ?? classifyUserIntent(text);
-  const orderState = (input.orderState ?? 'IDLE').trim() || 'IDLE';
-
-  if (OPENAI_REQUIRED_PATTERNS.some((re) => re.test(text))) return false;
-
-  if (intent === 'product_search') return true;
-
-  if (intent === 'product_question') {
-    return (
-      /\b(price|cost|how much|available|in stock|stock)\b/i.test(text) ||
-      Boolean(input.hasDiscussedProduct)
-    );
-  }
-
-  if (intent === 'purchase_confirmation' && orderState === 'IDLE') {
-    return PRODUCT_AVAILABILITY_PATTERNS.some((re) => re.test(text));
-  }
-
-  if (/\b(one|two|three|\d+)\s+cop(y|ies)\b/i.test(text) && orderState !== 'IDLE') {
-    return false;
-  }
-
-  return PRODUCT_AVAILABILITY_PATTERNS.some((re) => re.test(text)) && intent !== 'store_policy_question';
+  return evaluateProductSearchGate(input).allowProductSearch;
 }
 
 export function extractProductSearchQuery(text: string): string {
@@ -191,16 +152,42 @@ export function shouldBypassOpenAIForVoiceTurn(
     };
   }
 
-  if (isProductFastPathQuery({
+  const gateInput = {
     text: input.text,
     intent: input.intent,
     orderState,
     hasDiscussedProduct: input.hasDiscussedProduct,
-  })) {
+  };
+
+  if (isConversationalSupportQuery(input.text, input.intent)) {
+    const legacyWouldFastPath = wouldLegacyProductFastPath(gateInput);
+    const gate = evaluateProductSearchGate(gateInput);
+    return {
+      bypassOpenAI: true,
+      useProductFastPath: false,
+      useConversationalSupport: true,
+      openaiSkippedReason: 'conversational_support',
+      firewallBlock: legacyWouldFastPath
+        ? buildIntentFirewallBlockPayload(input.text, gate, 'conversational_support')
+        : null,
+    };
+  }
+
+  const gate = evaluateProductSearchGate(gateInput);
+  if (gate.allowProductSearch) {
     return {
       bypassOpenAI: true,
       useProductFastPath: true,
       openaiSkippedReason: 'deterministic_product_fast_path',
+    };
+  }
+
+  if (wouldLegacyProductFastPath(gateInput)) {
+    return {
+      bypassOpenAI: false,
+      useProductFastPath: false,
+      openaiSkippedReason: null,
+      firewallBlock: buildIntentFirewallBlockPayload(input.text, gate, 'openai_fallback'),
     };
   }
 

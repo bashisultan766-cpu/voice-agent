@@ -70,6 +70,7 @@ import {
   shouldBypassOpenAIForVoiceTurn,
   shouldSkipNormalizationForProductFastPath,
 } from './voice-product-fast-path.util';
+import { buildConversationalSupportReply } from './voice-intent-firewall.util';
 import { VoiceLatencyAnalyzerService } from './voice-latency-analyzer.service';
 import { logVoiceTurnPerformance } from './voice-turn-performance.util';
 
@@ -1124,6 +1125,99 @@ export class VoiceRuntimeService {
           : null,
       hasDiscussedProduct: discussedForBypass.length > 0,
     });
+
+    if (voiceTurnBypass.firewallBlock) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.intent.firewall.blocked_product_search',
+          sessionId: callSessionId,
+          tenantId: ctx.tenantId,
+          agentId: ctx.agentId,
+          ...voiceTurnBypass.firewallBlock,
+        }),
+      );
+    }
+
+    if (voiceTurnBypass.useConversationalSupport) {
+      const storeName = ctx.store?.name ?? 'SureShot Books';
+      reply = shortenVoiceReply(
+        polishVoiceReply(buildConversationalSupportReply(trimmedUserText, userIntent, storeName), {
+          maxSentences: 2,
+          maxChars: 200,
+        }),
+        VOICE_WORD_LIMITS.simple + 10,
+      );
+      const userSeqSupport = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(callSessionId, 'user', trimmedUserText, userSeqSupport);
+      const agentSeqSupport = await this.transcriptBuffer.getNextSequence(callSessionId);
+      await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeqSupport);
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        ...buildLlmReplyMetadataPatch(reply),
+        conversational_support_used: true,
+        openaiCalled: false,
+        shopifyCalled: false,
+        lastIntentDetected: userIntent,
+      });
+
+      const totalTurnLatencyMs = Date.now() - turnStartedAt;
+      this.voiceLatencyAnalyzer.recordBreakdown({
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        route: 'conversational_support',
+        intentDetectionMs: intentLatencyMs,
+        openaiMs: 0,
+        totalCallerWaitMs: totalTurnLatencyMs,
+        instantReplyUsed: false,
+        openaiCalled: false,
+        ttsGenerated: false,
+        openaiSkippedReason: 'conversational_support',
+      });
+
+      logVoiceTurnPerformance({
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        totalTurnLatencyMs,
+        intentLatencyMs,
+        openaiLatencyMs: 0,
+        instantReplyUsed: false,
+        openaiCalled: false,
+        cacheHit: false,
+        slowPathReason: totalTurnLatencyMs >= 300 ? 'conversational_support_slow' : null,
+      });
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.brain.selected',
+          agentId: ctx.agentId,
+          sessionId: callSessionId,
+          tenantId: ctx.tenantId,
+          brain: 'conversational_support',
+          openaiCalled: false,
+          shopifyCalled: false,
+          userIntent,
+          langCode,
+        }),
+      );
+
+      const turnProof = {
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        userSpeechText: safeText.slice(0, 500),
+        openaiCalled: false,
+        openaiSuccess: true,
+        conversational_support_used: true,
+        shopifyCalled: false,
+        replyPreview: reply.slice(0, 240),
+        flowStep: 'conversational_support',
+        brain: 'conversational_support',
+        totalTurnLatencyMs,
+        intentLatencyMs,
+      };
+      return { reply, turnProof };
+    }
 
     if (voiceTurnBypass.useProductFastPath) {
       const fastResult = await this.productFastPath.execute({
