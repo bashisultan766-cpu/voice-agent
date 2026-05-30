@@ -16,12 +16,7 @@ const prisma_service_1 = require("../../../database/prisma.service");
 const normalize_phone_1 = require("./utils/normalize-phone");
 const client_1 = require("@prisma/client");
 function inboundVoiceAgentStatuses() {
-    const allowDraft = process.env.VOICE_ALLOW_DRAFT_AGENTS === 'true' ||
-        process.env.ALLOW_DRAFT_VOICE_AGENTS === 'true' ||
-        process.env.NODE_ENV !== 'production';
-    return allowDraft
-        ? [client_1.AgentStatus.ACTIVE, client_1.AgentStatus.READY, client_1.AgentStatus.DRAFT]
-        : [client_1.AgentStatus.ACTIVE, client_1.AgentStatus.READY];
+    return [client_1.AgentStatus.ACTIVE, client_1.AgentStatus.READY];
 }
 function digitsLast4(value) {
     const d = value.replace(/\D/g, '');

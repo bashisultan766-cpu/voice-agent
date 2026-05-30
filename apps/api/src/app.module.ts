@@ -23,6 +23,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { OpsModule } from './modules/ops/ops.module';
 import { ClientsModule } from './modules/clients/clients.module';
 import { TenantIntegrationsModule } from './modules/tenant-integrations/tenant-integrations.module';
+import { RealtimeVoiceModule } from './modules/realtime-voice/realtime-voice.module';
 import { parseEnv, validateProductionEnv } from './common/env-validation';
 import { RolesGuard } from './modules/auth/roles.guard';
 
@@ -70,6 +71,7 @@ import { RolesGuard } from './modules/auth/roles.guard';
     OpsModule,
     ClientsModule,
     TenantIntegrationsModule,
+    RealtimeVoiceModule,
   ],
   providers: [
     JwtAuthGuard,

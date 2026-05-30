@@ -34,6 +34,7 @@ import { TwilioModule } from '../integrations/twilio/twilio.module';
 import { ShopifyModule } from '../integrations/shopify/shopify.module';
 import { EmailModule } from '../integrations/email/email.module';
 import { ToolsModule } from '../tools/tools.module';
+import { RealtimeVoiceModule } from '../realtime-voice/realtime-voice.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { ToolsModule } from '../tools/tools.module';
     ShopifyModule,
     EmailModule,
     forwardRef(() => TwilioModule),
+    forwardRef(() => RealtimeVoiceModule),
   ],
   controllers: [CallsController, VoiceRuntimeController, VoiceConfigCheckController, CallbackRequestsController],
   providers: [

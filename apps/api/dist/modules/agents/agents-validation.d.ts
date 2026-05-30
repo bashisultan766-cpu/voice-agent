@@ -32,8 +32,8 @@ export declare const patchAgentCredentialsBodySchema: z.ZodObject<{
     clearElevenlabsApiKey: z.ZodOptional<z.ZodBoolean>;
     clearResendApiKey: z.ZodOptional<z.ZodBoolean>;
 }, "strict", z.ZodTypeAny, {
-    voiceId?: string | undefined;
     shopifyStoreUrl?: string | undefined;
+    voiceId?: string | undefined;
     twilioPhoneNumber?: string | undefined;
     emailSenderName?: string | undefined;
     emailSenderAddress?: string | undefined;
@@ -46,18 +46,18 @@ export declare const patchAgentCredentialsBodySchema: z.ZodObject<{
     useWorkspaceElevenlabs?: boolean | undefined;
     useWorkspaceTwilio?: boolean | undefined;
     shopifyApiVersion?: string | undefined;
-    shopifyAdminToken?: string | undefined;
     twilioAccountSid?: string | undefined;
-    twilioAuthToken?: string | undefined;
+    shopifyAdminToken?: string | undefined;
     openaiApiKey?: string | undefined;
     elevenlabsApiKey?: string | undefined;
+    twilioAuthToken?: string | undefined;
     resendApiKey?: string | undefined;
     clearOpenaiApiKey?: boolean | undefined;
     clearElevenlabsApiKey?: boolean | undefined;
     clearResendApiKey?: boolean | undefined;
 }, {
-    voiceId?: string | undefined;
     shopifyStoreUrl?: string | undefined;
+    voiceId?: string | undefined;
     twilioPhoneNumber?: string | undefined;
     emailSenderName?: string | undefined;
     emailSenderAddress?: string | undefined;
@@ -70,11 +70,11 @@ export declare const patchAgentCredentialsBodySchema: z.ZodObject<{
     useWorkspaceElevenlabs?: boolean | undefined;
     useWorkspaceTwilio?: boolean | undefined;
     shopifyApiVersion?: string | undefined;
-    shopifyAdminToken?: string | undefined;
     twilioAccountSid?: string | undefined;
-    twilioAuthToken?: string | undefined;
+    shopifyAdminToken?: string | undefined;
     openaiApiKey?: string | undefined;
     elevenlabsApiKey?: string | undefined;
+    twilioAuthToken?: string | undefined;
     resendApiKey?: string | undefined;
     clearOpenaiApiKey?: boolean | undefined;
     clearElevenlabsApiKey?: boolean | undefined;
@@ -166,11 +166,11 @@ export declare const testAgentEmailBodySchema: z.ZodDefault<z.ZodObject<{
     toEmail: z.ZodOptional<z.ZodString>;
     checkoutUrl: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
-    toEmail?: string | undefined;
     checkoutUrl?: string | undefined;
+    toEmail?: string | undefined;
 }, {
-    toEmail?: string | undefined;
     checkoutUrl?: string | undefined;
+    toEmail?: string | undefined;
 }>>;
 export declare const configureTwilioWebhookBodySchema: z.ZodDefault<z.ZodObject<{
     force: z.ZodOptional<z.ZodBoolean>;
@@ -183,11 +183,11 @@ export declare const smokeTestBodySchema: z.ZodDefault<z.ZodObject<{
     dryRun: z.ZodOptional<z.ZodBoolean>;
     sampleSpeechResult: z.ZodOptional<z.ZodString>;
 }, "strict", z.ZodTypeAny, {
-    sampleSpeechResult?: string | undefined;
     dryRun?: boolean | undefined;
+    sampleSpeechResult?: string | undefined;
 }, {
-    sampleSpeechResult?: string | undefined;
     dryRun?: boolean | undefined;
+    sampleSpeechResult?: string | undefined;
 }>>;
 export declare const debugShopifySearchBodySchema: z.ZodObject<{
     query: z.ZodString;

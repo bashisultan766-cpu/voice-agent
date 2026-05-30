@@ -32,6 +32,7 @@ const analytics_module_1 = require("./modules/analytics/analytics.module");
 const ops_module_1 = require("./modules/ops/ops.module");
 const clients_module_1 = require("./modules/clients/clients.module");
 const tenant_integrations_module_1 = require("./modules/tenant-integrations/tenant-integrations.module");
+const realtime_voice_module_1 = require("./modules/realtime-voice/realtime-voice.module");
 const env_validation_1 = require("./common/env-validation");
 const roles_guard_1 = require("./modules/auth/roles.guard");
 let AppModule = class AppModule {
@@ -82,6 +83,7 @@ exports.AppModule = AppModule = __decorate([
             ops_module_1.OpsModule,
             clients_module_1.ClientsModule,
             tenant_integrations_module_1.TenantIntegrationsModule,
+            realtime_voice_module_1.RealtimeVoiceModule,
         ],
         providers: [
             jwt_auth_guard_1.JwtAuthGuard,

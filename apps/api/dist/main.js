@@ -7,6 +7,13 @@ const app_module_1 = require("./app.module");
 const express = require("express");
 const env_validation_1 = require("./common/env-validation");
 const api_exception_filter_1 = require("./common/filters/api-exception.filter");
+const redis_client_util_1 = require("./common/redis-client.util");
+const realtime_voice_gateway_1 = require("./modules/realtime-voice/websocket/realtime-voice.gateway");
+if (process.env.REDIS_URL) {
+    const normalized = (0, redis_client_util_1.normalizeRedisUrl)(process.env.REDIS_URL);
+    if (normalized)
+        process.env.REDIS_URL = normalized;
+}
 async function bootstrap() {
     (0, env_validation_1.assertProductionEnvOrExit)();
     const app = await core_1.NestFactory.create(app_module_1.AppModule);
@@ -34,6 +41,8 @@ async function bootstrap() {
         console.warn('\n[api] WARNING: API is listening on PORT=3000. The Next.js admin is meant to use 3000; set PORT=3001 in apps/api/.env (see apps/api/.env.example).\n');
     }
     await app.listen(port);
+    const httpServer = app.getHttpServer();
+    app.get(realtime_voice_gateway_1.RealtimeVoiceGateway).attach(httpServer);
     console.log(`[api] http://127.0.0.1:${port}/  (JSON) · http://127.0.0.1:${port}/api/health · Admin UI: http://127.0.0.1:3000`);
 }
 bootstrap();

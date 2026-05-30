@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var VoiceRuntimeService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VoiceRuntimeService = void 0;
@@ -23,6 +26,7 @@ const call_outcome_service_1 = require("../../analytics/call-outcome.service");
 const client_1 = require("@prisma/client");
 const transcript_buffer_service_1 = require("./transcript-buffer.service");
 const redact_voice_input_1 = require("../../../common/redact-voice-input");
+const language_intelligence_util_1 = require("./language-intelligence.util");
 const tool_orchestrator_service_1 = require("./tool-orchestrator.service");
 const runtime_safety_service_1 = require("./runtime-safety.service");
 const conversation_flow_engine_service_1 = require("./conversation-flow-engine.service");
@@ -30,14 +34,22 @@ const conversation_analytics_service_1 = require("./conversation-analytics.servi
 const call_memory_service_1 = require("./call-memory.service");
 const voice_speaking_util_1 = require("./voice-speaking.util");
 const professional_conversation_policy_util_1 = require("./professional-conversation-policy.util");
+const user_intent_classifier_util_1 = require("./user-intent-classifier.util");
 const policy_context_prefetch_service_1 = require("./policy-context-prefetch.service");
 const professional_voice_response_util_1 = require("./professional-voice-response.util");
 const response_mode_util_1 = require("./response-mode.util");
 const context_aware_reply_util_1 = require("./context-aware-reply.util");
 const voice_email_capture_util_1 = require("./voice-email-capture.util");
 const telephony_spelling_capture_util_1 = require("./telephony-spelling-capture.util");
+const instant_reply_engine_1 = require("./instant-reply.engine");
+const voice_product_fast_path_service_1 = require("./voice-product-fast-path.service");
+const voice_product_fast_path_util_1 = require("./voice-product-fast-path.util");
+const voice_intent_firewall_util_1 = require("./voice-intent-firewall.util");
+const voice_latency_analyzer_service_1 = require("./voice-latency-analyzer.service");
+const voice_turn_performance_util_1 = require("./voice-turn-performance.util");
+const legacy_voice_bridge_service_1 = require("../../realtime-voice/bridge/legacy-voice-bridge.service");
 let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
-    constructor(sessionContext, callsService, llmAgent, transcriptNormalizer, tools, callEvents, callOutcome, transcriptBuffer, promptBuilder, runtimeSafety, conversationFlow, conversationAnalytics, callMemory, policyPrefetch) {
+    constructor(sessionContext, callsService, llmAgent, transcriptNormalizer, tools, callEvents, callOutcome, transcriptBuffer, promptBuilder, runtimeSafety, conversationFlow, conversationAnalytics, callMemory, policyPrefetch, voiceLatencyAnalyzer, productFastPath, multiAgentBridge) {
         this.sessionContext = sessionContext;
         this.callsService = callsService;
         this.llmAgent = llmAgent;
@@ -52,6 +64,9 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         this.conversationAnalytics = conversationAnalytics;
         this.callMemory = callMemory;
         this.policyPrefetch = policyPrefetch;
+        this.voiceLatencyAnalyzer = voiceLatencyAnalyzer;
+        this.productFastPath = productFastPath;
+        this.multiAgentBridge = multiAgentBridge;
         this.logger = new common_1.Logger(VoiceRuntimeService_1.name);
     }
     deterministicFallbackEnabled() {
@@ -587,6 +602,20 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             responseTemplateUsed: 'fallback_429_generic',
         };
     }
+    async recordInstantTurn(args) {
+        const dbStart = Date.now();
+        const userSeq = await this.transcriptBuffer.getNextSequence(args.callSessionId);
+        await this.transcriptBuffer.append(args.callSessionId, 'user', args.userText, userSeq);
+        const agentSeq = await this.transcriptBuffer.getNextSequence(args.callSessionId);
+        await this.transcriptBuffer.append(args.callSessionId, 'agent', args.reply, agentSeq);
+        await this.callsService.mergeSessionMetadata(args.callSessionId, {
+            ...(0, voice_single_reply_pipeline_util_1.buildLlmReplyMetadataPatch)(args.reply),
+            instant_reply_used: true,
+            openaiCalled: false,
+            lastIntentDetected: args.userIntent,
+        });
+        return Date.now() - dbStart;
+    }
     async getGreeting(callSessionId) {
         const ctx = await this.sessionContext.load(callSessionId);
         if (!ctx)
@@ -664,9 +693,12 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         }));
     }
     async processUtterance(callSessionId, text, conversationHistory = []) {
+        const turnStartedAt = Date.now();
         const safeText = (0, redact_voice_input_1.redactPaymentLikePatterns)(text);
         const trimmedUserText = safeText.trim();
         let reply = '';
+        let openaiLatencyMs;
+        let intentLatencyMs;
         const safety = this.runtimeSafety.checkUserInput(safeText);
         if (safety.blocked) {
             reply = this.runtimeSafety.refusalReply(safety.category);
@@ -684,6 +716,16 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         if (!trimmedUserText) {
             reply = "I didn't catch that. Could you say that again?";
             return { reply };
+        }
+        if (this.multiAgentBridge?.isMultiAgentEnabled()) {
+            const bridged = await this.multiAgentBridge.processUtterance(callSessionId, trimmedUserText, conversationHistory);
+            this.logger.log(JSON.stringify({
+                event: 'voice.multi_agent.turn',
+                callSessionId,
+                latencyMs: Date.now() - turnStartedAt,
+                turnProof: bridged.turnProof,
+            }));
+            return bridged;
         }
         const ctx = await this.sessionContext.load(callSessionId);
         if (!ctx) {
@@ -704,12 +746,296 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
         const historyFromDb = conversationHistory.length > 0
             ? conversationHistory
             : await this.transcriptBuffer.getConversationHistory(callSessionId, 24);
-        const sessionRow = await this.callsService.findOneById(callSessionId);
-        const sessionMeta = sessionRow.metadata &&
-            typeof sessionRow.metadata === 'object' &&
-            !Array.isArray(sessionRow.metadata)
-            ? sessionRow.metadata
+        const sessionRowEarly = await this.callsService.findOneById(callSessionId);
+        const sessionMetaEarly = sessionRowEarly.metadata &&
+            typeof sessionRowEarly.metadata === 'object' &&
+            !Array.isArray(sessionRowEarly.metadata)
+            ? sessionRowEarly.metadata
             : {};
+        const intentStartedAt = Date.now();
+        const [userIntent, langCode] = await Promise.all([
+            Promise.resolve((0, user_intent_classifier_util_1.classifyUserIntent)(trimmedUserText)),
+            Promise.resolve((0, language_intelligence_util_1.detectLanguageFromText)(trimmedUserText).language),
+        ]);
+        intentLatencyMs = Date.now() - intentStartedAt;
+        const orderStateForInstant = typeof sessionMetaEarly.orderState === 'string' ? sessionMetaEarly.orderState : 'IDLE';
+        const bypass = (0, instant_reply_engine_1.shouldBypassOpenAI)({
+            text: trimmedUserText,
+            orderState: orderStateForInstant,
+            spellingCaptureActive: (0, voice_email_capture_util_1.isSpellingCaptureActive)(sessionMetaEarly),
+        });
+        if (bypass.bypass && bypass.openaiSkippedReason === 'instant_deterministic_reply') {
+            const storeName = ctx.store?.name ?? 'SureShot Books';
+            reply = (0, instant_reply_engine_1.shortenVoiceReply)((0, voice_speaking_util_1.polishVoiceReply)((0, instant_reply_engine_1.buildInstantEngineReply)(trimmedUserText, storeName), { maxSentences: 2, maxChars: 120 }), instant_reply_engine_1.VOICE_WORD_LIMITS.simple);
+            const userSeqInstant = await this.transcriptBuffer.getNextSequence(callSessionId);
+            await this.transcriptBuffer.append(callSessionId, 'user', trimmedUserText, userSeqInstant);
+            const agentSeqInstant = await this.transcriptBuffer.getNextSequence(callSessionId);
+            await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeqInstant);
+            await this.callsService.mergeSessionMetadata(callSessionId, {
+                ...(0, voice_single_reply_pipeline_util_1.buildLlmReplyMetadataPatch)(reply),
+                instant_reply_used: true,
+                openaiCalled: false,
+                lastIntentDetected: userIntent,
+            });
+            const totalTurnLatencyMs = Date.now() - turnStartedAt;
+            this.voiceLatencyAnalyzer.recordBreakdown({
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                route: 'instant_reply',
+                intentDetectionMs: intentLatencyMs,
+                instantReplyMs: Date.now() - turnStartedAt - intentLatencyMs,
+                normalizationMs: 0,
+                openaiMs: 0,
+                totalCallerWaitMs: totalTurnLatencyMs,
+                instantReplyUsed: true,
+                openaiCalled: false,
+                ttsGenerated: false,
+                openaiSkippedReason: bypass.openaiSkippedReason,
+            });
+            (0, voice_turn_performance_util_1.logVoiceTurnPerformance)({
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                totalTurnLatencyMs,
+                intentLatencyMs,
+                openaiLatencyMs: 0,
+                instantReplyUsed: true,
+                openaiCalled: false,
+                cacheHit: false,
+                slowPathReason: totalTurnLatencyMs >= 2000 ? 'instant_path_slow' : null,
+            });
+            this.logger.log(JSON.stringify({
+                event: 'voice.brain.selected',
+                agentId: ctx.agentId,
+                sessionId: callSessionId,
+                tenantId: ctx.tenantId,
+                brain: 'instant_reply',
+                instant_reply_used: true,
+                openaiCalled: false,
+                userIntent,
+                langCode,
+            }));
+            const turnProof = {
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                userSpeechText: safeText.slice(0, 500),
+                openaiCalled: false,
+                openaiSuccess: true,
+                instant_reply_used: true,
+                instantReplyUsed: true,
+                replyPreview: reply.slice(0, 240),
+                flowStep: 'instant_reply',
+                brain: 'instant_reply',
+                totalTurnLatencyMs,
+                intentLatencyMs,
+            };
+            this.logTurnProof({
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                userSpeechText: safeText.slice(0, 500),
+                openaiKeySource: 'none',
+                modelUsed: 'n/a',
+                openaiCalled: false,
+                openaiSuccess: true,
+                replyPreview: reply.slice(0, 240),
+                voiceProvider: ctx.agent.voiceProvider ?? null,
+                voiceIdPresent: Boolean(ctx.agent.voiceId?.trim()),
+                ttsProviderUsed: null,
+                intentDetected: userIntent,
+                flowStep: 'instant_reply',
+                responseDelayMs: totalTurnLatencyMs,
+                openaiUsed: false,
+            });
+            return { reply, turnProof };
+        }
+        const callMemorySnapshot = await this.callMemory.load(callSessionId);
+        const discussedForBypass = callMemorySnapshot.discussedProducts ?? callMemorySnapshot.mentionedProducts ?? [];
+        const voiceTurnBypass = (0, voice_product_fast_path_util_1.shouldBypassOpenAIForVoiceTurn)({
+            text: trimmedUserText,
+            intent: userIntent,
+            orderState: orderStateForInstant,
+            spellingCaptureActive: (0, voice_email_capture_util_1.isSpellingCaptureActive)(sessionMetaEarly),
+            checkoutLockActive: sessionMetaEarly.checkoutLockActive === true,
+            transactionalCheckoutState: typeof sessionMetaEarly.transactionalCheckoutState === 'string'
+                ? sessionMetaEarly.transactionalCheckoutState
+                : null,
+            hasDiscussedProduct: discussedForBypass.length > 0,
+        });
+        if (voiceTurnBypass.firewallBlock) {
+            this.logger.warn(JSON.stringify({
+                event: 'voice.intent.firewall.blocked_product_search',
+                sessionId: callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                ...voiceTurnBypass.firewallBlock,
+            }));
+        }
+        if (voiceTurnBypass.useConversationalSupport) {
+            const storeName = ctx.store?.name ?? 'SureShot Books';
+            const lastProductQuery = typeof sessionMetaEarly.lastProductQuery === 'string'
+                ? sessionMetaEarly.lastProductQuery
+                : null;
+            const lastAgentReply = typeof sessionMetaEarly.lastAgentReply === 'string' ? sessionMetaEarly.lastAgentReply : null;
+            reply = (0, instant_reply_engine_1.shortenVoiceReply)((0, voice_speaking_util_1.polishVoiceReply)((0, voice_intent_firewall_util_1.buildConversationalSupportReply)(trimmedUserText, userIntent, storeName, 'Justin', {
+                lastProductQuery,
+                lastAgentReply,
+            }), { maxSentences: 2, maxChars: 200 }), instant_reply_engine_1.VOICE_WORD_LIMITS.simple + 10);
+            const userSeqSupport = await this.transcriptBuffer.getNextSequence(callSessionId);
+            await this.transcriptBuffer.append(callSessionId, 'user', trimmedUserText, userSeqSupport);
+            const agentSeqSupport = await this.transcriptBuffer.getNextSequence(callSessionId);
+            await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeqSupport);
+            await this.callsService.mergeSessionMetadata(callSessionId, {
+                ...(0, voice_single_reply_pipeline_util_1.buildLlmReplyMetadataPatch)(reply),
+                conversational_support_used: true,
+                openaiCalled: false,
+                shopifyCalled: false,
+                lastIntentDetected: userIntent,
+            });
+            const totalTurnLatencyMs = Date.now() - turnStartedAt;
+            this.voiceLatencyAnalyzer.recordBreakdown({
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                route: 'conversational_support',
+                intentDetectionMs: intentLatencyMs,
+                openaiMs: 0,
+                totalCallerWaitMs: totalTurnLatencyMs,
+                instantReplyUsed: false,
+                openaiCalled: false,
+                ttsGenerated: false,
+                openaiSkippedReason: 'conversational_support',
+            });
+            (0, voice_turn_performance_util_1.logVoiceTurnPerformance)({
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                totalTurnLatencyMs,
+                intentLatencyMs,
+                openaiLatencyMs: 0,
+                instantReplyUsed: false,
+                openaiCalled: false,
+                cacheHit: false,
+                slowPathReason: totalTurnLatencyMs >= 300 ? 'conversational_support_slow' : null,
+            });
+            this.logger.log(JSON.stringify({
+                event: 'voice.brain.selected',
+                agentId: ctx.agentId,
+                sessionId: callSessionId,
+                tenantId: ctx.tenantId,
+                brain: 'conversational_support',
+                openaiCalled: false,
+                shopifyCalled: false,
+                userIntent,
+                langCode,
+            }));
+            const turnProof = {
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                userSpeechText: safeText.slice(0, 500),
+                openaiCalled: false,
+                openaiSuccess: true,
+                conversational_support_used: true,
+                shopifyCalled: false,
+                replyPreview: reply.slice(0, 240),
+                flowStep: 'conversational_support',
+                brain: 'conversational_support',
+                totalTurnLatencyMs,
+                intentLatencyMs,
+            };
+            return { reply, turnProof };
+        }
+        if (voiceTurnBypass.useProductFastPath) {
+            const fastResult = await this.productFastPath.execute({
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                speechText: trimmedUserText,
+                intent: userIntent,
+                orderState: orderStateForInstant,
+                sessionMeta: sessionMetaEarly,
+            });
+            if (fastResult.used && fastResult.reply) {
+                reply = fastResult.reply;
+                const userSeqFast = await this.transcriptBuffer.getNextSequence(callSessionId);
+                await this.transcriptBuffer.append(callSessionId, 'user', trimmedUserText, userSeqFast);
+                const agentSeqFast = await this.transcriptBuffer.getNextSequence(callSessionId);
+                await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeqFast);
+                await this.callsService.mergeSessionMetadata(callSessionId, {
+                    ...(0, voice_single_reply_pipeline_util_1.buildLlmReplyMetadataPatch)(reply),
+                    product_fast_path_used: true,
+                    openaiCalled: false,
+                    lastIntentDetected: userIntent,
+                    lastProductQuery: trimmedUserText.slice(0, 200),
+                });
+                const totalTurnLatencyMs = Date.now() - turnStartedAt;
+                this.voiceLatencyAnalyzer.recordBreakdown({
+                    callSessionId,
+                    tenantId: ctx.tenantId,
+                    agentId: ctx.agentId,
+                    route: 'product_fast_path',
+                    intentDetectionMs: intentLatencyMs,
+                    openaiMs: 0,
+                    toolMs: 0,
+                    shopifyMs: fastResult.shopifySkipped ? 0 : fastResult.localProductSearchMs,
+                    totalCallerWaitMs: totalTurnLatencyMs,
+                    instantReplyUsed: false,
+                    openaiCalled: false,
+                    ttsGenerated: false,
+                    openaiSkippedReason: 'deterministic_product_fast_path',
+                });
+                (0, voice_turn_performance_util_1.logVoiceTurnPerformance)({
+                    callSessionId,
+                    tenantId: ctx.tenantId,
+                    agentId: ctx.agentId,
+                    totalTurnLatencyMs,
+                    intentLatencyMs,
+                    openaiLatencyMs: 0,
+                    instantReplyUsed: false,
+                    openaiCalled: false,
+                    cacheHit: Boolean(fastResult.shopifySkipped),
+                    slowPathReason: null,
+                });
+                this.logger.log(JSON.stringify({
+                    event: 'voice.brain.selected',
+                    agentId: ctx.agentId,
+                    sessionId: callSessionId,
+                    tenantId: ctx.tenantId,
+                    brain: 'deterministic_product_fast_path',
+                    product_fast_path_used: true,
+                    openaiCalled: false,
+                    localProductSearchMs: fastResult.localProductSearchMs,
+                    shopifySkipped: fastResult.shopifySkipped,
+                    productFastPathConfidence: fastResult.productFastPathConfidence,
+                    userIntent,
+                }));
+                const turnProof = {
+                    callSessionId,
+                    tenantId: ctx.tenantId,
+                    agentId: ctx.agentId,
+                    userSpeechText: safeText.slice(0, 500),
+                    openaiCalled: false,
+                    openaiSuccess: true,
+                    product_fast_path_used: true,
+                    instant_reply_used: false,
+                    replyPreview: reply.slice(0, 240),
+                    flowStep: 'product_fast_path',
+                    brain: 'deterministic_product_fast_path',
+                    totalTurnLatencyMs,
+                    intentLatencyMs,
+                    openaiLatencyMs: 0,
+                    localProductSearchMs: fastResult.localProductSearchMs,
+                    shopifySkipped: fastResult.shopifySkipped,
+                    productFastPathConfidence: fastResult.productFastPathConfidence,
+                };
+                return { reply, turnProof };
+            }
+        }
+        const sessionRow = sessionRowEarly;
+        const sessionMeta = sessionMetaEarly;
         let orchestratorSpeech = trimmedUserText;
         let rawTranscriptForLog = trimmedUserText;
         if ((0, voice_email_capture_util_1.isSpellingCaptureActive)(sessionMeta)) {
@@ -738,22 +1064,40 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             }));
         }
         else {
-            const normalization = await this.transcriptNormalizer.normalizeTranscript(trimmedUserText, {
-                tenantId: ctx.tenantId,
-                agentId: ctx.agentId,
-                callSessionId,
-                conversationHistory: historyFromDb,
-            });
-            orchestratorSpeech = normalization.normalized;
-            rawTranscriptForLog = normalization.raw;
-            await this.callsService.mergeSessionMetadata(callSessionId, {
-                rawSpeechTranscript: normalization.raw,
-                normalizedConversationTranscript: normalization.normalized,
-                lastRawTranscript: normalization.raw,
-                lastNormalizedTranscript: normalization.normalized,
-                transcriptNormalizeConfidence: normalization.confidence,
-                transcriptNormalizeCorrected: normalization.corrected,
-            });
+            const transcriptConfidence = sessionMeta.transcriptNormalizeConfidence;
+            const skipNormalization = (0, voice_product_fast_path_util_1.shouldSkipNormalizationForProductFastPath)(trimmedUserText, typeof transcriptConfidence === 'number' || typeof transcriptConfidence === 'string'
+                ? transcriptConfidence
+                : null);
+            if (skipNormalization) {
+                orchestratorSpeech = trimmedUserText;
+                rawTranscriptForLog = trimmedUserText;
+                await this.callsService.mergeSessionMetadata(callSessionId, {
+                    rawSpeechTranscript: trimmedUserText,
+                    normalizedConversationTranscript: trimmedUserText,
+                    lastRawTranscript: trimmedUserText,
+                    lastNormalizedTranscript: trimmedUserText,
+                    transcriptNormalizeSkipped: true,
+                    transcriptNormalizeSkipReason: 'product_fast_path_high_confidence',
+                });
+            }
+            else {
+                const normalization = await this.transcriptNormalizer.normalizeTranscript(trimmedUserText, {
+                    tenantId: ctx.tenantId,
+                    agentId: ctx.agentId,
+                    callSessionId,
+                    conversationHistory: historyFromDb,
+                });
+                orchestratorSpeech = normalization.normalized;
+                rawTranscriptForLog = normalization.raw;
+                await this.callsService.mergeSessionMetadata(callSessionId, {
+                    rawSpeechTranscript: normalization.raw,
+                    normalizedConversationTranscript: normalization.normalized,
+                    lastRawTranscript: normalization.raw,
+                    lastNormalizedTranscript: normalization.normalized,
+                    transcriptNormalizeConfidence: normalization.confidence,
+                    transcriptNormalizeCorrected: normalization.corrected,
+                });
+            }
         }
         const userSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
         await this.transcriptBuffer.append(callSessionId, 'user', orchestratorSpeech, userSeq);
@@ -768,8 +1112,19 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             brain: 'openai_llm_agent_orchestrator',
         }));
         const llmStartedAt = Date.now();
+        if (userIntent === 'product_search' && orderStateForInstant === 'IDLE') {
+            this.logger.error(JSON.stringify({
+                event: 'CRITICAL_OPENAI_USED_ON_PRODUCT_FAST_PATH',
+                callSessionId,
+                tenantId: ctx.tenantId,
+                agentId: ctx.agentId,
+                userSpeechText: orchestratorSpeech.slice(0, 200),
+                intent: userIntent,
+            }));
+        }
         const result = await this.llmAgent.handleTurn(callSessionId, orchestratorSpeech, historyFromDb);
-        const responseDelayMs = Date.now() - llmStartedAt;
+        openaiLatencyMs = Date.now() - llmStartedAt;
+        const responseDelayMs = openaiLatencyMs;
         if (result.toolCallsCount > 0) {
             await this.conversationAnalytics.recordToolLatency(ctx.tenantId, callSessionId, responseDelayMs, 'voice_tool_loop');
         }
@@ -838,7 +1193,36 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
             skipOpenAiGeneration: result.proof?.skipOpenAiGeneration ?? false,
         };
         this.logTurnProof(turnProof);
-        return { reply, turnProof };
+        const totalTurnLatencyMs = Date.now() - turnStartedAt;
+        const slowPathReason = totalTurnLatencyMs >= 2000
+            ? result.toolNames.some((n) => /search|shopify/i.test(n))
+                ? 'shopify_tools'
+                : result.proof?.openaiCalled
+                    ? 'openai'
+                    : 'llm_pipeline'
+            : null;
+        (0, voice_turn_performance_util_1.logVoiceTurnPerformance)({
+            callSessionId,
+            tenantId: ctx.tenantId,
+            agentId: ctx.agentId,
+            totalTurnLatencyMs,
+            intentLatencyMs,
+            openaiLatencyMs: result.proof?.openaiCalled ? openaiLatencyMs : 0,
+            instantReplyUsed: false,
+            openaiCalled: result.proof?.openaiCalled ?? true,
+            cacheHit: false,
+            slowPathReason,
+        });
+        return {
+            reply,
+            turnProof: {
+                ...turnProof,
+                totalTurnLatencyMs,
+                intentLatencyMs,
+                openaiLatencyMs: result.proof?.openaiCalled ? openaiLatencyMs : 0,
+                instantReplyUsed: false,
+            },
+        };
     }
     logTurnProof(p) {
         this.logger.log(JSON.stringify({
@@ -897,6 +1281,7 @@ let VoiceRuntimeService = VoiceRuntimeService_1 = class VoiceRuntimeService {
 exports.VoiceRuntimeService = VoiceRuntimeService;
 exports.VoiceRuntimeService = VoiceRuntimeService = VoiceRuntimeService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(16, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [session_context_service_1.SessionContextService,
         calls_service_1.CallsService,
         llm_agent_orchestrator_service_1.LlmAgentOrchestratorService,
@@ -910,6 +1295,9 @@ exports.VoiceRuntimeService = VoiceRuntimeService = VoiceRuntimeService_1 = __de
         conversation_flow_engine_service_1.ConversationFlowEngineService,
         conversation_analytics_service_1.ConversationAnalyticsService,
         call_memory_service_1.CallMemoryService,
-        policy_context_prefetch_service_1.PolicyContextPrefetchService])
+        policy_context_prefetch_service_1.PolicyContextPrefetchService,
+        voice_latency_analyzer_service_1.VoiceLatencyAnalyzerService,
+        voice_product_fast_path_service_1.VoiceProductFastPathService,
+        legacy_voice_bridge_service_1.LegacyVoiceBridgeService])
 ], VoiceRuntimeService);
 //# sourceMappingURL=voice-runtime.service.js.map

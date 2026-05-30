@@ -8,13 +8,16 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var ElevenLabsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ElevenLabsService = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
-let ElevenLabsService = class ElevenLabsService {
+const elevenlabs_voice_model_util_1 = require("./elevenlabs-voice-model.util");
+let ElevenLabsService = ElevenLabsService_1 = class ElevenLabsService {
     constructor(config) {
         this.config = config;
+        this.logger = new common_1.Logger(ElevenLabsService_1.name);
     }
     async textToSpeech(text, voiceId, options) {
         const key = options?.apiKey?.trim();
@@ -28,19 +31,32 @@ let ElevenLabsService = class ElevenLabsService {
         if (!vid) {
             throw new common_1.BadRequestException('ElevenLabs voice ID is required on the agent. Save a single voice ID in agent settings.');
         }
-        const modelId = options?.modelId?.trim() ||
-            this.config.get('ELEVENLABS_MODEL_ID')?.trim() ||
-            'eleven_multilingual_v2';
+        const isVoiceCall = options?.voiceCall === true || options?.latencyMode === true;
+        const modelPick = (0, elevenlabs_voice_model_util_1.resolveElevenLabsVoiceModel)({
+            agentModelId: options?.modelId,
+            forceVoiceLatency: isVoiceCall,
+            envLatencyModelId: this.config.get('ELEVENLABS_LATENCY_MODEL_ID'),
+            envDefaultModelId: this.config.get('ELEVENLABS_MODEL_ID'),
+        });
+        (0, elevenlabs_voice_model_util_1.logElevenLabsModelSelected)(modelPick, {
+            callSessionId: options?.callSessionId ?? null,
+            voiceCall: isVoiceCall,
+            latencyMode: options?.latencyMode === true,
+        });
+        const modelId = modelPick.selectedModel;
+        const latencyMode = options?.latencyMode === true || isVoiceCall;
         const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vid)}`;
         const body = JSON.stringify({
             text: trimmed,
             model_id: modelId,
-            voice_settings: {
-                stability: 0.5,
-                similarity_boost: 0.8,
-                style: 0,
-                use_speaker_boost: true,
-            },
+            voice_settings: latencyMode
+                ? { stability: 0.35, similarity_boost: 0.75, style: 0, use_speaker_boost: false }
+                : {
+                    stability: 0.5,
+                    similarity_boost: 0.8,
+                    style: 0,
+                    use_speaker_boost: true,
+                },
         });
         let lastNetworkError;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -73,7 +89,7 @@ let ElevenLabsService = class ElevenLabsService {
     }
 };
 exports.ElevenLabsService = ElevenLabsService;
-exports.ElevenLabsService = ElevenLabsService = __decorate([
+exports.ElevenLabsService = ElevenLabsService = ElevenLabsService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [config_1.ConfigService])
 ], ElevenLabsService);

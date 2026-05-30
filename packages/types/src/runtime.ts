@@ -112,6 +112,14 @@ export interface VoiceStreamMetrics {
   chunksEmitted?: number;
   chunksPlayed?: number;
   lastUpdatedAt?: string;
+  /** Full-duplex media stream pipeline metrics */
+  timeToFirstAudioMs?: number | null;
+  agentLatencyMs?: number | null;
+  ttsFirstChunkMs?: number | null;
+  shopifyLatencyMs?: number | null;
+  fallbackCount?: number;
+  lastFallbackReason?: string | null;
+  pipelineMode?: 'full_duplex' | 'gather' | 'legacy_media_stream';
 }
 
 /** Estimated provider costs per call (CallSession.metadata.voiceCostMetrics). */

@@ -1,22 +1,24 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const ioredis_1 = require("ioredis");
+const redis_client_util_1 = require("../common/redis-client.util");
 const agents_service_1 = require("../modules/agents/agents.service");
 const prisma_service_1 = require("../database/prisma.service");
 const dev_script_context_1 = require("./dev-script-context");
 async function checkRedis(redisUrl) {
-    if (!redisUrl?.trim()) {
+    const normalized = (0, redis_client_util_1.normalizeRedisUrl)(redisUrl);
+    if (!normalized) {
         return {
             key: 'redis_url_configured',
             pass: false,
             details: 'REDIS_URL is empty.',
-            fix: 'Set REDIS_URL to a reachable Redis instance (e.g. redis://localhost:6379).',
+            fix: 'Set REDIS_URL to a reachable Redis instance (e.g. redis://127.0.0.1:6379).',
         };
     }
-    const client = new ioredis_1.default(redisUrl, {
+    const client = new ioredis_1.default(normalized, {
+        ...redis_client_util_1.REDIS_CLIENT_OPTIONS,
         maxRetriesPerRequest: 1,
         connectTimeout: 1500,
-        lazyConnect: true,
     });
     client.on('error', () => {
     });

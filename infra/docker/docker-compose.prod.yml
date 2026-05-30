@@ -16,6 +16,33 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  voice-worker:
+    build:
+      context: ../../
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - ../../.env
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+    command: ["node", "dist/modules/realtime-voice/workers/voice-task.worker.js"]
+
   api:
     build:
       context: ../../
@@ -24,6 +51,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - ../../.env
     environment:
@@ -31,6 +60,8 @@ services:
       PORT: 3001
       TRUST_PROXY: "true"
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      REALTIME_MULTI_AGENT_ENABLED: ${REALTIME_MULTI_AGENT_ENABLED:-true}
     expose:
       - "3001"
 
@@ -81,6 +112,7 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   certbot_www:
   certbot_etc:
 

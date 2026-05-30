@@ -82,6 +82,11 @@ export declare class SessionContextService {
     private readonly prisma;
     private readonly encryption;
     private readonly log;
+    private readonly contextCache;
+    private readonly contextTtlMs;
     constructor(prisma: PrismaService, encryption: EncryptionService);
-    load(callSessionId: string): Promise<VoiceSessionContext | null>;
+    load(callSessionId: string, forceRefresh?: boolean): Promise<VoiceSessionContext | null>;
+    invalidate(callSessionId: string): void;
+    private readAgentConfigStamp;
+    private loadFresh;
 }

@@ -20,18 +20,18 @@ export declare class ShopifyDraftOrderService {
         checkoutFingerprint: string;
         metadata: Prisma.InputJsonValue;
     }): Promise<{
-        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         id: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         agentId: string;
+        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         metadata: Prisma.JsonValue | null;
+        createdAt: Date;
+        updatedAt: Date;
         callSessionId: string | null;
-        checkoutUrl: string;
         checkoutFingerprint: string | null;
         shopifyConnectionId: string | null;
         mode: import("@prisma/client").$Enums.CheckoutMode;
+        checkoutUrl: string;
         customerEmail: string | null;
         itemsJson: Prisma.JsonValue | null;
         providerRef: string | null;

@@ -22,8 +22,69 @@ let SessionContextService = SessionContextService_1 = class SessionContextServic
         this.prisma = prisma;
         this.encryption = encryption;
         this.log = new common_1.Logger(SessionContextService_1.name);
+        this.contextCache = new Map();
+        this.contextTtlMs = 60_000;
     }
-    async load(callSessionId) {
+    async load(callSessionId, forceRefresh = false) {
+        if (!forceRefresh) {
+            const hit = this.contextCache.get(callSessionId);
+            if (hit && hit.expiresAt > Date.now()) {
+                const stamp = await this.readAgentConfigStamp(callSessionId);
+                const configStillFresh = stamp &&
+                    stamp.configUpdatedAt === hit.configUpdatedAt &&
+                    stamp.configVersion === hit.configVersion;
+                if (configStillFresh) {
+                    this.log.log(JSON.stringify({
+                        event: 'session_context.cache_hit',
+                        session_context_cache_hit: true,
+                        callSessionId,
+                        configUpdatedAt: hit.configUpdatedAt,
+                        configVersion: hit.configVersion,
+                    }));
+                    return hit.ctx;
+                }
+            }
+        }
+        const ctx = await this.loadFresh(callSessionId);
+        if (ctx) {
+            this.contextCache.set(callSessionId, {
+                ctx,
+                expiresAt: Date.now() + this.contextTtlMs,
+                configUpdatedAt: ctx.configUpdatedAt ?? null,
+                configVersion: ctx.configVersion ?? null,
+            });
+        }
+        return ctx;
+    }
+    invalidate(callSessionId) {
+        this.contextCache.delete(callSessionId);
+    }
+    async readAgentConfigStamp(callSessionId) {
+        const session = await this.prisma.callSession.findUnique({
+            where: { id: callSessionId },
+            select: {
+                agent: {
+                    select: {
+                        updatedAt: true,
+                        agentConfig: { select: { updatedAt: true, metadata: true } },
+                    },
+                },
+            },
+        });
+        if (!session?.agent)
+            return null;
+        const configUpdatedAt = session.agent.updatedAt?.toISOString() ?? null;
+        const cfgMeta = session.agent.agentConfig?.metadata &&
+            typeof session.agent.agentConfig.metadata === 'object' &&
+            !Array.isArray(session.agent.agentConfig.metadata)
+            ? session.agent.agentConfig.metadata
+            : null;
+        const configVersion = typeof cfgMeta?.configVersion === 'number' && Number.isFinite(cfgMeta.configVersion)
+            ? Number(cfgMeta.configVersion)
+            : 1;
+        return { configUpdatedAt, configVersion };
+    }
+    async loadFresh(callSessionId) {
         const session = await this.prisma.callSession.findUnique({
             where: { id: callSessionId },
             include: {

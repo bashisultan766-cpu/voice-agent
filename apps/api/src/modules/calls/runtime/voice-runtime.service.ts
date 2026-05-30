@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { SessionContextService } from './session-context.service';
 import { CallsService } from '../calls.service';
 import { OpenAIPromptBuilderService } from '../../integrations/openai/openai-prompt-builder.service';
@@ -73,6 +73,7 @@ import {
 import { buildConversationalSupportReply } from './voice-intent-firewall.util';
 import { VoiceLatencyAnalyzerService } from './voice-latency-analyzer.service';
 import { logVoiceTurnPerformance } from './voice-turn-performance.util';
+import { LegacyVoiceBridgeService } from '../../realtime-voice/bridge/legacy-voice-bridge.service';
 
 /**
  * Voice runtime: assembles prompt, handles conversation flow.
@@ -99,6 +100,7 @@ export class VoiceRuntimeService {
     private readonly policyPrefetch: PolicyContextPrefetchService,
     private readonly voiceLatencyAnalyzer: VoiceLatencyAnalyzerService,
     private readonly productFastPath: VoiceProductFastPathService,
+    @Optional() private readonly multiAgentBridge?: LegacyVoiceBridgeService,
   ) {}
 
   private deterministicFallbackEnabled(): boolean {
@@ -964,6 +966,23 @@ export class VoiceRuntimeService {
     if (!trimmedUserText) {
       reply = "I didn't catch that. Could you say that again?";
       return { reply };
+    }
+
+    if (this.multiAgentBridge?.isMultiAgentEnabled()) {
+      const bridged = await this.multiAgentBridge.processUtterance(
+        callSessionId,
+        trimmedUserText,
+        conversationHistory,
+      );
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.multi_agent.turn',
+          callSessionId,
+          latencyMs: Date.now() - turnStartedAt,
+          turnProof: bridged.turnProof,
+        }),
+      );
+      return bridged;
     }
 
     const ctx = await this.sessionContext.load(callSessionId);

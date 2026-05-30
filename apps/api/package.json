@@ -25,13 +25,23 @@
     "dev:test-phone-mapping": "nest build && node dist/scripts/test-phone-mapping.js",
     "smoke:shopify": "tsx src/scripts/smoke-shopify-runtime.ts",
     "dev:agents": "node --import tsx src/scripts/list-dev-agents.ts",
-    "test:voice-sim": "nest build && node dist/scripts/voice-qa-sim.js"
+    "test:voice-sim": "nest build && node dist/scripts/voice-qa-sim.js",
+    "test:realtime-voice": "node --import tsx --test \"src/modules/realtime-voice/media-stream/full-duplex.integration.test.ts\" \"src/modules/realtime-voice/media-stream/openai-realtime-bridge.test.ts\" \"src/modules/realtime-voice/media-stream/full-duplex-pipeline.integration.test.ts\" \"src/modules/realtime-voice/media-stream/failure-recovery.integration.test.ts\" \"src/modules/search/realtime/realtime-voice-product-search.test.ts\" \"src/modules/realtime-voice/checkout/voice-checkout.integration.test.ts\"",
+    "benchmark:realtime-voice": "tsx src/scripts/benchmark-realtime-voice.ts",
+    "benchmark:realtime-product-search": "tsx src/scripts/benchmark-realtime-product-search.ts",
+    "e2e:realtime-voice-staging": "tsx src/scripts/e2e-realtime-voice-staging.ts",
+    "readiness:realtime-voice": "tsx src/scripts/e2e-realtime-voice-staging.ts --report-only",
+    "client-demo:readiness": "tsx src/scripts/client-demo-readiness.ts",
+    "client-demo:live-call-test": "tsx src/scripts/client-demo-live-call-test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@bookstore-voice-agents/types": "workspace:*",
+    "@langchain/core": "^1.1.48",
+    "@langchain/langgraph": "^1.3.2",
+    "@langchain/openai": "^1.4.7",
     "@nestjs/common": "^10.4.15",
     "@nestjs/config": "^3.3.0",
     "@nestjs/core": "^10.4.15",
@@ -41,15 +51,15 @@
     "@nestjs/throttler": "^6.0.0",
     "@prisma/adapter-pg": "^7.0.0",
     "@prisma/client": "^7.0.0",
-    "dotenv": "^16.4.7",
-    "pg": "^8.13.1",
     "bcrypt": "^6.0.0",
     "bullmq": "^5.76.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "dotenv": "^16.4.7",
     "express": "^4.21.0",
     "ioredis": "^5.10.1",
     "openai": "^4.73.0",
+    "pg": "^8.13.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "ws": "^8.18.0",
@@ -61,12 +71,12 @@
     "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.1",
+    "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.13",
     "eslint": "^8.57.1",
-    "@types/pg": "^8.11.10",
     "prisma": "^7.0.0",
     "tsx": "^4.21.0",
-    "typescript-eslint": "^8.46.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.46.2"
   }
 }

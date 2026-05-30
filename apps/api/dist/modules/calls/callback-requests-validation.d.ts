@@ -8,11 +8,11 @@ export declare const callbackListQuerySchema: z.ZodObject<{
     }>>;
     limit: z.ZodOptional<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
-    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
     limit?: number | undefined;
+    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
 }, {
-    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
     limit?: number | undefined;
+    status?: "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "OPEN" | undefined;
 }>;
 export declare const callbackPatchStatusBodySchema: z.ZodObject<{
     status: z.ZodOptional<z.ZodNativeEnum<{

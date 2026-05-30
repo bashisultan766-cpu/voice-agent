@@ -29,6 +29,8 @@ const voice_stream_metrics_service_1 = require("./runtime/voice-stream-metrics.s
 const voice_cost_analytics_service_1 = require("./runtime/voice-cost-analytics.service");
 const voice_streaming_session_service_1 = require("./runtime/voice-streaming-session.service");
 const voice_live_monitor_service_1 = require("./runtime/voice-live-monitor.service");
+const voice_latency_analyzer_service_1 = require("./runtime/voice-latency-analyzer.service");
+const voice_product_fast_path_service_1 = require("./runtime/voice-product-fast-path.service");
 const openai_module_1 = require("../integrations/openai/openai.module");
 const openai_voice_service_1 = require("../integrations/openai/openai-voice.service");
 const openai_streaming_voice_service_1 = require("../integrations/openai/openai-streaming-voice.service");
@@ -41,6 +43,7 @@ const twilio_module_1 = require("../integrations/twilio/twilio.module");
 const shopify_module_1 = require("../integrations/shopify/shopify.module");
 const email_module_1 = require("../integrations/email/email.module");
 const tools_module_1 = require("../tools/tools.module");
+const realtime_voice_module_1 = require("../realtime-voice/realtime-voice.module");
 let CallsModule = class CallsModule {
 };
 exports.CallsModule = CallsModule;
@@ -55,6 +58,7 @@ exports.CallsModule = CallsModule = __decorate([
             shopify_module_1.ShopifyModule,
             email_module_1.EmailModule,
             (0, common_1.forwardRef)(() => twilio_module_1.TwilioModule),
+            (0, common_1.forwardRef)(() => realtime_voice_module_1.RealtimeVoiceModule),
         ],
         controllers: [calls_controller_1.CallsController, voice_runtime_controller_1.VoiceRuntimeController, voice_config_check_controller_1.VoiceConfigCheckController, callback_requests_controller_1.CallbackRequestsController],
         providers: [
@@ -76,6 +80,8 @@ exports.CallsModule = CallsModule = __decorate([
             voice_cost_analytics_service_1.VoiceCostAnalyticsService,
             voice_streaming_session_service_1.VoiceStreamingSessionService,
             voice_live_monitor_service_1.VoiceLiveMonitorService,
+            voice_latency_analyzer_service_1.VoiceLatencyAnalyzerService,
+            voice_product_fast_path_service_1.VoiceProductFastPathService,
             openai_voice_service_1.OpenAIVoiceService,
             openai_streaming_voice_service_1.OpenAIStreamingVoiceService,
             callback_requests_service_1.CallbackRequestsService,
@@ -92,6 +98,7 @@ exports.CallsModule = CallsModule = __decorate([
             voice_cost_analytics_service_1.VoiceCostAnalyticsService,
             voice_streaming_session_service_1.VoiceStreamingSessionService,
             voice_live_monitor_service_1.VoiceLiveMonitorService,
+            voice_latency_analyzer_service_1.VoiceLatencyAnalyzerService,
         ],
     })
 ], CallsModule);

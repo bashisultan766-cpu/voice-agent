@@ -4,6 +4,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { Prisma } from '@prisma/client';
 import { buildPaymentEmailContent } from './payment-email-templates';
 import { paymentEmailIdempotencyKey } from '../../../common/payment-email-idempotency';
+import { assertPaymentEmailRecipientAllowed } from '../../../common/client-demo-safety.util';
 import type { ResolvedAgentEmailConfig } from './agent-email-config.service';
 
 function assertHttpsCheckoutUrl(raw: string): string {
@@ -96,6 +97,7 @@ export class ResendEmailService {
     if (!cleanTo.includes('@')) {
       throw new Error('A valid customer email is required.');
     }
+    assertPaymentEmailRecipientAllowed(cleanTo);
 
     const tmpl = buildPaymentEmailContent({
       businessName: input.businessName.trim() || 'Our store',

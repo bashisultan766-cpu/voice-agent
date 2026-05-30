@@ -15,6 +15,8 @@ const REDIS_TTL_SEC = 15 * 60;
 const DEBOUNCE_MS = 400;
 const RECENT_SEARCH_MAX = 48;
 const CATALOG_SNAPSHOT_TTL_SEC = 30 * 60;
+const POPULAR_SEARCH_TTL_SEC = 7 * 24 * 60 * 60;
+const POPULAR_SEARCH_MAX = 100;
 
 interface MemoryEntry {
   expiresAt: number;
@@ -186,6 +188,42 @@ export class BookstoreSearchCacheService implements OnModuleInit, OnModuleDestro
     const prev = this.recentSearches.get(key) ?? [];
     const next = [normalizedQuery, ...prev.filter((q) => q !== normalizedQuery)].slice(0, RECENT_SEARCH_MAX);
     this.recentSearches.set(key, next);
+  }
+
+  /** Track popular voice queries in memory + Redis sorted set. */
+  async recordPopularSearch(tenantId: string, agentId: string, normalizedQuery: string): Promise<void> {
+    const q = normalizedQuery.toLowerCase().trim();
+    if (!q) return;
+    this.recordRecentSearch(tenantId, agentId, q);
+    if (!this.redis || this.redis.status !== 'ready') return;
+    try {
+      const key = this.popularSearchesKey(tenantId, agentId);
+      await this.redis.zincrby(key, 1, q);
+      await this.redis.expire(key, POPULAR_SEARCH_TTL_SEC);
+      const count = await this.redis.zcard(key);
+      if (count > POPULAR_SEARCH_MAX) {
+        await this.redis.zremrangebyrank(key, 0, count - POPULAR_SEARCH_MAX - 1);
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  async getPopularSearches(tenantId: string, agentId: string, limit = 20): Promise<string[]> {
+    const memory = this.getRecentSearches(tenantId, agentId, limit);
+    if (!this.redis || this.redis.status !== 'ready') return memory;
+    try {
+      const key = this.popularSearchesKey(tenantId, agentId);
+      const redisHits = await this.redis.zrevrange(key, 0, limit - 1);
+      const merged = [...new Set([...redisHits, ...memory])];
+      return merged.slice(0, limit);
+    } catch {
+      return memory;
+    }
+  }
+
+  private popularSearchesKey(tenantId: string, agentId: string): string {
+    return `bookstore:popular:${tenantId}:${agentId}`;
   }
 
   getRecentSearches(tenantId: string, agentId: string, limit = 12): string[] {

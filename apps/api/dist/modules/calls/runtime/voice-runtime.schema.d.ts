@@ -20,15 +20,15 @@ export declare const turnBodySchema: z.ZodObject<{
         content: string;
     }>, "many">>;
 }, "strip", z.ZodTypeAny, {
-    callSessionId: string;
     message: string;
+    callSessionId: string;
     history?: {
         role: "user" | "assistant";
         content: string;
     }[] | undefined;
 }, {
-    callSessionId: string;
     message: string;
+    callSessionId: string;
     history?: {
         role: "user" | "assistant";
         content: string;

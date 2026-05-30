@@ -13,6 +13,7 @@ exports.ShopifyProductSyncQueueService = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const bullmq_1 = require("bullmq");
+const redis_client_util_1 = require("../../../common/redis-client.util");
 let ShopifyProductSyncQueueService = class ShopifyProductSyncQueueService {
     constructor(config) {
         this.config = config;
@@ -21,7 +22,7 @@ let ShopifyProductSyncQueueService = class ShopifyProductSyncQueueService {
     getQueue() {
         if (this.queue)
             return this.queue;
-        const connection = this.config.get('REDIS_URL')?.trim();
+        const connection = (0, redis_client_util_1.normalizeRedisUrl)(this.config.get('REDIS_URL'));
         if (!connection)
             throw new Error('REDIS_URL is not configured for product sync queue.');
         this.queue = new bullmq_1.Queue('shopify-product-sync', { connection: { url: connection } });

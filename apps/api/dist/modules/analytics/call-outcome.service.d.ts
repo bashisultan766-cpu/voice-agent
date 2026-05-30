@@ -6,12 +6,14 @@ export declare class CallOutcomeService {
     deriveAndUpsert(callSessionId: string): Promise<void>;
     getByCallSession(callSessionId: string): Promise<{
         id: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         summary: string | null;
         escalated: boolean;
+        createdAt: Date;
+        updatedAt: Date;
         callSessionId: string;
+        paymentLinkSent: boolean;
+        callbackRequested: boolean;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
@@ -19,11 +21,9 @@ export declare class CallOutcomeService {
         toolsUsedCount: number;
         toolFailuresCount: number;
         fallbackCount: number;
-        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
-        paymentLinkSent: boolean;
         orderCompleted: boolean;
         escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;
@@ -36,12 +36,14 @@ export declare class CallOutcomeService {
         qaScore?: number;
     }): Promise<{
         id: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         summary: string | null;
         escalated: boolean;
+        createdAt: Date;
+        updatedAt: Date;
         callSessionId: string;
+        paymentLinkSent: boolean;
+        callbackRequested: boolean;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
@@ -49,11 +51,9 @@ export declare class CallOutcomeService {
         toolsUsedCount: number;
         toolFailuresCount: number;
         fallbackCount: number;
-        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
-        paymentLinkSent: boolean;
         orderCompleted: boolean;
         escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;

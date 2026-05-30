@@ -67,6 +67,10 @@ import {
   buildMediaStreamConnectTwiML,
   isMediaStreamInboundEnabled,
 } from './twiml/media-stream.twiml';
+import {
+  isFullDuplexVoiceEnabled,
+  isLegacyMediaStreamEnabled,
+} from '../../realtime-voice/config/realtime-voice-flags.util';
 import { VoiceStreamMetricsService } from '../../calls/runtime/voice-stream-metrics.service';
 import { VoiceCostAnalyticsService } from '../../calls/runtime/voice-cost-analytics.service';
 import { VoiceStreamingSessionService } from '../../calls/runtime/voice-streaming-session.service';
@@ -872,7 +876,26 @@ export class TwilioWebhookService implements OnModuleInit {
 
     const origin = this.getPublicBaseUrl();
 
-    if (isMediaStreamInboundEnabled()) {
+    if (isFullDuplexVoiceEnabled()) {
+      const wsBase = origin.replace(/^http/i, 'wss');
+      const streamUrl = `${wsBase}/api/realtime-voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
+      const twimlStream = buildMediaStreamConnectTwiML(streamUrl, session.id);
+      await this.streamMetrics.merge(session.id, {
+        streamingMode: 'media_stream',
+        streamingStatus: 'listening',
+        pipelineMode: 'full_duplex',
+      });
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.voice.inbound_full_duplex',
+          callSessionId: session.id,
+          streamUrl: streamUrl.replace(/callSessionId=[^&]+/, 'callSessionId=***'),
+        }),
+      );
+      return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };
+    }
+
+    if (isLegacyMediaStreamEnabled() || isMediaStreamInboundEnabled()) {
       const wsBase = origin.replace(/^http/i, 'wss');
       const streamUrl = `${wsBase}/api/twilio/voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
       const twimlStream = buildMediaStreamConnectTwiML(streamUrl, session.id);
@@ -884,6 +907,7 @@ export class TwilioWebhookService implements OnModuleInit {
         JSON.stringify({
           event: 'twilio.voice.inbound_media_stream',
           callSessionId: session.id,
+          path: 'legacy',
         }),
       );
       return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };

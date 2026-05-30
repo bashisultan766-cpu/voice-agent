@@ -22,6 +22,7 @@ const elevenlabs_module_1 = require("../elevenlabs/elevenlabs.module");
 const agents_module_1 = require("../../agents/agents.module");
 const twilio_tts_cache_service_1 = require("./twilio-tts-cache.service");
 const voice_prompt_audio_service_1 = require("./voice-prompt-audio.service");
+const voice_audio_cache_service_1 = require("./voice-audio-cache.service");
 const twilio_media_stream_service_1 = require("./twilio-media-stream.service");
 let TwilioModule = class TwilioModule {
 };
@@ -38,6 +39,7 @@ exports.TwilioModule = TwilioModule = __decorate([
             twilio_sms_service_1.TwilioSmsService,
             agent_resolution_service_1.AgentResolutionService,
             twilio_tts_cache_service_1.TwilioTtsCacheService,
+            voice_audio_cache_service_1.VoiceAudioCacheService,
             voice_prompt_audio_service_1.VoicePromptAudioService,
             twilio_media_stream_service_1.TwilioMediaStreamService,
         ],

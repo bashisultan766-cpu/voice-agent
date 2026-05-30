@@ -11,7 +11,11 @@ import { RuntimeSafetyService } from './runtime-safety.service';
 import { ConversationFlowEngineService } from './conversation-flow-engine.service';
 import { ConversationAnalyticsService } from './conversation-analytics.service';
 import { CallMemoryService } from './call-memory.service';
+import { type UserUtteranceIntent } from './user-intent-classifier.util';
 import { PolicyContextPrefetchService } from './policy-context-prefetch.service';
+import { VoiceProductFastPathService } from './voice-product-fast-path.service';
+import { VoiceLatencyAnalyzerService } from './voice-latency-analyzer.service';
+import { LegacyVoiceBridgeService } from '../../realtime-voice/bridge/legacy-voice-bridge.service';
 export declare class VoiceRuntimeService {
     private readonly sessionContext;
     private readonly callsService;
@@ -27,8 +31,11 @@ export declare class VoiceRuntimeService {
     private readonly conversationAnalytics;
     private readonly callMemory;
     private readonly policyPrefetch;
+    private readonly voiceLatencyAnalyzer;
+    private readonly productFastPath;
+    private readonly multiAgentBridge?;
     private readonly logger;
-    constructor(sessionContext: SessionContextService, callsService: CallsService, llmAgent: LlmAgentOrchestratorService, transcriptNormalizer: TranscriptNormalizerService, tools: ToolOrchestratorService, callEvents: CallEventsService, callOutcome: CallOutcomeService, transcriptBuffer: TranscriptBufferService, promptBuilder: OpenAIPromptBuilderService, runtimeSafety: RuntimeSafetyService, conversationFlow: ConversationFlowEngineService, conversationAnalytics: ConversationAnalyticsService, callMemory: CallMemoryService, policyPrefetch: PolicyContextPrefetchService);
+    constructor(sessionContext: SessionContextService, callsService: CallsService, llmAgent: LlmAgentOrchestratorService, transcriptNormalizer: TranscriptNormalizerService, tools: ToolOrchestratorService, callEvents: CallEventsService, callOutcome: CallOutcomeService, transcriptBuffer: TranscriptBufferService, promptBuilder: OpenAIPromptBuilderService, runtimeSafety: RuntimeSafetyService, conversationFlow: ConversationFlowEngineService, conversationAnalytics: ConversationAnalyticsService, callMemory: CallMemoryService, policyPrefetch: PolicyContextPrefetchService, voiceLatencyAnalyzer: VoiceLatencyAnalyzerService, productFastPath: VoiceProductFastPathService, multiAgentBridge?: LegacyVoiceBridgeService | undefined);
     private deterministicFallbackEnabled;
     private resolveInterruptIntent;
     private professionalReplyFromSearchTool;
@@ -45,6 +52,12 @@ export declare class VoiceRuntimeService {
     private buildTemplateReply;
     private isDeliveryQuestion;
     private respondDeterministicallyOnOpenAI429;
+    recordInstantTurn(args: {
+        callSessionId: string;
+        userText: string;
+        reply: string;
+        userIntent: UserUtteranceIntent;
+    }): Promise<number>;
     getGreeting(callSessionId: string): Promise<string>;
     buildSystemPrompt(callSessionId: string): Promise<string>;
     onRuntimeConnected(callSessionId: string): Promise<void>;

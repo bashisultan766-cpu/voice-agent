@@ -13,11 +13,11 @@ export declare class FaqService {
         isActive?: boolean;
     }): Promise<{
         id: string;
-        language: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -27,11 +27,11 @@ export declare class FaqService {
     }>;
     findAll(tenantId: string, storeId?: string, branchProfileId?: string, isActive?: boolean): Promise<{
         id: string;
-        language: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -41,11 +41,11 @@ export declare class FaqService {
     }[]>;
     findOne(tenantId: string, id: string): Promise<{
         id: string;
-        language: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -62,11 +62,11 @@ export declare class FaqService {
         isActive: boolean;
     }>): Promise<{
         id: string;
-        language: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -76,11 +76,11 @@ export declare class FaqService {
     }>;
     remove(tenantId: string, id: string): Promise<{
         id: string;
-        language: string;
-        createdAt: Date;
-        updatedAt: Date;
         tenantId: string;
         storeId: string;
+        createdAt: Date;
+        updatedAt: Date;
+        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;

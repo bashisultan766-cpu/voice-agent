@@ -12,18 +12,18 @@ function step(state, utterance) {
 (0, node_test_1.default)('bookstore flow: product search then confirm goes to email collection', () => {
     let s = 'IDLE';
     ({ res: { nextState: s } } = step(s, 'I want Atomic Habits'));
-    strict_1.default.equal(s, 'PRODUCT_DISCOVERY');
+    strict_1.default.equal(s, 'PRODUCT_SEARCH');
     ({ res: { nextState: s } } = step(s, 'Yes'));
-    strict_1.default.equal(s, 'EMAIL_COLLECTION');
+    strict_1.default.equal(s, 'PRODUCT_CONFIRMED');
 });
 (0, node_test_1.default)('unclear product: recovery prompt in discovery', () => {
-    const { res } = step('PRODUCT_DISCOVERY', 'uhm');
-    strict_1.default.equal(res.nextState, 'PRODUCT_DISCOVERY');
+    const { res } = step('PRODUCT_SEARCH', 'uhm');
+    strict_1.default.equal(res.nextState, 'PRODUCT_SEARCH');
     strict_1.default.ok(res.recoveryPrompt);
 });
 (0, node_test_1.default)('invalid email retry: stays in EMAIL_COLLECTION', () => {
-    const { res } = step('EMAIL_COLLECTION', 'not-an-email');
-    strict_1.default.equal(res.nextState, 'EMAIL_COLLECTION');
+    const { res } = step('EMAIL_COLLECTING', 'not-an-email');
+    strict_1.default.equal(res.nextState, 'EMAIL_COLLECTING');
     strict_1.default.equal(res.recoveryPrompt?.key, 'INVALID_EMAIL');
 });
 (0, node_test_1.default)('EMAIL_COLLECTION + product query interrupts recovery and returns to discovery', () => {
@@ -48,8 +48,19 @@ function step(state, utterance) {
     strict_1.default.equal(res.recoveryPrompt?.key, 'CHANGED_MIND');
 });
 (0, node_test_1.default)('general question mid-order: stays in product discovery', () => {
-    const { cls, res } = step('PRODUCT_DISCOVERY', 'What is your return policy?');
+    const { cls, res } = step('PRODUCT_SEARCH', 'What is your return policy?');
     strict_1.default.equal(cls.intent, 'general_question');
-    strict_1.default.equal(res.nextState, 'PRODUCT_DISCOVERY');
+    strict_1.default.equal(res.nextState, 'PRODUCT_SEARCH');
+});
+(0, node_test_1.default)('quantity then email progresses to email confirming', () => {
+    let s = 'PRODUCT_CONFIRMED';
+    ({ res: { nextState: s } } = step(s, '2 copies please'));
+    strict_1.default.equal(s, 'QUANTITY_COLLECTED');
+    ({ res: { nextState: s } } = step(s, 'reader@gmail.com'));
+    strict_1.default.equal(s, 'EMAIL_CONFIRMING');
+});
+(0, node_test_1.default)('email confirmation moves checkout to payment link creating', () => {
+    const { res } = step('EMAIL_CONFIRMING', 'yes');
+    strict_1.default.equal(res.nextState, 'PAYMENT_LINK_CREATING');
 });
 //# sourceMappingURL=order-turn-state-manager.util.test.js.map

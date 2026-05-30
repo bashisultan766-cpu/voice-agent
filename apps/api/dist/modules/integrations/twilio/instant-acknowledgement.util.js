@@ -4,8 +4,7 @@ exports.isYesNoOnlyUtterance = isYesNoOnlyUtterance;
 exports.isLikelyProductCorrection = isLikelyProductCorrection;
 exports.selectInstantAcknowledgement = selectInstantAcknowledgement;
 exports.buildInstantAckMetadataPatch = buildInstantAckMetadataPatch;
-const voice_commerce_fast_mode_util_1 = require("../../calls/runtime/voice-commerce-fast-mode.util");
-const voice_search_filler_util_1 = require("../../search/voice/voice-search-filler.util");
+const instant_reply_util_1 = require("../../calls/runtime/instant-reply.util");
 const ORDER_DETAIL_STATES = new Set(['EMAIL_COLLECTION']);
 function normalizeQuery(s) {
     return s.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200);
@@ -24,8 +23,15 @@ function isLikelyProductCorrection(text) {
 function selectInstantAcknowledgement(input) {
     const { intent, speechText, callState, metadata, forceElevenLabsOnly = false } = input;
     const trimmed = speechText.trim();
+    const orderState = callState.trim() || 'IDLE';
     const normQ = normalizeQuery(trimmed);
     const prevProduct = typeof metadata.lastProductQuery === 'string' ? metadata.lastProductQuery : null;
+    if ((0, instant_reply_util_1.shouldUseInstantReply)(trimmed, orderState) && orderState === 'IDLE' && !forceElevenLabsOnly) {
+        return {
+            mode: 'sync_full_reply',
+            ackReason: 'instant_deterministic_sync',
+        };
+    }
     if (intent === 'greeting' || intent === 'small_talk') {
         return {
             mode: 'deferred_kickoff',
@@ -70,12 +76,12 @@ function selectInstantAcknowledgement(input) {
             };
         }
     }
-    const fastInstant = !forceElevenLabsOnly && (0, voice_commerce_fast_mode_util_1.isVoiceCommerceFastMode)() ? voice_search_filler_util_1.DEFERRED_INSTANT_ACK_PHRASE : null;
+    const productSearchAck = !forceElevenLabsOnly ? instant_reply_util_1.VOICE_CACHED_PHRASES.searchAckShort : null;
     if (intent === 'product_search') {
         if (isLikelyProductCorrection(trimmed)) {
             return {
                 mode: 'deferred_kickoff',
-                instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'Got it — checking that title instead.'),
+                instantPhrase: forceElevenLabsOnly ? null : instant_reply_util_1.VOICE_CACHED_PHRASES.productCorrection,
                 ackReason: 'product_correction',
                 markSessionLetMeCheck: !forceElevenLabsOnly,
                 nextLastProductQuery: normQ || null,
@@ -84,7 +90,7 @@ function selectInstantAcknowledgement(input) {
         if (prevProduct && normQ === prevProduct) {
             return {
                 mode: 'deferred_kickoff',
-                instantPhrase: fastInstant,
+                instantPhrase: productSearchAck,
                 ackReason: 'product_search_repeat_same_query',
                 markSessionLetMeCheck: false,
                 nextLastProductQuery: normQ || null,
@@ -92,18 +98,18 @@ function selectInstantAcknowledgement(input) {
         }
         return {
             mode: 'deferred_kickoff',
-            instantPhrase: fastInstant,
-            ackReason: fastInstant ? 'product_search_instant_ack' : 'product_search_silent_kickoff',
-            markSessionLetMeCheck: Boolean(fastInstant),
+            instantPhrase: productSearchAck,
+            ackReason: productSearchAck ? 'product_search_instant_ack' : 'product_search_silent_kickoff',
+            markSessionLetMeCheck: Boolean(productSearchAck),
             nextLastProductQuery: normQ || null,
         };
     }
     if (intent === 'payment_question' || intent === 'product_question') {
         return {
             mode: 'deferred_kickoff',
-            instantPhrase: forceElevenLabsOnly ? null : (fastInstant ?? 'One moment while I look that up.'),
+            instantPhrase: forceElevenLabsOnly ? null : instant_reply_util_1.PRODUCT_SEARCH_FAST_ACK,
             ackReason: 'question_requires_direct_answer_deferred',
-            markSessionLetMeCheck: Boolean(fastInstant) && !forceElevenLabsOnly,
+            markSessionLetMeCheck: !forceElevenLabsOnly,
         };
     }
     if (intent === 'purchase_confirmation') {

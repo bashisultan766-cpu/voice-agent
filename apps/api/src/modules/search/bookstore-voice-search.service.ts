@@ -556,6 +556,91 @@ export class BookstoreVoiceSearchService {
     });
   }
 
+  /** PostgreSQL productCache index only — no Redis cache read, no Shopify live. */
+  async searchIndexedOnly(input: {
+    tenantId: string;
+    agentId: string;
+    query: string;
+    limit: number;
+    shopDomain?: string | null;
+  }): Promise<BookstoreVoiceSearchResult> {
+    const started = Date.now();
+    const productSearchInputRaw = input.query.trim();
+    if (!productSearchInputRaw) {
+      return this.emptyQueryResult();
+    }
+
+    const { cleanedQuery, probableTitle } = cleanVoiceProductQuery(productSearchInputRaw);
+    const { products: indexProducts, embeddings } = await this.index.getIndex(
+      input.tenantId,
+      input.agentId,
+      input.shopDomain,
+    );
+
+    const localFirst = await this.tryLocalCatalogOnlySearch({
+      tenantId: input.tenantId,
+      agentId: input.agentId,
+      shopDomain: input.shopDomain,
+      indexProducts,
+      embeddings,
+      productSearchInputRaw,
+      probableTitle,
+      cleanedQuery,
+      limit: input.limit,
+    });
+
+    const searchVoiceLog = {
+      ...this.emptyLog(productSearchInputRaw),
+      cleanedQuery,
+      probableTitle,
+      productsReturned: localFirst.products.length,
+      productsReturnedCount: localFirst.products.length,
+      productsAfterRanking: localFirst.products.length,
+      topProduct: localFirst.products[0]?.title ?? null,
+      topProductTitle: localFirst.products[0]?.title ?? null,
+      topScore: localFirst.bestScore,
+      topMatchReason: localFirst.products[0]?.matchReason ?? 'local_index',
+      rankedProducts: localFirst.products.map((p) => ({
+        title: p.title,
+        score: p.relevanceScore ?? localFirst.bestScore,
+        matchReason: p.matchReason ?? 'local_index',
+      })),
+      lowConfidenceSearch: localFirst.bestScore < LOCAL_SEARCH_SKIP_SHOPIFY_MIN_SCORE,
+      bookstoreSearch: {
+        fuzzySearchActivated: true,
+        semanticSearchUsed: indexProducts.length > 0,
+        cacheHit: false,
+        memoryHit: false,
+        redisHit: false,
+        searchLatencyMs: Date.now() - started,
+        fallbackStage: 'fuzzy_local' as BookstoreSearchFallbackStage,
+        indexSize: indexProducts.length,
+        topResultConfidence: localFirst.bestScore,
+        confidenceTier:
+          localFirst.bestScore >= LOCAL_SEARCH_SKIP_SHOPIFY_MIN_SCORE
+            ? ('HIGH' as BookstoreConfidenceTier)
+            : localFirst.bestScore >= 550
+              ? ('MEDIUM' as BookstoreConfidenceTier)
+              : ('LOW' as BookstoreConfidenceTier),
+        recommendedBooks: localFirst.products.map((p) => ({
+          title: p.title,
+          score: p.relevanceScore ?? localFirst.bestScore,
+          matchReason: p.matchReason ?? 'local_index',
+          vendor: p.vendor,
+        })),
+        rankingDiagnostics: [],
+        debounced: false,
+        parallelShopifyQueries: 0,
+      },
+    };
+
+    return {
+      ok: localFirst.products.length > 0,
+      products: localFirst.products,
+      searchVoiceLog,
+    };
+  }
+
   /**
    * Search in-memory productCache index before any live Shopify GraphQL call.
    */

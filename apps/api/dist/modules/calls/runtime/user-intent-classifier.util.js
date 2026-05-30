@@ -20,7 +20,11 @@ function classifyUserIntent(text) {
         /\b(sports|clothes|clothing|electronics|toys|shoes|furniture|appliances)\b/.test(t)) {
         return 'store_category_question';
     }
-    if (/\b(what can you do|how can you help|what do you do|how do you help)\b/.test(t)) {
+    if (/\b(what can you do|how can you help|what do you do|how do you help|can you help me)\b/.test(t)) {
+        return 'capability_question';
+    }
+    if (/\b(what is your service|tell me about yourself|explain your service|what kind of store)\b/.test(t) ||
+        /\bwhat are you\b(?! doing)/.test(t)) {
         return 'capability_question';
     }
     if (/\b(what('?s| is) your name|who am i speaking with|who is this)\b/.test(t)) {
@@ -37,6 +41,9 @@ function classifyUserIntent(text) {
         return 'small_talk';
     }
     if (/\b(can you hear me|do you hear me|are you there|can you hear)\b/.test(t)) {
+        return 'small_talk';
+    }
+    if (/\bwhat are you doing\b/.test(t) || /\bwhat('s| is) going on\b/.test(t)) {
         return 'small_talk';
     }
     if (/\bhow\s+(are|r)\s+(you|u|ya)\b/.test(t) ||
@@ -87,7 +94,8 @@ function classifyUserIntent(text) {
     }
     if (words.length >= 5 &&
         !/^(yes|no|ok|okay|sure|uh|um)\b/i.test(t) &&
-        !(0, policy_intent_util_1.isStorePolicyQuestion)(t)) {
+        !(0, policy_intent_util_1.isStorePolicyQuestion)(t) &&
+        !/\b(what is your service|who are you|tell me about yourself|what can you do|can you help me|how does this work|explain your service)\b/.test(t)) {
         return 'product_search';
     }
     if (/^(yes|no|ok|okay|sure|uh|um|hmm|maybe)\b/i.test(t)) {

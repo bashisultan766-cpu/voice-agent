@@ -11,6 +11,7 @@ import { TwilioTtsCacheService } from './twilio-tts-cache.service';
 import { PrismaService } from '../../../database/prisma.service';
 import { EncryptionService } from '../../../common/encryption.service';
 import { VoicePromptAudioService } from './voice-prompt-audio.service';
+import { VoiceLatencyAnalyzerService } from '../../calls/runtime/voice-latency-analyzer.service';
 import { VoiceStreamMetricsService } from '../../calls/runtime/voice-stream-metrics.service';
 import { VoiceCostAnalyticsService } from '../../calls/runtime/voice-cost-analytics.service';
 import { VoiceStreamingSessionService } from '../../calls/runtime/voice-streaming-session.service';
@@ -56,6 +57,7 @@ export declare class TwilioWebhookService implements OnModuleInit {
     private readonly elevenLabs;
     private readonly ttsCache;
     private readonly voicePromptAudio;
+    private readonly voiceLatencyAnalyzer;
     private readonly prisma;
     private readonly encryption;
     private readonly streamMetrics;
@@ -64,8 +66,9 @@ export declare class TwilioWebhookService implements OnModuleInit {
     private readonly elevenStreaming;
     private readonly logger;
     private readonly publicBaseUrl;
-    constructor(config: ConfigService, agentResolution: AgentResolutionService, callsService: CallsService, callEvents: CallEventsService, voiceRuntime: VoiceRuntimeService, sessionContext: SessionContextService, transcriptBuffer: TranscriptBufferService, elevenLabs: ElevenLabsService, ttsCache: TwilioTtsCacheService, voicePromptAudio: VoicePromptAudioService, prisma: PrismaService, encryption: EncryptionService, streamMetrics: VoiceStreamMetricsService, voiceCost: VoiceCostAnalyticsService, streamingSession: VoiceStreamingSessionService, elevenStreaming: ElevenLabsStreamingService);
+    constructor(config: ConfigService, agentResolution: AgentResolutionService, callsService: CallsService, callEvents: CallEventsService, voiceRuntime: VoiceRuntimeService, sessionContext: SessionContextService, transcriptBuffer: TranscriptBufferService, elevenLabs: ElevenLabsService, ttsCache: TwilioTtsCacheService, voicePromptAudio: VoicePromptAudioService, voiceLatencyAnalyzer: VoiceLatencyAnalyzerService, prisma: PrismaService, encryption: EncryptionService, streamMetrics: VoiceStreamMetricsService, voiceCost: VoiceCostAnalyticsService, streamingSession: VoiceStreamingSessionService, elevenStreaming: ElevenLabsStreamingService);
     onModuleInit(): void;
+    private warmPhraseAudioAtStartup;
     private getPublicBaseUrl;
     private getVoiceGreetingMaxMs;
     private estimateGreetingAudioMs;
