@@ -20,6 +20,7 @@ import { VoiceStreamMetricsService } from './runtime/voice-stream-metrics.servic
 import { VoiceCostAnalyticsService } from './runtime/voice-cost-analytics.service';
 import { VoiceStreamingSessionService } from './runtime/voice-streaming-session.service';
 import { VoiceLiveMonitorService } from './runtime/voice-live-monitor.service';
+import { VoiceLatencyAnalyzerService } from './runtime/voice-latency-analyzer.service';
 import { OpenAIModule } from '../integrations/openai/openai.module';
 import { OpenAIVoiceService } from '../integrations/openai/openai-voice.service';
 import { OpenAIStreamingVoiceService } from '../integrations/openai/openai-streaming-voice.service';
@@ -64,6 +65,7 @@ import { ToolsModule } from '../tools/tools.module';
     VoiceCostAnalyticsService,
     VoiceStreamingSessionService,
     VoiceLiveMonitorService,
+    VoiceLatencyAnalyzerService,
     OpenAIVoiceService,
     OpenAIStreamingVoiceService,
     CallbackRequestsService,
@@ -80,6 +82,7 @@ import { ToolsModule } from '../tools/tools.module';
     VoiceCostAnalyticsService,
     VoiceStreamingSessionService,
     VoiceLiveMonitorService,
+    VoiceLatencyAnalyzerService,
   ],
 })
 export class CallsModule {}

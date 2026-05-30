@@ -1,6 +1,6 @@
 import type { UserUtteranceIntent } from '../../calls/runtime/user-intent-classifier.util';
 
-const SEARCH_FILLERS = [
+export const SEARCH_FILLERS = [
   'One moment while I check that for you.',
   'Looking that up for you now.',
   'Checking similar titles in our catalog.',
@@ -8,7 +8,7 @@ const SEARCH_FILLERS = [
   'Searching our shelves for that title.',
 ] as const;
 
-const GENERIC_FILLERS = [
+export const GENERIC_FILLERS = [
   'One moment please.',
   'Just a second.',
 ] as const;

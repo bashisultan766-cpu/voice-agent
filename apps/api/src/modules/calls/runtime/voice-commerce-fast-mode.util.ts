@@ -4,10 +4,11 @@ export function isVoiceCommerceFastMode(): boolean {
   return raw === 'true' || raw === '1' || raw === 'yes';
 }
 
-/** Play search filler when deferred job exceeds this (ms). */
+/** Play search filler when deferred job exceeds this (ms). No dead silence > 800ms in fast mode. */
 export function voiceSearchFillerThresholdMs(): number {
   const raw = Number(process.env.VOICE_SEARCH_FILLER_THRESHOLD_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 1500;
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return isVoiceCommerceFastMode() ? 700 : 1500;
 }
 
 /** Twilio deferred-poll pause between hops (seconds). */

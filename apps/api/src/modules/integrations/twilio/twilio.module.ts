@@ -13,6 +13,7 @@ import { ElevenLabsModule } from '../elevenlabs/elevenlabs.module';
 import { AgentsModule } from '../../agents/agents.module';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
 import { VoicePromptAudioService } from './voice-prompt-audio.service';
+import { VoiceAudioCacheService } from './voice-audio-cache.service';
 import { TwilioMediaStreamService } from './twilio-media-stream.service';
 
 @Module({
@@ -26,6 +27,7 @@ import { TwilioMediaStreamService } from './twilio-media-stream.service';
     TwilioSmsService,
     AgentResolutionService,
     TwilioTtsCacheService,
+    VoiceAudioCacheService,
     VoicePromptAudioService,
     TwilioMediaStreamService,
   ],

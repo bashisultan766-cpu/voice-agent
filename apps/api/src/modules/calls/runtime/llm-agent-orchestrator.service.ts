@@ -120,10 +120,10 @@ import {
 } from './voice-commerce-fast-mode.util';
 import {
   buildInstantReply,
-  shouldUseInstantReply,
+  shouldBypassOpenAI,
   shortenVoiceReply,
   VOICE_WORD_LIMITS,
-} from './instant-reply.util';
+} from './instant-reply.engine';
 
 const MAX_TOOL_ITERATIONS = voiceFastModeMaxToolIterations(Number(process.env.MAX_TOOL_ITERATIONS_VOICE) || 8);
 const MAX_TOOL_CALLS_PER_TURN = Number(process.env.MAX_TOOL_CALLS_PER_TURN) || 4;
@@ -233,7 +233,8 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     const trimmedMessage = userMessage.trim();
     const orderStateEarly =
       typeof sessionMetaAtStart.orderState === 'string' ? sessionMetaAtStart.orderState : 'IDLE';
-    if (shouldUseInstantReply(trimmedMessage, orderStateEarly)) {
+    const bypass = shouldBypassOpenAI({ text: trimmedMessage, orderState: orderStateEarly });
+    if (bypass.bypass && bypass.openaiSkippedReason === 'instant_deterministic_reply') {
       const storeName = ctx.store?.name ?? 'SureShot Books';
       const instantReply = shortenVoiceReply(buildInstantReply(trimmedMessage, storeName), VOICE_WORD_LIMITS.simple);
       this.logger.log(
@@ -244,7 +245,7 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           agentId: ctx.agentId,
           instant_reply_used: true,
           openaiCalled: false,
-          openaiSkippedReason: 'instant_deterministic_reply',
+          openaiSkippedReason: bypass.openaiSkippedReason,
         }),
       );
       return {

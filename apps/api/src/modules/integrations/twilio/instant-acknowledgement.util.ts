@@ -1,5 +1,5 @@
 import type { UserUtteranceIntent } from '../../calls/runtime/user-intent-classifier.util';
-import { PRODUCT_SEARCH_FAST_ACK, shouldUseInstantReply } from '../../calls/runtime/instant-reply.util';
+import { PRODUCT_SEARCH_FAST_ACK, shouldUseInstantReply, VOICE_CACHED_PHRASES } from '../../calls/runtime/instant-reply.util';
 
 export type InstantAckSelection =
   | {
@@ -124,7 +124,7 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     if (isLikelyProductCorrection(trimmed)) {
       return {
         mode: 'deferred_kickoff',
-        instantPhrase: forceElevenLabsOnly ? null : 'Got it — checking that title instead.',
+        instantPhrase: forceElevenLabsOnly ? null : VOICE_CACHED_PHRASES.productCorrection,
         ackReason: 'product_correction',
         markSessionLetMeCheck: !forceElevenLabsOnly,
         nextLastProductQuery: normQ || null,

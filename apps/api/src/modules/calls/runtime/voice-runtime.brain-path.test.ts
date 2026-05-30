@@ -85,6 +85,7 @@ function buildRuntime(overrides: {
     conversationAnalytics,
     {} as never,
     {} as never,
+    { recordBreakdown: () => 'unknown' } as never,
   );
 }
 

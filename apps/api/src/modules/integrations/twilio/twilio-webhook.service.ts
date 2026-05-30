@@ -40,11 +40,9 @@ import {
 import { VoicePromptAudioService } from './voice-prompt-audio.service';
 import { classifyUserIntent } from '../../calls/runtime/user-intent-classifier.util';
 import { buildInstantAckMetadataPatch, selectInstantAcknowledgement } from './instant-acknowledgement.util';
-import { buildInstantReply } from '../../calls/runtime/instant-reply.util';
-import {
-  logVoiceLatencyBreakdown,
-  VoiceLatencyTimer,
-} from '../../calls/runtime/voice-latency-breakdown.util';
+import { buildInstantReply, instantReplyAudioPhrase } from '../../calls/runtime/instant-reply.util';
+import { VoiceLatencyAnalyzerService } from '../../calls/runtime/voice-latency-analyzer.service';
+import { VoiceLatencyTimer } from '../../calls/runtime/voice-latency-breakdown.util';
 import {
   isVoiceCommerceFastMode,
   voiceDeferredPollPauseSeconds,
@@ -177,6 +175,7 @@ export class TwilioWebhookService implements OnModuleInit {
     private readonly elevenLabs: ElevenLabsService,
     private readonly ttsCache: TwilioTtsCacheService,
     private readonly voicePromptAudio: VoicePromptAudioService,
+    private readonly voiceLatencyAnalyzer: VoiceLatencyAnalyzerService,
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly streamMetrics: VoiceStreamMetricsService,
@@ -1456,6 +1455,10 @@ export class TwilioWebhookService implements OnModuleInit {
           speechText,
           ctx.store?.name ?? 'SureShot Books',
         );
+        const instantAudioPhrase = instantReplyAudioPhrase(
+          speechText,
+          ctx.store?.name ?? 'SureShot Books',
+        );
         const intentDetectionMs = latencyTimer.endSection('intentDetectionMs');
         latencyTimer.mark('instantReplyMs', 0);
         latencyTimer.mark('normalizationMs', 0);
@@ -1506,7 +1509,7 @@ export class TwilioWebhookService implements OnModuleInit {
 
         latencyTimer.startSection('ttsMs');
         const mainPlay = this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(originEarly, {
-          text: instantReplyText,
+          text: instantAudioPhrase,
           voiceId: voiceIdSync ?? '',
           modelId: modelSync,
           callSessionId,
@@ -1572,7 +1575,7 @@ export class TwilioWebhookService implements OnModuleInit {
           elevenlabsLatencyMs: mainPlay.ttsGenerated ? ttsMs : 0,
           audioCacheKey: mainPlay.audioCacheKey.slice(0, 16),
         });
-        logVoiceLatencyBreakdown(breakdown);
+        this.voiceLatencyAnalyzer.recordBreakdown(breakdown);
 
         this.logTwilioResponseMetrics('gather_sync_social_reply', callSessionId, handlerStartedAt);
         this.logger.log(
@@ -2080,15 +2083,31 @@ export class TwilioWebhookService implements OnModuleInit {
           queryPreview:
             typeof meta.lastProductQuery === 'string' ? meta.lastProductQuery : undefined,
         });
-        const fillerPlay = await this.resolveShortPhrasePlayUrl({
-          origin,
-          hearingDebugEffective,
+        const voiceIdFiller = this.resolveElevenLabsVoiceId(ctx.agent);
+        const modelFiller = this.voicePromptAudio.resolveLatencyModelId(ctx.agent.elevenlabsModel ?? null);
+        const cachedFiller = this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(origin, {
           text: fillerText,
-          tenantId: ctx.tenantId,
+          voiceId: voiceIdFiller ?? '',
+          modelId: modelFiller,
           callSessionId,
-          agent: ctx.agent,
-          logLabel: 'deferred_poll_search_filler',
         });
+        const fillerPlay = cachedFiller.playbackUrl
+          ? {
+              playbackUrl: cachedFiller.playbackUrl,
+              voiceProviderActuallyUsed: resolveVoiceProviderActuallyUsed(
+                true,
+                voicePolicyPoll,
+              ),
+            }
+          : await this.resolveShortPhrasePlayUrl({
+              origin,
+              hearingDebugEffective,
+              text: fillerText,
+              tenantId: ctx.tenantId,
+              callSessionId,
+              agent: ctx.agent,
+              logLabel: 'deferred_poll_search_filler',
+            });
         const twimlFiller = this.finalizeTwiml(
           buildDeferredVoiceMomentPleaseTwiML({
             deferPollUrl,
@@ -2496,6 +2515,26 @@ export class TwilioWebhookService implements OnModuleInit {
 
       const responseDelayMs = Date.now() - cur.startedAtMs;
       const fillerUsedLog = meta.fillerUsed === true;
+      const deferredBreakdown = this.voiceLatencyAnalyzer.buildDeferredBreakdown({
+        callSessionId,
+        tenantId: ctx.tenantId,
+        agentId: ctx.agentId,
+        jobStartedAtMs: cur.startedAtMs,
+        llmLatencyMs,
+        ttsGenerationTimeMs,
+        turnProof: {
+          ...(utter.turnProof ?? {}),
+          openaiSkippedReason:
+            typeof proof?.skipOpenAiGeneration === 'boolean' && proof.skipOpenAiGeneration
+              ? 'transactional_checkout_state'
+              : proof?.instant_reply_used
+                ? 'instant_deterministic_reply'
+                : undefined,
+        },
+        audioServedFromCache: false,
+        elevenlabsModel: ctx.agent.elevenlabsModel ?? this.voicePromptAudio.resolveLatencyModelId(null),
+      });
+      this.voiceLatencyAnalyzer.recordBreakdown(deferredBreakdown);
       this.logger.log(
         JSON.stringify({
           event: 'voice.deferred.job_ready',

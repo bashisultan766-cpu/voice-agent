@@ -2,8 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { ElevenLabsService } from '../elevenlabs/elevenlabs.service';
 import { TwilioTtsCacheService } from './twilio-tts-cache.service';
+import { VoiceAudioCacheService } from './voice-audio-cache.service';
 import { buildTtsPlaybackUrl, validateTtsAudioBuffer } from './voice-elevenlabs-playback.util';
 import { VOICE_CACHED_PHRASES } from '../../calls/runtime/instant-reply.util';
+import {
+  GENERIC_FILLERS,
+  SEARCH_FILLERS,
+} from '../../search/voice/voice-search-filler.util';
 
 interface PhraseEntry {
   buffer: Buffer;
@@ -15,18 +20,25 @@ export const VOICE_PRELOADED_PHRASES = [
   VOICE_CACHED_PHRASES.greeting,
   VOICE_CACHED_PHRASES.salam,
   VOICE_CACHED_PHRASES.howAreYou,
+  VOICE_CACHED_PHRASES.thanks,
+  VOICE_CACHED_PHRASES.yes,
+  VOICE_CACHED_PHRASES.no,
+  VOICE_CACHED_PHRASES.okay,
+  VOICE_CACHED_PHRASES.goodbye,
+  VOICE_CACHED_PHRASES.namaste,
   VOICE_CACHED_PHRASES.searchAck,
+  VOICE_CACHED_PHRASES.productCorrection,
   VOICE_CACHED_PHRASES.emailPrompt,
   VOICE_CACHED_PHRASES.emailSpell,
   VOICE_CACHED_PHRASES.emailConfirm,
   VOICE_CACHED_PHRASES.thankYouOrder,
   VOICE_CACHED_PHRASES.repeat,
   VOICE_CACHED_PHRASES.speakEnglish,
-  "You're welcome. What else can I help?",
-  'Great. What would you like next?',
-  'No problem. What can I help with?',
-  'Sounds good. How can I help?',
-  'Namaste. How can I help you today?',
+  VOICE_CACHED_PHRASES.oneMoment,
+  VOICE_CACHED_PHRASES.checking,
+  VOICE_CACHED_PHRASES.verifying,
+  ...SEARCH_FILLERS,
+  ...GENERIC_FILLERS,
 ] as const;
 
 /**
@@ -42,6 +54,7 @@ export class VoicePromptAudioService {
   constructor(
     private readonly elevenLabs: ElevenLabsService,
     private readonly ttsCache: TwilioTtsCacheService,
+    private readonly audioCache: VoiceAudioCacheService,
   ) {}
 
   audioCacheKey(voiceId: string, modelId: string, text: string): string {
@@ -73,6 +86,14 @@ export class VoicePromptAudioService {
     const k = this.cacheKey(voiceId, model, text);
     const hit = this.phraseBuffers.get(k);
     if (hit && hit.expiresAt > Date.now()) return;
+
+    const persisted = await this.audioCache.getBuffer(k);
+    if (persisted) {
+      this.phraseBuffers.set(k, { buffer: persisted, expiresAt: Date.now() + this.phraseTtlMs });
+      this.audioCache.logCacheEvent(true, k, 'redis', undefined);
+      return;
+    }
+
     const started = Date.now();
     const buffer = await this.elevenLabs.textToSpeech(text, voiceId, {
       apiKey,
@@ -80,15 +101,8 @@ export class VoicePromptAudioService {
       latencyMode: true,
     });
     this.phraseBuffers.set(k, { buffer, expiresAt: Date.now() + this.phraseTtlMs });
-    this.logger.log(
-      JSON.stringify({
-        event: 'voice.audio_cache_warm',
-        audioCacheKey: k.slice(0, 16),
-        elevenlabsLatencyMs: Date.now() - started,
-        elevenlabsModel: model,
-        phrasePreview: text.slice(0, 60),
-      }),
-    );
+    void this.audioCache.setBuffer(k, buffer);
+    this.audioCache.logCacheWarm(k, Date.now() - started, model, text);
   }
 
   resolveLatencyModelId(modelId?: string | null): string {
@@ -98,8 +112,7 @@ export class VoicePromptAudioService {
   }
 
   private cacheKey(voiceId: string, modelId: string, text: string): string {
-    const t = text.trim().slice(0, 2000);
-    return createHash('sha256').update(`${voiceId}\0${modelId}\0${t}`, 'utf8').digest('hex');
+    return this.audioCache.audioHash(voiceId, modelId, text);
   }
 
   /**
@@ -119,32 +132,44 @@ export class VoicePromptAudioService {
     fromPhraseCache: boolean;
     audioCacheKey: string;
     ttsGenerated: boolean;
+    audioServedFromCache: boolean;
   } {
     const modelId = this.resolveLatencyModelId(opts.modelId);
     const vid = opts.voiceId.trim();
     const text = opts.text.trim().slice(0, 500);
     const audioCacheKey = this.cacheKey(vid, modelId, text);
     if (!text || !vid || !/^https:\/\//i.test(publicOrigin)) {
-      this.logAudioCache(false, audioCacheKey, opts.callSessionId);
-      return { fromPhraseCache: false, audioCacheKey, ttsGenerated: false };
+      this.logAudioCache(false, audioCacheKey, 'miss', opts.callSessionId);
+      return {
+        fromPhraseCache: false,
+        audioCacheKey,
+        ttsGenerated: false,
+        audioServedFromCache: false,
+      };
     }
 
     const hit = this.phraseBuffers.get(audioCacheKey);
-    if (!hit || hit.expiresAt <= Date.now()) {
-      this.logAudioCache(false, audioCacheKey, opts.callSessionId);
-      return { fromPhraseCache: false, audioCacheKey, ttsGenerated: false };
+    if (hit && hit.expiresAt > Date.now()) {
+      const playback = this.bufferToPlayback(publicOrigin, hit.buffer, audioCacheKey, opts.callSessionId);
+      if (playback) {
+        this.logAudioCache(true, audioCacheKey, 'memory', opts.callSessionId);
+        return {
+          playbackUrl: playback,
+          fromPhraseCache: true,
+          audioCacheKey,
+          ttsGenerated: false,
+          audioServedFromCache: true,
+        };
+      }
     }
 
-    const validation = validateTtsAudioBuffer(hit.buffer);
-    if (!validation.valid) {
-      this.logAudioCache(false, audioCacheKey, opts.callSessionId);
-      return { fromPhraseCache: false, audioCacheKey, ttsGenerated: false };
-    }
-
-    const token = this.ttsCache.put(hit.buffer);
-    const playbackUrl = buildTtsPlaybackUrl(publicOrigin, token);
-    this.logAudioCache(true, audioCacheKey, opts.callSessionId);
-    return { playbackUrl, fromPhraseCache: true, audioCacheKey, ttsGenerated: false };
+    this.logAudioCache(false, audioCacheKey, 'miss', opts.callSessionId);
+    return {
+      fromPhraseCache: false,
+      audioCacheKey,
+      ttsGenerated: false,
+      audioServedFromCache: false,
+    };
   }
 
   /**
@@ -167,6 +192,8 @@ export class VoicePromptAudioService {
     ttsGenerated: boolean;
     elevenlabsLatencyMs?: number;
     elevenlabsModel?: string;
+    audioServedFromCache?: boolean;
+    ttsLatencyMs?: number;
   }> {
     const modelId = this.resolveLatencyModelId(opts.modelId);
     const vid = opts.voiceId.trim();
@@ -183,7 +210,33 @@ export class VoicePromptAudioService {
       callSessionId: opts.callSessionId,
     });
     if (cached.playbackUrl || opts.cacheOnly) {
-      return { ...cached, elevenlabsModel: modelId };
+      return {
+        ...cached,
+        elevenlabsModel: modelId,
+        audioServedFromCache: cached.fromPhraseCache,
+        ttsLatencyMs: 0,
+      };
+    }
+
+    const persisted = await this.audioCache.getBuffer(audioCacheKey);
+    if (persisted) {
+      this.phraseBuffers.set(audioCacheKey, {
+        buffer: persisted,
+        expiresAt: Date.now() + this.phraseTtlMs,
+      });
+      const playbackUrl = this.bufferToPlayback(publicOrigin, persisted, audioCacheKey, opts.callSessionId);
+      if (playbackUrl) {
+        this.audioCache.logCacheEvent(true, audioCacheKey, 'redis', opts.callSessionId);
+        return {
+          playbackUrl,
+          fromPhraseCache: true,
+          audioCacheKey,
+          ttsGenerated: false,
+          elevenlabsModel: modelId,
+          audioServedFromCache: true,
+          ttsLatencyMs: 0,
+        };
+      }
     }
 
     let elevenlabsLatencyMs = 0;
@@ -199,6 +252,7 @@ export class VoicePromptAudioService {
         buffer,
         expiresAt: Date.now() + this.phraseTtlMs,
       });
+      void this.audioCache.setBuffer(audioCacheKey, buffer);
       const validation = validateTtsAudioBuffer(buffer);
       if (!validation.valid) {
         return {
@@ -208,9 +262,20 @@ export class VoicePromptAudioService {
           ttsGenerated: true,
           elevenlabsLatencyMs,
           elevenlabsModel: modelId,
+          audioServedFromCache: false,
+          ttsLatencyMs: elevenlabsLatencyMs,
         };
       }
       const token = this.ttsCache.put(buffer);
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.tts.generated',
+          ttsLatencyMs: elevenlabsLatencyMs,
+          elevenlabsModel: modelId,
+          audioServedFromCache: false,
+          callSessionId: opts.callSessionId ?? null,
+        }),
+      );
       return {
         playbackUrl: buildTtsPlaybackUrl(publicOrigin, token),
         fromPhraseCache: false,
@@ -218,6 +283,8 @@ export class VoicePromptAudioService {
         ttsGenerated: true,
         elevenlabsLatencyMs,
         elevenlabsModel: modelId,
+        audioServedFromCache: false,
+        ttsLatencyMs: elevenlabsLatencyMs,
       };
     } catch {
       return {
@@ -226,17 +293,29 @@ export class VoicePromptAudioService {
         audioCacheKey,
         ttsGenerated: false,
         elevenlabsModel: modelId,
+        audioServedFromCache: false,
       };
     }
   }
 
-  private logAudioCache(hit: boolean, audioCacheKey: string, callSessionId?: string): void {
-    this.logger.log(
-      JSON.stringify({
-        event: hit ? 'voice.audio_cache_hit' : 'voice.audio_cache_miss',
-        audioCacheKey: audioCacheKey.slice(0, 16),
-        callSessionId: callSessionId ?? null,
-      }),
-    );
+  private bufferToPlayback(
+    publicOrigin: string,
+    buffer: Buffer,
+    audioCacheKey: string,
+    callSessionId?: string,
+  ): string | undefined {
+    const validation = validateTtsAudioBuffer(buffer);
+    if (!validation.valid) return undefined;
+    const token = this.ttsCache.put(buffer);
+    return buildTtsPlaybackUrl(publicOrigin, token);
+  }
+
+  private logAudioCache(
+    hit: boolean,
+    audioCacheKey: string,
+    layer: 'memory' | 'redis' | 'disk' | 'miss',
+    callSessionId?: string,
+  ): void {
+    this.audioCache.logCacheEvent(hit, audioCacheKey, layer, callSessionId);
   }
 }

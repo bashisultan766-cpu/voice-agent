@@ -60,13 +60,13 @@ import {
 } from './voice-email-capture.util';
 import { processTelephonySpellingPipeline } from './telephony-spelling-capture.util';
 import {
-  buildInstantReply,
-  shouldUseInstantReply,
+  buildInstantEngineReply,
+  shouldBypassOpenAI,
   shortenVoiceReply,
   VOICE_WORD_LIMITS,
-} from './instant-reply.util';
+} from './instant-reply.engine';
+import { VoiceLatencyAnalyzerService } from './voice-latency-analyzer.service';
 import { logVoiceTurnPerformance } from './voice-turn-performance.util';
-import { logVoiceLatencyBreakdown } from './voice-latency-breakdown.util';
 
 /**
  * Voice runtime: assembles prompt, handles conversation flow.
@@ -91,6 +91,7 @@ export class VoiceRuntimeService {
     private readonly conversationAnalytics: ConversationAnalyticsService,
     private readonly callMemory: CallMemoryService,
     private readonly policyPrefetch: PolicyContextPrefetchService,
+    private readonly voiceLatencyAnalyzer: VoiceLatencyAnalyzerService,
   ) {}
 
   private deterministicFallbackEnabled(): boolean {
@@ -1001,13 +1002,15 @@ export class VoiceRuntimeService {
 
     const orderStateForInstant =
       typeof sessionMetaEarly.orderState === 'string' ? sessionMetaEarly.orderState : 'IDLE';
-    if (
-      shouldUseInstantReply(trimmedUserText, orderStateForInstant) &&
-      !isSpellingCaptureActive(sessionMetaEarly)
-    ) {
+    const bypass = shouldBypassOpenAI({
+      text: trimmedUserText,
+      orderState: orderStateForInstant,
+      spellingCaptureActive: isSpellingCaptureActive(sessionMetaEarly),
+    });
+    if (bypass.bypass && bypass.openaiSkippedReason === 'instant_deterministic_reply') {
       const storeName = ctx.store?.name ?? 'SureShot Books';
       reply = shortenVoiceReply(
-        polishVoiceReply(buildInstantReply(trimmedUserText, storeName), { maxSentences: 2, maxChars: 120 }),
+        polishVoiceReply(buildInstantEngineReply(trimmedUserText, storeName), { maxSentences: 2, maxChars: 120 }),
         VOICE_WORD_LIMITS.simple,
       );
       const userSeqInstant = await this.transcriptBuffer.getNextSequence(callSessionId);
@@ -1022,7 +1025,7 @@ export class VoiceRuntimeService {
       });
 
       const totalTurnLatencyMs = Date.now() - turnStartedAt;
-      logVoiceLatencyBreakdown({
+      this.voiceLatencyAnalyzer.recordBreakdown({
         callSessionId,
         tenantId: ctx.tenantId,
         agentId: ctx.agentId,
@@ -1035,7 +1038,7 @@ export class VoiceRuntimeService {
         instantReplyUsed: true,
         openaiCalled: false,
         ttsGenerated: false,
-        openaiSkippedReason: 'instant_deterministic_reply',
+        openaiSkippedReason: bypass.openaiSkippedReason,
       });
       logVoiceTurnPerformance({
         callSessionId,

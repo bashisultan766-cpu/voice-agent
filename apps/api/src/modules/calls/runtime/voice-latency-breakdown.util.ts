@@ -99,7 +99,7 @@ export function logVoiceLatencyBreakdown(b: VoiceLatencyBreakdown): void {
   if (total >= SLA_FAIL_MS) {
     perfLogger.error(
       JSON.stringify({
-        event: 'voice.latency.sla_failed',
+        event: 'voice.sla_failed',
         callSessionId: b.callSessionId,
         totalCallerWaitMs: total,
         rootCause,
