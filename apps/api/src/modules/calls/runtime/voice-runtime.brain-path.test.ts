@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type OpenAI from 'openai';
-import { VoiceRuntimeService } from './voice-runtime.service';
 import type { LlmAgentOrchestratorService } from './llm-agent-orchestrator.service';
 import type { SessionContextService } from './session-context.service';
+import { VoiceRuntimeService } from './voice-runtime.service';
 import type { CallsService } from '../calls.service';
 import type { RuntimeSafetyService } from './runtime-safety.service';
 import type { TranscriptBufferService } from './transcript-buffer.service';
 import { containsBannedVoicePhrase } from './voice-brain-reply.util';
+import { selectInstantAcknowledgement } from '../../integrations/twilio/instant-acknowledgement.util';
 
 function mockCtx() {
   return {
@@ -28,6 +28,16 @@ function mockCtx() {
 
 function buildRuntime(overrides: {
   handleTurn: LlmAgentOrchestratorService['handleTurn'];
+  productFastPathExecute?: () => Promise<{
+    used: boolean;
+    reply?: string;
+    openaiCalled: false;
+    product_fast_path_used: boolean;
+    brain: 'deterministic_product_fast_path';
+    localProductSearchMs?: number;
+    shopifySkipped?: boolean;
+    productFastPathConfidence?: number;
+  }>;
 }) {
   const sessionContext = {
     load: async () => mockCtx(),
@@ -86,6 +96,16 @@ function buildRuntime(overrides: {
     {} as never,
     {} as never,
     { recordBreakdown: () => 'unknown' } as never,
+    {
+      execute:
+        overrides.productFastPathExecute ??
+        (async () => ({
+          used: false,
+          openaiCalled: false,
+          product_fast_path_used: false,
+          brain: 'deterministic_product_fast_path' as const,
+        })),
+    } as never,
   );
 }
 
@@ -157,90 +177,47 @@ test('how are you reply without OpenAI', async () => {
   }
 });
 
-test('history book calls handleTurn then search tool via orchestrator mock', async () => {
-  const internalTools: string[] = [];
-  let completionStep = 0;
-
-  const completionFn = async () => {
-    completionStep += 1;
-    if (completionStep === 1) {
-      return {
-        choices: [
-          {
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: 'c1',
-                  type: 'function',
-                  function: {
-                    name: 'ShopifyProductSearch',
-                    arguments: JSON.stringify({ query: 'history', searchType: 'category' }),
-                  },
-                },
-              ],
-            },
-          },
-        ],
-      } as OpenAI.Chat.ChatCompletion;
-    }
-    return {
-      choices: [
-        {
-          message: {
-            role: 'assistant',
-            content:
-              'I found World History Vol 1 for $24.99 with 8 in stock. Would you like to order it?',
-          },
-        },
-      ],
-    } as OpenAI.Chat.ChatCompletion;
-  };
-
-  const { LlmAgentOrchestratorService } = await import('./llm-agent-orchestrator.service');
-  const orchestrator = new LlmAgentOrchestratorService(
-    { get: () => undefined } as never,
-    {
-      load: async () => mockCtx() as never,
-    } as never,
-    {
-      execute: async (_c: unknown, name: string) => {
-        internalTools.push(name);
-        return {
-          ok: true,
-          toolName: name,
-          storeId: 'store_1',
-          data: {
-            results: [
-              {
-                id: 'p1',
-                title: 'World History Vol 1',
-                primaryVariantId: 'v1',
-                variants: [{ id: 'v1', price: '24.99', inventoryQuantity: 8 }],
-              },
-            ],
-          },
-        };
-      },
-    } as never,
-    {
-      summarizeForPrompt: () => '',
-      load: async () => ({}),
-      setEmailState: async () => undefined,
-    } as never,
-    { mergeSessionMetadata: async () => ({}), findOneById: async () => ({ metadata: {} }) } as never,
-  );
-
+test('history book uses product fast path without OpenAI', async () => {
+  let handleTurnCalls = 0;
   const runtime = buildRuntime({
-    handleTurn: (id, text, hist, opts) =>
-      orchestrator.handleTurn(id, text, hist, { ...opts, completionFn }),
+    handleTurn: async () => {
+      handleTurnCalls += 1;
+      return {
+        reply: 'should not run',
+        toolCallsCount: 0,
+        toolNames: [],
+        state: { checkoutStage: 'idle' } as never,
+      };
+    },
+    productFastPathExecute: async () => ({
+      used: true,
+      reply: 'Yes, I found World History Vol 1. The price is 24.99.',
+      localProductSearchMs: 120,
+      shopifySkipped: true,
+      productFastPathConfidence: 0.9,
+      openaiCalled: false,
+      product_fast_path_used: true,
+      brain: 'deterministic_product_fast_path',
+    }),
   });
 
-  const { reply } = await runtime.processUtterance('sess_brain_2', 'I need a history book', []);
-  assert.ok(internalTools.includes('searchProducts'));
+  const { reply, turnProof } = await runtime.processUtterance('sess_brain_2', 'I need a history book', []);
+  assert.equal(handleTurnCalls, 0);
+  assert.equal(turnProof?.openaiCalled, false);
+  assert.equal(turnProof?.brain, 'deterministic_product_fast_path');
   assert.match(reply, /World History/i);
-  assert.match(reply, /24\.99/);
+});
+
+test('product search ack uses short cached phrase', () => {
+  const sel = selectInstantAcknowledgement({
+    intent: 'product_search',
+    speechText: 'do you have atomic habits',
+    callState: 'IDLE',
+    metadata: {},
+    forceElevenLabsOnly: false,
+  });
+  assert.equal(sel.mode, 'deferred_kickoff');
+  assert.match(sel.instantPhrase ?? '', /let me check/i);
 });
 
 test('containsBannedVoicePhrase detects robotic fillers', () => {

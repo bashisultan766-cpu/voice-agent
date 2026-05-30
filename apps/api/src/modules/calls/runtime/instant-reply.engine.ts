@@ -104,3 +104,5 @@ export {
   shortenVoiceReply,
   VOICE_WORD_LIMITS,
 };
+
+export { shouldBypassOpenAIForVoiceTurn } from './voice-product-fast-path.util';

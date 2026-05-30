@@ -97,10 +97,91 @@ export interface VoiceSessionContext {
 @Injectable()
 export class SessionContextService {
   private readonly log = new Logger(SessionContextService.name);
+  private readonly contextCache = new Map<
+    string,
+    {
+      ctx: VoiceSessionContext;
+      expiresAt: number;
+      configUpdatedAt: string | null;
+      configVersion: number | null;
+    }
+  >();
+  private readonly contextTtlMs = 60_000;
 
   constructor(private readonly prisma: PrismaService, private readonly encryption: EncryptionService) {}
 
-  async load(callSessionId: string): Promise<VoiceSessionContext | null> {
+  async load(callSessionId: string, forceRefresh = false): Promise<VoiceSessionContext | null> {
+    if (!forceRefresh) {
+      const hit = this.contextCache.get(callSessionId);
+      if (hit && hit.expiresAt > Date.now()) {
+        const stamp = await this.readAgentConfigStamp(callSessionId);
+        const configStillFresh =
+          stamp &&
+          stamp.configUpdatedAt === hit.configUpdatedAt &&
+          stamp.configVersion === hit.configVersion;
+        if (configStillFresh) {
+          this.log.log(
+            JSON.stringify({
+              event: 'session_context.cache_hit',
+              session_context_cache_hit: true,
+              callSessionId,
+              configUpdatedAt: hit.configUpdatedAt,
+              configVersion: hit.configVersion,
+            }),
+          );
+          return hit.ctx;
+        }
+      }
+    }
+
+    const ctx = await this.loadFresh(callSessionId);
+    if (ctx) {
+      this.contextCache.set(callSessionId, {
+        ctx,
+        expiresAt: Date.now() + this.contextTtlMs,
+        configUpdatedAt: ctx.configUpdatedAt ?? null,
+        configVersion: ctx.configVersion ?? null,
+      });
+    }
+    return ctx;
+  }
+
+  invalidate(callSessionId: string): void {
+    this.contextCache.delete(callSessionId);
+  }
+
+  private async readAgentConfigStamp(
+    callSessionId: string,
+  ): Promise<{ configUpdatedAt: string | null; configVersion: number | null } | null> {
+    const session = await this.prisma.callSession.findUnique({
+      where: { id: callSessionId },
+      select: {
+        agent: {
+          select: {
+            updatedAt: true,
+            agentConfig: { select: { updatedAt: true, metadata: true } },
+          },
+        },
+      },
+    });
+    if (!session?.agent) return null;
+
+    const configUpdatedAt = session.agent.updatedAt?.toISOString() ?? null;
+    const cfgMeta =
+      session.agent.agentConfig?.metadata &&
+      typeof session.agent.agentConfig.metadata === 'object' &&
+      !Array.isArray(session.agent.agentConfig.metadata)
+        ? (session.agent.agentConfig.metadata as Record<string, unknown>)
+        : null;
+    const configVersion =
+      typeof cfgMeta?.configVersion === 'number' && Number.isFinite(cfgMeta.configVersion)
+        ? Number(cfgMeta.configVersion)
+        : 1;
+
+    return { configUpdatedAt, configVersion };
+  }
+
+  private async loadFresh(callSessionId: string): Promise<VoiceSessionContext | null> {
     const session = await this.prisma.callSession.findUnique({
       where: { id: callSessionId },
       include: {

@@ -1633,7 +1633,7 @@ export class TwilioWebhookService implements OnModuleInit {
         selection: ackSelection,
         intent: userIntent,
         letMeCheckUsedBefore,
-        instantPhraseForLog: null,
+        instantPhraseForLog: kickText.length > 0 ? kickText : null,
       });
       const letMeCheckUsedAfter = deferredPatch.letMeCheckUsed;
 
@@ -1656,6 +1656,8 @@ export class TwilioWebhookService implements OnModuleInit {
       let kickPhrase: { playbackUrl?: string; voiceProviderActuallyUsed: VoiceProviderActuallyUsed } = {
         voiceProviderActuallyUsed: resolveVoiceProviderActuallyUsed(false, this.voiceProviderPolicy()),
       };
+      let productSearchAckPlayed = false;
+      let productSearchAckCacheHit = false;
       if (kickText.length > 0) {
         const voiceIdKick = this.resolveElevenLabsVoiceId(ctx.agent);
         const modelKick = this.voicePromptAudio.resolveLatencyModelId(ctx.agent.elevenlabsModel);
@@ -1666,6 +1668,8 @@ export class TwilioWebhookService implements OnModuleInit {
           callSessionId,
         });
         if (cachedKick.playbackUrl) {
+          productSearchAckPlayed = true;
+          productSearchAckCacheHit = cachedKick.audioCacheHit;
           kickPhrase = {
             playbackUrl: cachedKick.playbackUrl,
             voiceProviderActuallyUsed: resolveVoiceProviderActuallyUsed(true, this.voiceProviderPolicy()),
@@ -1728,6 +1732,8 @@ export class TwilioWebhookService implements OnModuleInit {
           letMeCheckUsedBefore,
           letMeCheckUsedAfter,
           intentDetected: userIntent,
+          product_search_ack_played: productSearchAckPlayed,
+          audioCacheHit: productSearchAckCacheHit,
         }),
       );
 

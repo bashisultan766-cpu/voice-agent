@@ -118,7 +118,7 @@ export function selectInstantAcknowledgement(input: SelectInstantAcknowledgement
     }
   }
 
-  const productSearchAck = !forceElevenLabsOnly ? PRODUCT_SEARCH_FAST_ACK : null;
+  const productSearchAck = !forceElevenLabsOnly ? VOICE_CACHED_PHRASES.searchAckShort : null;
 
   if (intent === 'product_search') {
     if (isLikelyProductCorrection(trimmed)) {
