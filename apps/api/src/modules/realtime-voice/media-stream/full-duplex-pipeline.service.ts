@@ -112,8 +112,22 @@ export class FullDuplexPipelineService {
       const bridge = await this.openaiBridgeService.createBridge({
         apiKey,
         instructions: 'Transcribe bookstore phone callers accurately. Do not generate responses.',
+        onConnected: () => {
+          this.logger.log(
+            JSON.stringify({ event: 'openai_realtime_connected', callSessionId, streamSid, callSid }),
+          );
+        },
         onSpeechStart: () => void this.handleSpeechStart(callSessionId),
-        onPartialTranscript: (partial) => void this.metrics.recordPartialTranscript(callSessionId, partial),
+        onPartialTranscript: (partial) => {
+          this.logger.debug(
+            JSON.stringify({
+              event: 'transcript_partial',
+              callSessionId,
+              chars: partial.length,
+            }),
+          );
+          void this.metrics.recordPartialTranscript(callSessionId, partial);
+        },
         onFinalTranscript: (text) => void this.handleFinalTranscript(callSessionId, text),
         onError: (err) => {
           this.logger.warn(JSON.stringify({ event: 'openai.realtime.error', callSessionId, message: err.message }));
@@ -173,6 +187,7 @@ export class FullDuplexPipelineService {
       await this.cancelTts(callSessionId, 'user_barge_in');
       await this.metrics.recordBargeIn(callSessionId);
       this.events.emit('stream.interrupted', { callSessionId });
+      this.logger.log(JSON.stringify({ event: 'barge_in_detected', callSessionId }));
     }
 
     await this.metrics.record(callSessionId, { streamingStatus: 'listening', agentSpeaking: false });
@@ -198,6 +213,13 @@ export class FullDuplexPipelineService {
 
     const userSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
     await this.transcriptBuffer.append(callSessionId, 'user', trimmed, userSeq);
+    this.logger.log(
+      JSON.stringify({
+        event: 'transcript_final',
+        callSessionId,
+        chars: trimmed.length,
+      }),
+    );
     void this.e2eTrace.record(callSessionId, 'transcript_final', {
       metadata: { text: trimmed.slice(0, 200) },
       provider: 'openai_realtime',
@@ -293,18 +315,30 @@ export class FullDuplexPipelineService {
     for (const chunk of chunks) {
       if (abort.signal.aborted) break;
 
+      let elevenLabsLogged = false;
       const tts = new ElevenLabsWsTtsSession({
         apiKey,
         voiceId,
         modelId: ctx.agent.elevenlabsModel?.trim() || process.env.ELEVENLABS_MODEL_ID,
         onAudioChunk: (mulawBase64, isFirst) => {
           if (abort.signal.aborted) return;
-          this.sendMulawToTwilio(state, mulawBase64);
+          if (!elevenLabsLogged) {
+            elevenLabsLogged = true;
+            this.logger.log(JSON.stringify({ event: 'elevenlabs_stream_connected', callSessionId }));
+          }
+          this.sendMulawToTwilio(state, mulawBase64, { logFirstOutbound: isFirst });
           chunksEmitted += 1;
           if (isFirst && !state.firstAudioSent) {
             state.firstAudioSent = true;
             const ttfa = Date.now() - state.connectedAt;
             void this.metrics.record(callSessionId, { timeToFirstAudioMs: ttfa });
+            this.logger.log(
+              JSON.stringify({
+                event: 'tts_first_chunk',
+                callSessionId,
+                timeToFirstAudioMs: ttfa,
+              }),
+            );
           }
         },
         onError: (err) => {
@@ -344,9 +378,22 @@ export class FullDuplexPipelineService {
     // Log and skip audio; Gather fallback handles production TTS if triggered.
   }
 
-  private sendMulawToTwilio(state: MediaStreamSessionState, mulawBase64: string): void {
+  private sendMulawToTwilio(
+    state: MediaStreamSessionState,
+    mulawBase64: string,
+    opts?: { logFirstOutbound?: boolean },
+  ): void {
     if (state.twilioWs.readyState !== state.twilioWs.OPEN) return;
     state.twilioWs.send(buildTwilioMediaPayload(state.streamSid, mulawBase64));
+    if (opts?.logFirstOutbound) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'outbound_audio_sent',
+          callSessionId: state.callSessionId,
+          streamSid: state.streamSid,
+        }),
+      );
+    }
     this.events.emit('stream.chunk', {
       callSessionId: state.callSessionId,
       text: '[audio]',
@@ -370,6 +417,14 @@ export class FullDuplexPipelineService {
   }
 
   private async triggerFallback(callSessionId: string, callSid: string, reason: string): Promise<void> {
+    this.logger.warn(
+      JSON.stringify({
+        event: 'realtime.media_stream.fallback_to_gather',
+        callSessionId,
+        callSid,
+        reason,
+      }),
+    );
     void this.e2eTrace.record(callSessionId, 'fallback_triggered', {
       ok: false,
       provider: 'twilio_gather',

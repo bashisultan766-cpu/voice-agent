@@ -2,7 +2,10 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { HttpAdapterHost } from '@nestjs/core';
 import { IncomingMessage } from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { isFullDuplexVoiceEnabled } from '../config/realtime-voice-flags.util';
+import {
+  getRealtimePipelineFlags,
+  isFullDuplexVoiceEnabled,
+} from '../config/realtime-voice-flags.util';
 import { FullDuplexPipelineService } from './full-duplex-pipeline.service';
 import {
   extractCallSessionId,
@@ -27,8 +30,13 @@ export class RealtimeMediaStreamGateway implements OnModuleInit, OnModuleDestroy
 
   onModuleInit(): void {
     if (!isFullDuplexVoiceEnabled()) {
-      this.logger.log(
-        'Full-duplex media stream gateway disabled (requires VOICE_MEDIA_STREAM_ENABLED + OPENAI_REALTIME_ENABLED + REALTIME_MULTI_AGENT_ENABLED)',
+      const flags = getRealtimePipelineFlags();
+      this.logger.warn(
+        JSON.stringify({
+          event: 'realtime.media_stream.gateway_disabled',
+          flags,
+          fix: 'Set VOICE_MEDIA_STREAM_ENABLED, OPENAI_REALTIME_ENABLED, REALTIME_MULTI_AGENT_ENABLED to true (or 1/yes/on) and restart.',
+        }),
       );
       return;
     }
@@ -49,7 +57,13 @@ export class RealtimeMediaStreamGateway implements OnModuleInit, OnModuleDestroy
       void this.handleConnection(ws, req);
     });
 
-    this.logger.log(JSON.stringify({ event: 'realtime.media_stream.ws_ready', path: this.pathPrefix }));
+    this.logger.log(
+      JSON.stringify({
+        event: 'realtime.media_stream.ws_ready',
+        path: this.pathPrefix,
+        wssExample: 'wss://<PUBLIC_WEBHOOK_HOST>/api/realtime-voice/media-stream',
+      }),
+    );
   }
 
   onModuleDestroy(): void {

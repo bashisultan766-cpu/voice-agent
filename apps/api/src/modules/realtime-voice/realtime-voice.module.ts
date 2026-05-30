@@ -34,6 +34,7 @@ import { MediaStreamFallbackService } from './media-stream/media-stream-fallback
 import { VoiceCheckoutFlowService } from './checkout/voice-checkout-flow.service';
 import { VoiceE2ETraceService } from './observability/voice-e2e-trace.service';
 import { VoiceE2EObservabilityListener } from './observability/voice-e2e-observability.listener';
+import { RealtimeVoicePipelineBootstrapService } from './config/realtime-voice-pipeline.bootstrap';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { VoiceE2EObservabilityListener } from './observability/voice-e2e-observa
   ],
   controllers: [RealtimeVoiceController],
   providers: [
+    RealtimeVoicePipelineBootstrapService,
     RealtimeVoiceOrchestratorService,
     VoiceEventBusService,
     VoiceSessionMemoryService,

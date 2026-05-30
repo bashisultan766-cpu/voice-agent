@@ -106,6 +106,18 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             event: 'voice.public_base_url',
             value: this.publicBaseUrl,
         }));
+        const pipelineFlags = (0, realtime_voice_flags_util_1.getRealtimePipelineFlags)();
+        this.logger.log(JSON.stringify({
+            event: 'realtime_pipeline_enabled',
+            voiceMediaStream: pipelineFlags.voiceMediaStream,
+            openaiRealtime: pipelineFlags.openaiRealtime,
+            multiAgent: pipelineFlags.multiAgent,
+            elevenlabsStreaming: pipelineFlags.elevenlabsStreaming,
+            gatherFallback: pipelineFlags.gatherFallback,
+            fullDuplex: pipelineFlags.fullDuplex,
+            inboundPipelinePath: (0, realtime_voice_flags_util_1.resolveInboundVoicePipelinePath)(),
+            twilioInboundWebhook: `${this.publicBaseUrl}/api/twilio/voice/inbound`,
+        }));
         const policy = this.voiceProviderPolicy();
         if (policy.twilioSayBlocked) {
             this.logger.log(JSON.stringify((0, voice_provider_policy_util_1.buildElevenLabsOnlyModeActiveLog)(policy)));
@@ -641,10 +653,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             }));
         }
         const origin = this.getPublicBaseUrl();
+        const inboundPath = (0, realtime_voice_flags_util_1.resolveInboundVoicePipelinePath)();
         if ((0, realtime_voice_flags_util_1.isFullDuplexVoiceEnabled)()) {
             const wsBase = origin.replace(/^http/i, 'wss');
             const streamUrl = `${wsBase}/api/realtime-voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
-            const twimlStream = (0, media_stream_twiml_1.buildMediaStreamConnectTwiML)(streamUrl, session.id);
+            const twimlStream = (0, media_stream_twiml_1.buildMediaStreamConnectTwiML)(streamUrl, session.id, {
+                track: 'inbound_track',
+            });
             await this.streamMetrics.merge(session.id, {
                 streamingMode: 'media_stream',
                 streamingStatus: 'listening',
@@ -653,14 +668,18 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             this.logger.log(JSON.stringify({
                 event: 'twilio.voice.inbound_full_duplex',
                 callSessionId: session.id,
+                inboundPipelinePath: inboundPath,
                 streamUrl: streamUrl.replace(/callSessionId=[^&]+/, 'callSessionId=***'),
+                twiml: 'Connect/Stream',
             }));
             return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };
         }
         if ((0, realtime_voice_flags_util_1.isLegacyMediaStreamEnabled)() || (0, media_stream_twiml_1.isMediaStreamInboundEnabled)()) {
             const wsBase = origin.replace(/^http/i, 'wss');
             const streamUrl = `${wsBase}/api/twilio/voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
-            const twimlStream = (0, media_stream_twiml_1.buildMediaStreamConnectTwiML)(streamUrl, session.id);
+            const twimlStream = (0, media_stream_twiml_1.buildMediaStreamConnectTwiML)(streamUrl, session.id, {
+                track: 'inbound_track',
+            });
             await this.streamMetrics.merge(session.id, {
                 streamingMode: 'media_stream',
                 streamingStatus: 'listening',
@@ -672,6 +691,13 @@ let TwilioWebhookService = TwilioWebhookService_1 = class TwilioWebhookService {
             }));
             return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };
         }
+        this.logger.log(JSON.stringify({
+            event: 'twilio.voice.inbound_gather_mvp',
+            callSessionId: session.id,
+            inboundPipelinePath: inboundPath,
+            reason: 'full_duplex_flags_not_all_enabled',
+            flags: (0, realtime_voice_flags_util_1.getRealtimePipelineFlags)(),
+        }));
         const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(session.id)}`;
         const hearingDebug = this.isGatherHearingDebugMode();
         const hearingDebugEffective = this.resolveGatherHearingDebugEffective();

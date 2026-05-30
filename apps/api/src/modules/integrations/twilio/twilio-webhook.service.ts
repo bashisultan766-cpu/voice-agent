@@ -68,8 +68,10 @@ import {
   isMediaStreamInboundEnabled,
 } from './twiml/media-stream.twiml';
 import {
+  getRealtimePipelineFlags,
   isFullDuplexVoiceEnabled,
   isLegacyMediaStreamEnabled,
+  resolveInboundVoicePipelinePath,
 } from '../../realtime-voice/config/realtime-voice-flags.util';
 import { VoiceStreamMetricsService } from '../../calls/runtime/voice-stream-metrics.service';
 import { VoiceCostAnalyticsService } from '../../calls/runtime/voice-cost-analytics.service';
@@ -216,6 +218,20 @@ export class TwilioWebhookService implements OnModuleInit {
       JSON.stringify({
         event: 'voice.public_base_url',
         value: this.publicBaseUrl,
+      }),
+    );
+    const pipelineFlags = getRealtimePipelineFlags();
+    this.logger.log(
+      JSON.stringify({
+        event: 'realtime_pipeline_enabled',
+        voiceMediaStream: pipelineFlags.voiceMediaStream,
+        openaiRealtime: pipelineFlags.openaiRealtime,
+        multiAgent: pipelineFlags.multiAgent,
+        elevenlabsStreaming: pipelineFlags.elevenlabsStreaming,
+        gatherFallback: pipelineFlags.gatherFallback,
+        fullDuplex: pipelineFlags.fullDuplex,
+        inboundPipelinePath: resolveInboundVoicePipelinePath(),
+        twilioInboundWebhook: `${this.publicBaseUrl}/api/twilio/voice/inbound`,
       }),
     );
     const policy = this.voiceProviderPolicy();
@@ -875,11 +891,14 @@ export class TwilioWebhookService implements OnModuleInit {
     }
 
     const origin = this.getPublicBaseUrl();
+    const inboundPath = resolveInboundVoicePipelinePath();
 
     if (isFullDuplexVoiceEnabled()) {
       const wsBase = origin.replace(/^http/i, 'wss');
       const streamUrl = `${wsBase}/api/realtime-voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
-      const twimlStream = buildMediaStreamConnectTwiML(streamUrl, session.id);
+      const twimlStream = buildMediaStreamConnectTwiML(streamUrl, session.id, {
+        track: 'inbound_track',
+      });
       await this.streamMetrics.merge(session.id, {
         streamingMode: 'media_stream',
         streamingStatus: 'listening',
@@ -889,7 +908,9 @@ export class TwilioWebhookService implements OnModuleInit {
         JSON.stringify({
           event: 'twilio.voice.inbound_full_duplex',
           callSessionId: session.id,
+          inboundPipelinePath: inboundPath,
           streamUrl: streamUrl.replace(/callSessionId=[^&]+/, 'callSessionId=***'),
+          twiml: 'Connect/Stream',
         }),
       );
       return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };
@@ -898,7 +919,9 @@ export class TwilioWebhookService implements OnModuleInit {
     if (isLegacyMediaStreamEnabled() || isMediaStreamInboundEnabled()) {
       const wsBase = origin.replace(/^http/i, 'wss');
       const streamUrl = `${wsBase}/api/twilio/voice/media-stream?callSessionId=${encodeURIComponent(session.id)}`;
-      const twimlStream = buildMediaStreamConnectTwiML(streamUrl, session.id);
+      const twimlStream = buildMediaStreamConnectTwiML(streamUrl, session.id, {
+        track: 'inbound_track',
+      });
       await this.streamMetrics.merge(session.id, {
         streamingMode: 'media_stream',
         streamingStatus: 'listening',
@@ -912,6 +935,16 @@ export class TwilioWebhookService implements OnModuleInit {
       );
       return { twiml: twimlStream, callSessionId: session.id, agentResolved: true };
     }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'twilio.voice.inbound_gather_mvp',
+        callSessionId: session.id,
+        inboundPipelinePath: inboundPath,
+        reason: 'full_duplex_flags_not_all_enabled',
+        flags: getRealtimePipelineFlags(),
+      }),
+    );
 
     const gatherActionUrl = `${origin}/api/twilio/voice/gather?callSessionId=${encodeURIComponent(
       session.id,

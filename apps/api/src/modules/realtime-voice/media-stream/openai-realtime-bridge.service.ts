@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import WebSocket from 'ws';
+import { isOpenAiRealtimeEnabled } from '../config/realtime-voice-flags.util';
 import { OpenAiRealtimeBridge, type OpenAiRealtimeBridgeCallbacks } from './openai-realtime-bridge';
 
 export type CreateBridgeInput = OpenAiRealtimeBridgeCallbacks & {
@@ -44,6 +45,6 @@ export class OpenAiRealtimeBridgeService {
   }
 
   isEnabled(): boolean {
-    return this.config.get<string>('OPENAI_REALTIME_ENABLED') === 'true';
+    return isOpenAiRealtimeEnabled();
   }
 }

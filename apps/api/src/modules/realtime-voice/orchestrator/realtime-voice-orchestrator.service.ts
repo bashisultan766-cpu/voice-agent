@@ -17,6 +17,7 @@ import { VoiceCheckoutFlowService } from '../checkout/voice-checkout-flow.servic
 import { emptyCheckoutSession } from '../checkout/voice-checkout-session.types';
 import { checkoutStageFiller, isResendPaymentEmailRequest } from '../checkout/voice-checkout-flow.util';
 import { VoiceE2ETraceService } from '../observability/voice-e2e-trace.service';
+import { isRealtimeMultiAgentEnabled } from '../config/realtime-voice-flags.util';
 import type { AgentTaskResult, VoiceGraphState, VoiceTurnInput, VoiceTurnOutput } from '../types/voice-turn.types';
 
 const PARALLEL_TIMEOUT_MS = 2500;
@@ -44,7 +45,7 @@ export class RealtimeVoiceOrchestratorService {
     private readonly checkoutFlow: VoiceCheckoutFlowService,
     private readonly e2eTrace: VoiceE2ETraceService,
   ) {
-    this.enabled = this.config.get<string>('REALTIME_MULTI_AGENT_ENABLED') === 'true';
+    this.enabled = isRealtimeMultiAgentEnabled();
     this.graph = buildVoiceOrchestrationGraph({
       router: (s) => this.router.route(s),
       conversationFiller: (s) => Promise.resolve(this.conversation.immediateFiller(s)),

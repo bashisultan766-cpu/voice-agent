@@ -5,6 +5,11 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { CallsService } from '../../calls/calls.service';
 import { VoiceStreamMetricsService } from '../../calls/runtime/voice-stream-metrics.service';
 import { VoiceStreamingSessionService } from '../../calls/runtime/voice-streaming-session.service';
+import {
+  isFullDuplexVoiceEnabled,
+  isLegacyMediaStreamEnabled,
+  isVoiceMediaStreamEnabled,
+} from '../../realtime-voice/config/realtime-voice-flags.util';
 
 type TwilioStreamMessage = {
   event?: string;
@@ -31,8 +36,23 @@ export class TwilioMediaStreamService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (process.env.VOICE_MEDIA_STREAM_ENABLED !== 'true') {
-      this.logger.log('Twilio Media Stream WebSocket disabled (VOICE_MEDIA_STREAM_ENABLED!=true)');
+    if (isFullDuplexVoiceEnabled()) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.legacy_media_stream_gateway_skipped',
+          reason: 'full_duplex_active',
+          usePath: '/api/realtime-voice/media-stream',
+        }),
+      );
+      return;
+    }
+    if (!isVoiceMediaStreamEnabled() && !isLegacyMediaStreamEnabled()) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'twilio.legacy_media_stream_gateway_disabled',
+          reason: 'VOICE_MEDIA_STREAM_ENABLED not truthy',
+        }),
+      );
       return;
     }
     const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();

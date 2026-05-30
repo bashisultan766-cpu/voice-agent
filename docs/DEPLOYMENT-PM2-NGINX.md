@@ -50,11 +50,21 @@ TRUST_PROXY=true
 CORS_ORIGIN=https://agent.mailcallcommunication.com
 PUBLIC_WEBHOOK_BASE_URL=https://agent.mailcallcommunication.com
 
+# Full-duplex realtime voice (Twilio Media Streams — NOT a wss:// voice webhook URL)
+VOICE_MEDIA_STREAM_ENABLED=true
+OPENAI_REALTIME_ENABLED=true
+REALTIME_MULTI_AGENT_ENABLED=true
+ELEVENLABS_STREAMING_TTS_ENABLED=true
+GATHER_FALLBACK_ENABLED=true
+REDIS_URL=redis://127.0.0.1:6379
+
 NEXT_PUBLIC_APP_URL=https://agent.mailcallcommunication.com
 NEXT_PUBLIC_API_URL=http://127.0.0.1:3001
 # Server-side Next → API (same host)
 INTERNAL_API_URL=http://127.0.0.1:3001
 ```
+
+After deploy, confirm startup log `realtime_pipeline_enabled` with `"fullDuplex":true` and `GET /api/realtime-voice/health` shows `fullDuplexEnabled:true`. Twilio **voice webhook** stays HTTPS `.../api/twilio/voice/inbound`; that endpoint returns TwiML `<Connect><Stream url="wss://.../api/realtime-voice/media-stream">`.
 
 Twilio webhooks in the console must use:
 
