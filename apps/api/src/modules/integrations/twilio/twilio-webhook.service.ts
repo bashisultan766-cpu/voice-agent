@@ -233,18 +233,29 @@ export class TwilioWebhookService implements OnModuleInit {
       take: 12,
       orderBy: { updatedAt: 'desc' },
     });
+    const modelId = this.voicePromptAudio.resolveLatencyModelId(null);
+    let totalWarmed = 0;
     for (const agent of agents) {
       const voiceId = agent.voiceId?.trim();
       if (!voiceId) continue;
-      this.voicePromptAudio.warmPreloadedPhrases({
+      const { warmed } = await this.voicePromptAudio.warmPreloadedPhrases({
         voiceId,
         apiKey: apiKey || undefined,
       });
+      totalWarmed += warmed;
     }
+    this.voicePromptAudio.logWarmComplete({
+      agents: agents.length,
+      phrases: totalWarmed,
+      modelId,
+    });
     this.logger.log(
       JSON.stringify({
-        event: 'voice.startup_phrase_audio_warm',
+        event: 'voice.audio_cache_warm_complete',
         agents: agents.length,
+        phrasesWarmed: totalWarmed,
+        elevenlabsModel: modelId,
+        envLatencyModel: process.env.ELEVENLABS_LATENCY_MODEL_ID ?? null,
       }),
     );
   }
@@ -1508,7 +1519,7 @@ export class TwilioWebhookService implements OnModuleInit {
         const modelSync = this.voicePromptAudio.resolveLatencyModelId(ctx.agent.elevenlabsModel ?? null);
 
         latencyTimer.startSection('ttsMs');
-        const mainPlay = this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(originEarly, {
+        const mainPlay = await this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(originEarly, {
           text: instantAudioPhrase,
           voiceId: voiceIdSync ?? '',
           modelId: modelSync,
@@ -1516,7 +1527,7 @@ export class TwilioWebhookService implements OnModuleInit {
         });
         const ttsMs = latencyTimer.endSection('ttsMs');
 
-        const finalFbSync = this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(originEarly, {
+        const finalFbSync = await this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(originEarly, {
           text: gatherFallbackTextSync,
           voiceId: voiceIdSync ?? '',
           modelId: modelSync,
@@ -1569,7 +1580,7 @@ export class TwilioWebhookService implements OnModuleInit {
           instantReplyUsed: true,
           openaiCalled: false,
           ttsGenerated: mainPlay.ttsGenerated,
-          audioCacheHit: mainPlay.fromPhraseCache,
+          audioCacheHit: mainPlay.audioCacheHit,
           openaiSkippedReason: 'instant_deterministic_sync',
           elevenlabsModel: modelSync,
           elevenlabsLatencyMs: mainPlay.ttsGenerated ? ttsMs : 0,
@@ -1635,7 +1646,7 @@ export class TwilioWebhookService implements OnModuleInit {
       if (kickText.length > 0) {
         const voiceIdKick = this.resolveElevenLabsVoiceId(ctx.agent);
         const modelKick = this.voicePromptAudio.resolveLatencyModelId(ctx.agent.elevenlabsModel);
-        const cachedKick = this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(originEarly, {
+        const cachedKick = await this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(originEarly, {
           text: kickText,
           voiceId: voiceIdKick ?? '',
           modelId: modelKick,
@@ -2085,7 +2096,7 @@ export class TwilioWebhookService implements OnModuleInit {
         });
         const voiceIdFiller = this.resolveElevenLabsVoiceId(ctx.agent);
         const modelFiller = this.voicePromptAudio.resolveLatencyModelId(ctx.agent.elevenlabsModel ?? null);
-        const cachedFiller = this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(origin, {
+        const cachedFiller = await this.voicePromptAudio.resolveCachedPhrasePlaybackUrl(origin, {
           text: fillerText,
           voiceId: voiceIdFiller ?? '',
           modelId: modelFiller,
@@ -2532,7 +2543,7 @@ export class TwilioWebhookService implements OnModuleInit {
                 : undefined,
         },
         audioServedFromCache: false,
-        elevenlabsModel: ctx.agent.elevenlabsModel ?? this.voicePromptAudio.resolveLatencyModelId(null),
+        elevenlabsModel: this.voicePromptAudio.resolveLatencyModelId(null),
       });
       this.voiceLatencyAnalyzer.recordBreakdown(deferredBreakdown);
       this.logger.log(
@@ -2759,33 +2770,31 @@ export class TwilioWebhookService implements OnModuleInit {
         }),
       );
 
-      const ttsOpts = {
-        apiKey: opts.elevenlabsApiKey,
-        modelId: opts.elevenlabsModel,
-      };
-      let audio = await this.elevenLabs.textToSpeech(speechText, opts.voiceId, ttsOpts);
-      let validation = validateTtsAudioBuffer(audio);
-      if (!validation.valid && this.voiceProviderPolicy().twilioSayBlocked) {
-        audio = await this.elevenLabs.textToSpeech(speechText, opts.voiceId, ttsOpts);
-        validation = validateTtsAudioBuffer(audio);
+      const voiceId = opts.voiceId?.trim();
+      if (!voiceId) {
+        return {};
       }
-      const tts_generation_time_ms = Date.now() - ttsStart;
-      if (!validation.valid) {
+
+      const ttsResult = await this.voicePromptAudio.createPhrasePlaybackUrl(publicOrigin, {
+        text: speechText,
+        voiceId,
+        apiKey: opts.elevenlabsApiKey ?? this.config.get<string>('ELEVENLABS_API_KEY') ?? undefined,
+        callSessionId: opts.callSessionId,
+      });
+      const tts_generation_time_ms = ttsResult.ttsLatencyMs ?? Date.now() - ttsStart;
+
+      if (!ttsResult.playbackUrl) {
         this.logger.warn(
           JSON.stringify({
             event: 'voice.tts.fallback_used',
             phase: opts.phase,
             callSessionId: opts.callSessionId,
-            reason: validation.reason ?? 'invalid_audio',
-            audioBytes: audio.length,
+            reason: 'elevenlabs_phrase_playback_failed',
             tts_generation_time_ms,
           }),
         );
-        return { audioBytes: audio.length, tts_generation_time_ms };
+        return { tts_generation_time_ms };
       }
-
-      const token = this.ttsCache.put(audio);
-      const playbackUrl = buildTtsPlaybackUrl(publicOrigin, token);
 
       this.logger.log(
         JSON.stringify({
@@ -2793,11 +2802,13 @@ export class TwilioWebhookService implements OnModuleInit {
           provider: 'elevenlabs',
           phase: opts.phase,
           callSessionId: opts.callSessionId,
-          audioBytes: audio.length,
-          playbackUrl,
-          contentType: validation.contentType,
+          playbackUrl: ttsResult.playbackUrl,
           ttsInputChars: speechText.length,
           tts_generation_time_ms,
+          elevenlabsModel: ttsResult.elevenlabsModel,
+          audioCacheHit: ttsResult.audioCacheHit ?? false,
+          audioServedFromCache: ttsResult.audioServedFromCache ?? false,
+          ttsGenerated: ttsResult.ttsGenerated,
         }),
       );
 
@@ -2806,12 +2817,16 @@ export class TwilioWebhookService implements OnModuleInit {
           event: 'twilio.voice.elevenlabs_audio_generated',
           phase: opts.phase,
           callSessionId: opts.callSessionId,
-          audioBytes: audio.length,
           ttsInputChars: speechText.length,
           tts_generation_time_ms,
+          elevenlabsModel: ttsResult.elevenlabsModel,
+          audioCacheHit: ttsResult.audioCacheHit ?? false,
         }),
       );
-      return { playbackUrl, audioBytes: audio.length, tts_generation_time_ms };
+      return {
+        playbackUrl: ttsResult.playbackUrl,
+        tts_generation_time_ms,
+      };
     } catch (err) {
       const tts_generation_time_ms = Date.now() - ttsStart;
       const message = err instanceof Error ? err.message.slice(0, 300) : 'unknown_error';

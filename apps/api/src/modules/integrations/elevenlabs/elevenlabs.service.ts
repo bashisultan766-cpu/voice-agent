@@ -1,8 +1,14 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  logElevenLabsModelSelected,
+  resolveElevenLabsVoiceModel,
+} from './elevenlabs-voice-model.util';
 
 @Injectable()
 export class ElevenLabsService {
+  private readonly logger = new Logger(ElevenLabsService.name);
+
   constructor(private readonly config: ConfigService) {}
 
   /**
@@ -11,7 +17,14 @@ export class ElevenLabsService {
   async textToSpeech(
     text: string,
     voiceId?: string,
-    options?: { apiKey?: string; modelId?: string; latencyMode?: boolean },
+    options?: {
+      apiKey?: string;
+      modelId?: string;
+      latencyMode?: boolean;
+      /** Live Twilio voice call — env latency model wins over agent model. */
+      voiceCall?: boolean;
+      callSessionId?: string;
+    },
   ): Promise<Buffer> {
     const key = options?.apiKey?.trim();
     if (!key) {
@@ -27,14 +40,22 @@ export class ElevenLabsService {
         'ElevenLabs voice ID is required on the agent. Save a single voice ID in agent settings.',
       );
     }
-    const modelId =
-      options?.modelId?.trim() ||
-      (options?.latencyMode
-        ? this.config.get<string>('ELEVENLABS_LATENCY_MODEL_ID')?.trim()
-        : undefined) ||
-      this.config.get<string>('ELEVENLABS_MODEL_ID')?.trim() ||
-      (options?.latencyMode ? 'eleven_turbo_v2_5' : 'eleven_multilingual_v2');
-    const latencyMode = options?.latencyMode === true;
+
+    const isVoiceCall = options?.voiceCall === true || options?.latencyMode === true;
+    const modelPick = resolveElevenLabsVoiceModel({
+      agentModelId: options?.modelId,
+      forceVoiceLatency: isVoiceCall,
+      envLatencyModelId: this.config.get<string>('ELEVENLABS_LATENCY_MODEL_ID'),
+      envDefaultModelId: this.config.get<string>('ELEVENLABS_MODEL_ID'),
+    });
+    logElevenLabsModelSelected(modelPick, {
+      callSessionId: options?.callSessionId ?? null,
+      voiceCall: isVoiceCall,
+      latencyMode: options?.latencyMode === true,
+    });
+
+    const modelId = modelPick.selectedModel;
+    const latencyMode = options?.latencyMode === true || isVoiceCall;
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vid)}`;
     const body = JSON.stringify({
       text: trimmed,

@@ -7,9 +7,10 @@ import Redis from 'ioredis';
 
 const DEFAULT_REDIS_TTL_SEC = 7 * 24 * 60 * 60;
 
+type CacheLayer = 'memory' | 'redis' | 'disk' | 'miss';
+
 /**
  * Multi-tier voice audio cache: in-process (via VoicePromptAudioService), Redis, local disk.
- * Hot path reads memory first; warm path persists across restarts via Redis/disk.
  */
 @Injectable()
 export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
@@ -17,6 +18,8 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
   private redis: Redis | null = null;
   private readonly diskDir: string | null;
   private readonly redisTtlSec: number;
+  private readonly cacheEnabled: boolean;
+  lastHitLayer: CacheLayer = 'miss';
 
   constructor(private readonly config: ConfigService) {
     const dir = this.config.get<string>('VOICE_AUDIO_CACHE_DIR')?.trim();
@@ -24,23 +27,62 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
     const ttlRaw = Number(this.config.get<string>('VOICE_AUDIO_CACHE_REDIS_TTL_SEC'));
     this.redisTtlSec =
       Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.trunc(ttlRaw) : DEFAULT_REDIS_TTL_SEC;
+    this.cacheEnabled = this.resolveCacheEnabled();
+  }
+
+  isEnabled(): boolean {
+    return this.cacheEnabled;
+  }
+
+  private resolveCacheEnabled(): boolean {
+    const raw = (
+      this.config.get<string>('VOICE_AUDIO_CACHE_ENABLED') ??
+      process.env.VOICE_AUDIO_CACHE_ENABLED ??
+      'true'
+    )
+      .trim()
+      .toLowerCase();
+    return raw !== 'false' && raw !== '0' && raw !== 'no';
   }
 
   onModuleInit(): void {
-    const url = this.config.get<string>('REDIS_URL')?.trim();
-    if (!url) return;
-    try {
-      this.redis = new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: true });
-      this.redis.on('error', (err) => {
-        this.logger.warn(`Voice audio Redis cache unavailable: ${err.message}`);
-      });
-    } catch (err) {
+    if (!this.cacheEnabled) {
       this.logger.warn(
-        `Voice audio Redis init failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        JSON.stringify({
+          event: 'voice.audio_cache_disabled',
+          reason: 'VOICE_AUDIO_CACHE_ENABLED=false',
+        }),
       );
+      return;
+    }
+    const url = this.config.get<string>('REDIS_URL')?.trim();
+    if (!url) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.audio_cache_redis_skipped',
+          reason: 'REDIS_URL unset — disk + memory only',
+        }),
+      );
+    } else {
+      try {
+        this.redis = new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: true });
+        this.redis.on('error', (err) => {
+          this.logger.warn(`Voice audio Redis cache unavailable: ${err.message}`);
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Voice audio Redis init failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        );
+      }
     }
     if (this.diskDir) {
       void mkdir(this.diskDir, { recursive: true }).catch(() => undefined);
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.audio_cache_disk_ready',
+          dir: this.diskDir,
+        }),
+      );
     }
   }
 
@@ -53,22 +95,32 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
     return createHash('sha256').update(`${voiceId}\0${modelId}\0${t}`, 'utf8').digest('hex');
   }
 
-  /** Read cached mp3 from Redis or disk (not in-memory — caller owns L1). */
+  /** Read cached mp3 from Redis then disk. */
   async getBuffer(audioHash: string): Promise<Buffer | null> {
+    if (!this.cacheEnabled) return null;
     const fromRedis = await this.getFromRedis(audioHash);
-    if (fromRedis) return fromRedis;
-    return this.getFromDisk(audioHash);
+    if (fromRedis) {
+      this.lastHitLayer = 'redis';
+      return fromRedis;
+    }
+    const fromDisk = await this.getFromDisk(audioHash);
+    if (fromDisk) {
+      this.lastHitLayer = 'disk';
+      return fromDisk;
+    }
+    this.lastHitLayer = 'miss';
+    return null;
   }
 
-  /** Persist mp3 to Redis + disk after ElevenLabs generation. */
   async setBuffer(audioHash: string, buffer: Buffer): Promise<void> {
+    if (!this.cacheEnabled) return;
     await Promise.allSettled([this.setRedis(audioHash, buffer), this.setDisk(audioHash, buffer)]);
   }
 
   logCacheEvent(
     hit: boolean,
     audioHash: string,
-    layer: 'memory' | 'redis' | 'disk' | 'miss',
+    layer: CacheLayer,
     callSessionId?: string,
   ): void {
     this.logger.log(
@@ -92,6 +144,20 @@ export class VoiceAudioCacheService implements OnModuleInit, OnModuleDestroy {
         elevenlabsLatencyMs,
         elevenlabsModel: modelId,
         phrasePreview: phrasePreview.slice(0, 60),
+      }),
+    );
+  }
+
+  logWarmComplete(args: { agents: number; phrases: number; modelId: string }): void {
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.audio_cache_warm_complete',
+        agentsWarmed: args.agents,
+        phrasesPerAgent: args.phrases,
+        elevenlabsModel: args.modelId,
+        cacheEnabled: this.cacheEnabled,
+        diskDir: this.diskDir,
+        redisConfigured: Boolean(this.redis),
       }),
     );
   }

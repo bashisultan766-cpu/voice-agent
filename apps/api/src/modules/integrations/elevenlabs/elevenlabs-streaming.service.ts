@@ -26,6 +26,8 @@ export class ElevenLabsStreamingService {
     const audio = await this.elevenLabs.textToSpeech(chunkText, options?.voiceId, {
       apiKey: options?.apiKey,
       modelId: options?.modelId,
+      latencyMode: true,
+      voiceCall: true,
     });
     return {
       audio,
@@ -40,6 +42,8 @@ export class ElevenLabsStreamingService {
     const audio = await this.elevenLabs.textToSpeech(text, options?.voiceId, {
       apiKey: options?.apiKey,
       modelId: options?.modelId,
+      latencyMode: true,
+      voiceCall: true,
     });
     return {
       audio,
