@@ -19,6 +19,11 @@ export class SendPaymentLinkDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(32)
+  phoneNumber?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(64)
   tenantId?: string;
 
@@ -35,6 +40,10 @@ export type SendPaymentLinkResponseDto = {
   agentMessage?: string;
   draftOrderId?: string;
   invoiceUrl?: string;
+  emailSentByShopify?: boolean;
+  emailSentByResend?: boolean;
+  smsSent?: boolean;
+  warning?: string;
   error?: string;
   latencyMs?: number;
 };

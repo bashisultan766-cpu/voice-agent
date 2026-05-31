@@ -45,9 +45,12 @@ When the customer confirms they want to buy:
 {
   "email": "customer@gmail.com",
   "variantId": "gid://shopify/ProductVariant/48502554689773",
-  "quantity": 1
+  "quantity": 1,
+  "phoneNumber": "+15551234567"
 }
 ```
+
+Delivery uses **Shopify invoice email + Resend backup** (`RESEND_API_KEY`, `PAYMENT_EMAIL_FROM`). Optional SMS when `phoneNumber` is provided.
 
 ## Source of truth
 

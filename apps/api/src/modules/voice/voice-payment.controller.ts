@@ -22,6 +22,7 @@ export class VoicePaymentController {
       email: dto.email,
       variantId: dto.variantId,
       quantity: dto.quantity,
+      phoneNumber: dto.phoneNumber,
       tenantId: dto.tenantId,
       agentId: dto.agentId,
     });

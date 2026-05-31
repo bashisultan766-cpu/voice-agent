@@ -90,6 +90,10 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
           description: 'Exact variantId from SureShotBooksProduct selected product (gid://shopify/ProductVariant/...)',
         },
         quantity: { type: 'integer', description: 'Number of copies (default 1)' },
+        phoneNumber: {
+          type: 'string',
+          description: 'Optional E.164 phone for SMS backup delivery of payment link',
+        },
       },
       required: ['email', 'variantId', 'quantity'],
     },

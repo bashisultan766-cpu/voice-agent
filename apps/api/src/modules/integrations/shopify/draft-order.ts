@@ -13,6 +13,14 @@ export type DraftResolvedLine = {
   sku?: string | null;
 };
 
+export type DraftOrderPaymentLinkResult = {
+  draftOrderId: string;
+  invoiceUrl: string;
+  shopifyInvoiceSent: boolean;
+  shopifyInvoiceError?: string;
+  shopifyConnectionId: string | null;
+};
+
 @Injectable()
 export class ShopifyDraftOrderService {
   constructor(
@@ -134,7 +142,7 @@ export class ShopifyDraftOrderService {
     tenantId: string,
     agentId: string,
     payload: { email: string; variantId: string; quantity: number },
-  ): Promise<{ draftOrderId: string; invoiceUrl: string }> {
+  ): Promise<DraftOrderPaymentLinkResult> {
     const customerEmail = payload.email.trim().toLowerCase();
     if (!customerEmail) {
       throw new ShopifyCheckoutValidationError(
@@ -152,7 +160,7 @@ export class ShopifyDraftOrderService {
     }
 
     const quantity = Math.max(1, Math.min(99, Math.floor(payload.quantity || 1)));
-    const { domain, token, apiVersion } = await this.client.getAgentShopifyConfig(
+    const { domain, token, apiVersion, shopifyConnectionId } = await this.client.getAgentShopifyConfig(
       tenantId,
       agentId,
     );
@@ -199,6 +207,8 @@ export class ShopifyDraftOrderService {
       );
     }
 
+    const invoiceUrlFromCreate = createData.draftOrderCreate.draftOrder?.invoiceUrl ?? null;
+
     const invoiceSendMutation = `
       mutation DraftOrderInvoiceSend($id: ID!, $email: EmailInput) {
         draftOrderInvoiceSend(id: $id, email: $email) {
@@ -207,33 +217,42 @@ export class ShopifyDraftOrderService {
         }
       }
     `;
-    const invoiceData = await this.client.adminGraphql<{
-      draftOrderInvoiceSend: {
-        draftOrder?: { id: string; invoiceUrl?: string | null };
-        userErrors?: Array<{ field?: string[]; message?: string }>;
-      };
-    }>(
-      domain,
-      token,
-      invoiceSendMutation,
-      {
-        id: draftOrderId,
-        email: { to: customerEmail },
-      },
-      apiVersion,
-    );
 
-    const invoiceErrors = invoiceData.draftOrderInvoiceSend.userErrors ?? [];
-    if (invoiceErrors.length) {
-      const msg =
-        invoiceErrors.map((e) => e.message).filter(Boolean).join('; ') ||
-        'Draft order invoice could not be sent.';
-      throw new ShopifyCheckoutValidationError('DRAFT_ORDER_INVOICE_ERROR', msg);
+    let shopifyInvoiceSent = false;
+    let shopifyInvoiceError: string | undefined;
+    let invoiceUrlFromSend: string | null = null;
+
+    try {
+      const invoiceData = await this.client.adminGraphql<{
+        draftOrderInvoiceSend: {
+          draftOrder?: { id: string; invoiceUrl?: string | null };
+          userErrors?: Array<{ field?: string[]; message?: string }>;
+        };
+      }>(
+        domain,
+        token,
+        invoiceSendMutation,
+        {
+          id: draftOrderId,
+          email: { to: customerEmail },
+        },
+        apiVersion,
+      );
+
+      const invoiceErrors = invoiceData.draftOrderInvoiceSend.userErrors ?? [];
+      if (invoiceErrors.length) {
+        shopifyInvoiceError =
+          invoiceErrors.map((e) => e.message).filter(Boolean).join('; ') ||
+          'Draft order invoice could not be sent.';
+      } else {
+        shopifyInvoiceSent = true;
+        invoiceUrlFromSend = invoiceData.draftOrderInvoiceSend.draftOrder?.invoiceUrl ?? null;
+      }
+    } catch (err) {
+      shopifyInvoiceError = err instanceof Error ? err.message : String(err);
     }
 
-    const invoiceUrl =
-      invoiceData.draftOrderInvoiceSend.draftOrder?.invoiceUrl ??
-      createData.draftOrderCreate.draftOrder?.invoiceUrl;
+    const invoiceUrl = invoiceUrlFromSend ?? invoiceUrlFromCreate;
     if (!invoiceUrl) {
       throw new ShopifyCheckoutValidationError(
         'DRAFT_ORDER_NO_INVOICE_URL',
@@ -241,6 +260,12 @@ export class ShopifyDraftOrderService {
       );
     }
 
-    return { draftOrderId, invoiceUrl };
+    return {
+      draftOrderId,
+      invoiceUrl,
+      shopifyInvoiceSent,
+      shopifyInvoiceError,
+      shopifyConnectionId,
+    };
   }
 }

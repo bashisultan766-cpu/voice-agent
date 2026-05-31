@@ -13,6 +13,7 @@ const elevenlabs_service_1 = require("./elevenlabs.service");
 const elevenlabs_streaming_service_1 = require("./elevenlabs-streaming.service");
 const elevenlabs_controller_1 = require("./elevenlabs.controller");
 const elevenlabs_twilio_controller_1 = require("./elevenlabs-twilio.controller");
+const elevenlabs_convai_controller_1 = require("./elevenlabs-convai.controller");
 const elevenlabs_twilio_register_call_service_1 = require("./elevenlabs-twilio-register-call.service");
 let ElevenLabsModule = class ElevenLabsModule {
 };
@@ -20,7 +21,7 @@ exports.ElevenLabsModule = ElevenLabsModule;
 exports.ElevenLabsModule = ElevenLabsModule = __decorate([
     (0, common_1.Module)({
         imports: [config_1.ConfigModule],
-        controllers: [elevenlabs_controller_1.ElevenLabsController, elevenlabs_twilio_controller_1.ElevenLabsTwilioController],
+        controllers: [elevenlabs_controller_1.ElevenLabsController, elevenlabs_twilio_controller_1.ElevenLabsTwilioController, elevenlabs_convai_controller_1.ElevenLabsConvaiController],
         providers: [elevenlabs_service_1.ElevenLabsService, elevenlabs_streaming_service_1.ElevenLabsStreamingService, elevenlabs_twilio_register_call_service_1.ElevenLabsTwilioRegisterCallService],
         exports: [elevenlabs_service_1.ElevenLabsService, elevenlabs_streaming_service_1.ElevenLabsStreamingService, elevenlabs_twilio_register_call_service_1.ElevenLabsTwilioRegisterCallService],
     })

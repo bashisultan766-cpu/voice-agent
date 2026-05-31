@@ -8,6 +8,13 @@ export type DraftResolvedLine = {
     title?: string;
     sku?: string | null;
 };
+export type DraftOrderPaymentLinkResult = {
+    draftOrderId: string;
+    invoiceUrl: string;
+    shopifyInvoiceSent: boolean;
+    shopifyInvoiceError?: string;
+    shopifyConnectionId: string | null;
+};
 export declare class ShopifyDraftOrderService {
     private readonly prisma;
     private readonly client;
@@ -43,8 +50,5 @@ export declare class ShopifyDraftOrderService {
         email: string;
         variantId: string;
         quantity: number;
-    }): Promise<{
-        draftOrderId: string;
-        invoiceUrl: string;
-    }>;
+    }): Promise<DraftOrderPaymentLinkResult>;
 }
