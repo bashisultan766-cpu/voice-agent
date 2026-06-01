@@ -16,8 +16,11 @@ import { VoiceApiKeyGuard } from '../voice/guards/voice-api-key.guard';
 /**
  * Multi-channel payment link delivery (email, SMS, WhatsApp).
  *
- * Previously imported TwilioModule (index [3]), which re-imported ElevenLabsModule → DeliveryModule
- * and left TwilioModule undefined at bootstrap. TwilioMessagingModule breaks that cycle.
+ * Must be imported by AppModule (see app.module.ts) so DeliveryDebugController routes register:
+ *   GET  /api/debug/payment-deliveries/latest
+ *   POST /api/debug/test-delivery
+ *
+ * Also imported by VoiceModule for PaymentLinkDeliveryService. Nest dedupes the module instance.
  */
 @Module({
   imports: [

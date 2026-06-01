@@ -25,6 +25,7 @@ import { ClientsModule } from './modules/clients/clients.module';
 import { TenantIntegrationsModule } from './modules/tenant-integrations/tenant-integrations.module';
 import { RealtimeVoiceModule } from './modules/realtime-voice/realtime-voice.module';
 import { VoiceCommerceModule } from './modules/voice-commerce.module';
+import { DeliveryModule } from './modules/delivery/delivery.module';
 import { parseEnv, validateProductionEnv } from './common/env-validation';
 import { RolesGuard } from './modules/auth/roles.guard';
 
@@ -74,6 +75,8 @@ import { RolesGuard } from './modules/auth/roles.guard';
     TenantIntegrationsModule,
     RealtimeVoiceModule,
     VoiceCommerceModule,
+    /** Registers DeliveryDebugController (/api/debug/*) at root — not only via VoiceModule import. */
+    DeliveryModule,
   ],
   providers: [
     JwtAuthGuard,
