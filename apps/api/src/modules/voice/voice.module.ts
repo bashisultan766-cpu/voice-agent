@@ -6,7 +6,6 @@ import { EmailModule } from '../integrations/email/email.module';
 import { ShopifyVoiceModule } from '../shopify/shopify-voice.module';
 import { VoiceCatalogSearchModule } from '../search/voice-catalog-search.module';
 import { VoiceCheckoutModule } from '../checkout/checkout.module';
-import { TelephonyModule } from '../telephony/telephony.module';
 import { DeliveryModule } from '../delivery/delivery.module';
 import { VoiceSearchController } from './voice-search.controller';
 import { VoicePaymentController } from './voice-payment.controller';
@@ -16,6 +15,11 @@ import { VoicePaymentService } from './voice-payment.service';
 import { VoicePaymentCatalogService } from './voice-payment-catalog.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
 
+/**
+ * ElevenLabs ConvAI server tools (search, send-payment-link).
+ * Does not import TelephonyModule — that pulled TwilioModule → ElevenLabsModule into the
+ * same graph as DeliveryModule and caused circular bootstrap failures.
+ */
 @Module({
   imports: [
     ConfigModule,
@@ -25,7 +29,6 @@ import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
     ShopifyVoiceModule,
     VoiceCatalogSearchModule,
     VoiceCheckoutModule,
-    TelephonyModule,
     DeliveryModule,
   ],
   controllers: [VoiceSearchController, VoicePaymentController, VoiceHealthController],
