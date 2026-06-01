@@ -7,6 +7,7 @@ import { ShopifyDraftOrderService } from '../integrations/shopify/draft-order';
 import { ShopifyCheckoutValidationError } from '../integrations/shopify/shopify-errors';
 import { PaymentLinkDeliveryService } from '../delivery/payment-link-delivery.service';
 import { VoicePaymentCatalogService } from './voice-payment-catalog.service';
+import { VoiceCallContextService } from './voice-call-context.service';
 import type { SendPaymentLinkResponseDto } from './dto/send-payment-link.dto';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class VoicePaymentService {
   constructor(
     private readonly draftOrders: ShopifyDraftOrderService,
     private readonly paymentDelivery: PaymentLinkDeliveryService,
+    private readonly callContext: VoiceCallContextService,
     private readonly catalog: VoicePaymentCatalogService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -34,21 +36,26 @@ export class VoicePaymentService {
     const email = args.email.trim().toLowerCase();
     const variantId = args.variantId.trim();
     const quantity = args.quantity;
-    const phoneNumber = args.phoneNumber?.trim();
-    const callSid = args.callSid?.trim();
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'voice.payment.started',
-        emailDomain: email.split('@')[1] ?? null,
-        variantId: variantId.slice(0, 80),
-        quantity,
-        smsRequested: Boolean(phoneNumber),
-        callSid: callSid ?? null,
-      }),
-    );
-
     try {
+      const callCtx = await this.callContext.resolveForPaymentLink({
+        callSid: args.callSid,
+        phoneNumber: args.phoneNumber,
+      });
+      const phoneNumber = callCtx.phoneNumber;
+      const callSid = callCtx.callSid;
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.payment.started',
+          emailDomain: email.split('@')[1] ?? null,
+          variantId: variantId.slice(0, 80),
+          quantity,
+          smsRequested: Boolean(phoneNumber),
+          callSid: callSid ?? null,
+          callContextSource: callCtx.source,
+        }),
+      );
+
       const { tenantId, agentId } = await this.resolveAgentContext(args.tenantId, args.agentId);
       const lineItem = await this.catalog.resolveLineItem(tenantId, agentId, variantId, quantity);
 
@@ -98,7 +105,7 @@ export class VoicePaymentService {
         draftOrderId: shopify.draftOrderId,
         shopifyConnectionId: shopify.shopifyConnectionId,
         lineItem,
-        callSid,
+        callSid: callSid ?? undefined,
       });
 
       const branding = await this.resolveBusinessBranding(tenantId, agentId);
@@ -122,6 +129,7 @@ export class VoicePaymentService {
         orderId: shopify.draftOrderId,
         tenantId,
         agentId,
+        callerCountry: callCtx.country,
         businessName: branding.businessName,
         supportEmail: branding.supportEmail,
         supportPhone: branding.supportPhone,

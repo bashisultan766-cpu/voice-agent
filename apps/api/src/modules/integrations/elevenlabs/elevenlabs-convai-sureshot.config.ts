@@ -46,6 +46,8 @@ When the customer confirms they want to buy a product (yes, I'll take it, order 
    - email (the confirmed address)
    - variantId (from the selected ${ELEVENLABS_CONVAI_TOOLS.productSearch} result)
    - quantity (confirmed number, default 1)
+   - callSid: ALWAYS pass {{call_sid}} (Twilio call ID for this caller)
+   - phoneNumber: ALWAYS pass {{caller_phone}} (caller's phone in E.164) for text/WhatsApp backup
    NEVER stop, end the turn, or tell the customer the link was sent without calling ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} first.
 7. Only when ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} returns success:true, tell the customer:
    "I've sent the payment link to your email."
@@ -90,19 +92,37 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
           description: 'Exact variantId from SureShotBooksProduct selected product (gid://shopify/ProductVariant/...)',
         },
         quantity: { type: 'integer', description: 'Number of copies (default 1)' },
-        phoneNumber: {
-          type: 'string',
-          description: 'Optional E.164 phone for SMS backup delivery of payment link',
-        },
         callSid: {
           type: 'string',
           description:
-            'Twilio CallSid from the active call (optional if captured at inbound; used to SMS/WhatsApp the caller)',
+            'Twilio CallSid — use dynamic variable {{call_sid}} or {{system__call_sid}} (required for SMS/WhatsApp)',
+        },
+        phoneNumber: {
+          type: 'string',
+          description:
+            'Caller phone E.164 — use {{caller_phone}} or {{system__caller_id}} (required for SMS/WhatsApp backup)',
         },
       },
-      required: ['email', 'variantId', 'quantity'],
+      required: ['email', 'variantId', 'quantity', 'callSid', 'phoneNumber'],
     },
   },
+} as const;
+
+/** Pass to ElevenLabs register-call + dashboard dynamic variable placeholders. */
+export const ELEVENLABS_CONVAI_DYNAMIC_VARIABLES = {
+  call_sid: 'Twilio CallSid — set at inbound via register-call',
+  caller_phone: 'Caller E.164 — from Twilio From',
+  caller_number: 'Raw Twilio From',
+} as const;
+
+/**
+ * In ElevenLabs dashboard → SendPaymentLink tool → add body fields with constant values:
+ *   callSid     = {{call_sid}}  or {{system__call_sid}}
+ *   phoneNumber = {{caller_phone}} or {{system__caller_id}}
+ */
+export const ELEVENLABS_SEND_PAYMENT_LINK_TOOL_CONSTANTS = {
+  callSid: '{{call_sid}}',
+  phoneNumber: '{{caller_phone}}',
 } as const;
 
 export function buildElevenLabsConvaiAgentConfig(publicBaseUrl: string) {
@@ -111,6 +131,8 @@ export function buildElevenLabsConvaiAgentConfig(publicBaseUrl: string) {
     agentName: ELEVENLABS_CONVAI_AGENT_NAME,
     openingLine: ELEVENLABS_CONVAI_OPENING_LINE,
     systemPrompt: ELEVENLABS_CONVAI_SYSTEM_PROMPT,
+    dynamicVariables: ELEVENLABS_CONVAI_DYNAMIC_VARIABLES,
+    sendPaymentLinkToolConstants: ELEVENLABS_SEND_PAYMENT_LINK_TOOL_CONSTANTS,
     tools: Object.values(ELEVENLABS_CONVAI_TOOL_SPECS).map((tool) => ({
       ...tool,
       url: `${base}${tool.path}`,

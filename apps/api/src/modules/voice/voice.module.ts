@@ -7,6 +7,8 @@ import { ShopifyVoiceModule } from '../shopify/shopify-voice.module';
 import { VoiceCatalogSearchModule } from '../search/voice-catalog-search.module';
 import { VoiceCheckoutModule } from '../checkout/checkout.module';
 import { DeliveryModule } from '../delivery/delivery.module';
+import { InboundCallModule } from '../delivery/inbound-call.module';
+import { VoiceCallContextService } from './voice-call-context.service';
 import { VoiceSearchController } from './voice-search.controller';
 import { VoicePaymentController } from './voice-payment.controller';
 import { VoiceHealthController } from './voice-health.controller';
@@ -30,12 +32,14 @@ import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
     VoiceCatalogSearchModule,
     VoiceCheckoutModule,
     DeliveryModule,
+    InboundCallModule,
   ],
   controllers: [VoiceSearchController, VoicePaymentController, VoiceHealthController],
   providers: [
     VoiceSearchService,
     VoicePaymentService,
     VoicePaymentCatalogService,
+    VoiceCallContextService,
     VoiceApiKeyGuard,
   ],
   exports: [VoiceSearchService, VoicePaymentService],

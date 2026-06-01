@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { normalizePhoneNumber } from '../twilio/utils/normalize-phone';
 
 const REGISTER_CALL_URL = 'https://api.elevenlabs.io/v1/convai/twilio/register-call';
 const DEFAULT_CONVAI_AGENT_ID = 'agent_2401kswaf3cpegs890qs6jjcb00v';
@@ -40,12 +41,24 @@ export class ElevenLabsTwilioRegisterCallService {
    */
   async registerInboundCall(input: ElevenLabsTwilioRegisterCallInput): Promise<string> {
     const agentId = this.resolveAgentId();
-    const body = {
+    const callerPhone = normalizePhoneNumber(input.fromNumber) || input.fromNumber.trim();
+    const body: Record<string, unknown> = {
       agent_id: agentId,
       from_number: input.fromNumber,
       to_number: input.toNumber,
       direction: input.direction ?? 'inbound',
     };
+
+    if (input.callSid?.trim()) {
+      body.conversation_initiation_client_data = {
+        dynamic_variables: {
+          call_sid: input.callSid.trim(),
+          caller_phone: callerPhone,
+          caller_number: input.fromNumber.trim(),
+          twilio_to_number: input.toNumber.trim(),
+        },
+      };
+    }
 
     const started = Date.now();
     this.logger.log(
@@ -54,6 +67,7 @@ export class ElevenLabsTwilioRegisterCallService {
         agentId,
         direction: body.direction,
         callSid: input.callSid ?? null,
+        dynamicVariablesAttached: Boolean(input.callSid?.trim()),
         fromMasked: maskPhone(input.fromNumber),
         toMasked: maskPhone(input.toNumber),
       }),

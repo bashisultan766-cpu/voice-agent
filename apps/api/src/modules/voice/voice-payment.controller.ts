@@ -1,13 +1,16 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator';
 import { SendPaymentLinkDto } from './dto/send-payment-link.dto';
 import { VoicePaymentService } from './voice-payment.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
+import { resolveSendPaymentLinkFieldsFromToolBody } from './utils/parse-elevenlabs-tool-body.util';
 
 /**
  * Voice checkout — draft order invoice for ElevenLabs server tools.
  * POST /api/voice/send-payment-link
+ *
+ * Accepts flat JSON or ElevenLabs `{ parameters: { ... } }` tool payloads.
  */
 @Controller('voice')
 export class VoicePaymentController {
@@ -17,18 +20,29 @@ export class VoicePaymentController {
   @SkipThrottle()
   @UseGuards(VoiceApiKeyGuard)
   @Post('send-payment-link')
-  sendPaymentLink(@Body() dto: SendPaymentLinkDto) {
-    const phoneNumber = dto.phoneNumber?.trim() || dto.phone?.trim();
-    const callSid = dto.callSid?.trim() || dto.call_sid?.trim();
+  sendPaymentLink(@Body() body: SendPaymentLinkDto & Record<string, unknown>) {
+    const fromTool = resolveSendPaymentLinkFieldsFromToolBody(body);
+
+    const email = (fromTool.email ?? body.email)?.trim();
+    const variantId = (fromTool.variantId ?? body.variantId)?.trim();
+    const quantity = fromTool.quantity ?? body.quantity;
+    const phoneNumber =
+      fromTool.phoneNumber?.trim() || body.phoneNumber?.trim() || body.phone?.trim();
+    const callSid =
+      fromTool.callSid?.trim() || body.callSid?.trim() || body.call_sid?.trim();
+
+    if (!email || !variantId || quantity == null) {
+      throw new BadRequestException('email, variantId, and quantity are required.');
+    }
 
     return this.voicePayment.sendPaymentLink({
-      email: dto.email,
-      variantId: dto.variantId,
-      quantity: dto.quantity,
+      email,
+      variantId,
+      quantity,
       phoneNumber,
       callSid,
-      tenantId: dto.tenantId,
-      agentId: dto.agentId,
+      tenantId: fromTool.tenantId ?? body.tenantId,
+      agentId: fromTool.agentId ?? body.agentId,
     });
   }
 }

@@ -27,6 +27,8 @@ export type DeliverPaymentLinkInput = {
   supportEmail?: string | null;
   supportPhone?: string | null;
   lineItems?: Array<{ title: string; quantity: number; price?: string | null }>;
+  /** Pre-resolved from calls table (VoiceCallContextService). */
+  callerCountry?: string | null;
 };
 
 export type DeliverPaymentLinkOutput = PaymentLinkDeliveryResult & {
@@ -59,33 +61,17 @@ export class PaymentLinkDeliveryService {
     const paymentLink = input.paymentLink.trim();
     const callSid = input.callSid?.trim() || null;
 
-    let customerPhone = input.customerPhone?.trim() || null;
-    const phoneFromRequest = Boolean(customerPhone);
+    const customerPhone = input.customerPhone?.trim() || null;
 
-    if (!customerPhone && callSid) {
-      customerPhone = await this.inboundCalls.findCallerPhoneByCallSid(callSid);
-      if (customerPhone) {
-        logDelivery(this.logger, 'delivery.phone_resolved_from_call', {
-          callSid,
-          source: 'calls_table',
-        });
-      }
-    }
-
-    if (!customerPhone && !callSid && !phoneFromRequest) {
+    if (!customerPhone && !callSid) {
       logDeliveryWarn(this.logger, 'delivery.phone_missing', {
         orderId: input.orderId ?? null,
         emailDomain: customerEmail.split('@')[1] ?? null,
       });
-    } else if (!customerPhone) {
-      logDeliveryWarn(this.logger, 'delivery.phone_missing', {
-        callSid,
-        orderId: input.orderId ?? null,
-        note: 'callSid present but no caller_phone row — ensure POST /api/elevenlabs/inbound ran for this CallSid',
-      });
     }
 
     const country =
+      input.callerCountry ??
       (customerPhone ? detectPhoneCountry(customerPhone) : null) ??
       (callSid
         ? (

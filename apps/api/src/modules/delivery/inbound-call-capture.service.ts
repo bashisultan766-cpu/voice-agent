@@ -68,4 +68,35 @@ export class InboundCallCaptureService {
     }
     return row.callerPhone;
   }
+
+  /**
+   * Fallback when ElevenLabs SendPaymentLink omits callSid — use the most recent inbound call.
+   */
+  async findRecentInboundCall(withinMinutes = 45): Promise<{
+    callSid: string;
+    callerPhone: string;
+    callerCountry: string | null;
+  } | null> {
+    const since = new Date(Date.now() - withinMinutes * 60 * 1000);
+    const row = await this.prisma.inboundCall.findFirst({
+      where: { createdAt: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      select: { callSid: true, callerPhone: true, callerCountry: true },
+    });
+    if (!row?.callSid || !row.callerPhone) return null;
+    return row;
+  }
+
+  async findInboundCallByCallSid(callSid: string): Promise<{
+    callSid: string;
+    callerPhone: string;
+    callerCountry: string | null;
+  } | null> {
+    const row = await this.prisma.inboundCall.findUnique({
+      where: { callSid },
+      select: { callSid: true, callerPhone: true, callerCountry: true },
+    });
+    if (!row?.callerPhone) return null;
+    return row;
+  }
 }

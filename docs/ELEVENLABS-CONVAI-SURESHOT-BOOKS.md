@@ -46,11 +46,21 @@ When the customer confirms they want to buy:
   "email": "customer@gmail.com",
   "variantId": "gid://shopify/ProductVariant/48502554689773",
   "quantity": 1,
-  "phoneNumber": "+15551234567"
+  "callSid": "{{call_sid}}",
+  "phoneNumber": "{{caller_phone}}"
 }
 ```
 
-Delivery uses **Shopify invoice email + Resend backup** (`RESEND_API_KEY`, `PAYMENT_EMAIL_FROM`). Optional SMS when `phoneNumber` is provided.
+In the ElevenLabs **SendPaymentLink** tool, set constant body fields (recommended):
+
+| Field | Constant value |
+|-------|----------------|
+| `callSid` | `{{call_sid}}` or `{{system__call_sid}}` |
+| `phoneNumber` | `{{caller_phone}}` or `{{system__caller_id}}` |
+
+`POST /api/elevenlabs/inbound` stores `CallSid` + caller phone in the `calls` table and passes `call_sid` / `caller_phone` to ElevenLabs via `register-call`.
+
+Delivery uses **Shopify invoice email + Resend backup**. SMS/WhatsApp use `phoneNumber` or lookup by `callSid`.
 
 ## Source of truth
 
