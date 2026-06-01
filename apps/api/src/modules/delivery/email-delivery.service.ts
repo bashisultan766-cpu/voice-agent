@@ -4,12 +4,21 @@ import { gatedProcessEnv } from '../../common/provider-env-slice.util';
 
 export type EmailProvider = 'resend' | 'sendgrid';
 
+export type PaymentLinkEmailCredentials = {
+  apiKey: string;
+  from: string;
+  replyTo?: string | null;
+  provider?: EmailProvider;
+};
+
 export type SendPaymentLinkEmailInput = {
   to: string;
   subject: string;
   html: string;
   text: string;
   replyTo?: string | null;
+  /** Agent/workspace/env resolved credentials (preferred in production). */
+  credentials?: PaymentLinkEmailCredentials | null;
 };
 
 export type SendPaymentLinkEmailResult = {
@@ -26,9 +35,18 @@ export class EmailDeliveryService {
 
   constructor(private readonly config: ConfigService) {}
 
-  resolveProvider(): EmailProvider {
+  /** Read env whether or not ALLOW_PROVIDER_ENV_FALLBACK is set. */
+  private envString(key: string): string | undefined {
+    const fromConfig = this.config.get<string>(key);
+    if (typeof fromConfig === 'string' && fromConfig.trim()) return fromConfig.trim();
+    const raw = process.env[key];
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+  }
+
+  resolveProvider(override?: EmailProvider): EmailProvider {
     const raw =
-      this.config.get<string>('EMAIL_PROVIDER')?.trim().toLowerCase() ||
+      override ||
+      this.envString('EMAIL_PROVIDER')?.toLowerCase() ||
       gatedProcessEnv('EMAIL_PROVIDER', this.config)?.toLowerCase() ||
       'resend';
     return raw === 'sendgrid' ? 'sendgrid' : 'resend';
@@ -36,26 +54,19 @@ export class EmailDeliveryService {
 
   resolveFromEmail(): string | null {
     return (
-      this.config.get<string>('FROM_EMAIL')?.trim() ||
-      this.config.get<string>('PAYMENT_EMAIL_FROM')?.trim() ||
-      this.config.get<string>('RESEND_FROM_EMAIL')?.trim() ||
-      gatedProcessEnv('FROM_EMAIL', this.config) ||
-      gatedProcessEnv('PAYMENT_EMAIL_FROM', this.config) ||
-      gatedProcessEnv('RESEND_FROM_EMAIL', this.config) ||
+      this.envString('FROM_EMAIL') ||
+      this.envString('PAYMENT_EMAIL_FROM') ||
+      this.envString('RESEND_FROM_EMAIL') ||
       null
     );
   }
 
-  /**
-   * Ensures FROM uses a domain that matches VERIFIED_EMAIL_DOMAIN when set.
-   */
   verifySenderDomain(fromEmail: string): { ok: boolean; reason?: string } {
-    const verified =
-      this.config.get<string>('VERIFIED_EMAIL_DOMAIN')?.trim() ||
-      gatedProcessEnv('VERIFIED_EMAIL_DOMAIN', this.config);
+    const verified = this.envString('VERIFIED_EMAIL_DOMAIN') || gatedProcessEnv('VERIFIED_EMAIL_DOMAIN', this.config);
     if (!verified) return { ok: true };
 
-    const match = fromEmail.match(/@([^>\s]+)/);
+    const emailOnly = extractEmailAddress(fromEmail);
+    const match = emailOnly.match(/@([^>\s]+)/);
     const domain = match?.[1]?.toLowerCase();
     if (!domain) {
       return { ok: false, reason: 'FROM email does not contain a valid domain.' };
@@ -72,33 +83,20 @@ export class EmailDeliveryService {
 
   async sendPaymentLinkEmail(input: SendPaymentLinkEmailInput): Promise<SendPaymentLinkEmailResult> {
     const to = input.to.trim().toLowerCase();
-    const from = this.resolveFromEmail();
-    const provider = this.resolveProvider();
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'email_attempted',
-        provider,
-        recipientDomain: to.split('@')[1] ?? null,
-      }),
-    );
+    const provider = input.credentials?.provider ?? this.resolveProvider();
+    const from = input.credentials?.from?.trim() || this.resolveFromEmail();
+    const apiKeyFromCredentials = input.credentials?.apiKey?.trim();
 
     if (!from) {
-      const error = 'FROM_EMAIL (or PAYMENT_EMAIL_FROM / RESEND_FROM_EMAIL) is not configured.';
-      this.logger.error(JSON.stringify({ event: 'email_failed', provider, error }));
-      return { ok: false, provider, error };
+      return {
+        ok: false,
+        provider,
+        error: 'FROM_EMAIL (or PAYMENT_EMAIL_FROM / RESEND_FROM_EMAIL / agent email) is not configured.',
+      };
     }
 
     const domainCheck = this.verifySenderDomain(from);
     if (!domainCheck.ok) {
-      this.logger.warn(
-        JSON.stringify({
-          event: 'email_failed',
-          provider,
-          reason: 'sender_domain_mismatch',
-          message: domainCheck.reason,
-        }),
-      );
       return { ok: false, provider, error: domainCheck.reason };
     }
 
@@ -111,7 +109,8 @@ export class EmailDeliveryService {
               subject: input.subject,
               html: input.html,
               text: input.text,
-              replyTo: input.replyTo,
+              replyTo: input.credentials?.replyTo ?? input.replyTo,
+              apiKey: apiKeyFromCredentials,
             })
           : await this.sendViaResend({
               from,
@@ -119,30 +118,23 @@ export class EmailDeliveryService {
               subject: input.subject,
               html: input.html,
               text: input.text,
-              replyTo: input.replyTo,
+              replyTo: input.credentials?.replyTo ?? input.replyTo,
+              apiKey: apiKeyFromCredentials,
             });
 
-      this.logger.log(
-        JSON.stringify({
-          event: result.ok ? 'email_sent' : 'email_failed',
-          provider,
-          messageId: result.messageId ?? null,
-        }),
-      );
-      this.logger.log(
-        JSON.stringify({
-          event: 'email_provider_response',
-          provider,
-          ok: result.ok,
-          response: result.providerResponse ?? null,
-        }),
-      );
       return result;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      this.logger.error(JSON.stringify({ event: 'email_failed', provider, error: error.slice(0, 400) }));
       return { ok: false, provider, error };
     }
+  }
+
+  private resolveResendApiKey(override?: string): string | undefined {
+    return override || this.envString('RESEND_API_KEY') || gatedProcessEnv('RESEND_API_KEY', this.config);
+  }
+
+  private resolveSendGridApiKey(override?: string): string | undefined {
+    return override || this.envString('SENDGRID_API_KEY') || gatedProcessEnv('SENDGRID_API_KEY', this.config);
   }
 
   private async sendViaResend(args: {
@@ -152,12 +144,11 @@ export class EmailDeliveryService {
     html: string;
     text: string;
     replyTo?: string | null;
+    apiKey?: string;
   }): Promise<SendPaymentLinkEmailResult> {
-    const apiKey =
-      this.config.get<string>('RESEND_API_KEY')?.trim() ||
-      gatedProcessEnv('RESEND_API_KEY', this.config);
+    const apiKey = this.resolveResendApiKey(args.apiKey);
     if (!apiKey) {
-      return { ok: false, provider: 'resend', error: 'RESEND_API_KEY is not configured.' };
+      return { ok: false, provider: 'resend', error: 'RESEND_API_KEY is not configured (env or agent).' };
     }
 
     const payload: Record<string, unknown> = {
@@ -178,10 +169,7 @@ export class EmailDeliveryService {
       body: JSON.stringify(payload),
     });
 
-    const body = (await response.json().catch(() => ({}))) as {
-      id?: string;
-      message?: string;
-    };
+    const body = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
 
     if (!response.ok) {
       return {
@@ -207,24 +195,21 @@ export class EmailDeliveryService {
     html: string;
     text: string;
     replyTo?: string | null;
+    apiKey?: string;
   }): Promise<SendPaymentLinkEmailResult> {
-    const apiKey =
-      this.config.get<string>('SENDGRID_API_KEY')?.trim() ||
-      gatedProcessEnv('SENDGRID_API_KEY', this.config);
+    const apiKey = this.resolveSendGridApiKey(args.apiKey);
     if (!apiKey) {
-      return { ok: false, provider: 'sendgrid', error: 'SENDGRID_API_KEY is not configured.' };
+      return { ok: false, provider: 'sendgrid', error: 'SENDGRID_API_KEY is not configured (env or agent).' };
     }
 
-    const personalizations = [{ to: [{ email: args.to }] }];
-    const content = [
-      { type: 'text/plain', value: args.text },
-      { type: 'text/html', value: args.html },
-    ];
     const mail: Record<string, unknown> = {
-      personalizations,
+      personalizations: [{ to: [{ email: args.to }] }],
       from: { email: extractEmailAddress(args.from), name: extractDisplayName(args.from) },
       subject: args.subject,
-      content,
+      content: [
+        { type: 'text/plain', value: args.text },
+        { type: 'text/html', value: args.html },
+      ],
     };
     if (args.replyTo?.trim()) {
       mail.reply_to = { email: args.replyTo.trim() };

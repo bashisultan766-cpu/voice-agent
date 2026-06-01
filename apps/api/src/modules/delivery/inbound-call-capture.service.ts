@@ -57,6 +57,15 @@ export class InboundCallCaptureService {
       where: { callSid },
       select: { callerPhone: true },
     });
-    return row?.callerPhone ?? null;
+    if (!row?.callerPhone) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'inbound_call.lookup_miss',
+          callSid,
+        }),
+      );
+      return null;
+    }
+    return row.callerPhone;
   }
 }

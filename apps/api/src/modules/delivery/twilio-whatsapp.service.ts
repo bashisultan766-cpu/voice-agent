@@ -30,30 +30,26 @@ export class TwilioWhatsAppService {
     return raw.startsWith('whatsapp:') ? raw : `whatsapp:${raw}`;
   }
 
+  async hasTwilioCredentials(tenantId?: string, agentId?: string): Promise<boolean> {
+    const creds = await this.resolveTwilioCredentials(tenantId, agentId);
+    return creds !== null;
+  }
+
   async sendWhatsAppPaymentLink(args: {
     phone: string;
     paymentLink: string;
     tenantId?: string;
     agentId?: string;
   }): Promise<{ ok: boolean; status: 'sent' | 'skipped' | 'failed'; messageSid?: string; error?: string }> {
-    if (!this.isEnabled()) {
-      return { ok: false, status: 'skipped', error: 'WhatsApp delivery is disabled.' };
-    }
-
-    this.logger.log(JSON.stringify({ event: 'whatsapp_attempted' }));
-
     const e164 = this.toE164(args.phone);
     if (!e164) {
       const error = 'Invalid phone number for WhatsApp.';
-      this.logger.warn(JSON.stringify({ event: 'whatsapp_failed', error }));
       return { ok: false, status: 'failed', error };
     }
 
     const from = this.resolveWhatsAppFrom();
     if (!from) {
-      const error = 'TWILIO_WHATSAPP_FROM is not configured.';
-      this.logger.warn(JSON.stringify({ event: 'whatsapp_failed', error }));
-      return { ok: false, status: 'failed', error };
+      return { ok: false, status: 'failed', error: 'TWILIO_WHATSAPP_FROM is not configured.' };
     }
 
     let paymentLink: string;
@@ -81,20 +77,10 @@ export class TwilioWhatsAppService {
         to,
         body,
       });
-      this.logger.log(
-        JSON.stringify({ event: 'whatsapp_sent', messageSid: result.sid ?? null }),
-      );
       return { ok: true, status: 'sent', messageSid: result.sid };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const userFacingHint = classifyWhatsAppError(error);
-      this.logger.warn(
-        JSON.stringify({
-          event: 'whatsapp_failed',
-          error: error.slice(0, 400),
-          hint: userFacingHint,
-        }),
-      );
       return { ok: false, status: 'failed', error: `${userFacingHint}: ${error.slice(0, 200)}` };
     }
   }

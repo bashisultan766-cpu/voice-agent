@@ -18,6 +18,11 @@ export class TwilioPaymentSmsService {
     private readonly agents: AgentsService,
   ) {}
 
+  async hasTwilioCredentials(tenantId?: string, agentId?: string): Promise<boolean> {
+    const creds = await this.resolveTwilioCredentials(tenantId, agentId);
+    return creds !== null;
+  }
+
   async sendSmsPaymentLink(args: {
     phone: string;
     paymentLink: string;
@@ -32,13 +37,6 @@ export class TwilioPaymentSmsService {
     const rules = readSmsCountryRulesFromEnv(process.env);
     const decision = evaluateSmsCountryRules(e164, rules);
     if (!decision.allowed) {
-      this.logger.log(
-        JSON.stringify({
-          event: decision.logEvent ?? 'sms_skipped_country_restricted',
-          country: decision.country,
-          reason: decision.reason,
-        }),
-      );
       return { ok: false, status: 'skipped', error: decision.reason };
     }
 
@@ -66,17 +64,9 @@ export class TwilioPaymentSmsService {
         to: e164,
         body,
       });
-      this.logger.log(
-        JSON.stringify({
-          event: 'sms_sent',
-          messageSid: result.sid ?? null,
-          country: decision.country,
-        }),
-      );
       return { ok: true, status: 'sent', messageSid: result.sid };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      this.logger.warn(JSON.stringify({ event: 'sms_failed', error: error.slice(0, 400) }));
       return { ok: false, status: 'failed', error };
     }
   }

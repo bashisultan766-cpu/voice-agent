@@ -22,11 +22,23 @@ export class SendPaymentLinkDto {
   @MaxLength(32)
   phoneNumber?: string;
 
+  /** Alias for phoneNumber (some tool configs use `phone`). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  phone?: string;
+
   /** Twilio CallSid — used to look up caller phone from `calls` table when phoneNumber is omitted. */
   @IsOptional()
   @IsString()
   @MaxLength(64)
   callSid?: string;
+
+  /** Snake_case alias for callSid. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  call_sid?: string;
 
   @IsOptional()
   @IsString()

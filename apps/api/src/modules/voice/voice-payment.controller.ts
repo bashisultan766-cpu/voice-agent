@@ -18,12 +18,15 @@ export class VoicePaymentController {
   @UseGuards(VoiceApiKeyGuard)
   @Post('send-payment-link')
   sendPaymentLink(@Body() dto: SendPaymentLinkDto) {
+    const phoneNumber = dto.phoneNumber?.trim() || dto.phone?.trim();
+    const callSid = dto.callSid?.trim() || dto.call_sid?.trim();
+
     return this.voicePayment.sendPaymentLink({
       email: dto.email,
       variantId: dto.variantId,
       quantity: dto.quantity,
-      phoneNumber: dto.phoneNumber,
-      callSid: dto.callSid,
+      phoneNumber,
+      callSid,
       tenantId: dto.tenantId,
       agentId: dto.agentId,
     });

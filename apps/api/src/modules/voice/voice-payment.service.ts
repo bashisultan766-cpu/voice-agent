@@ -103,6 +103,17 @@ export class VoicePaymentService {
 
       const branding = await this.resolveBusinessBranding(tenantId, agentId);
 
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.payment.delivery_invoked',
+          tenantId,
+          agentId,
+          draftOrderId: shopify.draftOrderId,
+          callSid: callSid ?? null,
+          hasPhoneNumber: Boolean(phoneNumber),
+        }),
+      );
+
       const delivery = await this.paymentDelivery.deliverPaymentLink({
         customerEmail: email,
         customerPhone: phoneNumber,
@@ -127,7 +138,6 @@ export class VoicePaymentService {
       const smsSent = delivery.sms === 'sent';
       const whatsappSent = delivery.whatsapp === 'sent';
       const emailSentByShopify = shopify.shopifyInvoiceSent;
-      const warnings: string[] = [];
 
       if (emailSentByResend) {
         await this.prisma.checkoutLink.update({
@@ -136,22 +146,28 @@ export class VoicePaymentService {
         });
       }
 
-      if (!emailSentByResend && delivery.emailError) {
-        warnings.push(`Email delivery failed: ${delivery.emailError}`);
-      }
-      if (delivery.sms === 'failed' && delivery.smsError) {
-        warnings.push(`SMS failed: ${delivery.smsError}`);
-      }
-      if (delivery.whatsapp === 'failed' && delivery.whatsappError) {
-        warnings.push(`WhatsApp failed: ${delivery.whatsappError}`);
-      }
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.payment.delivery_result',
+          tenantId,
+          agentId,
+          draftOrderId: shopify.draftOrderId,
+          deliveryId: delivery.deliveryId,
+          email: delivery.email,
+          sms: delivery.sms,
+          whatsapp: delivery.whatsapp,
+          emailSentByShopify,
+          emailSentByResend,
+          emailError: delivery.emailError?.slice(0, 200) ?? null,
+          smsError: delivery.smsError?.slice(0, 200) ?? null,
+          whatsappError: delivery.whatsappError?.slice(0, 200) ?? null,
+        }),
+      );
 
       const emailDelivered = emailSentByShopify || emailSentByResend;
       const latencyMs = Date.now() - started;
 
       if (!emailDelivered && !smsSent && !whatsappSent) {
-        const error =
-          'Payment link was created but could not be delivered by email or messaging.';
         this.logger.error(
           JSON.stringify({
             event: 'voice.payment.failed',
@@ -170,23 +186,15 @@ export class VoicePaymentService {
           success: false,
           message: 'Payment link could not be delivered.',
           agentMessage: delivery.agentMessage,
-          error,
           draftOrderId: shopify.draftOrderId,
-          invoiceUrl: shopify.invoiceUrl,
-          emailSentByShopify,
-          emailSentByResend,
-          smsSent,
-          whatsappSent,
-          delivery,
+          delivery: {
+            email: delivery.email,
+            sms: delivery.sms,
+            whatsapp: delivery.whatsapp,
+          },
           latencyMs,
         };
       }
-
-      if (emailSentByShopify && !emailSentByResend) {
-        warnings.push('Backup payment email was not delivered; customer may rely on store invoice email.');
-      }
-
-      const warning = warnings.length > 0 ? warnings.join(' ') : undefined;
 
       this.logger.log(
         JSON.stringify({
@@ -205,20 +213,14 @@ export class VoicePaymentService {
 
       return {
         success: true,
-        message: warning ? 'Payment link sent with delivery warnings.' : 'Payment link sent successfully.',
+        message: 'Payment link sent successfully.',
         agentMessage: delivery.agentMessage,
         draftOrderId: shopify.draftOrderId,
-        invoiceUrl: shopify.invoiceUrl,
-        emailSentByShopify,
-        emailSentByResend,
-        smsSent,
-        whatsappSent,
         delivery: {
           email: delivery.email,
           sms: delivery.sms,
           whatsapp: delivery.whatsapp,
         },
-        warning,
         latencyMs,
       };
     } catch (err) {
@@ -235,11 +237,6 @@ export class VoicePaymentService {
         message: 'Payment link could not be sent.',
         agentMessage:
           "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
-        error: message,
-        emailSentByShopify: false,
-        emailSentByResend: false,
-        smsSent: false,
-        whatsappSent: false,
         latencyMs: Date.now() - started,
       };
     }

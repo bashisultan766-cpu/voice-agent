@@ -94,6 +94,11 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
           type: 'string',
           description: 'Optional E.164 phone for SMS backup delivery of payment link',
         },
+        callSid: {
+          type: 'string',
+          description:
+            'Twilio CallSid from the active call (optional if captured at inbound; used to SMS/WhatsApp the caller)',
+        },
       },
       required: ['email', 'variantId', 'quantity'],
     },
