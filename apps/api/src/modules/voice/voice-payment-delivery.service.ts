@@ -1,3 +1,6 @@
+/**
+ * @deprecated Use `PaymentLinkDeliveryService` in `modules/delivery/` for multi-channel delivery.
+ */
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';

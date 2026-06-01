@@ -1093,3 +1093,45 @@ model AuditLog {
   @@index([entityType, entityId])
 }
 
+/// Twilio inbound caller capture (ElevenLabs bridge webhook).
+model InboundCall {
+  id            String   @id @default(cuid())
+  callSid       String   @unique @map("call_sid")
+  callerPhone   String   @map("caller_phone")
+  twilioNumber  String   @map("twilio_number")
+  callerCountry String?  @map("caller_country")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([callerPhone])
+  @@index([createdAt])
+  @@map("calls")
+}
+
+/// Multi-channel payment link delivery audit (email, SMS, WhatsApp).
+model PaymentDelivery {
+  id                 String   @id @default(cuid())
+  callSid            String?  @map("call_sid")
+  orderId            String?  @map("order_id")
+  customerEmail      String   @map("customer_email")
+  customerPhone      String?  @map("customer_phone")
+  country            String?
+  paymentLink        String   @map("payment_link")
+  emailStatus        String   @default("pending") @map("email_status")
+  emailMessageId     String?  @map("email_message_id")
+  emailError         String?  @map("email_error")
+  smsStatus          String   @default("pending") @map("sms_status")
+  smsMessageSid      String?  @map("sms_message_sid")
+  smsError           String?  @map("sms_error")
+  whatsappStatus     String   @default("pending") @map("whatsapp_status")
+  whatsappMessageSid String?  @map("whatsapp_message_sid")
+  whatsappError      String?  @map("whatsapp_error")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([callSid])
+  @@index([orderId])
+  @@index([customerEmail])
+  @@index([createdAt])
+  @@map("payment_deliveries")
+}
+

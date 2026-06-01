@@ -15,9 +15,9 @@ export declare class FaqService {
         id: string;
         tenantId: string;
         storeId: string;
+        language: string;
         createdAt: Date;
         updatedAt: Date;
-        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -29,9 +29,9 @@ export declare class FaqService {
         id: string;
         tenantId: string;
         storeId: string;
+        language: string;
         createdAt: Date;
         updatedAt: Date;
-        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -43,9 +43,9 @@ export declare class FaqService {
         id: string;
         tenantId: string;
         storeId: string;
+        language: string;
         createdAt: Date;
         updatedAt: Date;
-        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -64,9 +64,9 @@ export declare class FaqService {
         id: string;
         tenantId: string;
         storeId: string;
+        language: string;
         createdAt: Date;
         updatedAt: Date;
-        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;
@@ -78,9 +78,9 @@ export declare class FaqService {
         id: string;
         tenantId: string;
         storeId: string;
+        language: string;
         createdAt: Date;
         updatedAt: Date;
-        language: string;
         tags: string | null;
         priority: number;
         branchProfileId: string | null;

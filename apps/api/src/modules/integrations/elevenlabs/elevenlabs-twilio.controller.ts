@@ -11,6 +11,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { Public } from '../../../common/decorators/public.decorator';
 import { buildFallbackTwiML } from '../twilio/twiml/conversation-relay.twiml';
+import { InboundCallCaptureService } from '../../delivery/inbound-call-capture.service';
 import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-register-call.service';
 
 const twilioInboundBodySchema = z.object({
@@ -28,7 +29,10 @@ const twilioInboundBodySchema = z.object({
 export class ElevenLabsTwilioController {
   private readonly logger = new Logger(ElevenLabsTwilioController.name);
 
-  constructor(private readonly registerCall: ElevenLabsTwilioRegisterCallService) {}
+  constructor(
+    private readonly registerCall: ElevenLabsTwilioRegisterCallService,
+    private readonly inboundCallCapture: InboundCallCaptureService,
+  ) {}
 
   @Public()
   @SkipThrottle()
@@ -57,6 +61,25 @@ export class ElevenLabsTwilioController {
     const { From, To, CallSid, Direction } = parsed.data;
     const direction =
       Direction?.toLowerCase() === 'outbound' ? ('outbound' as const) : ('inbound' as const);
+
+    if (CallSid) {
+      try {
+        await this.inboundCallCapture.captureInboundCall({
+          from: From,
+          to: To,
+          callSid: CallSid,
+        });
+      } catch (captureErr) {
+        const captureMessage = captureErr instanceof Error ? captureErr.message : String(captureErr);
+        this.logger.warn(
+          JSON.stringify({
+            event: 'elevenlabs.twilio.inbound_call_capture_failed',
+            callSid: CallSid,
+            message: captureMessage.slice(0, 300),
+          }),
+        );
+      }
+    }
 
     try {
       const twiml = await this.registerCall.registerInboundCall({

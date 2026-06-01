@@ -22,6 +22,12 @@ export class SendPaymentLinkDto {
   @MaxLength(32)
   phoneNumber?: string;
 
+  /** Twilio CallSid — used to look up caller phone from `calls` table when phoneNumber is omitted. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  callSid?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(64)
@@ -43,6 +49,12 @@ export type SendPaymentLinkResponseDto = {
   emailSentByShopify?: boolean;
   emailSentByResend?: boolean;
   smsSent?: boolean;
+  whatsappSent?: boolean;
+  delivery?: {
+    email: 'sent' | 'skipped' | 'failed';
+    sms: 'sent' | 'skipped' | 'failed';
+    whatsapp: 'sent' | 'skipped' | 'failed';
+  };
   warning?: string;
   error?: string;
   latencyMs?: number;

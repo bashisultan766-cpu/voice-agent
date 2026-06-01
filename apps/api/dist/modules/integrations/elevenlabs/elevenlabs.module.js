@@ -9,6 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ElevenLabsModule = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
+const delivery_module_1 = require("../../delivery/delivery.module");
 const elevenlabs_service_1 = require("./elevenlabs.service");
 const elevenlabs_streaming_service_1 = require("./elevenlabs-streaming.service");
 const elevenlabs_controller_1 = require("./elevenlabs.controller");
@@ -20,7 +21,7 @@ let ElevenLabsModule = class ElevenLabsModule {
 exports.ElevenLabsModule = ElevenLabsModule;
 exports.ElevenLabsModule = ElevenLabsModule = __decorate([
     (0, common_1.Module)({
-        imports: [config_1.ConfigModule],
+        imports: [config_1.ConfigModule, delivery_module_1.DeliveryModule],
         controllers: [elevenlabs_controller_1.ElevenLabsController, elevenlabs_twilio_controller_1.ElevenLabsTwilioController, elevenlabs_convai_controller_1.ElevenLabsConvaiController],
         providers: [elevenlabs_service_1.ElevenLabsService, elevenlabs_streaming_service_1.ElevenLabsStreamingService, elevenlabs_twilio_register_call_service_1.ElevenLabsTwilioRegisterCallService],
         exports: [elevenlabs_service_1.ElevenLabsService, elevenlabs_streaming_service_1.ElevenLabsStreamingService, elevenlabs_twilio_register_call_service_1.ElevenLabsTwilioRegisterCallService],

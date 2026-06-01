@@ -23,6 +23,7 @@ export class VoicePaymentController {
       variantId: dto.variantId,
       quantity: dto.quantity,
       phoneNumber: dto.phoneNumber,
+      callSid: dto.callSid,
       tenantId: dto.tenantId,
       agentId: dto.agentId,
     });

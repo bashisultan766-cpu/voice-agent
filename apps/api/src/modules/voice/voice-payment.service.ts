@@ -5,8 +5,8 @@ import { createHash } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { ShopifyDraftOrderService } from '../integrations/shopify/draft-order';
 import { ShopifyCheckoutValidationError } from '../integrations/shopify/shopify-errors';
+import { PaymentLinkDeliveryService } from '../delivery/payment-link-delivery.service';
 import { VoicePaymentCatalogService } from './voice-payment-catalog.service';
-import { VoicePaymentDeliveryService } from './voice-payment-delivery.service';
 import type { SendPaymentLinkResponseDto } from './dto/send-payment-link.dto';
 
 @Injectable()
@@ -15,7 +15,7 @@ export class VoicePaymentService {
 
   constructor(
     private readonly draftOrders: ShopifyDraftOrderService,
-    private readonly delivery: VoicePaymentDeliveryService,
+    private readonly paymentDelivery: PaymentLinkDeliveryService,
     private readonly catalog: VoicePaymentCatalogService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -26,6 +26,7 @@ export class VoicePaymentService {
     variantId: string;
     quantity: number;
     phoneNumber?: string;
+    callSid?: string;
     tenantId?: string;
     agentId?: string;
   }): Promise<SendPaymentLinkResponseDto> {
@@ -34,6 +35,7 @@ export class VoicePaymentService {
     const variantId = args.variantId.trim();
     const quantity = args.quantity;
     const phoneNumber = args.phoneNumber?.trim();
+    const callSid = args.callSid?.trim();
 
     this.logger.log(
       JSON.stringify({
@@ -42,6 +44,7 @@ export class VoicePaymentService {
         variantId: variantId.slice(0, 80),
         quantity,
         smsRequested: Boolean(phoneNumber),
+        callSid: callSid ?? null,
       }),
     );
 
@@ -78,11 +81,10 @@ export class VoicePaymentService {
       } else {
         this.logger.warn(
           JSON.stringify({
-            event: 'voice.payment.invoice_sent',
+            event: 'voice.payment.shopify_invoice_skipped',
             tenantId,
             agentId,
             draftOrderId: shopify.draftOrderId,
-            shopifyInvoiceSent: false,
             shopifyInvoiceError: shopify.shopifyInvoiceError?.slice(0, 300) ?? null,
           }),
         );
@@ -96,150 +98,126 @@ export class VoicePaymentService {
         draftOrderId: shopify.draftOrderId,
         shopifyConnectionId: shopify.shopifyConnectionId,
         lineItem,
+        callSid,
       });
 
-      let emailSentByShopify = shopify.shopifyInvoiceSent;
-      let emailSentByResend = false;
-      let smsSent = false;
-      const warnings: string[] = [];
+      const branding = await this.resolveBusinessBranding(tenantId, agentId);
 
-      const resend = await this.delivery.sendBrandedPaymentEmail({
+      const delivery = await this.paymentDelivery.deliverPaymentLink({
+        customerEmail: email,
+        customerPhone: phoneNumber,
+        paymentLink: shopify.invoiceUrl,
+        callSid,
+        orderId: shopify.draftOrderId,
         tenantId,
         agentId,
-        checkoutLinkId: checkoutLink.id,
-        email,
-        invoiceUrl: shopify.invoiceUrl,
-        lineItem,
+        businessName: branding.businessName,
+        supportEmail: branding.supportEmail,
+        supportPhone: branding.supportPhone,
+        lineItems: [
+          {
+            title: lineItem.title,
+            quantity: lineItem.quantity,
+            price: lineItem.price,
+          },
+        ],
       });
-      if (resend.ok) {
-        emailSentByResend = true;
+
+      const emailSentByResend = delivery.email === 'sent';
+      const smsSent = delivery.sms === 'sent';
+      const whatsappSent = delivery.whatsapp === 'sent';
+      const emailSentByShopify = shopify.shopifyInvoiceSent;
+      const warnings: string[] = [];
+
+      if (emailSentByResend) {
         await this.prisma.checkoutLink.update({
           where: { id: checkoutLink.id },
           data: { status: 'SENT', sentAt: new Date() },
         });
-        this.logger.log(
-          JSON.stringify({
-            event: 'voice.payment.resend_email_sent',
-            tenantId,
-            agentId,
-            draftOrderId: shopify.draftOrderId,
-            checkoutLinkId: checkoutLink.id,
-            providerMessageId: resend.providerMessageId ?? null,
-            emailDomain: email.split('@')[1] ?? null,
-            productTitle: lineItem.title.slice(0, 120),
-          }),
-        );
-      } else {
-        this.logger.warn(
-          JSON.stringify({
-            event: 'voice.payment.resend_email_failed',
-            tenantId,
-            agentId,
-            draftOrderId: shopify.draftOrderId,
-            checkoutLinkId: checkoutLink.id,
-            message: resend.error?.slice(0, 300) ?? null,
-          }),
-        );
-        if (resend.error) warnings.push(`Resend email failed: ${resend.error}`);
       }
 
-      if (phoneNumber) {
-        const sms = await this.delivery.sendSmsPaymentLink({
-          phoneNumber,
-          invoiceUrl: shopify.invoiceUrl,
-          tenantId,
-          agentId,
-        });
-        if (sms.ok) {
-          smsSent = true;
-          this.logger.log(
-            JSON.stringify({
-              event: 'voice.payment.sms_sent',
-              tenantId,
-              agentId,
-              draftOrderId: shopify.draftOrderId,
-              messageSid: sms.messageSid ?? null,
-            }),
-          );
-        } else {
-          this.logger.warn(
-            JSON.stringify({
-              event: 'voice.payment.sms_failed',
-              tenantId,
-              agentId,
-              draftOrderId: shopify.draftOrderId,
-              message: sms.error?.slice(0, 300) ?? null,
-            }),
-          );
-          if (sms.error) warnings.push(`SMS failed: ${sms.error}`);
-        }
+      if (!emailSentByResend && delivery.emailError) {
+        warnings.push(`Email delivery failed: ${delivery.emailError}`);
+      }
+      if (delivery.sms === 'failed' && delivery.smsError) {
+        warnings.push(`SMS failed: ${delivery.smsError}`);
+      }
+      if (delivery.whatsapp === 'failed' && delivery.whatsappError) {
+        warnings.push(`WhatsApp failed: ${delivery.whatsappError}`);
       }
 
       const emailDelivered = emailSentByShopify || emailSentByResend;
       const latencyMs = Date.now() - started;
 
-      if (!emailDelivered && !smsSent) {
+      if (!emailDelivered && !smsSent && !whatsappSent) {
         const error =
-          'Payment link was created but email delivery failed on all channels. Please verify RESEND_API_KEY and PAYMENT_EMAIL_FROM, or provide phoneNumber for SMS.';
+          'Payment link was created but could not be delivered by email or messaging.';
         this.logger.error(
           JSON.stringify({
             event: 'voice.payment.failed',
             tenantId,
             agentId,
             draftOrderId: shopify.draftOrderId,
+            deliveryId: delivery.deliveryId,
             emailSentByShopify,
             emailSentByResend,
             smsSent,
+            whatsappSent,
             latencyMs,
-            message: error,
           }),
         );
         return {
           success: false,
           message: 'Payment link could not be delivered.',
+          agentMessage: delivery.agentMessage,
           error,
           draftOrderId: shopify.draftOrderId,
           invoiceUrl: shopify.invoiceUrl,
           emailSentByShopify,
           emailSentByResend,
           smsSent,
+          whatsappSent,
+          delivery,
           latencyMs,
         };
       }
 
       if (emailSentByShopify && !emailSentByResend) {
-        warnings.push('Backup Resend email was not delivered; customer may rely on Shopify invoice email.');
-      } else if (!emailSentByShopify && emailSentByResend) {
-        warnings.push('Shopify invoice email may not have been delivered; payment link sent via Resend.');
+        warnings.push('Backup payment email was not delivered; customer may rely on store invoice email.');
       }
 
       const warning = warnings.length > 0 ? warnings.join(' ') : undefined;
 
       this.logger.log(
         JSON.stringify({
-          event: 'voice.payment.invoice_sent',
+          event: 'voice.payment.completed',
           tenantId,
           agentId,
           draftOrderId: shopify.draftOrderId,
+          deliveryId: delivery.deliveryId,
           emailSentByShopify,
           emailSentByResend,
           smsSent,
+          whatsappSent,
           latencyMs,
-          hasWarning: Boolean(warning),
         }),
       );
 
       return {
         success: true,
-        message: warning
-          ? 'Payment link sent with delivery warnings.'
-          : 'Payment link sent successfully.',
-        agentMessage: "I've sent the payment link to your email.",
+        message: warning ? 'Payment link sent with delivery warnings.' : 'Payment link sent successfully.',
+        agentMessage: delivery.agentMessage,
         draftOrderId: shopify.draftOrderId,
         invoiceUrl: shopify.invoiceUrl,
         emailSentByShopify,
         emailSentByResend,
         smsSent,
+        whatsappSent,
+        delivery: {
+          email: delivery.email,
+          sms: delivery.sms,
+          whatsapp: delivery.whatsapp,
+        },
         warning,
         latencyMs,
       };
@@ -255,10 +233,13 @@ export class VoicePaymentService {
       return {
         success: false,
         message: 'Payment link could not be sent.',
+        agentMessage:
+          "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
         error: message,
         emailSentByShopify: false,
         emailSentByResend: false,
         smsSent: false,
+        whatsappSent: false,
         latencyMs: Date.now() - started,
       };
     }
@@ -272,6 +253,7 @@ export class VoicePaymentService {
     draftOrderId: string;
     shopifyConnectionId: string | null;
     lineItem: { title: string; quantity: number; price: string | null; variantId: string };
+    callSid?: string;
   }) {
     const fingerprint = createHash('sha256')
       .update(
@@ -287,10 +269,20 @@ export class VoicePaymentService {
       )
       .digest('hex');
 
+    let callSessionId: string | undefined;
+    if (args.callSid) {
+      const session = await this.prisma.callSession.findFirst({
+        where: { twilioCallSid: args.callSid },
+        select: { id: true },
+      });
+      callSessionId = session?.id;
+    }
+
     return this.prisma.checkoutLink.create({
       data: {
         tenantId: args.tenantId,
         agentId: args.agentId,
+        callSessionId,
         checkoutFingerprint: fingerprint,
         shopifyConnectionId: args.shopifyConnectionId,
         mode: 'DRAFT_ORDER_INVOICE',
@@ -309,9 +301,38 @@ export class VoicePaymentService {
         metadata: {
           source: 'voice_send_payment_link',
           draftOrderId: args.draftOrderId,
+          callSid: args.callSid ?? null,
         } as Prisma.InputJsonValue,
       },
     });
+  }
+
+  private async resolveBusinessBranding(
+    tenantId: string,
+    agentId: string,
+  ): Promise<{
+    businessName: string;
+    supportEmail: string | null;
+    supportPhone: string | null;
+  }> {
+    const agent = await this.prisma.agent.findFirst({
+      where: { id: agentId, tenantId, deletedAt: null },
+      select: {
+        agentConfig: {
+          select: { businessName: true, supportEmail: true, supportPhone: true },
+        },
+        client: { select: { name: true, contactEmail: true, contactPhone: true } },
+      },
+    });
+
+    return {
+      businessName:
+        agent?.agentConfig?.businessName?.trim() ||
+        agent?.client?.name?.trim() ||
+        'SureShot Books',
+      supportEmail: agent?.agentConfig?.supportEmail ?? agent?.client?.contactEmail ?? null,
+      supportPhone: agent?.agentConfig?.supportPhone ?? agent?.client?.contactPhone ?? null,
+    };
   }
 
   private formatError(err: unknown): string {

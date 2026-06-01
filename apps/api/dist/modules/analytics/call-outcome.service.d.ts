@@ -7,13 +7,11 @@ export declare class CallOutcomeService {
     getByCallSession(callSessionId: string): Promise<{
         id: string;
         tenantId: string;
-        summary: string | null;
-        escalated: boolean;
         createdAt: Date;
         updatedAt: Date;
+        summary: string | null;
+        escalated: boolean;
         callSessionId: string;
-        paymentLinkSent: boolean;
-        callbackRequested: boolean;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
@@ -21,9 +19,11 @@ export declare class CallOutcomeService {
         toolsUsedCount: number;
         toolFailuresCount: number;
         fallbackCount: number;
+        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
+        paymentLinkSent: boolean;
         orderCompleted: boolean;
         escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;
@@ -37,13 +37,11 @@ export declare class CallOutcomeService {
     }): Promise<{
         id: string;
         tenantId: string;
-        summary: string | null;
-        escalated: boolean;
         createdAt: Date;
         updatedAt: Date;
+        summary: string | null;
+        escalated: boolean;
         callSessionId: string;
-        paymentLinkSent: boolean;
-        callbackRequested: boolean;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
@@ -51,9 +49,11 @@ export declare class CallOutcomeService {
         toolsUsedCount: number;
         toolFailuresCount: number;
         fallbackCount: number;
+        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
+        paymentLinkSent: boolean;
         orderCompleted: boolean;
         escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;
