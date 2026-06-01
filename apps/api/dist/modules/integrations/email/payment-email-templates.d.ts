@@ -10,6 +10,8 @@ export type PaymentEmailBranding = {
     checkoutUrl: string;
     items: PaymentEmailItem[];
     subjectTemplate?: string | null;
+    paymentEmailSubjectEnv?: string | null;
+    subject?: string | null;
     customIntro?: string | null;
 };
 export declare function buildPaymentEmailContent(branding: PaymentEmailBranding): {

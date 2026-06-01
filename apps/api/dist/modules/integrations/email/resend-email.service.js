@@ -16,6 +16,7 @@ const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../../../database/prisma.service");
 const client_1 = require("@prisma/client");
 const payment_email_templates_1 = require("./payment-email-templates");
+const payment_email_subject_service_1 = require("./payment-email-subject.service");
 const payment_email_idempotency_1 = require("../../../common/payment-email-idempotency");
 const client_demo_safety_util_1 = require("../../../common/client-demo-safety.util");
 function assertHttpsCheckoutUrl(raw) {
@@ -51,9 +52,10 @@ function appendSendAttempt(metadata, attempt) {
     return { ...base, attempts };
 }
 let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
-    constructor(config, prisma) {
+    constructor(config, prisma, paymentEmailSubject) {
         this.config = config;
         this.prisma = prisma;
+        this.paymentEmailSubject = paymentEmailSubject;
         this.logger = new common_1.Logger(ResendEmailService_1.name);
     }
     apiKey(override) {
@@ -70,13 +72,17 @@ let ResendEmailService = ResendEmailService_1 = class ResendEmailService {
             throw new Error('A valid customer email is required.');
         }
         (0, client_demo_safety_util_1.assertPaymentEmailRecipientAllowed)(cleanTo);
+        const subjectResolution = this.paymentEmailSubject.getPaymentLinkSubject({
+            businessName: input.businessName,
+            subjectTemplate: input.emailConfig?.subjectTemplate,
+        });
         const tmpl = (0, payment_email_templates_1.buildPaymentEmailContent)({
             businessName: input.businessName.trim() || 'Our store',
             supportEmail: input.supportEmail,
             supportPhone: input.supportPhone,
             checkoutUrl: safeCheckoutUrl,
             items: input.items,
-            subjectTemplate: input.emailConfig?.subjectTemplate,
+            subject: subjectResolution.subject,
             customIntro: input.emailConfig?.paymentLinkIntro,
         });
         const idemKey = input.idempotencyKey?.trim() ||
@@ -472,6 +478,7 @@ exports.ResendEmailService = ResendEmailService;
 exports.ResendEmailService = ResendEmailService = ResendEmailService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [config_1.ConfigService,
-        prisma_service_1.PrismaService])
+        prisma_service_1.PrismaService,
+        payment_email_subject_service_1.PaymentEmailSubjectService])
 ], ResendEmailService);
 //# sourceMappingURL=resend-email.service.js.map

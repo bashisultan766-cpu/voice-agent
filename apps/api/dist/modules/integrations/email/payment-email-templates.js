@@ -1,9 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildPaymentEmailContent = buildPaymentEmailContent;
-function applySubjectTemplate(template, storeName) {
-    return template.replace(/\{\{storeName\}\}/gi, storeName);
-}
+const payment_email_subject_util_1 = require("./payment-email-subject.util");
 function normalizeItems(items) {
     return (items ?? [])
         .map((item) => ({
@@ -77,9 +75,12 @@ function buildPaymentEmailContent(branding) {
     const itemsRows = formatItemsHtmlRows(normalizedItems);
     const supportTxt = supportBlockText(branding.supportEmail, branding.supportPhone);
     const supportHtml = supportBlockHtml(branding.supportEmail, branding.supportPhone);
-    const subject = branding.subjectTemplate?.trim()
-        ? applySubjectTemplate(branding.subjectTemplate.trim(), name)
-        : `${name} — Complete your secure checkout`;
+    const subject = branding.subject?.trim() ||
+        (0, payment_email_subject_util_1.resolvePaymentEmailSubject)({
+            businessName: name,
+            subjectTemplate: branding.subjectTemplate,
+            envOverride: branding.paymentEmailSubjectEnv,
+        }).subject;
     const introBlock = branding.customIntro?.trim()
         ? `${escapeText(branding.customIntro.trim())}\n\n`
         : '';

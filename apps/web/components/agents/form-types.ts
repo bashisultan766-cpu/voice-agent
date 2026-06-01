@@ -192,7 +192,7 @@ export const initialFormData: CreateAgentFormData = {
   emailSenderName: '',
   emailSenderAddress: '',
   emailReplyTo: '',
-  emailSubjectTemplate: '{{storeName}} — Complete your secure checkout',
+  emailSubjectTemplate: 'Your {{storeName}} payment link',
   paymentLinkEmailIntro: '',
   emailTestRecipient: '',
   useWorkspaceEmail: false,

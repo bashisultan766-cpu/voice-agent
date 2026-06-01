@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
+import { PaymentEmailSubjectService } from './payment-email-subject.service';
 import type { ResolvedAgentEmailConfig } from './agent-email-config.service';
 export type PaymentEmailDeliveryProof = {
     success: boolean;
@@ -14,8 +15,9 @@ type SendPaymentEmailResult = PaymentEmailDeliveryProof;
 export declare class ResendEmailService {
     private readonly config;
     private readonly prisma;
+    private readonly paymentEmailSubject;
     private readonly logger;
-    constructor(config: ConfigService, prisma: PrismaService);
+    constructor(config: ConfigService, prisma: PrismaService, paymentEmailSubject: PaymentEmailSubjectService);
     private apiKey;
     sendPaymentEmail(input: {
         tenantId: string;

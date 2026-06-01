@@ -1,7 +1,9 @@
 /**
- * Branded transactional templates for secure checkout / payment-link emails.
+ * Branded transactional templates for payment-link emails.
  * HTML uses tables + inline styles for broad client support; text is always included for accessibility.
  */
+
+import { resolvePaymentEmailSubject } from './payment-email-subject.util';
 
 export type PaymentEmailItem = { title: string; quantity: number; price?: string | null };
 
@@ -14,13 +16,13 @@ export type PaymentEmailBranding = {
   items: PaymentEmailItem[];
   /** Optional custom subject template with {{storeName}} placeholder */
   subjectTemplate?: string | null;
+  /** PAYMENT_EMAIL_SUBJECT env override (prefer PaymentEmailSubjectService at send time). */
+  paymentEmailSubjectEnv?: string | null;
+  /** Pre-resolved subject from PaymentEmailSubjectService (skips re-resolution). */
+  subject?: string | null;
   /** Optional intro paragraph prepended to email body */
   customIntro?: string | null;
 };
-
-function applySubjectTemplate(template: string, storeName: string): string {
-  return template.replace(/\{\{storeName\}\}/gi, storeName);
-}
 
 function normalizeItems(items: PaymentEmailItem[]): PaymentEmailItem[] {
   return (items ?? [])
@@ -107,9 +109,13 @@ export function buildPaymentEmailContent(branding: PaymentEmailBranding): {
   const supportTxt = supportBlockText(branding.supportEmail, branding.supportPhone);
   const supportHtml = supportBlockHtml(branding.supportEmail, branding.supportPhone);
 
-  const subject = branding.subjectTemplate?.trim()
-    ? applySubjectTemplate(branding.subjectTemplate.trim(), name)
-    : `${name} — Complete your secure checkout`;
+  const subject =
+    branding.subject?.trim() ||
+    resolvePaymentEmailSubject({
+      businessName: name,
+      subjectTemplate: branding.subjectTemplate,
+      envOverride: branding.paymentEmailSubjectEnv,
+    }).subject;
 
   const introBlock = branding.customIntro?.trim()
     ? `${escapeText(branding.customIntro.trim())}\n\n`

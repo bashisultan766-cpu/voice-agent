@@ -4,6 +4,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { detectPhoneCountry } from '../../config/smsCountryRules';
 import { buildPaymentEmailContent } from '../integrations/email/payment-email-templates';
 import { AgentEmailConfigService } from '../integrations/email/agent-email-config.service';
+import { PaymentEmailSubjectService } from '../integrations/email/payment-email-subject.service';
 import { EmailDeliveryService } from './email-delivery.service';
 import { TwilioPaymentSmsService } from './twilio-payment-sms.service';
 import { TwilioWhatsAppService } from './twilio-whatsapp.service';
@@ -51,6 +52,7 @@ export class PaymentLinkDeliveryService {
     private readonly config: ConfigService,
     private readonly emailDelivery: EmailDeliveryService,
     private readonly agentEmailConfig: AgentEmailConfigService,
+    private readonly paymentEmailSubject: PaymentEmailSubjectService,
     private readonly sms: TwilioPaymentSmsService,
     private readonly whatsapp: TwilioWhatsAppService,
     private readonly inboundCalls: InboundCallCaptureService,
@@ -137,15 +139,31 @@ export class PaymentLinkDeliveryService {
       provider: this.emailDelivery.resolveProvider(),
     });
 
+    let agentEmail: Awaited<ReturnType<AgentEmailConfigService['resolveForSend']>> | undefined;
+    if (input.tenantId && input.agentId) {
+      agentEmail = await this.agentEmailConfig.resolveForSend(input.tenantId, input.agentId);
+    }
+
+    const subjectResolution = this.paymentEmailSubject.getPaymentLinkSubject({
+      businessName: input.businessName,
+      subjectTemplate: agentEmail?.subjectTemplate,
+    });
+
     const tmpl = buildPaymentEmailContent({
       businessName: input.businessName?.trim() || 'SureShot Books',
       supportEmail: input.supportEmail,
       supportPhone: input.supportPhone,
       checkoutUrl: paymentLink,
       items: input.lineItems ?? [{ title: 'Your order', quantity: 1, price: null }],
+      subject: subjectResolution.subject,
+      customIntro: agentEmail?.paymentLinkIntro,
     });
 
-    const emailCredentials = await this.resolveEmailCredentials(input.tenantId, input.agentId);
+    const emailCredentials = await this.resolveEmailCredentials(
+      input.tenantId,
+      input.agentId,
+      agentEmail,
+    );
     const emailResult = await this.emailDelivery.sendPaymentLinkEmail({
       to: customerEmail,
       subject: tmpl.subject,
@@ -315,20 +333,24 @@ export class PaymentLinkDeliveryService {
   private async resolveEmailCredentials(
     tenantId?: string,
     agentId?: string,
+    preResolved?: Awaited<ReturnType<AgentEmailConfigService['resolveForSend']>>,
   ): Promise<import('./email-delivery.service').PaymentLinkEmailCredentials | null> {
     const paymentFromOverride = this.config.get<string>('PAYMENT_EMAIL_FROM')?.trim();
 
-    if (tenantId && agentId) {
-      const resolved = await this.agentEmailConfig.resolveForSend(tenantId, agentId);
-      if (resolved) {
-        const from = paymentFromOverride || resolved.from;
-        return {
-          apiKey: resolved.apiKey,
-          from,
-          replyTo: resolved.replyTo,
-          provider: this.emailDelivery.resolveProvider(),
-        };
-      }
+    const resolved =
+      preResolved !== undefined
+        ? preResolved
+        : tenantId && agentId
+          ? await this.agentEmailConfig.resolveForSend(tenantId, agentId)
+          : null;
+    if (resolved) {
+      const from = paymentFromOverride || resolved.from;
+      return {
+        apiKey: resolved.apiKey,
+        from,
+        replyTo: resolved.replyTo,
+        provider: this.emailDelivery.resolveProvider(),
+      };
     }
 
     const from = paymentFromOverride || this.emailDelivery.resolveFromEmail();

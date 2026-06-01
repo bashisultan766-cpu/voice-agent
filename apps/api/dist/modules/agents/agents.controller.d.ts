@@ -477,7 +477,7 @@ export declare class AgentsController {
         failures?: undefined;
     }>;
     syncSecretsFromSettings(tenantId: string, userId: string, id: string): Promise<{
-        updatedSecrets: Record<"shopifyAdminToken" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "resendApiKey", boolean>;
+        updatedSecrets: Record<"openaiApiKey" | "twilioAccountSid" | "twilioAuthToken" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "elevenlabsApiKey" | "resendApiKey", boolean>;
         id: string;
         tenantId: string;
         clientId: string | null;
@@ -603,7 +603,7 @@ export declare class AgentsController {
             } | null;
         };
         credentialSources: import("../../common/credential-resolver.util").CredentialSourcesSummary;
-        updatedSecrets: Record<"shopifyAdminToken" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "resendApiKey", boolean>;
+        updatedSecrets: Record<"openaiApiKey" | "twilioAccountSid" | "twilioAuthToken" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "elevenlabsApiKey" | "resendApiKey", boolean>;
         id: string;
         tenantId: string;
         clientId: string | null;
@@ -744,7 +744,7 @@ export declare class AgentsController {
         readiness?: undefined;
     }>;
     update(tenantId: string, userId: string, id: string, dto: UpdateAgentDto): Promise<{
-        updatedSecrets: Record<"shopifyAdminToken" | "databaseUrl" | "databaseAccessToken" | "twilioAccountSid" | "twilioAuthToken" | "openaiApiKey" | "elevenlabsApiKey" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "resendApiKey", boolean>;
+        updatedSecrets: Record<"openaiApiKey" | "twilioAccountSid" | "twilioAuthToken" | "shopifyAdminToken" | "shopifyApiKey" | "shopifyApiSecret" | "webhookSecret" | "databaseUrl" | "databaseAccessToken" | "elevenlabsApiKey" | "resendApiKey", boolean>;
         id: string;
         tenantId: string;
         clientId: string | null;

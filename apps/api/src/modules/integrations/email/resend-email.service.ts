@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
 import { Prisma } from '@prisma/client';
 import { buildPaymentEmailContent } from './payment-email-templates';
+import { PaymentEmailSubjectService } from './payment-email-subject.service';
 import { paymentEmailIdempotencyKey } from '../../../common/payment-email-idempotency';
 import { assertPaymentEmailRecipientAllowed } from '../../../common/client-demo-safety.util';
 import type { ResolvedAgentEmailConfig } from './agent-email-config.service';
@@ -64,6 +65,7 @@ export class ResendEmailService {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly paymentEmailSubject: PaymentEmailSubjectService,
   ) {}
 
   private apiKey(override?: string): string {
@@ -99,13 +101,18 @@ export class ResendEmailService {
     }
     assertPaymentEmailRecipientAllowed(cleanTo);
 
+    const subjectResolution = this.paymentEmailSubject.getPaymentLinkSubject({
+      businessName: input.businessName,
+      subjectTemplate: input.emailConfig?.subjectTemplate,
+    });
+
     const tmpl = buildPaymentEmailContent({
       businessName: input.businessName.trim() || 'Our store',
       supportEmail: input.supportEmail,
       supportPhone: input.supportPhone,
       checkoutUrl: safeCheckoutUrl,
       items: input.items,
-      subjectTemplate: input.emailConfig?.subjectTemplate,
+      subject: subjectResolution.subject,
       customIntro: input.emailConfig?.paymentLinkIntro,
     });
 

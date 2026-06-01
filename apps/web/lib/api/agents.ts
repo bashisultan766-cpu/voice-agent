@@ -809,7 +809,7 @@ export function agentToFormData(a: AgentApi): CreateAgentPayload {
     emailSenderAddress: (a.emailSenderAddress as string) ?? '',
     emailReplyTo: (a.emailReplyTo as string) ?? '',
     emailSubjectTemplate:
-      (a.emailSubjectTemplate as string) ?? '{{storeName}} — Complete your secure checkout',
+      (a.emailSubjectTemplate as string) ?? 'Your {{storeName}} payment link',
     paymentLinkEmailIntro: (a.paymentLinkEmailIntro as string) ?? '',
     emailTestRecipient: (a.emailTestRecipient as string) ?? '',
     useWorkspaceEmail: (a.useWorkspaceEmail as boolean) ?? false,
