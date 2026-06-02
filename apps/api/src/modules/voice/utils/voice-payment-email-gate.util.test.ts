@@ -10,6 +10,8 @@ import {
 test('PAYMENT_EMAIL_REGEX accepts standard addresses', () => {
   assert.match('jessica@sureshot.com', PAYMENT_EMAIL_REGEX);
   assert.match('user.name+tag@gmail.com', PAYMENT_EMAIL_REGEX);
+  assert.match('jessica@shoreshortbooks.com', PAYMENT_EMAIL_REGEX);
+  assert.match('orders@mycompany.co.uk', PAYMENT_EMAIL_REGEX);
 });
 
 test('evaluatePaymentEmailGate blocks invalid format', () => {
@@ -56,6 +58,17 @@ test('evaluatePaymentEmailGate allows tool emailConfirmed flag', () => {
     emailConfirmed: true,
   });
   assert.equal(result.allowed, true);
+});
+
+test('evaluatePaymentEmailGate coerces string emailConfirmed yes/1/true', () => {
+  for (const flag of ['true', 'TRUE', '1', 'yes'] as const) {
+    const result = evaluatePaymentEmailGate({
+      rawEmail: 'buyer@gmail.com',
+      emailConfirmed: flag,
+    });
+    assert.equal(result.allowed, true, `expected allow for emailConfirmed=${flag}`);
+    assert.equal(typeof result.possiblyInvalid, 'boolean');
+  }
 });
 
 test('isPossiblyInvalidEmailDomain flags structurally invalid domains', () => {

@@ -2,6 +2,28 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { resolvePaymentEmailConfirmed } from './resolve-payment-email-confirmed.util';
 
+test('resolvePaymentEmailConfirmed coerces yes/1/true strings', () => {
+  assert.equal(
+    resolvePaymentEmailConfirmed({
+      body: { parameters: { email_confirmed: 'yes' } },
+      callSid: 'CA1',
+    }),
+    true,
+  );
+  assert.equal(
+    resolvePaymentEmailConfirmed({
+      body: { parameters: { emailConfirmed: '1' } },
+    }),
+    true,
+  );
+  assert.equal(
+    resolvePaymentEmailConfirmed({
+      body: { parameters: { email_confirmed: 'no' } },
+    }),
+    false,
+  );
+});
+
 test('resolvePaymentEmailConfirmed respects explicit true', () => {
   assert.equal(
     resolvePaymentEmailConfirmed({

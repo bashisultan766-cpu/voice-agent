@@ -2,6 +2,7 @@
  * SendPaymentLink email gate — format validation, typo suggestions, confirmation, debug envelope.
  */
 
+import { coerceBoolean } from '../../../common/utils/coerce-boolean.util';
 import {
   normalizeSpokenEmail,
   VOICE_EMAIL_REGEX,
@@ -71,7 +72,8 @@ export function buildPaymentEmailGateDebug(partial: PaymentEmailGateDebug): Paym
 
 export function evaluatePaymentEmailGate(input: {
   rawEmail: string;
-  emailConfirmed?: boolean;
+  /** boolean or tool string forms ("true", "1", "yes"). */
+  emailConfirmed?: boolean | string | number;
   sessionConfirmedEmail?: string | null;
   sessionConfirmationState?: 'pending' | 'confirmed' | 'rejected' | null;
 }): PaymentEmailGateResult {
@@ -163,7 +165,7 @@ export function evaluatePaymentEmailGate(input: {
 
   const sessionEmail = input.sessionConfirmedEmail?.trim().toLowerCase();
   const sessionConfirmed = input.sessionConfirmationState === 'confirmed';
-  const toolConfirmed = input.emailConfirmed === true;
+  const toolConfirmed = coerceBoolean(input.emailConfirmed) === true;
   const emailMatchesSession = sessionEmail ? sessionEmail === normalized : false;
 
   if (!toolConfirmed && !(sessionConfirmed && emailMatchesSession)) {
@@ -175,7 +177,7 @@ export function evaluatePaymentEmailGate(input: {
       agentMessage: sessionMismatch
         ? EMAIL_POSSIBLY_INVALID_PROMPT
         : EMAIL_CONFIRMATION_REQUIRED_PROMPT,
-      possiblyInvalid: sessionMismatch,
+      possiblyInvalid: Boolean(sessionMismatch),
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
