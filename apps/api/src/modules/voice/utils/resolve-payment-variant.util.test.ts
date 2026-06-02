@@ -13,6 +13,7 @@ test('isUsableShopifyVariantId accepts Shopify GIDs and numeric ids', () => {
 test('isUsableShopifyVariantId rejects placeholders and empty values', () => {
   assert.equal(isUsableShopifyVariantId(''), false);
   assert.equal(isUsableShopifyVariantId('0'), false);
+  assert.equal(isUsableShopifyVariantId('gid://shopify/ProductVariant/0'), false);
   assert.equal(isUsableShopifyVariantId('YOUR_VARIANT'), false);
   assert.equal(isUsableShopifyVariantId('PLACEHOLDER'), false);
   assert.equal(isUsableShopifyVariantId(undefined), false);

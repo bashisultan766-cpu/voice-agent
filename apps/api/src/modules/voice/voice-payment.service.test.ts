@@ -314,3 +314,39 @@ test('sendPaymentLink treats placeholder variantId as missing and searches by pr
   assert.equal(searchCalled, true);
   assert.equal(result.success, true);
 });
+
+test('sendPaymentLink ignores variantId 0 and resolves via productName search', async () => {
+  let searchCalled = false;
+  const { service } = buildService({
+    searchProduct: async () => {
+      searchCalled = true;
+      return {
+        success: true,
+        products: [
+          {
+            productId: 'gid://shopify/Product/4',
+            variantId: 'gid://shopify/ProductVariant/48449949204717',
+            title: 'A Game of Thrones',
+            price: '12.00',
+            inventory: 2,
+            image: null,
+            sku: null,
+            inStock: true,
+            score: 99,
+          },
+        ],
+      };
+    },
+  });
+
+  const result = await service.sendPaymentLink({
+    email: 'buyer@sureshotbooks.com',
+    variantId: '0',
+    productName: 'A Game of Thrones',
+    quantity: 1,
+    callSid: 'CA_live_123',
+  });
+
+  assert.equal(searchCalled, true);
+  assert.equal(result.success, true);
+});

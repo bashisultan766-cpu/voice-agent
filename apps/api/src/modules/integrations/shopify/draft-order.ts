@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { ShopifyClientService } from './client';
 import { ShopifyCheckoutValidationError } from './shopify-errors';
-import { toProductVariantGid } from './shopify-ids';
+import { extractTrailingNumericId, toProductVariantGid } from './shopify-ids';
 
 export type DraftResolvedLine = {
   variantGid: string;
@@ -156,6 +156,14 @@ export class ShopifyDraftOrderService {
       throw new ShopifyCheckoutValidationError(
         'INVALID_VARIANT_ID',
         'variantId must be a Shopify ProductVariant GID or numeric variant id.',
+      );
+    }
+
+    const variantNumericId = extractTrailingNumericId(variantGid);
+    if (!variantNumericId || variantNumericId === '0') {
+      throw new ShopifyCheckoutValidationError(
+        'INVALID_VARIANT_ID',
+        'variantId must reference a valid Shopify product variant (received id 0).',
       );
     }
 
