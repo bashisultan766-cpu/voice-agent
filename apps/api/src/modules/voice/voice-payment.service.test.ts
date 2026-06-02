@@ -40,9 +40,16 @@ function eventNames(logLines: string[]): string[] {
     .filter(Boolean);
 }
 
+type VoiceSearchProductArgs = {
+  query: string;
+  tenantId?: string;
+  agentId?: string;
+  limit?: number;
+};
+
 function buildService(overrides?: {
   deliveryEmail?: 'sent' | 'skipped' | 'failed';
-  searchProduct?: (args: { query: string }) => Promise<SearchProductResponseDto>;
+  searchProduct?: (args: VoiceSearchProductArgs) => Promise<SearchProductResponseDto>;
   callSid?: string | null;
 }) {
   const tenantId = 'tenant-test';
@@ -99,7 +106,12 @@ function buildService(overrides?: {
       }),
     } as never,
     {
-      resolveLineItem: async (_tenantId, _agentId, variantId: string) => ({
+      resolveLineItem: async (
+        _tenantId: string,
+        _agentId: string,
+        variantId: string,
+        _quantity: number,
+      ) => ({
         title: 'Test Book',
         quantity: 1,
         price: '9.99',
@@ -107,7 +119,7 @@ function buildService(overrides?: {
       }),
     } as never,
     {
-      searchProduct: async (args) =>
+      searchProduct: async (args: VoiceSearchProductArgs) =>
         overrides?.searchProduct
           ? overrides.searchProduct(args)
           : defaultSearch,
