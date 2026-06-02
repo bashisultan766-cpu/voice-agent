@@ -4,7 +4,7 @@
 
 | Symptom | Meaning |
 |---------|---------|
-| `voice-agent-web` **errored**, ↺ 60 | Process crashed on start many times (missing build, env, or port conflict). |
+| `voice-web` **errored**, ↺ 60 | Process crashed on start many times (missing build, env, or port conflict). |
 | After `pm2 restart`, both **online** | Restart can work if the underlying issue was transient; check logs anyway. |
 | `http://YOUR_VPS_IP:3000: No such file or directory` | **Not a URL command.** Bash tried to run a file named `http://...`. Use a browser or `curl`. |
 | `client_loop: send disconnect` | SSH session dropped (network/idle). Reconnect with `ssh root@srv1609894` (or your host). |
@@ -78,7 +78,7 @@ test -f apps/api/dist/main.js && echo "api build OK" || echo "RUN pnpm build (ap
 From `/var/www/voice-agent`:
 
 ```bash
-pm2 delete voice-agent-api voice-agent-web 2>/dev/null || true
+pm2 delete voice-api voice-web voice-agent-api voice-agent-web 2>/dev/null || true
 pm2 start ecosystem.config.cjs --update-env
 pm2 save
 pm2 status
@@ -87,13 +87,13 @@ pm2 status
 Restart after editing `.env` / `.env.local`:
 
 ```bash
-pm2 restart voice-agent-api voice-agent-web --update-env
+pm2 restart voice-api voice-web --update-env
 ```
 
-## 4) If `voice-agent-web` is errored again
+## 4) If `voice-web` is errored again
 
 ```bash
-pm2 logs voice-agent-web --lines 80
+pm2 logs voice-web --lines 80
 ```
 
 | Log message | Fix |
@@ -106,7 +106,7 @@ pm2 logs voice-agent-web --lines 80
 API logs:
 
 ```bash
-pm2 logs voice-agent-api --lines 80
+pm2 logs voice-api --lines 80
 ```
 
 ## 5) Verify voice-db client

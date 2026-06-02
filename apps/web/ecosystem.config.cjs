@@ -10,7 +10,7 @@
 module.exports = {
   apps: [
     {
-      name: 'voice-agent-web',
+      name: 'voice-web',
       cwd: __dirname,
       script: 'pnpm',
       args: 'start',

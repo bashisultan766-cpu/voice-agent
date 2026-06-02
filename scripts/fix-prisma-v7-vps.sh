@@ -22,7 +22,7 @@
 #   5. prisma validate / generate / migrate deploy (API)
 #   6. Generates voice-db client (Prisma 6, separate schema)
 #   7. Builds Nest API + Next.js web
-#   8. Restarts PM2 (voice-agent-api, voice-agent-web)
+#   8. Restarts PM2 (voice-api, voice-web)
 #   9. Verifies health endpoints
 #
 # Verify manually after success:
@@ -30,8 +30,8 @@
 #   curl -sS http://127.0.0.1:3001/api/health/ready    # expect 200
 #   curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/   # expect 200 or 307
 #   curl -sS http://127.0.0.1:3000/api/health        # web proxy to API health
-#   pm2 status && pm2 logs voice-agent-api --lines 50 --nostream
-#   pm2 logs voice-agent-web --lines 50 --nostream
+#   pm2 status && pm2 logs voice-api --lines 50 --nostream
+#   pm2 logs voice-web --lines 50 --nostream
 #   # Browser (replace IP): http://YOUR_VPS_IP:3000  — dashboard loads, no "missing required error components"
 #   # If browser fails but curl works: sudo ufw allow 3000/tcp && sudo ufw allow 3001/tcp
 # =============================================================================
@@ -43,8 +43,8 @@ cd "$REPO_ROOT"
 API_DIR="$REPO_ROOT/apps/api"
 WEB_DIR="$REPO_ROOT/apps/web"
 VOICE_DB_DIR="$REPO_ROOT/packages/voice-db"
-PM2_API="voice-agent-api"
-PM2_WEB="voice-agent-web"
+PM2_API="voice-api"
+PM2_WEB="voice-web"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }

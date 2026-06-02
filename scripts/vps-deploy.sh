@@ -20,5 +20,5 @@ echo "==> Build monorepo"
 pnpm build
 
 echo "==> Done. Restart PM2 from repo root:"
-echo "    pm2 restart voice-agent-api voice-agent-web --update-env"
+echo "    pm2 restart voice-api voice-web --update-env"
 echo "    # first time: pm2 start ecosystem.config.cjs --update-env && pm2 save"
