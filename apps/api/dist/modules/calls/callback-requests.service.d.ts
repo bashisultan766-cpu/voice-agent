@@ -15,15 +15,15 @@ export declare class CallbackRequestsService {
     create(input: CreateCallbackRequestInput): Promise<{
         id: string;
         tenantId: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         createdAt: Date;
         updatedAt: Date;
-        agentId: string;
-        phone: string;
-        callSessionId: string | null;
-        notes: string | null;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         reason: string;
+        callSessionId: string | null;
+        phone: string;
         priority: string | null;
+        agentId: string;
+        notes: string | null;
     }>;
     listForTenant(tenantId: string, options?: {
         status?: CallbackRequestStatus;
@@ -31,28 +31,28 @@ export declare class CallbackRequestsService {
     }): Promise<{
         id: string;
         tenantId: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         createdAt: Date;
         updatedAt: Date;
-        agentId: string;
-        phone: string;
-        callSessionId: string | null;
-        notes: string | null;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         reason: string;
+        callSessionId: string | null;
+        phone: string;
         priority: string | null;
+        agentId: string;
+        notes: string | null;
     }[]>;
     updateStatus(tenantId: string, id: string, status: CallbackRequestStatus): Promise<{
         id: string;
         tenantId: string;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         createdAt: Date;
         updatedAt: Date;
-        agentId: string;
-        phone: string;
-        callSessionId: string | null;
-        notes: string | null;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         reason: string;
+        callSessionId: string | null;
+        phone: string;
         priority: string | null;
+        agentId: string;
+        notes: string | null;
     } | null>;
     markRequestedOnSession(callSessionId: string): Promise<void>;
 }

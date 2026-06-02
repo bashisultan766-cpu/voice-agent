@@ -3,9 +3,9 @@ export declare const elevenLabsTestBodySchema: z.ZodObject<{
     text: z.ZodOptional<z.ZodString>;
     voiceId: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    voiceId?: string | undefined;
     text?: string | undefined;
+    voiceId?: string | undefined;
 }, {
-    voiceId?: string | undefined;
     text?: string | undefined;
+    voiceId?: string | undefined;
 }>;

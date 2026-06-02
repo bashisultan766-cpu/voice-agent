@@ -3,11 +3,11 @@ export declare class TenantsController {
     private readonly tenantsService;
     constructor(tenantsService: TenantsService);
     findOne(tenantId: string, id: string): Promise<{
-        id: string;
         name: string;
-        slug: string;
+        id: string;
         createdAt: Date;
         updatedAt: Date;
         deletedAt: Date | null;
+        slug: string;
     }>;
 }

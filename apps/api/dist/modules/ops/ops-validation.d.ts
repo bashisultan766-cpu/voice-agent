@@ -5,12 +5,12 @@ export declare const simulateToolBodySchema: z.ZodObject<{
     callSessionId: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     toolName: string;
-    callSessionId?: string | undefined;
     args?: Record<string, unknown> | undefined;
+    callSessionId?: string | undefined;
 }, {
     toolName: string;
-    callSessionId?: string | undefined;
     args?: Record<string, unknown> | undefined;
+    callSessionId?: string | undefined;
 }>;
 export declare const testEmailBodySchema: z.ZodObject<{
     toEmail: z.ZodString;
@@ -31,15 +31,15 @@ export declare const simulateBuyingFlowBodySchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     query?: string | undefined;
     callSessionId?: string | undefined;
-    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
     customerEmail?: string | undefined;
     sendEmail?: boolean | undefined;
+    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
 }, {
     query?: string | undefined;
     callSessionId?: string | undefined;
-    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
     customerEmail?: string | undefined;
     sendEmail?: boolean | undefined;
+    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
 }>;
 export declare const fullReadinessSmokeBodySchema: z.ZodObject<{
     query: z.ZodOptional<z.ZodString>;
@@ -51,16 +51,16 @@ export declare const fullReadinessSmokeBodySchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     query?: string | undefined;
     callSessionId?: string | undefined;
-    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
     customerEmail?: string | undefined;
     sendEmail?: boolean | undefined;
+    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
     runFlowSimulation?: boolean | undefined;
 }, {
     query?: string | undefined;
     callSessionId?: string | undefined;
-    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
     customerEmail?: string | undefined;
     sendEmail?: boolean | undefined;
+    checkoutMode?: "STOREFRONT_CART" | "DRAFT_ORDER_INVOICE" | undefined;
     runFlowSimulation?: boolean | undefined;
 }>;
 export declare const cuidParamSchema: z.ZodString;

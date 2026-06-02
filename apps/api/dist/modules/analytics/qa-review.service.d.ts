@@ -6,25 +6,25 @@ export declare class QaReviewService {
         limit?: number;
         hasOutcome?: boolean;
     }): Promise<({
-        agent: {
-            id: string;
-            name: string;
-        };
         store: {
-            id: string;
             name: string;
+            id: string;
         } | null;
-        _count: {
-            toolExecutions: number;
+        agent: {
+            name: string;
+            id: string;
         };
         callOutcome: {
             id: string;
             tenantId: string;
             createdAt: Date;
             updatedAt: Date;
+            callSessionId: string;
             summary: string | null;
             escalated: boolean;
-            callSessionId: string;
+            callbackRequested: boolean;
+            paymentLinkSent: boolean;
+            escalationReason: string | null;
             resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
             primaryIntent: string | null;
             secondaryIntent: string | null;
@@ -32,26 +32,26 @@ export declare class QaReviewService {
             toolsUsedCount: number;
             toolFailuresCount: number;
             fallbackCount: number;
-            callbackRequested: boolean;
             qaScore: number | null;
             productsRequested: import("@prisma/client/runtime/client").JsonValue | null;
             conversionOutcome: string | null;
-            paymentLinkSent: boolean;
             orderCompleted: boolean;
-            escalationReason: string | null;
             analyticsMeta: import("@prisma/client/runtime/client").JsonValue | null;
         } | null;
+        _count: {
+            toolExecutions: number;
+        };
     } & {
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -70,37 +70,26 @@ export declare class QaReviewService {
         endedReason: string | null;
     })[]>;
     getQaDetail(callSessionId: string, tenantId: string): Promise<{
-        agent: {
-            id: string;
+        store: {
             name: string;
+            id: string;
+        } | null;
+        agent: {
+            name: string;
+            id: string;
             baseSystemPrompt: string;
         };
-        store: {
-            id: string;
-            name: string;
-        } | null;
-        toolExecutions: {
-            id: string;
-            tenantId: string;
-            status: import("@prisma/client").$Enums.ToolExecutionStatus;
-            createdAt: Date;
-            agentId: string;
-            callSessionId: string | null;
-            toolName: string;
-            requestId: string | null;
-            inputJson: import("@prisma/client/runtime/client").JsonValue;
-            outputJson: import("@prisma/client/runtime/client").JsonValue | null;
-            errorMessage: string | null;
-            latencyMs: number | null;
-        }[];
         callOutcome: {
             id: string;
             tenantId: string;
             createdAt: Date;
             updatedAt: Date;
+            callSessionId: string;
             summary: string | null;
             escalated: boolean;
-            callSessionId: string;
+            callbackRequested: boolean;
+            paymentLinkSent: boolean;
+            escalationReason: string | null;
             resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
             primaryIntent: string | null;
             secondaryIntent: string | null;
@@ -108,22 +97,33 @@ export declare class QaReviewService {
             toolsUsedCount: number;
             toolFailuresCount: number;
             fallbackCount: number;
-            callbackRequested: boolean;
             qaScore: number | null;
             productsRequested: import("@prisma/client/runtime/client").JsonValue | null;
             conversionOutcome: string | null;
-            paymentLinkSent: boolean;
             orderCompleted: boolean;
-            escalationReason: string | null;
             analyticsMeta: import("@prisma/client/runtime/client").JsonValue | null;
         } | null;
+        toolExecutions: {
+            id: string;
+            tenantId: string;
+            createdAt: Date;
+            status: import("@prisma/client").$Enums.ToolExecutionStatus;
+            toolName: string;
+            callSessionId: string | null;
+            agentId: string;
+            errorMessage: string | null;
+            requestId: string | null;
+            inputJson: import("@prisma/client/runtime/client").JsonValue;
+            outputJson: import("@prisma/client/runtime/client").JsonValue | null;
+            latencyMs: number | null;
+        }[];
         transcripts: {
             id: string;
+            role: string;
             createdAt: Date;
             callSessionId: string;
-            sequenceNumber: number;
-            role: string;
             content: string;
+            sequenceNumber: number;
             timestampMs: number | null;
         }[];
         callEvents: {
@@ -138,14 +138,14 @@ export declare class QaReviewService {
     } & {
         id: string;
         tenantId: string;
-        storeId: string | null;
-        status: import("@prisma/client").$Enums.CallStatus;
         createdAt: Date;
         updatedAt: Date;
+        status: import("@prisma/client").$Enums.CallStatus;
+        storeId: string | null;
         agentId: string;
         metadata: import("@prisma/client/runtime/client").JsonValue | null;
-        phoneNumberId: string | null;
         twilioCallSid: string | null;
+        phoneNumberId: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -176,14 +176,14 @@ export declare class QaReviewService {
         id: string;
         tenantId: string;
         createdAt: Date;
-        agentId: string;
         callSessionId: string;
+        agentId: string;
+        notes: string | null;
         reviewerUserId: string | null;
         accuracyScore: number | null;
         toneScore: number | null;
         policyComplianceScore: number | null;
         brevityScore: number | null;
-        notes: string | null;
         needsPromptUpdate: boolean;
         needsFaqUpdate: boolean;
     }>;
