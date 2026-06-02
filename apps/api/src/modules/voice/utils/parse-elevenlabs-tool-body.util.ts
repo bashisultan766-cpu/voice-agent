@@ -85,11 +85,19 @@ export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolReq
     tenantId: pickString(flat, ['tenantId', 'tenant_id']),
     agentId: pickString(flat, ['agentId', 'agent_id']),
     // Accept common payload typos emitted by voice tools ("emailComfirmed").
-    emailConfirmed: pickBooleanFromRecord(flat, [
-      'emailConfirmed',
-      'email_confirmed',
-      'emailComfirmed',
-      'email_comfirmed',
-    ]),
+    emailConfirmed:
+      pickBooleanFromRecord(flat, [
+        'emailConfirmed',
+        'email_confirmed',
+        'emailComfirmed',
+        'email_comfirmed',
+        'confirmed',
+      ]) ??
+      pickBooleanFromRecord(body, [
+        'emailConfirmed',
+        'email_confirmed',
+        'emailComfirmed',
+        'email_comfirmed',
+      ]),
   };
 }

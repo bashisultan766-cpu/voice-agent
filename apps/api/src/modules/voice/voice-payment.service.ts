@@ -70,6 +70,7 @@ export class VoicePaymentService {
           ...gate.debug,
           emailSource:
             args.email?.trim() ? 'tool' : sessionEmailState.confirmedEmail ? 'session' : 'none',
+          emailConfirmedToolFlag: args.emailConfirmed === true,
           maskedEmail: gate.normalizedEmail ? maskEmailForLog(gate.normalizedEmail) : null,
           possiblyInvalid: gate.possiblyInvalid,
           callSid: callSid ?? null,

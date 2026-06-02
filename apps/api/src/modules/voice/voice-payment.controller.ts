@@ -4,8 +4,8 @@ import { Public } from '../../common/decorators/public.decorator';
 import { SendPaymentLinkDto } from './dto/send-payment-link.dto';
 import { VoicePaymentService } from './voice-payment.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
-import { coerceBoolean, pickBooleanFromRecord } from '../../common/utils/coerce-boolean.util';
 import { resolveSendPaymentLinkFieldsFromToolBody } from './utils/parse-elevenlabs-tool-body.util';
+import { resolvePaymentEmailConfirmed } from './utils/resolve-payment-email-confirmed.util';
 
 /**
  * Voice checkout — draft order invoice for ElevenLabs server tools.
@@ -41,9 +41,11 @@ export class VoicePaymentController {
       );
     }
 
-    // Default unknown email-confirmation inputs to false so downstream booleans stay strict.
-    const emailConfirmed =
-      fromTool.emailConfirmed ?? this.resolveEmailConfirmed(body.emailConfirmed, body) ?? false;
+    const emailConfirmed = resolvePaymentEmailConfirmed({
+      fromTool: fromTool.emailConfirmed,
+      body,
+      callSid,
+    });
 
     return this.voicePayment.sendPaymentLink({
       email: email ?? '',
@@ -55,18 +57,5 @@ export class VoicePaymentController {
       agentId: fromTool.agentId ?? body.agentId,
       emailConfirmed,
     });
-  }
-
-  private resolveEmailConfirmed(
-    value: unknown,
-    body: Record<string, unknown>,
-  ): boolean | undefined {
-    const direct = coerceBoolean(value);
-    if (direct !== undefined) return direct;
-    return pickBooleanFromRecord(body, [
-      'emailComfirmed',
-      'email_confirmed',
-      'email_comfirmed',
-    ]);
   }
 }
