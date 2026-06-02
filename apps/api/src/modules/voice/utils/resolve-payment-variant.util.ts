@@ -9,7 +9,9 @@ export function isUsableShopifyVariantId(variantId: string | undefined | null): 
   if (!v || v.length > 128) return false;
   if (VARIANT_ID_PLACEHOLDER.test(v)) return false;
   if (/^gid:\/\/shopify\/ProductVariant\/.+/i.test(v)) return true;
-  if (/^\d+$/.test(v)) return true;
+  if (/^\d+$/.test(v)) {
+    return Number(v) > 0;
+  }
   return false;
 }
 
