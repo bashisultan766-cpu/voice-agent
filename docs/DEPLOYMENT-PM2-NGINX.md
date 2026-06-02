@@ -78,10 +78,16 @@ With the **split** config, those URLs go straight to Nest; Nginx must send `X-Fo
 
 ```bash
 cd /opt/shopify-agent/apps/api && PORT=3001 NODE_ENV=production node dist/main.js
-cd /opt/shopify-agent/apps/web && PORT=3000 HOSTNAME=127.0.0.1 NODE_ENV=production node server.js
+cd /opt/shopify-agent/apps/web && PORT=3000 HOSTNAME=127.0.0.1 NODE_ENV=production pnpm start
 ```
 
-Use PM2/ecosystem files in your own ops layer; the repo does not ship PM2 configs yet.
+The repo ships PM2 config at `ecosystem.config.cjs` (recommended on VPS):
+
+```bash
+cd /opt/shopify-agent
+pm2 start ecosystem.config.cjs --update-env
+pm2 save
+```
 
 ## Smoke test through Nginx
 
