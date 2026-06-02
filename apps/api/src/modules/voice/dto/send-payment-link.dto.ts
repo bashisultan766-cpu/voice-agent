@@ -78,6 +78,8 @@ export type SendPaymentLinkResponseDto = {
   };
   warning?: string;
   error?: string;
+  /** PaymentDelivery row id (or no-db-* fallback) for support / log correlation. */
+  deliveryAttemptId?: string | null;
   latencyMs?: number;
   /** Structured gate decision for logs / ElevenLabs tool debugging. */
   emailGate?: PaymentEmailGateDebug;

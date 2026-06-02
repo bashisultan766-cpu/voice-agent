@@ -5,7 +5,6 @@
 import { normalizeSpokenEmail } from '../../calls/runtime/spoken-email-normalizer.util';
 import {
   extractEmailDomain,
-  isDisposableEmailDomain,
   suggestEmailTypo,
 } from '../../calls/runtime/voice-email-enterprise-validation.util';
 
@@ -122,22 +121,6 @@ export function evaluatePaymentEmailGate(input: {
         confirmationRequired: true,
         error: 'invalid_domain',
         note: 'Could not parse domain from email.',
-      }),
-    };
-  }
-
-  if (isDisposableEmailDomain(domain)) {
-    return {
-      allowed: false,
-      normalizedEmail: normalized,
-      agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
-      possiblyInvalid: true,
-      debug: baseDebug({
-        action: 'AskForEmail',
-        customerEmail: normalized,
-        confirmationRequired: true,
-        error: 'disposable_domain',
-        note: 'Disposable / temporary email domain blocked.',
       }),
     };
   }

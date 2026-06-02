@@ -89,6 +89,7 @@ export class VoicePaymentService {
           message: 'Email must be validated and confirmed before sending a payment link.',
           agentMessage: gate.agentMessage,
           emailGate: gate.debug,
+          deliveryAttemptId: null,
           latencyMs: Date.now() - started,
         };
       }
@@ -263,6 +264,7 @@ export class VoicePaymentService {
             whatsapp: delivery.whatsapp,
           },
           error: errorMessage,
+          deliveryAttemptId: delivery.deliveryId,
           emailGate: gate.debug,
           latencyMs,
         };
@@ -306,6 +308,7 @@ export class VoicePaymentService {
           sms: delivery.sms,
           whatsapp: delivery.whatsapp,
         },
+        deliveryAttemptId: delivery.deliveryId,
         emailGate: gate.debug,
         latencyMs,
       };
@@ -330,6 +333,7 @@ export class VoicePaymentService {
         agentMessage:
           "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
         error: message.slice(0, 300),
+        deliveryAttemptId: null,
         latencyMs: Date.now() - started,
       };
     }

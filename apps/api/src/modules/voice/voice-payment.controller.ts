@@ -40,7 +40,9 @@ export class VoicePaymentController {
       );
     }
 
-    const emailConfirmed = fromTool.emailConfirmed;
+    const emailConfirmed =
+      fromTool.emailConfirmed ??
+      (body.emailConfirmed === true || body.emailConfirmed === 'true');
 
     return this.voicePayment.sendPaymentLink({
       email: email ?? '',

@@ -14,7 +14,13 @@ import {
   type DeliveryChannelResult,
   type PaymentLinkDeliveryResult,
 } from './utils/agent-delivery-message.util';
-import { logDelivery, logDeliveryError, logDeliveryWarn } from './utils/delivery-logger.util';
+import {
+  logDelivery,
+  logDeliveryError,
+  logDeliveryWarn,
+  logPaymentDeliveryFailure,
+} from './utils/delivery-logger.util';
+import { maskEmailForLog } from '../calls/runtime/voice-email-capture.util';
 
 export type DeliverPaymentLinkInput = {
   customerEmail: string;
@@ -183,11 +189,13 @@ export class PaymentLinkDeliveryService {
       });
     } else {
       result.email = 'failed';
-      emailError = emailResult.error;
-      logDeliveryError(this.logger, 'delivery.email_failed', {
-        deliveryId,
+      emailError = emailResult.error ?? 'Email delivery failed.';
+      logPaymentDeliveryFailure(this.logger, 'delivery.email_failed', {
+        customerEmail: maskEmailForLog(customerEmail),
+        errorMessage: emailError,
+        deliveryAttemptId: deliveryId,
+        channel: 'email',
         provider: emailResult.provider,
-        error: emailError?.slice(0, 400) ?? null,
         providerResponse: emailResult.providerResponse ?? null,
       });
     }
@@ -224,17 +232,23 @@ export class PaymentLinkDeliveryService {
         } else if (smsResult.status === 'skipped') {
           logDelivery(this.logger, 'delivery.sms_skipped', { deliveryId, reason: smsError?.slice(0, 200) });
         } else {
-          logDeliveryError(this.logger, 'delivery.sms_failed', {
-            deliveryId,
-            error: smsError?.slice(0, 400) ?? null,
+          logPaymentDeliveryFailure(this.logger, 'delivery.sms_failed', {
+            customerEmail: maskEmailForLog(customerEmail),
+            errorMessage: smsError ?? 'Twilio SMS delivery failed.',
+            deliveryAttemptId: deliveryId,
+            channel: 'sms',
+            provider: 'twilio',
           });
         }
       } catch (err) {
         result.sms = 'failed';
         smsError = err instanceof Error ? err.message : String(err);
-        logDeliveryError(this.logger, 'delivery.sms_failed', {
-          deliveryId,
-          error: smsError.slice(0, 400),
+        logPaymentDeliveryFailure(this.logger, 'delivery.sms_failed', {
+          customerEmail: maskEmailForLog(customerEmail),
+          errorMessage: smsError,
+          deliveryAttemptId: deliveryId,
+          channel: 'sms',
+          provider: 'twilio',
         });
       }
     }
@@ -285,17 +299,23 @@ export class PaymentLinkDeliveryService {
             reason: whatsappError?.slice(0, 200),
           });
         } else {
-          logDeliveryError(this.logger, 'delivery.whatsapp_failed', {
-            deliveryId,
-            error: whatsappError?.slice(0, 400) ?? null,
+          logPaymentDeliveryFailure(this.logger, 'delivery.whatsapp_failed', {
+            customerEmail: maskEmailForLog(customerEmail),
+            errorMessage: whatsappError ?? 'Twilio WhatsApp delivery failed.',
+            deliveryAttemptId: deliveryId,
+            channel: 'whatsapp',
+            provider: 'twilio',
           });
         }
       } catch (err) {
         result.whatsapp = 'failed';
         whatsappError = err instanceof Error ? err.message : String(err);
-        logDeliveryError(this.logger, 'delivery.whatsapp_failed', {
-          deliveryId,
-          error: whatsappError.slice(0, 400),
+        logPaymentDeliveryFailure(this.logger, 'delivery.whatsapp_failed', {
+          customerEmail: maskEmailForLog(customerEmail),
+          errorMessage: whatsappError,
+          deliveryAttemptId: deliveryId,
+          channel: 'whatsapp',
+          provider: 'twilio',
         });
       }
     }
