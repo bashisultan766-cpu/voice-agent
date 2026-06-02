@@ -94,3 +94,14 @@ test('resolveSendPaymentLinkFieldsFromToolBody normalizes yes/no values', () => 
   assert.equal(yesFields.emailConfirmed, true);
   assert.equal(noFields.emailConfirmed, false);
 });
+
+test('resolveSendPaymentLinkFieldsFromToolBody reads productName aliases', () => {
+  const fields = resolveSendPaymentLinkFieldsFromToolBody({
+    parameters: {
+      email: 'buyer@sureshotbooks.com',
+      book_title: 'A Game of Thrones',
+      quantity: 1,
+    },
+  });
+  assert.equal(fields.productName, 'A Game of Thrones');
+});

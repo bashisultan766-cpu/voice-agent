@@ -67,3 +67,27 @@ test('send-payment-link infers emailConfirmed on live call when ElevenLabs omits
 
   assert.equal(calls[0]?.emailConfirmed, true);
 });
+
+test('send-payment-link accepts productName without variantId', async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const controller = new VoicePaymentController({
+    sendPaymentLink: async (args: Record<string, unknown>) => {
+      calls.push(args);
+      return { success: true, message: 'Payment link sent successfully.' };
+    },
+  } as never);
+
+  await controller.sendPaymentLink({
+    parameters: {
+      email: 'buyer@sureshotbooks.com',
+      productName: 'A Game of Thrones',
+      quantity: 1,
+      callSid: 'CA5652b993f408284b47dd9ea9c8b2128a',
+      emailConfirmed: true,
+    },
+  } as never);
+
+  assert.equal(calls[0]?.productName, 'A Game of Thrones');
+  assert.equal(calls[0]?.variantId, undefined);
+  assert.equal(calls[0]?.emailConfirmed, true);
+});

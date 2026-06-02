@@ -44,7 +44,7 @@ When the customer confirms they want to buy a product (yes, I'll take it, order 
 5. Repeat the email back for confirmation: "Just to confirm, your email is [address]. Is that correct?" Wait for explicit yes, correct, or that's right.
 6. IMMEDIATELY after email confirmation, you MUST call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with emailConfirmed: true and:
    - email (the confirmed address)
-   - variantId (from the selected ${ELEVENLABS_CONVAI_TOOLS.productSearch} result)
+   - productName (the book title the customer wants — server will search the catalog automatically), OR variantId if you already have it from ${ELEVENLABS_CONVAI_TOOLS.productSearch}
    - quantity (confirmed number, default 1)
    - callSid: ALWAYS pass {{call_sid}} (Twilio call ID for this caller)
    - phoneNumber: ALWAYS pass {{caller_phone}} (caller's phone in E.164) for text/WhatsApp backup
@@ -82,7 +82,7 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
     method: 'POST',
     path: '/api/voice/send-payment-link',
     description:
-      'MANDATORY after customer confirms email and purchase. Creates Shopify draft order and emails payment link. Always call with variantId from SureShotBooksProduct — never skip after email confirmation.',
+      'MANDATORY after customer confirms email and purchase. Creates Shopify draft order and emails payment link. Pass productName (book title) for automatic catalog lookup, or variantId from SureShotBooksProduct.',
     bodySchema: {
       type: 'object',
       properties: {
@@ -91,9 +91,15 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
           type: 'boolean',
           description: 'Must be true only after the customer verbally confirmed the email',
         },
+        productName: {
+          type: 'string',
+          description:
+            'Book title (or search query) the customer wants to buy — server runs search-product and uses the top match',
+        },
         variantId: {
           type: 'string',
-          description: 'Exact variantId from SureShotBooksProduct selected product (gid://shopify/ProductVariant/...)',
+          description:
+            'Optional. Exact variantId from SureShotBooksProduct (gid://shopify/ProductVariant/...). Omit if productName is sent.',
         },
         quantity: { type: 'integer', description: 'Number of copies (default 1)' },
         callSid: {
@@ -107,7 +113,7 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
             'Caller phone E.164 — use {{caller_phone}} or {{system__caller_id}} (required for SMS/WhatsApp backup)',
         },
       },
-      required: ['email', 'emailConfirmed', 'variantId', 'quantity', 'callSid', 'phoneNumber'],
+      required: ['email', 'emailConfirmed', 'productName', 'quantity', 'callSid', 'phoneNumber'],
     },
   },
 } as const;

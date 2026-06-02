@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Logger } from '@nestjs/common';
 import { VoicePaymentService } from './voice-payment.service';
+import type { SearchProductResponseDto } from './dto/search-product.dto';
 
 function attachLogCapture(service: VoicePaymentService): string[] {
   const events: string[] = [];
@@ -41,9 +42,28 @@ function eventNames(logLines: string[]): string[] {
 
 function buildService(overrides?: {
   deliveryEmail?: 'sent' | 'skipped' | 'failed';
+  searchProduct?: (args: { query: string }) => Promise<SearchProductResponseDto>;
+  callSid?: string | null;
 }) {
   const tenantId = 'tenant-test';
   const agentId = 'agent-test';
+  const defaultSearch: SearchProductResponseDto = {
+    success: true,
+    products: [
+      {
+        productId: 'gid://shopify/Product/1',
+        variantId: 'gid://shopify/ProductVariant/48449949204717',
+        title: 'A Game of Thrones',
+        price: '9.99',
+        inventory: 5,
+        image: null,
+        sku: null,
+        inStock: true,
+        score: 100,
+      },
+    ],
+    cacheHit: false,
+  };
 
   const service = new VoicePaymentService(
     {
@@ -69,19 +89,28 @@ function buildService(overrides?: {
     } as never,
     {
       resolveForPaymentLink: async () => ({
-        phoneNumber: undefined,
-        callSid: undefined,
+        phoneNumber: overrides?.callSid === null ? undefined : '+12025551234',
+        callSid:
+          overrides?.callSid === null
+            ? undefined
+            : (overrides?.callSid ?? 'CA_test_call'),
         source: 'test',
         country: 'US',
       }),
     } as never,
     {
-      resolveLineItem: async () => ({
+      resolveLineItem: async (_tenantId, _agentId, variantId: string) => ({
         title: 'Test Book',
         quantity: 1,
         price: '9.99',
-        variantId: 'gid://shopify/ProductVariant/1',
+        variantId,
       }),
+    } as never,
+    {
+      searchProduct: async (args) =>
+        overrides?.searchProduct
+          ? overrides.searchProduct(args)
+          : defaultSearch,
     } as never,
     {
       callSession: { findFirst: async () => null },
@@ -137,7 +166,7 @@ test('sendPaymentLink emits full success log chain for company email', async () 
 });
 
 test('sendPaymentLink blocks unconfirmed Gmail at email_gate', async () => {
-  const { service } = buildService();
+  const { service } = buildService({ callSid: null });
   const logs = attachLogCapture(service);
 
   const result = await service.sendPaymentLink({
@@ -152,4 +181,124 @@ test('sendPaymentLink blocks unconfirmed Gmail at email_gate', async () => {
   assert.ok(names.includes('voice.payment.email_gate'));
   assert.ok(names.includes('voice.payment.email_gate_blocked'));
   assert.equal(names.includes('voice.payment.started'), false);
+});
+
+test('sendPaymentLink resolves variantId from productName via search-product', async () => {
+  let searchQuery = '';
+  const { service } = buildService({
+    searchProduct: async (args) => {
+      searchQuery = args.query;
+      return {
+        success: true,
+        products: [
+          {
+            productId: 'gid://shopify/Product/2',
+            variantId: 'gid://shopify/ProductVariant/48449949204717',
+            title: 'A Game of Thrones',
+            price: '12.00',
+            inventory: 3,
+            image: null,
+            sku: 'ISBN-1',
+            inStock: true,
+            score: 95,
+          },
+        ],
+      };
+    },
+  });
+  const logs = attachLogCapture(service);
+
+  const result = await service.sendPaymentLink({
+    email: 'buyer@sureshotbooks.com',
+    productName: 'A Game of Thrones',
+    quantity: 1,
+    callSid: 'CA_live_123',
+  });
+
+  assert.equal(searchQuery, 'A Game of Thrones');
+  assert.equal(result.success, true);
+  const names = eventNames(logs);
+  assert.ok(names.includes('voice.payment.variant_search_started'));
+  assert.ok(names.includes('voice.payment.variant_resolved_from_search'));
+  assert.ok(names.includes('voice.payment.completed'));
+});
+
+test('sendPaymentLink returns gracefully when search finds no products', async () => {
+  const { service } = buildService({
+    searchProduct: async () => ({
+      success: true,
+      products: [],
+    }),
+  });
+  const logs = attachLogCapture(service);
+
+  const result = await service.sendPaymentLink({
+    email: 'buyer@sureshotbooks.com',
+    productName: 'Nonexistent Book XYZ',
+    quantity: 1,
+    callSid: 'CA_live_123',
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.agentMessage ?? '', /couldn't find/i);
+  const names = eventNames(logs);
+  assert.ok(names.includes('voice.payment.variant_resolve_failed'));
+  assert.equal(names.includes('voice.payment.started'), false);
+});
+
+test('sendPaymentLink prefers explicit variantId and skips search', async () => {
+  let searchCalled = false;
+  const { service } = buildService({
+    searchProduct: async () => {
+      searchCalled = true;
+      return { success: true, products: [] };
+    },
+  });
+
+  const result = await service.sendPaymentLink({
+    email: 'buyer@sureshotbooks.com',
+    variantId: 'gid://shopify/ProductVariant/999',
+    productName: 'Should Not Search',
+    quantity: 1,
+    callSid: 'CA_live_123',
+  });
+
+  assert.equal(searchCalled, false);
+  assert.equal(result.success, true);
+});
+
+test('sendPaymentLink treats placeholder variantId as missing and searches by productName', async () => {
+  let searchCalled = false;
+  const { service } = buildService({
+    searchProduct: async () => {
+      searchCalled = true;
+      return {
+        success: true,
+        products: [
+          {
+            productId: 'gid://shopify/Product/3',
+            variantId: 'gid://shopify/ProductVariant/111',
+            title: 'Dune',
+            price: '10.00',
+            inventory: 1,
+            image: null,
+            sku: null,
+            inStock: true,
+            score: 90,
+          },
+        ],
+      };
+    },
+  });
+
+  const result = await service.sendPaymentLink({
+    email: 'buyer@sureshotbooks.com',
+    variantId: 'YOUR_VARIANT',
+    productName: 'Dune',
+    quantity: 1,
+    callSid: 'CA_live_123',
+  });
+
+  assert.equal(searchCalled, true);
+  assert.equal(result.success, true);
 });

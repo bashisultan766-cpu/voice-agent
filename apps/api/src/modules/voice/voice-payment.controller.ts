@@ -26,14 +26,25 @@ export class VoicePaymentController {
 
     const email = (fromTool.email ?? body.email)?.trim();
     const variantId = (fromTool.variantId ?? body.variantId)?.trim();
+    const productName = (
+      fromTool.productName ??
+      body.productName ??
+      body.productQuery ??
+      (typeof body.query === 'string' ? body.query : undefined)
+    )?.trim();
     const quantity = fromTool.quantity ?? body.quantity;
     const phoneNumber =
       fromTool.phoneNumber?.trim() || body.phoneNumber?.trim() || body.phone?.trim();
     const callSid =
       fromTool.callSid?.trim() || body.callSid?.trim() || body.call_sid?.trim();
 
-    if (!variantId || quantity == null) {
-      throw new BadRequestException('variantId and quantity are required.');
+    if (quantity == null) {
+      throw new BadRequestException('quantity is required.');
+    }
+    if (!variantId && !productName) {
+      throw new BadRequestException(
+        'variantId or productName is required (productName triggers automatic catalog search).',
+      );
     }
     if (!email && !callSid) {
       throw new BadRequestException(
@@ -49,7 +60,8 @@ export class VoicePaymentController {
 
     return this.voicePayment.sendPaymentLink({
       email: email ?? '',
-      variantId,
+      variantId: variantId || undefined,
+      productName: productName || undefined,
       quantity,
       phoneNumber,
       callSid,

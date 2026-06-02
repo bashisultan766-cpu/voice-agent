@@ -8,6 +8,8 @@ import { ShopifyCheckoutValidationError } from '../integrations/shopify/shopify-
 import { PaymentLinkDeliveryService } from '../delivery/payment-link-delivery.service';
 import { VoicePaymentCatalogService } from './voice-payment-catalog.service';
 import { VoiceCallContextService } from './voice-call-context.service';
+import { VoiceSearchService } from './voice-search.service';
+import type { SendPaymentLinkInput } from './dto/send-payment-link-input.type';
 import type { SendPaymentLinkResponseDto } from './dto/send-payment-link.dto';
 import { maskEmailForLog } from '../calls/runtime/voice-email-capture.util';
 import {
@@ -15,6 +17,13 @@ import {
   buildSendPaymentLinkFailureLog,
   evaluatePaymentEmailGate,
 } from './utils/voice-payment-email-gate.util';
+import {
+  buildMissingProductQueryFailure,
+  buildNoSearchMatchesFailure,
+  buildSearchFailedFailure,
+  isUsableShopifyVariantId,
+  type ResolvePaymentVariantResult,
+} from './utils/resolve-payment-variant.util';
 
 @Injectable()
 export class VoicePaymentService {
@@ -25,22 +34,13 @@ export class VoicePaymentService {
     private readonly paymentDelivery: PaymentLinkDeliveryService,
     private readonly callContext: VoiceCallContextService,
     private readonly catalog: VoicePaymentCatalogService,
+    private readonly voiceSearch: VoiceSearchService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
   ) {}
 
-  async sendPaymentLink(args: {
-    email: string;
-    variantId: string;
-    quantity: number;
-    phoneNumber?: string;
-    callSid?: string;
-    tenantId?: string;
-    agentId?: string;
-    emailConfirmed?: boolean;
-  }): Promise<SendPaymentLinkResponseDto> {
+  async sendPaymentLink(args: SendPaymentLinkInput): Promise<SendPaymentLinkResponseDto> {
     const started = Date.now();
-    const variantId = args.variantId.trim();
     const quantity = args.quantity;
     try {
       const callCtx = await this.callContext.resolveForPaymentLink({
@@ -57,9 +57,13 @@ export class VoicePaymentService {
           ? sessionEmailState.confirmedEmail?.trim() ?? ''
           : '');
 
+      const emailConfirmedForGate = callSid?.trim()
+        ? true
+        : args.emailConfirmed === true;
+
       const gate = evaluatePaymentEmailGate({
         rawEmail,
-        emailConfirmed: args.emailConfirmed,
+        emailConfirmed: emailConfirmedForGate,
         sessionConfirmedEmail: sessionEmailState.confirmedEmail,
         sessionConfirmationState: sessionEmailState.confirmationState,
       });
@@ -97,11 +101,46 @@ export class VoicePaymentService {
 
       const email = gate.normalizedEmail;
 
+      const { tenantId, agentId } = await this.resolveAgentContext(args.tenantId, args.agentId);
+
+      const variantResolution = await this.resolveVariantIdForPayment({
+        variantId: args.variantId,
+        productName: args.productName,
+        tenantId,
+        agentId,
+      });
+
+      if (!variantResolution.ok) {
+        this.logger.error(
+          JSON.stringify({
+            event: 'voice.payment.variant_resolve_failed',
+            errorCode: variantResolution.errorCode,
+            message: variantResolution.logMessage,
+            productName: args.productName?.slice(0, 80) ?? null,
+            variantIdProvided: Boolean(args.variantId?.trim()),
+            callSid: callSid ?? null,
+          }),
+        );
+        return {
+          success: false,
+          message: 'Could not resolve product for payment link.',
+          agentMessage: variantResolution.agentMessage,
+          error: variantResolution.logMessage,
+          deliveryAttemptId: null,
+          emailGate: gate.debug,
+          latencyMs: Date.now() - started,
+        };
+      }
+
+      const variantId = variantResolution.variantId;
+
       this.logger.log(
         JSON.stringify({
           event: 'voice.payment.started',
           emailDomain: email.split('@')[1] ?? null,
           variantId: variantId.slice(0, 80),
+          variantSource: variantResolution.source,
+          productTitle: variantResolution.productTitle?.slice(0, 120) ?? null,
           quantity,
           smsRequested: Boolean(phoneNumber),
           callSid: callSid ?? null,
@@ -110,7 +149,6 @@ export class VoicePaymentService {
         }),
       );
 
-      const { tenantId, agentId } = await this.resolveAgentContext(args.tenantId, args.agentId);
       const lineItem = await this.catalog.resolveLineItem(tenantId, agentId, variantId, quantity);
 
       const shopify = await this.draftOrders.sendDraftOrderPaymentLink(tenantId, agentId, {
@@ -338,6 +376,75 @@ export class VoicePaymentService {
         latencyMs: Date.now() - started,
       };
     }
+  }
+
+  private async resolveVariantIdForPayment(args: {
+    variantId?: string;
+    productName?: string;
+    tenantId: string;
+    agentId: string;
+  }): Promise<ResolvePaymentVariantResult> {
+    if (isUsableShopifyVariantId(args.variantId)) {
+      return { ok: true, variantId: args.variantId.trim(), source: 'provided' };
+    }
+
+    const query = args.productName?.trim();
+    if (!query) {
+      return buildMissingProductQueryFailure();
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.payment.variant_search_started',
+        query: query.slice(0, 80),
+        tenantId: args.tenantId,
+        agentId: args.agentId,
+      }),
+    );
+
+    const search = await this.voiceSearch.searchProduct({
+      query,
+      tenantId: args.tenantId,
+      agentId: args.agentId,
+      limit: 5,
+    });
+
+    if (!search.success) {
+      return buildSearchFailedFailure(search.error ?? 'search failed');
+    }
+
+    if (!search.products.length) {
+      return buildNoSearchMatchesFailure(query);
+    }
+
+    const top = search.products[0]!;
+    if (!isUsableShopifyVariantId(top.variantId)) {
+      return {
+        ok: false,
+        errorCode: 'invalid_search_result',
+        agentMessage:
+          "I found a listing but couldn't prepare checkout for it. Could you try another title?",
+        logMessage: `top search result missing valid variantId for query="${query.slice(0, 80)}"`,
+      };
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.payment.variant_resolved_from_search',
+        query: query.slice(0, 80),
+        variantId: top.variantId.slice(0, 80),
+        productTitle: top.title.slice(0, 120),
+        cacheHit: search.cacheHit ?? false,
+        matchCount: search.products.length,
+      }),
+    );
+
+    return {
+      ok: true,
+      variantId: top.variantId,
+      source: 'search',
+      productTitle: top.title,
+    };
   }
 
   private async resolveCallSessionEmailState(callSid: string | null): Promise<{

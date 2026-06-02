@@ -58,6 +58,7 @@ export function resolvePhoneNumberFromToolBody(body: ElevenLabsToolRequestBody):
 export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolRequestBody): {
   email?: string;
   variantId?: string;
+  productName?: string;
   quantity?: number;
   phoneNumber?: string;
   callSid?: string;
@@ -79,6 +80,18 @@ export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolReq
   return {
     email: pickString(flat, ['email']),
     variantId: pickString(flat, ['variantId', 'variant_id']),
+    productName: pickString(flat, [
+      'productName',
+      'product_name',
+      'productTitle',
+      'product_title',
+      'bookTitle',
+      'book_title',
+      'query',
+      'productQuery',
+      'product_query',
+      'title',
+    ]),
     quantity,
     phoneNumber: resolvePhoneNumberFromToolBody(body),
     callSid: resolveCallSidFromToolBody(body),

@@ -8,10 +8,25 @@ export class SendPaymentLinkDto {
   @MaxLength(320)
   email?: string;
 
+  /** Optional when productName is provided — server can resolve via search-product. */
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(128)
-  variantId!: string;
+  variantId?: string;
+
+  /** Book title or search query — used to auto-resolve variantId when variantId is omitted. */
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(240)
+  productName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(240)
+  productQuery?: string;
 
   @Type(() => Number)
   @IsInt()
