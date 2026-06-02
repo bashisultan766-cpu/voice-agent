@@ -35,6 +35,8 @@ export class VoicePaymentController {
       throw new BadRequestException('email, variantId, and quantity are required.');
     }
 
+    const emailConfirmed = fromTool.emailConfirmed;
+
     return this.voicePayment.sendPaymentLink({
       email,
       variantId,
@@ -43,6 +45,7 @@ export class VoicePaymentController {
       callSid,
       tenantId: fromTool.tenantId ?? body.tenantId,
       agentId: fromTool.agentId ?? body.agentId,
+      emailConfirmed,
     });
   }
 }

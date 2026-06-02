@@ -54,6 +54,15 @@ export function resolvePhoneNumberFromToolBody(body: ElevenLabsToolRequestBody):
   );
 }
 
+function pickBoolean(obj: Record<string, unknown>, keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const v = obj[key];
+    if (v === true || v === 'true' || v === 1 || v === '1') return true;
+    if (v === false || v === 'false' || v === 0 || v === '0') return false;
+  }
+  return undefined;
+}
+
 export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolRequestBody): {
   email?: string;
   variantId?: string;
@@ -62,6 +71,7 @@ export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolReq
   callSid?: string;
   tenantId?: string;
   agentId?: string;
+  emailConfirmed?: boolean;
 } {
   const flat = flattenElevenLabsToolBody(body);
 
@@ -82,5 +92,6 @@ export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolReq
     callSid: resolveCallSidFromToolBody(body),
     tenantId: pickString(flat, ['tenantId', 'tenant_id']),
     agentId: pickString(flat, ['agentId', 'agent_id']),
+    emailConfirmed: pickBoolean(flat, ['emailConfirmed', 'email_confirmed']),
   };
 }

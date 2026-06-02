@@ -1,5 +1,6 @@
 import { IsEmail, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
+import type { PaymentEmailGateDebug } from '../utils/voice-payment-email-gate.util';
 
 export class SendPaymentLinkDto {
   @IsEmail({}, { message: 'email must be a valid email address.' })
@@ -49,7 +50,10 @@ export class SendPaymentLinkDto {
   @IsString()
   @MaxLength(64)
   agentId?: string;
+
 }
+
+export type { PaymentEmailGateDebug };
 
 export type SendPaymentLinkResponseDto = {
   success: boolean;
@@ -70,4 +74,6 @@ export type SendPaymentLinkResponseDto = {
   warning?: string;
   error?: string;
   latencyMs?: number;
+  /** Structured gate decision for logs / ElevenLabs tool debugging. */
+  emailGate?: PaymentEmailGateDebug;
 };

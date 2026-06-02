@@ -9,6 +9,12 @@ import { PaymentLinkDeliveryService } from '../delivery/payment-link-delivery.se
 import { VoicePaymentCatalogService } from './voice-payment-catalog.service';
 import { VoiceCallContextService } from './voice-call-context.service';
 import type { SendPaymentLinkResponseDto } from './dto/send-payment-link.dto';
+import { maskEmailForLog } from '../calls/runtime/voice-email-capture.util';
+import {
+  buildEmailSentLog,
+  buildSendPaymentLinkFailureLog,
+  evaluatePaymentEmailGate,
+} from './utils/voice-payment-email-gate.util';
 
 @Injectable()
 export class VoicePaymentService {
@@ -31,9 +37,9 @@ export class VoicePaymentService {
     callSid?: string;
     tenantId?: string;
     agentId?: string;
+    emailConfirmed?: boolean;
   }): Promise<SendPaymentLinkResponseDto> {
     const started = Date.now();
-    const email = args.email.trim().toLowerCase();
     const variantId = args.variantId.trim();
     const quantity = args.quantity;
     try {
@@ -44,6 +50,43 @@ export class VoicePaymentService {
       const phoneNumber = callCtx.phoneNumber;
       const callSid = callCtx.callSid;
 
+      const sessionEmailState = await this.resolveCallSessionEmailState(callSid);
+      const gate = evaluatePaymentEmailGate({
+        rawEmail: args.email,
+        emailConfirmed: args.emailConfirmed,
+        sessionConfirmedEmail: sessionEmailState.confirmedEmail,
+        sessionConfirmationState: sessionEmailState.confirmationState,
+      });
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.payment.email_gate',
+          ...gate.debug,
+          maskedEmail: gate.normalizedEmail ? maskEmailForLog(gate.normalizedEmail) : null,
+          possiblyInvalid: gate.possiblyInvalid,
+          callSid: callSid ?? null,
+        }),
+      );
+
+      if (!gate.allowed) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.payment.email_gate_blocked',
+            ...gate.debug,
+            maskedEmail: gate.normalizedEmail ? maskEmailForLog(gate.normalizedEmail) : null,
+          }),
+        );
+        return {
+          success: false,
+          message: 'Email must be validated and confirmed before sending a payment link.',
+          agentMessage: gate.agentMessage,
+          emailGate: gate.debug,
+          latencyMs: Date.now() - started,
+        };
+      }
+
+      const email = gate.normalizedEmail;
+
       this.logger.log(
         JSON.stringify({
           event: 'voice.payment.started',
@@ -53,6 +96,7 @@ export class VoicePaymentService {
           smsRequested: Boolean(phoneNumber),
           callSid: callSid ?? null,
           callContextSource: callCtx.source,
+          emailConfirmed: true,
         }),
       );
 
@@ -176,6 +220,11 @@ export class VoicePaymentService {
       const latencyMs = Date.now() - started;
 
       if (!emailDelivered && !smsSent && !whatsappSent) {
+        const errorMessage =
+          delivery.emailError?.trim() ||
+          delivery.smsError?.trim() ||
+          delivery.whatsappError?.trim() ||
+          'Payment link could not be delivered.';
         this.logger.error(
           JSON.stringify({
             event: 'voice.payment.failed',
@@ -188,6 +237,11 @@ export class VoicePaymentService {
             smsSent,
             whatsappSent,
             latencyMs,
+            ...buildSendPaymentLinkFailureLog({
+              customerEmail: maskEmailForLog(email),
+              errorMessage,
+              deliveryAttemptId: delivery.deliveryId,
+            }),
           }),
         );
         return {
@@ -200,8 +254,23 @@ export class VoicePaymentService {
             sms: delivery.sms,
             whatsapp: delivery.whatsapp,
           },
+          error: errorMessage,
+          emailGate: gate.debug,
           latencyMs,
         };
+      }
+
+      if (emailDelivered) {
+        this.logger.log(
+          JSON.stringify(
+            buildEmailSentLog({
+              customerEmail: maskEmailForLog(email),
+              emailConfirmed: true,
+              deliveryAttemptId: delivery.deliveryId,
+              draftOrderId: shopify.draftOrderId,
+            }),
+          ),
+        );
       }
 
       this.logger.log(
@@ -229,15 +298,22 @@ export class VoicePaymentService {
           sms: delivery.sms,
           whatsapp: delivery.whatsapp,
         },
+        emailGate: gate.debug,
         latencyMs,
       };
     } catch (err) {
       const message = this.formatError(err);
+      const maskedEmail = args.email?.trim() ? maskEmailForLog(args.email.trim().toLowerCase()) : '';
       this.logger.error(
         JSON.stringify({
           event: 'voice.payment.failed',
           message: message.slice(0, 400),
           latencyMs: Date.now() - started,
+          ...buildSendPaymentLinkFailureLog({
+            customerEmail: maskedEmail,
+            errorMessage: message,
+            deliveryAttemptId: null,
+          }),
         }),
       );
       return {
@@ -245,9 +321,38 @@ export class VoicePaymentService {
         message: 'Payment link could not be sent.',
         agentMessage:
           "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
+        error: message.slice(0, 300),
         latencyMs: Date.now() - started,
       };
     }
+  }
+
+  private async resolveCallSessionEmailState(callSid: string | null): Promise<{
+    confirmedEmail: string | null;
+    confirmationState: 'pending' | 'confirmed' | 'rejected' | null;
+  }> {
+    if (!callSid) {
+      return { confirmedEmail: null, confirmationState: null };
+    }
+
+    const session = await this.prisma.callSession.findFirst({
+      where: { twilioCallSid: callSid },
+      select: { metadata: true },
+    });
+    const meta =
+      session?.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
+        ? (session.metadata as Record<string, unknown>)
+        : {};
+
+    const state = meta.emailConfirmationState;
+    const confirmationState =
+      state === 'confirmed' || state === 'pending' || state === 'rejected' ? state : null;
+
+    const confirmedEmail =
+      (typeof meta.normalizedEmail === 'string' && meta.normalizedEmail.trim()) ||
+      null;
+
+    return { confirmedEmail, confirmationState };
   }
 
   private async persistCheckoutLink(args: {

@@ -42,7 +42,7 @@ When the customer confirms they want to buy a product (yes, I'll take it, order 
 3. If quantity is not confirmed, ask: "How many copies would you like?" Use quantity 1 if they already said one copy.
 4. Ask for email: "Perfect. I'll help you place the order. Please tell me your email address so I can send your payment link."
 5. Repeat the email back for confirmation: "Just to confirm, your email is [address]. Is that correct?" Wait for explicit yes, correct, or that's right.
-6. IMMEDIATELY after email confirmation, you MUST call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with:
+6. IMMEDIATELY after email confirmation, you MUST call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with emailConfirmed: true and:
    - email (the confirmed address)
    - variantId (from the selected ${ELEVENLABS_CONVAI_TOOLS.productSearch} result)
    - quantity (confirmed number, default 1)
@@ -87,6 +87,10 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
       type: 'object',
       properties: {
         email: { type: 'string', description: 'Customer email after verbal confirmation' },
+        emailConfirmed: {
+          type: 'boolean',
+          description: 'Must be true only after the customer verbally confirmed the email',
+        },
         variantId: {
           type: 'string',
           description: 'Exact variantId from SureShotBooksProduct selected product (gid://shopify/ProductVariant/...)',
@@ -103,7 +107,7 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
             'Caller phone E.164 — use {{caller_phone}} or {{system__caller_id}} (required for SMS/WhatsApp backup)',
         },
       },
-      required: ['email', 'variantId', 'quantity', 'callSid', 'phoneNumber'],
+      required: ['email', 'emailConfirmed', 'variantId', 'quantity', 'callSid', 'phoneNumber'],
     },
   },
 } as const;

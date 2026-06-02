@@ -49,3 +49,15 @@ test('resolveSendPaymentLinkFieldsFromToolBody', () => {
   assert.equal(fields.callSid, 'CAabc');
   assert.equal(fields.phoneNumber, '+12025551234');
 });
+
+test('resolveSendPaymentLinkFieldsFromToolBody reads emailConfirmed', () => {
+  const fields = resolveSendPaymentLinkFieldsFromToolBody({
+    parameters: {
+      email: 'test@gmail.com',
+      emailConfirmed: true,
+      variantId: 'gid://shopify/ProductVariant/1',
+      quantity: 1,
+    },
+  });
+  assert.equal(fields.emailConfirmed, true);
+});

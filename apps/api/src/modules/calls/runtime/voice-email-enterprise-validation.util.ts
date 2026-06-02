@@ -8,6 +8,7 @@ import { normalizeSpokenEmail, VOICE_EMAIL_REGEX } from './spoken-email-normaliz
 /** Common spoken / ASR domain typos → canonical domain. */
 const DOMAIN_TYPO_MAP: Record<string, string> = {
   'gmial.com': 'gmail.com',
+  'gmil.com': 'gmail.com',
   'gmai.com': 'gmail.com',
   'gmal.com': 'gmail.com',
   'gamil.com': 'gmail.com',
@@ -16,6 +17,8 @@ const DOMAIN_TYPO_MAP: Record<string, string> = {
   'gmail.con': 'gmail.com',
   'hotnail.com': 'hotmail.com',
   'hotmal.com': 'hotmail.com',
+  'hotmai.com': 'hotmail.com',
+  'hotmial.com': 'hotmail.com',
   'yaho.com': 'yahoo.com',
   'yahooo.com': 'yahoo.com',
   'outlok.com': 'outlook.com',
