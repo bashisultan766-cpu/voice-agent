@@ -40,8 +40,9 @@ export class VoicePaymentController {
       );
     }
 
+    // Default unknown email-confirmation inputs to false so downstream booleans stay strict.
     const emailConfirmed =
-      fromTool.emailConfirmed ?? this.resolveEmailConfirmed(body.emailConfirmed, body);
+      fromTool.emailConfirmed ?? this.resolveEmailConfirmed(body.emailConfirmed, body) ?? false;
 
     return this.voicePayment.sendPaymentLink({
       email: email ?? '',

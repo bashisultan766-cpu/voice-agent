@@ -34,9 +34,6 @@
     "client-demo:readiness": "tsx src/scripts/client-demo-readiness.ts",
     "client-demo:live-call-test": "tsx src/scripts/client-demo-live-call-test.ts"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@bookstore-voice-agents/types": "workspace:*",
     "@langchain/core": "^1.1.48",

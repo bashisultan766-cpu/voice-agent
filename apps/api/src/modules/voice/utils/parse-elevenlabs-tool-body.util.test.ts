@@ -73,3 +73,24 @@ test('resolveSendPaymentLinkFieldsFromToolBody reads emailComfirmed typo key', (
   });
   assert.equal(fields.emailConfirmed, true);
 });
+
+test('resolveSendPaymentLinkFieldsFromToolBody normalizes yes/no values', () => {
+  const yesFields = resolveSendPaymentLinkFieldsFromToolBody({
+    parameters: {
+      email: 'buyer@mycompany.com',
+      email_confirmed: 'yes',
+      variantId: 'gid://shopify/ProductVariant/1',
+      quantity: 1,
+    },
+  });
+  const noFields = resolveSendPaymentLinkFieldsFromToolBody({
+    parameters: {
+      email: 'buyer@mycompany.com',
+      email_comfirmed: 'no',
+      variantId: 'gid://shopify/ProductVariant/1',
+      quantity: 1,
+    },
+  });
+  assert.equal(yesFields.emailConfirmed, true);
+  assert.equal(noFields.emailConfirmed, false);
+});

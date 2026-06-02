@@ -57,8 +57,14 @@ export function resolvePhoneNumberFromToolBody(body: ElevenLabsToolRequestBody):
 function pickBoolean(obj: Record<string, unknown>, keys: string[]): boolean | undefined {
   for (const key of keys) {
     const v = obj[key];
-    if (v === true || v === 'true' || v === 1 || v === '1') return true;
-    if (v === false || v === 'false' || v === 0 || v === '0') return false;
+    if (v === true || v === 1) return true;
+    if (v === false || v === 0) return false;
+    if (typeof v === 'string') {
+      const normalized = v.trim().toLowerCase();
+      // Normalize common tool payload booleans from string forms.
+      if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+      if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+    }
   }
   return undefined;
 }

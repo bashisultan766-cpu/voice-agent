@@ -164,7 +164,8 @@ export function evaluatePaymentEmailGate(input: {
   const emailMatchesSession = sessionEmail ? sessionEmail === normalized : false;
 
   if (!toolConfirmed && !(sessionConfirmed && emailMatchesSession)) {
-    const sessionMismatch = sessionConfirmed && sessionEmail && !emailMatchesSession;
+    // Force strict boolean so PaymentEmailGateResult.possiblyInvalid never receives string/undefined.
+    const sessionMismatch = Boolean(sessionConfirmed && sessionEmail && !emailMatchesSession);
     return {
       allowed: false,
       normalizedEmail: normalized,

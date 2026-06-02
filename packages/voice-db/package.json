@@ -17,9 +17,6 @@
     "studio": "prisma studio",
     "seed": "tsx prisma/seed.ts"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@prisma/client": "^6.9.0"
   },
