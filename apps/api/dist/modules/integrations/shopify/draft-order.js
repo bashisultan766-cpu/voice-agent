@@ -102,6 +102,10 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
         if (!variantGid.startsWith('gid://shopify/ProductVariant/')) {
             throw new shopify_errors_1.ShopifyCheckoutValidationError('INVALID_VARIANT_ID', 'variantId must be a Shopify ProductVariant GID or numeric variant id.');
         }
+        const variantNumericId = (0, shopify_ids_1.extractTrailingNumericId)(variantGid);
+        if (!variantNumericId || variantNumericId === '0') {
+            throw new shopify_errors_1.ShopifyCheckoutValidationError('INVALID_VARIANT_ID', 'variantId must reference a valid Shopify product variant (received id 0).');
+        }
         const quantity = Math.max(1, Math.min(99, Math.floor(payload.quantity || 1)));
         const { domain, token, apiVersion, shopifyConnectionId } = await this.client.getAgentShopifyConfig(tenantId, agentId);
         const createMutation = `

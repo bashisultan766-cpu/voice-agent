@@ -385,17 +385,19 @@ export class VoicePaymentService {
     agentId: string;
   }): Promise<ResolvePaymentVariantResult> {
     const providedVariantId = args.variantId?.trim();
+    const invalidVariantIdForLog = args.variantId?.trim().slice(0, 80) ?? null;
+
     if (isUsableShopifyVariantId(providedVariantId)) {
       return { ok: true, variantId: providedVariantId, source: 'provided' };
     }
 
     const query = args.productName?.trim();
     if (!query) {
-      if (providedVariantId) {
+      if (invalidVariantIdForLog) {
         this.logger.warn(
           JSON.stringify({
             event: 'voice.payment.invalid_variant_id',
-            variantId: providedVariantId.slice(0, 80),
+            variantId: invalidVariantIdForLog,
             reason: 'not_usable_and_no_product_name',
           }),
         );
@@ -403,11 +405,11 @@ export class VoicePaymentService {
       return buildMissingProductQueryFailure();
     }
 
-    if (providedVariantId) {
+    if (invalidVariantIdForLog) {
       this.logger.warn(
         JSON.stringify({
           event: 'voice.payment.invalid_variant_id',
-          variantId: providedVariantId.slice(0, 80),
+          variantId: invalidVariantIdForLog,
           reason: 'falling_back_to_product_name_search',
           productName: query.slice(0, 80),
         }),

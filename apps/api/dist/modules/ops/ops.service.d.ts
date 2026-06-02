@@ -24,43 +24,43 @@ export declare class OpsService {
     private decryptSecretsBlob;
     private normalizeUrlNoSlash;
     getAgentsOverview(tenantId: string): Prisma.PrismaPromise<{
+        id: string;
+        status: import("@prisma/client").$Enums.AgentStatus;
+        updatedAt: Date;
+        name: string;
+        shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
+        twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
+        openaiConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
         voiceProfile: {
             id: string;
-            tenantId: string;
             createdAt: Date;
             updatedAt: Date;
+            tenantId: string;
+            agentId: string;
             language: string;
             voice: string | null;
             greetingMessage: string | null;
-            agentId: string;
             provider: string;
             tone: string | null;
             providerConfig: Prisma.JsonValue | null;
         } | null;
-        name: string;
-        id: string;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.AgentStatus;
-        shopifyConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
-        twilioConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
-        openaiConnectionStatus: import("@prisma/client").$Enums.ConnectionStatus;
     }[]>;
     getCalls(tenantId: string): Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
         id: string;
-        tenantId: string;
+        status: import("@prisma/client").$Enums.CallStatus;
+        metadata: Prisma.JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallStatus;
-        storeId: string | null;
+        tenantId: string;
         agentId: string;
-        metadata: Prisma.JsonValue | null;
-        twilioCallSid: string | null;
+        storeId: string | null;
         phoneNumberId: string | null;
+        twilioCallSid: string | null;
         twilioStreamSid: string | null;
         fromNumber: string | null;
         toNumber: string | null;
@@ -80,104 +80,104 @@ export declare class OpsService {
     })[]>;
     getTranscripts(tenantId: string, callSessionId: string): Prisma.PrismaPromise<{
         id: string;
-        role: string;
         createdAt: Date;
         callSessionId: string;
+        role: string;
         content: string;
         sequenceNumber: number;
         timestampMs: number | null;
     }[]>;
     getCheckoutLinks(tenantId: string): Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
         id: string;
-        tenantId: string;
-        createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
-        callSessionId: string | null;
+        checkoutFingerprint: string | null;
+        mode: import("@prisma/client").$Enums.CheckoutMode;
         checkoutUrl: string;
         customerEmail: string | null;
-        mode: import("@prisma/client").$Enums.CheckoutMode;
-        agentId: string;
-        metadata: Prisma.JsonValue | null;
-        sentAt: Date | null;
-        checkoutFingerprint: string | null;
-        shopifyConnectionId: string | null;
         itemsJson: Prisma.JsonValue | null;
+        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         providerRef: string | null;
         expiresAt: Date | null;
+        sentAt: Date | null;
         completedAt: Date | null;
+        metadata: Prisma.JsonValue | null;
+        createdAt: Date;
+        updatedAt: Date;
+        tenantId: string;
+        agentId: string;
+        callSessionId: string | null;
+        shopifyConnectionId: string | null;
     })[]>;
     getLeads(tenantId: string): Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
         id: string;
-        tenantId: string;
+        customerEmail: string | null;
+        metadata: Prisma.JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
-        callSessionId: string | null;
-        customerEmail: string | null;
-        customerName: string | null;
+        tenantId: string;
         agentId: string;
-        metadata: Prisma.JsonValue | null;
-        notes: string | null;
+        callSessionId: string | null;
+        customerName: string | null;
         customerPhone: string | null;
         intent: string | null;
         interestedItems: Prisma.JsonValue | null;
+        notes: string | null;
     })[]>;
     getEmailEvents(tenantId: string): Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
     } & {
         id: string;
-        tenantId: string;
+        status: import("@prisma/client").$Enums.EmailDeliveryStatus;
+        sentAt: Date | null;
+        metadata: Prisma.JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.EmailDeliveryStatus;
-        callSessionId: string | null;
-        checkoutLinkId: string | null;
+        tenantId: string;
         agentId: string;
-        metadata: Prisma.JsonValue | null;
+        callSessionId: string | null;
+        provider: string;
+        checkoutLinkId: string | null;
         idempotencyKey: string | null;
         recipientEmail: string;
         subject: string;
-        provider: string;
         providerMessageId: string | null;
         bodyPreview: string | null;
-        sentAt: Date | null;
     })[]>;
     getPayments(tenantId: string): Prisma.PrismaPromise<({
         agent: {
-            name: string;
             id: string;
+            name: string;
         };
         checkoutLink: {
             id: string;
-            callSessionId: string | null;
             checkoutUrl: string;
+            callSessionId: string | null;
         };
     } & {
         id: string;
-        tenantId: string;
+        customerEmail: string | null;
+        metadata: Prisma.JsonValue | null;
         createdAt: Date;
         updatedAt: Date;
-        callSessionId: string | null;
-        customerEmail: string | null;
-        checkoutLinkId: string;
+        tenantId: string;
         agentId: string;
-        metadata: Prisma.JsonValue | null;
-        paymentStatus: import("@prisma/client").$Enums.PaymentLifecycleStatus;
+        callSessionId: string | null;
+        checkoutLinkId: string;
         shopifyOrderId: string | null;
         shopifyOrderName: string | null;
+        paymentStatus: import("@prisma/client").$Enums.PaymentLifecycleStatus;
         paidAt: Date | null;
         failedAt: Date | null;
         expiredAt: Date | null;
