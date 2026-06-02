@@ -11,6 +11,7 @@ import { RealtimeVoiceProductSearchService } from './realtime/realtime-voice-pro
 import { ShopifyProductSyncQueueService } from '../integrations/shopify/product-sync.queue';
 
 @Module({
+  // ConfigModule.forRoot is global in AppModule; import here so ConfigService resolves in this context.
   imports: [ConfigModule, PrismaModule, forwardRef(() => AgentsModule)],
   providers: [
     BookstoreSearchCacheService,

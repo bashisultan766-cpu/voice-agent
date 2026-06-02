@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { configGetNumber } from '../../../common/utils/safe-config.util';
 import { ShopifyAgentService, type ShopifyProductSummary } from '../../agents/shopify-agent.service';
 import { BookstoreVoiceSearchService } from '../bookstore-voice-search.service';
 import { BookstoreSearchCacheService } from '../bookstore-search-cache.service';
@@ -38,15 +39,22 @@ function sleep(ms: number): Promise<'timeout'> {
 @Injectable()
 export class RealtimeVoiceProductSearchService {
   private readonly logger = new Logger(RealtimeVoiceProductSearchService.name);
-  private readonly deadlineMs: number;
 
   constructor(
-    private readonly config: ConfigService,
+    // Optional: PM2 must run compiled `dist/main.js`; tsx on .ts source can break DI metadata.
+    @Optional() private readonly config: ConfigService | null,
     private readonly cache: BookstoreSearchCacheService,
     private readonly voiceSearch: BookstoreVoiceSearchService,
     private readonly shopifyAgent: ShopifyAgentService,
-  ) {
-    this.deadlineMs = Number(this.config.get('REALTIME_VOICE_SEARCH_DEADLINE_MS')) || REALTIME_VOICE_SEARCH_DEADLINE_MS;
+  ) {}
+
+  /** Lazy read — do not call config.get in constructor (ConfigService may be undefined). */
+  private resolveDeadlineMs(): number {
+    return configGetNumber(
+      this.config,
+      'REALTIME_VOICE_SEARCH_DEADLINE_MS',
+      REALTIME_VOICE_SEARCH_DEADLINE_MS,
+    );
   }
 
   /** Redis → PostgreSQL index → Shopify live (never live first). Hard deadline for voice. */
@@ -79,8 +87,9 @@ export class RealtimeVoiceProductSearchService {
       }
     }
 
+    const deadlineMs = this.resolveDeadlineMs();
     const elapsedAfterCache = Date.now() - started;
-    const remaining = this.deadlineMs - elapsedAfterCache;
+    const remaining = deadlineMs - elapsedAfterCache;
     if (remaining <= 0) {
       return this.timeoutPartial(started, parsed.kind, [], 'none');
     }
@@ -115,7 +124,7 @@ export class RealtimeVoiceProductSearchService {
     }
 
     const elapsedAfterIndex = Date.now() - started;
-    const liveBudget = this.deadlineMs - elapsedAfterIndex;
+    const liveBudget = deadlineMs - elapsedAfterIndex;
     if (liveBudget <= 80) {
       void this.backgroundFullSearch(tenantId, agentId, searchTerm, limit);
       return this.timeoutPartial(

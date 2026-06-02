@@ -76,18 +76,20 @@ With the **split** config, those URLs go straight to Nest; Nginx must send `X-Fo
 
 ## Start processes (example)
 
-From repo root (after `pnpm build` in api + web):
+From repo root (after `pnpm --filter api build` and `pnpm --filter web build`):
 
 ```bash
 pm2 start infra/ecosystem.config.cjs
-pm2 logs voice-api --lines 50
-pm2 logs voice-web --lines 50
+pm2 logs voice-agent-api --lines 50
+pm2 logs voice-agent-web --lines 50
 ```
+
+**Do not** start the API with `tsx` or `nest start` under PM2. If logs show `.ts` paths and `Cannot read properties of undefined (reading 'get')`, fix PM2 to use `node dist/main.js` only.
 
 Manual start (equivalent):
 
 ```bash
-cd /opt/shopify-agent/apps/api && PORT=3001 NODE_ENV=production node dist/main.js
+cd /var/www/voice-agent/apps/api && PORT=3001 NODE_ENV=production node dist/main.js
 cd /opt/shopify-agent/apps/web && PORT=3000 HOSTNAME=127.0.0.1 NODE_ENV=production pnpm start
 ```
 
