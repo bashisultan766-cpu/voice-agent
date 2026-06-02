@@ -76,6 +76,21 @@ test('evaluatePaymentEmailGate allows company domain with emailConfirmed', () =>
   assert.equal(result.debug.customerEmail, 'jessica@shoreshortbooks.com');
 });
 
+test('evaluatePaymentEmailGate always returns strict boolean possiblyInvalid', () => {
+  const cases = [
+    evaluatePaymentEmailGate({ rawEmail: 'bad' }),
+    evaluatePaymentEmailGate({ rawEmail: 'jessica@gmil.com', emailConfirmed: true }),
+    evaluatePaymentEmailGate({
+      rawEmail: 'buyer@gmail.com',
+      sessionConfirmationState: 'confirmed',
+      sessionConfirmedEmail: 'other@gmail.com',
+    }),
+  ];
+  for (const result of cases) {
+    assert.equal(typeof result.possiblyInvalid, 'boolean');
+  }
+});
+
 test('evaluatePaymentEmailGate uses confirmation prompt when email valid but unconfirmed', () => {
   const result = evaluatePaymentEmailGate({
     rawEmail: 'jessica@shoreshortbooks.com',

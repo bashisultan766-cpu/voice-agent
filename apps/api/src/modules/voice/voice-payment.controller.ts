@@ -4,6 +4,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { SendPaymentLinkDto } from './dto/send-payment-link.dto';
 import { VoicePaymentService } from './voice-payment.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
+import { coerceBoolean, pickBooleanFromRecord } from '../../common/utils/coerce-boolean.util';
 import { resolveSendPaymentLinkFieldsFromToolBody } from './utils/parse-elevenlabs-tool-body.util';
 
 /**
@@ -60,23 +61,12 @@ export class VoicePaymentController {
     value: unknown,
     body: Record<string, unknown>,
   ): boolean | undefined {
-    const direct = this.coerceBoolean(value);
+    const direct = coerceBoolean(value);
     if (direct !== undefined) return direct;
-    const typo = this.coerceBoolean(body.emailComfirmed ?? body.email_confirmed ?? body.email_comfirmed);
-    return typo;
-  }
-
-  private coerceBoolean(value: unknown): boolean | undefined {
-    if (value === true || value === false) return value;
-    if (typeof value === 'string') {
-      const normalized = value.trim().toLowerCase();
-      if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
-      if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
-    }
-    if (typeof value === 'number') {
-      if (value === 1) return true;
-      if (value === 0) return false;
-    }
-    return undefined;
+    return pickBooleanFromRecord(body, [
+      'emailComfirmed',
+      'email_confirmed',
+      'email_comfirmed',
+    ]);
   }
 }

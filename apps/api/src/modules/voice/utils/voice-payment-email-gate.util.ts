@@ -2,14 +2,17 @@
  * SendPaymentLink email gate — format validation, typo suggestions, confirmation, debug envelope.
  */
 
-import { normalizeSpokenEmail } from '../../calls/runtime/spoken-email-normalizer.util';
+import {
+  normalizeSpokenEmail,
+  VOICE_EMAIL_REGEX,
+} from '../../calls/runtime/spoken-email-normalizer.util';
 import {
   extractEmailDomain,
   suggestEmailTypo,
 } from '../../calls/runtime/voice-email-enterprise-validation.util';
 
-/** Inbox-safe payment-link email format (voice + tool payloads). */
-export const PAYMENT_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+/** Same regex as voice capture — accepts Gmail and custom company domains consistently. */
+export const PAYMENT_EMAIL_REGEX = VOICE_EMAIL_REGEX;
 
 export type PaymentEmailGateAction = 'SendPaymentLink' | 'AskForEmail' | 'SuggestCorrection';
 

@@ -76,6 +76,16 @@ With the **split** config, those URLs go straight to Nest; Nginx must send `X-Fo
 
 ## Start processes (example)
 
+From repo root (after `pnpm build` in api + web):
+
+```bash
+pm2 start infra/ecosystem.config.cjs
+pm2 logs voice-api --lines 50
+pm2 logs voice-web --lines 50
+```
+
+Manual start (equivalent):
+
 ```bash
 cd /opt/shopify-agent/apps/api && PORT=3001 NODE_ENV=production node dist/main.js
 cd /opt/shopify-agent/apps/web && PORT=3000 HOSTNAME=127.0.0.1 NODE_ENV=production pnpm start

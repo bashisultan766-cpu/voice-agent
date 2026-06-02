@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../database/prisma.service';
 import { ShopifyProductSyncQueueService } from '../../integrations/shopify/product-sync.queue';
@@ -12,21 +12,26 @@ const DEFAULT_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 export class RealtimeSearchSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RealtimeSearchSyncService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
-  private readonly intervalMs: number;
   private running = false;
 
   constructor(
-    private readonly config: ConfigService,
+    // Optional: avoids "Cannot read properties of undefined (reading 'get')" if DI order fails in tests.
+    @Optional() private readonly config: ConfigService | null,
     private readonly prisma: PrismaService,
     private readonly voiceSearch: BookstoreVoiceSearchService,
     private readonly cache: BookstoreSearchCacheService,
     private readonly syncQueue: ShopifyProductSyncQueueService,
-  ) {
-    this.intervalMs =
-      Number(this.config.get('REALTIME_SEARCH_SYNC_INTERVAL_MS')) || DEFAULT_SYNC_INTERVAL_MS;
+  ) {}
+
+  /** Read interval after module init — ConfigService may not be ready in constructor. */
+  private resolveIntervalMs(): number {
+    const raw = this.config?.get<string | number>('REALTIME_SEARCH_SYNC_INTERVAL_MS');
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SYNC_INTERVAL_MS;
   }
 
   onModuleInit(): void {
+    const intervalMs = this.resolveIntervalMs();
     void this.runSync('startup').catch((err) => {
       this.logger.warn(`Realtime search sync startup failed: ${(err as Error).message}`);
     });
@@ -34,7 +39,7 @@ export class RealtimeSearchSyncService implements OnModuleInit, OnModuleDestroy 
       void this.runSync('interval').catch((err) => {
         this.logger.warn(`Realtime search sync interval failed: ${(err as Error).message}`);
       });
-    }, this.intervalMs);
+    }, intervalMs);
   }
 
   onModuleDestroy(): void {
@@ -75,7 +80,7 @@ export class RealtimeSearchSyncService implements OnModuleInit, OnModuleDestroy 
           trigger,
           agents: agents.length,
           latencyMs: Date.now() - started,
-          intervalMs: this.intervalMs,
+          intervalMs: this.resolveIntervalMs(),
         }),
       );
     } finally {

@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",
-    "dev:server": "tsx server.ts",
+    "dev:server": "tsx --tsconfig tsconfig.json -r tsconfig-paths/register server.ts",
     "dev:next": "next dev --port 3000",
     "prebuild": "pnpm --filter @bookstore-voice-agents/voice-db run generate",
     "build": "next build",
-    "start": "tsx server.ts",
+    "start": "tsx --tsconfig tsconfig.json -r tsconfig-paths/register server.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
@@ -25,6 +25,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "tsconfig-paths": "^4.2.0",
     "@types/node": "^22.10.1",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",

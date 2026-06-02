@@ -4,6 +4,7 @@
  * - WebSocket endpoint for Twilio ConversationRelay at `/api/twilio/voice/stream`
  *
  * Production: set PORT and HOSTNAME in the process manager (PM2). Defaults are for local dev only.
+ * Run via `pnpm start` (tsx + tsconfig-paths) so `@/lib/*` imports resolve outside Next bundler.
  */
 import http, { type IncomingMessage, type ServerResponse } from 'http';
 import type { Duplex } from 'stream';
