@@ -10,7 +10,9 @@
  *   cd /var/www/voice-agent
  *   pnpm install && pnpm db:generate:all
  *   pnpm --filter api build && pnpm --filter web build
- *   pm2 delete voice-api voice-web 2>/dev/null; pm2 start infra/ecosystem.config.cjs
+ *   pm2 delete voice-api voice-web voice-agent-api voice-agent-web 2>/dev/null || true
+ *   pm2 start ecosystem.config.cjs
+ *   (Prefer repo-root ecosystem.config.cjs — same layout, one canonical file.)
  *   pm2 save
  */
 module.exports = {

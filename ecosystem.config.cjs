@@ -1,13 +1,16 @@
 /**
- * PM2 — run from repo root on VPS:
+ * PM2 — canonical production config (run from repo root).
  *
  *   cd /var/www/voice-agent
- *   pnpm install && ./scripts/vps-deploy.sh
- *   pm2 start ecosystem.config.cjs --update-env
+ *   pnpm --filter api build && pnpm --filter web build
+ *   pm2 delete voice-api voice-web voice-agent-api voice-agent-web 2>/dev/null || true
+ *   pm2 start ecosystem.config.cjs
  *   pm2 save
  *
- * Restart after env changes:
- *   pm2 restart voice-agent-api voice-agent-web --update-env
+ * IMPORTANT: Run only ONE API process. Do not also start infra/ecosystem.config.cjs
+ * (that uses names voice-api / voice-web) unless you delete these first.
+ *
+ * API loads apps/api/.env via Nest (cwd must be apps/api).
  */
 const path = require('path');
 
@@ -18,46 +21,35 @@ const webDir = path.join(root, 'apps', 'web');
 module.exports = {
   apps: [
     {
-      name: 'voice-agent-api',
+      name: 'voice-api',
       cwd: apiDir,
       script: 'dist/main.js',
       interpreter: 'node',
       exec_mode: 'fork',
       instances: 1,
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '10s',
       env: {
         NODE_ENV: 'production',
         PORT: '3001',
       },
-      env_file: path.join(apiDir, '.env'),
-      autorestart: true,
-      max_restarts: 15,
-      min_uptime: '10s',
-      restart_delay: 5000,
-      merge_logs: true,
-      time: true,
     },
     {
-      name: 'voice-agent-web',
+      name: 'voice-web',
       cwd: webDir,
-      script: 'pnpm',
-      args: 'start',
-      interpreter: 'none',
+      script: path.join(webDir, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+      args: '--tsconfig tsconfig.json -r tsconfig-paths/register server.ts',
       exec_mode: 'fork',
       instances: 1,
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '10s',
       env: {
         NODE_ENV: 'production',
         PORT: '3000',
         HOSTNAME: '0.0.0.0',
       },
-      env_file: path.join(webDir, '.env.local'),
-      autorestart: true,
-      max_restarts: 15,
-      min_uptime: '10s',
-      restart_delay: 5000,
-      listen_timeout: 30_000,
-      kill_timeout: 10_000,
-      merge_logs: true,
-      time: true,
     },
   ],
 };
