@@ -92,6 +92,12 @@ export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolReq
     callSid: resolveCallSidFromToolBody(body),
     tenantId: pickString(flat, ['tenantId', 'tenant_id']),
     agentId: pickString(flat, ['agentId', 'agent_id']),
-    emailConfirmed: pickBoolean(flat, ['emailConfirmed', 'email_confirmed']),
+    // Accept common payload typos emitted by voice tools ("emailComfirmed").
+    emailConfirmed: pickBoolean(flat, [
+      'emailConfirmed',
+      'email_confirmed',
+      'emailComfirmed',
+      'email_comfirmed',
+    ]),
   };
 }

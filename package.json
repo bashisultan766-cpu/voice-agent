@@ -3,7 +3,9 @@
   "private": true,
   "packageManager": "pnpm@9.14.2",
   "scripts": {
+    "predev": "node ./scripts/ensure-voice-db-client.mjs",
     "dev": "turbo dev",
+    "predev:local": "node ./scripts/ensure-voice-db-client.mjs",
     "dev:local": "concurrently -k -n api,web -c blue,magenta \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:web": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-web.ps1",
     "dev:api": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-api.ps1",
@@ -24,6 +26,7 @@
     "prebuild": "pnpm db:generate:all",
     "build": "turbo build",
     "lint": "turbo lint",
+    "pretypecheck": "node ./scripts/ensure-voice-db-client.mjs",
     "typecheck": "turbo typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "clean": "turbo clean && rm -rf node_modules",

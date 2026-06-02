@@ -61,3 +61,15 @@ test('resolveSendPaymentLinkFieldsFromToolBody reads emailConfirmed', () => {
   });
   assert.equal(fields.emailConfirmed, true);
 });
+
+test('resolveSendPaymentLinkFieldsFromToolBody reads emailComfirmed typo key', () => {
+  const fields = resolveSendPaymentLinkFieldsFromToolBody({
+    parameters: {
+      email: 'buyer@mycompany.com',
+      emailComfirmed: 'true',
+      variantId: 'gid://shopify/ProductVariant/1',
+      quantity: 1,
+    },
+  });
+  assert.equal(fields.emailConfirmed, true);
+});

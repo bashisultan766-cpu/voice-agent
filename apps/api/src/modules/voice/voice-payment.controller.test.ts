@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { VoicePaymentController } from './voice-payment.controller';
+
+test('send-payment-link accepts Gmail email payloads', async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const controller = new VoicePaymentController({
+    sendPaymentLink: async (args: Record<string, unknown>) => {
+      calls.push(args);
+      return { success: true, message: 'Payment link sent successfully.' };
+    },
+  } as never);
+
+  const result = await controller.sendPaymentLink({
+    email: 'test@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/123',
+    quantity: 1,
+    emailConfirmed: true,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.email, 'test@gmail.com');
+});
+
+test('send-payment-link accepts company email payloads and typo confirmation key', async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const controller = new VoicePaymentController({
+    sendPaymentLink: async (args: Record<string, unknown>) => {
+      calls.push(args);
+      return { success: true, message: 'Payment link sent successfully.' };
+    },
+  } as never);
+
+  const result = await controller.sendPaymentLink({
+    parameters: {
+      email: 'orders@mycompany.com',
+      variantId: 'gid://shopify/ProductVariant/456',
+      quantity: 2,
+      emailComfirmed: 'true',
+    },
+  } as never);
+
+  assert.equal(result.success, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.email, 'orders@mycompany.com');
+  assert.equal(calls[0]?.emailConfirmed, true);
+});

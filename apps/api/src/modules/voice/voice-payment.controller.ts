@@ -41,8 +41,7 @@ export class VoicePaymentController {
     }
 
     const emailConfirmed =
-      fromTool.emailConfirmed ??
-      (body.emailConfirmed === true || body.emailConfirmed === 'true');
+      fromTool.emailConfirmed ?? this.resolveEmailConfirmed(body.emailConfirmed, body);
 
     return this.voicePayment.sendPaymentLink({
       email: email ?? '',
@@ -54,5 +53,29 @@ export class VoicePaymentController {
       agentId: fromTool.agentId ?? body.agentId,
       emailConfirmed,
     });
+  }
+
+  private resolveEmailConfirmed(
+    value: unknown,
+    body: Record<string, unknown>,
+  ): boolean | undefined {
+    const direct = this.coerceBoolean(value);
+    if (direct !== undefined) return direct;
+    const typo = this.coerceBoolean(body.emailComfirmed ?? body.email_confirmed ?? body.email_comfirmed);
+    return typo;
+  }
+
+  private coerceBoolean(value: unknown): boolean | undefined {
+    if (value === true || value === false) return value;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+      if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+    }
+    if (typeof value === 'number') {
+      if (value === 1) return true;
+      if (value === 0) return false;
+    }
+    return undefined;
   }
 }
