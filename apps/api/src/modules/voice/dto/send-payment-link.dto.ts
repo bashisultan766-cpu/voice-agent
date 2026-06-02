@@ -1,11 +1,12 @@
-import { IsEmail, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { PaymentEmailGateDebug } from '../utils/voice-payment-email-gate.util';
 
 export class SendPaymentLinkDto {
+  @IsOptional()
   @IsEmail({}, { message: 'email must be a valid email address.' })
   @MaxLength(320)
-  email!: string;
+  email?: string;
 
   @IsString()
   @MinLength(1)
@@ -51,6 +52,10 @@ export class SendPaymentLinkDto {
   @MaxLength(64)
   agentId?: string;
 
+  /** Must be true only after the customer verbally confirmed their email. */
+  @IsOptional()
+  @IsBoolean()
+  emailConfirmed?: boolean;
 }
 
 export type { PaymentEmailGateDebug };

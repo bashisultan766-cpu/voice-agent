@@ -4,7 +4,6 @@
 
 import { normalizeSpokenEmail } from '../../calls/runtime/spoken-email-normalizer.util';
 import {
-  detectDomainTypo,
   extractEmailDomain,
   isDisposableEmailDomain,
   suggestEmailTypo,
@@ -34,42 +33,24 @@ export type PaymentEmailGateResult = {
 export const EMAIL_POSSIBLY_INVALID_PROMPT =
   'I noticed your email might be incorrect. Please repeat it slowly.';
 
-export const EMAIL_UNRECOGNIZED_DOMAIN_PROMPT =
-  'I could not verify that email domain. Please spell your email address again, or provide a different email you use regularly.';
+export const EMAIL_CONFIRMATION_REQUIRED_PROMPT =
+  'Please confirm your email address before I send the payment link.';
 
-const WELL_KNOWN_EMAIL_DOMAINS = new Set([
-  'gmail.com',
-  'googlemail.com',
-  'yahoo.com',
-  'yahoo.co.uk',
-  'hotmail.com',
-  'outlook.com',
-  'live.com',
-  'msn.com',
-  'icloud.com',
-  'me.com',
-  'mac.com',
-  'aol.com',
-  'protonmail.com',
-  'proton.me',
-  'zoho.com',
-  'mail.com',
-  'gmx.com',
-  'yandex.com',
-  'sureshotbooks.com',
-  'sureshot.com',
-]);
+/** ASCII hostname label — allows company and custom domains (e.g. shoreshortbooks.com). */
+const DOMAIN_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function isPossiblyInvalidEmailDomain(domain: string): boolean {
   const d = domain.trim().toLowerCase();
   if (!d || !d.includes('.')) return true;
-  if (WELL_KNOWN_EMAIL_DOMAINS.has(d)) return false;
-  if (detectDomainTypo(d)) return false;
+
   const labels = d.split('.');
+  if (labels.some((label) => !label || label.length > 63)) return true;
+
   const tld = labels[labels.length - 1] ?? '';
   if (tld.length < 2 || tld.length > 24) return true;
-  if (/^\d+$/.test(tld)) return true;
-  return true;
+  if (!/^[a-z]+$/.test(tld)) return true;
+
+  return !labels.every((label) => DOMAIN_LABEL_REGEX.test(label));
 }
 
 export function buildPaymentEmailTypoSuggestionPrompt(correctedEmail: string): string {
@@ -149,7 +130,7 @@ export function evaluatePaymentEmailGate(input: {
     return {
       allowed: false,
       normalizedEmail: normalized,
-      agentMessage: EMAIL_UNRECOGNIZED_DOMAIN_PROMPT,
+      agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
       possiblyInvalid: true,
       debug: baseDebug({
         action: 'AskForEmail',
@@ -178,19 +159,18 @@ export function evaluatePaymentEmailGate(input: {
     };
   }
 
-  const possiblyInvalid = isPossiblyInvalidEmailDomain(domain);
-  if (possiblyInvalid) {
+  if (isPossiblyInvalidEmailDomain(domain)) {
     return {
       allowed: false,
       normalizedEmail: normalized,
-      agentMessage: EMAIL_UNRECOGNIZED_DOMAIN_PROMPT,
+      agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
       possiblyInvalid: true,
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
         confirmationRequired: true,
-        error: 'unrecognized_domain',
-        note: `Domain "${domain}" is not in the known-provider list.`,
+        error: 'invalid_domain',
+        note: `Domain "${domain}" failed structural validation.`,
       }),
     };
   }
@@ -201,19 +181,22 @@ export function evaluatePaymentEmailGate(input: {
   const emailMatchesSession = sessionEmail ? sessionEmail === normalized : false;
 
   if (!toolConfirmed && !(sessionConfirmed && emailMatchesSession)) {
+    const sessionMismatch = sessionConfirmed && sessionEmail && !emailMatchesSession;
     return {
       allowed: false,
       normalizedEmail: normalized,
-      agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
-      possiblyInvalid: false,
+      agentMessage: sessionMismatch
+        ? EMAIL_POSSIBLY_INVALID_PROMPT
+        : EMAIL_CONFIRMATION_REQUIRED_PROMPT,
+      possiblyInvalid: sessionMismatch,
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
         confirmationRequired: true,
-        error: 'email_not_confirmed',
-        note: sessionConfirmed
+        error: sessionMismatch ? 'email_session_mismatch' : 'email_not_confirmed',
+        note: sessionMismatch
           ? 'Session confirmed a different email than the tool payload.'
-          : 'Customer must confirm email before SendPaymentLink.',
+          : 'Customer must confirm email before SendPaymentLink (emailConfirmed: true).',
       }),
     };
   }

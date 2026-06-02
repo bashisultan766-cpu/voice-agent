@@ -31,14 +31,19 @@ export class VoicePaymentController {
     const callSid =
       fromTool.callSid?.trim() || body.callSid?.trim() || body.call_sid?.trim();
 
-    if (!email || !variantId || quantity == null) {
-      throw new BadRequestException('email, variantId, and quantity are required.');
+    if (!variantId || quantity == null) {
+      throw new BadRequestException('variantId and quantity are required.');
+    }
+    if (!email && !callSid) {
+      throw new BadRequestException(
+        'email is required, or callSid with a confirmed session email.',
+      );
     }
 
     const emailConfirmed = fromTool.emailConfirmed;
 
     return this.voicePayment.sendPaymentLink({
-      email,
+      email: email ?? '',
       variantId,
       quantity,
       phoneNumber,

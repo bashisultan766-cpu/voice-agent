@@ -58,7 +58,30 @@ test('evaluatePaymentEmailGate allows tool emailConfirmed flag', () => {
   assert.equal(result.allowed, true);
 });
 
-test('isPossiblyInvalidEmailDomain flags unknown domains', () => {
+test('isPossiblyInvalidEmailDomain flags structurally invalid domains', () => {
   assert.equal(isPossiblyInvalidEmailDomain('gmail.com'), false);
-  assert.equal(isPossiblyInvalidEmailDomain('totallymadeup.zz'), true);
+  assert.equal(isPossiblyInvalidEmailDomain('shoreshortbooks.com'), false);
+  assert.equal(isPossiblyInvalidEmailDomain('totallymadeup.zz'), false);
+  assert.equal(isPossiblyInvalidEmailDomain('no-tld'), true);
+  assert.equal(isPossiblyInvalidEmailDomain('bad..domain.com'), true);
+});
+
+test('evaluatePaymentEmailGate allows company domain with emailConfirmed', () => {
+  const result = evaluatePaymentEmailGate({
+    rawEmail: 'jessica@shoreshortbooks.com',
+    emailConfirmed: true,
+  });
+  assert.equal(result.allowed, true);
+  assert.equal(result.debug.action, 'SendPaymentLink');
+  assert.equal(result.debug.customerEmail, 'jessica@shoreshortbooks.com');
+});
+
+test('evaluatePaymentEmailGate uses confirmation prompt when email valid but unconfirmed', () => {
+  const result = evaluatePaymentEmailGate({
+    rawEmail: 'jessica@shoreshortbooks.com',
+    emailConfirmed: false,
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.debug.error, 'email_not_confirmed');
+  assert.match(result.agentMessage, /confirm your email/i);
 });

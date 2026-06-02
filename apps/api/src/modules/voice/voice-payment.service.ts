@@ -51,8 +51,14 @@ export class VoicePaymentService {
       const callSid = callCtx.callSid;
 
       const sessionEmailState = await this.resolveCallSessionEmailState(callSid);
+      const rawEmail =
+        args.email?.trim() ||
+        (sessionEmailState.confirmationState === 'confirmed'
+          ? sessionEmailState.confirmedEmail?.trim() ?? ''
+          : '');
+
       const gate = evaluatePaymentEmailGate({
-        rawEmail: args.email,
+        rawEmail,
         emailConfirmed: args.emailConfirmed,
         sessionConfirmedEmail: sessionEmailState.confirmedEmail,
         sessionConfirmationState: sessionEmailState.confirmationState,
@@ -62,6 +68,8 @@ export class VoicePaymentService {
         JSON.stringify({
           event: 'voice.payment.email_gate',
           ...gate.debug,
+          emailSource:
+            args.email?.trim() ? 'tool' : sessionEmailState.confirmedEmail ? 'session' : 'none',
           maskedEmail: gate.normalizedEmail ? maskEmailForLog(gate.normalizedEmail) : null,
           possiblyInvalid: gate.possiblyInvalid,
           callSid: callSid ?? null,
