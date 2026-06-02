@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { BadRequestException } from '@nestjs/common';
 import { VoicePaymentController } from './voice-payment.controller';
 
 test('send-payment-link accepts Gmail email payloads', async () => {
@@ -90,4 +91,42 @@ test('send-payment-link accepts productName without variantId', async () => {
   assert.equal(calls[0]?.productName, 'A Game of Thrones');
   assert.equal(calls[0]?.variantId, undefined);
   assert.equal(calls[0]?.emailConfirmed, true);
+});
+
+test('send-payment-link rejects variantId 0 without productName', async () => {
+  const controller = new VoicePaymentController({
+    sendPaymentLink: async () => ({ success: true }),
+  } as never);
+
+  assert.throws(
+    () =>
+      controller.sendPaymentLink({
+        email: 'buyer@sureshotbooks.com',
+        variantId: '0',
+        quantity: 1,
+        emailConfirmed: true,
+      }),
+    BadRequestException,
+  );
+});
+
+test('send-payment-link strips variantId 0 when productName is provided', async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const controller = new VoicePaymentController({
+    sendPaymentLink: async (args: Record<string, unknown>) => {
+      calls.push(args);
+      return { success: true };
+    },
+  } as never);
+
+  await controller.sendPaymentLink({
+    email: 'buyer@sureshotbooks.com',
+    variantId: '0',
+    productName: 'A Game of Thrones',
+    quantity: 1,
+    emailConfirmed: true,
+  });
+
+  assert.equal(calls[0]?.variantId, undefined);
+  assert.equal(calls[0]?.productName, 'A Game of Thrones');
 });

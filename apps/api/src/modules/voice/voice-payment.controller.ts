@@ -6,6 +6,7 @@ import { VoicePaymentService } from './voice-payment.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
 import { resolveSendPaymentLinkFieldsFromToolBody } from './utils/parse-elevenlabs-tool-body.util';
 import { resolvePaymentEmailConfirmed } from './utils/resolve-payment-email-confirmed.util';
+import { isUsableShopifyVariantId } from './utils/resolve-payment-variant.util';
 
 /**
  * Voice checkout — draft order invoice for ElevenLabs server tools.
@@ -46,6 +47,16 @@ export class VoicePaymentController {
         'variantId or productName is required (productName triggers automatic catalog search).',
       );
     }
+
+    let effectiveVariantId = variantId || undefined;
+    if (effectiveVariantId && !isUsableShopifyVariantId(effectiveVariantId)) {
+      if (!productName) {
+        throw new BadRequestException(
+          'Invalid variantId (often 0 or a placeholder). Send productName with the book title instead.',
+        );
+      }
+      effectiveVariantId = undefined;
+    }
     if (!email && !callSid) {
       throw new BadRequestException(
         'email is required, or callSid with a confirmed session email.',
@@ -60,7 +71,7 @@ export class VoicePaymentController {
 
     return this.voicePayment.sendPaymentLink({
       email: email ?? '',
-      variantId: variantId || undefined,
+      variantId: effectiveVariantId,
       productName: productName || undefined,
       quantity,
       phoneNumber,

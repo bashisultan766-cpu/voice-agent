@@ -354,11 +354,18 @@ export class VoicePaymentService {
     } catch (err) {
       const message = this.formatError(err);
       const maskedEmail = args.email?.trim() ? maskEmailForLog(args.email.trim().toLowerCase()) : '';
+      const invalidCatalogProduct =
+        /Product with ID 0/i.test(message) ||
+        /INVALID_VARIANT_ID/i.test(message) ||
+        /no longer available/i.test(message);
+
       this.logger.error(
         JSON.stringify({
           event: 'voice.payment.failed',
           message: message.slice(0, 400),
           latencyMs: Date.now() - started,
+          variantIdRequested: args.variantId?.trim().slice(0, 80) ?? null,
+          productName: args.productName?.trim().slice(0, 80) ?? null,
           ...buildSendPaymentLinkFailureLog({
             customerEmail: maskedEmail,
             errorMessage: message,
@@ -368,9 +375,12 @@ export class VoicePaymentService {
       );
       return {
         success: false,
-        message: 'Payment link could not be sent.',
-        agentMessage:
-          "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
+        message: invalidCatalogProduct
+          ? 'Could not resolve a valid product for checkout.'
+          : 'Payment link could not be sent.',
+        agentMessage: invalidCatalogProduct
+          ? "I couldn't match that book in our catalog. What's the exact title you'd like to order?"
+          : "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
         error: message.slice(0, 300),
         deliveryAttemptId: null,
         latencyMs: Date.now() - started,
