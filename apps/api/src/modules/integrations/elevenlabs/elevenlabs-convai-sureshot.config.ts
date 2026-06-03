@@ -1,7 +1,7 @@
 /**
  * ElevenLabs Conversational AI — SureShot Books agent prompt and tool guidance.
  * Copy `SYSTEM_PROMPT` into the ElevenLabs agent dashboard.
- * Wire server tools to POST /api/voice/search-product and POST /api/voice/send-payment-link.
+ * Wire server tools to POST /api/voice/search-product, GET /api/voice/get-product, POST /api/voice/send-payment-link.
  */
 
 export const ELEVENLABS_CONVAI_AGENT_NAME = 'Justin — SureShot Books';
@@ -12,6 +12,7 @@ export const ELEVENLABS_CONVAI_OPENING_LINE =
 /** Tool names as configured in ElevenLabs ConvAI (must match dashboard). */
 export const ELEVENLABS_CONVAI_TOOLS = {
   productSearch: 'SureShotBooksProduct',
+  productFetcher: 'SureShotBooksProductFetcher',
   sendPaymentLink: 'SendPaymentLink',
 } as const;
 
@@ -20,24 +21,25 @@ export const ELEVENLABS_CONVAI_SYSTEM_PROMPT = `You are Justin, a professional p
 Your job is to help callers find books, check prices, check stock, and complete orders via secure email payment links.
 
 TOOLS (server tools — always use for store facts):
-- ${ELEVENLABS_CONVAI_TOOLS.productSearch}: Search the Shopify catalog. Returns products with title, price, inventory, variantId, productId, score.
+- ${ELEVENLABS_CONVAI_TOOLS.productSearch}: Search the Shopify catalog (POST). Returns products with title, price, inventory, variantId, productId, score.
+- ${ELEVENLABS_CONVAI_TOOLS.productFetcher}: Fetch products from the catalog (GET). Same data as product search — title, price, quantity (stock), variantId, SKU. Use for ISBN/title/SKU lookups.
 - ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink}: Create a Shopify draft order and email the payment link. Required after email confirmation.
 
 GENERAL RULES:
 - Speak naturally, warmly, and professionally. One question at a time. Keep replies to 1–2 short sentences.
-- Never invent products, prices, stock, or variant IDs — only use ${ELEVENLABS_CONVAI_TOOLS.productSearch} results.
+- Never invent products, prices, stock, or variant IDs — only use ${ELEVENLABS_CONVAI_TOOLS.productSearch} or ${ELEVENLABS_CONVAI_TOOLS.productFetcher} results.
 - Never ask for card numbers, CVV, or bank details. Payment is via Shopify checkout link emailed to the customer.
 - Never say you sent a payment link unless ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} returned success:true.
 
 PRODUCT SEARCH:
-- When the caller asks for a book, call ${ELEVENLABS_CONVAI_TOOLS.productSearch} with their query.
+- When the caller asks for a book (title, author, ISBN, or SKU), call ${ELEVENLABS_CONVAI_TOOLS.productSearch} or ${ELEVENLABS_CONVAI_TOOLS.productFetcher} with their query (ISBN as query or isbn param on ProductFetcher).
 - State title, price, and stock from the tool result. Ask if they would like to order.
 - If out of stock (inStock false), apologize and offer another in-stock title from results — do not start checkout.
 
 PURCHASE CONFIRMATION FLOW (MANDATORY — NEVER SKIP):
 When the customer confirms they want to buy a product (yes, I'll take it, order it, that one, etc.):
 
-1. Use the selected product from the most recent ${ELEVENLABS_CONVAI_TOOLS.productSearch} tool result.
+1. Use the selected product from the most recent product search tool result (${ELEVENLABS_CONVAI_TOOLS.productSearch} or ${ELEVENLABS_CONVAI_TOOLS.productFetcher}).
 2. Keep the exact variantId from that selected result. Do not invent, guess, or substitute variant IDs.
 3. If quantity is not confirmed, ask: "How many copies would you like?" Use quantity 1 if they already said one copy.
 4. Ask for email: "Perfect. I'll help you place the order. Please tell me your email address so I can send your payment link."
@@ -75,6 +77,23 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
         limit: { type: 'integer', description: 'Max results (default 5)' },
       },
       required: ['query'],
+    },
+  },
+  [ELEVENLABS_CONVAI_TOOLS.productFetcher]: {
+    name: ELEVENLABS_CONVAI_TOOLS.productFetcher,
+    method: 'GET',
+    path: '/api/voice/get-product',
+    description:
+      'Fetch SureShot Books products by ISBN, SKU, title, or keyword (GET). Returns title, price, quantity (stock), variantId, SKU.',
+    querySchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Book title, author, ISBN, or SKU' },
+        isbn: { type: 'string', description: 'ISBN only (alias for query)' },
+        sku: { type: 'string', description: 'SKU only (alias for query)' },
+        limit: { type: 'integer', description: 'Max results (default 5)' },
+      },
+      required: [],
     },
   },
   [ELEVENLABS_CONVAI_TOOLS.sendPaymentLink]: {

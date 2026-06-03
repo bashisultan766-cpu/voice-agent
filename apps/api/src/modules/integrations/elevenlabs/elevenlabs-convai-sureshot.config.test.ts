@@ -15,7 +15,8 @@ test('convai system prompt references SureShotBooksProduct and SendPaymentLink',
 
 test('buildElevenLabsConvaiAgentConfig wires voice API tool URLs', () => {
   const cfg = buildElevenLabsConvaiAgentConfig('https://voice.example.com');
-  assert.equal(cfg.tools.length, 2);
+  assert.equal(cfg.tools.length, 3);
   assert.ok(cfg.tools.some((t) => t.url.includes('/api/voice/search-product')));
+  assert.ok(cfg.tools.some((t) => t.url.includes('/api/voice/get-product')));
   assert.ok(cfg.tools.some((t) => t.url.includes('/api/voice/send-payment-link')));
 });

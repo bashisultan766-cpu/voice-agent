@@ -15,9 +15,10 @@ Configure the ElevenLabs Conversational AI agent for Twilio inbound (`POST /api/
 | Tool name | Method | URL |
 |-----------|--------|-----|
 | `SureShotBooksProduct` | POST | `https://<your-host>/api/voice/search-product` |
+| `SureShotBooksProductFetcher` | GET | `https://<your-host>/api/voice/get-product` |
 | `SendPaymentLink` | POST | `https://<your-host>/api/voice/send-payment-link` |
 
-5. If `VOICE_COMMERCE_API_KEY` is set, add header `x-voice-api-key` on both tools in ElevenLabs.
+5. If `VOICE_COMMERCE_API_KEY` is set, add header `x-voice-api-key` on all voice tools in ElevenLabs.
 
 ## Purchase flow (mandatory)
 
@@ -38,6 +39,16 @@ When the customer confirms they want to buy:
 ```json
 { "query": "Atomic Habits", "limit": 5 }
 ```
+
+**SureShotBooksProductFetcher** (query parameters on GET)
+
+| Param | Required | Example |
+|-------|----------|---------|
+| `query` | One of query/isbn/sku | `Atomic Habits` |
+| `isbn` | alias | `9780143127550` |
+| `limit` | no | `5` |
+
+Example URL: `GET .../api/voice/get-product?query=9780143127550&limit=5`
 
 **SendPaymentLink**
 
