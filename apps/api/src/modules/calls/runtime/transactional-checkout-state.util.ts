@@ -14,6 +14,11 @@ import {
   type LlmAgentConversationState,
   type LlmSelectedProduct,
 } from './llm-agent-conversation-state.util';
+import {
+  activeProductAlreadySent,
+  allPaymentRecipientsTerminal,
+  parsePaymentRecipients,
+} from './payment-recipient.util';
 import { isLlmProductInStock } from './voice-stock-sales-policy.util';
 import { QUANTITY_PROMPT } from './book-sales-voice.util';
 import {
@@ -344,8 +349,17 @@ export function resolveTransactionalCheckoutState(
   const { llmState, collectedEmail, orderState } = ctx;
   const emailConfirmationState = normalizeEmailConfirmationState(ctx.emailConfirmationState);
 
-  if (llmState.paymentLinkSent === true || orderState === 'PAYMENT_LINK_SENT') {
-    return CheckoutState.PAYMENT_LINK_SENT;
+  const recipients = parsePaymentRecipients(llmState.paymentRecipients);
+  const active = activeCheckoutProduct(llmState);
+  const activeNeedsCheckout =
+    active != null &&
+    !activeProductAlreadySent(recipients, active, llmState.customerEmail);
+  const paymentSentFlag =
+    llmState.paymentLinkSent === true || orderState === 'PAYMENT_LINK_SENT';
+  if (paymentSentFlag && !activeNeedsCheckout) {
+    if (recipients.length === 0 || allPaymentRecipientsTerminal(recipients)) {
+      return CheckoutState.PAYMENT_LINK_SENT;
+    }
   }
   if (orderState === 'PAYMENT_LINK_CREATING' || llmState.paymentLinkCreated === true) {
     return CheckoutState.PAYMENT_LINK_CREATING;

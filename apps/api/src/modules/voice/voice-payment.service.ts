@@ -13,6 +13,15 @@ import type { SendPaymentLinkInput } from './dto/send-payment-link-input.type';
 import type { SendPaymentLinkResponseDto } from './dto/send-payment-link.dto';
 import { maskEmailForLog } from '../calls/runtime/voice-email-capture.util';
 import {
+  isDuplicatePaymentRecipient,
+  markRecipientPaymentSent,
+  parsePaymentRecipients,
+  PAYMENT_RECIPIENTS_METADATA_KEY,
+  paymentRecipientPairKey,
+  resolveProductIdForRecipient,
+  sessionMetaPatchForRecipients,
+} from '../calls/runtime/payment-recipient.util';
+import {
   buildEmailSentLog,
   buildSendPaymentLinkFailureLog,
   evaluatePaymentEmailGate,
@@ -133,6 +142,30 @@ export class VoicePaymentService {
       }
 
       const variantId = variantResolution.variantId;
+      const productTitle = variantResolution.productTitle ?? args.productName?.trim() ?? 'Book';
+      const productId = args.variantId?.trim() || variantId;
+
+      const sessionRecipients = await this.loadCallSessionPaymentRecipients(callSid);
+      if (isDuplicatePaymentRecipient(sessionRecipients, productId, email)) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.payment.duplicate_recipient_blocked',
+            productId: productId.slice(0, 80),
+            maskedEmail: maskEmailForLog(email),
+            idempotencyKey: paymentRecipientPairKey(productId, email),
+            callSid: callSid ?? null,
+          }),
+        );
+        return {
+          success: true,
+          message: 'Payment link was already sent for this book and email.',
+          agentMessage:
+            'I already sent a payment link for that book to that email address on this call.',
+          deliveryAttemptId: null,
+          emailGate: gate.debug,
+          latencyMs: Date.now() - started,
+        };
+      }
 
       this.logger.log(
         JSON.stringify({
@@ -322,6 +355,19 @@ export class VoicePaymentService {
         );
       }
 
+      if (emailDelivered && callSid) {
+        await this.appendPaymentRecipientToCallSession(callSid, {
+          productId,
+          productTitle,
+          variantId,
+          recipientEmail: email,
+          paymentLink: shopify.invoiceUrl,
+          draftOrderId: shopify.draftOrderId,
+          checkoutLinkId: checkoutLink.id,
+          quantity,
+        });
+      }
+
       this.logger.log(
         JSON.stringify({
           event: 'voice.payment.completed',
@@ -334,6 +380,7 @@ export class VoicePaymentService {
           smsSent,
           whatsappSent,
           latencyMs,
+          recipientCount: sessionRecipients.length + (emailDelivered ? 1 : 0),
         }),
       );
 
@@ -478,6 +525,76 @@ export class VoicePaymentService {
       source: 'search',
       productTitle: top.title,
     };
+  }
+
+  private async loadCallSessionPaymentRecipients(callSid: string | null) {
+    if (!callSid) return [];
+    const session = await this.prisma.callSession.findFirst({
+      where: { twilioCallSid: callSid },
+      select: { metadata: true },
+    });
+    const meta =
+      session?.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
+        ? (session.metadata as Record<string, unknown>)
+        : {};
+    return parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]);
+  }
+
+  private async appendPaymentRecipientToCallSession(
+    callSid: string,
+    args: {
+      productId: string;
+      productTitle: string;
+      variantId: string;
+      recipientEmail: string;
+      paymentLink: string;
+      draftOrderId: string;
+      checkoutLinkId: string;
+      quantity: number;
+    },
+  ): Promise<void> {
+    const session = await this.prisma.callSession.findFirst({
+      where: { twilioCallSid: callSid },
+      select: { id: true, metadata: true },
+    });
+    if (!session) return;
+    const meta =
+      session.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
+        ? (session.metadata as Record<string, unknown>)
+        : {};
+    const recipients = parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]);
+    const productId = resolveProductIdForRecipient({
+      title: args.productTitle,
+      productId: args.productId,
+      variantId: args.variantId,
+    });
+    const updated = markRecipientPaymentSent(recipients, productId, args.recipientEmail, {
+      paymentLink: args.paymentLink,
+      draftOrderId: args.draftOrderId,
+      checkoutLinkId: args.checkoutLinkId,
+      productTitle: args.productTitle,
+      variantId: args.variantId,
+      quantity: args.quantity,
+    });
+    await this.prisma.callSession.update({
+      where: { id: session.id },
+      data: {
+        metadata: {
+          ...meta,
+          ...sessionMetaPatchForRecipients(updated),
+          orderState: 'PAYMENT_LINK_SENT',
+        } as Prisma.InputJsonValue,
+      },
+    });
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.payment.recipient_persisted',
+        callSid,
+        productId: productId.slice(0, 80),
+        maskedEmail: maskEmailForLog(args.recipientEmail),
+        recipientCount: updated.length,
+      }),
+    );
   }
 
   private async resolveCallSessionEmailState(callSid: string | null): Promise<{

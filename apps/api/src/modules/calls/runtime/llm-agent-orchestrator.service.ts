@@ -98,6 +98,7 @@ import {
 import {
   applyCheckoutSignalsFromSpeech,
   applyDeterministicProductSelection,
+  activeCheckoutProduct,
   assertNoOpenAiDuringTransactionalCheckout,
   buildTransactionalCheckoutLog,
   CHECKOUT_LOCK_ACTIVE_KEY,
@@ -108,10 +109,23 @@ import {
   isCheckoutLockedUtterance,
   isTransactionalCheckoutActive,
   normalizeEmailConfirmationState,
+  resolveLineQuantity,
   resolveTransactionalCheckoutState,
   routeTransactionalCheckoutTurn,
   TRANSACTIONAL_CHECKOUT_STATE_KEY,
 } from './transactional-checkout-state.util';
+import {
+  buildPaymentRecipientsSummary,
+  isLegacySingleRecipientComplete,
+  markRecipientEmailConfirmed,
+  mergePaymentRecipientsIntoState,
+  parsePaymentRecipients,
+  paymentRecipientsFromSession,
+  resetPerProductEmailForNextBook,
+  sessionMetaPatchForRecipients,
+  shouldBlockPostPaymentEmailCapture,
+  wantsAnotherBookOnCall,
+} from './payment-recipient.util';
 import type { TransactionalCheckoutState } from './checkout-state.types';
 import {
   voiceFastModeMaxToolIterations,
@@ -319,10 +333,33 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
 
     const emailCaptureMode = resolveEmailCaptureMode(sessionMetaAtStart);
 
-    const paymentLinkSent =
-      state.paymentLinkSent === true || sessionMetaAtStart.orderState === 'PAYMENT_LINK_SENT';
+    const recipientsAtStart = paymentRecipientsFromSession(sessionMetaAtStart, state);
+    const checkoutFullyComplete = isLegacySingleRecipientComplete(
+      recipientsAtStart,
+      state.paymentLinkSent === true,
+      typeof sessionMetaAtStart.orderState === 'string' ? sessionMetaAtStart.orderState : null,
+    );
 
-    if (paymentLinkSent && isPostPaymentClosingUtterance(userMessage)) {
+    if (wantsAnotherBookOnCall(userMessage) && checkoutFullyComplete) {
+      state = {
+        ...state,
+        customerEmail: null,
+        checkoutStage: 'product_selected',
+        paymentLinkCreated: false,
+      };
+      await this.callsService.mergeSessionMetadata(callSessionId, {
+        ...resetPerProductEmailForNextBook(),
+        [LLM_AGENT_STATE_KEY]: state,
+      });
+      await this.callMemory.merge(callSessionId, {
+        collectedEmail: null,
+        emailCollected: false,
+        emailConfirmationState: 'none',
+        checkoutState: 'confirming',
+      });
+    }
+
+    if (checkoutFullyComplete && isPostPaymentClosingUtterance(userMessage)) {
       this.logger.log(
         JSON.stringify({
           event: 'voice.checkout.post_payment_closing',
@@ -331,8 +368,12 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
           agentId: ctx.agentId,
         }),
       );
+      const summary =
+        recipientsAtStart.length > 1
+          ? buildPaymentRecipientsSummary(recipientsAtStart)
+          : POST_PAYMENT_THANK_YOU_REPLY;
       return {
-        reply: POST_PAYMENT_THANK_YOU_REPLY,
+        reply: summary || POST_PAYMENT_THANK_YOU_REPLY,
         toolCallsCount: 0,
         toolNames: [],
         escalated: false,
@@ -352,7 +393,17 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     /** PRIORITY 1: checkout signals before intent classification or OpenAI. */
     state = applyCheckoutSignalsFromSpeech(state, userMessage);
 
-    if (paymentLinkSent && extractEmailFromSpeech(userMessage)) {
+    if (
+      shouldBlockPostPaymentEmailCapture({
+        utterance: userMessage,
+        recipients: recipientsAtStart,
+        paymentLinkSent: state.paymentLinkSent === true,
+        orderState:
+          typeof sessionMetaAtStart.orderState === 'string'
+            ? sessionMetaAtStart.orderState
+            : null,
+      })
+    ) {
       return {
         reply: POST_PAYMENT_THANK_YOU_REPLY,
         toolCallsCount: 0,
@@ -563,13 +614,31 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
     ) {
       const confirmedEmail = pendingEmailForConfirm;
       await this.callMemory.setEmailState(callSessionId, confirmedEmail, 'confirmed');
+      const productForRecipient = activeCheckoutProduct(state);
+      let recipientPatch: Record<string, unknown> = {};
+      if (productForRecipient) {
+        const recipients = markRecipientEmailConfirmed(
+          parsePaymentRecipients(state.paymentRecipients),
+          productForRecipient,
+          confirmedEmail,
+          Math.max(1, resolveLineQuantity(state)),
+        );
+        state = mergePaymentRecipientsIntoState(
+          mergeCallerSignalsIntoState(state, { email: confirmedEmail }),
+          recipients,
+        );
+        recipientPatch = sessionMetaPatchForRecipients(recipients);
+      } else {
+        state = mergeCallerSignalsIntoState(state, { email: confirmedEmail });
+      }
       await this.callsService.mergeSessionMetadata(callSessionId, {
         orderState: 'EMAIL_CONFIRMED',
         normalizedEmail: confirmedEmail,
         emailConfirmationState: 'confirmed',
         [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'EMAIL_CONFIRMED',
+        [LLM_AGENT_STATE_KEY]: state,
+        ...recipientPatch,
       });
-      state = mergeCallerSignalsIntoState(state, { email: confirmedEmail });
       emailConfirmedThisTurn = true;
       this.logger.log(
         JSON.stringify(
@@ -1742,11 +1811,18 @@ export class LlmAgentOrchestratorService implements OnModuleInit {
         checkoutUrl,
         paymentLinkCreated: true,
         paymentLinkSent: emailOk,
+        draftOrderId:
+          typeof checkoutData.draftOrderId === 'string' ? checkoutData.draftOrderId : undefined,
       });
       if (emailOk) {
+        const recipientMeta = sessionMetaPatchForRecipients(
+          parsePaymentRecipients(nextState.paymentRecipients),
+        );
         await this.callsService.mergeSessionMetadata(callSessionId, {
           orderState: 'PAYMENT_LINK_SENT',
           [TRANSACTIONAL_CHECKOUT_STATE_KEY]: 'PAYMENT_LINK_SENT',
+          [LLM_AGENT_STATE_KEY]: nextState,
+          ...recipientMeta,
         });
       }
     }

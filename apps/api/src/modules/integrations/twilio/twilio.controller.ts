@@ -283,8 +283,17 @@ export class TwilioVoiceController {
 
       res.type('text/xml; charset=utf-8').send(twiml);
     } catch (error) {
-      console.error('Twilio inbound error:', error);
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        JSON.stringify({
+          event: 'twilio.voice.inbound_error',
+          message: message.slice(0, 400),
+        }),
+      );
+      const twiml = buildFallbackTwiML('Sorry, something went wrong. Please try your call again.', {
+        blockTwilioSay: false,
+      });
+      res.type('text/xml; charset=utf-8').status(200).send(twiml);
     }
   }
 

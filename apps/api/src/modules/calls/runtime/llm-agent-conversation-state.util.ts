@@ -1,4 +1,5 @@
 import type { ToolResult } from './tool-orchestrator.service';
+import type { PaymentRecipient } from './payment-recipient.types';
 import {
   isVoiceCheckoutState,
   type VoiceCheckoutState,
@@ -52,6 +53,8 @@ export type LlmAgentConversationState = {
   checkoutUrl?: string | null;
   /** Caller heard "Perfect. I'll help you place the order." before quantity/email. */
   checkoutProductAcknowledged?: boolean;
+  /** Per product/email payment links for multi-book calls. */
+  paymentRecipients?: PaymentRecipient[];
 };
 
 export const LLM_AGENT_STATE_KEY = 'llmAgentState';
@@ -104,6 +107,9 @@ export function parseLlmAgentState(raw: unknown): LlmAgentConversationState {
       ? o.transactionalCheckoutState
       : null,
     checkoutProductAcknowledged: o.checkoutProductAcknowledged === true,
+    paymentRecipients: Array.isArray(o.paymentRecipients)
+      ? (o.paymentRecipients as PaymentRecipient[])
+      : undefined,
     lastToolCalls: Array.isArray(o.lastToolCalls)
       ? o.lastToolCalls.filter((x): x is string => typeof x === 'string')
       : [],
@@ -138,8 +144,27 @@ export function formatStateForPrompt(state: LlmAgentConversationState): string {
     lines.push(`Selected for order: ${sel}.`);
   }
   if (state.customerEmail) lines.push(`Customer email: ${state.customerEmail}.`);
-  if (state.paymentLinkSent) lines.push('Payment link email: already sent for this order.');
-  else if (state.paymentLinkCreated) lines.push('Payment link: created; email not confirmed sent yet.');
+  if (state.paymentRecipients?.length) {
+    const sent = state.paymentRecipients.filter((r) => r.paymentStatus === 'link_sent');
+    if (sent.length) {
+      const recap = sent
+        .map((r) => `${r.productTitle} → ${r.recipientEmail}`)
+        .join('; ');
+      lines.push(`Payment links already sent: ${recap}.`);
+    }
+    const pending = state.paymentRecipients.filter(
+      (r) => r.paymentStatus !== 'link_sent' && r.paymentStatus !== 'failed',
+    );
+    if (pending.length) {
+      lines.push(
+        `In-progress checkouts: ${pending.map((r) => `${r.productTitle} (email ${r.paymentStatus})`).join('; ')}.`,
+      );
+    }
+  } else if (state.paymentLinkSent) {
+    lines.push('Payment link email: already sent for this order.');
+  } else if (state.paymentLinkCreated) {
+    lines.push('Payment link: created; email not confirmed sent yet.');
+  }
   if (state.lastToolCalls.length) {
     lines.push(`Recent tools: ${state.lastToolCalls.slice(-5).join(', ')}.`);
   }

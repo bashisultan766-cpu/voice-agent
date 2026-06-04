@@ -6,6 +6,11 @@ import {
   CheckoutState,
   type EnterpriseCheckoutState,
 } from './checkout-state.types';
+import {
+  activeProductAlreadySent,
+  parsePaymentRecipients,
+} from './payment-recipient.util';
+import { activeCheckoutProduct } from './transactional-checkout-state.util';
 import { validateVoiceEmail } from './voice-email-capture.util';
 import { hasSelectedInStockProduct, resolveLineQuantity } from './transactional-checkout-state.util';
 
@@ -72,13 +77,26 @@ export function flowStateFromLlm(
 }
 
 /** Hard guard — never create payment link before confirmed email (spec §9). */
-export function canCreatePaymentLink(flow: EnterpriseCheckoutFlowState): boolean {
-  return (
-    flow.productSelected &&
-    flow.quantityConfirmed &&
-    flow.emailValidated &&
-    flow.emailConfirmed
-  );
+export function canCreatePaymentLink(
+  flow: EnterpriseCheckoutFlowState,
+  llmState?: LlmAgentConversationState,
+): boolean {
+  if (
+    !flow.productSelected ||
+    !flow.quantityConfirmed ||
+    !flow.emailValidated ||
+    !flow.emailConfirmed
+  ) {
+    return false;
+  }
+  if (!llmState) return true;
+  const recipients = parsePaymentRecipients(llmState.paymentRecipients);
+  const active = activeCheckoutProduct(llmState);
+  if (active && activeProductAlreadySent(recipients, active, llmState.customerEmail)) {
+    return false;
+  }
+  if (recipients.length === 0 && flow.paymentLinkSent) return false;
+  return true;
 }
 
 export type EmailConfirmationState = 'pending' | 'confirmed' | 'rejected' | 'none' | null;
@@ -113,7 +131,15 @@ export function resolveEnterpriseCheckoutState(
   flow: EnterpriseCheckoutFlowState,
   llmState: LlmAgentConversationState,
 ): EnterpriseCheckoutState {
-  if (flow.paymentLinkSent) return CheckoutState.CHECKOUT_COMPLETED;
+  const recipients = parsePaymentRecipients(llmState.paymentRecipients);
+  const active = activeCheckoutProduct(llmState);
+  const activePending =
+    active != null &&
+    !activeProductAlreadySent(recipients, active, llmState.customerEmail);
+  if (flow.paymentLinkSent && !activePending && recipients.length > 0) {
+    return CheckoutState.CHECKOUT_COMPLETED;
+  }
+  if (flow.paymentLinkSent && recipients.length === 0) return CheckoutState.CHECKOUT_COMPLETED;
   if ((flow.emailSendFailureCount ?? 0) >= 2 && !flow.paymentLinkSent) {
     return CheckoutState.FALLBACK_DELIVERY_REQUIRED;
   }

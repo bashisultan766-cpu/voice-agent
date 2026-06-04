@@ -1,4 +1,13 @@
 import type { LlmAgentConversationState } from './llm-agent-conversation-state.util';
+import {
+  activeProductAlreadySent,
+  markRecipientEmailConfirmed,
+  markRecipientPaymentSent,
+  mergePaymentRecipientsIntoState,
+  parsePaymentRecipients,
+  resolveProductIdForRecipient,
+} from './payment-recipient.util';
+import { activeCheckoutProduct } from './transactional-checkout-state.util';
 import { resolveCheckoutLineItemsFromLlmState } from './voice-checkout-flow.util';
 import { shouldBlockCheckoutForOutOfStock, isLlmProductInStock } from './voice-stock-sales-policy.util';
 import {
@@ -17,10 +26,21 @@ export function shouldTriggerCheckoutAfterEmailConfirmed(
   options: { emailConfirmedThisTurn: boolean },
 ): boolean {
   if (!options.emailConfirmedThisTurn) return false;
-  if (state.paymentLinkSent === true || state.paymentLinkCreated === true) return false;
+
+  const recipients = parsePaymentRecipients(state.paymentRecipients);
+  const active = activeCheckoutProduct(state);
+  if (active && activeProductAlreadySent(recipients, active, state.customerEmail)) {
+    return false;
+  }
+  if (
+    recipients.length === 0 &&
+    (state.paymentLinkSent === true || state.paymentLinkCreated === true)
+  ) {
+    return false;
+  }
 
   const flow = flowStateFromLlm(state, { emailConfirmationState: 'confirmed' });
-  if (!canCreatePaymentLink(flow)) return false;
+  if (!canCreatePaymentLink(flow, state)) return false;
 
   const email = state.customerEmail?.trim();
   if (!email || !validateVoiceEmail(email).valid) return false;
@@ -31,9 +51,6 @@ export function shouldTriggerCheckoutAfterEmailConfirmed(
   const stockBlock = shouldBlockCheckoutForOutOfStock(state);
   if (stockBlock.blocked) return false;
 
-  const active =
-    state.selectedProducts.find((p) => isLlmProductInStock(p) && p.variantId) ??
-    state.lastSearchedProducts.find((p) => isLlmProductInStock(p) && p.variantId);
   if (!active?.variantId) return false;
 
   const stage = state.checkoutStage;
@@ -71,9 +88,10 @@ export function applyPaymentFlowToState(
     checkoutUrl?: string;
     paymentLinkCreated: boolean;
     paymentLinkSent: boolean;
+    draftOrderId?: string;
   },
 ): LlmAgentConversationState {
-  return {
+  let next: LlmAgentConversationState = {
     ...state,
     paymentLinkCreated: args.paymentLinkCreated,
     paymentLinkSent: args.paymentLinkSent,
@@ -82,6 +100,24 @@ export function applyPaymentFlowToState(
     checkoutStage: args.paymentLinkSent ? 'payment_sent' : 'payment',
     customerIntent: 'payment_link',
   };
+  const product = activeCheckoutProduct(state);
+  const email = state.customerEmail?.trim();
+  if (product && email && args.paymentLinkSent) {
+    const productId = resolveProductIdForRecipient(product);
+    const qty =
+      product.variantId && state.quantities[product.variantId]
+        ? state.quantities[product.variantId]!
+        : 1;
+    let recipients = parsePaymentRecipients(state.paymentRecipients);
+    recipients = markRecipientEmailConfirmed(recipients, product, email, qty);
+    recipients = markRecipientPaymentSent(recipients, productId, email, {
+      paymentLink: args.checkoutUrl ?? null,
+      draftOrderId: args.draftOrderId,
+      checkoutLinkId: args.checkoutLinkId,
+    });
+    next = mergePaymentRecipientsIntoState(next, recipients);
+  }
+  return next;
 }
 
 export function buildConfirmedEmailCheckoutReply(args: {

@@ -1,11 +1,4 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Logger,
-  Post,
-  Res,
-} from '@nestjs/common';
+import { Body, Controller, Logger, Post, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Response } from 'express';
 import { z } from 'zod';
@@ -38,6 +31,21 @@ export class ElevenLabsTwilioController {
   @SkipThrottle()
   @Post('inbound')
   async inbound(@Body() body: Record<string, string>, @Res() res: Response): Promise<void> {
+    const sendFallback = (reason: string, callSid?: string | null) => {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs.twilio.inbound_fallback',
+          reason,
+          callSid: callSid ?? null,
+        }),
+      );
+      const fallback = buildFallbackTwiML(
+        "We're sorry, we're unable to connect your call right now. Please try again later.",
+      );
+      res.type('text/xml; charset=utf-8');
+      res.status(200).send(fallback);
+    };
+
     this.logger.log(
       JSON.stringify({
         event: 'elevenlabs.twilio.inbound_received',
@@ -55,7 +63,8 @@ export class ElevenLabsTwilioController {
           issues: parsed.error.flatten().fieldErrors,
         }),
       );
-      throw new BadRequestException('Invalid Twilio inbound payload (From and To required).');
+      sendFallback('invalid_payload', body?.CallSid);
+      return;
     }
 
     const { From, To, CallSid, Direction } = parsed.data;
@@ -106,11 +115,7 @@ export class ElevenLabsTwilioController {
         }),
       );
 
-      const fallback = buildFallbackTwiML(
-        "We're sorry, we're unable to connect your call right now. Please try again later.",
-      );
-      res.type('text/xml; charset=utf-8');
-      res.status(200).send(fallback);
+      sendFallback(message.slice(0, 120), CallSid);
     }
   }
 }

@@ -1280,7 +1280,7 @@ export class ToolOrchestratorService {
           emailConfirmationState: 'confirmed',
           emailEnterpriseValidated: metadata.emailEnterpriseValidated === true,
         });
-        if (!canCreatePaymentLink(checkoutFlow)) {
+        if (!canCreatePaymentLink(checkoutFlow, llmState)) {
           return {
             ok: false,
             error: {

@@ -66,6 +66,18 @@ export interface CallConversationMemory {
   };
   checkoutState?: 'none' | 'confirming' | 'email_pending' | 'link_sent' | 'completed';
   emailConfirmationState?: 'none' | 'pending' | 'confirmed';
+  /** Per product/email payment links for multi-book voice checkout. */
+  paymentRecipients?: Array<{
+    productId: string;
+    productTitle: string;
+    variantId?: string;
+    recipientEmail: string;
+    paymentLink?: string | null;
+    paymentStatus: 'pending' | 'email_pending' | 'email_confirmed' | 'link_created' | 'link_sent' | 'failed';
+    draftOrderId?: string | null;
+    checkoutLinkId?: string | null;
+    quantity?: number;
+  }>;
   conversationStage?:
     | 'GREETING'
     | 'DISCOVERY'
