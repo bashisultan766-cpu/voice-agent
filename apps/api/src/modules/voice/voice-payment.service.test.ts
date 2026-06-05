@@ -336,7 +336,7 @@ test('sendPaymentLink treats placeholder variantId as missing and searches by pr
   assert.equal(result.success, true);
 });
 
-test('sendPaymentLink updates existing draft for same email without resending email', async () => {
+test('sendPaymentLink re-sends updated invoice when a new product is added to invoiced draft', async () => {
   let aggregatedLines: Array<{ variantId: string; quantity: number }> = [];
   let sendShopifyInvoice: boolean | undefined;
   let existingDraftOrderId: string | null | undefined;
@@ -389,7 +389,7 @@ test('sendPaymentLink updates existing draft for same email without resending em
           draftOrderId: 'draft-existing',
           invoiceUrl: 'https://shop.example/invoice',
           shopifyConnectionId: 'conn-1',
-          shopifyInvoiceSent: false,
+          shopifyInvoiceSent: true,
           shopifyInvoiceError: null,
         };
       },
@@ -416,7 +416,7 @@ test('sendPaymentLink updates existing draft for same email without resending em
   assert.equal(result.success, true);
   assert.equal(aggregatedLines.length, 2);
   assert.equal(existingDraftOrderId, 'draft-existing');
-  assert.equal(sendShopifyInvoice, false);
+  assert.equal(sendShopifyInvoice, true);
   assert.equal(result.delivery?.email, 'skipped');
 });
 
@@ -436,7 +436,7 @@ test('sendPaymentLink hydrates checkout state from prior checkout links when cal
           draftOrderId: 'gid://shopify/DraftOrder/1',
           invoiceUrl: 'https://shop.example/invoice-1',
           shopifyConnectionId: 'conn-1',
-          shopifyInvoiceSent: false,
+          shopifyInvoiceSent: true,
           shopifyInvoiceError: null,
         };
       },
@@ -484,7 +484,7 @@ test('sendPaymentLink hydrates checkout state from prior checkout links when cal
 
   assert.equal(result.success, true);
   assert.equal(existingDraftOrderId, 'gid://shopify/DraftOrder/1');
-  assert.equal(sendShopifyInvoice, false);
+  assert.equal(sendShopifyInvoice, true);
   assert.equal(result.delivery?.email, 'skipped');
 });
 

@@ -299,6 +299,24 @@ export function buildCheckoutExecutionPlan(args: {
   }
 
   if (existingDraftOrderId && shopifyInvoiceAlreadySent) {
+    const linesChangedSinceInvoice =
+      !invoicedFingerprint || invoicedFingerprint !== currentFingerprint;
+    if (linesChangedSinceInvoice) {
+      return {
+        aggregationMode: 'update',
+        finalizeCheckout: true,
+        lines: batch.lines,
+        existingDraftOrderId,
+        shopifyInvoiceAlreadySent: false,
+        duplicateInvoicePrevented: false,
+        resendEmailSkippedBecauseShopifySent: false,
+        sendShopifyInvoice: true,
+        skipResendEmail: false,
+        workingRecipients,
+        batch,
+        idempotencyKey,
+      };
+    }
     return {
       aggregationMode: 'update',
       finalizeCheckout: true,

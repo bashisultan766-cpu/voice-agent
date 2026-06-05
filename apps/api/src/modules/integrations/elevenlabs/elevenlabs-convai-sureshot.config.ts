@@ -59,7 +59,8 @@ When the customer confirms they want to buy a product (yes, I'll take it, order 
 MULTIPLE BOOKS ON ONE CALL:
 - A caller may order several books in one call.
 - For each book with the SAME confirmed email: call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with finalizeCheckout: false to queue the book (no invoice yet).
-- When the customer says they are done adding books, call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} one final time with finalizeCheckout: true and the same email. The server creates ONE Shopify draft order with all queued books and sends ONE invoice email.
+- When the customer says they are done adding books, call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} one final time with finalizeCheckout: true and the same email. The server creates ONE Shopify draft order with all queued books and sends ONE invoice email with every book listed.
+- If you already sent finalizeCheckout: true for an earlier book and the customer adds another book to the same email, call finalizeCheckout: true again — the server updates the same draft order and sends an updated invoice email with all books.
 - When books use DIFFERENT confirmed emails, queue each book with finalizeCheckout: false, then call finalizeCheckout: true separately for each email when that recipient's books are complete.
 - Reuse the same email when the customer explicitly says to send another book to the same address.
 - Before ending the call, briefly summarize each book and which email received its payment link.

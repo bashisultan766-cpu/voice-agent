@@ -64,7 +64,7 @@ test('buildCheckoutExecutionPlan finalizes all queued lines into one create', ()
   assert.equal(plan.sendShopifyInvoice, true);
 });
 
-test('buildCheckoutExecutionPlan updates existing invoiced draft without resending', () => {
+test('buildCheckoutExecutionPlan re-sends invoice when new products are added to invoiced draft', () => {
   const batches = parseEmailCheckoutBatches({
     'john@gmail.com': {
       recipientEmail: 'john@gmail.com',
@@ -102,8 +102,49 @@ test('buildCheckoutExecutionPlan updates existing invoiced draft without resendi
   });
   assert.equal(plan.aggregationMode, 'update');
   assert.equal(plan.lines.length, 2);
+  assert.equal(plan.sendShopifyInvoice, true);
+  assert.equal(plan.skipResendEmail, false);
+});
+
+test('buildCheckoutExecutionPlan skips re-invoice when invoiced lines are unchanged', () => {
+  const batches = parseEmailCheckoutBatches({
+    'john@gmail.com': {
+      recipientEmail: 'john@gmail.com',
+      draftOrderId: 'draft-1',
+      shopifyInvoiceSent: true,
+      status: 'invoiced',
+      invoicedLinesFingerprint: 'v1:1|v2:1',
+      lines: [
+        {
+          productId: 'p1',
+          variantId: 'v1',
+          productTitle: 'Capital Seven',
+          quantity: 1,
+        },
+        {
+          productId: 'p2',
+          variantId: 'v2',
+          productTitle: 'Illuminati',
+          quantity: 1,
+        },
+      ],
+    },
+  });
+  const plan = buildCheckoutExecutionPlan({
+    recipients: [],
+    batches,
+    email: 'john@gmail.com',
+    callSid: 'CA123',
+    current: {
+      productId: 'p2',
+      variantId: 'v2',
+      productTitle: 'Illuminati',
+      quantity: 1,
+    },
+    finalizeCheckout: true,
+  });
+  assert.equal(plan.aggregationMode, 'duplicate_prevented');
   assert.equal(plan.sendShopifyInvoice, false);
-  assert.equal(plan.resendEmailSkippedBecauseShopifySent, true);
 });
 
 test('buildCheckoutExecutionPlan prevents duplicate finalize invoice', () => {
