@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AgentStatus, Prisma } from '@prisma/client';
+import { AgentStatus, CallStatus, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { ShopifyDraftOrderService } from '../integrations/shopify/draft-order';
@@ -18,10 +18,12 @@ import {
   EMAIL_CHECKOUT_BATCHES_KEY,
   parseEmailCheckoutBatches,
   recipientsAfterAggregatedSend,
+  registerLineToEmailBatch,
   sessionMetaPatchForEmailBatches,
 } from '../calls/runtime/order-aggregation-by-email.util';
 import {
   isDuplicatePaymentRecipient,
+  normalizeRecipientEmail,
   parsePaymentRecipients,
   PAYMENT_RECIPIENTS_METADATA_KEY,
   paymentRecipientPairKey,
@@ -40,6 +42,12 @@ import {
   isUsableShopifyVariantId,
   type ResolvePaymentVariantResult,
 } from './utils/resolve-payment-variant.util';
+import {
+  checkoutStateLookbackSince,
+  extractCallSidFromCheckoutMetadata,
+  hydrateCheckoutStateFromCheckoutLinks,
+  mergeCheckoutSessionState,
+} from './utils/voice-call-checkout-state.util';
 
 @Injectable()
 export class VoicePaymentService {
@@ -152,9 +160,14 @@ export class VoicePaymentService {
       const productTitle = variantResolution.productTitle ?? args.productName?.trim() ?? 'Book';
       const productId = args.variantId?.trim() || variantId;
 
-      const sessionState = await this.loadCallSessionCheckoutState(callSid);
+      const sessionState = await this.loadCallSessionCheckoutState({
+        callSid,
+        tenantId,
+        agentId,
+        email,
+      });
       const sessionRecipients = sessionState.recipients;
-      const finalizeCheckout = args.finalizeCheckout === true;
+      const finalizeCheckout = args.finalizeCheckout !== false;
 
       if (isDuplicatePaymentRecipient(sessionRecipients, productId, email)) {
         this.logger.warn(
@@ -243,12 +256,13 @@ export class VoicePaymentService {
       }
 
       if (!finalizeCheckout) {
+        let persistedLineCount = checkoutPlan.lines.length;
         if (callSid) {
-          await this.persistCheckoutBatchToCallSession(callSid, {
-            batches: {
-              ...sessionState.batches,
-              [email.toLowerCase()]: checkoutPlan.batch,
-            },
+          persistedLineCount = await this.persistCheckoutBatchToCallSession(callSid, {
+            tenantId,
+            agentId,
+            email,
+            batch: checkoutPlan.batch,
             workingRecipients: checkoutPlan.workingRecipients,
           });
         }
@@ -256,7 +270,7 @@ export class VoicePaymentService {
           JSON.stringify({
             event: 'voice.payment.product_queued',
             aggregationMode: 'queue',
-            aggregatedLineCount: checkoutPlan.lines.length,
+            aggregatedLineCount: persistedLineCount,
             finalizeCheckout: false,
             callSid: callSid ?? null,
             maskedEmail: maskEmailForLog(email),
@@ -354,6 +368,7 @@ export class VoicePaymentService {
         })),
         callSid: callSid ?? undefined,
         aggregationMode: checkoutPlan.aggregationMode,
+        shopifyInvoiceSent: shopify.shopifyInvoiceSent,
       });
 
       const branding = await this.resolveBusinessBranding(tenantId, agentId);
@@ -510,6 +525,8 @@ export class VoicePaymentService {
           shopifyInvoiceSent: shopify.shopifyInvoiceSent,
         });
         await this.appendAggregatedPaymentRecipientsToCallSession(callSid, {
+          tenantId,
+          agentId,
           recipientEmail: email,
           paymentLink: shopify.invoiceUrl,
           draftOrderId: shopify.draftOrderId,
@@ -518,7 +535,7 @@ export class VoicePaymentService {
           workingRecipients: checkoutPlan.workingRecipients,
           batches: {
             ...sessionState.batches,
-            [email.toLowerCase()]: invoicedBatch,
+            [normalizeRecipientEmail(email)]: invoicedBatch,
           },
         });
       }
@@ -685,11 +702,20 @@ export class VoicePaymentService {
     };
   }
 
-  private async loadCallSessionCheckoutState(callSid: string | null): Promise<{
+  private async loadCallSessionCheckoutState(args: {
+    callSid: string | null | undefined;
+    tenantId: string;
+    agentId: string;
+    email: string;
+  }): Promise<{
     recipients: ReturnType<typeof parsePaymentRecipients>;
     batches: ReturnType<typeof parseEmailCheckoutBatches>;
   }> {
+    const callSid = args.callSid?.trim();
     if (!callSid) return { recipients: [], batches: {} };
+
+    await this.ensureCallSessionForCheckout(callSid, args.tenantId, args.agentId);
+
     const session = await this.prisma.callSession.findFirst({
       where: { twilioCallSid: callSid },
       select: { metadata: true },
@@ -698,44 +724,186 @@ export class VoicePaymentService {
       session?.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
         ? (session.metadata as Record<string, unknown>)
         : {};
+    const sessionRecipients = parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]);
+    const sessionBatches = parseEmailCheckoutBatches(meta[EMAIL_CHECKOUT_BATCHES_KEY]);
+
+    const recentCheckoutLinks = await this.prisma.checkoutLink.findMany({
+      where: {
+        tenantId: args.tenantId,
+        agentId: args.agentId,
+        customerEmail: args.email,
+        createdAt: { gte: checkoutStateLookbackSince() },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        providerRef: true,
+        checkoutUrl: true,
+        customerEmail: true,
+        itemsJson: true,
+        metadata: true,
+        status: true,
+        sentAt: true,
+        createdAt: true,
+      },
+    });
+    const hydrated = hydrateCheckoutStateFromCheckoutLinks(
+      recentCheckoutLinks.filter(
+        (record) => extractCallSidFromCheckoutMetadata(record.metadata) === callSid,
+      ),
+      { callSid, email: args.email },
+    );
+    const merged = mergeCheckoutSessionState({
+      sessionRecipients,
+      sessionBatches,
+      hydratedRecipients: hydrated.recipients,
+      hydratedBatches: hydrated.batches,
+    });
+    if (merged.hydrated) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.payment.checkout_state_hydrated',
+          callSid,
+          maskedEmail: maskEmailForLog(args.email),
+          recipientCount: merged.recipients.length,
+          batchCount: Object.keys(merged.batches).length,
+        }),
+      );
+    }
     return {
-      recipients: parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]),
-      batches: parseEmailCheckoutBatches(meta[EMAIL_CHECKOUT_BATCHES_KEY]),
+      recipients: merged.recipients,
+      batches: merged.batches,
     };
+  }
+
+  private async ensureCallSessionForCheckout(
+    callSid: string,
+    tenantId: string,
+    agentId: string,
+  ): Promise<void> {
+    const existing = await this.prisma.callSession.findFirst({
+      where: { twilioCallSid: callSid },
+      select: { id: true },
+    });
+    if (existing) return;
+
+    const inbound = await this.prisma.inboundCall.findUnique({
+      where: { callSid },
+      select: { callerPhone: true, twilioNumber: true },
+    });
+
+    try {
+      const created = await this.prisma.callSession.create({
+        data: {
+          tenantId,
+          agentId,
+          twilioCallSid: callSid,
+          fromNumber: inbound?.callerPhone,
+          toNumber: inbound?.twilioNumber,
+          direction: 'inbound',
+          status: CallStatus.IN_PROGRESS,
+          startedAt: new Date(),
+        },
+        select: { id: true },
+      });
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.payment.call_session_ensured',
+          callSid,
+          callSessionId: created.id,
+          source: 'elevenlabs_inbound',
+        }),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const raced = await this.prisma.callSession.findFirst({
+        where: { twilioCallSid: callSid },
+        select: { id: true },
+      });
+      if (raced) return;
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.payment.call_session_ensure_failed',
+          callSid,
+          message: message.slice(0, 300),
+        }),
+      );
+    }
   }
 
   private async persistCheckoutBatchToCallSession(
     callSid: string,
     args: {
-      batches: ReturnType<typeof parseEmailCheckoutBatches>;
+      tenantId: string;
+      agentId: string;
+      email: string;
+      batch: ReturnType<typeof parseEmailCheckoutBatches>[string];
       workingRecipients: ReturnType<typeof parsePaymentRecipients>;
     },
-  ): Promise<void> {
+  ): Promise<number> {
+    await this.ensureCallSessionForCheckout(callSid, args.tenantId, args.agentId);
     const session = await this.prisma.callSession.findFirst({
       where: { twilioCallSid: callSid },
       select: { id: true, metadata: true },
     });
-    if (!session) return;
+    if (!session) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.payment.batch_persist_skipped',
+          reason: 'no_call_session',
+          callSid,
+          maskedEmail: maskEmailForLog(args.email),
+        }),
+      );
+      return args.batch.lines.length;
+    }
     const meta =
       session.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
         ? (session.metadata as Record<string, unknown>)
         : {};
+    const normalizedEmail = normalizeRecipientEmail(args.email);
+    const existingBatches = parseEmailCheckoutBatches(meta[EMAIL_CHECKOUT_BATCHES_KEY]);
+    let mergedBatch = existingBatches[normalizedEmail] ?? {
+      recipientEmail: normalizedEmail,
+      draftOrderId: null,
+      shopifyInvoiceSent: false,
+      lines: [],
+      status: 'accumulating' as const,
+    };
+    for (const line of args.batch.lines) {
+      mergedBatch = registerLineToEmailBatch(mergedBatch, line);
+    }
+    const batches = {
+      ...existingBatches,
+      [normalizedEmail]: mergedBatch,
+    };
     await this.prisma.callSession.update({
       where: { id: session.id },
       data: {
         metadata: {
           ...meta,
           ...sessionMetaPatchForRecipients(args.workingRecipients),
-          ...sessionMetaPatchForEmailBatches(args.batches),
+          ...sessionMetaPatchForEmailBatches(batches),
           orderState: 'PAYMENT_LINK_CREATING',
         } as Prisma.InputJsonValue,
       },
     });
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.payment.batch_persisted',
+        callSid,
+        maskedEmail: maskEmailForLog(args.email),
+        aggregatedLineCount: mergedBatch.lines.length,
+      }),
+    );
+    return mergedBatch.lines.length;
   }
 
   private async appendAggregatedPaymentRecipientsToCallSession(
     callSid: string,
     args: {
+      tenantId: string;
+      agentId: string;
       recipientEmail: string;
       paymentLink: string;
       draftOrderId: string;
@@ -745,6 +913,7 @@ export class VoicePaymentService {
       batches: ReturnType<typeof parseEmailCheckoutBatches>;
     },
   ): Promise<void> {
+    await this.ensureCallSessionForCheckout(callSid, args.tenantId, args.agentId);
     const session = await this.prisma.callSession.findFirst({
       where: { twilioCallSid: callSid },
       select: { id: true, metadata: true },
@@ -822,6 +991,7 @@ export class VoicePaymentService {
     lineItems: Array<{ title: string; quantity: number; price: string | null; variantId: string }>;
     callSid?: string;
     aggregationMode?: 'queue' | 'create' | 'update' | 'duplicate_prevented';
+    shopifyInvoiceSent?: boolean;
   }) {
     const fingerprint = createHash('sha256')
       .update(
@@ -871,6 +1041,7 @@ export class VoicePaymentService {
           callSid: args.callSid ?? null,
           aggregationMode: args.aggregationMode ?? 'create',
           lineCount: args.lineItems.length,
+          shopifyInvoiceSent: args.shopifyInvoiceSent === true,
         } as Prisma.InputJsonValue,
       },
     });

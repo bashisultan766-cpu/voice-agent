@@ -132,7 +132,21 @@ function buildService(overrides?: {
           : defaultSearch,
     } as never,
     {
-      callSession: { findFirst: async () => null },
+      callSession: {
+        findFirst: async () => null,
+        create: async () => ({ id: 'sess-auto' }),
+      },
+      inboundCall: {
+        findUnique: async () => ({
+          callerPhone: '+12025551234',
+          twilioNumber: '+12025555678',
+        }),
+      },
+      checkoutLink: {
+        create: async () => ({ id: 'checkout-link-1' }),
+        update: async () => ({}),
+        findMany: async () => [],
+      },
       agent: {
         findFirst: async () => ({
           id: agentId,
@@ -144,10 +158,6 @@ function buildService(overrides?: {
           },
           client: null,
         }),
-      },
-      checkoutLink: {
-        create: async () => ({ id: 'checkout-link-1' }),
-        update: async () => ({}),
       },
     } as never,
     {
@@ -410,6 +420,74 @@ test('sendPaymentLink updates existing draft for same email without resending em
   assert.equal(result.delivery?.email, 'skipped');
 });
 
+test('sendPaymentLink hydrates checkout state from prior checkout links when call session is empty', async () => {
+  let existingDraftOrderId: string | null | undefined;
+  let sendShopifyInvoice: boolean | undefined;
+  const { service } = buildService({ callSid: 'CA_hydrate_test', deliveryEmail: 'skipped' });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async (_t: string, _a: string, payload: {
+        existingDraftOrderId?: string | null;
+        sendShopifyInvoice?: boolean;
+      }) => {
+        existingDraftOrderId = payload.existingDraftOrderId;
+        sendShopifyInvoice = payload.sendShopifyInvoice;
+        return {
+          draftOrderId: 'gid://shopify/DraftOrder/1',
+          invoiceUrl: 'https://shop.example/invoice-1',
+          shopifyConnectionId: 'conn-1',
+          shopifyInvoiceSent: false,
+          shopifyInvoiceError: null,
+        };
+      },
+    } as never;
+
+  const prisma = (service as unknown as {
+    prisma: {
+      callSession: { findFirst: Function; update: Function; create: Function };
+      checkoutLink: { findMany: Function; create: Function; update: Function };
+    };
+  }).prisma;
+  prisma.callSession.findFirst = async () => ({ id: 'sess-1', metadata: {} });
+  prisma.callSession.create = async () => ({ id: 'sess-1' });
+  prisma.callSession.update = async () => ({});
+  prisma.checkoutLink.findMany = async () => [
+    {
+      id: 'cl-1',
+      providerRef: 'gid://shopify/DraftOrder/1',
+      checkoutUrl: 'https://shop.example/invoice-1',
+      customerEmail: 'john@gmail.com',
+      itemsJson: [
+        {
+          title: 'Capital Seven',
+          quantity: 1,
+          price: '9.99',
+          variantId: 'gid://shopify/ProductVariant/1',
+        },
+      ],
+      metadata: { callSid: 'CA_hydrate_test', shopifyInvoiceSent: true },
+      status: 'SENT',
+      sentAt: new Date(),
+      createdAt: new Date(),
+    },
+  ];
+
+  const result = await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/2',
+    productName: 'Illuminati',
+    quantity: 1,
+    callSid: 'CA_hydrate_test',
+    emailConfirmed: true,
+    finalizeCheckout: true,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(existingDraftOrderId, 'gid://shopify/DraftOrder/1');
+  assert.equal(sendShopifyInvoice, false);
+  assert.equal(result.delivery?.email, 'skipped');
+});
+
 test('sendPaymentLink queues product when finalizeCheckout is false', async () => {
   let shopifyCalled = false;
   const sessionMetadata: Record<string, unknown> = {};
@@ -448,6 +526,57 @@ test('sendPaymentLink queues product when finalizeCheckout is false', async () =
   assert.equal(result.success, true);
   assert.equal(shopifyCalled, false);
   assert.match(result.agentMessage ?? '', /added that book/i);
+  const batches = sessionMetadata.emailCheckoutBatches as Record<string, { lines: unknown[] }>;
+  assert.equal(batches['john@gmail.com']?.lines?.length, 1);
+});
+
+test('sendPaymentLink accumulates queued lines across multiple finalizeCheckout false calls', async () => {
+  const sessionMetadata: Record<string, unknown> = {};
+  const { service } = buildService({ callSid: 'CA_queue_multi' });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async () => ({
+        draftOrderId: 'draft-1',
+        invoiceUrl: 'https://shop.example/invoice',
+        shopifyConnectionId: 'conn-1',
+        shopifyInvoiceSent: false,
+        shopifyInvoiceError: null,
+      }),
+    } as never;
+
+  const prisma = (service as unknown as {
+    prisma: {
+      callSession: { findFirst: Function; update: Function; create: Function };
+      checkoutLink: { findMany: Function };
+    };
+  }).prisma;
+  prisma.callSession.findFirst = async () => ({ id: 'sess-1', metadata: sessionMetadata });
+  prisma.callSession.create = async () => ({ id: 'sess-1' });
+  prisma.callSession.update = async (args: { data: { metadata: Record<string, unknown> } }) => {
+    Object.assign(sessionMetadata, args.data.metadata);
+    return {};
+  };
+  prisma.checkoutLink.findMany = async () => [];
+
+  await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/1',
+    quantity: 1,
+    callSid: 'CA_queue_multi',
+    emailConfirmed: true,
+    finalizeCheckout: false,
+  });
+  await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/2',
+    quantity: 1,
+    callSid: 'CA_queue_multi',
+    emailConfirmed: true,
+    finalizeCheckout: false,
+  });
+
+  const batches = sessionMetadata.emailCheckoutBatches as Record<string, { lines: unknown[] }>;
+  assert.equal(batches['john@gmail.com']?.lines?.length, 2);
 });
 
 test('sendPaymentLink ignores variantId 0 and resolves via productName search', async () => {
