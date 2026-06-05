@@ -81,6 +81,13 @@ function buildService(overrides?: {
         shopifyInvoiceSent: false,
         shopifyInvoiceError: null,
       }),
+      sendAggregatedDraftOrderPaymentLink: async () => ({
+        draftOrderId: 'draft-123',
+        invoiceUrl: 'https://shop.example/invoice',
+        shopifyConnectionId: 'conn-1',
+        shopifyInvoiceSent: false,
+        shopifyInvoiceError: null,
+      }),
     } as never,
     {
       deliverPaymentLink: async () => ({
@@ -313,6 +320,71 @@ test('sendPaymentLink treats placeholder variantId as missing and searches by pr
 
   assert.equal(searchCalled, true);
   assert.equal(result.success, true);
+});
+
+test('sendPaymentLink updates existing draft for same email without resending email', async () => {
+  let aggregatedLines: Array<{ variantId: string; quantity: number }> = [];
+  let sendShopifyInvoice: boolean | undefined;
+  let existingDraftOrderId: string | null | undefined;
+  const sessionMetadata: Record<string, unknown> = {
+    paymentRecipients: [
+      {
+        productId: 'gid://shopify/Product/1',
+        productTitle: 'Capital Seven',
+        variantId: 'gid://shopify/ProductVariant/1',
+        recipientEmail: 'john@gmail.com',
+        paymentStatus: 'link_sent',
+        draftOrderId: 'draft-existing',
+        paymentLink: 'https://shop.example/invoice',
+      },
+    ],
+  };
+
+  const { service } = buildService({
+    callSid: 'CA_agg_test',
+  });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async (_t: string, _a: string, payload: {
+        lines: Array<{ variantId: string; quantity: number }>;
+        existingDraftOrderId?: string | null;
+        sendShopifyInvoice?: boolean;
+      }) => {
+        aggregatedLines = payload.lines;
+        existingDraftOrderId = payload.existingDraftOrderId;
+        sendShopifyInvoice = payload.sendShopifyInvoice;
+        return {
+          draftOrderId: 'draft-existing',
+          invoiceUrl: 'https://shop.example/invoice',
+          shopifyConnectionId: 'conn-1',
+          shopifyInvoiceSent: false,
+          shopifyInvoiceError: null,
+        };
+      },
+    } as never;
+
+  const prisma = (service as unknown as { prisma: { callSession: { findFirst: Function; update: Function } } })
+    .prisma;
+  prisma.callSession.findFirst = async () => ({ id: 'sess-1', metadata: sessionMetadata });
+  prisma.callSession.update = async (args: { data: { metadata: Record<string, unknown> } }) => {
+    Object.assign(sessionMetadata, args.data.metadata);
+    return {};
+  };
+
+  const result = await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/2',
+    productName: 'Illuminati',
+    quantity: 1,
+    callSid: 'CA_agg_test',
+    emailConfirmed: true,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(aggregatedLines.length, 2);
+  assert.equal(existingDraftOrderId, 'draft-existing');
+  assert.equal(sendShopifyInvoice, false);
+  assert.equal(result.delivery?.email, 'skipped');
 });
 
 test('sendPaymentLink ignores variantId 0 and resolves via productName search', async () => {

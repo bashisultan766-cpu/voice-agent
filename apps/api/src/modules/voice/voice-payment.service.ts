@@ -13,8 +13,11 @@ import type { SendPaymentLinkInput } from './dto/send-payment-link-input.type';
 import type { SendPaymentLinkResponseDto } from './dto/send-payment-link.dto';
 import { maskEmailForLog } from '../calls/runtime/voice-email-capture.util';
 import {
+  buildEmailCheckoutPlan,
+  recipientsAfterAggregatedSend,
+} from '../calls/runtime/order-aggregation-by-email.util';
+import {
   isDuplicatePaymentRecipient,
-  markRecipientPaymentSent,
   parsePaymentRecipients,
   PAYMENT_RECIPIENTS_METADATA_KEY,
   paymentRecipientPairKey,
@@ -182,12 +185,52 @@ export class VoicePaymentService {
         }),
       );
 
-      const lineItem = await this.catalog.resolveLineItem(tenantId, agentId, variantId, quantity);
-
-      const shopify = await this.draftOrders.sendDraftOrderPaymentLink(tenantId, agentId, {
-        email,
+      const checkoutPlan = buildEmailCheckoutPlan(sessionRecipients, email, {
+        productId,
         variantId,
+        productTitle,
         quantity,
+      });
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'voice.payment.aggregation_plan',
+          mode: checkoutPlan.mode,
+          lineCount: checkoutPlan.lines.length,
+          existingDraftOrderId: checkoutPlan.existingDraftOrderId,
+          emailAlreadySentForEmail: checkoutPlan.emailAlreadySentForEmail,
+          maskedEmail: maskEmailForLog(email),
+          callSid: callSid ?? null,
+        }),
+      );
+
+      const resolvedLineItems = await Promise.all(
+        checkoutPlan.lines.map(async (line) => {
+          const catalogLine = await this.catalog.resolveLineItem(
+            tenantId,
+            agentId,
+            line.variantId,
+            line.quantity,
+          );
+          return {
+            variantId: line.variantId,
+            quantity: line.quantity,
+            productId: line.productId,
+            productTitle: line.productTitle,
+            title: catalogLine.title,
+            price: catalogLine.price,
+          };
+        }),
+      );
+
+      const shopify = await this.draftOrders.sendAggregatedDraftOrderPaymentLink(tenantId, agentId, {
+        email,
+        lines: resolvedLineItems.map((line) => ({
+          variantId: line.variantId,
+          quantity: line.quantity,
+        })),
+        existingDraftOrderId: checkoutPlan.existingDraftOrderId,
+        sendShopifyInvoice: !checkoutPlan.emailAlreadySentForEmail,
       });
 
       this.logger.log(
@@ -197,6 +240,8 @@ export class VoicePaymentService {
           agentId,
           draftOrderId: shopify.draftOrderId,
           invoiceUrlPresent: Boolean(shopify.invoiceUrl),
+          aggregationMode: checkoutPlan.mode,
+          aggregatedLineCount: resolvedLineItems.length,
         }),
       );
 
@@ -229,8 +274,14 @@ export class VoicePaymentService {
         invoiceUrl: shopify.invoiceUrl,
         draftOrderId: shopify.draftOrderId,
         shopifyConnectionId: shopify.shopifyConnectionId,
-        lineItem,
+        lineItems: resolvedLineItems.map((line) => ({
+          title: line.title,
+          quantity: line.quantity,
+          price: line.price,
+          variantId: line.variantId,
+        })),
         callSid: callSid ?? undefined,
+        aggregationMode: checkoutPlan.mode,
       });
 
       const branding = await this.resolveBusinessBranding(tenantId, agentId);
@@ -246,31 +297,45 @@ export class VoicePaymentService {
         }),
       );
 
-      const delivery = await this.paymentDelivery.deliverPaymentLink({
-        customerEmail: email,
-        customerPhone: phoneNumber,
-        paymentLink: shopify.invoiceUrl,
-        callSid,
-        orderId: shopify.draftOrderId,
-        tenantId,
-        agentId,
-        callerCountry: callCtx.country,
-        businessName: branding.businessName,
-        supportEmail: branding.supportEmail,
-        supportPhone: branding.supportPhone,
-        lineItems: [
-          {
-            title: lineItem.title,
-            quantity: lineItem.quantity,
-            price: lineItem.price,
-          },
-        ],
-      });
+      const skipResendEmail =
+        checkoutPlan.mode === 'update' && checkoutPlan.emailAlreadySentForEmail;
+      const delivery = skipResendEmail
+        ? {
+            email: 'skipped' as const,
+            sms: 'skipped' as const,
+            whatsapp: 'skipped' as const,
+            deliveryId: null,
+            agentMessage:
+              "I've added that book to your existing payment link. Use the same checkout link in your email.",
+            emailError: null,
+            smsError: null,
+            whatsappError: null,
+          }
+        : await this.paymentDelivery.deliverPaymentLink({
+            customerEmail: email,
+            customerPhone: phoneNumber,
+            paymentLink: shopify.invoiceUrl,
+            callSid,
+            orderId: shopify.draftOrderId,
+            tenantId,
+            agentId,
+            callerCountry: callCtx.country,
+            businessName: branding.businessName,
+            supportEmail: branding.supportEmail,
+            supportPhone: branding.supportPhone,
+            lineItems: resolvedLineItems.map((line) => ({
+              title: line.title,
+              quantity: line.quantity,
+              price: line.price,
+            })),
+          });
 
       const emailSentByResend = delivery.email === 'sent';
       const smsSent = delivery.sms === 'sent';
       const whatsappSent = delivery.whatsapp === 'sent';
       const emailSentByShopify = shopify.shopifyInvoiceSent;
+      const draftOrderUpdatedInPlace =
+        checkoutPlan.mode === 'update' && checkoutPlan.emailAlreadySentForEmail;
 
       if (emailSentByResend) {
         await this.prisma.checkoutLink.update({
@@ -297,7 +362,8 @@ export class VoicePaymentService {
         }),
       );
 
-      const emailDelivered = emailSentByShopify || emailSentByResend;
+      const emailDelivered =
+        draftOrderUpdatedInPlace || emailSentByShopify || emailSentByResend;
       const latencyMs = Date.now() - started;
 
       if (!emailDelivered && !smsSent && !whatsappSent) {
@@ -356,15 +422,13 @@ export class VoicePaymentService {
       }
 
       if (emailDelivered && callSid) {
-        await this.appendPaymentRecipientToCallSession(callSid, {
-          productId,
-          productTitle,
-          variantId,
+        await this.appendAggregatedPaymentRecipientsToCallSession(callSid, {
           recipientEmail: email,
           paymentLink: shopify.invoiceUrl,
           draftOrderId: shopify.draftOrderId,
           checkoutLinkId: checkoutLink.id,
-          quantity,
+          productIds: resolvedLineItems.map((line) => line.productId),
+          workingRecipients: checkoutPlan.workingRecipients,
         });
       }
 
@@ -380,7 +444,10 @@ export class VoicePaymentService {
           smsSent,
           whatsappSent,
           latencyMs,
-          recipientCount: sessionRecipients.length + (emailDelivered ? 1 : 0),
+          recipientCount:
+            sessionRecipients.length +
+            (emailDelivered ? resolvedLineItems.length : 0),
+          aggregatedLineCount: resolvedLineItems.length,
         }),
       );
 
@@ -540,17 +607,15 @@ export class VoicePaymentService {
     return parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]);
   }
 
-  private async appendPaymentRecipientToCallSession(
+  private async appendAggregatedPaymentRecipientsToCallSession(
     callSid: string,
     args: {
-      productId: string;
-      productTitle: string;
-      variantId: string;
       recipientEmail: string;
       paymentLink: string;
       draftOrderId: string;
       checkoutLinkId: string;
-      quantity: number;
+      productIds: string[];
+      workingRecipients: ReturnType<typeof parsePaymentRecipients>;
     },
   ): Promise<void> {
     const session = await this.prisma.callSession.findFirst({
@@ -563,18 +628,12 @@ export class VoicePaymentService {
         ? (session.metadata as Record<string, unknown>)
         : {};
     const recipients = parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]);
-    const productId = resolveProductIdForRecipient({
-      title: args.productTitle,
-      productId: args.productId,
-      variantId: args.variantId,
-    });
-    const updated = markRecipientPaymentSent(recipients, productId, args.recipientEmail, {
+    const mergedSource = recipients.length ? recipients : args.workingRecipients;
+    const updated = recipientsAfterAggregatedSend(mergedSource, args.recipientEmail, {
       paymentLink: args.paymentLink,
       draftOrderId: args.draftOrderId,
       checkoutLinkId: args.checkoutLinkId,
-      productTitle: args.productTitle,
-      variantId: args.variantId,
-      quantity: args.quantity,
+      productIds: args.productIds,
     });
     await this.prisma.callSession.update({
       where: { id: session.id },
@@ -590,9 +649,9 @@ export class VoicePaymentService {
       JSON.stringify({
         event: 'voice.payment.recipient_persisted',
         callSid,
-        productId: productId.slice(0, 80),
         maskedEmail: maskEmailForLog(args.recipientEmail),
         recipientCount: updated.length,
+        aggregatedProductCount: args.productIds.length,
       }),
     );
   }
@@ -632,8 +691,9 @@ export class VoicePaymentService {
     invoiceUrl: string;
     draftOrderId: string;
     shopifyConnectionId: string | null;
-    lineItem: { title: string; quantity: number; price: string | null; variantId: string };
+    lineItems: Array<{ title: string; quantity: number; price: string | null; variantId: string }>;
     callSid?: string;
+    aggregationMode?: 'create' | 'update';
   }) {
     const fingerprint = createHash('sha256')
       .update(
@@ -642,8 +702,9 @@ export class VoicePaymentService {
           args.agentId,
           args.draftOrderId,
           args.email,
-          args.lineItem.variantId,
-          String(args.lineItem.quantity),
+          ...args.lineItems
+            .map((line) => `${line.variantId}:${line.quantity}`)
+            .sort(),
         ].join('|'),
         'utf8',
       )
@@ -668,20 +729,20 @@ export class VoicePaymentService {
         mode: 'DRAFT_ORDER_INVOICE',
         checkoutUrl: args.invoiceUrl,
         customerEmail: args.email,
-        itemsJson: [
-          {
-            title: args.lineItem.title,
-            quantity: args.lineItem.quantity,
-            price: args.lineItem.price,
-            variantId: args.lineItem.variantId,
-          },
-        ] as unknown as Prisma.InputJsonValue,
+        itemsJson: args.lineItems.map((line) => ({
+          title: line.title,
+          quantity: line.quantity,
+          price: line.price,
+          variantId: line.variantId,
+        })) as unknown as Prisma.InputJsonValue,
         providerRef: args.draftOrderId,
         status: 'CREATED',
         metadata: {
           source: 'voice_send_payment_link',
           draftOrderId: args.draftOrderId,
           callSid: args.callSid ?? null,
+          aggregationMode: args.aggregationMode ?? 'create',
+          lineCount: args.lineItems.length,
         } as Prisma.InputJsonValue,
       },
     });

@@ -56,9 +56,11 @@ When the customer confirms they want to buy a product (yes, I'll take it, order 
    If the tool fails (success:false), apologize, explain briefly, and offer to retry — never claim the link was sent on failure.
 
 MULTIPLE BOOKS ON ONE CALL:
-- A caller may order several books in the same call. Each book needs its own confirmed email (they may differ per book).
-- After one payment link is sent, you may start the next book: confirm title/quantity, collect and confirm that book's recipient email, then call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} again with that book's productName/variantId and email.
-- Never reuse a previous book's email for a new book unless the customer explicitly says to use the same address.
+- A caller may order several books in one call.
+- When multiple books use the SAME confirmed email, the server aggregates them into ONE Shopify draft order and ONE payment email for that address. Call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} once per book after each book's email is confirmed; additional books with the same email are added to the existing checkout link automatically.
+- When books use DIFFERENT confirmed emails, each email gets its own draft order and payment link (call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} separately per book/email pair).
+- After one payment link is sent, you may start the next book: confirm title/quantity, collect and confirm that book's recipient email, then call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} again.
+- Reuse the same email when the customer explicitly says to send another book to the same address.
 - Before ending the call, briefly summarize each book and which email received its payment link.
 
 CRITICAL: Never stop before calling ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} after the customer confirms their email and purchase intent.

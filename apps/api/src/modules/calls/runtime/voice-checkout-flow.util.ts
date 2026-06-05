@@ -31,8 +31,23 @@ export function voiceCheckoutPreconditionMet(
 export function resolveCheckoutLineItemsFromLlmState(
   llmState: LlmAgentConversationState,
 ): Array<{ variantId: string; quantity: number; productId?: string; title?: string }> {
+  const inStockSelected = llmState.selectedProducts.filter(
+    (p) => isLlmProductInStock(p) && p.variantId,
+  );
+  if (inStockSelected.length > 1) {
+    return inStockSelected.map((product) => ({
+      variantId: product.variantId!,
+      productId: product.productId,
+      title: product.title,
+      quantity: Math.max(
+        1,
+        Math.trunc(llmState.quantities[product.variantId!] ?? 1),
+      ),
+    }));
+  }
+
   const selected =
-    llmState.selectedProducts.find((p) => isLlmProductInStock(p) && p.variantId) ??
+    inStockSelected[0] ??
     llmState.lastSearchedProducts.find((p) => isLlmProductInStock(p) && p.variantId);
   if (!selected?.variantId) return [];
 
