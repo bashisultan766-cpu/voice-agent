@@ -94,45 +94,93 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
         });
     }
     async sendDraftOrderPaymentLink(tenantId, agentId, payload) {
+        return this.sendAggregatedDraftOrderPaymentLink(tenantId, agentId, {
+            email: payload.email,
+            lines: [{ variantId: payload.variantId, quantity: payload.quantity }],
+        });
+    }
+    async sendAggregatedDraftOrderPaymentLink(tenantId, agentId, payload) {
         const customerEmail = payload.email.trim().toLowerCase();
         if (!customerEmail) {
             throw new shopify_errors_1.ShopifyCheckoutValidationError('EMAIL_REQUIRED', 'Customer email is required before sending a payment link.');
         }
-        const variantGid = (0, shopify_ids_1.toProductVariantGid)(payload.variantId);
-        if (!variantGid.startsWith('gid://shopify/ProductVariant/')) {
-            throw new shopify_errors_1.ShopifyCheckoutValidationError('INVALID_VARIANT_ID', 'variantId must be a Shopify ProductVariant GID or numeric variant id.');
+        const normalizedLines = payload.lines
+            .map((line) => {
+            const variantGid = (0, shopify_ids_1.toProductVariantGid)(line.variantId);
+            const variantNumericId = (0, shopify_ids_1.extractTrailingNumericId)(variantGid);
+            if (!variantGid.startsWith('gid://shopify/ProductVariant/') || !variantNumericId || variantNumericId === '0') {
+                return null;
+            }
+            return {
+                variantGid,
+                quantity: Math.max(1, Math.min(99, Math.floor(line.quantity || 1))),
+            };
+        })
+            .filter((line) => line != null);
+        if (normalizedLines.length === 0) {
+            throw new shopify_errors_1.ShopifyCheckoutValidationError('INVALID_VARIANT_ID', 'At least one valid Shopify product variant is required.');
         }
-        const variantNumericId = (0, shopify_ids_1.extractTrailingNumericId)(variantGid);
-        if (!variantNumericId || variantNumericId === '0') {
-            throw new shopify_errors_1.ShopifyCheckoutValidationError('INVALID_VARIANT_ID', 'variantId must reference a valid Shopify product variant (received id 0).');
-        }
-        const quantity = Math.max(1, Math.min(99, Math.floor(payload.quantity || 1)));
         const { domain, token, apiVersion, shopifyConnectionId } = await this.client.getAgentShopifyConfig(tenantId, agentId);
-        const createMutation = `
-      mutation DraftOrderCreate($input: DraftOrderInput!) {
-        draftOrderCreate(input: $input) {
-          draftOrder { id invoiceUrl }
-          userErrors { field message }
+        const lineItemsInput = normalizedLines.map((line) => ({
+            variantId: line.variantGid,
+            quantity: line.quantity,
+        }));
+        const existingDraftOrderId = payload.existingDraftOrderId?.trim() || null;
+        let draftOrderId = null;
+        let invoiceUrlFromMutation = null;
+        if (existingDraftOrderId) {
+            const updateMutation = `
+        mutation DraftOrderUpdate($id: ID!, $input: DraftOrderInput!) {
+          draftOrderUpdate(id: $id, input: $input) {
+            draftOrder { id invoiceUrl }
+            userErrors { field message }
+          }
         }
-      }
-    `;
-        const createData = await this.client.adminGraphql(domain, token, createMutation, {
-            input: {
-                email: customerEmail,
-                lineItems: [{ variantId: variantGid, quantity }],
-            },
-        }, apiVersion);
-        const createErrors = createData.draftOrderCreate.userErrors ?? [];
-        if (createErrors.length) {
-            const msg = createErrors.map((e) => e.message).filter(Boolean).join('; ') ||
-                'Draft order could not be created.';
-            throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_USER_ERROR', msg);
+      `;
+            const updateData = await this.client.adminGraphql(domain, token, updateMutation, {
+                id: existingDraftOrderId,
+                input: {
+                    email: customerEmail,
+                    lineItems: lineItemsInput,
+                },
+            }, apiVersion);
+            const updateErrors = updateData.draftOrderUpdate.userErrors ?? [];
+            if (updateErrors.length) {
+                const msg = updateErrors.map((e) => e.message).filter(Boolean).join('; ') ||
+                    'Draft order could not be updated.';
+                throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_USER_ERROR', msg);
+            }
+            draftOrderId = updateData.draftOrderUpdate.draftOrder?.id ?? existingDraftOrderId;
+            invoiceUrlFromMutation = updateData.draftOrderUpdate.draftOrder?.invoiceUrl ?? null;
         }
-        const draftOrderId = createData.draftOrderCreate.draftOrder?.id;
+        else {
+            const createMutation = `
+        mutation DraftOrderCreate($input: DraftOrderInput!) {
+          draftOrderCreate(input: $input) {
+            draftOrder { id invoiceUrl }
+            userErrors { field message }
+          }
+        }
+      `;
+            const createData = await this.client.adminGraphql(domain, token, createMutation, {
+                input: {
+                    email: customerEmail,
+                    lineItems: lineItemsInput,
+                },
+            }, apiVersion);
+            const createErrors = createData.draftOrderCreate.userErrors ?? [];
+            if (createErrors.length) {
+                const msg = createErrors.map((e) => e.message).filter(Boolean).join('; ') ||
+                    'Draft order could not be created.';
+                throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_USER_ERROR', msg);
+            }
+            draftOrderId = createData.draftOrderCreate.draftOrder?.id ?? null;
+            invoiceUrlFromMutation = createData.draftOrderCreate.draftOrder?.invoiceUrl ?? null;
+        }
         if (!draftOrderId) {
             throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_MISSING_ID', 'Draft order was created but Shopify did not return a draft order id.');
         }
-        const invoiceUrlFromCreate = createData.draftOrderCreate.draftOrder?.invoiceUrl ?? null;
+        const shouldSendShopifyInvoice = payload.sendShopifyInvoice !== false;
         const invoiceSendMutation = `
       mutation DraftOrderInvoiceSend($id: ID!, $email: EmailInput) {
         draftOrderInvoiceSend(id: $id, email: $email) {
@@ -144,26 +192,28 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
         let shopifyInvoiceSent = false;
         let shopifyInvoiceError;
         let invoiceUrlFromSend = null;
-        try {
-            const invoiceData = await this.client.adminGraphql(domain, token, invoiceSendMutation, {
-                id: draftOrderId,
-                email: { to: customerEmail },
-            }, apiVersion);
-            const invoiceErrors = invoiceData.draftOrderInvoiceSend.userErrors ?? [];
-            if (invoiceErrors.length) {
-                shopifyInvoiceError =
-                    invoiceErrors.map((e) => e.message).filter(Boolean).join('; ') ||
-                        'Draft order invoice could not be sent.';
+        if (shouldSendShopifyInvoice) {
+            try {
+                const invoiceData = await this.client.adminGraphql(domain, token, invoiceSendMutation, {
+                    id: draftOrderId,
+                    email: { to: customerEmail },
+                }, apiVersion);
+                const invoiceErrors = invoiceData.draftOrderInvoiceSend.userErrors ?? [];
+                if (invoiceErrors.length) {
+                    shopifyInvoiceError =
+                        invoiceErrors.map((e) => e.message).filter(Boolean).join('; ') ||
+                            'Draft order invoice could not be sent.';
+                }
+                else {
+                    shopifyInvoiceSent = true;
+                    invoiceUrlFromSend = invoiceData.draftOrderInvoiceSend.draftOrder?.invoiceUrl ?? null;
+                }
             }
-            else {
-                shopifyInvoiceSent = true;
-                invoiceUrlFromSend = invoiceData.draftOrderInvoiceSend.draftOrder?.invoiceUrl ?? null;
+            catch (err) {
+                shopifyInvoiceError = err instanceof Error ? err.message : String(err);
             }
         }
-        catch (err) {
-            shopifyInvoiceError = err instanceof Error ? err.message : String(err);
-        }
-        const invoiceUrl = invoiceUrlFromSend ?? invoiceUrlFromCreate;
+        const invoiceUrl = invoiceUrlFromSend ?? invoiceUrlFromMutation;
         if (!invoiceUrl) {
             throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_NO_INVOICE_URL', 'Draft order was created but Shopify did not return an invoice URL.');
         }

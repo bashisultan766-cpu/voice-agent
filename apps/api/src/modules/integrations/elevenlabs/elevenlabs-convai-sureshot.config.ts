@@ -44,22 +44,23 @@ When the customer confirms they want to buy a product (yes, I'll take it, order 
 3. If quantity is not confirmed, ask: "How many copies would you like?" Use quantity 1 if they already said one copy.
 4. Ask for email: "Perfect. I'll help you place the order. Please tell me your email address so I can send your payment link."
 5. Repeat the email back for confirmation: "Just to confirm, your email is [address]. Is that correct?" Wait for explicit yes, correct, or that's right.
-6. IMMEDIATELY after email confirmation, you MUST call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with emailConfirmed: true and:
+6. After email confirmation, call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with emailConfirmed: true and:
    - email (the confirmed address)
    - productName (the book title the customer wants — server will search the catalog automatically), OR variantId if you already have it from ${ELEVENLABS_CONVAI_TOOLS.productSearch}
    - quantity (confirmed number, default 1)
    - callSid: ALWAYS pass {{call_sid}} (Twilio call ID for this caller)
    - phoneNumber: ALWAYS pass {{caller_phone}} (caller's phone in E.164) for text/WhatsApp backup
-   NEVER stop, end the turn, or tell the customer the link was sent without calling ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} first.
-7. Only when ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} returns success:true, tell the customer:
+   - finalizeCheckout: false while the customer may add more books to the SAME email; true ONLY when they confirm they are done adding products and want the payment link sent now
+7. For a single-book order, call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} once with finalizeCheckout: true after email confirmation.
+8. Only when ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} returns success:true with finalizeCheckout: true, tell the customer:
    "I've sent the payment link to your email."
    If the tool fails (success:false), apologize, explain briefly, and offer to retry — never claim the link was sent on failure.
 
 MULTIPLE BOOKS ON ONE CALL:
 - A caller may order several books in one call.
-- When multiple books use the SAME confirmed email, the server aggregates them into ONE Shopify draft order and ONE payment email for that address. Call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} once per book after each book's email is confirmed; additional books with the same email are added to the existing checkout link automatically.
-- When books use DIFFERENT confirmed emails, each email gets its own draft order and payment link (call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} separately per book/email pair).
-- After one payment link is sent, you may start the next book: confirm title/quantity, collect and confirm that book's recipient email, then call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} again.
+- For each book with the SAME confirmed email: call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with finalizeCheckout: false to queue the book (no invoice yet).
+- When the customer says they are done adding books, call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} one final time with finalizeCheckout: true and the same email. The server creates ONE Shopify draft order with all queued books and sends ONE invoice email.
+- When books use DIFFERENT confirmed emails, queue each book with finalizeCheckout: false, then call finalizeCheckout: true separately for each email when that recipient's books are complete.
 - Reuse the same email when the customer explicitly says to send another book to the same address.
 - Before ending the call, briefly summarize each book and which email received its payment link.
 
@@ -138,6 +139,11 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
           type: 'string',
           description:
             'Caller phone E.164 — use {{caller_phone}} or {{system__caller_id}} (required for SMS/WhatsApp backup)',
+        },
+        finalizeCheckout: {
+          type: 'boolean',
+          description:
+            'false while adding books to the same email; true only when customer confirms they are done and want the invoice sent',
         },
       },
       required: ['email', 'emailConfirmed', 'productName', 'quantity', 'callSid', 'phoneNumber'],

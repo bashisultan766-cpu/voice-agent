@@ -1085,7 +1085,7 @@ let ToolOrchestratorService = ToolOrchestratorService_1 = class ToolOrchestrator
                     emailConfirmationState: 'confirmed',
                     emailEnterpriseValidated: metadata.emailEnterpriseValidated === true,
                 });
-                if (!(0, enterprise_checkout_state_machine_util_1.canCreatePaymentLink)(checkoutFlow)) {
+                if (!(0, enterprise_checkout_state_machine_util_1.canCreatePaymentLink)(checkoutFlow, llmState)) {
                     return {
                         ok: false,
                         error: {

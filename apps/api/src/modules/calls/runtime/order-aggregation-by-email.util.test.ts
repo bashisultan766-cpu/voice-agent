@@ -1,115 +1,185 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  buildEmailCheckoutPlan,
-  emailPaymentLinkAlreadySent,
-  findDraftOrderIdForEmail,
+  batchAfterSuccessfulInvoice,
+  buildCheckoutExecutionPlan,
+  checkoutSessionIdempotencyKey,
+  parseEmailCheckoutBatches,
   recipientsAfterAggregatedSend,
 } from './order-aggregation-by-email.util';
 import { markRecipientPaymentSent } from './payment-recipient.util';
 
-test('buildEmailCheckoutPlan batches email_confirmed products on create', () => {
-  const plan = buildEmailCheckoutPlan(
-    [
-      {
-        productId: 'p1',
-        productTitle: 'Capital Seven',
-        variantId: 'v1',
-        recipientEmail: 'john@gmail.com',
-        paymentStatus: 'email_confirmed',
-        quantity: 1,
-      },
-      {
-        productId: 'p2',
-        productTitle: 'Illuminati',
-        variantId: 'v2',
-        recipientEmail: 'john@gmail.com',
-        paymentStatus: 'email_confirmed',
-        quantity: 1,
-      },
-    ],
-    'john@gmail.com',
-    {
-      productId: 'p3',
-      variantId: 'v3',
-      productTitle: 'GED Success',
-      quantity: 1,
-    },
-  );
-  assert.equal(plan.mode, 'create');
-  assert.equal(plan.lines.length, 3);
-  assert.equal(plan.emailAlreadySentForEmail, false);
-});
-
-test('buildEmailCheckoutPlan updates existing draft for same email', () => {
-  let recipients = markRecipientPaymentSent(
-    [],
-    'p1',
-    'john@gmail.com',
-    {
-      paymentLink: 'https://pay/1',
-      draftOrderId: 'draft-1',
-      productTitle: 'Capital Seven',
+test('buildCheckoutExecutionPlan queues products without finalizing', () => {
+  const plan = buildCheckoutExecutionPlan({
+    recipients: [],
+    batches: {},
+    email: 'john@gmail.com',
+    callSid: 'CA123',
+    current: {
+      productId: 'p1',
       variantId: 'v1',
+      productTitle: 'Capital Seven',
       quantity: 1,
     },
-  );
-  recipients = [
-    ...recipients,
-    {
-      productId: 'p2',
-      productTitle: 'Illuminati',
-      variantId: 'v2',
-      recipientEmail: 'john@gmail.com',
-      paymentStatus: 'email_confirmed',
-      quantity: 1,
-    },
-  ];
-  const plan = buildEmailCheckoutPlan(recipients, 'john@gmail.com', {
-    productId: 'p2',
-    variantId: 'v2',
-    productTitle: 'Illuminati',
-    quantity: 1,
+    finalizeCheckout: false,
   });
-  assert.equal(plan.mode, 'update');
-  assert.equal(plan.existingDraftOrderId, 'draft-1');
-  assert.equal(plan.lines.length, 2);
-  assert.equal(plan.emailAlreadySentForEmail, true);
-});
-
-test('different emails stay independent', () => {
-  const plan = buildEmailCheckoutPlan(
-    [
-      {
-        productId: 'p1',
-        productTitle: 'Capital Seven',
-        variantId: 'v1',
-        recipientEmail: 'john@gmail.com',
-        paymentStatus: 'email_confirmed',
-        quantity: 1,
-      },
-    ],
-    'jessica@gmail.com',
-    {
-      productId: 'p2',
-      variantId: 'v2',
-      productTitle: 'Illuminati',
-      quantity: 1,
-    },
-  );
-  assert.equal(plan.mode, 'create');
+  assert.equal(plan.aggregationMode, 'queue');
   assert.equal(plan.lines.length, 1);
-  assert.equal(plan.lines[0]!.productTitle, 'Illuminati');
+  assert.equal(plan.sendShopifyInvoice, false);
+  assert.equal(plan.skipResendEmail, true);
 });
 
-test('findDraftOrderIdForEmail and emailPaymentLinkAlreadySent', () => {
-  const recipients = markRecipientPaymentSent([], 'p1', 'john@gmail.com', {
-    draftOrderId: 'draft-abc',
-    paymentLink: 'https://pay/1',
+test('buildCheckoutExecutionPlan finalizes all queued lines into one create', () => {
+  const batches = parseEmailCheckoutBatches({
+    'john@gmail.com': {
+      recipientEmail: 'john@gmail.com',
+      draftOrderId: null,
+      shopifyInvoiceSent: false,
+      status: 'accumulating',
+      lines: [
+        {
+          productId: 'p1',
+          variantId: 'v1',
+          productTitle: 'Capital Seven',
+          quantity: 1,
+        },
+      ],
+    },
   });
-  assert.equal(findDraftOrderIdForEmail(recipients, 'john@gmail.com'), 'draft-abc');
-  assert.equal(emailPaymentLinkAlreadySent(recipients, 'john@gmail.com'), true);
-  assert.equal(emailPaymentLinkAlreadySent(recipients, 'jessica@gmail.com'), false);
+  const plan = buildCheckoutExecutionPlan({
+    recipients: [],
+    batches,
+    email: 'john@gmail.com',
+    callSid: 'CA123',
+    current: {
+      productId: 'p2',
+      variantId: 'v2',
+      productTitle: 'Illuminati',
+      quantity: 1,
+    },
+    finalizeCheckout: true,
+  });
+  assert.equal(plan.aggregationMode, 'create');
+  assert.equal(plan.lines.length, 2);
+  assert.equal(plan.sendShopifyInvoice, true);
+});
+
+test('buildCheckoutExecutionPlan updates existing invoiced draft without resending', () => {
+  const batches = parseEmailCheckoutBatches({
+    'john@gmail.com': {
+      recipientEmail: 'john@gmail.com',
+      draftOrderId: 'draft-1',
+      shopifyInvoiceSent: true,
+      status: 'invoiced',
+      invoicedLinesFingerprint: 'v1:1',
+      lines: [
+        {
+          productId: 'p1',
+          variantId: 'v1',
+          productTitle: 'Capital Seven',
+          quantity: 1,
+        },
+      ],
+    },
+  });
+  const plan = buildCheckoutExecutionPlan({
+    recipients: markRecipientPaymentSent([], 'p1', 'john@gmail.com', {
+      draftOrderId: 'draft-1',
+      paymentLink: 'https://pay/1',
+      variantId: 'v1',
+      productTitle: 'Capital Seven',
+    }),
+    batches,
+    email: 'john@gmail.com',
+    callSid: 'CA123',
+    current: {
+      productId: 'p2',
+      variantId: 'v2',
+      productTitle: 'Illuminati',
+      quantity: 1,
+    },
+    finalizeCheckout: true,
+  });
+  assert.equal(plan.aggregationMode, 'update');
+  assert.equal(plan.lines.length, 2);
+  assert.equal(plan.sendShopifyInvoice, false);
+  assert.equal(plan.resendEmailSkippedBecauseShopifySent, true);
+});
+
+test('buildCheckoutExecutionPlan prevents duplicate finalize invoice', () => {
+  const batches = parseEmailCheckoutBatches({
+    'john@gmail.com': {
+      recipientEmail: 'john@gmail.com',
+      draftOrderId: 'draft-1',
+      shopifyInvoiceSent: true,
+      status: 'invoiced',
+      invoicedLinesFingerprint: 'v1:1',
+      lines: [
+        {
+          productId: 'p1',
+          variantId: 'v1',
+          productTitle: 'Capital Seven',
+          quantity: 1,
+        },
+      ],
+    },
+  });
+  const plan = buildCheckoutExecutionPlan({
+    recipients: [],
+    batches,
+    email: 'john@gmail.com',
+    callSid: 'CA123',
+    current: {
+      productId: 'p1',
+      variantId: 'v1',
+      productTitle: 'Capital Seven',
+      quantity: 1,
+    },
+    finalizeCheckout: true,
+  });
+  assert.equal(plan.aggregationMode, 'duplicate_prevented');
+  assert.equal(plan.duplicateInvoicePrevented, true);
+});
+
+test('buildCheckoutExecutionPlan updates quantity when same variant re-finalized with more copies', () => {
+  const batches = parseEmailCheckoutBatches({
+    'john@gmail.com': {
+      recipientEmail: 'john@gmail.com',
+      draftOrderId: 'draft-1',
+      shopifyInvoiceSent: true,
+      status: 'invoiced',
+      invoicedLinesFingerprint: 'v1:1',
+      lines: [
+        {
+          productId: 'p1',
+          variantId: 'v1',
+          productTitle: 'Capital Seven',
+          quantity: 1,
+        },
+      ],
+    },
+  });
+  const plan = buildCheckoutExecutionPlan({
+    recipients: [],
+    batches,
+    email: 'john@gmail.com',
+    callSid: 'CA123',
+    current: {
+      productId: 'p1',
+      variantId: 'v1',
+      productTitle: 'Capital Seven',
+      quantity: 2,
+    },
+    finalizeCheckout: true,
+  });
+  assert.equal(plan.aggregationMode, 'update');
+  assert.equal(plan.lines[0]!.quantity, 3);
+});
+
+test('checkoutSessionIdempotencyKey is stable for callSid email draftOrderId', () => {
+  const a = checkoutSessionIdempotencyKey('CA1', 'john@gmail.com', 'draft-1');
+  const b = checkoutSessionIdempotencyKey('CA1', 'John@Gmail.com', 'draft-1');
+  assert.equal(a, b);
 });
 
 test('recipientsAfterAggregatedSend marks included products link_sent', () => {
@@ -137,5 +207,19 @@ test('recipientsAfterAggregatedSend marks included products link_sent', () => {
     },
   );
   assert.equal(next.every((r) => r.paymentStatus === 'link_sent'), true);
-  assert.equal(next[0]!.draftOrderId, 'draft-1');
+});
+
+test('batchAfterSuccessfulInvoice marks batch invoiced', () => {
+  const next = batchAfterSuccessfulInvoice(
+    {
+      recipientEmail: 'john@gmail.com',
+      draftOrderId: null,
+      shopifyInvoiceSent: false,
+      lines: [],
+      status: 'accumulating',
+    },
+    { draftOrderId: 'draft-1', shopifyInvoiceSent: true },
+  );
+  assert.equal(next.status, 'invoiced');
+  assert.equal(next.shopifyInvoiceSent, true);
 });

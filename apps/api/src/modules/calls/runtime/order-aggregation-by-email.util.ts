@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { PaymentRecipient } from './payment-recipient.types';
 import {
   findPaymentRecipient,
@@ -6,6 +7,8 @@ import {
   paymentRecipientPairKey,
 } from './payment-recipient.util';
 
+export const EMAIL_CHECKOUT_BATCHES_KEY = 'emailCheckoutBatches';
+
 export type AggregatedCheckoutLine = {
   productId: string;
   variantId: string;
@@ -13,14 +16,29 @@ export type AggregatedCheckoutLine = {
   quantity: number;
 };
 
-export type EmailCheckoutPlan = {
-  mode: 'create' | 'update';
-  existingDraftOrderId: string | null;
+export type EmailCheckoutBatch = {
+  recipientEmail: string;
+  draftOrderId: string | null;
+  shopifyInvoiceSent: boolean;
   lines: AggregatedCheckoutLine[];
-  /** True when a payment email was already delivered for this email on the call. */
-  emailAlreadySentForEmail: boolean;
-  /** Recipients after registering the current product as email_confirmed. */
+  status: 'accumulating' | 'invoiced';
+  /** Line-item fingerprint when the Shopify invoice was last sent. */
+  invoicedLinesFingerprint?: string | null;
+};
+
+export type CheckoutExecutionPlan = {
+  aggregationMode: 'queue' | 'create' | 'update' | 'duplicate_prevented';
+  finalizeCheckout: boolean;
+  lines: AggregatedCheckoutLine[];
+  existingDraftOrderId: string | null;
+  shopifyInvoiceAlreadySent: boolean;
+  duplicateInvoicePrevented: boolean;
+  resendEmailSkippedBecauseShopifySent: boolean;
+  sendShopifyInvoice: boolean;
+  skipResendEmail: boolean;
   workingRecipients: PaymentRecipient[];
+  batch: EmailCheckoutBatch;
+  idempotencyKey: string;
 };
 
 function recipientToLine(recipient: PaymentRecipient): AggregatedCheckoutLine | null {
@@ -34,7 +52,11 @@ function recipientToLine(recipient: PaymentRecipient): AggregatedCheckoutLine | 
   };
 }
 
-function mergeLinesByVariant(lines: AggregatedCheckoutLine[]): AggregatedCheckoutLine[] {
+export function variantIdSetFingerprint(lines: AggregatedCheckoutLine[]): string {
+  return [...new Set(lines.map((line) => line.variantId.trim().toLowerCase()))].sort().join('|');
+}
+
+export function mergeLinesByVariant(lines: AggregatedCheckoutLine[]): AggregatedCheckoutLine[] {
   const map = new Map<string, AggregatedCheckoutLine>();
   for (const line of lines) {
     const key = line.variantId.trim().toLowerCase();
@@ -46,6 +68,61 @@ function mergeLinesByVariant(lines: AggregatedCheckoutLine[]): AggregatedCheckou
     existing.quantity += line.quantity;
   }
   return [...map.values()];
+}
+
+export function linesFingerprint(lines: AggregatedCheckoutLine[]): string {
+  return mergeLinesByVariant(lines)
+    .map((line) => `${line.variantId}:${line.quantity}`)
+    .sort()
+    .join('|');
+}
+
+export function parseEmailCheckoutBatches(raw: unknown): Record<string, EmailCheckoutBatch> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, EmailCheckoutBatch> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const recipientEmail =
+      typeof row.recipientEmail === 'string' ? normalizeRecipientEmail(row.recipientEmail) : key;
+    const lines = Array.isArray(row.lines)
+      ? (row.lines as AggregatedCheckoutLine[]).filter(
+          (line) =>
+            line &&
+            typeof line.productId === 'string' &&
+            typeof line.variantId === 'string' &&
+            typeof line.productTitle === 'string',
+        )
+      : [];
+    out[normalizeRecipientEmail(key)] = {
+      recipientEmail,
+      draftOrderId: typeof row.draftOrderId === 'string' ? row.draftOrderId : null,
+      shopifyInvoiceSent: row.shopifyInvoiceSent === true,
+      lines: mergeLinesByVariant(lines),
+      status: row.status === 'invoiced' ? 'invoiced' : 'accumulating',
+      invoicedLinesFingerprint:
+        typeof row.invoicedLinesFingerprint === 'string' ? row.invoicedLinesFingerprint : null,
+    };
+  }
+  return out;
+}
+
+export function checkoutSessionIdempotencyKey(
+  callSid: string | null | undefined,
+  email: string,
+  draftOrderId?: string | null,
+): string {
+  return createHash('sha256')
+    .update(
+      [
+        callSid?.trim() ?? 'no_call',
+        normalizeRecipientEmail(email),
+        draftOrderId?.trim() ?? 'no_draft',
+        'voice_checkout_session',
+      ].join('|'),
+      'utf8',
+    )
+    .digest('hex');
 }
 
 export function findDraftOrderIdForEmail(
@@ -72,74 +149,205 @@ export function emailPaymentLinkAlreadySent(
   );
 }
 
-/**
- * Build checkout lines for one recipient email: batch all confirmed-but-unsent
- * products, or append to an existing draft order when the email already has a sent link.
- */
-export function buildEmailCheckoutPlan(
-  recipients: PaymentRecipient[],
-  email: string,
-  current: AggregatedCheckoutLine,
-): EmailCheckoutPlan {
-  const normalized = normalizeRecipientEmail(email);
-  let working = markRecipientEmailConfirmed(
-    recipients,
+export function registerLineToEmailBatch(
+  batch: EmailCheckoutBatch,
+  line: AggregatedCheckoutLine,
+): EmailCheckoutBatch {
+  const existing = batch.lines.find(
+    (row) =>
+      row.variantId.trim().toLowerCase() === line.variantId.trim().toLowerCase() &&
+      row.productId.trim().toLowerCase() === line.productId.trim().toLowerCase() &&
+      row.quantity === line.quantity,
+  );
+  if (existing) {
+    return batch;
+  }
+  const merged = mergeLinesByVariant([...batch.lines, line]);
+  return {
+    ...batch,
+    recipientEmail: batch.recipientEmail || normalizeRecipientEmail(line.productId),
+    lines: merged,
+    status: batch.status === 'invoiced' ? 'invoiced' : 'accumulating',
+  };
+}
+
+export function buildCheckoutExecutionPlan(args: {
+  recipients: PaymentRecipient[];
+  batches: Record<string, EmailCheckoutBatch>;
+  email: string;
+  callSid?: string | null;
+  current: AggregatedCheckoutLine;
+  finalizeCheckout: boolean;
+}): CheckoutExecutionPlan {
+  const normalized = normalizeRecipientEmail(args.email);
+  const workingRecipients = markRecipientEmailConfirmed(
+    args.recipients,
     {
-      title: current.productTitle,
-      productId: current.productId,
-      variantId: current.variantId,
+      title: args.current.productTitle,
+      productId: args.current.productId,
+      variantId: args.current.variantId,
     },
     normalized,
-    current.quantity,
+    args.current.quantity,
   );
 
-  const existingDraftOrderId = findDraftOrderIdForEmail(working, normalized);
-  const emailAlreadySentForEmail = emailPaymentLinkAlreadySent(working, normalized);
+  const existingBatch = args.batches[normalized];
+  const shopifyInvoiceAlreadySentBeforeRegister =
+    (existingBatch?.shopifyInvoiceSent ?? false) ||
+    emailPaymentLinkAlreadySent(args.recipients, normalized);
 
-  const lines: AggregatedCheckoutLine[] = [];
-
-  if (existingDraftOrderId && emailAlreadySentForEmail) {
-    for (const recipient of working) {
-      if (normalizeRecipientEmail(recipient.recipientEmail) !== normalized) continue;
-      if (recipient.paymentStatus !== 'link_sent' && recipient.paymentStatus !== 'email_confirmed') {
-        continue;
-      }
-      const line = recipientToLine(recipient);
-      if (line) lines.push(line);
+  if (
+    args.finalizeCheckout &&
+    existingBatch?.status === 'invoiced' &&
+    existingBatch.invoicedLinesFingerprint &&
+    shopifyInvoiceAlreadySentBeforeRegister
+  ) {
+    const projected = registerLineToEmailBatch(existingBatch, args.current);
+    if (existingBatch.invoicedLinesFingerprint === linesFingerprint(projected.lines)) {
+      return {
+        aggregationMode: 'duplicate_prevented',
+        finalizeCheckout: true,
+        lines: projected.lines,
+        existingDraftOrderId: existingBatch.draftOrderId,
+        shopifyInvoiceAlreadySent: true,
+        duplicateInvoicePrevented: true,
+        resendEmailSkippedBecauseShopifySent: true,
+        sendShopifyInvoice: false,
+        skipResendEmail: true,
+        workingRecipients: markRecipientEmailConfirmed(
+          args.recipients,
+          {
+            title: args.current.productTitle,
+            productId: args.current.productId,
+            variantId: args.current.variantId,
+          },
+          normalized,
+          args.current.quantity,
+        ),
+        batch: existingBatch,
+        idempotencyKey: checkoutSessionIdempotencyKey(
+          args.callSid,
+          normalized,
+          existingBatch.draftOrderId,
+        ),
+      };
     }
+  }
+
+  let batch: EmailCheckoutBatch = existingBatch
+    ? registerLineToEmailBatch(existingBatch, args.current)
+    : registerLineToEmailBatch(
+        {
+          recipientEmail: normalized,
+          draftOrderId: null,
+          shopifyInvoiceSent: false,
+          lines: [],
+          status: 'accumulating',
+        },
+        args.current,
+      );
+
+  const existingDraftOrderId =
+    batch.draftOrderId ?? findDraftOrderIdForEmail(workingRecipients, normalized);
+  const shopifyInvoiceAlreadySent =
+    batch.shopifyInvoiceSent || emailPaymentLinkAlreadySent(workingRecipients, normalized);
+  const idempotencyKey = checkoutSessionIdempotencyKey(
+    args.callSid,
+    normalized,
+    existingDraftOrderId,
+  );
+
+  if (!args.finalizeCheckout) {
     return {
-      mode: 'update',
+      aggregationMode: 'queue',
+      finalizeCheckout: false,
+      lines: batch.lines,
       existingDraftOrderId,
-      lines: mergeLinesByVariant(lines),
-      emailAlreadySentForEmail: true,
-      workingRecipients: working,
+      shopifyInvoiceAlreadySent,
+      duplicateInvoicePrevented: false,
+      resendEmailSkippedBecauseShopifySent: false,
+      sendShopifyInvoice: false,
+      skipResendEmail: true,
+      workingRecipients,
+      batch,
+      idempotencyKey,
     };
   }
 
-  for (const recipient of working) {
-    if (normalizeRecipientEmail(recipient.recipientEmail) !== normalized) continue;
-    if (recipient.paymentStatus !== 'email_confirmed') continue;
-    const line = recipientToLine(recipient);
-    if (line) lines.push(line);
+  const currentFingerprint = linesFingerprint(batch.lines);
+  const invoicedFingerprint = batch.invoicedLinesFingerprint ?? null;
+  if (
+    shopifyInvoiceAlreadySent &&
+    batch.status === 'invoiced' &&
+    invoicedFingerprint &&
+    invoicedFingerprint === currentFingerprint
+  ) {
+    return {
+      aggregationMode: 'duplicate_prevented',
+      finalizeCheckout: true,
+      lines: batch.lines,
+      existingDraftOrderId,
+      shopifyInvoiceAlreadySent: true,
+      duplicateInvoicePrevented: true,
+      resendEmailSkippedBecauseShopifySent: true,
+      sendShopifyInvoice: false,
+      skipResendEmail: true,
+      workingRecipients,
+      batch,
+      idempotencyKey,
+    };
   }
 
-  const merged = mergeLinesByVariant(lines);
-  const hasCurrent = merged.some(
-    (line) =>
-      paymentRecipientPairKey(line.productId, normalized) ===
-      paymentRecipientPairKey(current.productId, normalized),
-  );
-  if (!hasCurrent) {
-    merged.push({ ...current });
+  if (existingDraftOrderId && shopifyInvoiceAlreadySent) {
+    return {
+      aggregationMode: 'update',
+      finalizeCheckout: true,
+      lines: batch.lines,
+      existingDraftOrderId,
+      shopifyInvoiceAlreadySent: true,
+      duplicateInvoicePrevented: false,
+      resendEmailSkippedBecauseShopifySent: true,
+      sendShopifyInvoice: false,
+      skipResendEmail: true,
+      workingRecipients,
+      batch,
+      idempotencyKey,
+    };
   }
 
   return {
-    mode: 'create',
-    existingDraftOrderId: null,
-    lines: mergeLinesByVariant(merged),
-    emailAlreadySentForEmail: false,
-    workingRecipients: working,
+    aggregationMode: existingDraftOrderId ? 'update' : 'create',
+    finalizeCheckout: true,
+    lines: batch.lines,
+    existingDraftOrderId,
+    shopifyInvoiceAlreadySent: false,
+    duplicateInvoicePrevented: false,
+    resendEmailSkippedBecauseShopifySent: false,
+    sendShopifyInvoice: true,
+    skipResendEmail: false,
+    workingRecipients,
+    batch,
+    idempotencyKey,
   };
+}
+
+export function batchAfterSuccessfulInvoice(
+  batch: EmailCheckoutBatch,
+  args: { draftOrderId: string; shopifyInvoiceSent: boolean },
+): EmailCheckoutBatch {
+  return {
+    ...batch,
+    draftOrderId: args.draftOrderId,
+    shopifyInvoiceSent: batch.shopifyInvoiceSent || args.shopifyInvoiceSent,
+    status: 'invoiced',
+    invoicedLinesFingerprint: linesFingerprint(batch.lines),
+  };
+}
+
+export function sessionMetaPatchForEmailBatches(
+  batches: Record<string, EmailCheckoutBatch>,
+): Record<string, unknown> {
+  return { [EMAIL_CHECKOUT_BATCHES_KEY]: batches };
 }
 
 export function recipientsAfterAggregatedSend(
@@ -191,4 +399,32 @@ export function findPaymentRecipientByProductEmail(
   email: string,
 ): PaymentRecipient | undefined {
   return findPaymentRecipient(recipients, productId, email);
+}
+
+/** @deprecated Use buildCheckoutExecutionPlan */
+export function buildEmailCheckoutPlan(
+  recipients: PaymentRecipient[],
+  email: string,
+  current: AggregatedCheckoutLine,
+): {
+  mode: 'create' | 'update';
+  existingDraftOrderId: string | null;
+  lines: AggregatedCheckoutLine[];
+  emailAlreadySentForEmail: boolean;
+  workingRecipients: PaymentRecipient[];
+} {
+  const plan = buildCheckoutExecutionPlan({
+    recipients,
+    batches: {},
+    email,
+    current,
+    finalizeCheckout: true,
+  });
+  return {
+    mode: plan.aggregationMode === 'update' ? 'update' : 'create',
+    existingDraftOrderId: plan.existingDraftOrderId,
+    lines: plan.lines,
+    emailAlreadySentForEmail: plan.shopifyInvoiceAlreadySent,
+    workingRecipients: plan.workingRecipients,
+  };
 }

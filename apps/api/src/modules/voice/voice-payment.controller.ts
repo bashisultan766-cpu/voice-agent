@@ -79,6 +79,7 @@ export class VoicePaymentController {
       tenantId: fromTool.tenantId ?? body.tenantId,
       agentId: fromTool.agentId ?? body.agentId,
       emailConfirmed,
+      finalizeCheckout: fromTool.finalizeCheckout ?? body.finalizeCheckout,
     });
   }
 }

@@ -11,4 +11,9 @@ export type SendPaymentLinkInput = {
   tenantId?: string;
   agentId?: string;
   emailConfirmed?: boolean;
+  /**
+   * When false (default), queue the product for the call/email batch without creating a draft order.
+   * When true, finalize the batch: one draft order, one Shopify invoice, optional Resend fallback.
+   */
+  finalizeCheckout?: boolean;
 };

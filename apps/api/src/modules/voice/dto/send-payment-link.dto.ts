@@ -71,6 +71,11 @@ export class SendPaymentLinkDto {
   @IsOptional()
   @IsBoolean()
   emailConfirmed?: boolean;
+
+  /** When true, create/send one aggregated invoice for all queued products on this call+email. */
+  @IsOptional()
+  @IsBoolean()
+  finalizeCheckout?: boolean;
 }
 
 export type { PaymentEmailGateDebug };

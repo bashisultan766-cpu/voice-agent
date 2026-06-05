@@ -171,6 +171,7 @@ test('sendPaymentLink emits full success log chain for company email', async () 
     variantId: 'gid://shopify/ProductVariant/1',
     quantity: 1,
     emailConfirmed: true,
+    finalizeCheckout: true,
   });
 
   assert.equal(result.success, true);
@@ -232,6 +233,7 @@ test('sendPaymentLink resolves variantId from productName via search-product', a
     productName: 'A Game of Thrones',
     quantity: 1,
     callSid: 'CA_live_123',
+    finalizeCheckout: true,
   });
 
   assert.equal(searchQuery, 'A Game of Thrones');
@@ -280,6 +282,7 @@ test('sendPaymentLink prefers explicit variantId and skips search', async () => 
     productName: 'Should Not Search',
     quantity: 1,
     callSid: 'CA_live_123',
+    finalizeCheckout: true,
   });
 
   assert.equal(searchCalled, false);
@@ -316,6 +319,7 @@ test('sendPaymentLink treats placeholder variantId as missing and searches by pr
     productName: 'Dune',
     quantity: 1,
     callSid: 'CA_live_123',
+    finalizeCheckout: true,
   });
 
   assert.equal(searchCalled, true);
@@ -338,6 +342,24 @@ test('sendPaymentLink updates existing draft for same email without resending em
         paymentLink: 'https://shop.example/invoice',
       },
     ],
+    emailCheckoutBatches: {
+      'john@gmail.com': {
+        recipientEmail: 'john@gmail.com',
+        draftOrderId: 'draft-existing',
+        shopifyInvoiceSent: true,
+        status: 'invoiced',
+        invoicedLinesFingerprint:
+          'gid://shopify/productvariant/1:1',
+        lines: [
+          {
+            productId: 'gid://shopify/Product/1',
+            variantId: 'gid://shopify/ProductVariant/1',
+            productTitle: 'Capital Seven',
+            quantity: 1,
+          },
+        ],
+      },
+    },
   };
 
   const { service } = buildService({
@@ -378,6 +400,7 @@ test('sendPaymentLink updates existing draft for same email without resending em
     quantity: 1,
     callSid: 'CA_agg_test',
     emailConfirmed: true,
+    finalizeCheckout: true,
   });
 
   assert.equal(result.success, true);
@@ -385,6 +408,46 @@ test('sendPaymentLink updates existing draft for same email without resending em
   assert.equal(existingDraftOrderId, 'draft-existing');
   assert.equal(sendShopifyInvoice, false);
   assert.equal(result.delivery?.email, 'skipped');
+});
+
+test('sendPaymentLink queues product when finalizeCheckout is false', async () => {
+  let shopifyCalled = false;
+  const sessionMetadata: Record<string, unknown> = {};
+  const { service } = buildService({ callSid: 'CA_queue_test' });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async () => {
+        shopifyCalled = true;
+        return {
+          draftOrderId: 'draft-1',
+          invoiceUrl: 'https://shop.example/invoice',
+          shopifyConnectionId: 'conn-1',
+          shopifyInvoiceSent: false,
+          shopifyInvoiceError: null,
+        };
+      },
+    } as never;
+
+  const prisma = (service as unknown as { prisma: { callSession: { findFirst: Function; update: Function } } })
+    .prisma;
+  prisma.callSession.findFirst = async () => ({ id: 'sess-1', metadata: sessionMetadata });
+  prisma.callSession.update = async (args: { data: { metadata: Record<string, unknown> } }) => {
+    Object.assign(sessionMetadata, args.data.metadata);
+    return {};
+  };
+
+  const result = await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/1',
+    quantity: 1,
+    callSid: 'CA_queue_test',
+    emailConfirmed: true,
+    finalizeCheckout: false,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(shopifyCalled, false);
+  assert.match(result.agentMessage ?? '', /added that book/i);
 });
 
 test('sendPaymentLink ignores variantId 0 and resolves via productName search', async () => {
@@ -417,6 +480,7 @@ test('sendPaymentLink ignores variantId 0 and resolves via productName search', 
     productName: 'A Game of Thrones',
     quantity: 1,
     callSid: 'CA_live_123',
+    finalizeCheckout: true,
   });
 
   assert.equal(searchCalled, true);

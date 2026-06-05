@@ -13,8 +13,12 @@ import type { SendPaymentLinkInput } from './dto/send-payment-link-input.type';
 import type { SendPaymentLinkResponseDto } from './dto/send-payment-link.dto';
 import { maskEmailForLog } from '../calls/runtime/voice-email-capture.util';
 import {
-  buildEmailCheckoutPlan,
+  batchAfterSuccessfulInvoice,
+  buildCheckoutExecutionPlan,
+  EMAIL_CHECKOUT_BATCHES_KEY,
+  parseEmailCheckoutBatches,
   recipientsAfterAggregatedSend,
+  sessionMetaPatchForEmailBatches,
 } from '../calls/runtime/order-aggregation-by-email.util';
 import {
   isDuplicatePaymentRecipient,
@@ -148,7 +152,10 @@ export class VoicePaymentService {
       const productTitle = variantResolution.productTitle ?? args.productName?.trim() ?? 'Book';
       const productId = args.variantId?.trim() || variantId;
 
-      const sessionRecipients = await this.loadCallSessionPaymentRecipients(callSid);
+      const sessionState = await this.loadCallSessionCheckoutState(callSid);
+      const sessionRecipients = sessionState.recipients;
+      const finalizeCheckout = args.finalizeCheckout === true;
+
       if (isDuplicatePaymentRecipient(sessionRecipients, productId, email)) {
         this.logger.warn(
           JSON.stringify({
@@ -185,24 +192,86 @@ export class VoicePaymentService {
         }),
       );
 
-      const checkoutPlan = buildEmailCheckoutPlan(sessionRecipients, email, {
-        productId,
-        variantId,
-        productTitle,
-        quantity,
+      const checkoutPlan = buildCheckoutExecutionPlan({
+        recipients: sessionRecipients,
+        batches: sessionState.batches,
+        email,
+        callSid,
+        current: { productId, variantId, productTitle, quantity },
+        finalizeCheckout,
       });
 
       this.logger.log(
         JSON.stringify({
           event: 'voice.payment.aggregation_plan',
-          mode: checkoutPlan.mode,
-          lineCount: checkoutPlan.lines.length,
-          existingDraftOrderId: checkoutPlan.existingDraftOrderId,
-          emailAlreadySentForEmail: checkoutPlan.emailAlreadySentForEmail,
+          aggregationMode: checkoutPlan.aggregationMode,
+          aggregatedLineCount: checkoutPlan.lines.length,
+          draftOrderId: checkoutPlan.existingDraftOrderId,
+          shopifyInvoiceSent: checkoutPlan.shopifyInvoiceAlreadySent,
+          resendEmailSkippedBecauseShopifySent: checkoutPlan.resendEmailSkippedBecauseShopifySent,
+          duplicateInvoicePrevented: checkoutPlan.duplicateInvoicePrevented,
+          finalizeCheckout,
+          idempotencyKey: checkoutPlan.idempotencyKey,
           maskedEmail: maskEmailForLog(email),
           callSid: callSid ?? null,
         }),
       );
+
+      if (checkoutPlan.duplicateInvoicePrevented) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.payment.duplicate_invoice_prevented',
+            aggregationMode: checkoutPlan.aggregationMode,
+            draftOrderId: checkoutPlan.existingDraftOrderId,
+            shopifyInvoiceSent: checkoutPlan.shopifyInvoiceAlreadySent,
+            duplicateInvoicePrevented: true,
+            idempotencyKey: checkoutPlan.idempotencyKey,
+            callSid: callSid ?? null,
+            maskedEmail: maskEmailForLog(email),
+          }),
+        );
+        return {
+          success: true,
+          message: 'Payment invoice was already sent for this checkout.',
+          agentMessage:
+            'Your payment invoice was already sent to that email. Please check your inbox for the existing invoice.',
+          draftOrderId: checkoutPlan.existingDraftOrderId ?? undefined,
+          deliveryAttemptId: null,
+          emailGate: gate.debug,
+          latencyMs: Date.now() - started,
+        };
+      }
+
+      if (!finalizeCheckout) {
+        if (callSid) {
+          await this.persistCheckoutBatchToCallSession(callSid, {
+            batches: {
+              ...sessionState.batches,
+              [email.toLowerCase()]: checkoutPlan.batch,
+            },
+            workingRecipients: checkoutPlan.workingRecipients,
+          });
+        }
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.payment.product_queued',
+            aggregationMode: 'queue',
+            aggregatedLineCount: checkoutPlan.lines.length,
+            finalizeCheckout: false,
+            callSid: callSid ?? null,
+            maskedEmail: maskEmailForLog(email),
+          }),
+        );
+        return {
+          success: true,
+          message: 'Product queued for checkout.',
+          agentMessage:
+            "I've added that book to your order. Tell me if you'd like another book, or let me know when you're ready for your payment link.",
+          deliveryAttemptId: null,
+          emailGate: gate.debug,
+          latencyMs: Date.now() - started,
+        };
+      }
 
       const resolvedLineItems = await Promise.all(
         checkoutPlan.lines.map(async (line) => {
@@ -230,7 +299,7 @@ export class VoicePaymentService {
           quantity: line.quantity,
         })),
         existingDraftOrderId: checkoutPlan.existingDraftOrderId,
-        sendShopifyInvoice: !checkoutPlan.emailAlreadySentForEmail,
+        sendShopifyInvoice: checkoutPlan.sendShopifyInvoice,
       });
 
       this.logger.log(
@@ -240,8 +309,11 @@ export class VoicePaymentService {
           agentId,
           draftOrderId: shopify.draftOrderId,
           invoiceUrlPresent: Boolean(shopify.invoiceUrl),
-          aggregationMode: checkoutPlan.mode,
+          aggregationMode: checkoutPlan.aggregationMode,
           aggregatedLineCount: resolvedLineItems.length,
+          shopifyInvoiceSent: shopify.shopifyInvoiceSent,
+          resendEmailSkippedBecauseShopifySent:
+            checkoutPlan.resendEmailSkippedBecauseShopifySent || shopify.shopifyInvoiceSent,
         }),
       );
 
@@ -281,7 +353,7 @@ export class VoicePaymentService {
           variantId: line.variantId,
         })),
         callSid: callSid ?? undefined,
-        aggregationMode: checkoutPlan.mode,
+        aggregationMode: checkoutPlan.aggregationMode,
       });
 
       const branding = await this.resolveBusinessBranding(tenantId, agentId);
@@ -298,7 +370,18 @@ export class VoicePaymentService {
       );
 
       const skipResendEmail =
-        checkoutPlan.mode === 'update' && checkoutPlan.emailAlreadySentForEmail;
+        checkoutPlan.skipResendEmail || shopify.shopifyInvoiceSent;
+      if (skipResendEmail) {
+        this.logger.log(
+          JSON.stringify({
+            event: 'voice.payment.resend_email_skipped',
+            resendEmailSkippedBecauseShopifySent: shopify.shopifyInvoiceSent,
+            aggregationMode: checkoutPlan.aggregationMode,
+            draftOrderId: shopify.draftOrderId,
+            callSid: callSid ?? null,
+          }),
+        );
+      }
       const delivery = skipResendEmail
         ? {
             email: 'skipped' as const,
@@ -335,7 +418,7 @@ export class VoicePaymentService {
       const whatsappSent = delivery.whatsapp === 'sent';
       const emailSentByShopify = shopify.shopifyInvoiceSent;
       const draftOrderUpdatedInPlace =
-        checkoutPlan.mode === 'update' && checkoutPlan.emailAlreadySentForEmail;
+        checkoutPlan.aggregationMode === 'update' && checkoutPlan.shopifyInvoiceAlreadySent;
 
       if (emailSentByResend) {
         await this.prisma.checkoutLink.update({
@@ -422,6 +505,10 @@ export class VoicePaymentService {
       }
 
       if (emailDelivered && callSid) {
+        const invoicedBatch = batchAfterSuccessfulInvoice(checkoutPlan.batch, {
+          draftOrderId: shopify.draftOrderId,
+          shopifyInvoiceSent: shopify.shopifyInvoiceSent,
+        });
         await this.appendAggregatedPaymentRecipientsToCallSession(callSid, {
           recipientEmail: email,
           paymentLink: shopify.invoiceUrl,
@@ -429,6 +516,10 @@ export class VoicePaymentService {
           checkoutLinkId: checkoutLink.id,
           productIds: resolvedLineItems.map((line) => line.productId),
           workingRecipients: checkoutPlan.workingRecipients,
+          batches: {
+            ...sessionState.batches,
+            [email.toLowerCase()]: invoicedBatch,
+          },
         });
       }
 
@@ -594,8 +685,11 @@ export class VoicePaymentService {
     };
   }
 
-  private async loadCallSessionPaymentRecipients(callSid: string | null) {
-    if (!callSid) return [];
+  private async loadCallSessionCheckoutState(callSid: string | null): Promise<{
+    recipients: ReturnType<typeof parsePaymentRecipients>;
+    batches: ReturnType<typeof parseEmailCheckoutBatches>;
+  }> {
+    if (!callSid) return { recipients: [], batches: {} };
     const session = await this.prisma.callSession.findFirst({
       where: { twilioCallSid: callSid },
       select: { metadata: true },
@@ -604,7 +698,39 @@ export class VoicePaymentService {
       session?.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
         ? (session.metadata as Record<string, unknown>)
         : {};
-    return parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]);
+    return {
+      recipients: parsePaymentRecipients(meta[PAYMENT_RECIPIENTS_METADATA_KEY]),
+      batches: parseEmailCheckoutBatches(meta[EMAIL_CHECKOUT_BATCHES_KEY]),
+    };
+  }
+
+  private async persistCheckoutBatchToCallSession(
+    callSid: string,
+    args: {
+      batches: ReturnType<typeof parseEmailCheckoutBatches>;
+      workingRecipients: ReturnType<typeof parsePaymentRecipients>;
+    },
+  ): Promise<void> {
+    const session = await this.prisma.callSession.findFirst({
+      where: { twilioCallSid: callSid },
+      select: { id: true, metadata: true },
+    });
+    if (!session) return;
+    const meta =
+      session.metadata && typeof session.metadata === 'object' && !Array.isArray(session.metadata)
+        ? (session.metadata as Record<string, unknown>)
+        : {};
+    await this.prisma.callSession.update({
+      where: { id: session.id },
+      data: {
+        metadata: {
+          ...meta,
+          ...sessionMetaPatchForRecipients(args.workingRecipients),
+          ...sessionMetaPatchForEmailBatches(args.batches),
+          orderState: 'PAYMENT_LINK_CREATING',
+        } as Prisma.InputJsonValue,
+      },
+    });
   }
 
   private async appendAggregatedPaymentRecipientsToCallSession(
@@ -616,6 +742,7 @@ export class VoicePaymentService {
       checkoutLinkId: string;
       productIds: string[];
       workingRecipients: ReturnType<typeof parsePaymentRecipients>;
+      batches: ReturnType<typeof parseEmailCheckoutBatches>;
     },
   ): Promise<void> {
     const session = await this.prisma.callSession.findFirst({
@@ -641,6 +768,7 @@ export class VoicePaymentService {
         metadata: {
           ...meta,
           ...sessionMetaPatchForRecipients(updated),
+          ...sessionMetaPatchForEmailBatches(args.batches),
           orderState: 'PAYMENT_LINK_SENT',
         } as Prisma.InputJsonValue,
       },
@@ -693,7 +821,7 @@ export class VoicePaymentService {
     shopifyConnectionId: string | null;
     lineItems: Array<{ title: string; quantity: number; price: string | null; variantId: string }>;
     callSid?: string;
-    aggregationMode?: 'create' | 'update';
+    aggregationMode?: 'queue' | 'create' | 'update' | 'duplicate_prevented';
   }) {
     const fingerprint = createHash('sha256')
       .update(

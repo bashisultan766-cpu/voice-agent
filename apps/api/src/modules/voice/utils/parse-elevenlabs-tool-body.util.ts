@@ -65,6 +65,7 @@ export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolReq
   tenantId?: string;
   agentId?: string;
   emailConfirmed?: boolean;
+  finalizeCheckout?: boolean;
 } {
   const flat = flattenElevenLabsToolBody(body);
 
@@ -112,5 +113,15 @@ export function resolveSendPaymentLinkFieldsFromToolBody(body: ElevenLabsToolReq
         'emailComfirmed',
         'email_comfirmed',
       ]),
+    finalizeCheckout:
+      pickBooleanFromRecord(flat, [
+        'finalizeCheckout',
+        'finalize_checkout',
+        'checkoutFinalized',
+        'checkout_finalized',
+        'doneAddingProducts',
+        'done_adding_products',
+      ]) ??
+      pickBooleanFromRecord(body, ['finalizeCheckout', 'finalize_checkout']),
   };
 }
