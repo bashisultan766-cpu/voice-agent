@@ -111,7 +111,7 @@ export function applyPaymentFlowToState(
     let recipients = parsePaymentRecipients(state.paymentRecipients);
     recipients = markRecipientEmailConfirmed(recipients, product, email, qty);
     recipients = markRecipientPaymentSent(recipients, productId, email, {
-      paymentLink: args.checkoutUrl ?? null,
+      paymentLink: args.checkoutUrl,
       draftOrderId: args.draftOrderId,
       checkoutLinkId: args.checkoutLinkId,
     });
