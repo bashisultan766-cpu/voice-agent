@@ -17,4 +17,14 @@ export type SendPaymentLinkInput = {
    * omitted — auto: finalize the first book only; queue additional books until explicit true.
    */
   finalizeCheckout?: boolean;
+  /**
+   * Internal (multi-product tool calls): pre-resolved additional books merged into
+   * the same invoice as the main product. Not part of the public tool payload.
+   */
+  extraLines?: Array<{
+    productId: string;
+    variantId: string;
+    productTitle: string;
+    quantity: number;
+  }>;
 };

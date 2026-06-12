@@ -673,6 +673,133 @@ test('sendPaymentLink auto-queues second book when finalizeCheckout is omitted',
   assert.equal(batches['john@gmail.com']?.lines?.length, 2);
 });
 
+test('sendPaymentLinkForProducts sends ONE invoice with ALL books even without callSid', async () => {
+  let aggregatedLines: Array<{ variantId: string; quantity: number }> = [];
+  let shopifyCalls = 0;
+  const searchResults: Record<string, string> = {
+    'Book One': 'gid://shopify/ProductVariant/101',
+    'Book Two': 'gid://shopify/ProductVariant/102',
+    'Book Three': 'gid://shopify/ProductVariant/103',
+  };
+  const { service } = buildService({
+    // No callSid — reproduces ElevenLabs tool calls without system__call_sid.
+    callSid: null,
+    searchProduct: async (args) => ({
+      success: true,
+      products: [
+        {
+          productId: `gid://shopify/Product/${args.query}`,
+          variantId: searchResults[args.query] ?? 'gid://shopify/ProductVariant/999',
+          title: args.query,
+          price: '9.99',
+          inventory: 5,
+          image: null,
+          sku: null,
+          inStock: true,
+          score: 100,
+        },
+      ],
+    }),
+  });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async (
+        _tenantId: string,
+        _agentId: string,
+        payload: { lines: Array<{ variantId: string; quantity: number }> },
+      ) => {
+        shopifyCalls += 1;
+        aggregatedLines = payload.lines;
+        return {
+          draftOrderId: 'draft-multi',
+          invoiceUrl: 'https://shop.example/invoice',
+          shopifyConnectionId: 'conn-1',
+          shopifyInvoiceSent: true,
+          shopifyInvoiceError: null,
+        };
+      },
+    } as never;
+
+  const result = await service.sendPaymentLinkForProducts({
+    items: [
+      { productName: 'Book One', quantity: 1 },
+      { productName: 'Book Two', quantity: 1 },
+      { productName: 'Book Three', quantity: 1 },
+    ],
+    email: 'buyer@sureshotbooks.com',
+    emailConfirmed: true,
+    finalizeCheckout: true,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(shopifyCalls, 1, 'exactly one Shopify invoice');
+  assert.equal(aggregatedLines.length, 3, 'all 3 books on the invoice');
+  const variantIds = aggregatedLines.map((l) => l.variantId).sort();
+  assert.deepEqual(variantIds, [
+    'gid://shopify/ProductVariant/101',
+    'gid://shopify/ProductVariant/102',
+    'gid://shopify/ProductVariant/103',
+  ]);
+});
+
+test('sendPaymentLinkForProducts keeps remaining books when one ISBN is not found', async () => {
+  let aggregatedLines: Array<{ variantId: string; quantity: number }> = [];
+  const { service } = buildService({
+    callSid: null,
+    searchProduct: async (args) =>
+      args.query === 'Missing Book'
+        ? { success: true, products: [] }
+        : {
+            success: true,
+            products: [
+              {
+                productId: `gid://shopify/Product/${args.query}`,
+                variantId: `gid://shopify/ProductVariant/${args.query.length}`,
+                title: args.query,
+                price: '9.99',
+                inventory: 5,
+                image: null,
+                sku: null,
+                inStock: true,
+                score: 100,
+              },
+            ],
+          },
+  });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async (
+        _tenantId: string,
+        _agentId: string,
+        payload: { lines: Array<{ variantId: string; quantity: number }> },
+      ) => {
+        aggregatedLines = payload.lines;
+        return {
+          draftOrderId: 'draft-partial',
+          invoiceUrl: 'https://shop.example/invoice',
+          shopifyConnectionId: 'conn-1',
+          shopifyInvoiceSent: true,
+          shopifyInvoiceError: null,
+        };
+      },
+    } as never;
+
+  const result = await service.sendPaymentLinkForProducts({
+    items: [
+      { productName: 'Book One', quantity: 1 },
+      { productName: 'Missing Book', quantity: 1 },
+      { productName: 'Book Three', quantity: 1 },
+    ],
+    email: 'buyer@sureshotbooks.com',
+    emailConfirmed: true,
+    finalizeCheckout: true,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(aggregatedLines.length, 2, 'two found books still invoiced');
+  assert.match(result.agentMessage ?? '', /could not find Missing Book/i);
+});
+
 test('sendPaymentLink finalize-only sends one aggregated invoice for queued books', async () => {
   let aggregatedLineCount = 0;
   const sessionMetadata: Record<string, unknown> = {

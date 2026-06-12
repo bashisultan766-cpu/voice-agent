@@ -30,6 +30,8 @@ import {
   recipientsAfterAggregatedSend,
   registerLineToEmailBatch,
   sessionMetaPatchForEmailBatches,
+  type AggregatedCheckoutLine,
+  type EmailCheckoutBatch,
 } from '../calls/runtime/order-aggregation-by-email.util';
 import {
   isDuplicatePaymentRecipient,
@@ -114,63 +116,50 @@ export class VoicePaymentService {
       }),
     );
 
-    const wantFinalize = shared.finalizeCheckout !== false;
+    // Resolve every product up-front, then create ONE draft order in a single
+    // sendPaymentLink call. This must NOT rely on call-session persistence
+    // (callSid can be missing from the tool payload).
+    const { tenantId, agentId } = await this.resolveAgentContext(
+      shared.tenantId,
+      shared.agentId,
+    );
+
+    const resolvedLines: AggregatedCheckoutLine[] = [];
     const failedTitles: string[] = [];
-    let lastSuccess: SendPaymentLinkResponseDto | null = null;
-    let queuedAny = false;
-    let finalized = false;
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const isLast = i === items.length - 1;
-      const finalizeThis = isLast && wantFinalize;
-
-      const res = await this.sendPaymentLink({
-        ...shared,
-        productName: item.productName,
+      const resolution = await this.resolveVariantIdForPayment({
         variantId: item.variantId,
-        quantity: item.quantity,
-        finalizeCheckout: finalizeThis,
+        productName: item.productName,
+        tenantId,
+        agentId,
       });
 
-      if (res.success) {
-        lastSuccess = res;
-        queuedAny = true;
-        if (finalizeThis) finalized = true;
+      if (!resolution.ok) {
+        failedTitles.push(item.productName || item.variantId || `book ${i + 1}`);
+        this.logger.warn(
+          JSON.stringify({
+            event: 'voice.payment.multi_product_item_failed',
+            index: i,
+            productName: item.productName?.slice(0, 80) ?? null,
+            errorCode: resolution.errorCode,
+            message: resolution.logMessage?.slice(0, 200),
+            callSid: shared.callSid ?? null,
+          }),
+        );
         continue;
       }
 
-      // Email gate rejection blocks the whole batch — surface it immediately.
-      if (res.emailGate && !queuedAny && i === 0) {
-        return res;
-      }
-
-      failedTitles.push(item.productName || item.variantId || `book ${i + 1}`);
-      this.logger.warn(
-        JSON.stringify({
-          event: 'voice.payment.multi_product_item_failed',
-          index: i,
-          productName: item.productName?.slice(0, 80) ?? null,
-          message: res.message?.slice(0, 200),
-          callSid: shared.callSid ?? null,
-        }),
-      );
-    }
-
-    // Last item failed but earlier books are queued — flush the queue so the
-    // customer still receives ONE invoice with everything that resolved.
-    if (wantFinalize && !finalized && queuedAny) {
-      const flush = await this.sendPaymentLink({
-        ...shared,
-        finalizeCheckout: true,
+      resolvedLines.push({
+        productId: item.variantId?.trim() || resolution.variantId,
+        variantId: resolution.variantId,
+        productTitle: resolution.productTitle ?? item.productName?.trim() ?? 'Book',
+        quantity: Math.max(1, item.quantity),
       });
-      if (flush.success) {
-        lastSuccess = flush;
-        finalized = true;
-      }
     }
 
-    if (!lastSuccess) {
+    if (resolvedLines.length === 0) {
       return {
         success: false,
         message: 'None of the requested products could be added to the payment link.',
@@ -180,18 +169,32 @@ export class VoicePaymentService {
       };
     }
 
-    if (failedTitles.length > 0) {
+    const current = resolvedLines[resolvedLines.length - 1];
+    const extraLines = resolvedLines.slice(0, -1);
+
+    const response = await this.sendPaymentLink({
+      ...shared,
+      tenantId,
+      agentId,
+      variantId: current.variantId,
+      productName: current.productTitle,
+      quantity: current.quantity,
+      finalizeCheckout: shared.finalizeCheckout !== false,
+      extraLines,
+    });
+
+    if (response.success && failedTitles.length > 0) {
       const failNote = ` Note: I could not find ${failedTitles.join(', ')} in the catalog, so ${
         failedTitles.length === 1 ? 'that book is' : 'those books are'
       } not on the invoice.`;
       return {
-        ...lastSuccess,
-        agentMessage: `${lastSuccess.agentMessage ?? ''}${failNote}`.trim(),
+        ...response,
+        agentMessage: `${response.agentMessage ?? ''}${failNote}`.trim(),
         warning: `Unresolved products: ${failedTitles.join(', ')}`,
       };
     }
 
-    return lastSuccess;
+    return response;
   }
 
   async sendPaymentLink(args: SendPaymentLinkInput): Promise<SendPaymentLinkResponseDto> {
@@ -265,6 +268,24 @@ export class VoicePaymentService {
         agentId,
         email,
       });
+
+      // Multi-product call: pre-resolved books are merged into the email batch
+      // in-memory so ONE invoice carries all of them, with or without a session.
+      if (args.extraLines?.length) {
+        const batchKey = normalizeRecipientEmail(email);
+        let batch: EmailCheckoutBatch = sessionState.batches[batchKey] ?? {
+          recipientEmail: batchKey,
+          draftOrderId: null,
+          shopifyInvoiceSent: false,
+          lines: [],
+          status: 'accumulating',
+        };
+        for (const line of args.extraLines) {
+          batch = registerLineToEmailBatch(batch, line);
+        }
+        sessionState.batches[batchKey] = batch;
+      }
+
       const finalizeCheckout = resolveVoiceFinalizeCheckout({
         explicit: args.finalizeCheckout,
         email,
