@@ -60,6 +60,11 @@ test('token stream parser handles spaced letters', () => {
   assert.equal(parsed.email, 'bashir@gmail.com');
 });
 
+test('token stream parser handles custom business domain words', () => {
+  const parsed = parseEmailTokenStream('jessica at sureshot books dot com');
+  assert.equal(parsed.email, 'jessica@sureshotbooks.com');
+});
+
 test('inline this is correct only when not negative', () => {
   assert.equal(
     containsInlineEmailConfirmation('yes bashir at gmail dot com this is correct'),

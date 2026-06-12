@@ -1,7 +1,7 @@
 /** Service-layer input for sendPaymentLink (controller maps HTTP/tool body → this). */
 export type SendPaymentLinkInput = {
   email: string;
-  quantity: number;
+  quantity?: number;
   /** Explicit Shopify variant; used when present and valid. */
   variantId?: string;
   /** Book title / search query — triggers automatic search-product when variantId is absent. */
@@ -12,8 +12,9 @@ export type SendPaymentLinkInput = {
   agentId?: string;
   emailConfirmed?: boolean;
   /**
-   * When false (default), queue the product for the call/email batch without creating a draft order.
-   * When true, finalize the batch: one draft order, one Shopify invoice, optional Resend fallback.
+   * false — queue this book on the call/email batch (no invoice yet).
+   * true — create/update one draft order and send one invoice email for all queued books.
+   * omitted — auto: finalize the first book only; queue additional books until explicit true.
    */
   finalizeCheckout?: boolean;
 };

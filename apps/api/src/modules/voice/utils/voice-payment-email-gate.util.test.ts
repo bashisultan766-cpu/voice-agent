@@ -12,6 +12,11 @@ test('PAYMENT_EMAIL_REGEX accepts standard addresses', () => {
   assert.match('user.name+tag@gmail.com', PAYMENT_EMAIL_REGEX);
   assert.match('jessica@shoreshortbooks.com', PAYMENT_EMAIL_REGEX);
   assert.match('orders@mycompany.co.uk', PAYMENT_EMAIL_REGEX);
+  assert.match('jessica@sureshoebooks.com', PAYMENT_EMAIL_REGEX);
+  assert.match('support@sureshotbooks.com', PAYMENT_EMAIL_REGEX);
+  assert.match('orders@company.org', PAYMENT_EMAIL_REGEX);
+  assert.match('billing@business.net', PAYMENT_EMAIL_REGEX);
+  assert.match('john@gmail.com', PAYMENT_EMAIL_REGEX);
 });
 
 test('evaluatePaymentEmailGate blocks invalid format', () => {
@@ -29,6 +34,19 @@ test('evaluatePaymentEmailGate suggests gmail typo correction', () => {
   assert.equal(result.allowed, false);
   assert.equal(result.debug.action, 'SuggestCorrection');
   assert.match(result.agentMessage, /Did you mean jessica@gmail.com/i);
+  assert.equal(result.rejectionLog?.validationSource, 'internal_email_gate');
+  assert.equal(result.rejectionLog?.validationResult, 'domain_typo');
+});
+
+test('evaluatePaymentEmailGate suggests SureShot store domain typo correction', () => {
+  const result = evaluatePaymentEmailGate({
+    rawEmail: 'jessica@sureshoebooks.com',
+    emailConfirmed: true,
+  });
+  assert.equal(result.allowed, false);
+  assert.equal(result.debug.action, 'SuggestCorrection');
+  assert.match(result.agentMessage, /sureshotbooks\.com/);
+  assert.equal(result.rejectionLog?.domain, 'sureshoebooks.com');
 });
 
 test('evaluatePaymentEmailGate requires confirmation before send', () => {
@@ -81,12 +99,12 @@ test('isPossiblyInvalidEmailDomain flags structurally invalid domains', () => {
 
 test('evaluatePaymentEmailGate allows company domain with emailConfirmed', () => {
   const result = evaluatePaymentEmailGate({
-    rawEmail: 'jessica@shoreshortbooks.com',
+    rawEmail: 'support@sureshotbooks.com',
     emailConfirmed: true,
   });
   assert.equal(result.allowed, true);
   assert.equal(result.debug.action, 'SendPaymentLink');
-  assert.equal(result.debug.customerEmail, 'jessica@shoreshortbooks.com');
+  assert.equal(result.debug.customerEmail, 'support@sureshotbooks.com');
 });
 
 test('evaluatePaymentEmailGate always returns strict boolean possiblyInvalid', () => {
@@ -106,7 +124,7 @@ test('evaluatePaymentEmailGate always returns strict boolean possiblyInvalid', (
 
 test('evaluatePaymentEmailGate uses confirmation prompt when email valid but unconfirmed', () => {
   const result = evaluatePaymentEmailGate({
-    rawEmail: 'jessica@shoreshortbooks.com',
+    rawEmail: 'support@sureshotbooks.com',
     emailConfirmed: false,
   });
   assert.equal(result.allowed, false);

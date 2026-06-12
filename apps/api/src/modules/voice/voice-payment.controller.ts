@@ -39,13 +39,20 @@ export class VoicePaymentController {
     const callSid =
       fromTool.callSid?.trim() || body.callSid?.trim() || body.call_sid?.trim();
 
-    if (quantity == null) {
-      throw new BadRequestException('quantity is required.');
-    }
-    if (!variantId && !productName) {
-      throw new BadRequestException(
-        'variantId or productName is required (productName triggers automatic catalog search).',
-      );
+    const finalizeRequested =
+      fromTool.finalizeCheckout === true || body.finalizeCheckout === true;
+
+    if (!finalizeRequested) {
+      if (quantity == null) {
+        throw new BadRequestException('quantity is required.');
+      }
+      if (!variantId && !productName) {
+        throw new BadRequestException(
+          'variantId or productName is required (productName triggers automatic catalog search).',
+        );
+      }
+    } else if (quantity == null && (variantId || productName)) {
+      throw new BadRequestException('quantity is required when adding a product.');
     }
 
     let effectiveVariantId = variantId || undefined;
@@ -73,7 +80,7 @@ export class VoicePaymentController {
       email: email ?? '',
       variantId: effectiveVariantId,
       productName: productName || undefined,
-      quantity,
+      quantity: quantity ?? 1,
       phoneNumber,
       callSid,
       tenantId: fromTool.tenantId ?? body.tenantId,

@@ -25,12 +25,21 @@ export type PaymentEmailGateDebug = {
   note: string;
 };
 
+export type PaymentEmailRejectionLog = {
+  originalEmail: string;
+  normalizedEmail: string;
+  validationResult: string;
+  domain: string | null;
+  validationSource: 'internal_email_gate';
+};
+
 export type PaymentEmailGateResult = {
   allowed: boolean;
   normalizedEmail: string;
   agentMessage: string;
   debug: PaymentEmailGateDebug;
   possiblyInvalid: boolean;
+  rejectionLog?: PaymentEmailRejectionLog;
 };
 
 export const EMAIL_POSSIBLY_INVALID_PROMPT =
@@ -70,6 +79,48 @@ export function buildPaymentEmailGateDebug(partial: PaymentEmailGateDebug): Paym
   };
 }
 
+export function buildPaymentEmailRejectionLog(input: {
+  originalEmail: string;
+  normalizedEmail: string;
+  validationResult: string;
+  domain?: string | null;
+}): PaymentEmailRejectionLog {
+  const normalized = input.normalizedEmail.trim().toLowerCase();
+  return {
+    originalEmail: input.originalEmail,
+    normalizedEmail: normalized,
+    validationResult: input.validationResult,
+    domain: input.domain ?? extractEmailDomain(normalized),
+    validationSource: 'internal_email_gate',
+  };
+}
+
+function rejectGate(
+  input: {
+    rawEmail: string;
+    normalizedEmail: string;
+    agentMessage: string;
+    possiblyInvalid: boolean;
+    debug: PaymentEmailGateDebug;
+    validationResult: string;
+    domain?: string | null;
+  },
+): PaymentEmailGateResult {
+  return {
+    allowed: false,
+    normalizedEmail: input.normalizedEmail,
+    agentMessage: input.agentMessage,
+    possiblyInvalid: input.possiblyInvalid,
+    debug: input.debug,
+    rejectionLog: buildPaymentEmailRejectionLog({
+      originalEmail: input.rawEmail,
+      normalizedEmail: input.normalizedEmail,
+      validationResult: input.validationResult,
+      domain: input.domain,
+    }),
+  };
+}
+
 export function evaluatePaymentEmailGate(input: {
   rawEmail: string;
   /** boolean or tool string forms ("true", "1", "yes"). */
@@ -82,11 +133,12 @@ export function evaluatePaymentEmailGate(input: {
     buildPaymentEmailGateDebug(overrides);
 
   if (!normalized || !normalized.includes('@')) {
-    return {
-      allowed: false,
+    return rejectGate({
+      rawEmail: input.rawEmail,
       normalizedEmail: normalized,
       agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
       possiblyInvalid: true,
+      validationResult: 'missing_or_malformed_email',
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
@@ -94,15 +146,16 @@ export function evaluatePaymentEmailGate(input: {
         error: 'missing_or_malformed_email',
         note: 'Email missing @ or empty after normalization.',
       }),
-    };
+    });
   }
 
   if (!PAYMENT_EMAIL_REGEX.test(normalized)) {
-    return {
-      allowed: false,
+    return rejectGate({
+      rawEmail: input.rawEmail,
       normalizedEmail: normalized,
       agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
       possiblyInvalid: true,
+      validationResult: 'invalid_format',
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
@@ -110,16 +163,17 @@ export function evaluatePaymentEmailGate(input: {
         error: 'invalid_format',
         note: 'Email failed PAYMENT_EMAIL_REGEX validation.',
       }),
-    };
+    });
   }
 
   const domain = extractEmailDomain(normalized);
   if (!domain) {
-    return {
-      allowed: false,
+    return rejectGate({
+      rawEmail: input.rawEmail,
       normalizedEmail: normalized,
       agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
       possiblyInvalid: true,
+      validationResult: 'invalid_domain',
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
@@ -127,16 +181,18 @@ export function evaluatePaymentEmailGate(input: {
         error: 'invalid_domain',
         note: 'Could not parse domain from email.',
       }),
-    };
+    });
   }
 
   const typo = suggestEmailTypo(normalized);
   if (typo) {
-    return {
-      allowed: false,
+    return rejectGate({
+      rawEmail: input.rawEmail,
       normalizedEmail: normalized,
       agentMessage: buildPaymentEmailTypoSuggestionPrompt(typo.correctedEmail),
       possiblyInvalid: false,
+      validationResult: 'domain_typo',
+      domain,
       debug: baseDebug({
         action: 'SuggestCorrection',
         customerEmail: normalized,
@@ -144,15 +200,17 @@ export function evaluatePaymentEmailGate(input: {
         error: 'domain_typo',
         note: `Suggested domain correction ${typo.fromDomain} → ${typo.toDomain}.`,
       }),
-    };
+    });
   }
 
   if (isPossiblyInvalidEmailDomain(domain)) {
-    return {
-      allowed: false,
+    return rejectGate({
+      rawEmail: input.rawEmail,
       normalizedEmail: normalized,
       agentMessage: EMAIL_POSSIBLY_INVALID_PROMPT,
       possiblyInvalid: true,
+      validationResult: 'invalid_domain_structure',
+      domain,
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
@@ -160,7 +218,7 @@ export function evaluatePaymentEmailGate(input: {
         error: 'invalid_domain',
         note: `Domain "${domain}" failed structural validation.`,
       }),
-    };
+    });
   }
 
   const sessionEmail = input.sessionConfirmedEmail?.trim().toLowerCase();
@@ -171,13 +229,15 @@ export function evaluatePaymentEmailGate(input: {
   if (!toolConfirmed && !(sessionConfirmed && emailMatchesSession)) {
     // Force strict boolean so PaymentEmailGateResult.possiblyInvalid never receives string/undefined.
     const sessionMismatch = Boolean(sessionConfirmed && sessionEmail && !emailMatchesSession);
-    return {
-      allowed: false,
+    return rejectGate({
+      rawEmail: input.rawEmail,
       normalizedEmail: normalized,
       agentMessage: sessionMismatch
         ? EMAIL_POSSIBLY_INVALID_PROMPT
         : EMAIL_CONFIRMATION_REQUIRED_PROMPT,
       possiblyInvalid: Boolean(sessionMismatch),
+      validationResult: sessionMismatch ? 'email_session_mismatch' : 'email_not_confirmed',
+      domain,
       debug: baseDebug({
         action: 'AskForEmail',
         customerEmail: normalized,
@@ -187,7 +247,7 @@ export function evaluatePaymentEmailGate(input: {
           ? 'Session confirmed a different email than the tool payload.'
           : 'Customer must confirm email before SendPaymentLink (emailConfirmed: true).',
       }),
-    };
+    });
   }
 
   return {

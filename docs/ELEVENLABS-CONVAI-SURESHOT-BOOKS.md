@@ -50,16 +50,28 @@ When the customer confirms they want to buy:
 
 Example URL: `GET .../api/voice/get-product?query=9780143127550&limit=5`
 
-**SendPaymentLink**
+**SendPaymentLink** — single book
 
 ```json
 {
   "email": "customer@gmail.com",
   "variantId": "gid://shopify/ProductVariant/48502554689773",
   "quantity": 1,
+  "finalizeCheckout": true,
   "callSid": "{{call_sid}}",
   "phoneNumber": "{{caller_phone}}"
 }
+```
+
+**SendPaymentLink** — multiple books (one email, one invoice)
+
+1. For each book (same email): `finalizeCheckout: false` + `variantId` or `productName` + `quantity`
+2. When done: `finalizeCheckout: true` + same `email` (product fields optional)
+
+```json
+{ "email": "customer@gmail.com", "variantId": "gid://shopify/ProductVariant/111", "quantity": 1, "finalizeCheckout": false, "callSid": "{{call_sid}}", "phoneNumber": "{{caller_phone}}" }
+{ "email": "customer@gmail.com", "variantId": "gid://shopify/ProductVariant/222", "quantity": 1, "finalizeCheckout": false, "callSid": "{{call_sid}}", "phoneNumber": "{{caller_phone}}" }
+{ "email": "customer@gmail.com", "emailConfirmed": true, "finalizeCheckout": true, "callSid": "{{call_sid}}", "phoneNumber": "{{caller_phone}}" }
 ```
 
 In the ElevenLabs **SendPaymentLink** tool, set constant body fields (recommended):

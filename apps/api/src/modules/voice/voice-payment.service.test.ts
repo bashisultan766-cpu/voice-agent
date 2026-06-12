@@ -177,7 +177,7 @@ test('sendPaymentLink emits full success log chain for company email', async () 
   const logs = attachLogCapture(service);
 
   const result = await service.sendPaymentLink({
-    email: 'buyer@shoreshortbooks.com',
+    email: 'support@sureshotbooks.com',
     variantId: 'gid://shopify/ProductVariant/1',
     quantity: 1,
     emailConfirmed: true,
@@ -614,4 +614,134 @@ test('sendPaymentLink ignores variantId 0 and resolves via productName search', 
 
   assert.equal(searchCalled, true);
   assert.equal(result.success, true);
+});
+
+test('sendPaymentLink auto-queues second book when finalizeCheckout is omitted', async () => {
+  let shopifyCalls = 0;
+  const sessionMetadata: Record<string, unknown> = {};
+  const { service } = buildService({ callSid: 'CA_auto_queue' });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async () => {
+        shopifyCalls += 1;
+        return {
+          draftOrderId: 'draft-1',
+          invoiceUrl: 'https://shop.example/invoice',
+          shopifyConnectionId: 'conn-1',
+          shopifyInvoiceSent: true,
+          shopifyInvoiceError: null,
+        };
+      },
+    } as never;
+
+  const prisma = (service as unknown as {
+    prisma: {
+      callSession: { findFirst: Function; update: Function; create: Function };
+      checkoutLink: { findMany: Function; create: Function; update: Function };
+    };
+  }).prisma;
+  prisma.callSession.findFirst = async () => ({ id: 'sess-1', metadata: sessionMetadata });
+  prisma.callSession.create = async () => ({ id: 'sess-1' });
+  prisma.callSession.update = async (args: { data: { metadata: Record<string, unknown> } }) => {
+    Object.assign(sessionMetadata, args.data.metadata);
+    return {};
+  };
+  prisma.checkoutLink.findMany = async () => [];
+  prisma.checkoutLink.create = async () => ({ id: 'link-1' });
+  prisma.checkoutLink.update = async () => ({});
+
+  await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/1',
+    quantity: 1,
+    callSid: 'CA_auto_queue',
+    emailConfirmed: true,
+  });
+
+  const second = await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    variantId: 'gid://shopify/ProductVariant/2',
+    quantity: 1,
+    callSid: 'CA_auto_queue',
+    emailConfirmed: true,
+  });
+
+  assert.equal(shopifyCalls, 1);
+  assert.equal(second.success, true);
+  assert.match(second.agentMessage ?? '', /added that book/i);
+  const batches = sessionMetadata.emailCheckoutBatches as Record<string, { lines: unknown[] }>;
+  assert.equal(batches['john@gmail.com']?.lines?.length, 2);
+});
+
+test('sendPaymentLink finalize-only sends one aggregated invoice for queued books', async () => {
+  let aggregatedLineCount = 0;
+  const sessionMetadata: Record<string, unknown> = {
+    emailCheckoutBatches: {
+      'john@gmail.com': {
+        recipientEmail: 'john@gmail.com',
+        draftOrderId: null,
+        shopifyInvoiceSent: false,
+        status: 'accumulating',
+        lines: [
+          {
+            productId: 'gid://shopify/ProductVariant/1',
+            variantId: 'gid://shopify/ProductVariant/1',
+            productTitle: 'Book A',
+            quantity: 1,
+          },
+          {
+            productId: 'gid://shopify/ProductVariant/2',
+            variantId: 'gid://shopify/ProductVariant/2',
+            productTitle: 'Book B',
+            quantity: 1,
+          },
+        ],
+      },
+    },
+  };
+  const { service } = buildService({ callSid: 'CA_finalize_only' });
+  (service as unknown as { draftOrders: { sendAggregatedDraftOrderPaymentLink: Function } }).draftOrders =
+    {
+      sendAggregatedDraftOrderPaymentLink: async (
+        _tenantId: string,
+        _agentId: string,
+        payload: { lines: unknown[] },
+      ) => {
+        aggregatedLineCount = payload.lines.length;
+        return {
+          draftOrderId: 'draft-agg',
+          invoiceUrl: 'https://shop.example/invoice',
+          shopifyConnectionId: 'conn-1',
+          shopifyInvoiceSent: true,
+          shopifyInvoiceError: null,
+        };
+      },
+    } as never;
+
+  const prisma = (service as unknown as {
+    prisma: {
+      callSession: { findFirst: Function; update: Function; create: Function };
+      checkoutLink: { findMany: Function; create: Function; update: Function };
+    };
+  }).prisma;
+  prisma.callSession.findFirst = async () => ({ id: 'sess-1', metadata: sessionMetadata });
+  prisma.callSession.create = async () => ({ id: 'sess-1' });
+  prisma.callSession.update = async (args: { data: { metadata: Record<string, unknown> } }) => {
+    Object.assign(sessionMetadata, args.data.metadata);
+    return {};
+  };
+  prisma.checkoutLink.findMany = async () => [];
+  prisma.checkoutLink.create = async () => ({ id: 'link-agg' });
+  prisma.checkoutLink.update = async () => ({});
+
+  const result = await service.sendPaymentLink({
+    email: 'john@gmail.com',
+    callSid: 'CA_finalize_only',
+    emailConfirmed: true,
+    finalizeCheckout: true,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(aggregatedLineCount, 2);
+  assert.match(result.agentMessage ?? '', /all 2 books/i);
 });

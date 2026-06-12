@@ -111,7 +111,7 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
     method: 'POST',
     path: '/api/voice/send-payment-link',
     description:
-      'MANDATORY after customer confirms email and purchase. Creates Shopify draft order and emails payment link. Pass productName (book title) for automatic catalog lookup, or variantId from SureShotBooksProduct.',
+      'Queue or send payment links. Use finalizeCheckout:false + productName/variantId to add each book. Use finalizeCheckout:true once when the customer is done — sends ONE email with ALL queued books on one Shopify invoice. finalizeCheckout:true with only email (no product) finalizes the existing queue.',
     bodySchema: {
       type: 'object',
       properties: {
@@ -147,7 +147,7 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
             'false while adding books to the same email; true only when customer confirms they are done and want the invoice sent',
         },
       },
-      required: ['email', 'emailConfirmed', 'productName', 'quantity', 'callSid', 'phoneNumber'],
+      required: ['email', 'emailConfirmed', 'callSid', 'phoneNumber'],
     },
   },
 } as const;

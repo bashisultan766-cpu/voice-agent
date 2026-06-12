@@ -130,3 +130,25 @@ test('send-payment-link strips variantId 0 when productName is provided', async 
   assert.equal(calls[0]?.variantId, undefined);
   assert.equal(calls[0]?.productName, 'A Game of Thrones');
 });
+
+test('send-payment-link allows finalize-only payload without product fields', async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const controller = new VoicePaymentController({
+    sendPaymentLink: async (args: Record<string, unknown>) => {
+      calls.push(args);
+      return { success: true };
+    },
+  } as never);
+
+  await controller.sendPaymentLink({
+    email: 'buyer@sureshotbooks.com',
+    emailConfirmed: true,
+    finalizeCheckout: true,
+    callSid: 'CA_test',
+    phoneNumber: '+15551234567',
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.finalizeCheckout, true);
+  assert.equal(calls[0]?.quantity, 1);
+});

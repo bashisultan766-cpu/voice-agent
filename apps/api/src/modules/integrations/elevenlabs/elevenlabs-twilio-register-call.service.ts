@@ -73,7 +73,7 @@ export class ElevenLabsTwilioRegisterCallService {
       }),
     );
 
-    const res = await fetch(REGISTER_CALL_URL, {
+    const requestInit: RequestInit = {
       method: 'POST',
       headers: {
         'xi-api-key': this.apiKey(),
@@ -81,10 +81,39 @@ export class ElevenLabsTwilioRegisterCallService {
         Accept: 'text/xml, application/xml, text/html, application/json',
       },
       body: JSON.stringify(body),
-    });
+      signal: AbortSignal.timeout(25_000),
+    };
 
-    const raw = (await res.text()).trim();
+    let res: Response | null = null;
+    let raw = '';
+    let lastNetworkError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        res = await fetch(REGISTER_CALL_URL, requestInit);
+        raw = (await res.text()).trim();
+        break;
+      } catch (err) {
+        lastNetworkError = err;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+        }
+      }
+    }
+
     const latencyMs = Date.now() - started;
+    if (!res) {
+      const networkMessage = formatFetchError(lastNetworkError);
+      this.logger.error(
+        JSON.stringify({
+          event: 'elevenlabs.twilio.register_call_network_failed',
+          latencyMs,
+          attempts: 3,
+          message: networkMessage.slice(0, 500),
+          callSid: input.callSid ?? null,
+        }),
+      );
+      throw new Error(networkMessage);
+    }
 
     if (!res.ok) {
       this.logger.error(
@@ -122,6 +151,21 @@ export class ElevenLabsTwilioRegisterCallService {
 
     return twiml;
   }
+}
+
+function formatFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as Error & { cause?: unknown }).cause;
+  const causeCode =
+    cause && typeof cause === 'object' && 'code' in cause
+      ? String((cause as { code?: string }).code ?? '')
+      : '';
+  const parts = [err.message];
+  if (causeCode) parts.push(`code=${causeCode}`);
+  if (cause instanceof Error && cause.message && cause.message !== err.message) {
+    parts.push(cause.message);
+  }
+  return parts.join(' | ');
 }
 
 function maskPhone(value: string): string {

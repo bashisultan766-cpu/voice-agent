@@ -4,7 +4,16 @@ import { AgentStatus, CallStatus, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { ShopifyDraftOrderService } from '../integrations/shopify/draft-order';
+import type { DraftOrderPaymentLinkResult } from '../integrations/shopify/draft-order';
+import {
+  buildShopifyEmailRejectionLog,
+  isShopifyInvalidEmailDomainError,
+} from '../integrations/shopify/shopify-email-domain.util';
 import { ShopifyCheckoutValidationError } from '../integrations/shopify/shopify-errors';
+import {
+  extractEmailDomain,
+  suggestEmailTypo,
+} from '../calls/runtime/voice-email-enterprise-validation.util';
 import { PaymentLinkDeliveryService } from '../delivery/payment-link-delivery.service';
 import { VoicePaymentCatalogService } from './voice-payment-catalog.service';
 import { VoiceCallContextService } from './voice-call-context.service';
@@ -15,6 +24,7 @@ import { maskEmailForLog } from '../calls/runtime/voice-email-capture.util';
 import {
   batchAfterSuccessfulInvoice,
   buildCheckoutExecutionPlan,
+  buildFinalizeBatchCheckoutPlan,
   EMAIL_CHECKOUT_BATCHES_KEY,
   parseEmailCheckoutBatches,
   recipientsAfterAggregatedSend,
@@ -48,6 +58,12 @@ import {
   hydrateCheckoutStateFromCheckoutLinks,
   mergeCheckoutSessionState,
 } from './utils/voice-call-checkout-state.util';
+import { buildAggregatedPaymentAgentMessage } from './utils/build-aggregated-payment-agent-message.util';
+import {
+  isFinalizeOnlyRequest,
+  MAX_VOICE_CHECKOUT_LINES,
+  resolveVoiceFinalizeCheckout,
+} from './utils/resolve-voice-finalize-checkout.util';
 
 @Injectable()
 export class VoicePaymentService {
@@ -65,7 +81,7 @@ export class VoicePaymentService {
 
   async sendPaymentLink(args: SendPaymentLinkInput): Promise<SendPaymentLinkResponseDto> {
     const started = Date.now();
-    const quantity = args.quantity;
+    const quantity = args.quantity ?? 1;
     try {
       const callCtx = await this.callContext.resolveForPaymentLink({
         callSid: args.callSid,
@@ -110,6 +126,7 @@ export class VoicePaymentService {
           JSON.stringify({
             event: 'voice.payment.email_gate_blocked',
             ...gate.debug,
+            ...(gate.rejectionLog ?? {}),
             maskedEmail: gate.normalizedEmail ? maskEmailForLog(gate.normalizedEmail) : null,
           }),
         );
@@ -126,6 +143,37 @@ export class VoicePaymentService {
       const email = gate.normalizedEmail;
 
       const { tenantId, agentId } = await this.resolveAgentContext(args.tenantId, args.agentId);
+
+      const sessionState = await this.loadCallSessionCheckoutState({
+        callSid,
+        tenantId,
+        agentId,
+        email,
+      });
+      const finalizeCheckout = resolveVoiceFinalizeCheckout({
+        explicit: args.finalizeCheckout,
+        email,
+        batches: sessionState.batches,
+      });
+      const finalizeOnly = isFinalizeOnlyRequest({
+        finalizeCheckout: args.finalizeCheckout,
+        variantId: args.variantId,
+        productName: args.productName,
+      });
+
+      if (finalizeOnly) {
+        return this.finalizeQueuedCheckoutBatch({
+          started,
+          email,
+          callSid,
+          phoneNumber,
+          callCtx,
+          gate,
+          tenantId,
+          agentId,
+          sessionState,
+        });
+      }
 
       const variantResolution = await this.resolveVariantIdForPayment({
         variantId: args.variantId,
@@ -160,14 +208,7 @@ export class VoicePaymentService {
       const productTitle = variantResolution.productTitle ?? args.productName?.trim() ?? 'Book';
       const productId = args.variantId?.trim() || variantId;
 
-      const sessionState = await this.loadCallSessionCheckoutState({
-        callSid,
-        tenantId,
-        agentId,
-        email,
-      });
       const sessionRecipients = sessionState.recipients;
-      const finalizeCheckout = args.finalizeCheckout !== false;
 
       if (isDuplicatePaymentRecipient(sessionRecipients, productId, email)) {
         this.logger.warn(
@@ -213,6 +254,17 @@ export class VoicePaymentService {
         current: { productId, variantId, productTitle, quantity },
         finalizeCheckout,
       });
+
+      if (checkoutPlan.lines.length > MAX_VOICE_CHECKOUT_LINES) {
+        return {
+          success: false,
+          message: `Checkout is limited to ${MAX_VOICE_CHECKOUT_LINES} books per email.`,
+          agentMessage: `I can include up to ${MAX_VOICE_CHECKOUT_LINES} books on one payment link. Would you like to split these across two orders?`,
+          deliveryAttemptId: null,
+          emailGate: gate.debug,
+          latencyMs: Date.now() - started,
+        };
+      }
 
       this.logger.log(
         JSON.stringify({
@@ -306,8 +358,7 @@ export class VoicePaymentService {
         }),
       );
 
-      const shopify = await this.draftOrders.sendAggregatedDraftOrderPaymentLink(tenantId, agentId, {
-        email,
+      const shopify = await this.sendAggregatedDraftOrderWithEmailRetry(tenantId, agentId, email, {
         lines: resolvedLineItems.map((line) => ({
           variantId: line.variantId,
           quantity: line.quantity,
@@ -559,10 +610,16 @@ export class VoicePaymentService {
         }),
       );
 
+      const aggregatedAgentMessage =
+        delivery.agentMessage?.trim() &&
+        !delivery.agentMessage.includes('existing payment link')
+          ? delivery.agentMessage
+          : buildAggregatedPaymentAgentMessage(resolvedLineItems.length);
+
       return {
         success: true,
         message: 'Payment link sent successfully.',
-        agentMessage: delivery.agentMessage,
+        agentMessage: aggregatedAgentMessage,
         draftOrderId: shopify.draftOrderId,
         delivery: {
           email: delivery.email,
@@ -575,11 +632,13 @@ export class VoicePaymentService {
       };
     } catch (err) {
       const message = this.formatError(err);
-      const maskedEmail = args.email?.trim() ? maskEmailForLog(args.email.trim().toLowerCase()) : '';
+      const normalizedEmail = args.email?.trim().toLowerCase() ?? '';
+      const maskedEmail = normalizedEmail ? maskEmailForLog(normalizedEmail) : '';
       const invalidCatalogProduct =
         /Product with ID 0/i.test(message) ||
         /INVALID_VARIANT_ID/i.test(message) ||
         /no longer available/i.test(message);
+      const shopifyEmailDomainRejected = isShopifyInvalidEmailDomainError(message);
 
       this.logger.error(
         JSON.stringify({
@@ -588,6 +647,14 @@ export class VoicePaymentService {
           latencyMs: Date.now() - started,
           variantIdRequested: args.variantId?.trim().slice(0, 80) ?? null,
           productName: args.productName?.trim().slice(0, 80) ?? null,
+          ...(shopifyEmailDomainRejected
+            ? buildShopifyEmailRejectionLog({
+                originalEmail: args.email?.trim() ?? normalizedEmail,
+                normalizedEmail,
+                domain: extractEmailDomain(normalizedEmail),
+                validationResult: message,
+              })
+            : {}),
           ...buildSendPaymentLinkFailureLog({
             customerEmail: maskedEmail,
             errorMessage: message,
@@ -602,11 +669,261 @@ export class VoicePaymentService {
           : 'Payment link could not be sent.',
         agentMessage: invalidCatalogProduct
           ? "I couldn't match that book in our catalog. What's the exact title you'd like to order?"
-          : "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
+          : shopifyEmailDomainRejected
+            ? 'That email domain could not be verified for checkout. Please spell your email address slowly, including the part after the at sign.'
+            : "I created your payment link, but I'm having trouble sending the email. Please confirm your email again.",
         error: message.slice(0, 300),
         deliveryAttemptId: null,
         latencyMs: Date.now() - started,
       };
+    }
+  }
+
+  private async finalizeQueuedCheckoutBatch(args: {
+    started: number;
+    email: string;
+    callSid: string | null | undefined;
+    phoneNumber: string | null | undefined;
+    callCtx: Awaited<ReturnType<VoiceCallContextService['resolveForPaymentLink']>>;
+    gate: ReturnType<typeof evaluatePaymentEmailGate>;
+    tenantId: string;
+    agentId: string;
+    sessionState: Awaited<ReturnType<VoicePaymentService['loadCallSessionCheckoutState']>>;
+  }): Promise<SendPaymentLinkResponseDto> {
+    const checkoutPlan = buildFinalizeBatchCheckoutPlan({
+      recipients: args.sessionState.recipients,
+      batches: args.sessionState.batches,
+      email: args.email,
+      callSid: args.callSid,
+    });
+
+    if (!checkoutPlan) {
+      return {
+        success: false,
+        message: 'No books are queued for this email on this call.',
+        agentMessage:
+          "I don't have any books saved for that email yet. Tell me which titles you'd like, and I'll add them before sending your payment link.",
+        deliveryAttemptId: null,
+        emailGate: args.gate.debug,
+        latencyMs: Date.now() - args.started,
+      };
+    }
+
+    if (checkoutPlan.lines.length > MAX_VOICE_CHECKOUT_LINES) {
+      return {
+        success: false,
+        message: `Checkout is limited to ${MAX_VOICE_CHECKOUT_LINES} books per email.`,
+        agentMessage: `I can include up to ${MAX_VOICE_CHECKOUT_LINES} books on one payment link. Would you like to split these across two orders?`,
+        deliveryAttemptId: null,
+        emailGate: args.gate.debug,
+        latencyMs: Date.now() - args.started,
+      };
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.payment.finalize_batch_only',
+        aggregatedLineCount: checkoutPlan.lines.length,
+        aggregationMode: checkoutPlan.aggregationMode,
+        callSid: args.callSid ?? null,
+        maskedEmail: maskEmailForLog(args.email),
+      }),
+    );
+
+    if (checkoutPlan.duplicateInvoicePrevented) {
+      return {
+        success: true,
+        message: 'Payment invoice was already sent for this checkout.',
+        agentMessage:
+          'Your payment invoice was already sent to that email. Please check your inbox for the existing invoice.',
+        draftOrderId: checkoutPlan.existingDraftOrderId ?? undefined,
+        deliveryAttemptId: null,
+        emailGate: args.gate.debug,
+        latencyMs: Date.now() - args.started,
+      };
+    }
+
+    const resolvedLineItems = await Promise.all(
+      checkoutPlan.lines.map(async (line) => {
+        const catalogLine = await this.catalog.resolveLineItem(
+          args.tenantId,
+          args.agentId,
+          line.variantId,
+          line.quantity,
+        );
+        return {
+          variantId: line.variantId,
+          quantity: line.quantity,
+          productId: line.productId,
+          productTitle: line.productTitle,
+          title: catalogLine.title,
+          price: catalogLine.price,
+        };
+      }),
+    );
+
+    const shopify = await this.sendAggregatedDraftOrderWithEmailRetry(
+      args.tenantId,
+      args.agentId,
+      args.email,
+      {
+        lines: resolvedLineItems.map((line) => ({
+          variantId: line.variantId,
+          quantity: line.quantity,
+        })),
+        existingDraftOrderId: checkoutPlan.existingDraftOrderId,
+        sendShopifyInvoice: checkoutPlan.sendShopifyInvoice,
+      },
+    );
+
+    const checkoutLink = await this.persistCheckoutLink({
+      tenantId: args.tenantId,
+      agentId: args.agentId,
+      email: args.email,
+      invoiceUrl: shopify.invoiceUrl,
+      draftOrderId: shopify.draftOrderId,
+      shopifyConnectionId: shopify.shopifyConnectionId,
+      lineItems: resolvedLineItems.map((line) => ({
+        title: line.title,
+        quantity: line.quantity,
+        price: line.price,
+        variantId: line.variantId,
+      })),
+      callSid: args.callSid ?? undefined,
+      aggregationMode: checkoutPlan.aggregationMode,
+      shopifyInvoiceSent: shopify.shopifyInvoiceSent,
+    });
+
+    const branding = await this.resolveBusinessBranding(args.tenantId, args.agentId);
+    const skipResendEmail = checkoutPlan.skipResendEmail || shopify.shopifyInvoiceSent;
+    const delivery = skipResendEmail
+      ? {
+          email: 'skipped' as const,
+          sms: 'skipped' as const,
+          whatsapp: 'skipped' as const,
+          deliveryId: null,
+          agentMessage: buildAggregatedPaymentAgentMessage(resolvedLineItems.length),
+          emailError: null,
+          smsError: null,
+          whatsappError: null,
+        }
+      : await this.paymentDelivery.deliverPaymentLink({
+          customerEmail: args.email,
+          customerPhone: args.phoneNumber ?? undefined,
+          paymentLink: shopify.invoiceUrl,
+          callSid: args.callSid ?? undefined,
+          orderId: shopify.draftOrderId,
+          tenantId: args.tenantId,
+          agentId: args.agentId,
+          callerCountry: args.callCtx.country,
+          businessName: branding.businessName,
+          supportEmail: branding.supportEmail,
+          supportPhone: branding.supportPhone,
+          lineItems: resolvedLineItems.map((line) => ({
+            title: line.title,
+            quantity: line.quantity,
+            price: line.price,
+          })),
+        });
+
+    const emailSentByResend = delivery.email === 'sent';
+    const emailSentByShopify = shopify.shopifyInvoiceSent;
+    const emailDelivered = emailSentByShopify || emailSentByResend;
+    const latencyMs = Date.now() - args.started;
+
+    if (!emailDelivered && delivery.sms !== 'sent' && delivery.whatsapp !== 'sent') {
+      const errorMessage =
+        delivery.emailError?.trim() ||
+        delivery.smsError?.trim() ||
+        delivery.whatsappError?.trim() ||
+        'Payment link could not be delivered.';
+      return {
+        success: false,
+        message: 'Payment link could not be delivered.',
+        agentMessage: delivery.agentMessage,
+        draftOrderId: shopify.draftOrderId,
+        error: errorMessage,
+        deliveryAttemptId: delivery.deliveryId,
+        emailGate: args.gate.debug,
+        latencyMs,
+      };
+    }
+
+    if (emailDelivered && args.callSid) {
+      const invoicedBatch = batchAfterSuccessfulInvoice(checkoutPlan.batch, {
+        draftOrderId: shopify.draftOrderId,
+        shopifyInvoiceSent: shopify.shopifyInvoiceSent,
+      });
+      await this.appendAggregatedPaymentRecipientsToCallSession(args.callSid, {
+        tenantId: args.tenantId,
+        agentId: args.agentId,
+        recipientEmail: args.email,
+        paymentLink: shopify.invoiceUrl,
+        draftOrderId: shopify.draftOrderId,
+        checkoutLinkId: checkoutLink.id,
+        productIds: resolvedLineItems.map((line) => line.productId),
+        workingRecipients: checkoutPlan.workingRecipients,
+        batches: {
+          ...args.sessionState.batches,
+          [normalizeRecipientEmail(args.email)]: invoicedBatch,
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Payment link sent successfully.',
+      agentMessage: buildAggregatedPaymentAgentMessage(resolvedLineItems.length),
+      draftOrderId: shopify.draftOrderId,
+      delivery: {
+        email: delivery.email,
+        sms: delivery.sms,
+        whatsapp: delivery.whatsapp,
+      },
+      deliveryAttemptId: delivery.deliveryId,
+      emailGate: args.gate.debug,
+      latencyMs,
+    };
+  }
+
+  private async sendAggregatedDraftOrderWithEmailRetry(
+    tenantId: string,
+    agentId: string,
+    email: string,
+    payload: {
+      lines: Array<{ variantId: string; quantity: number }>;
+      existingDraftOrderId?: string | null;
+      sendShopifyInvoice?: boolean;
+    },
+  ): Promise<DraftOrderPaymentLinkResult> {
+    try {
+      return await this.draftOrders.sendAggregatedDraftOrderPaymentLink(tenantId, agentId, {
+        email,
+        ...payload,
+      });
+    } catch (err) {
+      if (!(err instanceof ShopifyCheckoutValidationError)) throw err;
+      if (!isShopifyInvalidEmailDomainError(err.message)) throw err;
+
+      const typo = suggestEmailTypo(email);
+      if (!typo || typo.correctedEmail === email) throw err;
+
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.payment.shopify_email_typo_retry',
+          originalEmail: email,
+          normalizedEmail: typo.correctedEmail,
+          domain: extractEmailDomain(email),
+          validationResult: err.message,
+          validationSource: 'shopify_graphql',
+          correctedDomain: typo.toDomain,
+        }),
+      );
+
+      return this.draftOrders.sendAggregatedDraftOrderPaymentLink(tenantId, agentId, {
+        email: typo.correctedEmail,
+        ...payload,
+      });
     }
   }
 

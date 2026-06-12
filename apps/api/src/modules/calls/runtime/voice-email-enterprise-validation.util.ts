@@ -25,6 +25,13 @@ const DOMAIN_TYPO_MAP: Record<string, string> = {
   'outllok.com': 'outlook.com',
   'iclod.com': 'icloud.com',
   'protonmial.com': 'protonmail.com',
+  /** SureShot Books — common voice/ASR domain mishearings */
+  'sureshoebooks.com': 'sureshotbooks.com',
+  'sureshoebook.com': 'sureshotbooks.com',
+  'sureshotbook.com': 'sureshotbooks.com',
+  'shoreshortbooks.com': 'sureshotbooks.com',
+  'shoreshortbook.com': 'sureshotbooks.com',
+  'sureshortbooks.com': 'sureshotbooks.com',
 };
 
 const DISPOSABLE_DOMAINS = new Set([

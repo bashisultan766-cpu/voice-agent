@@ -11,9 +11,11 @@ import { InboundCallModule } from '../delivery/inbound-call.module';
 import { VoiceCallContextService } from './voice-call-context.service';
 import { VoiceSearchController } from './voice-search.controller';
 import { VoicePaymentController } from './voice-payment.controller';
+import { VoiceOrderController } from './voice-order.controller';
 import { VoiceHealthController } from './voice-health.controller';
 import { VoiceSearchService } from './voice-search.service';
 import { VoicePaymentService } from './voice-payment.service';
+import { VoiceOrderService } from './voice-order.service';
 import { VoicePaymentCatalogService } from './voice-payment-catalog.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
 
@@ -34,14 +36,15 @@ import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
     DeliveryModule,
     InboundCallModule,
   ],
-  controllers: [VoiceSearchController, VoicePaymentController, VoiceHealthController],
+  controllers: [VoiceSearchController, VoicePaymentController, VoiceOrderController, VoiceHealthController],
   providers: [
     VoiceSearchService,
     VoicePaymentService,
+    VoiceOrderService,
     VoicePaymentCatalogService,
     VoiceCallContextService,
     VoiceApiKeyGuard,
   ],
-  exports: [VoiceSearchService, VoicePaymentService],
+  exports: [VoiceSearchService, VoicePaymentService, VoiceOrderService],
 })
 export class VoiceModule {}

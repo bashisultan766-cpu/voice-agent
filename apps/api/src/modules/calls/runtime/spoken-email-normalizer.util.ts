@@ -224,6 +224,11 @@ export function parseEmailTokenStream(text: string): { email: string | null; tok
       parsedDomain.push(tok);
     } else if (['com', 'org', 'net', 'edu', 'co', 'uk', 'pk', 'io'].includes(tok)) {
       parsedDomain.push(tok);
+    } else if (
+      /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(tok) &&
+      !['at', 'dot', 'period'].includes(tok.toLowerCase())
+    ) {
+      parsedDomain.push(tok.toLowerCase());
     }
   }
 

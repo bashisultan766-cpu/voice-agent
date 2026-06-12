@@ -349,6 +349,86 @@ export function buildCheckoutExecutionPlan(args: {
   };
 }
 
+/** Finalize an existing email batch without adding a new line (voice: "send all books now"). */
+export function buildFinalizeBatchCheckoutPlan(args: {
+  recipients: PaymentRecipient[];
+  batches: Record<string, EmailCheckoutBatch>;
+  email: string;
+  callSid?: string | null;
+}): CheckoutExecutionPlan | null {
+  const normalized = normalizeRecipientEmail(args.email);
+  const batch = args.batches[normalized];
+  if (!batch?.lines?.length) return null;
+
+  const existingDraftOrderId =
+    batch.draftOrderId ?? findDraftOrderIdForEmail(args.recipients, normalized);
+  const shopifyInvoiceAlreadySent =
+    batch.shopifyInvoiceSent || emailPaymentLinkAlreadySent(args.recipients, normalized);
+  const idempotencyKey = checkoutSessionIdempotencyKey(
+    args.callSid,
+    normalized,
+    existingDraftOrderId,
+  );
+
+  const currentFingerprint = linesFingerprint(batch.lines);
+  const invoicedFingerprint = batch.invoicedLinesFingerprint ?? null;
+  if (
+    shopifyInvoiceAlreadySent &&
+    batch.status === 'invoiced' &&
+    invoicedFingerprint &&
+    invoicedFingerprint === currentFingerprint
+  ) {
+    return {
+      aggregationMode: 'duplicate_prevented',
+      finalizeCheckout: true,
+      lines: batch.lines,
+      existingDraftOrderId,
+      shopifyInvoiceAlreadySent: true,
+      duplicateInvoicePrevented: true,
+      resendEmailSkippedBecauseShopifySent: true,
+      sendShopifyInvoice: false,
+      skipResendEmail: true,
+      workingRecipients: args.recipients,
+      batch,
+      idempotencyKey,
+    };
+  }
+
+  if (existingDraftOrderId && shopifyInvoiceAlreadySent) {
+    const linesChangedSinceInvoice =
+      !invoicedFingerprint || invoicedFingerprint !== currentFingerprint;
+    return {
+      aggregationMode: 'update',
+      finalizeCheckout: true,
+      lines: batch.lines,
+      existingDraftOrderId,
+      shopifyInvoiceAlreadySent: !linesChangedSinceInvoice,
+      duplicateInvoicePrevented: false,
+      resendEmailSkippedBecauseShopifySent: !linesChangedSinceInvoice,
+      sendShopifyInvoice: linesChangedSinceInvoice,
+      skipResendEmail: !linesChangedSinceInvoice,
+      workingRecipients: args.recipients,
+      batch,
+      idempotencyKey,
+    };
+  }
+
+  return {
+    aggregationMode: existingDraftOrderId ? 'update' : 'create',
+    finalizeCheckout: true,
+    lines: batch.lines,
+    existingDraftOrderId,
+    shopifyInvoiceAlreadySent: false,
+    duplicateInvoicePrevented: false,
+    resendEmailSkippedBecauseShopifySent: false,
+    sendShopifyInvoice: true,
+    skipResendEmail: false,
+    workingRecipients: args.recipients,
+    batch,
+    idempotencyKey,
+  };
+}
+
 export function batchAfterSuccessfulInvoice(
   batch: EmailCheckoutBatch,
   args: { draftOrderId: string; shopifyInvoiceSent: boolean },

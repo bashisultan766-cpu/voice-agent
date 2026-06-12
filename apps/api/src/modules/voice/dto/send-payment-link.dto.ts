@@ -1,10 +1,23 @@
-import { IsBoolean, IsEmail, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { VOICE_EMAIL_REGEX } from '../../calls/runtime/spoken-email-normalizer.util';
 import type { PaymentEmailGateDebug } from '../utils/voice-payment-email-gate.util';
 
 export class SendPaymentLinkDto {
   @IsOptional()
-  @IsEmail({}, { message: 'email must be a valid email address.' })
+  @ValidateIf((_, value) => value != null && String(value).trim() !== '')
+  @Matches(VOICE_EMAIL_REGEX, { message: 'email must be a valid email address.' })
   @MaxLength(320)
   email?: string;
 
