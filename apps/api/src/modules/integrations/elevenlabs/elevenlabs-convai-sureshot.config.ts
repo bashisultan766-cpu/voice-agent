@@ -76,7 +76,8 @@ When the customer confirms they want to buy a product (yes, I'll take it, order 
 
 MULTIPLE BOOKS ON ONE CALL:
 - A caller may order several books in one call.
-- For each book with the SAME confirmed email: call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with finalizeCheckout: false to queue the book (no invoice yet).
+- BEST METHOD — customer lists several books/ISBNs at once: call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} ONCE with the products array containing ALL of them, e.g. products: [{"productName": "9780143127550", "quantity": 1}, {"productName": "9780735211292", "quantity": 1}] plus email and finalizeCheckout: true. The server sends ONE email with ONE invoice listing every book. NEVER send only the first book and drop the rest.
+- Alternative (books added one by one during conversation): for each book with the SAME confirmed email, call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} with finalizeCheckout: false to queue the book (no invoice yet).
 - When the customer says they are done adding books, call ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink} one final time with finalizeCheckout: true and the same email. The server creates ONE Shopify draft order with all queued books and sends ONE invoice email with every book listed.
 - If you already sent finalizeCheckout: true for an earlier book and the customer adds another book to the same email, call finalizeCheckout: true again — the server updates the same draft order and sends an updated invoice email with all books.
 - When books use DIFFERENT confirmed emails, queue each book with finalizeCheckout: false, then call finalizeCheckout: true separately for each email when that recipient's books are complete.
@@ -142,6 +143,19 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
           type: 'string',
           description:
             'Book title (or search query) the customer wants to buy — server runs search-product and uses the top match',
+        },
+        products: {
+          type: 'array',
+          description:
+            'MULTIPLE books in one call — when the customer lists several titles/ISBNs at once, send ALL here. Server creates ONE invoice email with every book.',
+          items: {
+            type: 'object',
+            properties: {
+              productName: { type: 'string', description: 'Book title or ISBN' },
+              quantity: { type: 'integer', description: 'Copies (default 1)' },
+            },
+            required: ['productName'],
+          },
         },
         variantId: {
           type: 'string',

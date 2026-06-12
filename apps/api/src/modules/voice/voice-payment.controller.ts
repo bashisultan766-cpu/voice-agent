@@ -4,9 +4,13 @@ import { Public } from '../../common/decorators/public.decorator';
 import { SendPaymentLinkDto } from './dto/send-payment-link.dto';
 import { VoicePaymentService } from './voice-payment.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
-import { resolveSendPaymentLinkFieldsFromToolBody } from './utils/parse-elevenlabs-tool-body.util';
+import {
+  flattenElevenLabsToolBody,
+  resolveSendPaymentLinkFieldsFromToolBody,
+} from './utils/parse-elevenlabs-tool-body.util';
 import { resolvePaymentEmailConfirmed } from './utils/resolve-payment-email-confirmed.util';
 import { isUsableShopifyVariantId } from './utils/resolve-payment-variant.util';
+import { resolveVoicePaymentProducts } from './utils/resolve-voice-payment-products.util';
 
 /**
  * Voice checkout — draft order invoice for ElevenLabs server tools.
@@ -42,19 +46,6 @@ export class VoicePaymentController {
     const finalizeRequested =
       fromTool.finalizeCheckout === true || body.finalizeCheckout === true;
 
-    if (!finalizeRequested) {
-      if (quantity == null) {
-        throw new BadRequestException('quantity is required.');
-      }
-      if (!variantId && !productName) {
-        throw new BadRequestException(
-          'variantId or productName is required (productName triggers automatic catalog search).',
-        );
-      }
-    } else if (quantity == null && (variantId || productName)) {
-      throw new BadRequestException('quantity is required when adding a product.');
-    }
-
     let effectiveVariantId = variantId || undefined;
     if (effectiveVariantId && !isUsableShopifyVariantId(effectiveVariantId)) {
       if (!productName) {
@@ -63,6 +54,26 @@ export class VoicePaymentController {
         );
       }
       effectiveVariantId = undefined;
+    }
+
+    // Multiple books in one call: `products` array, or several ISBNs spoken in one query.
+    const products = resolveVoicePaymentProducts({
+      flat: flattenElevenLabsToolBody(body),
+      body,
+      singleProductName: productName,
+      singleVariantId: effectiveVariantId,
+      singleQuantity: quantity ?? undefined,
+    });
+
+    if (!finalizeRequested) {
+      if (products.length === 0) {
+        throw new BadRequestException(
+          'variantId or productName is required (productName triggers automatic catalog search).',
+        );
+      }
+      if (products.length === 1 && quantity == null) {
+        throw new BadRequestException('quantity is required.');
+      }
     }
     if (!email && !callSid) {
       throw new BadRequestException(
@@ -76,17 +87,25 @@ export class VoicePaymentController {
       callSid,
     });
 
-    return this.voicePayment.sendPaymentLink({
+    const shared = {
       email: email ?? '',
-      variantId: effectiveVariantId,
-      productName: productName || undefined,
-      quantity: quantity ?? 1,
       phoneNumber,
       callSid,
       tenantId: fromTool.tenantId ?? body.tenantId,
       agentId: fromTool.agentId ?? body.agentId,
       emailConfirmed,
       finalizeCheckout: fromTool.finalizeCheckout ?? body.finalizeCheckout,
+    };
+
+    if (products.length > 1) {
+      return this.voicePayment.sendPaymentLinkForProducts({ ...shared, items: products });
+    }
+
+    return this.voicePayment.sendPaymentLink({
+      ...shared,
+      variantId: products[0]?.variantId,
+      productName: products[0]?.productName,
+      quantity: products[0]?.quantity ?? quantity ?? 1,
     });
   }
 }

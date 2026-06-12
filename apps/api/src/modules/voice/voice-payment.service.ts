@@ -79,6 +79,121 @@ export class VoicePaymentService {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Multiple books in ONE tool call (e.g. caller lists several ISBNs in one sentence).
+   * Queues every product on the same email batch, then finalizes once →
+   * ONE Shopify draft order + ONE invoice email listing ALL books.
+   */
+  async sendPaymentLinkForProducts(args: {
+    items: Array<{ productName?: string; variantId?: string; quantity: number }>;
+    email: string;
+    phoneNumber?: string;
+    callSid?: string;
+    tenantId?: string;
+    agentId?: string;
+    emailConfirmed?: boolean;
+    finalizeCheckout?: boolean;
+  }): Promise<SendPaymentLinkResponseDto> {
+    const { items, ...shared } = args;
+
+    if (items.length <= 1) {
+      const only = items[0];
+      return this.sendPaymentLink({
+        ...shared,
+        productName: only?.productName,
+        variantId: only?.variantId,
+        quantity: only?.quantity ?? 1,
+      });
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'voice.payment.multi_product_started',
+        itemCount: items.length,
+        callSid: shared.callSid ?? null,
+      }),
+    );
+
+    const wantFinalize = shared.finalizeCheckout !== false;
+    const failedTitles: string[] = [];
+    let lastSuccess: SendPaymentLinkResponseDto | null = null;
+    let queuedAny = false;
+    let finalized = false;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const isLast = i === items.length - 1;
+      const finalizeThis = isLast && wantFinalize;
+
+      const res = await this.sendPaymentLink({
+        ...shared,
+        productName: item.productName,
+        variantId: item.variantId,
+        quantity: item.quantity,
+        finalizeCheckout: finalizeThis,
+      });
+
+      if (res.success) {
+        lastSuccess = res;
+        queuedAny = true;
+        if (finalizeThis) finalized = true;
+        continue;
+      }
+
+      // Email gate rejection blocks the whole batch — surface it immediately.
+      if (res.emailGate && !queuedAny && i === 0) {
+        return res;
+      }
+
+      failedTitles.push(item.productName || item.variantId || `book ${i + 1}`);
+      this.logger.warn(
+        JSON.stringify({
+          event: 'voice.payment.multi_product_item_failed',
+          index: i,
+          productName: item.productName?.slice(0, 80) ?? null,
+          message: res.message?.slice(0, 200),
+          callSid: shared.callSid ?? null,
+        }),
+      );
+    }
+
+    // Last item failed but earlier books are queued — flush the queue so the
+    // customer still receives ONE invoice with everything that resolved.
+    if (wantFinalize && !finalized && queuedAny) {
+      const flush = await this.sendPaymentLink({
+        ...shared,
+        finalizeCheckout: true,
+      });
+      if (flush.success) {
+        lastSuccess = flush;
+        finalized = true;
+      }
+    }
+
+    if (!lastSuccess) {
+      return {
+        success: false,
+        message: 'None of the requested products could be added to the payment link.',
+        agentMessage:
+          'I could not find any of those books in the catalog. Could you repeat the titles or ISBN numbers one at a time?',
+        deliveryAttemptId: null,
+      };
+    }
+
+    if (failedTitles.length > 0) {
+      const failNote = ` Note: I could not find ${failedTitles.join(', ')} in the catalog, so ${
+        failedTitles.length === 1 ? 'that book is' : 'those books are'
+      } not on the invoice.`;
+      return {
+        ...lastSuccess,
+        agentMessage: `${lastSuccess.agentMessage ?? ''}${failNote}`.trim(),
+        warning: `Unresolved products: ${failedTitles.join(', ')}`,
+      };
+    }
+
+    return lastSuccess;
+  }
+
   async sendPaymentLink(args: SendPaymentLinkInput): Promise<SendPaymentLinkResponseDto> {
     const started = Date.now();
     const quantity = args.quantity ?? 1;
