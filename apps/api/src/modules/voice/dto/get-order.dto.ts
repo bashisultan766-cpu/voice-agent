@@ -94,6 +94,9 @@ export type VoiceOrderDetailDto = {
   lineItems: VoiceOrderLineItemDto[];
   fulfillments: VoiceOrderFulfillmentDto[];
   refunds: VoiceOrderRefundDto[];
+  /** Last 4 digits of the payment card (never the full number). */
+  paymentCardLast4: string | null;
+  paymentCardBrand: string | null;
 };
 
 export type GetOrderResponseDto = {

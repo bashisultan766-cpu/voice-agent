@@ -87,6 +87,18 @@ const ORDER_LOOKUP_QUERY = `
               }
             }
           }
+          transactions(first: 10) {
+            kind
+            status
+            accountNumber
+            paymentDetails {
+              ... on CardPaymentDetails {
+                number
+                company
+                paymentMethodName
+              }
+            }
+          }
         }
       }
     }
@@ -150,7 +162,48 @@ type GraphqlOrderNode = {
       shopMoney?: { amount?: string; currencyCode?: string } | null;
     } | null;
   }> | null;
+  transactions?: Array<{
+    kind?: string | null;
+    status?: string | null;
+    accountNumber?: string | null;
+    paymentDetails?: {
+      number?: string | null;
+      company?: string | null;
+      paymentMethodName?: string | null;
+    } | null;
+  }> | null;
 };
+
+/** Last 4 digits from a masked card number like "•••• •••• •••• 4242". */
+function extractCardLast4(masked: string | null | undefined): string | null {
+  const digits = (masked ?? '').replace(/\D/g, '');
+  return digits.length >= 4 ? digits.slice(-4) : null;
+}
+
+function resolvePaymentCard(node: GraphqlOrderNode): {
+  last4: string | null;
+  brand: string | null;
+} {
+  const transactions = node.transactions ?? [];
+  const ranked = [
+    ...transactions.filter(
+      (t) => t.status === 'SUCCESS' && (t.kind === 'SALE' || t.kind === 'CAPTURE'),
+    ),
+    ...transactions.filter((t) => t.status === 'SUCCESS'),
+    ...transactions,
+  ];
+  for (const tx of ranked) {
+    const last4 =
+      extractCardLast4(tx.paymentDetails?.number) ?? extractCardLast4(tx.accountNumber);
+    if (last4) {
+      return {
+        last4,
+        brand: tx.paymentDetails?.company ?? tx.paymentDetails?.paymentMethodName ?? null,
+      };
+    }
+  }
+  return { last4: null, brand: null };
+}
 
 @Injectable()
 export class VoiceOrderService {
@@ -305,6 +358,7 @@ export class VoiceOrderService {
       })) ?? [];
 
     const shipping = node.shippingAddress;
+    const paymentCard = resolvePaymentCard(node);
 
     return {
       id: node.legacyResourceId ?? node.id ?? '',
@@ -333,6 +387,8 @@ export class VoiceOrderService {
       lineItems,
       fulfillments,
       refunds,
+      paymentCardLast4: paymentCard.last4,
+      paymentCardBrand: paymentCard.brand,
     };
   }
 

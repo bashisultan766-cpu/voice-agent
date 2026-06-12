@@ -39,6 +39,8 @@ const baseOrder: VoiceOrderDetailDto = {
     },
   ],
   refunds: [],
+  paymentCardLast4: null,
+  paymentCardBrand: null,
 };
 
 test('buildVoiceOrderSummary includes status tracking and items', () => {
@@ -63,5 +65,24 @@ test('buildVoiceOrderSummary mentions refunds when present', () => {
       },
     ],
   });
-  assert.match(summary, /refund was issued/i);
+  assert.match(summary, /refund of 49\.99 USD was issued/i);
+  assert.match(summary, /refund confirmation email was sent to jane@example\.com/i);
+});
+
+test('buildVoiceOrderSummary refund mentions card last 4 when available', () => {
+  const summary = buildVoiceOrderSummary({
+    ...baseOrder,
+    financialStatus: 'REFUNDED',
+    paymentCardLast4: '4242',
+    paymentCardBrand: 'Visa',
+    refunds: [
+      {
+        createdAt: '2026-03-08T12:00:00.000Z',
+        amount: '49.99',
+        currency: 'USD',
+        note: null,
+      },
+    ],
+  });
+  assert.match(summary, /Visa card ending in 4242/i);
 });

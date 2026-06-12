@@ -22,8 +22,14 @@ function describeFinancialStatus(order: VoiceOrderDetailDto): string {
   }
   if (order.refunds.length > 0) {
     const latest = order.refunds[order.refunds.length - 1];
-    const amount = latest.amount ? ` for ${latest.amount}` : '';
-    return `A refund was issued on ${formatDate(latest.createdAt) ?? 'record'}${amount}. Current payment status: ${humanizeStatus(order.financialStatus)}.`;
+    const amount = latest.amount ? ` of ${latest.amount}${latest.currency ? ` ${latest.currency}` : ''}` : '';
+    const card = order.paymentCardLast4
+      ? ` back to the ${order.paymentCardBrand ?? 'payment'} card ending in ${order.paymentCardLast4}`
+      : '';
+    const email = order.customerEmail
+      ? ` A refund confirmation email was sent to ${order.customerEmail}.`
+      : '';
+    return `A refund${amount} was issued on ${formatDate(latest.createdAt) ?? 'record'}${card}.${email} Current payment status: ${humanizeStatus(order.financialStatus)}.`;
   }
   return `Payment status is ${humanizeStatus(order.financialStatus)}.`;
 }
