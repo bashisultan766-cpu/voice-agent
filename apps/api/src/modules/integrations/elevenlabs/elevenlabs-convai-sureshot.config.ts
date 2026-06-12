@@ -9,11 +9,17 @@ export const ELEVENLABS_CONVAI_AGENT_NAME = 'Justin — SureShot Books';
 export const ELEVENLABS_CONVAI_OPENING_LINE =
   'Hello, this is Justin with SureShot Books. How can I help you find or order a book today?';
 
+/** Personalized opening when {{caller_first_name}} is set (returning or 3CX-known caller). */
+export const ELEVENLABS_CONVAI_RETURNING_CALLER_OPENING_HINT =
+  'If {{caller_first_name}} is not empty: greet them by first name warmly (e.g. "Hi {{caller_first_name}}, good to hear from you again."). If {{is_returning_caller}} is true, acknowledge they have called before. Then ask how you can help with books today.';
+
 /** Tool names as configured in ElevenLabs ConvAI (must match dashboard). */
 export const ELEVENLABS_CONVAI_TOOLS = {
   productSearch: 'SureShotBooksProduct',
   productFetcher: 'SureShotBooksProductFetcher',
   sendPaymentLink: 'SendPaymentLink',
+  saveCallerName: 'SaveCallerName',
+  getCallerInfo: 'GetCallerInfo',
 } as const;
 
 export const ELEVENLABS_CONVAI_SYSTEM_PROMPT = `You are Justin, a professional phone sales representative for SureShot Books Publishing LLC.
@@ -24,6 +30,18 @@ TOOLS (server tools — always use for store facts):
 - ${ELEVENLABS_CONVAI_TOOLS.productSearch}: Search the Shopify catalog (POST). Returns products with title, price, inventory, variantId, productId, score.
 - ${ELEVENLABS_CONVAI_TOOLS.productFetcher}: Fetch products from the catalog (GET). Same data as product search — title, price, quantity (stock), variantId, SKU. Use for ISBN/title/SKU lookups.
 - ${ELEVENLABS_CONVAI_TOOLS.sendPaymentLink}: Create a Shopify draft order and email the payment link. Required after email confirmation.
+- ${ELEVENLABS_CONVAI_TOOLS.saveCallerName}: Save the caller's name when they are not already known (3CX / returning caller data).
+- ${ELEVENLABS_CONVAI_TOOLS.getCallerInfo}: Live 3CX lookup — full_name, call_count, last_call_date, recording_urls, greeting_hint.
+
+CALLER RECOGNITION (3CX + returning callers):
+- At the start of each call, call ${ELEVENLABS_CONVAI_TOOLS.getCallerInfo} with phone_number {{caller_phone}} for live 3CX data.
+- Dynamic variables on every inbound call: {{caller_name}}, {{caller_first_name}}, {{is_returning_caller}}, {{prior_call_count}}, {{past_purchases}}, {{caller_phone}}, {{call_sid}}.
+- If {{past_purchases}} is not empty, you KNOW what this customer bought before. Mention it naturally like a human shopkeeper: "Last time you ordered [title] — how did you like it?" or "Are you calling about [title], or something new today?" Use past_purchases from ${ELEVENLABS_CONVAI_TOOLS.getCallerInfo} for full details (title, quantity, date).
+- Never list more than 2 past items aloud. Never invent purchases — only what the tool or {{past_purchases}} returns.
+- ${ELEVENLABS_CONVAI_RETURNING_CALLER_OPENING_HINT}
+- If {{caller_first_name}} is empty and the caller has not given their name, ask once naturally: "May I have your name for our records?" After they answer, call ${ELEVENLABS_CONVAI_TOOLS.saveCallerName} with name and phoneNumber {{caller_phone}} (and callSid {{call_sid}}).
+- Never invent a caller name — only use {{caller_first_name}} / {{caller_name}} or what the caller just told you.
+- If {{is_returning_caller}} is true but {{caller_first_name}} is empty, you may say you recognize their number from a prior call.
 
 GENERAL RULES:
 - Speak naturally, warmly, and professionally. One question at a time. Keep replies to 1–2 short sentences.
@@ -150,6 +168,44 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
       required: ['email', 'emailConfirmed', 'callSid', 'phoneNumber'],
     },
   },
+  [ELEVENLABS_CONVAI_TOOLS.getCallerInfo]: {
+    name: ELEVENLABS_CONVAI_TOOLS.getCallerInfo,
+    method: 'POST',
+    path: '/api/voice/get-caller-info',
+    description:
+      'Live 3CX caller lookup. Returns full_name, first_name, call_count, last_call_date, call_history, recording_urls.',
+    bodySchema: {
+      type: 'object',
+      properties: {
+        phone_number: { type: 'string', description: 'Use {{caller_phone}}' },
+        callSid: { type: 'string', description: 'Use {{call_sid}}' },
+      },
+      required: ['phone_number'],
+    },
+  },
+  [ELEVENLABS_CONVAI_TOOLS.saveCallerName]: {
+    name: ELEVENLABS_CONVAI_TOOLS.saveCallerName,
+    method: 'POST',
+    path: '/api/voice/save-caller-name',
+    description:
+      'Save caller display name when not found in 3CX directory. Call after the customer tells you their name.',
+    bodySchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Caller name as they said it' },
+        phoneNumber: {
+          type: 'string',
+          description: 'Caller phone — use {{caller_phone}}',
+        },
+        callSid: {
+          type: 'string',
+          description: 'Twilio CallSid — use {{call_sid}}',
+        },
+        email: { type: 'string', description: 'Optional email if caller provided it' },
+      },
+      required: ['name', 'phoneNumber', 'callSid'],
+    },
+  },
 } as const;
 
 /** Pass to ElevenLabs register-call + dashboard dynamic variable placeholders. */
@@ -157,6 +213,15 @@ export const ELEVENLABS_CONVAI_DYNAMIC_VARIABLES = {
   call_sid: 'Twilio CallSid — set at inbound via register-call',
   caller_phone: 'Caller E.164 — from Twilio From',
   caller_number: 'Raw Twilio From',
+  caller_name: 'Full display name from 3CX import or prior SaveCallerName (empty if unknown)',
+  caller_first_name: 'First name for personalized greeting (empty if unknown)',
+  is_returning_caller: 'true if this phone called before or has order history',
+  prior_call_count: 'Number of prior inbound calls from this phone (excluding current call)',
+  call_count: '3CX call history count when live API is configured',
+  last_call_date: 'ISO date of most recent 3CX call',
+  recording_urls_json: 'JSON array of proxied past recording URLs (max 5)',
+  greeting_hint: 'Suggested personalized greeting from backend',
+  past_purchases: 'Semicolon-separated titles the caller bought before (max 5)',
 } as const;
 
 /**

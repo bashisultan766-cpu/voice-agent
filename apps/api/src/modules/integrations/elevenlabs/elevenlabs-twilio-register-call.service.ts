@@ -5,11 +5,24 @@ import { normalizePhoneNumber } from '../twilio/utils/normalize-phone';
 const REGISTER_CALL_URL = 'https://api.elevenlabs.io/v1/convai/twilio/register-call';
 const DEFAULT_CONVAI_AGENT_ID = 'agent_2401kswaf3cpegs890qs6jjcb00v';
 
+export type ElevenLabsCallerDynamicVariables = {
+  callerName?: string | null;
+  callerFirstName?: string | null;
+  isReturningCaller?: boolean;
+  priorCallCount?: number;
+  callCount?: number;
+  lastCallDate?: string | null;
+  recordingUrlsJson?: string;
+  greetingHint?: string;
+  pastPurchases?: string;
+};
+
 export type ElevenLabsTwilioRegisterCallInput = {
   fromNumber: string;
   toNumber: string;
   direction?: 'inbound' | 'outbound';
   callSid?: string;
+  callerIdentity?: ElevenLabsCallerDynamicVariables;
 };
 
 @Injectable()
@@ -50,13 +63,25 @@ export class ElevenLabsTwilioRegisterCallService {
     };
 
     if (input.callSid?.trim()) {
+      const identity = input.callerIdentity;
+      const dynamicVariables: Record<string, string> = {
+        call_sid: input.callSid.trim(),
+        caller_phone: callerPhone,
+        caller_number: input.fromNumber.trim(),
+        twilio_to_number: input.toNumber.trim(),
+        caller_name: identity?.callerName?.trim() || '',
+        caller_first_name: identity?.callerFirstName?.trim() || '',
+        is_returning_caller: identity?.isReturningCaller ? 'true' : 'false',
+        prior_call_count: String(identity?.priorCallCount ?? 0),
+        call_count: String(identity?.callCount ?? identity?.priorCallCount ?? 0),
+        last_call_date: identity?.lastCallDate?.trim() || '',
+        recording_urls_json: identity?.recordingUrlsJson?.trim() || '[]',
+        greeting_hint: identity?.greetingHint?.trim() || '',
+        past_purchases: identity?.pastPurchases?.trim() || '',
+      };
+
       body.conversation_initiation_client_data = {
-        dynamic_variables: {
-          call_sid: input.callSid.trim(),
-          caller_phone: callerPhone,
-          caller_number: input.fromNumber.trim(),
-          twilio_to_number: input.toNumber.trim(),
-        },
+        dynamic_variables: dynamicVariables,
       };
     }
 

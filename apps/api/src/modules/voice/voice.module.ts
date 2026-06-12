@@ -8,11 +8,14 @@ import { VoiceCatalogSearchModule } from '../search/voice-catalog-search.module'
 import { VoiceCheckoutModule } from '../checkout/checkout.module';
 import { DeliveryModule } from '../delivery/delivery.module';
 import { InboundCallModule } from '../delivery/inbound-call.module';
+import { CallerIdentityModule } from '../integrations/caller-identity/caller-identity.module';
 import { VoiceCallContextService } from './voice-call-context.service';
 import { VoiceSearchController } from './voice-search.controller';
 import { VoicePaymentController } from './voice-payment.controller';
 import { VoiceOrderController } from './voice-order.controller';
 import { VoiceHealthController } from './voice-health.controller';
+import { VoiceCallerController } from './voice-caller.controller';
+import { VoiceGetCallerInfoController } from './voice-get-caller-info.controller';
 import { VoiceSearchService } from './voice-search.service';
 import { VoicePaymentService } from './voice-payment.service';
 import { VoiceOrderService } from './voice-order.service';
@@ -35,8 +38,16 @@ import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
     VoiceCheckoutModule,
     DeliveryModule,
     InboundCallModule,
+    CallerIdentityModule,
   ],
-  controllers: [VoiceSearchController, VoicePaymentController, VoiceOrderController, VoiceHealthController],
+  controllers: [
+    VoiceSearchController,
+    VoicePaymentController,
+    VoiceOrderController,
+    VoiceHealthController,
+    VoiceCallerController,
+    VoiceGetCallerInfoController,
+  ],
   providers: [
     VoiceSearchService,
     VoicePaymentService,

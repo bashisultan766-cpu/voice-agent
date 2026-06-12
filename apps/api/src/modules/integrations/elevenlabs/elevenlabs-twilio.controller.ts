@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { Public } from '../../../common/decorators/public.decorator';
 import { buildFallbackTwiML } from '../twilio/twiml/conversation-relay.twiml';
 import { InboundCallCaptureService } from '../../delivery/inbound-call-capture.service';
+import { ThreeCxCallerService } from '../caller-identity/three-cx-caller.service';
 import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-register-call.service';
 
 const twilioInboundBodySchema = z.object({
@@ -25,6 +26,7 @@ export class ElevenLabsTwilioController {
   constructor(
     private readonly registerCall: ElevenLabsTwilioRegisterCallService,
     private readonly inboundCallCapture: InboundCallCaptureService,
+    private readonly threeCxCaller: ThreeCxCallerService,
   ) {}
 
   @Public()
@@ -95,12 +97,66 @@ export class ElevenLabsTwilioController {
       );
     }
 
+    let callerIdentityFields = {
+      callerName: null as string | null,
+      callerFirstName: null as string | null,
+      isReturningCaller: false,
+      priorCallCount: 0,
+      callCount: 0,
+      lastCallDate: null as string | null,
+      recordingUrlsJson: '[]',
+      greetingHint: '',
+      pastPurchases: '',
+    };
+
+    try {
+      const info = await this.threeCxCaller.getCallerInfo(From, {
+        excludeCallSid: CallSid,
+      });
+      callerIdentityFields = {
+        callerName: info.full_name,
+        callerFirstName: info.first_name,
+        isReturningCaller: info.is_returning_caller,
+        priorCallCount: info.call_count,
+        callCount: info.call_count,
+        lastCallDate: info.last_call_date,
+        recordingUrlsJson: JSON.stringify(info.recording_urls.slice(0, 5)),
+        greetingHint: info.greeting_hint,
+        pastPurchases: info.past_purchases
+          .slice(0, 5)
+          .map((item) => item.title)
+          .join('; '),
+      };
+      this.logger.log(
+        JSON.stringify({
+          event: 'elevenlabs.twilio.inbound_caller_identity',
+          callSid: CallSid,
+          hasName: Boolean(info.full_name),
+          isReturningCaller: info.is_returning_caller,
+          callCount: info.call_count,
+          source: info.source,
+          threeCxConfigured: info.three_cx_configured,
+        }),
+      );
+    } catch (identityErr) {
+      const identityMessage =
+        identityErr instanceof Error ? identityErr.message : String(identityErr);
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs.twilio.inbound_caller_identity_failed',
+          callSid: CallSid,
+          message: identityMessage.slice(0, 300),
+        }),
+      );
+    }
+
     try {
       const twiml = await this.registerCall.registerInboundCall({
         fromNumber: From,
         toNumber: To,
         direction,
         callSid: CallSid,
+        callerIdentity: callerIdentityFields,
       });
 
       res.type('text/xml; charset=utf-8');
