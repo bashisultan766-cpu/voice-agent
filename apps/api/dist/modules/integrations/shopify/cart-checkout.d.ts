@@ -20,22 +20,22 @@ export declare class ShopifyCartCheckoutService {
         metadata: Prisma.InputJsonValue;
     }): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
-        callSessionId: string | null;
-        checkoutUrl: string;
-        customerEmail: string | null;
-        mode: import("@prisma/client").$Enums.CheckoutMode;
+        tenantId: string;
         agentId: string;
+        customerEmail: string | null;
+        updatedAt: Date;
+        callSessionId: string | null;
+        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         metadata: Prisma.JsonValue | null;
         sentAt: Date | null;
         checkoutFingerprint: string | null;
-        shopifyConnectionId: string | null;
+        mode: import("@prisma/client").$Enums.CheckoutMode;
+        checkoutUrl: string;
         itemsJson: Prisma.JsonValue | null;
         providerRef: string | null;
         expiresAt: Date | null;
         completedAt: Date | null;
+        shopifyConnectionId: string | null;
     }>;
 }

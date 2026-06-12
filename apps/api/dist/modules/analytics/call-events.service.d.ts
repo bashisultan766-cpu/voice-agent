@@ -6,11 +6,11 @@ export declare class CallEventsService {
     log(tenantId: string, callSessionId: string, type: CallEventType, payload?: Record<string, unknown>): Promise<void>;
     getByCallSession(callSessionId: string, tenantId?: string): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        type: import("@prisma/client").$Enums.CallEventType;
+        tenantId: string;
         callSessionId: string;
-        timestamp: Date;
+        type: import("@prisma/client").$Enums.CallEventType;
         payload: Prisma.JsonValue | null;
+        timestamp: Date;
     }[]>;
 }

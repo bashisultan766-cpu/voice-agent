@@ -34,8 +34,8 @@ function formatItemsHtmlRows(items) {
     return items
         .map((i) => `
     <tr>
-      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;">${escapeHtml(i.title)}</td>
-      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#374151;text-align:right;white-space:nowrap;">× ${i.quantity}${i.price ? ` · ${escapeHtml(i.price)}` : ''}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #111111;font-size:14px;color:#111111;">${escapeHtml(i.title)}</td>
+      <td style="padding:12px 14px;border-bottom:1px solid #111111;font-size:14px;color:#111111;text-align:right;white-space:nowrap;">× ${i.quantity}${i.price ? ` · ${escapeHtml(i.price)}` : ''}</td>
     </tr>`)
         .join('');
 }
@@ -116,57 +116,57 @@ This message was sent because you requested a payment link during a call with ${
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${safeName} — Checkout</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f3f4f6;padding:24px 12px;">
+<body style="margin:0;padding:0;background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#111111;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#ffffff;padding:32px 16px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="100%" style="max-width:560px;background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <table role="presentation" width="100%" style="max-width:560px;background-color:#ffffff;border:1px solid #111111;">
           <tr>
-            <td style="background:linear-gradient(135deg,#111827 0%,#1f2937 100%);padding:24px 28px;">
-              <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#9ca3af;">Secure checkout</p>
-              <h1 style="margin:8px 0 0;font-size:22px;font-weight:700;color:#ffffff;line-height:1.25;">${safeName}</h1>
+            <td style="background-color:#111111;padding:28px 32px;">
+              <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:0.16em;text-transform:uppercase;color:#ffffff;">Secure checkout</p>
+              <h1 style="margin:10px 0 0;font-size:24px;font-weight:700;color:#ffffff;line-height:1.2;letter-spacing:-0.02em;">${safeName}</h1>
             </td>
           </tr>
           <tr>
-            <td style="padding:28px 28px 8px;">
-              <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Hello,</p>
+            <td style="padding:32px 32px 8px;">
+              <p style="margin:0 0 16px;font-size:15px;color:#111111;line-height:1.6;">Hello,</p>
               ${branding.customIntro?.trim()
         ? `<p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">${escapeHtml(branding.customIntro.trim())}</p>`
         : ''}
-              <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Thank you for your order by phone. Use the button below to pay securely on Shopify — the same trusted checkout millions of stores use.</p>
+              <p style="margin:0 0 16px;font-size:15px;color:#111111;line-height:1.6;">Thank you for your order by phone. Use the button below to complete payment on Shopify's secure checkout.</p>
             </td>
           </tr>
           <tr>
-            <td style="padding:0 28px 20px;">
-              <p style="margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6b7280;">Your items</p>
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            <td style="padding:0 32px 24px;">
+              <p style="margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#111111;">Your items</p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #111111;">
                 ${itemsRows}
               </table>
             </td>
           </tr>
           <tr>
-            <td style="padding:8px 28px 24px;" align="center">
+            <td style="padding:8px 32px 32px;" align="center">
               <table role="presentation" cellspacing="0" cellpadding="0">
                 <tr>
-                  <td style="border-radius:8px;background-color:#111827;">
-                    <a href="${safeUrlAttr}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Complete secure payment</a>
+                  <td style="background-color:#111111;">
+                    <a href="${safeUrlAttr}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:16px 32px;font-size:14px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#ffffff;text-decoration:none;">Complete payment</a>
                   </td>
                 </tr>
               </table>
-              <p style="margin:20px 0 0;font-size:13px;color:#6b7280;line-height:1.5;">Prefer to copy the link? Use this plain address:</p>
-              <p style="margin:8px 0 0;word-break:break-all;font-size:13px;color:#2563eb;"><a href="${safeUrlAttr}" style="color:#2563eb;">${safeUrlAttr}</a></p>
+              <p style="margin:24px 0 0;font-size:12px;color:#444444;line-height:1.5;">Or copy this link:</p>
+              <p style="margin:8px 0 0;word-break:break-all;font-size:12px;color:#111111;"><a href="${safeUrlAttr}" style="color:#111111;text-decoration:underline;">${safeUrlAttr}</a></p>
             </td>
           </tr>
           <tr>
-            <td style="padding:0 28px 24px;border-top:1px solid #e5e7eb;">
-              <p style="margin:20px 0 8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#6b7280;">Support</p>
+            <td style="padding:0 32px 28px;border-top:1px solid #111111;">
+              <p style="margin:24px 0 8px;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#111111;">Support</p>
               ${supportHtml}
-              <p style="margin:16px 0 0;font-size:12px;color:#9ca3af;line-height:1.5;">For your security, we never collect full card numbers or CVV codes on the phone. Enter payment details only on the checkout page.</p>
+              <p style="margin:16px 0 0;font-size:12px;color:#444444;line-height:1.5;">For your security, we never collect card numbers or CVV codes on the phone.</p>
             </td>
           </tr>
           <tr>
-            <td style="padding:16px 28px;background-color:#f9fafb;border-top:1px solid #e5e7eb;">
-              <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.5;">This email was sent because you asked for a payment link during a call with ${safeName}.</p>
+            <td style="padding:18px 32px;border-top:1px solid #111111;">
+              <p style="margin:0;font-size:11px;color:#666666;line-height:1.5;">Sent because you requested a payment link during a call with ${safeName}.</p>
             </td>
           </tr>
         </table>

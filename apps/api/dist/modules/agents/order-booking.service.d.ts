@@ -23,13 +23,13 @@ export declare class OrderBookingService {
     private ensureDraft;
     startBooking(callSessionId: string, tenantId: string, agentId: string, items: BookingItemInput[]): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.OrderBookingStatus;
-        callSessionId: string;
-        checkoutUrl: string | null;
+        tenantId: string;
         agentId: string;
+        updatedAt: Date;
+        callSessionId: string;
+        status: import("@prisma/client").$Enums.OrderBookingStatus;
+        checkoutUrl: string | null;
         itemsJson: Prisma.JsonValue | null;
         completedAt: Date | null;
         customerJson: Prisma.JsonValue | null;
@@ -40,13 +40,13 @@ export declare class OrderBookingService {
     }>;
     setCustomerDetails(callSessionId: string, tenantId: string, agentId: string, customer: CustomerDetailsInput): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.OrderBookingStatus;
-        callSessionId: string;
-        checkoutUrl: string | null;
+        tenantId: string;
         agentId: string;
+        updatedAt: Date;
+        callSessionId: string;
+        status: import("@prisma/client").$Enums.OrderBookingStatus;
+        checkoutUrl: string | null;
         itemsJson: Prisma.JsonValue | null;
         completedAt: Date | null;
         customerJson: Prisma.JsonValue | null;
@@ -57,13 +57,13 @@ export declare class OrderBookingService {
     }>;
     setDeliveryDetails(callSessionId: string, tenantId: string, agentId: string, address: DeliveryDetailsInput): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.OrderBookingStatus;
-        callSessionId: string;
-        checkoutUrl: string | null;
+        tenantId: string;
         agentId: string;
+        updatedAt: Date;
+        callSessionId: string;
+        status: import("@prisma/client").$Enums.OrderBookingStatus;
+        checkoutUrl: string | null;
         itemsJson: Prisma.JsonValue | null;
         completedAt: Date | null;
         customerJson: Prisma.JsonValue | null;
@@ -74,13 +74,13 @@ export declare class OrderBookingService {
     }>;
     confirmOrderSummary(callSessionId: string, tenantId: string, agentId: string, confirmed: boolean): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.OrderBookingStatus;
-        callSessionId: string;
-        checkoutUrl: string | null;
+        tenantId: string;
         agentId: string;
+        updatedAt: Date;
+        callSessionId: string;
+        status: import("@prisma/client").$Enums.OrderBookingStatus;
+        checkoutUrl: string | null;
         itemsJson: Prisma.JsonValue | null;
         completedAt: Date | null;
         customerJson: Prisma.JsonValue | null;
@@ -91,13 +91,13 @@ export declare class OrderBookingService {
     }>;
     attachCheckoutLink(callSessionId: string, checkoutUrl: string, channel: 'sms' | 'email', destination: string): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.OrderBookingStatus;
-        callSessionId: string;
-        checkoutUrl: string | null;
+        tenantId: string;
         agentId: string;
+        updatedAt: Date;
+        callSessionId: string;
+        status: import("@prisma/client").$Enums.OrderBookingStatus;
+        checkoutUrl: string | null;
         itemsJson: Prisma.JsonValue | null;
         completedAt: Date | null;
         customerJson: Prisma.JsonValue | null;
@@ -108,13 +108,13 @@ export declare class OrderBookingService {
     }>;
     getDraft(callSessionId: string): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
-        updatedAt: Date;
-        status: import("@prisma/client").$Enums.OrderBookingStatus;
-        callSessionId: string;
-        checkoutUrl: string | null;
+        tenantId: string;
         agentId: string;
+        updatedAt: Date;
+        callSessionId: string;
+        status: import("@prisma/client").$Enums.OrderBookingStatus;
+        checkoutUrl: string | null;
         itemsJson: Prisma.JsonValue | null;
         completedAt: Date | null;
         customerJson: Prisma.JsonValue | null;

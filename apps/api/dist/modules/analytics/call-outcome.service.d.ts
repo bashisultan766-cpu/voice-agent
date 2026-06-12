@@ -6,26 +6,26 @@ export declare class CallOutcomeService {
     deriveAndUpsert(callSessionId: string): Promise<void>;
     getByCallSession(callSessionId: string): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
+        tenantId: string;
         updatedAt: Date;
         callSessionId: string;
         summary: string | null;
         escalated: boolean;
-        callbackRequested: boolean;
         paymentLinkSent: boolean;
-        escalationReason: string | null;
+        fallbackCount: number;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
         customerVerified: boolean;
         toolsUsedCount: number;
         toolFailuresCount: number;
-        fallbackCount: number;
+        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
         orderCompleted: boolean;
+        escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;
     } | null>;
     update(tenantId: string, callSessionId: string, data: {
@@ -36,26 +36,26 @@ export declare class CallOutcomeService {
         qaScore?: number;
     }): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
+        tenantId: string;
         updatedAt: Date;
         callSessionId: string;
         summary: string | null;
         escalated: boolean;
-        callbackRequested: boolean;
         paymentLinkSent: boolean;
-        escalationReason: string | null;
+        fallbackCount: number;
         resolutionStatus: import("@prisma/client").$Enums.CallResolutionStatus;
         primaryIntent: string | null;
         secondaryIntent: string | null;
         customerVerified: boolean;
         toolsUsedCount: number;
         toolFailuresCount: number;
-        fallbackCount: number;
+        callbackRequested: boolean;
         qaScore: number | null;
         productsRequested: Prisma.JsonValue | null;
         conversionOutcome: string | null;
         orderCompleted: boolean;
+        escalationReason: string | null;
         analyticsMeta: Prisma.JsonValue | null;
     } | null>;
 }

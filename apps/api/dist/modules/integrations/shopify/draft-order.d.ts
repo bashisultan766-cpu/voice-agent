@@ -18,7 +18,9 @@ export type DraftOrderPaymentLinkResult = {
 export declare class ShopifyDraftOrderService {
     private readonly prisma;
     private readonly client;
+    private readonly logger;
     constructor(prisma: PrismaService, client: ShopifyClientService);
+    private logShopifyEmailUserErrors;
     createDraftOrderCheckout(tenantId: string, agentId: string, payload: {
         callSessionId?: string;
         email: string;
@@ -28,23 +30,23 @@ export declare class ShopifyDraftOrderService {
         metadata: Prisma.InputJsonValue;
     }): Promise<{
         id: string;
-        tenantId: string;
-        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
         createdAt: Date;
-        updatedAt: Date;
+        tenantId: string;
         agentId: string;
-        metadata: Prisma.JsonValue | null;
+        customerEmail: string | null;
+        updatedAt: Date;
         callSessionId: string | null;
+        status: import("@prisma/client").$Enums.CheckoutLinkStatus;
+        metadata: Prisma.JsonValue | null;
+        sentAt: Date | null;
         checkoutFingerprint: string | null;
-        shopifyConnectionId: string | null;
         mode: import("@prisma/client").$Enums.CheckoutMode;
         checkoutUrl: string;
-        customerEmail: string | null;
         itemsJson: Prisma.JsonValue | null;
         providerRef: string | null;
         expiresAt: Date | null;
-        sentAt: Date | null;
         completedAt: Date | null;
+        shopifyConnectionId: string | null;
     }>;
     sendDraftOrderPaymentLink(tenantId: string, agentId: string, payload: {
         email: string;

@@ -6,28 +6,28 @@ export declare class CallbackRequestsController {
     constructor(callbacks: CallbackRequestsService);
     list(tenantId: string, query: z.infer<typeof callbackListQuerySchema>): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
+        tenantId: string;
+        agentId: string;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         reason: string;
         callSessionId: string | null;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         phone: string;
-        priority: string | null;
-        agentId: string;
         notes: string | null;
+        priority: string | null;
     }[]>;
     updateStatus(tenantId: string, id: string, body: z.infer<typeof callbackPatchStatusBodySchema>): Promise<{
         id: string;
-        tenantId: string;
         createdAt: Date;
+        tenantId: string;
+        agentId: string;
         updatedAt: Date;
-        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         reason: string;
         callSessionId: string | null;
+        status: import("@prisma/client").$Enums.CallbackRequestStatus;
         phone: string;
-        priority: string | null;
-        agentId: string;
         notes: string | null;
+        priority: string | null;
     } | null>;
 }

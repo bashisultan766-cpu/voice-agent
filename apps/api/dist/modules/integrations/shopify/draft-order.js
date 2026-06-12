@@ -8,17 +8,33 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var ShopifyDraftOrderService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ShopifyDraftOrderService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../../database/prisma.service");
+const voice_email_enterprise_validation_util_1 = require("../../calls/runtime/voice-email-enterprise-validation.util");
 const client_1 = require("./client");
 const shopify_errors_1 = require("./shopify-errors");
+const shopify_email_domain_util_1 = require("./shopify-email-domain.util");
 const shopify_ids_1 = require("./shopify-ids");
-let ShopifyDraftOrderService = class ShopifyDraftOrderService {
+let ShopifyDraftOrderService = ShopifyDraftOrderService_1 = class ShopifyDraftOrderService {
     constructor(prisma, client) {
         this.prisma = prisma;
         this.client = client;
+        this.logger = new common_1.Logger(ShopifyDraftOrderService_1.name);
+    }
+    logShopifyEmailUserErrors(mutation, customerEmail, userErrors) {
+        if (!userErrors.length)
+            return;
+        this.logger.error(JSON.stringify((0, shopify_email_domain_util_1.buildShopifyEmailRejectionLog)({
+            originalEmail: customerEmail,
+            normalizedEmail: customerEmail,
+            domain: (0, voice_email_enterprise_validation_util_1.extractEmailDomain)(customerEmail),
+            validationResult: userErrors.map((e) => e.message).filter(Boolean).join('; '),
+            shopifyUserErrors: userErrors,
+            mutation,
+        })));
     }
     async createDraftOrderCheckout(tenantId, agentId, payload) {
         const customerEmail = payload.email.trim();
@@ -58,6 +74,7 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
         });
         const userErrors = data.draftOrderCreate.userErrors ?? [];
         if (userErrors.length) {
+            this.logShopifyEmailUserErrors('draftOrderCreate', customerEmail, userErrors);
             const msg = userErrors.map((e) => e.message).filter(Boolean).join('; ') || 'Draft order could not be created.';
             throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_USER_ERROR', msg);
         }
@@ -146,6 +163,7 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
             }, apiVersion);
             const updateErrors = updateData.draftOrderUpdate.userErrors ?? [];
             if (updateErrors.length) {
+                this.logShopifyEmailUserErrors('draftOrderUpdate', customerEmail, updateErrors);
                 const msg = updateErrors.map((e) => e.message).filter(Boolean).join('; ') ||
                     'Draft order could not be updated.';
                 throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_USER_ERROR', msg);
@@ -170,6 +188,7 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
             }, apiVersion);
             const createErrors = createData.draftOrderCreate.userErrors ?? [];
             if (createErrors.length) {
+                this.logShopifyEmailUserErrors('draftOrderCreate', customerEmail, createErrors);
                 const msg = createErrors.map((e) => e.message).filter(Boolean).join('; ') ||
                     'Draft order could not be created.';
                 throw new shopify_errors_1.ShopifyCheckoutValidationError('DRAFT_ORDER_USER_ERROR', msg);
@@ -200,6 +219,7 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
                 }, apiVersion);
                 const invoiceErrors = invoiceData.draftOrderInvoiceSend.userErrors ?? [];
                 if (invoiceErrors.length) {
+                    this.logShopifyEmailUserErrors('draftOrderInvoiceSend', customerEmail, invoiceErrors);
                     shopifyInvoiceError =
                         invoiceErrors.map((e) => e.message).filter(Boolean).join('; ') ||
                             'Draft order invoice could not be sent.';
@@ -227,7 +247,7 @@ let ShopifyDraftOrderService = class ShopifyDraftOrderService {
     }
 };
 exports.ShopifyDraftOrderService = ShopifyDraftOrderService;
-exports.ShopifyDraftOrderService = ShopifyDraftOrderService = __decorate([
+exports.ShopifyDraftOrderService = ShopifyDraftOrderService = ShopifyDraftOrderService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         client_1.ShopifyClientService])
