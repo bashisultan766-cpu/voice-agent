@@ -399,5 +399,6 @@ test('call diagnostics records call_started', () => {
   const snapshot = diag.getDiagnostics('CA123');
   assert.ok(snapshot);
   assert.equal(snapshot?.twilio_call_sid, 'CA123');
-  assert.ok(snapshot?.events.some((e) => e.event === 'call_started'));
+  assert.equal(snapshot?.twiml_sent, false);
+  assert.equal(snapshot?.likely_failure_stage, 'inbound_received');
 });

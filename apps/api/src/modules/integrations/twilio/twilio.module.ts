@@ -15,6 +15,7 @@ import { VoicePromptAudioService } from './voice-prompt-audio.service';
 import { VoiceAudioCacheService } from './voice-audio-cache.service';
 import { TwilioMediaStreamService } from './twilio-media-stream.service';
 import { TwilioMessagingModule } from './twilio-messaging.module';
+import { VoiceDiagnosticsModule } from '../../voice/voice-diagnostics.module';
 
 /**
  * Twilio voice webhooks + media stream.
@@ -26,6 +27,7 @@ import { TwilioMessagingModule } from './twilio-messaging.module';
   imports: [
     PrismaModule,
     TwilioMessagingModule,
+    VoiceDiagnosticsModule,
     forwardRef(() => CallsModule),
     AnalyticsModule,
     forwardRef(() => ElevenLabsModule),

@@ -278,10 +278,22 @@ export class VoiceCommerceController {
   @UseGuards(VoiceApiKeyGuard)
   @Get('call-diagnostics/:callSid')
   getCallDiagnostics(@Param('callSid') callSid: string) {
-    const snapshot = this.diagnostics.getDiagnostics(callSid);
-    if (!snapshot) {
+    const diagnostics = this.diagnostics.getDiagnostics(callSid);
+    if (!diagnostics) {
       throw new NotFoundException(`No diagnostics found for call ${callSid}.`);
     }
-    return { success: true, diagnostics: snapshot };
+    return {
+      success: true,
+      diagnostics,
+      summary: {
+        call_started: Boolean(diagnostics.call_started_at),
+        register_call_success: diagnostics.elevenlabs_register_call_success,
+        twiml_sent: diagnostics.twiml_sent,
+        twilio_final_status: diagnostics.twilio_final_status,
+        call_duration_seconds: diagnostics.call_duration_seconds,
+        likely_failure_stage: diagnostics.likely_failure_stage,
+        likely_reason: diagnostics.likely_reason,
+      },
+    };
   }
 }

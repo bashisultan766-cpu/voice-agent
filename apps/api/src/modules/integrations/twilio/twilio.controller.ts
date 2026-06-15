@@ -53,6 +53,12 @@ const statusSchema = z.object({
   CallStatus: z.string().trim().min(1),
   CallDuration: z.string().optional(),
   RecordingUrl: z.string().optional(),
+  Direction: z.string().optional(),
+  From: z.string().optional(),
+  To: z.string().optional(),
+  ErrorCode: z.string().optional(),
+  ErrorMessage: z.string().optional(),
+  Timestamp: z.string().optional(),
 });
 
 @Controller('twilio')
@@ -532,6 +538,12 @@ export class TwilioVoiceController {
         CallStatus: parsed.CallStatus,
         CallDuration: parsed.CallDuration,
         RecordingUrl: parsed.RecordingUrl,
+        Direction: parsed.Direction,
+        From: parsed.From,
+        To: parsed.To,
+        ErrorCode: parsed.ErrorCode,
+        ErrorMessage: parsed.ErrorMessage,
+        Timestamp: parsed.Timestamp,
       });
     } catch (error) {
       console.error('Twilio status error:', error);

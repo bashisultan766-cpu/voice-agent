@@ -83,6 +83,14 @@ In the ElevenLabs **SendPaymentLink** tool, set constant body fields (recommende
 
 `POST /api/elevenlabs/inbound` stores `CallSid` + caller phone in the `calls` table and passes `call_sid` / `caller_phone` to ElevenLabs via `register-call`.
 
+**Twilio call status (recommended for disconnect debugging):** set **Call status changes** on the Twilio number to:
+
+`POST https://<your-host>/api/elevenlabs/call-status`
+
+(or `https://<your-host>/api/twilio/voice/status` — both record diagnostics).
+
+After a call, inspect: `GET https://<your-host>/api/voice/call-diagnostics/<CallSid>` (requires `x-voice-api-key` when `VOICE_COMMERCE_API_KEY` is set).
+
 Delivery uses **Shopify invoice email + Resend backup**. SMS/WhatsApp use `phoneNumber` or lookup by `callSid`.
 
 ## Source of truth

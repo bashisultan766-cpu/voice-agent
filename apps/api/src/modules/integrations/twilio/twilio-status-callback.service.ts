@@ -3,12 +3,19 @@ import { CallsService } from '../../calls/calls.service';
 import { CallEventsService } from '../../analytics/call-events.service';
 import { CallStatus, CallEventType } from '@prisma/client';
 import { VoiceRuntimeService } from '../../calls/runtime/voice-runtime.service';
+import { VoiceCallDiagnosticsService } from '../../voice/services/voice-call-diagnostics.service';
 
 export interface TwilioStatusPayload {
   CallSid: string;
   CallStatus: string;
   CallDuration?: string;
   RecordingUrl?: string;
+  Direction?: string;
+  From?: string;
+  To?: string;
+  ErrorCode?: string;
+  ErrorMessage?: string;
+  Timestamp?: string;
 }
 
 const TWILIO_TO_STATUS: Record<string, CallStatus> = {
@@ -27,17 +34,31 @@ export class TwilioStatusCallbackService {
     private readonly callsService: CallsService,
     private readonly callEvents: CallEventsService,
     private readonly voiceRuntime: VoiceRuntimeService,
+    private readonly callDiagnostics: VoiceCallDiagnosticsService,
   ) {}
 
   private readonly terminalStatuses = [CallStatus.COMPLETED, CallStatus.FAILED, CallStatus.ABANDONED] as const;
 
   async handleStatus(payload: TwilioStatusPayload): Promise<void> {
+    this.callDiagnostics.recordTwilioStatusCallback({
+      callSid: payload.CallSid,
+      callStatus: payload.CallStatus,
+      callDuration: payload.CallDuration,
+      direction: payload.Direction,
+      from: payload.From,
+      to: payload.To,
+      errorCode: payload.ErrorCode,
+      errorMessage: payload.ErrorMessage,
+      timestamp: payload.Timestamp,
+    });
+
     this.logger.log(
       JSON.stringify({
         event: 'twilio.voice.status_received',
         callSid: payload.CallSid,
         callStatus: payload.CallStatus,
         callDuration: payload.CallDuration,
+        errorCode: payload.ErrorCode ?? null,
       }),
     );
 
@@ -48,6 +69,7 @@ export class TwilioStatusCallbackService {
           event: 'twilio.voice.status_no_session',
           callSid: payload.CallSid,
           callStatus: payload.CallStatus,
+          note: 'Diagnostics recorded; no CallSession for legacy runtime update.',
         }),
       );
       return;

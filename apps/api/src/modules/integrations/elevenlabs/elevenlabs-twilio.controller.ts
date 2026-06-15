@@ -16,6 +16,7 @@ import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-registe
 
 import { ReturningCallerService } from './returning-caller.service';
 import { VoiceCallDiagnosticsService } from '../../voice/services/voice-call-diagnostics.service';
+import { parseTwilioVoiceStatusBody } from '../../voice/utils/twilio-voice-status-callback.util';
 
 
 
@@ -78,6 +79,7 @@ async function withInboundBudget<T>(
  * Twilio → ElevenLabs Conversational AI register-call bridge.
 
  * Configure Twilio voice webhook: POST /api/elevenlabs/inbound
+ * Configure call status changes: POST /api/elevenlabs/call-status
 
  */
 
@@ -101,12 +103,39 @@ export class ElevenLabsTwilioController {
 
   ) {}
 
+  @Public()
+  @SkipThrottle()
+  @Post('call-status')
+  async callStatus(@Body() body: Record<string, string>, @Res() res: Response): Promise<void> {
+    const parsed = parseTwilioVoiceStatusBody(body);
+    if (!parsed) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs.twilio.call_status_invalid_payload',
+          keys: Object.keys(body ?? {}).slice(0, 12),
+        }),
+      );
+      res.status(200).send('OK');
+      return;
+    }
 
+    this.callDiagnostics.recordTwilioStatusCallback({
+      callSid: parsed.CallSid,
+      callStatus: parsed.CallStatus,
+      callDuration: parsed.CallDuration,
+      direction: parsed.Direction,
+      from: parsed.From,
+      to: parsed.To,
+      errorCode: parsed.ErrorCode,
+      errorMessage: parsed.ErrorMessage,
+      timestamp: parsed.Timestamp,
+    });
+
+    res.status(200).send('OK');
+  }
 
   @Public()
-
   @SkipThrottle()
-
   @Post('inbound')
 
   async inbound(@Body() body: Record<string, string>, @Res() res: Response): Promise<void> {
@@ -185,15 +214,16 @@ export class ElevenLabsTwilioController {
 
     const { From, To, CallSid, Direction } = parsed.data;
 
+    const direction =
+      Direction?.toLowerCase() === 'outbound' ? ('outbound' as const) : ('inbound' as const);
+
     this.callDiagnostics.recordCallStarted({
       callSid: CallSid,
       twilioCallStatus: 'ringing',
       callerPhoneMasked: maskPhoneForDiagnostics(From),
+      toPhoneMasked: maskPhoneForDiagnostics(To),
+      direction,
     });
-
-    const direction =
-
-      Direction?.toLowerCase() === 'outbound' ? ('outbound' as const) : ('inbound' as const);
 
     const inboundStarted = Date.now();
 
@@ -296,50 +326,52 @@ export class ElevenLabsTwilioController {
     try {
 
       const twiml = await this.registerCall.registerInboundCall({
-
         fromNumber: From,
-
         toNumber: To,
-
         direction,
-
         callSid: CallSid,
-
         phoneNormalized: prepared?.phoneNormalized,
-
         initiation: prepared?.initiation,
-
       });
 
-
+      const twimlBytes = twiml.length;
+      this.callDiagnostics.recordRegisterCallResult({
+        callSid: CallSid,
+        success: true,
+        httpStatus: 200,
+        twimlBytes,
+        latencyMs: Date.now() - inboundStarted,
+      });
+      this.callDiagnostics.recordTwimlSent({
+        callSid: CallSid,
+        twimlBytes,
+        personalizedGreeting: prepared?.initiation.personalized ?? false,
+        callerRecognized: prepared?.lookup.callerRecognized ?? false,
+        totalElapsedMs: Date.now() - inboundStarted,
+      });
 
       this.logger.log(
-
         JSON.stringify({
-
           event: 'elevenlabs.twilio.inbound_twiml_sent',
-
           callSid: CallSid,
-
           callerRecognized: prepared?.lookup.callerRecognized ?? false,
-
           personalizedGreeting: prepared?.initiation.personalized ?? false,
-
           totalElapsedMs: Date.now() - inboundStarted,
-
+          twimlBytes,
         }),
-
       );
 
-
-
       res.type('text/xml; charset=utf-8');
-
       res.send(twiml);
-
     } catch (err) {
-
       const message = err instanceof Error ? err.message : String(err);
+
+      this.callDiagnostics.recordRegisterCallResult({
+        callSid: CallSid,
+        success: false,
+        errorMessage: message,
+        latencyMs: Date.now() - inboundStarted,
+      });
 
       this.logger.error(
 
