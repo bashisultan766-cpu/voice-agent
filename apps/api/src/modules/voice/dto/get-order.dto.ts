@@ -1,4 +1,10 @@
 import { IsOptional, IsString, MaxLength } from 'class-validator';
+import type {
+  MaskedOrderFields,
+  VoiceOrderRefundSummary,
+  VoiceOrderVerificationFlags,
+} from '../utils/voice-order-privacy.util';
+import type { PrivacySafeOrderDto } from '../utils/voice-order-privacy.util';
 
 /** GET /api/voice/get-order — ElevenLabs GetOrders tool */
 export class GetOrderQueryDto {
@@ -36,6 +42,16 @@ export class GetOrderQueryDto {
   @IsString()
   @MaxLength(64)
   agentId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  caller_phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  callerPhone?: string;
 }
 
 export type VoiceOrderLineItemDto = {
@@ -99,11 +115,47 @@ export type VoiceOrderDetailDto = {
   paymentCardBrand: string | null;
 };
 
+export type VoiceOrderItemStatusDto = {
+  title: string;
+  sku: string | null;
+  quantity?: number;
+  status?: string;
+  reason?: string;
+};
+
+export type VoiceOrderEnrichedFields = {
+  order_number: string;
+  order_status: string;
+  fulfillment_status: string | null;
+  financial_status: string | null;
+  refund_status: string | null;
+  subtotal_without_shipping: string | null;
+  shipping_cost: string | null;
+  subtotal_disclaimer: string;
+  shipping_method: string;
+  carrier: string | null;
+  tracking_status: string;
+  tracking_number_masked?: string | null;
+  items: VoiceOrderLineItemDto[];
+  backorder_items: VoiceOrderItemStatusDto[];
+  out_of_stock_items: VoiceOrderItemStatusDto[];
+  facility_restricted_items: VoiceOrderItemStatusDto[];
+  cancellation_eligible: boolean;
+  cancellation_reason?: string;
+  cancellation_next_step?: string;
+};
+
 export type GetOrderResponseDto = {
   success: boolean;
   found: boolean;
-  order?: VoiceOrderDetailDto;
+  order?: PrivacySafeOrderDto;
+  enriched?: VoiceOrderEnrichedFields;
   voiceSummary?: string;
+  suggested_response?: string;
   error?: string;
   latencyMs?: number;
+  verification?: VoiceOrderVerificationFlags;
+  maskedFields?: MaskedOrderFields;
+  refundSummary?: VoiceOrderRefundSummary;
+  privacyModeApplied?: boolean;
 };

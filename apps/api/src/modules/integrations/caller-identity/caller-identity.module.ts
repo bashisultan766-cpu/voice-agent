@@ -28,6 +28,6 @@ import { VoiceApiKeyGuard } from '../../voice/guards/voice-api-key.guard';
     ShopifyClientService,
     VoiceApiKeyGuard,
   ],
-  exports: [CallerIdentityService, ThreeCxApiClient, ThreeCxCallerService],
+  exports: [CallerIdentityService, ThreeCxApiClient, ThreeCxCallerService, ShopifyCustomerLookupService],
 })
 export class CallerIdentityModule {}

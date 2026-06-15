@@ -19,3 +19,5 @@ packages/voice-db/generated/
 dist/
 build/
 .turbo/
+*.tsbuildinfo
+**/*.tsbuildinfo

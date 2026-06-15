@@ -223,6 +223,65 @@ export class CallerIdentityService {
     return { imported, skipped };
   }
 
+  async getCallerProfileByPhone(rawPhone: string) {
+    const { normalized, digits } = normalizeCallerPhone(rawPhone);
+    if (!normalized) return null;
+    return this.findProfileByPhone(normalized, digits);
+  }
+
+  async touchInboundCallHistory(args: {
+    phone: string;
+    callSid: string;
+    displayName?: string | null;
+    firstName?: string | null;
+    customerId?: string | null;
+    lastOrderNumber?: string | null;
+    source?: 'three_cx_import' | 'three_cx_api' | 'shopify_orders' | 'agent_capture';
+  }): Promise<void> {
+    const { normalized } = normalizeCallerPhone(args.phone);
+    if (!normalized) return;
+
+    const existing = await this.findProfileByPhone(
+      normalized,
+      phoneDigitsKey(normalized),
+    );
+    const prior = this.parseCallHistoryMetadata(existing?.metadata);
+    const nowIso = new Date().toISOString();
+    const history = {
+      first_seen_at: prior?.first_seen_at ?? nowIso,
+      last_seen_at: nowIso,
+      total_calls: (prior?.total_calls ?? 0) + 1,
+      last_call_sid: args.callSid,
+      last_order_number: args.lastOrderNumber ?? prior?.last_order_number ?? null,
+      last_intent: prior?.last_intent ?? null,
+      last_call_summary: prior?.last_call_summary ?? null,
+    };
+
+    const displayName =
+      args.displayName?.trim() ||
+      existing?.displayName?.trim() ||
+      args.firstName?.trim() ||
+      'Unknown Caller';
+
+    const source =
+      args.source ??
+      (existing?.source === 'three_cx_import' ||
+      existing?.source === 'three_cx_api' ||
+      existing?.source === 'shopify_orders' ||
+      existing?.source === 'agent_capture'
+        ? existing.source
+        : 'agent_capture');
+
+    await this.upsertCallerProfile({
+      phone: normalized,
+      displayName,
+      firstName: args.firstName ?? undefined,
+      source,
+      externalId: args.customerId ?? existing?.externalId ?? undefined,
+      metadata: this.mergeCallHistoryMetadata(existing?.metadata, history),
+    });
+  }
+
   /** 3CX CRM lookup response shape (FirstName, LastName, ContactID, …). */
   async lookupForThreeCxCrm(rawPhone: string): Promise<{
     FirstName: string;
@@ -400,6 +459,44 @@ export class CallerIdentityService {
     return rows.some(
       (row) => row.customerPhone && phonesLikelyMatch(row.customerPhone, normalized),
     );
+  }
+
+  private parseCallHistoryMetadata(metadata: unknown): {
+    first_seen_at: string;
+    last_seen_at: string;
+    total_calls: number;
+    last_order_number: string | null;
+    last_intent: string | null;
+    last_call_summary: string | null;
+  } | null {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+    const raw = (metadata as Record<string, unknown>).call_history;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const record = raw as Record<string, unknown>;
+    const first_seen_at = typeof record.first_seen_at === 'string' ? record.first_seen_at : null;
+    const last_seen_at = typeof record.last_seen_at === 'string' ? record.last_seen_at : null;
+    if (!first_seen_at || !last_seen_at) return null;
+    return {
+      first_seen_at,
+      last_seen_at,
+      total_calls: Math.max(0, Number(record.total_calls ?? 0) || 0),
+      last_order_number:
+        typeof record.last_order_number === 'string' ? record.last_order_number : null,
+      last_intent: typeof record.last_intent === 'string' ? record.last_intent : null,
+      last_call_summary:
+        typeof record.last_call_summary === 'string' ? record.last_call_summary : null,
+    };
+  }
+
+  private mergeCallHistoryMetadata(
+    metadata: unknown,
+    history: Record<string, unknown>,
+  ): Prisma.InputJsonValue {
+    const base =
+      metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? { ...(metadata as Record<string, unknown>) }
+        : {};
+    return { ...base, call_history: history } as Prisma.InputJsonValue;
   }
 }
 

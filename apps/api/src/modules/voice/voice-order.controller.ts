@@ -4,7 +4,7 @@ import { Public } from '../../common/decorators/public.decorator';
 import { GetOrderQueryDto } from './dto/get-order.dto';
 import { VoiceOrderService } from './voice-order.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
-import { flattenElevenLabsToolBody } from './utils/parse-elevenlabs-tool-body.util';
+import { flattenElevenLabsToolBody, resolvePhoneNumberFromToolBody } from './utils/parse-elevenlabs-tool-body.util';
 import { resolveVoiceOrderQuery } from './utils/resolve-voice-order-query.util';
 
 /**
@@ -31,6 +31,7 @@ export class VoiceOrderController {
       orderNumber,
       tenantId: query.tenantId,
       agentId: query.agentId,
+      callerPhone: query.callerPhone ?? query.caller_phone,
     });
   }
 
@@ -54,11 +55,18 @@ export class VoiceOrderController {
       (typeof flat.agentId === 'string' && flat.agentId) ||
       (typeof flat.agent_id === 'string' && flat.agent_id) ||
       body.agentId;
+    const callerPhone =
+      resolvePhoneNumberFromToolBody(body) ||
+      (typeof flat.callerPhone === 'string' && flat.callerPhone) ||
+      (typeof flat.caller_phone === 'string' && flat.caller_phone) ||
+      (typeof body.callerPhone === 'string' && body.callerPhone) ||
+      (typeof body.caller_phone === 'string' && body.caller_phone);
 
     return this.voiceOrder.getOrder({
       orderNumber,
       tenantId: typeof tenantId === 'string' ? tenantId : undefined,
       agentId: typeof agentId === 'string' ? agentId : undefined,
+      callerPhone: typeof callerPhone === 'string' ? callerPhone : undefined,
     });
   }
 }

@@ -1,224 +1,41 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { AgentStatus } from '@prisma/client';
-import { PrismaService } from '../../database/prisma.service';
-import { ShopifyClientService } from '../integrations/shopify/client';
+import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import type {
   GetOrderResponseDto,
-  VoiceOrderDetailDto,
-  VoiceOrderFulfillmentDto,
-  VoiceOrderLineItemDto,
-  VoiceOrderRefundDto,
+  VoiceOrderEnrichedFields,
 } from './dto/get-order.dto';
-import { buildVoiceOrderSummary } from './utils/build-voice-order-summary.util';
-import { shopifyOrderNameSearchTokens } from './utils/normalize-voice-order-number.util';
-
-const ORDER_LOOKUP_QUERY = `
-  query VoiceOrderLookup($query: String!) {
-    orders(first: 1, query: $query, sortKey: CREATED_AT, reverse: true) {
-      edges {
-        node {
-          id
-          legacyResourceId
-          name
-          createdAt
-          processedAt
-          cancelledAt
-          cancelReason
-          closed
-          displayFinancialStatus
-          displayFulfillmentStatus
-          note
-          email
-          phone
-          customer {
-            displayName
-            email
-            phone
-          }
-          shippingAddress {
-            name
-            address1
-            address2
-            city
-            provinceCode
-            zip
-            countryCodeV2
-          }
-          currentTotalPriceSet {
-            shopMoney {
-              amount
-              currencyCode
-            }
-          }
-          lineItems(first: 25) {
-            edges {
-              node {
-                title
-                quantity
-                sku
-                variantTitle
-              }
-            }
-          }
-          fulfillments {
-            id
-            status
-            displayStatus
-            createdAt
-            updatedAt
-            estimatedDeliveryAt
-            inTransitAt
-            deliveredAt
-            trackingInfo {
-              company
-              number
-              url
-            }
-          }
-          refunds {
-            id
-            createdAt
-            note
-            totalRefundedSet {
-              shopMoney {
-                amount
-                currencyCode
-              }
-            }
-          }
-          transactions(first: 10) {
-            kind
-            status
-            accountNumber
-            paymentDetails {
-              ... on CardPaymentDetails {
-                number
-                company
-                paymentMethodName
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
-type GraphqlOrderNode = {
-  id?: string;
-  legacyResourceId?: string;
-  name?: string;
-  createdAt?: string;
-  cancelledAt?: string | null;
-  cancelReason?: string | null;
-  displayFinancialStatus?: string | null;
-  displayFulfillmentStatus?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  customer?: {
-    displayName?: string | null;
-    email?: string | null;
-    phone?: string | null;
-  } | null;
-  shippingAddress?: {
-    name?: string | null;
-    address1?: string | null;
-    address2?: string | null;
-    city?: string | null;
-    provinceCode?: string | null;
-    zip?: string | null;
-    countryCodeV2?: string | null;
-  } | null;
-  currentTotalPriceSet?: {
-    shopMoney?: { amount?: string; currencyCode?: string } | null;
-  } | null;
-  lineItems?: {
-    edges?: Array<{
-      node?: {
-        title?: string;
-        quantity?: number;
-        sku?: string | null;
-        variantTitle?: string | null;
-      };
-    }>;
-  } | null;
-  fulfillments?: Array<{
-    status?: string | null;
-    displayStatus?: string | null;
-    estimatedDeliveryAt?: string | null;
-    inTransitAt?: string | null;
-    deliveredAt?: string | null;
-    trackingInfo?: Array<{
-      company?: string | null;
-      number?: string | null;
-      url?: string | null;
-    }> | null;
-  }> | null;
-  refunds?: Array<{
-    createdAt?: string;
-    note?: string | null;
-    totalRefundedSet?: {
-      shopMoney?: { amount?: string; currencyCode?: string } | null;
-    } | null;
-  }> | null;
-  transactions?: Array<{
-    kind?: string | null;
-    status?: string | null;
-    accountNumber?: string | null;
-    paymentDetails?: {
-      number?: string | null;
-      company?: string | null;
-      paymentMethodName?: string | null;
-    } | null;
-  }> | null;
-};
-
-/** Last 4 digits from a masked card number like "•••• •••• •••• 4242". */
-function extractCardLast4(masked: string | null | undefined): string | null {
-  const digits = (masked ?? '').replace(/\D/g, '');
-  return digits.length >= 4 ? digits.slice(-4) : null;
-}
-
-function resolvePaymentCard(node: GraphqlOrderNode): {
-  last4: string | null;
-  brand: string | null;
-} {
-  const transactions = node.transactions ?? [];
-  const ranked = [
-    ...transactions.filter(
-      (t) => t.status === 'SUCCESS' && (t.kind === 'SALE' || t.kind === 'CAPTURE'),
-    ),
-    ...transactions.filter((t) => t.status === 'SUCCESS'),
-    ...transactions,
-  ];
-  for (const tx of ranked) {
-    const last4 =
-      extractCardLast4(tx.paymentDetails?.number) ?? extractCardLast4(tx.accountNumber);
-    if (last4) {
-      return {
-        last4,
-        brand: tx.paymentDetails?.company ?? tx.paymentDetails?.paymentMethodName ?? null,
-      };
-    }
-  }
-  return { last4: null, brand: null };
-}
+import {
+  applyPrivacyToOrder,
+  buildMaskedOrderFields,
+  buildPrivacyAwareVoiceOrderSummary,
+  buildRefundOrderSummary,
+  resolveVerificationFlags,
+} from './utils/voice-order-privacy.util';
+import { VoiceOrderLookupService } from './services/voice-order-lookup.service';
+import { VoiceCancellationService } from './services/voice-cancellation.service';
+import { FacilityRestrictionService } from './services/facility-restriction.service';
+import {
+  buildEnrichedOrderVoiceSummary,
+  classifyOrderLineItems,
+  resolveOrderShippingMethodLabel,
+} from './utils/voice-order-enrichment.util';
+import { SUBTOTAL_DISCLAIMER, maskTrackingNumber, sanitizeCustomerFacingText } from './utils/voice-agent-language.util';
 
 @Injectable()
 export class VoiceOrderService {
   private readonly logger = new Logger(VoiceOrderService.name);
 
   constructor(
-    private readonly shopify: ShopifyClientService,
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
+    private readonly orderLookup: VoiceOrderLookupService,
+    private readonly cancellation: VoiceCancellationService,
+    private readonly facilityRestrictions: FacilityRestrictionService,
   ) {}
 
   async getOrder(args: {
     orderNumber: string;
     tenantId?: string;
     agentId?: string;
+    callerPhone?: string;
   }): Promise<GetOrderResponseDto> {
     const started = Date.now();
     const orderNumber = args.orderNumber.trim();
@@ -226,45 +43,28 @@ export class VoiceOrderService {
       throw new BadRequestException('order_number is required.');
     }
 
-    const { tenantId, agentId } = await this.resolveAgentContext(args.tenantId, args.agentId);
-
     this.logger.log(
       JSON.stringify({
-        event: 'voice.order.lookup_started',
-        tenantId,
-        agentId,
+        event: 'order_lookup_started',
         orderNumber: orderNumber.slice(0, 32),
+        callerPhoneMasked: args.callerPhone ? maskCallerPhone(args.callerPhone) : null,
       }),
     );
 
     try {
-      const shopifyConfig = await this.shopify.getAgentShopifyConfig(tenantId, agentId);
-      const searchTokens = shopifyOrderNameSearchTokens(orderNumber);
-      let node: GraphqlOrderNode | null = null;
-
-      for (const token of searchTokens) {
-        const data = await this.shopify.adminGraphql<{
-          orders?: { edges?: Array<{ node?: GraphqlOrderNode }> };
-        }>(
-          shopifyConfig.domain,
-          shopifyConfig.token,
-          ORDER_LOOKUP_QUERY,
-          { query: `name:${token}` },
-          shopifyConfig.apiVersion,
-        );
-        node = data.orders?.edges?.[0]?.node ?? null;
-        if (node?.name) break;
-      }
+      const order = await this.orderLookup.lookupOrder({
+        orderNumber,
+        tenantId: args.tenantId,
+        agentId: args.agentId,
+      });
 
       const latencyMs = Date.now() - started;
 
-      if (!node?.name) {
+      if (!order) {
         const notFoundSummary = `No order found with number ${orderNumber}. Ask the caller to verify the order number on their confirmation email.`;
         this.logger.log(
           JSON.stringify({
             event: 'voice.order.not_found',
-            tenantId,
-            agentId,
             orderNumber: orderNumber.slice(0, 32),
             latencyMs,
           }),
@@ -277,28 +77,115 @@ export class VoiceOrderService {
         };
       }
 
-      const order = this.mapOrderNode(node);
-      const voiceSummary = buildVoiceOrderSummary(order);
+      const verification = resolveVerificationFlags({
+        callerPhone: args.callerPhone,
+        customerPhone: order.customerPhone,
+        orderFound: true,
+      });
+      const maskedFields = buildMaskedOrderFields(order, verification);
+      const privacyOrder = applyPrivacyToOrder(order, verification);
+      const refundSummary = buildRefundOrderSummary(order, verification, maskedFields);
+
+      const { backorder_items, out_of_stock_items } = classifyOrderLineItems(
+        order.extendedLineItems,
+        order,
+      );
+
+      const cancellation = await this.cancellation.checkCancellationEligibility({
+        orderNumber: order.orderNumber,
+        tenantId: args.tenantId,
+        agentId: args.agentId,
+      });
+
+      const facilityCheck = await this.facilityRestrictions.checkOrderFacilityRestrictions({
+        orderNumber: order.orderNumber,
+        tenantId: args.tenantId,
+        agentId: args.agentId,
+      });
+
+      const shippingMethod = resolveOrderShippingMethodLabel(order);
+      const tracking = order.fulfillments[0]?.tracking?.find((t) => t.number);
+      const allowFullTracking = verification.verified_level === 'full';
+
+      const enriched: VoiceOrderEnrichedFields = {
+        order_number: order.orderNumber,
+        order_status: order.orderStatus,
+        fulfillment_status: order.fulfillmentStatus,
+        financial_status: order.financialStatus,
+        refund_status: order.refundStatus,
+        subtotal_without_shipping: order.subtotalWithoutShipping,
+        shipping_cost: order.shippingCost,
+        subtotal_disclaimer: SUBTOTAL_DISCLAIMER,
+        shipping_method: shippingMethod,
+        carrier: tracking?.company ?? order.shippingCarrier,
+        tracking_status: order.isShipped ? 'shipped' : 'not_shipped',
+        tracking_number_masked: allowFullTracking
+          ? tracking?.number ?? null
+          : maskTrackingNumber(tracking?.number),
+        items: order.lineItems,
+        backorder_items,
+        out_of_stock_items,
+        facility_restricted_items: facilityCheck.restricted_items.map((i) => ({
+          title: i.title,
+          sku: i.sku,
+          status: i.status,
+          reason: i.reason,
+        })),
+        cancellation_eligible: cancellation.cancellation_eligible,
+        cancellation_reason: cancellation.reason,
+        cancellation_next_step: cancellation.next_step,
+      };
+
+      const baseSummary = buildPrivacyAwareVoiceOrderSummary(order, verification, maskedFields);
+      const enrichedSummary = buildEnrichedOrderVoiceSummary({
+        order,
+        backorderItems: backorder_items,
+        outOfStockItems: out_of_stock_items,
+        cancellationEligible: cancellation.cancellation_eligible,
+        shippingMethod,
+      });
+      const voiceSummary = sanitizeCustomerFacingText(`${baseSummary} ${enrichedSummary}`);
 
       this.logger.log(
         JSON.stringify({
-          event: 'voice.order.found',
-          tenantId,
-          agentId,
+          event: 'order_lookup_success',
           orderNumber: order.orderNumber,
-          financialStatus: order.financialStatus,
-          fulfillmentStatus: order.fulfillmentStatus,
-          lineItemCount: order.lineItems.length,
-          fulfillmentCount: order.fulfillments.length,
+          verifiedLevel: verification.verified_level,
+          phoneMatchesCustomer: verification.phone_matches_customer,
           latencyMs,
+        }),
+      );
+
+      if (refundSummary) {
+        this.logger.log(
+          JSON.stringify({
+            event: 'refund_lookup_success',
+            orderNumber: order.orderNumber,
+            refundStatus: refundSummary.refund_status,
+            latencyMs,
+          }),
+        );
+      }
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'privacy_mode_applied',
+          orderNumber: order.orderNumber,
+          verifiedLevel: verification.verified_level,
         }),
       );
 
       return {
         success: true,
         found: true,
-        order,
+        order: privacyOrder,
+        enriched,
+        verification,
+        maskedFields,
+        refundSummary: refundSummary ?? undefined,
         voiceSummary,
+        suggested_response: voiceSummary,
+        privacyModeApplied: true,
         latencyMs,
       };
     } catch (err) {
@@ -316,106 +203,16 @@ export class VoiceOrderService {
         error: message,
         voiceSummary:
           'I could not look up that order right now. Apologize briefly and offer to try again or connect the caller with support.',
+        suggested_response:
+          'I could not look up that order right now. I will connect you with customer service.',
         latencyMs: Date.now() - started,
       };
     }
   }
+}
 
-  private mapOrderNode(node: GraphqlOrderNode): VoiceOrderDetailDto {
-    const money = node.currentTotalPriceSet?.shopMoney;
-    const lineItems: VoiceOrderLineItemDto[] =
-      node.lineItems?.edges
-        ?.map((edge) => edge.node)
-        .filter((line): line is NonNullable<typeof line> => Boolean(line?.title))
-        .map((line) => ({
-          title: line.title ?? 'Item',
-          quantity: Math.max(1, Number(line.quantity ?? 1)),
-          sku: line.sku ?? null,
-          variantTitle: line.variantTitle ?? null,
-        })) ?? [];
-
-    const fulfillments: VoiceOrderFulfillmentDto[] =
-      node.fulfillments?.map((f) => ({
-        status: f.status ?? null,
-        displayStatus: f.displayStatus ?? null,
-        estimatedDeliveryAt: f.estimatedDeliveryAt ?? null,
-        deliveredAt: f.deliveredAt ?? null,
-        inTransitAt: f.inTransitAt ?? null,
-        tracking:
-          f.trackingInfo?.map((t) => ({
-            company: t.company ?? null,
-            number: t.number ?? null,
-            url: t.url ?? null,
-          })) ?? [],
-      })) ?? [];
-
-    const refunds: VoiceOrderRefundDto[] =
-      node.refunds?.map((r) => ({
-        createdAt: r.createdAt ?? new Date(0).toISOString(),
-        amount: r.totalRefundedSet?.shopMoney?.amount ?? null,
-        currency: r.totalRefundedSet?.shopMoney?.currencyCode ?? null,
-        note: r.note ?? null,
-      })) ?? [];
-
-    const shipping = node.shippingAddress;
-    const paymentCard = resolvePaymentCard(node);
-
-    return {
-      id: node.legacyResourceId ?? node.id ?? '',
-      orderNumber: node.name ?? '',
-      createdAt: node.createdAt ?? '',
-      financialStatus: node.displayFinancialStatus ?? null,
-      fulfillmentStatus: node.displayFulfillmentStatus ?? null,
-      cancelledAt: node.cancelledAt ?? null,
-      cancelReason: node.cancelReason ?? null,
-      totalPrice: money?.amount ?? null,
-      currency: money?.currencyCode ?? null,
-      customerName: node.customer?.displayName ?? null,
-      customerEmail: node.customer?.email ?? node.email ?? null,
-      customerPhone: node.customer?.phone ?? node.phone ?? null,
-      shippingAddress: shipping
-        ? {
-            name: shipping.name ?? null,
-            address1: shipping.address1 ?? null,
-            address2: shipping.address2 ?? null,
-            city: shipping.city ?? null,
-            provinceCode: shipping.provinceCode ?? null,
-            zip: shipping.zip ?? null,
-            countryCode: shipping.countryCodeV2 ?? null,
-          }
-        : null,
-      lineItems,
-      fulfillments,
-      refunds,
-      paymentCardLast4: paymentCard.last4,
-      paymentCardBrand: paymentCard.brand,
-    };
-  }
-
-  private async resolveAgentContext(
-    tenantId?: string,
-    agentId?: string,
-  ): Promise<{ tenantId: string; agentId: string }> {
-    const envTenant = this.config.get<string>('VOICE_DEFAULT_TENANT_ID')?.trim();
-    const envAgent = this.config.get<string>('VOICE_DEFAULT_AGENT_ID')?.trim();
-
-    const resolvedTenant = tenantId?.trim() || envTenant;
-    const resolvedAgent = agentId?.trim() || envAgent;
-
-    if (resolvedTenant && resolvedAgent) {
-      return { tenantId: resolvedTenant, agentId: resolvedAgent };
-    }
-
-    const agent = await this.prisma.agent.findFirst({
-      where: { deletedAt: null, status: { in: [AgentStatus.ACTIVE, AgentStatus.READY] } },
-      orderBy: { updatedAt: 'desc' },
-      select: { id: true, tenantId: true },
-    });
-    if (!agent) {
-      throw new BadRequestException(
-        'No agent context. Provide tenantId/agentId or set VOICE_DEFAULT_TENANT_ID and VOICE_DEFAULT_AGENT_ID.',
-      );
-    }
-    return { tenantId: resolvedTenant ?? agent.tenantId, agentId: resolvedAgent ?? agent.id };
-  }
+function maskCallerPhone(value: string): string {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length <= 4) return '****';
+  return `***${digits.slice(-4)}`;
 }
