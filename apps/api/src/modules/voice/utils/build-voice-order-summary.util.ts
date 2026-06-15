@@ -76,8 +76,9 @@ function describeFulfillment(order: VoiceOrderDetailDto): string {
 }
 
 function describeLineItems(order: VoiceOrderDetailDto): string {
-  if (!order.lineItems.length) return '';
-  const items = order.lineItems.map((line) => {
+  const filtered = order.lineItems.filter((line) => !/processing\s+fee/i.test(line.title));
+  if (!filtered.length) return '';
+  const items = filtered.map((line) => {
     const variant = line.variantTitle ? ` (${line.variantTitle})` : '';
     const qty = line.quantity > 1 ? `${line.quantity} copies of ` : '';
     return `${qty}${line.title}${variant}`;

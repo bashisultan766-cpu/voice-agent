@@ -3,6 +3,7 @@ import type { ExtendedOrderLineItem, ExtendedOrderSnapshot } from '../services/v
 import { resolveInventoryStatus } from './voice-inventory-status.util';
 import { normalizeShippingMethod } from '../services/voice-shipping.service';
 import { SUBTOTAL_DISCLAIMER, sanitizeCustomerFacingText } from './voice-agent-language.util';
+import { partitionCustomerFacingLineItems } from './sanitize-voice-commerce-response.util';
 
 export type OrderItemStatus = {
   title: string;
@@ -21,8 +22,9 @@ export function classifyOrderLineItems(
 } {
   const backorder: OrderItemStatus[] = [];
   const outOfStock: OrderItemStatus[] = [];
+  const customerFacingItems = partitionCustomerFacingLineItems(items).customerFacing;
 
-  for (const line of items) {
+  for (const line of customerFacingItems) {
     const override = findCatalogInventoryOverride(line.title);
     const note = order.note?.toLowerCase() ?? '';
     const isBackorderNote = note.includes('backorder') || note.includes('back order');

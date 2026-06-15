@@ -281,6 +281,56 @@ test('13. one restricted book on order is identified', async () => {
   assert.match(result.restricted_items[0].reason, /Hardcover/i);
 });
 
+test('13b. processing fee line is excluded from facility restriction items', async () => {
+  const restrictions = new FacilityRestrictionService(
+    {
+      lookupOrder: async () => ({
+        ...sampleOrder(),
+        extendedLineItems: [
+          {
+            title: 'Paperback Novel',
+            quantity: 1,
+            sku: 'PB1',
+            variantTitle: 'Paperback',
+            unfulfilledQuantity: 1,
+            fulfillableQuantity: 1,
+            productTags: [],
+          },
+          {
+            title: 'Processing Fee',
+            quantity: 1,
+            sku: null,
+            variantTitle: null,
+            unfulfilledQuantity: 0,
+            fulfillableQuantity: 0,
+            productTags: [],
+          },
+        ],
+        subtotalWithoutShipping: '20',
+        shippingCost: null,
+        shippingMethodTitle: null,
+        shippingCarrier: null,
+        orderStatus: 'open',
+        refundStatus: null,
+        isShipped: false,
+        isCancelled: false,
+        isRefunded: false,
+        note: null,
+      }),
+    } as never,
+    new FacilityApprovalService(),
+  );
+
+  const result = await restrictions.checkOrderFacilityRestrictions({
+    orderNumber: '1001',
+    facilityName: 'San Quentin State Prison',
+  });
+  const json = JSON.stringify(result);
+  assert.doesNotMatch(json, /processing fee/i);
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0]?.title, 'Paperback Novel');
+});
+
 test('14. backorder items are explained correctly', () => {
   const order = {
     note: 'customer ok with backorder',

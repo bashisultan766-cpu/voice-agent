@@ -20,6 +20,11 @@ import {
   resolveOrderShippingMethodLabel,
 } from './utils/voice-order-enrichment.util';
 import { SUBTOTAL_DISCLAIMER, maskTrackingNumber, sanitizeCustomerFacingText } from './utils/voice-agent-language.util';
+import {
+  isHiddenInternalLineItem,
+  partitionCustomerFacingLineItems,
+  sanitizeVoiceCommerceResponse,
+} from './utils/sanitize-voice-commerce-response.util';
 
 @Injectable()
 export class VoiceOrderService {
@@ -69,12 +74,13 @@ export class VoiceOrderService {
             latencyMs,
           }),
         );
-        return {
+        return sanitizeVoiceCommerceResponse({
           success: true,
           found: false,
           voiceSummary: notFoundSummary,
+          suggested_response: notFoundSummary,
           latencyMs,
-        };
+        });
       }
 
       const verification = resolveVerificationFlags({
@@ -82,13 +88,24 @@ export class VoiceOrderService {
         customerPhone: order.customerPhone,
         orderFound: true,
       });
-      const maskedFields = buildMaskedOrderFields(order, verification);
-      const privacyOrder = applyPrivacyToOrder(order, verification);
-      const refundSummary = buildRefundOrderSummary(order, verification, maskedFields);
+      const { customerFacing: customerFacingLineItems, hiddenCount: hiddenInternalItemsCount } =
+        partitionCustomerFacingLineItems(order.lineItems);
+      const { customerFacing: customerFacingExtendedLineItems } = partitionCustomerFacingLineItems(
+        order.extendedLineItems,
+      );
+      const customerOrder: typeof order = {
+        ...order,
+        lineItems: customerFacingLineItems,
+        extendedLineItems: customerFacingExtendedLineItems,
+      };
+
+      const maskedFields = buildMaskedOrderFields(customerOrder, verification);
+      const privacyOrder = applyPrivacyToOrder(customerOrder, verification);
+      const refundSummary = buildRefundOrderSummary(customerOrder, verification, maskedFields);
 
       const { backorder_items, out_of_stock_items } = classifyOrderLineItems(
-        order.extendedLineItems,
-        order,
+        customerFacingExtendedLineItems,
+        customerOrder,
       );
 
       const cancellation = await this.cancellation.checkCancellationEligibility({
@@ -103,42 +120,46 @@ export class VoiceOrderService {
         agentId: args.agentId,
       });
 
-      const shippingMethod = resolveOrderShippingMethodLabel(order);
-      const tracking = order.fulfillments[0]?.tracking?.find((t) => t.number);
+      const shippingMethod = resolveOrderShippingMethodLabel(customerOrder);
+      const tracking = customerOrder.fulfillments[0]?.tracking?.find((t) => t.number);
       const allowFullTracking = verification.verified_level === 'full';
 
       const enriched: VoiceOrderEnrichedFields = {
-        order_number: order.orderNumber,
-        order_status: order.orderStatus,
-        fulfillment_status: order.fulfillmentStatus,
-        financial_status: order.financialStatus,
-        refund_status: order.refundStatus,
+        order_number: customerOrder.orderNumber,
+        order_status: customerOrder.orderStatus,
+        fulfillment_status: customerOrder.fulfillmentStatus,
+        financial_status: customerOrder.financialStatus,
+        refund_status: customerOrder.refundStatus,
         subtotal_without_shipping: order.subtotalWithoutShipping,
         shipping_cost: order.shippingCost,
         subtotal_disclaimer: SUBTOTAL_DISCLAIMER,
         shipping_method: shippingMethod,
-        carrier: tracking?.company ?? order.shippingCarrier,
-        tracking_status: order.isShipped ? 'shipped' : 'not_shipped',
+        carrier: tracking?.company ?? customerOrder.shippingCarrier,
+        tracking_status: customerOrder.isShipped ? 'shipped' : 'not_shipped',
         tracking_number_masked: allowFullTracking
           ? tracking?.number ?? null
           : maskTrackingNumber(tracking?.number),
-        items: order.lineItems,
+        items: customerFacingLineItems,
+        customer_facing_items: customerFacingLineItems,
+        hidden_internal_items_count: hiddenInternalItemsCount,
         backorder_items,
         out_of_stock_items,
-        facility_restricted_items: facilityCheck.restricted_items.map((i) => ({
-          title: i.title,
-          sku: i.sku,
-          status: i.status,
-          reason: i.reason,
-        })),
+        facility_restricted_items: facilityCheck.restricted_items
+          .filter((i) => !isHiddenInternalLineItem(i.title))
+          .map((i) => ({
+            title: i.title,
+            sku: i.sku,
+            status: i.status,
+            reason: i.reason,
+          })),
         cancellation_eligible: cancellation.cancellation_eligible,
         cancellation_reason: cancellation.reason,
         cancellation_next_step: cancellation.next_step,
       };
 
-      const baseSummary = buildPrivacyAwareVoiceOrderSummary(order, verification, maskedFields);
+      const baseSummary = buildPrivacyAwareVoiceOrderSummary(customerOrder, verification, maskedFields);
       const enrichedSummary = buildEnrichedOrderVoiceSummary({
-        order,
+        order: customerOrder,
         backorderItems: backorder_items,
         outOfStockItems: out_of_stock_items,
         cancellationEligible: cancellation.cancellation_eligible,
@@ -175,7 +196,7 @@ export class VoiceOrderService {
         }),
       );
 
-      return {
+      return sanitizeVoiceCommerceResponse({
         success: true,
         found: true,
         order: privacyOrder,
@@ -186,8 +207,13 @@ export class VoiceOrderService {
         voiceSummary,
         suggested_response: voiceSummary,
         privacyModeApplied: true,
+        customer_facing_items: customerFacingLineItems,
+        hidden_internal_items_count: hiddenInternalItemsCount,
+        subtotal_without_shipping: order.subtotalWithoutShipping,
+        shipping_cost: order.shippingCost,
+        subtotal_disclaimer: SUBTOTAL_DISCLAIMER,
         latencyMs,
-      };
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
@@ -197,7 +223,7 @@ export class VoiceOrderService {
           latencyMs: Date.now() - started,
         }),
       );
-      return {
+      return sanitizeVoiceCommerceResponse({
         success: false,
         found: false,
         error: message,
@@ -206,7 +232,7 @@ export class VoiceOrderService {
         suggested_response:
           'I could not look up that order right now. I will connect you with customer service.',
         latencyMs: Date.now() - started,
-      };
+      });
     }
   }
 }

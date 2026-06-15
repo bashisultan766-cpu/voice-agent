@@ -25,6 +25,7 @@ import { VoiceAddressUpdateService } from './services/voice-address-update.servi
 import { VoiceCancellationService } from './services/voice-cancellation.service';
 import { VoiceEscalationService } from './services/voice-escalation.service';
 import { VoiceCallDiagnosticsService } from './services/voice-call-diagnostics.service';
+import { toVoiceCommerceResponse } from './utils/sanitize-voice-commerce-response.util';
 
 class CatalogSearchBodyDto {
   @IsOptional()
@@ -148,36 +149,40 @@ export class VoiceCommerceController {
   @SkipThrottle()
   @UseGuards(VoiceApiKeyGuard)
   @Post('catalog-search')
-  catalogSearch(@Body() body: CatalogSearchBodyDto & Record<string, unknown>) {
+  async catalogSearch(@Body() body: CatalogSearchBodyDto & Record<string, unknown>) {
     const flat = flattenElevenLabsToolBody(body);
     const query = pickString(flat, ['query', 'title', 'isbn', 'sku', 'search']) ?? body.query;
     if (!query) throw new BadRequestException('query is required in parameters.');
     const callSid = resolveCallSidFromToolBody(body);
-    return this.catalog.searchCatalog({
-      query,
-      callerPhone: resolvePhoneNumberFromToolBody(body),
-      callSid,
-      tenantId: pickString(flat, ['tenantId', 'tenant_id']),
-      agentId: pickString(flat, ['agentId', 'agent_id']),
-    });
+    return toVoiceCommerceResponse(
+      await this.catalog.searchCatalog({
+        query,
+        callerPhone: resolvePhoneNumberFromToolBody(body),
+        callSid,
+        tenantId: pickString(flat, ['tenantId', 'tenant_id']),
+        agentId: pickString(flat, ['agentId', 'agent_id']),
+      }),
+    );
   }
 
   @Public()
   @SkipThrottle()
   @UseGuards(VoiceApiKeyGuard)
   @Post('calculate-pricing')
-  calculatePricing(@Body() body: CalculatePricingBodyDto & Record<string, unknown>) {
+  async calculatePricing(@Body() body: CalculatePricingBodyDto & Record<string, unknown>) {
     const flat = flattenElevenLabsToolBody(body);
     const orderNumber = pickString(flat, ['order_number', 'orderNumber', 'order']);
     const callSid = resolveCallSidFromToolBody(body);
-    return this.pricing.calculatePricing({
-      orderNumber,
-      shippingMethod: pickString(flat, ['shipping_method', 'shippingMethod']),
-      destinationZip: pickString(flat, ['destination_zip', 'destinationZip', 'zip']),
-      tenantId: pickString(flat, ['tenantId', 'tenant_id']),
-      agentId: pickString(flat, ['agentId', 'agent_id']),
-      callSid,
-    });
+    return toVoiceCommerceResponse(
+      await this.pricing.calculatePricing({
+        orderNumber,
+        shippingMethod: pickString(flat, ['shipping_method', 'shippingMethod']),
+        destinationZip: pickString(flat, ['destination_zip', 'destinationZip', 'zip']),
+        tenantId: pickString(flat, ['tenantId', 'tenant_id']),
+        agentId: pickString(flat, ['agentId', 'agent_id']),
+        callSid,
+      }),
+    );
   }
 
   @Public()
@@ -200,17 +205,19 @@ export class VoiceCommerceController {
   @SkipThrottle()
   @UseGuards(VoiceApiKeyGuard)
   @Post('check-order-facility-restrictions')
-  checkOrderFacilityRestrictions(@Body() body: OrderFacilityRestrictionsBodyDto & Record<string, unknown>) {
+  async checkOrderFacilityRestrictions(@Body() body: OrderFacilityRestrictionsBodyDto & Record<string, unknown>) {
     const flat = flattenElevenLabsToolBody(body);
     const orderNumber = pickString(flat, ['order_number', 'orderNumber', 'order']);
     if (!orderNumber) throw new BadRequestException('order_number is required.');
-    return this.facilityRestrictions.checkOrderFacilityRestrictions({
-      orderNumber,
-      facilityName: pickString(flat, ['facility_name', 'facilityName']),
-      tenantId: pickString(flat, ['tenantId', 'tenant_id']),
-      agentId: pickString(flat, ['agentId', 'agent_id']),
-      callSid: resolveCallSidFromToolBody(body),
-    });
+    return toVoiceCommerceResponse(
+      await this.facilityRestrictions.checkOrderFacilityRestrictions({
+        orderNumber,
+        facilityName: pickString(flat, ['facility_name', 'facilityName']),
+        tenantId: pickString(flat, ['tenantId', 'tenant_id']),
+        agentId: pickString(flat, ['agentId', 'agent_id']),
+        callSid: resolveCallSidFromToolBody(body),
+      }),
+    );
   }
 
   @Public()
@@ -230,16 +237,18 @@ export class VoiceCommerceController {
   @SkipThrottle()
   @UseGuards(VoiceApiKeyGuard)
   @Post('cancel-order-request')
-  cancelOrderRequest(@Body() body: CancelOrderBodyDto & Record<string, unknown>) {
+  async cancelOrderRequest(@Body() body: CancelOrderBodyDto & Record<string, unknown>) {
     const flat = flattenElevenLabsToolBody(body);
     const orderNumber = pickString(flat, ['order_number', 'orderNumber', 'order']);
     if (!orderNumber) throw new BadRequestException('order_number is required.');
-    return this.cancellation.checkCancellationEligibility({
-      orderNumber,
-      tenantId: pickString(flat, ['tenantId', 'tenant_id']),
-      agentId: pickString(flat, ['agentId', 'agent_id']),
-      callSid: resolveCallSidFromToolBody(body),
-    });
+    return toVoiceCommerceResponse(
+      await this.cancellation.checkCancellationEligibility({
+        orderNumber,
+        tenantId: pickString(flat, ['tenantId', 'tenant_id']),
+        agentId: pickString(flat, ['agentId', 'agent_id']),
+        callSid: resolveCallSidFromToolBody(body),
+      }),
+    );
   }
 
   @Public()
@@ -253,13 +262,15 @@ export class VoiceCommerceController {
     if (reason === 'call_cutoff' && callSid) {
       this.diagnostics.recordCustomerReportedCutoff(callSid);
     }
-    return this.escalation.escalate({
-      reason,
-      summary: pickString(flat, ['summary', 'notes']),
-      orderNumber: pickString(flat, ['order_number', 'orderNumber']),
-      callerPhone: resolvePhoneNumberFromToolBody(body),
-      callSid,
-    });
+    return toVoiceCommerceResponse(
+      this.escalation.escalate({
+        reason,
+        summary: pickString(flat, ['summary', 'notes']),
+        orderNumber: pickString(flat, ['order_number', 'orderNumber']),
+        callerPhone: resolvePhoneNumberFromToolBody(body),
+        callSid,
+      }),
+    );
   }
 
   @Public()

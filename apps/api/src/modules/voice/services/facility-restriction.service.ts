@@ -3,6 +3,7 @@ import { VoiceOrderLookupService } from './voice-order-lookup.service';
 import { FacilityApprovalService } from './facility-approval.service';
 import { findCatalogInventoryOverride } from '../data/voice-catalog-overrides.data';
 import { sanitizeCustomerFacingText } from '../utils/voice-agent-language.util';
+import { partitionCustomerFacingLineItems } from '../utils/sanitize-voice-commerce-response.util';
 
 export type FacilityItemRestriction = {
   title: string;
@@ -98,7 +99,8 @@ export class FacilityRestrictionService {
       });
 
       const rules = approval.rules;
-      const items: FacilityItemRestriction[] = order.extendedLineItems.map((line) => {
+      const customerFacingLines = partitionCustomerFacingLineItems(order.extendedLineItems).customerFacing;
+      const items: FacilityItemRestriction[] = customerFacingLines.map((line) => {
         const format = detectBookFormat(line.title, line.variantTitle);
         const override = findCatalogInventoryOverride(line.title);
 

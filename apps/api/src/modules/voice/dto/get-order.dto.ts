@@ -143,6 +143,8 @@ export type VoiceOrderEnrichedFields = {
   cancellation_eligible: boolean;
   cancellation_reason?: string;
   cancellation_next_step?: string;
+  customer_facing_items: VoiceOrderLineItemDto[];
+  hidden_internal_items_count: number;
 };
 
 export type GetOrderResponseDto = {
@@ -158,4 +160,9 @@ export type GetOrderResponseDto = {
   maskedFields?: MaskedOrderFields;
   refundSummary?: VoiceOrderRefundSummary;
   privacyModeApplied?: boolean;
+  customer_facing_items?: VoiceOrderLineItemDto[];
+  hidden_internal_items_count?: number;
+  subtotal_without_shipping?: string | null;
+  shipping_cost?: string | null;
+  subtotal_disclaimer?: string;
 };

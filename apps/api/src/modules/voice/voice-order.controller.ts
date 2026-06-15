@@ -6,6 +6,7 @@ import { VoiceOrderService } from './voice-order.service';
 import { VoiceApiKeyGuard } from './guards/voice-api-key.guard';
 import { flattenElevenLabsToolBody, resolvePhoneNumberFromToolBody } from './utils/parse-elevenlabs-tool-body.util';
 import { resolveVoiceOrderQuery } from './utils/resolve-voice-order-query.util';
+import { toVoiceCommerceResponse } from './utils/sanitize-voice-commerce-response.util';
 
 /**
  * Order lookup for ElevenLabs Conversational AI server tools.
@@ -20,26 +21,28 @@ export class VoiceOrderController {
   @SkipThrottle()
   @UseGuards(VoiceApiKeyGuard)
   @Get('get-order')
-  getOrder(@Query() query: GetOrderQueryDto) {
+  async getOrder(@Query() query: GetOrderQueryDto) {
     const orderNumber = resolveVoiceOrderQuery(query);
     if (!orderNumber) {
       throw new BadRequestException(
         'order_number is required (or orderNumber, order, name, query). Example: ?order_number=1010',
       );
     }
-    return this.voiceOrder.getOrder({
-      orderNumber,
-      tenantId: query.tenantId,
-      agentId: query.agentId,
-      callerPhone: query.callerPhone ?? query.caller_phone,
-    });
+    return toVoiceCommerceResponse(
+      await this.voiceOrder.getOrder({
+        orderNumber,
+        tenantId: query.tenantId,
+        agentId: query.agentId,
+        callerPhone: query.callerPhone ?? query.caller_phone,
+      }),
+    );
   }
 
   @Public()
   @SkipThrottle()
   @UseGuards(VoiceApiKeyGuard)
   @Post('get-order')
-  postGetOrder(@Body() body: GetOrderQueryDto & Record<string, unknown>) {
+  async postGetOrder(@Body() body: GetOrderQueryDto & Record<string, unknown>) {
     const flat = flattenElevenLabsToolBody(body);
     const orderNumber = resolveVoiceOrderQuery(flat) ?? resolveVoiceOrderQuery(body);
     if (!orderNumber) {
@@ -62,11 +65,13 @@ export class VoiceOrderController {
       (typeof body.callerPhone === 'string' && body.callerPhone) ||
       (typeof body.caller_phone === 'string' && body.caller_phone);
 
-    return this.voiceOrder.getOrder({
-      orderNumber,
-      tenantId: typeof tenantId === 'string' ? tenantId : undefined,
-      agentId: typeof agentId === 'string' ? agentId : undefined,
-      callerPhone: typeof callerPhone === 'string' ? callerPhone : undefined,
-    });
+    return toVoiceCommerceResponse(
+      await this.voiceOrder.getOrder({
+        orderNumber,
+        tenantId: typeof tenantId === 'string' ? tenantId : undefined,
+        agentId: typeof agentId === 'string' ? agentId : undefined,
+        callerPhone: typeof callerPhone === 'string' ? callerPhone : undefined,
+      }),
+    );
   }
 }
