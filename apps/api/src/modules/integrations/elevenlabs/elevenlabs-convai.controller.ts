@@ -72,6 +72,7 @@ export class ElevenLabsConvaiController {
     const lastTwiml = this.lastTwimlDebug.getLast();
     const lastStatus = this.lastTwimlDebug.getLastStatus();
     const recentBridge = this.callDiagnostics.getMostRecentBridgeSnapshot();
+    const skipCallerLookup = this.registerCall.isSkipCallerLookup();
     const postTwimlLikelyIssue =
       this.lastTwimlDebug.isPostTwiml31921Issue() ||
       Boolean(recentBridge?.postTwimlLikelyIssue);
@@ -90,6 +91,12 @@ export class ElevenLabsConvaiController {
       debugTwimlEnabled,
       forceBranchId,
       disableMinimalOn31921Flag,
+      skipCallerLookup,
+      latencyTips: [
+        'Set ELEVENLABS_SKIP_CALLER_LOOKUP=true to skip 1–8s DB lookup before agent connects.',
+        'ElevenLabs dashboard: use Flash/low-latency voice model and μ-law 8000 Hz.',
+        'Agent prompt: greet FIRST, call GetCallerInfo AFTER — do not wait for tools before speaking.',
+      ],
       expectedTtsFormat: 'mu-law 8000 Hz',
       postTwimlLikelyIssue,
       last_twiml_has_stream: lastTwiml?.hasStream ?? recentBridge?.twimlHasStream ?? null,

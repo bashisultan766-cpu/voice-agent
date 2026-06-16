@@ -163,6 +163,17 @@ export class ElevenLabsTwilioRegisterCallService {
     );
   }
 
+  /**
+   * Skip blocking returning-caller DB/Shopify/3CX lookup before register-call.
+   * Cuts 1–8s inbound delay; agent still gets call_sid, caller_phone, order_number.
+   */
+  isSkipCallerLookup(): boolean {
+    return (
+      this.config.get<string>('ELEVENLABS_SKIP_CALLER_LOOKUP')?.trim() === 'true' ||
+      process.env.ELEVENLABS_SKIP_CALLER_LOOKUP?.trim() === 'true'
+    );
+  }
+
   /** Include branch_id when branch is configured and not in minimal mode, or when forced. */
   shouldAttachBranchId(): boolean {
     const branchId = this.resolveBranchId();

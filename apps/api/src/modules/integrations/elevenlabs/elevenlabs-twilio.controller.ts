@@ -343,8 +343,17 @@ export class ElevenLabsTwilioController {
 
     let prepared = null as Awaited<ReturnType<ReturningCallerService['prepareInboundCall']>> | null;
 
+    const skipCallerLookup = this.registerCall.isSkipCallerLookup();
 
-
+    if (skipCallerLookup) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'elevenlabs_skip_caller_lookup',
+          callSid: CallSid,
+          reason: 'ELEVENLABS_SKIP_CALLER_LOOKUP=true — fast inbound, no DB/Shopify wait',
+        }),
+      );
+    } else {
     try {
 
       const lookupStarted = Date.now();
@@ -403,6 +412,7 @@ export class ElevenLabsTwilioController {
 
       );
 
+    }
     }
 
 
