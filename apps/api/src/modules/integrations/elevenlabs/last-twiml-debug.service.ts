@@ -90,9 +90,14 @@ export class LastTwimlDebugService {
   }
 
   isPostTwiml31921Issue(): boolean {
+    const duration = this.lastStatus?.callDuration
+      ? Number.parseInt(this.lastStatus.callDuration, 10)
+      : null;
     return isPostTwimlStreamIssue({
       twimlHasStream: Boolean(this.snapshot?.hasStream),
       errorCode: this.lastStatus?.errorCode,
+      callDurationSeconds: Number.isFinite(duration) ? duration : null,
+      callStatus: this.lastStatus?.callStatus,
     });
   }
 

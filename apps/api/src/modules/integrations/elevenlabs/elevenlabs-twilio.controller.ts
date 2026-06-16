@@ -17,11 +17,19 @@ import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-registe
 import { LastTwimlDebugService } from './last-twiml-debug.service';
 import { ReturningCallerService } from './returning-caller.service';
 import { VoiceCallDiagnosticsService } from '../../voice/services/voice-call-diagnostics.service';
-import { parseTwilioVoiceStatusBody } from '../../voice/utils/twilio-voice-status-callback.util';
 import {
+  listTwilioStatusCallbackKeys,
+  parseTwilioVoiceStatusBody,
+} from '../../voice/utils/twilio-voice-status-callback.util';
+import {
+  inferTwilio31921FromStatus,
   isTwilioStreamWebSocketCloseError,
   TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION,
 } from './utils/twilio-media-stream-error.util';
+import {
+  extractConversationIdFromTwiml,
+  twimlStructureFlags,
+} from './utils/twiml-sanitize.util';
 
 
 
@@ -169,13 +177,40 @@ export class ElevenLabsTwilioController {
 
     this.logger.log(JSON.stringify(statusPayload));
 
-    if (isTwilioStreamWebSocketCloseError(parsed.ErrorCode)) {
+    const recentDiag = this.callDiagnostics.getDiagnostics(parsed.CallSid);
+    const inferred31921 = inferTwilio31921FromStatus({
+      twimlHasStream: Boolean(recentDiag?.twiml_has_stream),
+      errorCode: parsed.ErrorCode,
+      callDurationSeconds: parsed.CallDuration
+        ? Number.parseInt(parsed.CallDuration, 10)
+        : null,
+      callStatus: parsed.CallStatus,
+    });
+
+    if (
+      inferred31921 &&
+      !isTwilioStreamWebSocketCloseError(parsed.ErrorCode)
+    ) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs.twilio.call_status_missing_error_code',
+          CallSid: parsed.CallSid,
+          CallDuration: parsed.CallDuration ?? null,
+          callbackKeys: listTwilioStatusCallbackKeys(body),
+          note: 'Twilio Debugger may show 31921 while call-status POST omits ErrorCode — issue inferred from short Stream call.',
+        }),
+      );
+    }
+
+    if (inferred31921) {
       this.logger.error(
         JSON.stringify({
           ...statusPayload,
           event: 'elevenlabs_stream_websocket_close_error',
           explanation: TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION,
-          postTwimlLikelyIssue: this.lastTwimlDebug.isPostTwiml31921Issue(),
+          inferred: !isTwilioStreamWebSocketCloseError(parsed.ErrorCode),
+          postTwimlLikelyIssue: true,
+          conversationId: recentDiag?.elevenlabs_conversation_id ?? null,
         }),
       );
     }
@@ -384,6 +419,11 @@ export class ElevenLabsTwilioController {
       });
 
       const twimlBytes = twiml.length;
+      const twimlFlags = twimlStructureFlags(twiml);
+      const conversationId = extractConversationIdFromTwiml(twiml);
+
+      this.lastTwimlDebug.record({ callSid: CallSid, twiml });
+
       this.callDiagnostics.recordRegisterCallResult({
         callSid: CallSid,
         success: true,
@@ -394,6 +434,9 @@ export class ElevenLabsTwilioController {
       this.callDiagnostics.recordTwimlSent({
         callSid: CallSid,
         twimlBytes,
+        twimlHasStream: twimlFlags.hasStream,
+        twimlHasConnect: twimlFlags.hasConnect,
+        conversationId,
         personalizedGreeting: prepared?.initiation.personalized ?? false,
         callerRecognized: prepared?.lookup.callerRecognized ?? false,
         totalElapsedMs: Date.now() - inboundStarted,
@@ -407,6 +450,8 @@ export class ElevenLabsTwilioController {
           personalizedGreeting: prepared?.initiation.personalized ?? false,
           totalElapsedMs: Date.now() - inboundStarted,
           twimlBytes,
+          twimlHasStream: twimlFlags.hasStream,
+          conversationId,
           contentType: 'text/xml; charset=utf-8',
         }),
       );

@@ -26,3 +26,24 @@ test('postTwimlStreamIssue requires Stream TwiML and error 31921', () => {
     false,
   );
 });
+
+test('postTwimlStreamIssue infers from short completed Stream call without ErrorCode', () => {
+  assert.equal(
+    isPostTwimlStreamIssue({
+      twimlHasStream: true,
+      errorCode: null,
+      callDurationSeconds: 8,
+      callStatus: 'completed',
+    }),
+    true,
+  );
+  assert.equal(
+    isPostTwimlStreamIssue({
+      twimlHasStream: true,
+      errorCode: null,
+      callDurationSeconds: 45,
+      callStatus: 'completed',
+    }),
+    false,
+  );
+});

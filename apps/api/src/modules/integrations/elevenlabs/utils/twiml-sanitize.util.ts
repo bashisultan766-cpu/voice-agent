@@ -1,4 +1,10 @@
-/** Flags for ElevenLabs/Twilio bridge TwiML structure checks. */
+/** Extract conv_... id from ElevenLabs register-call Stream TwiML. */
+export function extractConversationIdFromTwiml(twiml: string): string | null {
+  const match =
+    twiml.match(/name=["']conversation_id["'][^>]*value=["']([^"']+)["']/i) ??
+    twiml.match(/conversation_id["\s]*value=["']([^"']+)["']/i);
+  return match?.[1]?.trim() || null;
+}
 export function twimlStructureFlags(twiml: string): {
   hasConnect: boolean;
   hasConversation: boolean;

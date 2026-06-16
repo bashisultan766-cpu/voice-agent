@@ -75,6 +75,33 @@ test('records Twilio 31921 stream WebSocket close with stream error fields', () 
   assert.match(snapshot?.likely_reason ?? '', /ElevenLabs closed the stream/i);
 });
 
+test('infers 31921 when call-status omits ErrorCode but Stream TwiML ended quickly', () => {
+  const diag = new VoiceCallDiagnosticsService();
+  const callSid = 'CA_test_inferred_31921';
+
+  diag.recordTwimlSent({
+    callSid,
+    twimlBytes: 320,
+    twimlHasStream: true,
+    twimlHasConnect: true,
+    conversationId: 'conv_test_inferred',
+  });
+  diag.recordTwilioStatusCallback({
+    callSid,
+    callStatus: 'completed',
+    callDuration: '8',
+  });
+
+  const snapshot = diag.getDiagnostics(callSid);
+  assert.equal(snapshot?.twiml_has_stream, true);
+  assert.equal(snapshot?.inferred_twilio_31921, true);
+  assert.equal(snapshot?.likely_failure_stage, 'likely_post_twiml_disconnect');
+
+  const recent = diag.getMostRecentBridgeSnapshot();
+  assert.equal(recent?.postTwimlLikelyIssue, true);
+  assert.equal(recent?.conversationId, 'conv_test_inferred');
+});
+
 test('get-order style json never includes full phone in events', () => {
   const diag = new VoiceCallDiagnosticsService();
   const callSid = 'CA_test_mask_phone';

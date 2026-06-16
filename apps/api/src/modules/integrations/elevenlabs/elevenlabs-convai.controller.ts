@@ -8,6 +8,7 @@ import {
 import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-register-call.service';
 import { LastTwimlDebugService } from './last-twiml-debug.service';
 import { buildElevenLabsEricAgentConfig } from './elevenlabs-convai-eric.config';
+import { VoiceCallDiagnosticsService } from '../../voice/services/voice-call-diagnostics.service';
 
 function maskAgentId(agentId: string): string {
   if (agentId.length <= 12) return agentId;
@@ -25,6 +26,7 @@ export class ElevenLabsConvaiController {
     private readonly config: ConfigService,
     private readonly registerCall: ElevenLabsTwilioRegisterCallService,
     private readonly lastTwimlDebug: LastTwimlDebugService,
+    private readonly callDiagnostics: VoiceCallDiagnosticsService,
   ) {}
 
   @Get('agent-config')
@@ -69,7 +71,10 @@ export class ElevenLabsConvaiController {
     const disableMinimalOn31921Flag = this.registerCall.isDisableMinimalOn31921FlagSet();
     const lastTwiml = this.lastTwimlDebug.getLast();
     const lastStatus = this.lastTwimlDebug.getLastStatus();
-    const postTwimlLikelyIssue = this.lastTwimlDebug.isPostTwiml31921Issue();
+    const recentBridge = this.callDiagnostics.getMostRecentBridgeSnapshot();
+    const postTwimlLikelyIssue =
+      this.lastTwimlDebug.isPostTwiml31921Issue() ||
+      Boolean(recentBridge?.postTwimlLikelyIssue);
 
     return {
       ok: hasApiKey,
@@ -87,8 +92,14 @@ export class ElevenLabsConvaiController {
       disableMinimalOn31921Flag,
       expectedTtsFormat: 'mu-law 8000 Hz',
       postTwimlLikelyIssue,
-      last_twiml_has_stream: lastTwiml?.hasStream ?? null,
-      last_status_error_code: lastStatus?.errorCode ?? null,
+      last_twiml_has_stream: lastTwiml?.hasStream ?? recentBridge?.twimlHasStream ?? null,
+      last_status_error_code: lastStatus?.errorCode ?? recentBridge?.twilioErrorCode ?? null,
+      last_call_sid: recentBridge?.callSid ?? lastTwiml?.callSid ?? null,
+      last_conversation_id: recentBridge?.conversationId ?? null,
+      last_call_duration_seconds: recentBridge?.callDurationSeconds ?? null,
+      inferred_twilio_31921: recentBridge?.inferred31921 ?? null,
+      twilio_31921_note:
+        'ErrorCode 31921 often appears only in Twilio Debugger — call-status POST may omit it. Backend infers from Stream TwiML + short completed call.',
       twilio_stream_error_31921:
         'Post-TwiML WebSocket close — Twilio opened ElevenLabs stream but ElevenLabs closed it.',
       recommended_test_modes: {
@@ -111,7 +122,7 @@ export class ElevenLabsConvaiController {
       },
       recommended_env_on_31921: disableMinimalOn31921Flag
         ? 'ELEVENLABS_DISABLE_MINIMAL_ON_31921 is set — manually switch to Mode B (minimal=false + branch + FORCE_BRANCH_ID=true), restart API, retest.'
-        : 'If ErrorCode 31921 persists in call-status: try Mode B env, verify ElevenLabs phone import and TTS μ-law 8000 Hz.',
+        : 'If ErrorCode 31921 persists: try Mode A (minimal, no branch), verify ElevenLabs phone import +2512554549 and TTS μ-law 8000 Hz.',
       twilio_inbound_webhook: `${publicBaseUrl}/api/elevenlabs/inbound`,
       twilio_call_status_webhook: `${publicBaseUrl}/api/elevenlabs/call-status`,
       last_twiml_debug: `${publicBaseUrl}/api/elevenlabs/convai/last-twiml`,
@@ -142,7 +153,8 @@ export class ElevenLabsConvaiController {
   @Get('last-twiml')
   lastTwiml() {
     const snapshot = this.lastTwimlDebug.getLast();
-    if (!snapshot) {
+    const recentBridge = this.callDiagnostics.getMostRecentBridgeSnapshot();
+    if (!snapshot && !recentBridge) {
       return {
         ok: false,
         message: 'No register-call TwiML recorded yet. Place a test call first.',
@@ -151,18 +163,22 @@ export class ElevenLabsConvaiController {
 
     return {
       ok: true,
-      callSid: snapshot.callSid,
-      timestamp: snapshot.timestamp,
-      twimlBytes: snapshot.twimlBytes,
-      hasConnect: snapshot.hasConnect,
-      hasConversation: snapshot.hasConversation,
-      hasStream: snapshot.hasStream,
-      contentType: snapshot.contentType,
-      twimlRepaired: snapshot.twimlRepaired,
-      repairReason: snapshot.repairReason,
-      sanitizedTwiml: snapshot.sanitizedTwiml,
+      callSid: snapshot?.callSid ?? recentBridge?.callSid ?? null,
+      timestamp: snapshot?.timestamp ?? recentBridge?.twimlSentAt ?? null,
+      twimlBytes: snapshot?.twimlBytes ?? null,
+      hasConnect: snapshot?.hasConnect ?? recentBridge?.twimlHasConnect ?? null,
+      hasConversation: snapshot?.hasConversation ?? null,
+      hasStream: snapshot?.hasStream ?? recentBridge?.twimlHasStream ?? null,
+      contentType: snapshot?.contentType ?? 'text/xml; charset=utf-8',
+      twimlRepaired: snapshot?.twimlRepaired ?? false,
+      repairReason: snapshot?.repairReason ?? null,
+      sanitizedTwiml: snapshot?.sanitizedTwiml ?? null,
+      conversationId: recentBridge?.conversationId ?? null,
       lastStatus: this.lastTwimlDebug.getLastStatus(),
-      postTwimlLikelyIssue: this.lastTwimlDebug.isPostTwiml31921Issue(),
+      postTwimlLikelyIssue:
+        this.lastTwimlDebug.isPostTwiml31921Issue() ||
+        Boolean(recentBridge?.postTwimlLikelyIssue),
+      recentBridge,
     };
   }
 }

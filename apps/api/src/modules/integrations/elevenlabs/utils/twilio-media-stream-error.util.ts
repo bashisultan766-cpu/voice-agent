@@ -18,6 +18,34 @@ export function isTwilioStreamWebSocketCloseError(errorCode: string | null | und
 export function isPostTwimlStreamIssue(args: {
   twimlHasStream: boolean;
   errorCode: string | null | undefined;
+  callDurationSeconds?: number | null;
+  callStatus?: string | null;
+  quickDisconnectThresholdSeconds?: number;
 }): boolean {
-  return args.twimlHasStream && isTwilioStreamWebSocketCloseError(args.errorCode);
+  if (!args.twimlHasStream) return false;
+  if (isTwilioStreamWebSocketCloseError(args.errorCode)) return true;
+
+  const threshold = args.quickDisconnectThresholdSeconds ?? 12;
+  const duration = args.callDurationSeconds;
+  const status = args.callStatus?.trim().toLowerCase() ?? '';
+  const terminalQuick =
+    (status === 'completed' || status === 'failed') &&
+    duration != null &&
+    duration >= 0 &&
+    duration <= threshold;
+
+  // Twilio 31921 often appears only in Debugger — not in call-status POST body.
+  return terminalQuick;
+}
+
+export function inferTwilio31921FromStatus(args: {
+  twimlHasStream: boolean;
+  errorCode: string | null | undefined;
+  callDurationSeconds?: number | null;
+  callStatus?: string | null;
+}): boolean {
+  return (
+    isTwilioStreamWebSocketCloseError(args.errorCode) ||
+    isPostTwimlStreamIssue(args)
+  );
 }
