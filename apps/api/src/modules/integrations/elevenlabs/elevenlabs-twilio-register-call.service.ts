@@ -201,17 +201,25 @@ export class ElevenLabsTwilioRegisterCallService {
 
 
       if (initiation.firstMessage) {
+        const skipOverride =
+          this.config.get<string>('ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE')?.trim() === 'true' ||
+          process.env.ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE?.trim() === 'true';
 
-        conversationInitiation.conversation_config_override = {
-
-          agent: {
-
-            first_message: initiation.firstMessage,
-
-          },
-
-        };
-
+        if (!skipOverride) {
+          conversationInitiation.conversation_config_override = {
+            agent: {
+              first_message: initiation.firstMessage,
+            },
+          };
+        } else {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'elevenlabs_first_message_override_skipped',
+              callSid: input.callSid,
+              reason: 'ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE=true',
+            }),
+          );
+        }
       }
 
 
@@ -409,21 +417,16 @@ export class ElevenLabsTwilioRegisterCallService {
 
 
     this.logger.log(
-
       JSON.stringify({
-
         event: 'elevenlabs_register_call_success',
-
         status: res.status,
-
         latencyMs,
-
         twimlBytes: twiml.length,
-
+        twimlHasConnect: /<Connect/i.test(twiml),
+        twimlHasConversation: /Conversation/i.test(twiml),
+        agentId,
         callSid: input.callSid ?? null,
-
       }),
-
     );
 
 
