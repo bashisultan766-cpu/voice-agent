@@ -1,3 +1,8 @@
+import {
+  isTwilioStreamWebSocketCloseError,
+  TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION,
+} from '../../integrations/elevenlabs/utils/twilio-media-stream-error.util';
+
 /** Seconds after TwiML — shorter calls likely failed during ElevenLabs media connect. */
 export const QUICK_DISCONNECT_THRESHOLD_SECONDS = 12;
 
@@ -40,6 +45,10 @@ export function inferLikelyFailureStage(args: {
   callDurationSeconds: number | null;
   twilioErrorCode: string | null;
 }): LikelyFailureStage {
+  if (isTwilioStreamWebSocketCloseError(args.twilioErrorCode)) {
+    return 'likely_post_twiml_disconnect';
+  }
+
   const status = args.twilioFinalStatus?.toLowerCase() ?? null;
 
   if (status === 'failed') return 'twilio_failed';
@@ -77,6 +86,9 @@ export function buildLikelyDisconnectReason(stage: LikelyFailureStage, args: {
   callDurationSeconds: number | null;
   registerCallSuccess: boolean | null;
 }): string {
+  if (isTwilioStreamWebSocketCloseError(args.twilioErrorCode)) {
+    return `${TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION} Twilio error 31921 — check ElevenLabs agent publish, branch ID, phone import, and TTS μ-law 8000 Hz.`;
+  }
   if (args.twilioErrorMessage?.trim()) {
     return args.twilioErrorMessage.trim().slice(0, 240);
   }

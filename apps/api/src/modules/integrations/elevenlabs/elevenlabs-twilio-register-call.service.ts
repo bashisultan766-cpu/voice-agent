@@ -26,6 +26,12 @@ import {
 
 const REGISTER_CALL_URL = 'https://api.elevenlabs.io/v1/convai/twilio/register-call';
 
+/**
+ * ElevenLabs returns <Connect><Stream url="wss://api.elevenlabs.io/..."> TwiML.
+ * Twilio error 31921 means Twilio opened that WebSocket and ElevenLabs closed it —
+ * a post-TwiML agent/config issue, not malformed backend XML.
+ */
+
 const DEFAULT_CONVAI_AGENT_ID = 'agent_2401kswaf3cpegs890qs6jjcb00v';
 
 
@@ -133,6 +139,36 @@ export class ElevenLabsTwilioRegisterCallService {
       this.config.get<string>('ELEVENLABS_DEBUG_TWIML')?.trim() === 'true' ||
       process.env.ELEVENLABS_DEBUG_TWIML?.trim() === 'true'
     );
+  }
+
+  /**
+   * When true, always attach ELEVENLABS_CONVAI_BRANCH_ID to register-call when set.
+   * In minimal mode this sends conversation_initiation_client_data with branch_id only.
+   */
+  isForceBranchIdMode(): boolean {
+    return (
+      this.config.get<string>('ELEVENLABS_FORCE_BRANCH_ID')?.trim() === 'true' ||
+      process.env.ELEVENLABS_FORCE_BRANCH_ID?.trim() === 'true'
+    );
+  }
+
+  /**
+   * Documented env flag only — does not auto-toggle minimal mode at runtime.
+   * See bridge-status recommended_test_modes and .env.example.
+   */
+  isDisableMinimalOn31921FlagSet(): boolean {
+    return (
+      this.config.get<string>('ELEVENLABS_DISABLE_MINIMAL_ON_31921')?.trim() === 'true' ||
+      process.env.ELEVENLABS_DISABLE_MINIMAL_ON_31921?.trim() === 'true'
+    );
+  }
+
+  /** Include branch_id when branch is configured and not in minimal mode, or when forced. */
+  shouldAttachBranchId(): boolean {
+    const branchId = this.resolveBranchId();
+    if (!branchId) return false;
+    if (this.isForceBranchIdMode()) return true;
+    return !this.isMinimalRegisterCallMode();
   }
 
 
@@ -261,7 +297,7 @@ export class ElevenLabsTwilioRegisterCallService {
         }
       }
 
-      const branchId = this.resolveBranchId();
+      const branchId = this.shouldAttachBranchId() ? this.resolveBranchId() : null;
       if (branchId) {
         conversationInitiation.branch_id = branchId;
       }
@@ -281,13 +317,26 @@ export class ElevenLabsTwilioRegisterCallService {
       );
 
     } else if (this.isMinimalRegisterCallMode()) {
-      this.logger.warn(
-        JSON.stringify({
-          event: 'elevenlabs_minimal_register_call_mode',
-          callSid: input.callSid ?? null,
-          reason: 'ELEVENLABS_MINIMAL_REGISTER_CALL=true — no dynamic_variables or branch_id',
-        }),
-      );
+      const branchId = this.shouldAttachBranchId() ? this.resolveBranchId() : null;
+      if (branchId) {
+        body.conversation_initiation_client_data = { branch_id: branchId };
+        this.logger.warn(
+          JSON.stringify({
+            event: 'elevenlabs_minimal_register_call_with_forced_branch',
+            callSid: input.callSid ?? null,
+            branchId,
+            reason: 'ELEVENLABS_MINIMAL_REGISTER_CALL=true but ELEVENLABS_FORCE_BRANCH_ID=true',
+          }),
+        );
+      } else {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'elevenlabs_minimal_register_call_mode',
+            callSid: input.callSid ?? null,
+            reason: 'ELEVENLABS_MINIMAL_REGISTER_CALL=true — no dynamic_variables or branch_id',
+          }),
+        );
+      }
     }
 
     const started = Date.now();
@@ -297,7 +346,9 @@ export class ElevenLabsTwilioRegisterCallService {
         event: 'elevenlabs_register_call_started',
         agentId,
         branchId: this.resolveBranchId(),
+        forceBranchId: this.isForceBranchIdMode(),
         minimalRegisterCall: this.isMinimalRegisterCallMode(),
+        branchAttached: this.shouldAttachBranchId(),
         direction: body.direction,
         callSid: input.callSid ?? null,
         dynamicVariablesAttached: Boolean(input.callSid?.trim()),

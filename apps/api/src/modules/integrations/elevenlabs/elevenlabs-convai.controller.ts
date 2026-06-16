@@ -63,6 +63,13 @@ export class ElevenLabsConvaiController {
       this.config.get<string>('ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE')?.trim() === 'true' ||
       process.env.ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE?.trim() === 'true';
     const minimalRegisterCall = this.registerCall.isMinimalRegisterCallMode();
+    const branchIdPresent = Boolean(branchId);
+    const debugTwimlEnabled = this.registerCall.isDebugTwimlMode();
+    const forceBranchId = this.registerCall.isForceBranchIdMode();
+    const disableMinimalOn31921Flag = this.registerCall.isDisableMinimalOn31921FlagSet();
+    const lastTwiml = this.lastTwimlDebug.getLast();
+    const lastStatus = this.lastTwimlDebug.getLastStatus();
+    const postTwimlLikelyIssue = this.lastTwimlDebug.isPostTwiml31921Issue();
 
     return {
       ok: hasApiKey,
@@ -73,6 +80,38 @@ export class ElevenLabsConvaiController {
       elevenlabs_api_key_configured: hasApiKey,
       skip_first_message_override: skipFirstMessageOverride,
       minimal_register_call: minimalRegisterCall,
+      minimalRegisterCall,
+      branchIdPresent,
+      debugTwimlEnabled,
+      forceBranchId,
+      disableMinimalOn31921Flag,
+      expectedTtsFormat: 'mu-law 8000 Hz',
+      postTwimlLikelyIssue,
+      last_twiml_has_stream: lastTwiml?.hasStream ?? null,
+      last_status_error_code: lastStatus?.errorCode ?? null,
+      twilio_stream_error_31921:
+        'Post-TwiML WebSocket close — Twilio opened ElevenLabs stream but ElevenLabs closed it.',
+      recommended_test_modes: {
+        mode_a_minimal: {
+          description: 'Simplest register-call — agent_id + phones only',
+          env: {
+            ELEVENLABS_MINIMAL_REGISTER_CALL: 'true',
+            ELEVENLABS_CONVAI_BRANCH_ID: '',
+            ELEVENLABS_FORCE_BRANCH_ID: 'false',
+          },
+        },
+        mode_b_branch: {
+          description: 'Full register-call with published branch ID',
+          env: {
+            ELEVENLABS_MINIMAL_REGISTER_CALL: 'false',
+            ELEVENLABS_CONVAI_BRANCH_ID: 'agtbrch_1101kswaf3w6et29hfmdhxz8h03v',
+            ELEVENLABS_FORCE_BRANCH_ID: 'true',
+          },
+        },
+      },
+      recommended_env_on_31921: disableMinimalOn31921Flag
+        ? 'ELEVENLABS_DISABLE_MINIMAL_ON_31921 is set — manually switch to Mode B (minimal=false + branch + FORCE_BRANCH_ID=true), restart API, retest.'
+        : 'If ErrorCode 31921 persists in call-status: try Mode B env, verify ElevenLabs phone import and TTS μ-law 8000 Hz.',
       twilio_inbound_webhook: `${publicBaseUrl}/api/elevenlabs/inbound`,
       twilio_call_status_webhook: `${publicBaseUrl}/api/elevenlabs/call-status`,
       last_twiml_debug: `${publicBaseUrl}/api/elevenlabs/convai/last-twiml`,
@@ -83,7 +122,10 @@ export class ElevenLabsConvaiController {
         'ELEVENLABS_CONVAI_AGENT_ID on VPS must exactly match the PUBLISHED agent in ElevenLabs dashboard.',
         'After publish with versioning: set ELEVENLABS_CONVAI_BRANCH_ID=agtbrch_... from the agent URL if calls drop.',
         'Agent Voice TTS output must be μ-law 8000 Hz (NOT PCM 16000 Hz) for Twilio register-call.',
-        'Set ELEVENLABS_MINIMAL_REGISTER_CALL=true on VPS to restore old simple register-call (debug only).',
+        'Twilio error 31921 = Stream WebSocket Close — post-TwiML ElevenLabs issue, not bad backend XML.',
+        'Mode A test: ELEVENLABS_MINIMAL_REGISTER_CALL=true, clear ELEVENLABS_CONVAI_BRANCH_ID.',
+        'Mode B test: ELEVENLABS_MINIMAL_REGISTER_CALL=false, set branch ID, ELEVENLABS_FORCE_BRANCH_ID=true.',
+        'ELEVENLABS_DISABLE_MINIMAL_ON_31921 documents manual switch to Mode B — no auto runtime change.',
         'ElevenLabs → Phone Numbers: import Twilio number and assign it to the same published agent.',
         'If call drops instantly after publish: set ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE=true and restart API to test.',
         'After a failed call: GET call-diagnostics/{CallSid} with x-voice-api-key.',
@@ -114,10 +156,13 @@ export class ElevenLabsConvaiController {
       twimlBytes: snapshot.twimlBytes,
       hasConnect: snapshot.hasConnect,
       hasConversation: snapshot.hasConversation,
+      hasStream: snapshot.hasStream,
       contentType: snapshot.contentType,
       twimlRepaired: snapshot.twimlRepaired,
       repairReason: snapshot.repairReason,
       sanitizedTwiml: snapshot.sanitizedTwiml,
+      lastStatus: this.lastTwimlDebug.getLastStatus(),
+      postTwimlLikelyIssue: this.lastTwimlDebug.isPostTwiml31921Issue(),
     };
   }
 }

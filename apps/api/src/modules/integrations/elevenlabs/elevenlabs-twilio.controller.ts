@@ -14,9 +14,14 @@ import { InboundCallCaptureService } from '../../delivery/inbound-call-capture.s
 
 import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-register-call.service';
 
+import { LastTwimlDebugService } from './last-twiml-debug.service';
 import { ReturningCallerService } from './returning-caller.service';
 import { VoiceCallDiagnosticsService } from '../../voice/services/voice-call-diagnostics.service';
 import { parseTwilioVoiceStatusBody } from '../../voice/utils/twilio-voice-status-callback.util';
+import {
+  isTwilioStreamWebSocketCloseError,
+  TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION,
+} from './utils/twilio-media-stream-error.util';
 
 
 
@@ -80,7 +85,11 @@ async function withInboundBudget<T>(
 
  * Configure Twilio voice webhook: POST /api/elevenlabs/inbound
  * Configure call status changes: POST /api/elevenlabs/call-status
-
+ *
+ * Twilio error 31921 (Stream WebSocket Close) is a post-TwiML failure: Twilio
+ * executes valid <Connect><Stream> TwiML, opens wss://api.elevenlabs.io, then
+ * ElevenLabs closes the stream. That is not malformed backend XML — fix agent
+ * publish, branch ID, phone import, or TTS μ-law 8000 Hz in ElevenLabs.
  */
 
 @Controller('elevenlabs')
@@ -100,6 +109,8 @@ export class ElevenLabsTwilioController {
     private readonly returningCaller: ReturningCallerService,
 
     private readonly callDiagnostics: VoiceCallDiagnosticsService,
+
+    private readonly lastTwimlDebug: LastTwimlDebugService,
 
   ) {}
 
@@ -128,22 +139,46 @@ export class ElevenLabsTwilioController {
       to: parsed.To,
       errorCode: parsed.ErrorCode,
       errorMessage: parsed.ErrorMessage,
+      streamError: parsed.StreamError,
       sipResponseCode: parsed.SipResponseCode,
       timestamp: parsed.Timestamp,
     });
 
-    this.logger.log(
-      JSON.stringify({
-        event: 'elevenlabs.twilio.call_status',
-        CallSid: parsed.CallSid,
-        CallStatus: parsed.CallStatus,
-        ErrorCode: parsed.ErrorCode ?? null,
-        ErrorMessage: parsed.ErrorMessage?.slice(0, 300) ?? null,
-        SipResponseCode: parsed.SipResponseCode ?? null,
-        Timestamp: parsed.Timestamp ?? new Date().toISOString(),
-        CallDuration: parsed.CallDuration ?? null,
-      }),
-    );
+    this.lastTwimlDebug.recordStatusCallback({
+      callSid: parsed.CallSid,
+      callStatus: parsed.CallStatus,
+      errorCode: parsed.ErrorCode,
+      errorMessage: parsed.ErrorMessage,
+      streamError: parsed.StreamError,
+      sipResponseCode: parsed.SipResponseCode,
+      callDuration: parsed.CallDuration,
+      timestamp: parsed.Timestamp,
+    });
+
+    const statusPayload = {
+      event: 'elevenlabs.twilio.call_status',
+      CallSid: parsed.CallSid,
+      CallStatus: parsed.CallStatus,
+      ErrorCode: parsed.ErrorCode ?? null,
+      ErrorMessage: parsed.ErrorMessage?.slice(0, 300) ?? null,
+      StreamError: parsed.StreamError?.slice(0, 300) ?? null,
+      SipResponseCode: parsed.SipResponseCode ?? null,
+      Timestamp: parsed.Timestamp ?? new Date().toISOString(),
+      CallDuration: parsed.CallDuration ?? null,
+    };
+
+    this.logger.log(JSON.stringify(statusPayload));
+
+    if (isTwilioStreamWebSocketCloseError(parsed.ErrorCode)) {
+      this.logger.error(
+        JSON.stringify({
+          ...statusPayload,
+          event: 'elevenlabs_stream_websocket_close_error',
+          explanation: TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION,
+          postTwimlLikelyIssue: this.lastTwimlDebug.isPostTwiml31921Issue(),
+        }),
+      );
+    }
 
     res.status(200).send('OK');
   }

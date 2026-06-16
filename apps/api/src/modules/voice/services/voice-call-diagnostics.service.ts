@@ -7,6 +7,10 @@ import {
   TERMINAL_TWILIO_CALL_STATUSES,
   type LikelyFailureStage,
 } from '../utils/voice-call-diagnostics.util';
+import {
+  isTwilioStreamWebSocketCloseError,
+  TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION,
+} from '../../integrations/elevenlabs/utils/twilio-media-stream-error.util';
 
 export type CallDiagnosticEvent = {
   event: string;
@@ -25,6 +29,7 @@ export type CallDiagnosticSnapshot = {
   twilio_error_code: string | null;
   twilio_error_message: string | null;
   twilio_sip_response_code: string | null;
+  twilio_stream_error: string | null;
   elevenlabs_register_call_status: number | null;
   elevenlabs_register_call_success: boolean | null;
   twiml_sent: boolean;
@@ -51,6 +56,7 @@ type CallRecord = {
   twilioErrorCode: string | null;
   twilioErrorMessage: string | null;
   twilioSipResponseCode: string | null;
+  twilioStreamError: string | null;
   twilioCallDurationSeconds: number | null;
   twilioFromMasked: string | null;
   twilioToMasked: string | null;
@@ -174,6 +180,7 @@ export class VoiceCallDiagnosticsService {
     to?: string;
     errorCode?: string;
     errorMessage?: string;
+    streamError?: string;
     sipResponseCode?: string;
     timestamp?: string;
   }): void {
@@ -186,6 +193,7 @@ export class VoiceCallDiagnosticsService {
     if (args.to) record.twilioToMasked = maskPhoneForCallDiagnostics(args.to);
     if (args.errorCode?.trim()) record.twilioErrorCode = args.errorCode.trim();
     if (args.errorMessage?.trim()) record.twilioErrorMessage = args.errorMessage.trim().slice(0, 300);
+    if (args.streamError?.trim()) record.twilioStreamError = args.streamError.trim().slice(0, 300);
     if (args.sipResponseCode?.trim()) record.twilioSipResponseCode = args.sipResponseCode.trim();
 
     const parsedDuration = args.callDuration ? Number.parseInt(args.callDuration, 10) : NaN;
@@ -205,6 +213,7 @@ export class VoiceCallDiagnosticsService {
       to_masked: maskPhoneForCallDiagnostics(args.to),
       error_code: args.errorCode ?? null,
       error_message: args.errorMessage?.slice(0, 200) ?? null,
+      stream_error: args.streamError?.slice(0, 200) ?? null,
       sip_response_code: args.sipResponseCode ?? null,
       timestamp: args.timestamp ?? new Date().toISOString(),
     });
@@ -220,10 +229,29 @@ export class VoiceCallDiagnosticsService {
         toMasked: maskPhoneForCallDiagnostics(args.to),
         errorCode: args.errorCode ?? null,
         errorMessage: args.errorMessage?.slice(0, 200) ?? null,
+        streamError: args.streamError?.slice(0, 200) ?? null,
         sipResponseCode: args.sipResponseCode ?? null,
         timestamp: args.timestamp ?? new Date().toISOString(),
       }),
     );
+
+    if (isTwilioStreamWebSocketCloseError(args.errorCode)) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'elevenlabs_stream_websocket_close_error',
+          callSid: args.callSid,
+          CallSid: args.callSid,
+          CallStatus: normalizedStatus,
+          ErrorCode: args.errorCode ?? null,
+          ErrorMessage: args.errorMessage?.slice(0, 300) ?? null,
+          StreamError: args.streamError?.slice(0, 300) ?? null,
+          SipResponseCode: args.sipResponseCode ?? null,
+          CallDuration: Number.isFinite(parsedDuration) ? parsedDuration : null,
+          explanation: TWILIO_STREAM_WEBSOCKET_CLOSE_EXPLANATION,
+          note: 'Post-TwiML WebSocket close — Twilio received valid XML; ElevenLabs closed the Media Stream. Check agent publish, branch ID, phone import, TTS μ-law 8000 Hz.',
+        }),
+      );
+    }
 
     if (normalizedStatus === 'completed') {
       const duration =
@@ -379,6 +407,7 @@ export class VoiceCallDiagnosticsService {
       twilio_error_code: record.twilioErrorCode,
       twilio_error_message: record.twilioErrorMessage,
       twilio_sip_response_code: record.twilioSipResponseCode,
+      twilio_stream_error: record.twilioStreamError,
       elevenlabs_register_call_status: record.elevenlabsRegisterCallStatus,
       elevenlabs_register_call_success: record.elevenlabsRegisterCallSuccess,
       twiml_sent: Boolean(record.twimlSentAt),
@@ -423,6 +452,7 @@ export class VoiceCallDiagnosticsService {
         twilioErrorCode: null,
         twilioErrorMessage: null,
         twilioSipResponseCode: null,
+        twilioStreamError: null,
         twilioCallDurationSeconds: null,
         twilioFromMasked: null,
         twilioToMasked: null,

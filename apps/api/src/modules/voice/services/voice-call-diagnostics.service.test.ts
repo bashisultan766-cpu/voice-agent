@@ -53,6 +53,28 @@ test('records inbound, register-call, twiml, and status callback lifecycle', () 
   assert.ok(snapshot?.events.some((e) => e.event === 'twiml_sent'));
 });
 
+test('records Twilio 31921 stream WebSocket close with stream error fields', () => {
+  const diag = new VoiceCallDiagnosticsService();
+  const callSid = 'CA_test_31921';
+
+  diag.recordTwimlSent({ callSid, twimlBytes: 300 });
+  diag.recordTwilioStatusCallback({
+    callSid,
+    callStatus: 'completed',
+    callDuration: '2',
+    errorCode: '31921',
+    errorMessage: 'Stream - WebSocket - Close Error',
+    streamError: 'connection_closed',
+    sipResponseCode: '200',
+  });
+
+  const snapshot = diag.getDiagnostics(callSid);
+  assert.equal(snapshot?.twilio_error_code, '31921');
+  assert.equal(snapshot?.twilio_stream_error, 'connection_closed');
+  assert.equal(snapshot?.likely_failure_stage, 'likely_post_twiml_disconnect');
+  assert.match(snapshot?.likely_reason ?? '', /ElevenLabs closed the stream/i);
+});
+
 test('get-order style json never includes full phone in events', () => {
   const diag = new VoiceCallDiagnosticsService();
   const callSid = 'CA_test_mask_phone';
