@@ -14,6 +14,14 @@ import {
 
 } from './utils/returning-caller-personalization.util';
 
+import { LastTwimlDebugService } from './last-twiml-debug.service';
+
+import {
+  repairTwimlIfMalformed,
+  sanitizeTwiMLForLogging,
+  twimlStructureFlags,
+} from './utils/twiml-sanitize.util';
+
 
 
 const REGISTER_CALL_URL = 'https://api.elevenlabs.io/v1/convai/twilio/register-call';
@@ -78,7 +86,10 @@ export class ElevenLabsTwilioRegisterCallService {
 
 
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly lastTwimlDebug: LastTwimlDebugService,
+  ) {}
 
 
 
@@ -113,6 +124,14 @@ export class ElevenLabsTwilioRegisterCallService {
     return (
       this.config.get<string>('ELEVENLABS_MINIMAL_REGISTER_CALL')?.trim() === 'true' ||
       process.env.ELEVENLABS_MINIMAL_REGISTER_CALL?.trim() === 'true'
+    );
+  }
+
+  /** Log and expose sanitized TwiML via GET /api/elevenlabs/convai/last-twiml when true. */
+  isDebugTwimlMode(): boolean {
+    return (
+      this.config.get<string>('ELEVENLABS_DEBUG_TWIML')?.trim() === 'true' ||
+      process.env.ELEVENLABS_DEBUG_TWIML?.trim() === 'true'
     );
   }
 
@@ -401,7 +420,18 @@ export class ElevenLabsTwilioRegisterCallService {
 
 
 
-    const twiml = extractTwiML(raw);
+    const extracted = extractTwiML(raw);
+    const { twiml, repaired, reason } = repairTwimlIfMalformed(extracted);
+
+    if (repaired) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs_register_call_twiml_repaired',
+          callSid: input.callSid ?? null,
+          repairReason: reason,
+        }),
+      );
+    }
 
     if (!twiml.includes('<Response')) {
 
@@ -427,20 +457,64 @@ export class ElevenLabsTwilioRegisterCallService {
 
 
 
+    const flags = twimlStructureFlags(twiml);
+
     this.logger.log(
       JSON.stringify({
         event: 'elevenlabs_register_call_success',
         status: res.status,
         latencyMs,
         twimlBytes: twiml.length,
-        twimlHasConnect: /<Connect/i.test(twiml),
-        twimlHasConversation: /Conversation/i.test(twiml),
+        twimlHasConnect: flags.hasConnect,
+        twimlHasConversation: flags.hasConversation,
+        twimlHasStream: flags.hasStream,
+        twimlRepaired: repaired,
         agentId,
         callSid: input.callSid ?? null,
       }),
     );
 
+    this.lastTwimlDebug.record({
+      callSid: input.callSid ?? null,
+      twiml,
+      twimlRepaired: repaired,
+      repairReason: reason,
+    });
 
+    if (this.isDebugTwimlMode()) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'elevenlabs_register_call_twiml_debug',
+          callSid: input.callSid ?? null,
+          twimlBytes: twiml.length,
+          twimlHasConnect: flags.hasConnect,
+          twimlHasConversation: flags.hasConversation,
+          twimlHasStream: flags.hasStream,
+          twimlRepaired: repaired,
+          sanitizedTwiml: sanitizeTwiMLForLogging(twiml),
+        }),
+      );
+    }
+
+    if (!flags.hasConnect) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs_register_call_twiml_warning',
+          callSid: input.callSid ?? null,
+          reason: 'missing_connect_verb',
+        }),
+      );
+    }
+
+    if (!flags.hasConversation && !flags.hasStream) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs_register_call_twiml_warning',
+          callSid: input.callSid ?? null,
+          reason: 'missing_conversation_or_stream',
+        }),
+      );
+    }
 
     return twiml;
 

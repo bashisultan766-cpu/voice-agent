@@ -6,6 +6,7 @@ import {
   ELEVENLABS_CONVAI_PUBLIC_BASE_URL,
 } from './elevenlabs-convai-sureshot.config';
 import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-register-call.service';
+import { LastTwimlDebugService } from './last-twiml-debug.service';
 import { buildElevenLabsEricAgentConfig } from './elevenlabs-convai-eric.config';
 
 function maskAgentId(agentId: string): string {
@@ -23,6 +24,7 @@ export class ElevenLabsConvaiController {
   constructor(
     private readonly config: ConfigService,
     private readonly registerCall: ElevenLabsTwilioRegisterCallService,
+    private readonly lastTwimlDebug: LastTwimlDebugService,
   ) {}
 
   @Get('agent-config')
@@ -73,6 +75,7 @@ export class ElevenLabsConvaiController {
       minimal_register_call: minimalRegisterCall,
       twilio_inbound_webhook: `${publicBaseUrl}/api/elevenlabs/inbound`,
       twilio_call_status_webhook: `${publicBaseUrl}/api/elevenlabs/call-status`,
+      last_twiml_debug: `${publicBaseUrl}/api/elevenlabs/convai/last-twiml`,
       call_diagnostics_pattern: `${publicBaseUrl}/api/voice/call-diagnostics/{CallSid}`,
       checklist: [
         'Twilio voice URL must be POST .../api/elevenlabs/inbound (NOT api.us.elevenlabs.io/twilio/inbound_call).',
@@ -84,7 +87,37 @@ export class ElevenLabsConvaiController {
         'ElevenLabs → Phone Numbers: import Twilio number and assign it to the same published agent.',
         'If call drops instantly after publish: set ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE=true and restart API to test.',
         'After a failed call: GET call-diagnostics/{CallSid} with x-voice-api-key.',
+        'After a failed call: GET .../convai/last-twiml for sanitized TwiML from the last register-call.',
+        'Set ELEVENLABS_DEBUG_TWIML=true to log sanitized TwiML in pm2 logs on each call.',
       ],
+    };
+  }
+
+  /**
+   * Returns the last TwiML returned by ElevenLabs register-call (sanitized).
+   * GET /api/elevenlabs/convai/last-twiml
+   */
+  @Get('last-twiml')
+  lastTwiml() {
+    const snapshot = this.lastTwimlDebug.getLast();
+    if (!snapshot) {
+      return {
+        ok: false,
+        message: 'No register-call TwiML recorded yet. Place a test call first.',
+      };
+    }
+
+    return {
+      ok: true,
+      callSid: snapshot.callSid,
+      timestamp: snapshot.timestamp,
+      twimlBytes: snapshot.twimlBytes,
+      hasConnect: snapshot.hasConnect,
+      hasConversation: snapshot.hasConversation,
+      contentType: snapshot.contentType,
+      twimlRepaired: snapshot.twimlRepaired,
+      repairReason: snapshot.repairReason,
+      sanitizedTwiml: snapshot.sanitizedTwiml,
     };
   }
 }

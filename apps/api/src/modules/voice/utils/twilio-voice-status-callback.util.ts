@@ -10,6 +10,7 @@ export const twilioVoiceStatusCallbackSchema = z.object({
   To: z.string().optional(),
   ErrorCode: z.string().optional(),
   ErrorMessage: z.string().optional(),
+  SipResponseCode: z.string().optional(),
   Timestamp: z.string().optional(),
 });
 

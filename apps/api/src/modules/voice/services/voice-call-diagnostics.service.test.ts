@@ -34,6 +34,7 @@ test('records inbound, register-call, twiml, and status callback lifecycle', () 
     direction: 'inbound',
     from: '+923001234997',
     to: '+18456754549',
+    sipResponseCode: '200',
     timestamp: new Date().toISOString(),
   });
 
@@ -44,6 +45,7 @@ test('records inbound, register-call, twiml, and status callback lifecycle', () 
   assert.equal(snapshot?.twiml_sent, true);
   assert.equal(snapshot?.twiml_bytes, 226);
   assert.equal(snapshot?.twilio_final_status, 'completed');
+  assert.equal(snapshot?.twilio_sip_response_code, '200');
   assert.equal(snapshot?.call_duration_seconds, 4);
   assert.equal(snapshot?.likely_failure_stage, 'likely_post_twiml_disconnect');
   assert.doesNotMatch(snapshot?.likely_reason ?? '', /\+923/);

@@ -9,6 +9,7 @@ import { ElevenLabsController } from './elevenlabs.controller';
 import { ElevenLabsTwilioController } from './elevenlabs-twilio.controller';
 import { ElevenLabsConvaiController } from './elevenlabs-convai.controller';
 import { ElevenLabsTwilioRegisterCallService } from './elevenlabs-twilio-register-call.service';
+import { LastTwimlDebugService } from './last-twiml-debug.service';
 import { ReturningCallerService } from './returning-caller.service';
 
 /**
@@ -20,7 +21,19 @@ import { ReturningCallerService } from './returning-caller.service';
 @Module({
   imports: [ConfigModule, InboundCallModule, CallerIdentityModule, VoiceDiagnosticsModule],
   controllers: [ElevenLabsController, ElevenLabsTwilioController, ElevenLabsConvaiController],
-  providers: [ElevenLabsService, ElevenLabsStreamingService, ElevenLabsTwilioRegisterCallService, ReturningCallerService],
-  exports: [ElevenLabsService, ElevenLabsStreamingService, ElevenLabsTwilioRegisterCallService, ReturningCallerService],
+  providers: [
+    ElevenLabsService,
+    ElevenLabsStreamingService,
+    ElevenLabsTwilioRegisterCallService,
+    LastTwimlDebugService,
+    ReturningCallerService,
+  ],
+  exports: [
+    ElevenLabsService,
+    ElevenLabsStreamingService,
+    ElevenLabsTwilioRegisterCallService,
+    LastTwimlDebugService,
+    ReturningCallerService,
+  ],
 })
 export class ElevenLabsModule {}

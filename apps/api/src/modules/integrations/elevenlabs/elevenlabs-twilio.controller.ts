@@ -128,8 +128,22 @@ export class ElevenLabsTwilioController {
       to: parsed.To,
       errorCode: parsed.ErrorCode,
       errorMessage: parsed.ErrorMessage,
+      sipResponseCode: parsed.SipResponseCode,
       timestamp: parsed.Timestamp,
     });
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'elevenlabs.twilio.call_status',
+        CallSid: parsed.CallSid,
+        CallStatus: parsed.CallStatus,
+        ErrorCode: parsed.ErrorCode ?? null,
+        ErrorMessage: parsed.ErrorMessage?.slice(0, 300) ?? null,
+        SipResponseCode: parsed.SipResponseCode ?? null,
+        Timestamp: parsed.Timestamp ?? new Date().toISOString(),
+        CallDuration: parsed.CallDuration ?? null,
+      }),
+    );
 
     res.status(200).send('OK');
   }
@@ -358,11 +372,12 @@ export class ElevenLabsTwilioController {
           personalizedGreeting: prepared?.initiation.personalized ?? false,
           totalElapsedMs: Date.now() - inboundStarted,
           twimlBytes,
+          contentType: 'text/xml; charset=utf-8',
         }),
       );
 
-      res.type('text/xml; charset=utf-8');
-      res.send(twiml);
+      res.set('Content-Type', 'text/xml; charset=utf-8');
+      res.status(200).send(twiml);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
 

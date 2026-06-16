@@ -24,6 +24,7 @@ export type CallDiagnosticSnapshot = {
   twilio_final_status: string | null;
   twilio_error_code: string | null;
   twilio_error_message: string | null;
+  twilio_sip_response_code: string | null;
   elevenlabs_register_call_status: number | null;
   elevenlabs_register_call_success: boolean | null;
   twiml_sent: boolean;
@@ -49,6 +50,7 @@ type CallRecord = {
   twilioFinalStatus: string | null;
   twilioErrorCode: string | null;
   twilioErrorMessage: string | null;
+  twilioSipResponseCode: string | null;
   twilioCallDurationSeconds: number | null;
   twilioFromMasked: string | null;
   twilioToMasked: string | null;
@@ -172,6 +174,7 @@ export class VoiceCallDiagnosticsService {
     to?: string;
     errorCode?: string;
     errorMessage?: string;
+    sipResponseCode?: string;
     timestamp?: string;
   }): void {
     const record = this.getOrCreate(args.callSid);
@@ -183,6 +186,7 @@ export class VoiceCallDiagnosticsService {
     if (args.to) record.twilioToMasked = maskPhoneForCallDiagnostics(args.to);
     if (args.errorCode?.trim()) record.twilioErrorCode = args.errorCode.trim();
     if (args.errorMessage?.trim()) record.twilioErrorMessage = args.errorMessage.trim().slice(0, 300);
+    if (args.sipResponseCode?.trim()) record.twilioSipResponseCode = args.sipResponseCode.trim();
 
     const parsedDuration = args.callDuration ? Number.parseInt(args.callDuration, 10) : NaN;
     if (Number.isFinite(parsedDuration)) {
@@ -201,6 +205,7 @@ export class VoiceCallDiagnosticsService {
       to_masked: maskPhoneForCallDiagnostics(args.to),
       error_code: args.errorCode ?? null,
       error_message: args.errorMessage?.slice(0, 200) ?? null,
+      sip_response_code: args.sipResponseCode ?? null,
       timestamp: args.timestamp ?? new Date().toISOString(),
     });
 
@@ -215,6 +220,7 @@ export class VoiceCallDiagnosticsService {
         toMasked: maskPhoneForCallDiagnostics(args.to),
         errorCode: args.errorCode ?? null,
         errorMessage: args.errorMessage?.slice(0, 200) ?? null,
+        sipResponseCode: args.sipResponseCode ?? null,
         timestamp: args.timestamp ?? new Date().toISOString(),
       }),
     );
@@ -372,6 +378,7 @@ export class VoiceCallDiagnosticsService {
       twilio_final_status: record.twilioFinalStatus,
       twilio_error_code: record.twilioErrorCode,
       twilio_error_message: record.twilioErrorMessage,
+      twilio_sip_response_code: record.twilioSipResponseCode,
       elevenlabs_register_call_status: record.elevenlabsRegisterCallStatus,
       elevenlabs_register_call_success: record.elevenlabsRegisterCallSuccess,
       twiml_sent: Boolean(record.twimlSentAt),
@@ -415,6 +422,7 @@ export class VoiceCallDiagnosticsService {
         twilioFinalStatus: null,
         twilioErrorCode: null,
         twilioErrorMessage: null,
+        twilioSipResponseCode: null,
         twilioCallDurationSeconds: null,
         twilioFromMasked: null,
         twilioToMasked: null,
