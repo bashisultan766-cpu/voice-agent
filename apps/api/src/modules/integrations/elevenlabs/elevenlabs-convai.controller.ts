@@ -52,6 +52,7 @@ export class ElevenLabsConvaiController {
       this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL')?.trim() ||
       ELEVENLABS_CONVAI_PUBLIC_BASE_URL;
     const agentId = this.registerCall.resolveAgentId();
+    const branchId = this.registerCall.resolveBranchId();
     const hasApiKey = Boolean(
       this.config.get<string>('ELEVENLABS_API_KEY')?.trim() ||
         process.env.ELEVENLABS_API_KEY?.trim(),
@@ -65,6 +66,7 @@ export class ElevenLabsConvaiController {
       bridge: 'twilio_register_call',
       resolved_agent_id: agentId,
       resolved_agent_id_masked: maskAgentId(agentId),
+      resolved_branch_id: branchId,
       elevenlabs_api_key_configured: hasApiKey,
       skip_first_message_override: skipFirstMessageOverride,
       twilio_inbound_webhook: `${publicBaseUrl}/api/elevenlabs/inbound`,
@@ -74,6 +76,8 @@ export class ElevenLabsConvaiController {
         'Twilio voice URL must be POST .../api/elevenlabs/inbound (NOT api.us.elevenlabs.io/twilio/inbound_call).',
         'Twilio Call status changes must be POST .../api/elevenlabs/call-status.',
         'ELEVENLABS_CONVAI_AGENT_ID on VPS must exactly match the PUBLISHED agent in ElevenLabs dashboard.',
+        'After publish with versioning: set ELEVENLABS_CONVAI_BRANCH_ID=agtbrch_... from the agent URL if calls drop.',
+        'Agent Voice must be μ-law 8000 Hz (ElevenLabs register-call requirement).',
         'ElevenLabs → Phone Numbers: import Twilio number and assign it to the same published agent.',
         'If call drops instantly after publish: set ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE=true and restart API to test.',
         'After a failed call: GET call-diagnostics/{CallSid} with x-voice-api-key.',

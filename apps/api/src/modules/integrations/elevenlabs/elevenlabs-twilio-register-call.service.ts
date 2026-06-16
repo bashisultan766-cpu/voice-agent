@@ -96,6 +96,15 @@ export class ElevenLabsTwilioRegisterCallService {
 
   }
 
+  /** Optional — route register-call to a published agent branch (agtbrch_...). */
+  resolveBranchId(): string | null {
+    const branchId =
+      this.config.get<string>('ELEVENLABS_CONVAI_BRANCH_ID')?.trim() ||
+      process.env.ELEVENLABS_CONVAI_BRANCH_ID?.trim() ||
+      '';
+    return branchId || null;
+  }
+
 
 
   private apiKey(): string {
@@ -222,30 +231,23 @@ export class ElevenLabsTwilioRegisterCallService {
         }
       }
 
-
+      const branchId = this.resolveBranchId();
+      if (branchId) {
+        conversationInitiation.branch_id = branchId;
+      }
 
       body.conversation_initiation_client_data = conversationInitiation;
 
-
-
       this.logger.log(
-
         JSON.stringify({
-
           event: initiation.personalized
-
             ? 'returning_caller_first_message_applied'
-
             : 'generic_first_message_applied',
-
           callSid: input.callSid,
-
           firstMessagePreview: initiation.firstMessage?.slice(0, 80) ?? null,
-
           callerRecognized: dynamicVariables.caller_recognized ?? null,
-
+          branchId: branchId ?? null,
         }),
-
       );
 
     }
@@ -255,25 +257,16 @@ export class ElevenLabsTwilioRegisterCallService {
     const started = Date.now();
 
     this.logger.log(
-
       JSON.stringify({
-
         event: 'elevenlabs_register_call_started',
-
         agentId,
-
+        branchId: this.resolveBranchId(),
         direction: body.direction,
-
         callSid: input.callSid ?? null,
-
         dynamicVariablesAttached: Boolean(input.callSid?.trim()),
-
         fromMasked: maskPhone(input.fromNumber),
-
         toMasked: maskPhone(input.toNumber),
-
       }),
-
     );
 
 
