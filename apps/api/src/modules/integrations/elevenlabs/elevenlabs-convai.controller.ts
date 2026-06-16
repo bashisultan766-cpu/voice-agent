@@ -60,6 +60,7 @@ export class ElevenLabsConvaiController {
     const skipFirstMessageOverride =
       this.config.get<string>('ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE')?.trim() === 'true' ||
       process.env.ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE?.trim() === 'true';
+    const minimalRegisterCall = this.registerCall.isMinimalRegisterCallMode();
 
     return {
       ok: hasApiKey,
@@ -69,6 +70,7 @@ export class ElevenLabsConvaiController {
       resolved_branch_id: branchId,
       elevenlabs_api_key_configured: hasApiKey,
       skip_first_message_override: skipFirstMessageOverride,
+      minimal_register_call: minimalRegisterCall,
       twilio_inbound_webhook: `${publicBaseUrl}/api/elevenlabs/inbound`,
       twilio_call_status_webhook: `${publicBaseUrl}/api/elevenlabs/call-status`,
       call_diagnostics_pattern: `${publicBaseUrl}/api/voice/call-diagnostics/{CallSid}`,
@@ -77,7 +79,8 @@ export class ElevenLabsConvaiController {
         'Twilio Call status changes must be POST .../api/elevenlabs/call-status.',
         'ELEVENLABS_CONVAI_AGENT_ID on VPS must exactly match the PUBLISHED agent in ElevenLabs dashboard.',
         'After publish with versioning: set ELEVENLABS_CONVAI_BRANCH_ID=agtbrch_... from the agent URL if calls drop.',
-        'Agent Voice must be μ-law 8000 Hz (ElevenLabs register-call requirement).',
+        'Agent Voice TTS output must be μ-law 8000 Hz (NOT PCM 16000 Hz) for Twilio register-call.',
+        'Set ELEVENLABS_MINIMAL_REGISTER_CALL=true on VPS to restore old simple register-call (debug only).',
         'ElevenLabs → Phone Numbers: import Twilio number and assign it to the same published agent.',
         'If call drops instantly after publish: set ELEVENLABS_SKIP_FIRST_MESSAGE_OVERRIDE=true and restart API to test.',
         'After a failed call: GET call-diagnostics/{CallSid} with x-voice-api-key.',

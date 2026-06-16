@@ -105,6 +105,17 @@ export class ElevenLabsTwilioRegisterCallService {
     return branchId || null;
   }
 
+  /**
+   * When true, register-call sends only agent_id + phone numbers (legacy/simple mode).
+   * Use to test if dynamic_variables, branch_id, or first_message override break the bridge.
+   */
+  isMinimalRegisterCallMode(): boolean {
+    return (
+      this.config.get<string>('ELEVENLABS_MINIMAL_REGISTER_CALL')?.trim() === 'true' ||
+      process.env.ELEVENLABS_MINIMAL_REGISTER_CALL?.trim() === 'true'
+    );
+  }
+
 
 
   private apiKey(): string {
@@ -161,7 +172,7 @@ export class ElevenLabsTwilioRegisterCallService {
 
 
 
-    if (input.callSid?.trim()) {
+    if (input.callSid?.trim() && !this.isMinimalRegisterCallMode()) {
 
       const initiation: ElevenLabsConversationInitiation =
 
@@ -250,9 +261,15 @@ export class ElevenLabsTwilioRegisterCallService {
         }),
       );
 
+    } else if (this.isMinimalRegisterCallMode()) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'elevenlabs_minimal_register_call_mode',
+          callSid: input.callSid ?? null,
+          reason: 'ELEVENLABS_MINIMAL_REGISTER_CALL=true — no dynamic_variables or branch_id',
+        }),
+      );
     }
-
-
 
     const started = Date.now();
 
@@ -261,6 +278,7 @@ export class ElevenLabsTwilioRegisterCallService {
         event: 'elevenlabs_register_call_started',
         agentId,
         branchId: this.resolveBranchId(),
+        minimalRegisterCall: this.isMinimalRegisterCallMode(),
         direction: body.direction,
         callSid: input.callSid ?? null,
         dynamicVariablesAttached: Boolean(input.callSid?.trim()),
