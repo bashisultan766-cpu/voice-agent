@@ -30,6 +30,7 @@ test('known caller gets personalized first message', () => {
   assert.equal(initiation.dynamicVariables.customer_first_name, 'Washi');
   assert.equal(initiation.dynamicVariables.caller_phone_verified, 'partial');
   assert.equal(initiation.dynamicVariables.total_previous_calls, '12');
+  assert.equal(initiation.dynamicVariables.order_number, '#1042');
 });
 
 test('unknown caller gets generic first message', () => {
@@ -49,6 +50,7 @@ test('unknown caller gets generic first message', () => {
   assert.equal(initiation.dynamicVariables.caller_recognized, 'false');
   assert.equal(initiation.dynamicVariables.caller_phone_verified, 'none');
   assert.equal(initiation.dynamicVariables.customer_first_name, undefined);
+  assert.equal(initiation.dynamicVariables.order_number, '');
 });
 
 test('known caller with missing first name gets generic first message', () => {

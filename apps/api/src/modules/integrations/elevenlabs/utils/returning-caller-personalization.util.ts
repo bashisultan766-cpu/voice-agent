@@ -55,6 +55,7 @@ export function buildConversationInitiation(
       dynamicVariables: {
         caller_recognized: 'false',
         caller_phone_verified: 'none',
+        order_number: '',
       },
     };
   }
@@ -67,6 +68,7 @@ export function buildConversationInitiation(
     customer_full_name: lookup.customerFullName?.trim() || '',
     total_previous_calls: String(Math.max(0, lookup.totalPreviousCalls)),
     last_order_number: lookup.lastOrderNumber?.trim() || '',
+    order_number: lookup.lastOrderNumber?.trim() || '',
     last_call_summary: safeSummary,
   };
 

@@ -243,6 +243,8 @@ export class ElevenLabsTwilioRegisterCallService {
 
             caller_phone_verified: 'none',
 
+            order_number: '',
+
           },
 
         };
@@ -261,7 +263,11 @@ export class ElevenLabsTwilioRegisterCallService {
 
       };
 
-
+      // ElevenLabs agent tools require {{order_number}} at session start (empty until caller provides one).
+      dynamicVariables.order_number =
+        dynamicVariables.order_number?.trim() ||
+        dynamicVariables.last_order_number?.trim() ||
+        '';
 
       assertNoSensitiveDynamicVariables(dynamicVariables);
 

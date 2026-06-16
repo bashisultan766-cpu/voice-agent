@@ -351,6 +351,7 @@ export const ELEVENLABS_CONVAI_TOOL_SPECS = {
 export const ELEVENLABS_CONVAI_DYNAMIC_VARIABLES = {
   call_sid: 'Twilio CallSid — set at inbound via register-call',
   caller_phone: 'Caller E.164 — from Twilio From',
+  order_number: 'Shopify order number — empty at call start; set from last order for returning callers',
   caller_number: 'Raw Twilio From',
   caller_name: 'Full display name from 3CX import or prior SaveCallerName (empty if unknown)',
   caller_first_name: 'First name for personalized greeting (empty if unknown)',
