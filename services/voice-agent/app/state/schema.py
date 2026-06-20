@@ -14,6 +14,7 @@ class ConversationState(str, Enum):
     EMAIL_CONFIRMED = "EMAIL_CONFIRMED"
     CHECKOUT_CREATING = "CHECKOUT_CREATING"
     CHECKOUT_SENT = "CHECKOUT_SENT"
+    FACILITY_APPROVAL = "FACILITY_APPROVAL"
     ESCALATED = "ESCALATED"
     CLOSING = "CLOSING"
 
@@ -56,6 +57,11 @@ class SessionState(BaseModel):
 
     # Checkout
     checkout_link_id: Optional[str] = None
+
+    # Facility context (set by check_facility_approval)
+    facility_name: Optional[str] = None
+    facility_state: Optional[str] = None
+    facility_approval_status: Optional[str] = None  # "approved" / "not_approved" / "unknown"
 
     # Caller context
     caller_name: Optional[str] = None

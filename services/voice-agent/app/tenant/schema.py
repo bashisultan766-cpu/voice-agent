@@ -47,6 +47,7 @@ class AgentConfig(BaseModel):
             "send_payment_link",
             "get_caller_info",
             "normalize_voice_intent",
+            "check_facility_approval",
         ]
     )
 
