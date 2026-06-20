@@ -41,6 +41,15 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ApprovalStatus = Literal["approved", "not_approved", "unknown"]
+RestrictionRuleType = Literal["format_only", "publisher_whitelist", "all_blocked"]
+
+
+class RestrictionRule(BaseModel):
+    """Structured rule used by check_order_facility_restrictions."""
+
+    rule_type: RestrictionRuleType
+    allowed_formats: list[str] = Field(default_factory=list)
+    approved_publishers: list[str] = Field(default_factory=list)
 
 
 class FacilityRecord(BaseModel):
@@ -51,6 +60,7 @@ class FacilityRecord(BaseModel):
     state: Optional[str] = None
     approved: bool
     restrictions: list[str] = Field(default_factory=list)
+    restriction_rules: list[RestrictionRule] = Field(default_factory=list)
     notes: str = ""
 
 
@@ -167,6 +177,18 @@ _MOCK_FACILITIES: list[FacilityRecord] = [
         state="NY",
         approved=True,
         restrictions=["Paperback books only", "Publisher must be on approved list"],
+        restriction_rules=[
+            RestrictionRule(rule_type="format_only", allowed_formats=["paperback"]),
+            RestrictionRule(
+                rule_type="publisher_whitelist",
+                approved_publishers=[
+                    "G-Unit Books / Cash Money Content",
+                    "Good2Go Publishing",
+                    "Street Knowledge Publishing",
+                    "Urban Books",
+                ],
+            ),
+        ],
         notes="Ships via USPS Media Mail only",
     ),
     FacilityRecord(
@@ -175,6 +197,7 @@ _MOCK_FACILITIES: list[FacilityRecord] = [
         state="IL",
         approved=False,
         restrictions=[],
+        restriction_rules=[RestrictionRule(rule_type="all_blocked")],
         notes="Facility does not accept third-party book shipments",
     ),
 ]
@@ -182,23 +205,33 @@ _MOCK_FACILITIES: list[FacilityRecord] = [
 
 class MockFacilityRepository:
     @staticmethod
+    def _match_record(
+        facility_name: str,
+        state: Optional[str],
+    ) -> Optional[FacilityRecord]:
+        for record in _MOCK_FACILITIES:
+            if _facility_matches(record, facility_name, state):
+                return record
+        return None
+
+    @staticmethod
     def lookup(
         facility_name: str,
         city: Optional[str],
         state: Optional[str],
     ) -> FacilityApprovalData:
-        for record in _MOCK_FACILITIES:
-            if _facility_matches(record, facility_name, state):
-                status: ApprovalStatus = "approved" if record.approved else "not_approved"
-                return FacilityApprovalData(
-                    facility_name=record.facility_name,
-                    city=record.city,
-                    state=record.state,
-                    approved=record.approved,
-                    approval_status=status,
-                    restrictions=record.restrictions,
-                    source="mock",
-                )
+        record = MockFacilityRepository._match_record(facility_name, state)
+        if record:
+            status: ApprovalStatus = "approved" if record.approved else "not_approved"
+            return FacilityApprovalData(
+                facility_name=record.facility_name,
+                city=record.city,
+                state=record.state,
+                approved=record.approved,
+                approval_status=status,
+                restrictions=record.restrictions,
+                source="mock",
+            )
 
         # Not in table — return unknown, not "not_approved"
         return FacilityApprovalData(
@@ -210,6 +243,17 @@ class MockFacilityRepository:
             restrictions=[],
             source="mock",
         )
+
+    @staticmethod
+    def restriction_rules(
+        facility_name: str,
+        state: Optional[str],
+    ) -> list[RestrictionRule]:
+        """Structured rules for check_order_facility_restrictions — single source of truth."""
+        record = MockFacilityRepository._match_record(facility_name, state)
+        if record is None:
+            return []
+        return list(record.restriction_rules)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

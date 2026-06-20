@@ -104,6 +104,8 @@ class OrderItem(BaseModel):
     price: str                        # formatted string e.g. "15.95"
     variant_id: Optional[str] = None  # Shopify variant ID (needed by other tools)
     sku: Optional[str] = None
+    format: Optional[str] = None      # "paperback" / "hardcover" / "audiobook"
+    publisher: Optional[str] = None   # Publisher name — used by facility restriction checks
 
 
 class ShippingInfo(BaseModel):
@@ -372,6 +374,8 @@ _MOCK_ITEMS_FULFILLED: list[OrderItem] = [
         price="15.95",
         variant_id="var_001",
         sku="ATH-001",
+        format="paperback",
+        publisher="G-Unit Books / Cash Money Content",
     ),
 ]
 
@@ -382,6 +386,8 @@ _MOCK_ITEMS_UNFULFILLED: list[OrderItem] = [
         price="12.99",
         variant_id="var_004",
         sku="TOH-004",
+        format="paperback",
+        publisher="Good2Go Publishing",
     ),
     OrderItem(
         title="Hood Rich",
@@ -389,6 +395,8 @@ _MOCK_ITEMS_UNFULFILLED: list[OrderItem] = [
         price="14.99",
         variant_id="var_002",
         sku="HR-002",
+        format="hardcover",          # triggers not_accepted at paperback-only facilities
+        publisher="Urban Books",
     ),
 ]
 
@@ -399,6 +407,8 @@ _MOCK_ITEMS_PARTIAL: list[OrderItem] = [
         price="16.50",
         variant_id="var_003",
         sku="SL-003",
+        format="paperback",
+        publisher=None,              # unknown publisher → needs_review at restrictive facilities
     ),
     OrderItem(
         title="A Thug's Heartbeat: Rocko's Street Justice",
@@ -406,6 +416,8 @@ _MOCK_ITEMS_PARTIAL: list[OrderItem] = [
         price="15.95",
         variant_id="var_001",
         sku="ATH-001",
+        format="paperback",
+        publisher="G-Unit Books / Cash Money Content",
     ),
 ]
 
