@@ -43,9 +43,10 @@ class AgentConfig(BaseModel):
         default_factory=lambda: [
             "search_catalog",
             "get_order",
-            "create_checkout",
-            "get_caller_profile",
-            "escalate",
+            "calculate_pricing",
+            "send_payment_link",
+            "get_caller_info",
+            "normalize_voice_intent",
         ]
     )
 
