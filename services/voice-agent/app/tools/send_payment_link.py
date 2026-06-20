@@ -107,7 +107,7 @@ class SendPaymentLinkData(BaseModel):
     order_mode: OrderMode = "mock"
     expires_at: Optional[str] = None
     items_summary: str = ""
-    total_estimate: Optional[str] = None
+    subtotal_estimate: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -181,18 +181,21 @@ def _format_voice_summary(data: SendPaymentLinkData) -> str:
 
     if data.email_sent:
         item_part = f"Your order is for {data.items_summary}. " if data.items_summary else ""
-        total_part = f"The estimated total is ${data.total_estimate}. " if data.total_estimate else ""
+        subtotal_part = (
+            f"The subtotal before shipping is ${data.subtotal_estimate}. "
+            if data.subtotal_estimate else ""
+        )
         return (
             f"I've sent your payment link to {masked}. "
             f"{item_part}"
-            f"{total_part}"
+            f"{subtotal_part}"
             "Please check your email and click the link to complete your purchase."
         )
 
     return (
-        f"I had trouble sending the email right now. "
+        f"I wasn't able to send the payment link right now. "
         f"Your order reference is {data.order_name}. "
-        "Please call us back and we'll resend the payment link."
+        "Would you like me to try again, or would you prefer to speak with our team?"
     )
 
 
@@ -211,13 +214,13 @@ class MockPaymentLinkGenerator:
             f"https://sureshotbooks.myshopify.com/checkouts/mock/{draft_order_id}"
         )
         items_summary = _build_items_summary(req.items)
-        total_estimate = _estimate_total(req.items)
+        subtotal_estimate = _estimate_total(req.items)
 
         logger.debug(
-            "MockPaymentLinkGenerator: order=%s items=%r total=%s",
+            "MockPaymentLinkGenerator: order=%s items=%r subtotal=%s",
             order_name,
             items_summary,
-            total_estimate,
+            subtotal_estimate,
         )
 
         return SendPaymentLinkData(
@@ -230,7 +233,7 @@ class MockPaymentLinkGenerator:
             email_mode="stub",
             order_mode="mock",
             items_summary=items_summary,
-            total_estimate=total_estimate,
+            subtotal_estimate=subtotal_estimate,
         )
 
 
@@ -328,7 +331,7 @@ def _map_shopify_draft_order(raw: dict[str, Any], email_sent_to: str) -> SendPay
         email_mode="stub",
         order_mode="shopify",
         items_summary=items_summary,
-        total_estimate=raw.get("total_price"),
+        subtotal_estimate=raw.get("total_price"),
     )
 
 
@@ -370,7 +373,7 @@ async def _resolve_payment_link(
         to=req.email,
         checkout_url=order.checkout_url,
         items_summary=order.items_summary,
-        total=order.total_estimate,
+        total=order.subtotal_estimate,
         resend_api_key=resend_api_key,
         from_email=from_email,
     )
@@ -475,17 +478,41 @@ class SendPaymentLinkTool(BaseTool):
         voice_summary = _format_voice_summary(result)
 
         logger.info(
-            "send_payment_link: order=%s email_sent=%s email_mode=%s order_mode=%s items=%r total=%s session=%s",
+            "send_payment_link: order=%s email_sent=%s email_mode=%s order_mode=%s items=%r subtotal=%s session=%s",
             result.order_name, result.email_sent, result.email_mode,
-            result.order_mode, result.items_summary, result.total_estimate, context.session_id,
+            result.order_mode, result.items_summary, result.subtotal_estimate, context.session_id,
         )
 
-        email_label = f"Email dispatched ({result.email_mode})" if result.email_sent else "Email delivery failed"
-        message = f"Payment link created ({result.order_mode}). {email_label} to {req.email}."
+        if not result.email_sent:
+            logger.warning(
+                "send_payment_link: email delivery failed (session=%s order=%s)",
+                context.session_id, result.order_name,
+            )
+            return ToolResult(
+                success=False,
+                data={
+                    "success": False,
+                    "message": f"Payment link created ({result.order_mode}) but email delivery failed to {req.email}.",
+                    "suggested_response": voice_summary,
+                    "data": result.model_dump(),
+                    "error": "email_sent is False",
+                },
+                voice_summary=voice_summary,
+                error="email_sent is False",
+                state_update={"email_fsm_state": "EMAIL_FAILED"},
+            )
+
+        message = f"Payment link created ({result.order_mode}). Email dispatched ({result.email_mode}) to {req.email}."
 
         return ToolResult(
             success=True,
-            data={"success": True, "message": message, "data": result.model_dump(), "error": None},
+            data={
+                "success": True,
+                "message": message,
+                "suggested_response": voice_summary,
+                "data": result.model_dump(),
+                "error": None,
+            },
             voice_summary=voice_summary,
             state_update={
                 "conversation_state": "CHECKOUT_SENT",
