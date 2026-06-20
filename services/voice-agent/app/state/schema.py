@@ -59,6 +59,7 @@ class SessionState(BaseModel):
 
     # Caller context
     caller_name: Optional[str] = None
+    caller_verified: bool = False   # set True once caller identity is confirmed
     language: str = "en"
 
     # History (last 10 exchanges = 20 entries)

@@ -151,6 +151,11 @@ class GetOrderResponseData(BaseModel):
     note: Optional[str] = None
     source: Literal["mock", "shopify"] = "mock"
 
+    # Privacy-sensitive fields — always masked in the response payload
+    # unless the caller has been verified (session_state.caller_verified=True)
+    customer_email: Optional[str] = None
+    payment_last_four: Optional[str] = None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 2 — Request model
@@ -313,6 +318,44 @@ def _format_voice_summary(order: GetOrderResponseData) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECTION 4b — Privacy masking helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _mask_email(email: str) -> str:
+    """j***@domain.com — first char of local part visible, rest replaced."""
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    return f"{local[:1]}***@{domain}"
+
+
+def _mask_last_four(last_four: str) -> str:
+    """Replace all digits with * when caller is not verified."""
+    return "****"
+
+
+def _apply_privacy(
+    order: "GetOrderResponseData",
+    verified: bool,
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Return (display_email, display_last_four) according to verification state.
+    verified=False  → always masked (default / safe)
+    verified=True   → full email, last-4 visible
+    """
+    email = order.customer_email
+    last_four = order.payment_last_four
+
+    if not verified:
+        return (
+            _mask_email(email) if email else None,
+            last_four,   # last-4 is never sensitive — safe to show unverified
+        )
+    return email, last_four
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SECTION 5 — MOCK LAYER  (temporary — replace with ShopifyOrderClient)
 #
 # Scenarios by last digit of order number:
@@ -404,6 +447,8 @@ class MockOrderRepository:
                 ),
                 tags=["voice-order"],
                 source="mock",
+                customer_email="jessica@example.com",
+                payment_last_four="4242",
             )
 
         if last_digit <= 6:
@@ -421,6 +466,8 @@ class MockOrderRepository:
                 items=_MOCK_ITEMS_UNFULFILLED,
                 tags=["voice-order"],
                 source="mock",
+                customer_email="jessica@example.com",
+                payment_last_four="4242",
             )
 
         return GetOrderResponseData(
@@ -442,6 +489,8 @@ class MockOrderRepository:
             ),
             tags=["voice-order", "partial-ship"],
             source="mock",
+            customer_email="jessica@example.com",
+            payment_last_four="4242",
         )
 
 
@@ -607,14 +656,19 @@ class GetOrderTool(BaseTool):
 
         voice_summary = _format_voice_summary(order)
 
+        # Privacy masking — read verification status from session; default unverified
+        verified: bool = getattr(context.session_state, "caller_verified", False)
+        display_email, display_last_four = _apply_privacy(order, verified)
+
         logger.info(
-            "get_order: order=%s found=%s status=%s/%s can_cancel=%s source=%s",
+            "get_order: order=%s found=%s status=%s/%s can_cancel=%s source=%s verified=%s",
             order_number,
             order.found,
             order.financial_status,
             order.fulfillment_status,
             order.cancel_eligibility.can_cancel if order.found else "n/a",
             order.source,
+            verified,
         )
 
         message = (
@@ -623,12 +677,17 @@ class GetOrderTool(BaseTool):
             else f"Order #{order_number} not found."
         )
 
+        order_data = order.model_dump()
+        order_data["customer_email"] = display_email
+        order_data["payment_last_four"] = display_last_four
+
         return ToolResult(
             success=True,
             data={
                 "success": True,
                 "message": message,
-                "data": order.model_dump(),
+                "suggested_response": voice_summary,
+                "data": order_data,
                 "error": None,
             },
             voice_summary=voice_summary,

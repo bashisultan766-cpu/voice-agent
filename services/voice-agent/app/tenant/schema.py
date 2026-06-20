@@ -72,8 +72,8 @@ class AgentConfig(BaseModel):
 
     # ── Tool system version ────────────────────────────────────────────────────
     # "v1" → legacy tools (app/ai/tools/)
-    # "v2" → rebuilt tools (app/ai/tools_v2/)
-    tool_version: Literal["v1", "v2"] = "v1"
+    # "v2" → canonical tools (app/tools/)
+    tool_version: Literal["v1", "v2"] = "v2"
 
     # ── v2-only settings (ignored when tool_version == "v1") ──────────────────
     # Customer service email for escalation notifications
