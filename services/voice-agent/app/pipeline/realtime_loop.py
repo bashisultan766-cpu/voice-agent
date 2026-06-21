@@ -31,8 +31,10 @@ import logging
 
 from ..tools import registry as tool_registry
 from ..tools.base import ToolContext
+from .call_debug import call_log
 from .event_bus import EventBus
 from .intent import Entity, extract_entities
+from .social_intent import is_social_utterance
 from .task_manager import ResultCache, TaskManager
 
 logger = logging.getLogger(__name__)
@@ -140,6 +142,7 @@ class RealtimeLoop:
         self._loop_task = asyncio.create_task(
             self._tick_loop(), name="realtime-loop"
         )
+        call_log("loop_started", tick_ms=int(_TICK_S * 1000))
         logger.debug("RealtimeLoop started (tick=%dms)", int(_TICK_S * 1000))
 
     async def stop(self) -> None:
@@ -170,6 +173,7 @@ class RealtimeLoop:
             relevant = any(fv in key.lower() for fv in final_values)
             if not relevant:
                 self._tasks.cancel(key)
+                call_log("stale_task_cancelled", cache_key=key)
                 logger.debug("RealtimeLoop: pruned stale task key=%s", key)
 
         self._utterance_keys.clear()
@@ -187,6 +191,7 @@ class RealtimeLoop:
             try:
                 text = self._buffer.consume()
                 if text:
+                    call_log("partial_text_processed", text=text[:120])
                     self._process_tick(text)
             except asyncio.CancelledError:
                 raise
@@ -201,10 +206,27 @@ class RealtimeLoop:
         Submits tool coroutines as background Tasks.
         TaskManager.submit() is dedup-safe: same key → returns existing Task.
         """
-        for entity in extract_entities(text):
+        if is_social_utterance(text):
+            return
+
+        entities = extract_entities(text)
+        if entities:
+            call_log(
+                "detected_entities",
+                entities=[{"type": e.type, "value": e.value, "confidence": e.confidence} for e in entities],
+            )
+
+        for entity in entities:
             tool_name, args = _entity_to_tool(entity)
             if tool_name is None:
                 continue
+
+            call_log(
+                "detected_intent",
+                intent=entity.type,
+                tool=tool_name,
+                value=entity.value,
+            )
 
             key = _tool_cache_key(tool_name, args)
             if self._cache.has(key):
@@ -212,6 +234,12 @@ class RealtimeLoop:
 
             self._tasks.submit(key, self._run_tool(tool_name, args, key))
             self._utterance_keys.add(key)
+            call_log(
+                "speculative_tool_started",
+                tool=tool_name,
+                cache_key=key,
+                source="realtime_loop",
+            )
             logger.debug(
                 "RealtimeLoop: speculative %s queued (entity=%s conf=%.2f)",
                 tool_name, entity.value, entity.confidence,
@@ -236,6 +264,13 @@ class RealtimeLoop:
             value = result.voice_summary or json.dumps(result.data)
             if value:
                 self._cache.set(cache_key, value)
+                call_log(
+                    "speculative_tool_completed",
+                    tool=tool_name,
+                    cache_key=cache_key,
+                    source="realtime_loop",
+                    summary_len=len(value),
+                )
                 logger.debug(
                     "RealtimeLoop: cached %s key=%s len=%d",
                     tool_name, cache_key, len(value),

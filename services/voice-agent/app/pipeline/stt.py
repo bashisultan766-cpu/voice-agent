@@ -19,6 +19,8 @@ from urllib.parse import urlencode
 import websockets
 import websockets.exceptions
 
+from .call_debug import call_log
+
 logger = logging.getLogger(__name__)
 
 _DEEPGRAM_WS = "wss://api.deepgram.com/v1/listen"
@@ -88,12 +90,18 @@ class DeepgramSTT(STTProvider):
 
     async def start(self) -> None:
         url = f"{_DEEPGRAM_WS}?{urlencode(self._PARAMS)}"
-        self._ws = await websockets.connect(
-            url,
-            additional_headers={"Authorization": f"Token {self._api_key}"},
-            ping_interval=10,
-            ping_timeout=20,
-        )
+        call_log("deepgram_connecting", url=_DEEPGRAM_WS)
+        try:
+            self._ws = await websockets.connect(
+                url,
+                additional_headers={"Authorization": f"Token {self._api_key}"},
+                ping_interval=10,
+                ping_timeout=20,
+            )
+        except Exception as exc:
+            call_log("deepgram_error", phase="connect", error=str(exc))
+            raise
+        call_log("deepgram_connected", model="nova-2", encoding="mulaw", sample_rate=8000)
         logger.info("Deepgram STT connected (nova-2, mulaw 8 kHz)")
         self._recv_task = asyncio.create_task(self._recv_loop(), name="dg-recv")
 
@@ -139,10 +147,12 @@ class DeepgramSTT(STTProvider):
             async for raw in self._ws:
                 ev = _parse_message(raw)
                 if ev is not None:
+                    _log_stt_event(ev)
                     await self._queue.put(ev)
         except (websockets.exceptions.ConnectionClosed, asyncio.CancelledError):
             pass
-        except Exception:
+        except Exception as exc:
+            call_log("deepgram_error", phase="recv", error=str(exc))
             logger.exception("Deepgram recv error")
         finally:
             await self._queue.put(None)
@@ -182,3 +192,24 @@ def _parse_message(raw: str | bytes) -> STTEvent | None:
 
         case _:
             return None
+
+
+def _log_stt_event(ev: STTEvent) -> None:
+    if ev.speech_started:
+        return
+    if ev.speech_final or (ev.is_final and ev.text):
+        call_log(
+            "final_transcript",
+            text=ev.text,
+            confidence=round(ev.confidence, 3),
+            speech_final=ev.speech_final,
+        )
+        if not ev.text:
+            call_log("utterance_end")
+        return
+    if ev.text:
+        call_log(
+            "partial_transcript",
+            text=ev.text,
+            confidence=round(ev.confidence, 3),
+        )

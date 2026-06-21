@@ -21,6 +21,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -28,12 +29,15 @@ from fastapi import WebSocket, WebSocketDisconnect
 from openai import AsyncOpenAI
 
 from ..core.config import get_settings
+from ..pipeline.call_debug import call_log
 from ..pipeline.stt import DeepgramSTT
 from ..pipeline.orchestrator import StreamingOrchestrator
 from ..state.schema import SessionState
 from ..tenant.loader import get_tenant_loader
 
 logger = logging.getLogger(__name__)
+
+_STT_NO_TRANSCRIPT_S = 3.0
 
 
 async def handle_media_stream(websocket: WebSocket) -> None:
@@ -42,13 +46,42 @@ async def handle_media_stream(websocket: WebSocket) -> None:
 
     stream_sid: Optional[str] = None
     call_sid: Optional[str] = None
+    from_number = "unknown"
+    to_number = "unknown"
     orchestrator: Optional[StreamingOrchestrator] = None
     stt: Optional[DeepgramSTT] = None
     stt_consumer: Optional[asyncio.Task] = None
+    stt_watchdog: Optional[asyncio.Task] = None
+    media_frame_count = 0
+    first_media_at: float | None = None
+    close_reason = "unknown"
 
     # All Twilio sends go through this queue → single sender task
     send_q: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1024)
-    sender = asyncio.create_task(_sender(websocket, send_q), name="ws-sender")
+    outbound_ws_messages = [0]
+    sender = asyncio.create_task(
+        _sender(websocket, send_q, outbound_ws_messages),
+        name="ws-sender",
+    )
+
+    async def _stt_no_transcript_watchdog() -> None:
+        while True:
+            await asyncio.sleep(0.5)
+            if orchestrator is None:
+                continue
+            if orchestrator.transcript_seen:
+                return
+            if first_media_at is None or media_frame_count == 0:
+                continue
+            if time.monotonic() - first_media_at >= _STT_NO_TRANSCRIPT_S:
+                call_log(
+                    "no_transcript_timeout",
+                    media_frame_count=media_frame_count,
+                    call_sid=call_sid,
+                    seconds=_STT_NO_TRANSCRIPT_S,
+                )
+                await orchestrator.handle_stt_no_transcript()
+                return
 
     try:
         async for raw in websocket.iter_text():
@@ -56,18 +89,22 @@ async def handle_media_stream(websocket: WebSocket) -> None:
             event = msg.get("event")
 
             if event == "connected":
-                logger.info(
-                    "Media stream connected: protocol=%s", msg.get("protocol")
-                )
+                call_log("stream_connected", protocol=msg.get("protocol"))
 
             elif event == "start":
                 stream_sid = msg["streamSid"]
                 start = msg.get("start", {})
                 call_sid = start.get("callSid", "unknown")
                 custom = start.get("customParameters", {})
-                logger.info(
-                    "Stream start: sid=%s call=%s params=%s",
-                    stream_sid, call_sid, custom,
+                from_number = custom.get("from_number", start.get("from", "unknown"))
+                to_number = custom.get("to_number", start.get("to", "unknown"))
+                call_log(
+                    "stream_start",
+                    stream_sid=stream_sid,
+                    call_sid=call_sid,
+                    from_number=from_number,
+                    to_number=to_number,
+                    custom_params=custom,
                 )
 
                 loader = get_tenant_loader()
@@ -78,8 +115,8 @@ async def handle_media_stream(websocket: WebSocket) -> None:
                     agent_id=agent_config.agent_id,
                     tenant_id=agent_config.tenant_id,
                     call_sid=call_sid,
-                    from_number=custom.get("from_number", "unknown"),
-                    to_number=custom.get("to_number", "unknown"),
+                    from_number=from_number,
+                    to_number=to_number,
                 )
 
                 openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
@@ -99,36 +136,59 @@ async def handle_media_stream(websocket: WebSocket) -> None:
                     stt_consumer = asyncio.create_task(
                         _consume_stt(stt, orchestrator), name="stt-consumer"
                     )
+                    stt_watchdog = asyncio.create_task(
+                        _stt_no_transcript_watchdog(), name="stt-watchdog"
+                    )
                 else:
                     logger.warning(
                         "DEEPGRAM_API_KEY not set — STT disabled, audio discarded"
                     )
 
-                # Greeting runs as a cancellable task inside the orchestrator
                 await orchestrator.greet()
 
             elif event == "media":
-                # Forward inbound µ-law to Deepgram (non-blocking; STT queues internally)
                 if stt:
                     mulaw = base64.b64decode(msg["media"]["payload"])
                     await stt.send(mulaw)
+                media_frame_count += 1
+                if first_media_at is None:
+                    first_media_at = time.monotonic()
+                if media_frame_count % 50 == 0:
+                    call_log(
+                        "media_frame_count",
+                        count=media_frame_count,
+                        call_sid=call_sid,
+                        stream_sid=stream_sid,
+                    )
 
             elif event == "mark":
                 logger.debug("Mark: %s", msg.get("mark", {}).get("name"))
 
             elif event == "stop":
-                logger.info("Stream stop: sid=%s call=%s", stream_sid, call_sid)
+                close_reason = "twilio_stop"
+                call_log(
+                    "stream_stop",
+                    stream_sid=stream_sid,
+                    call_sid=call_sid,
+                    media_frame_count=media_frame_count,
+                )
                 break
 
             else:
                 logger.debug("Unknown Twilio event: %s", event)
 
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected: sid=%s", stream_sid)
-    except Exception:
+        close_reason = "websocket_disconnect"
+        call_log("websocket_close", reason=close_reason, stream_sid=stream_sid, call_sid=call_sid)
+    except Exception as exc:
+        close_reason = f"error:{exc}"
+        call_log("websocket_close", reason=close_reason, stream_sid=stream_sid, call_sid=call_sid)
         logger.exception("Media stream error: sid=%s", stream_sid)
     finally:
-        # Orderly shutdown: stop response → stop STT → drain sender
+        if stt_watchdog and not stt_watchdog.done():
+            stt_watchdog.cancel()
+            await asyncio.gather(stt_watchdog, return_exceptions=True)
+
         if orchestrator:
             try:
                 await orchestrator.close()
@@ -145,10 +205,20 @@ async def handle_media_stream(websocket: WebSocket) -> None:
             except Exception:
                 pass
 
-        await send_q.put(None)              # sentinel → sender exits cleanly
+        await send_q.put(None)
         await asyncio.gather(sender, return_exceptions=True)
 
-        logger.info("Media stream cleanup complete: sid=%s", stream_sid)
+        call_log(
+            "stream_cleanup_complete",
+            stream_sid=stream_sid,
+            call_sid=call_sid,
+            close_reason=close_reason,
+            media_frame_count=media_frame_count,
+            outbound_ws_messages=outbound_ws_messages[0],
+            outbound_audio_chunks=getattr(orchestrator, "_outbound_audio_chunks", 0)
+            if orchestrator
+            else 0,
+        )
 
 
 async def _consume_stt(
@@ -164,7 +234,11 @@ async def _consume_stt(
         logger.exception("STT consumer error")
 
 
-async def _sender(websocket: WebSocket, q: asyncio.Queue) -> None:
+async def _sender(
+    websocket: WebSocket,
+    q: asyncio.Queue,
+    outbound_counter: list[int],
+) -> None:
     """Single serialized writer: drains send_q and writes to Twilio WebSocket."""
     try:
         while True:
@@ -173,6 +247,7 @@ async def _sender(websocket: WebSocket, q: asyncio.Queue) -> None:
                 break
             try:
                 await websocket.send_text(msg)
+                outbound_counter[0] += 1
             except Exception as exc:
                 logger.debug("WS send error (call likely ended): %s", exc)
                 break

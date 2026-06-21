@@ -33,10 +33,16 @@ from ..ai.prompt_builder import build_system_prompt
 from ..tools import registry as tool_registry
 from ..tools.base import ToolContext
 from .audio import chunk_for_twilio
+from .call_debug import call_log
 from .event_bus import EventBus
 from .intent import Entity, extract_entities
 from .llm import StreamingLLM
 from .realtime_loop import RealtimeLoop
+from .social_intent import (
+    is_social_utterance,
+    should_play_filler,
+    social_response_text,
+)
 from .task_manager import ResultCache, TaskManager
 from .tts import OpenAIStreamingTTS
 from .stt import STTEvent
@@ -99,6 +105,9 @@ class StreamingOrchestrator:
         # Response lifecycle
         self._response_task: asyncio.Task | None = None
         self._is_speaking = False
+        self._outbound_audio_chunks = 0
+        self._transcript_seen = False
+        self._stt_no_transcript_handled = False
 
         # EventBus wires incremental → speculative → finalization
         self._bus = EventBus()
@@ -126,9 +135,12 @@ class StreamingOrchestrator:
         UtteranceEnd (speech_final=True, text="") also satisfies this.
         """
         if event.speech_started:
-            # Deepgram VAD: caller started speaking while AI may be speaking
+            call_log("barge_in_detected", call_sid=self._session.call_sid)
             await self._bus.emit("barge_in")
             return
+
+        if event.text:
+            self._transcript_seen = True
 
         if event.speech_final:
             # Combine accumulated segments with the final segment text
@@ -144,7 +156,12 @@ class StreamingOrchestrator:
             return
 
         if not event.is_final and event.text:
-            # Partial interim transcript → incremental processing
+            call_log(
+                "partial_received",
+                text=event.text,
+                confidence=round(event.confidence, 3),
+                call_sid=self._session.call_sid,
+            )
             await self._bus.emit(
                 "partial_transcript_updated",
                 text=event.text,
@@ -158,6 +175,8 @@ class StreamingOrchestrator:
         Incremental stage: extract entities from partial text, fire speculative tools.
         Must be fast — runs on every interim STT result.
         """
+        if is_social_utterance(text):
+            return
         for entity in extract_entities(text):
             await self._fire_speculative(entity)
 
@@ -165,6 +184,30 @@ class StreamingOrchestrator:
         """
         Turn finalization: cancel stale response, harvest cache, run LLM pipeline.
         """
+        intent = "social" if is_social_utterance(text) else "task"
+        call_log(
+            "final_received",
+            text=text,
+            intent=intent,
+            call_sid=self._session.call_sid,
+        )
+
+        if is_social_utterance(text):
+            if self._response_task and not self._response_task.done():
+                await self._interrupt_response()
+            self._tasks.cancel_all()
+            response = social_response_text()
+            call_log(
+                "social_fast_path_used",
+                intent="social",
+                response_text=response,
+                call_sid=self._session.call_sid,
+            )
+            self._response_task = asyncio.create_task(
+                self._respond_direct(user_text=text, response_text=response),
+                name="social-reply",
+            )
+            return
         # Cancel any in-progress response (previous turn still running)
         if self._response_task and not self._response_task.done():
             await self._interrupt_response()
@@ -211,6 +254,12 @@ class StreamingOrchestrator:
         if self._cache.has(key):
             return  # already have a fresh result
 
+        call_log(
+            "speculative_tool_started",
+            tool=tool_name,
+            args=args,
+            call_sid=self._session.call_sid,
+        )
         self._tasks.submit(key, self._run_speculative(tool_name, args, key))
 
     async def _run_speculative(
@@ -226,16 +275,39 @@ class StreamingOrchestrator:
             value = result.voice_summary or json.dumps(result.data)
             if value:
                 self._cache.set(cache_key, value)
+                call_log(
+                    "speculative_tool_completed",
+                    tool=tool_name,
+                    cache_key=cache_key,
+                    summary_len=len(value),
+                    call_sid=self._session.call_sid,
+                )
                 logger.debug("Speculative %s cached (key=%s)", tool_name, cache_key)
         except Exception as exc:
             logger.debug("Speculative %s failed: %s", tool_name, exc)
 
     # ── Main response pipeline ─────────────────────────────────────────────────
 
+    async def _respond_direct(self, user_text: str, response_text: str) -> None:
+        """Fast path: TTS only — no LLM, no filler, no tools."""
+        self._is_speaking = True
+        try:
+            call_log("tts_started", mode="direct", text=response_text[:120])
+            await self._synthesize_and_send(response_text)
+            call_log("tts_completed", mode="direct", call_sid=self._session.call_sid)
+            self._session.add_turn(user_text, response_text)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Direct response error")
+        finally:
+            self._is_speaking = False
+
     async def _respond(self, user_text: str, pre_fetched: dict) -> None:
         self._is_speaking = True
         producer_task: asyncio.Task | None = None
         collected: list[str] = []
+        play_filler = should_play_filler(user_text, pre_fetched)
 
         try:
             messages = self._build_messages(user_text, pre_fetched)
@@ -245,37 +317,52 @@ class StreamingOrchestrator:
             sentence_q: asyncio.Queue[str | None] = asyncio.Queue()
 
             async def produce() -> None:
+                sentence_count = 0
                 try:
+                    call_log("llm_started", call_sid=self._session.call_sid)
                     async for sentence in self._llm.stream_sentences(
                         messages, tools, executor
                     ):
+                        sentence_count += 1
                         await sentence_q.put(sentence)
                 except asyncio.CancelledError:
                     pass
                 except Exception as exc:
+                    call_log("llm_error", error=str(exc))
                     logger.error("LLM stream error: %s", exc)
                 finally:
+                    call_log(
+                        "llm_completed",
+                        call_sid=self._session.call_sid,
+                        sentences=sentence_count,
+                    )
                     await sentence_q.put(None)
 
             producer_task = asyncio.create_task(produce(), name="llm-producer")
 
-            # First sentence: inject filler if LLM is slow (tool round-trip)
-            try:
-                first = await asyncio.wait_for(
-                    sentence_q.get(), timeout=_FILLER_TIMEOUT_S
-                )
-            except asyncio.TimeoutError:
-                await self._synthesize_and_send(_FILLER_TEXT)
+            if play_filler:
+                try:
+                    first = await asyncio.wait_for(
+                        sentence_q.get(), timeout=_FILLER_TIMEOUT_S
+                    )
+                except asyncio.TimeoutError:
+                    call_log("filler_played", text=_FILLER_TEXT)
+                    await self._synthesize_and_send(_FILLER_TEXT)
+                    first = await sentence_q.get()
+            else:
                 first = await sentence_q.get()
 
             if first is not None:
+                call_log("tts_started", mode="llm", text=first[:120])
                 await self._synthesize_and_send(first)
+                call_log("tts_completed", mode="llm_sentence", call_sid=self._session.call_sid)
                 collected.append(first)
 
             while True:
                 sentence = await sentence_q.get()
                 if sentence is None:
                     break
+                call_log("tts_started", mode="llm", text=sentence[:120])
                 await self._synthesize_and_send(sentence)
                 collected.append(sentence)
 
@@ -321,9 +408,17 @@ class StreamingOrchestrator:
 
     async def _do_greet(self) -> None:
         self._is_speaking = True
+        greeting = self._agent_config.resolve_greeting()
         try:
-            mulaw = await self._tts.synthesize(self._agent_config.resolve_greeting())
+            call_log("tts_started", mode="greeting", text=greeting[:120])
+            mulaw = await self._tts.synthesize(greeting)
             await self._send_audio(mulaw)
+            call_log(
+                "greeting_sent",
+                text=greeting[:120],
+                call_sid=self._session.call_sid,
+            )
+            call_log("tts_completed", mode="greeting", call_sid=self._session.call_sid)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -338,8 +433,37 @@ class StreamingOrchestrator:
         async for mulaw_chunk in self._tts.stream_mulaw(text):
             await self._send_audio(mulaw_chunk)
 
+    async def handle_stt_no_transcript(self) -> None:
+        """One-shot fallback when audio arrives but STT produces nothing."""
+        if self._stt_no_transcript_handled or self._transcript_seen:
+            return
+        self._stt_no_transcript_handled = True
+        msg = "I'm having trouble hearing you clearly. Could you please repeat that?"
+        call_log("stt_no_transcript", call_sid=self._session.call_sid)
+        if self._response_task and not self._response_task.done():
+            await self._interrupt_response()
+        self._response_task = asyncio.create_task(
+            self._respond_direct(user_text="", response_text=msg),
+            name="stt-fallback",
+        )
+
+    def note_inbound_media_frame(self) -> None:
+        """Reserved for WS-layer frame accounting."""
+        return
+
+    @property
+    def transcript_seen(self) -> bool:
+        return self._transcript_seen
+
     async def _send_audio(self, mulaw_bytes: bytes) -> None:
         for frame in chunk_for_twilio(mulaw_bytes):
+            self._outbound_audio_chunks += 1
+            if self._outbound_audio_chunks % 50 == 0:
+                call_log(
+                    "outbound_audio_chunks",
+                    count=self._outbound_audio_chunks,
+                    call_sid=self._session.call_sid,
+                )
             await self._q.put(json.dumps({
                 "event": "media",
                 "streamSid": self._stream_sid,
