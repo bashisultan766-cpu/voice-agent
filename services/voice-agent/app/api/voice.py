@@ -3,6 +3,7 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 
+from ..core.deprecated import DEPRECATED_VOICE_PIPELINE_MESSAGE
 from ..voice.pipeline import VoicePipeline
 from ..voice.twiml import gather_twiml, media_stream_twiml, reject_twiml
 from ..config import get_settings
@@ -64,10 +65,11 @@ async def voice_test() -> dict[str, Any]:
         "message": "Voice agent API is reachable",
         "webhooks": {
             "incoming": "/voice/incoming",
-            "gather": "/voice/gather",
+            "gather": "/voice/gather (DEPRECATED — 410 Gone)",
             "status": "/voice/status",
             "ws": "/ws/stream",
         },
+        "activePipeline": "POST /voice/incoming → wss /ws/stream → StreamingOrchestrator",
     }
 
 
@@ -95,12 +97,24 @@ async def gather(
     SpeechResult: str = Form(default=""),
     Confidence: float = Form(default=0.0),
 ) -> Response:
-    """Twilio webhook: speech result from <Gather>."""
+    """
+    DEPRECATED — legacy Twilio <Gather> pipeline (VoicePipeline).
+    Production calls must use POST /voice/incoming (Media Streams).
+    """
+    raise HTTPException(status_code=410, detail=DEPRECATED_VOICE_PIPELINE_MESSAGE)
+
+
+async def _legacy_gather_turn(
+    session: str,
+    CallSid: str,
+    SpeechResult: str,
+    Confidence: float,
+) -> Response:
+    """Preserved gather implementation — not routed; remove after migration window."""
     speech = SpeechResult.strip()
     logger.info("Gather: session=%s text=%r conf=%.2f", session, speech[:80], Confidence)
 
     if not speech:
-        # No speech — re-prompt with the same gather
         settings = get_settings()
         gather_url = f"{settings.BASE_URL}/voice/gather?session={session}"
         twiml = gather_twiml(action_url=gather_url)

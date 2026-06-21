@@ -36,7 +36,7 @@ class TenantConfigLoader:
             tenant_id=settings.DEFAULT_TENANT_ID,
             agent_name=settings.DEFAULT_AGENT_NAME,
             business_name=settings.DEFAULT_BUSINESS_NAME,
-            voice_id=settings.DEFAULT_VOICE_ID,
+            voice_id=settings.OPENAI_TTS_VOICE,
             openai_api_key=settings.OPENAI_API_KEY or None,
             shopify_domain=settings.SHOPIFY_DOMAIN,
             shopify_access_token=settings.SHOPIFY_ACCESS_TOKEN,

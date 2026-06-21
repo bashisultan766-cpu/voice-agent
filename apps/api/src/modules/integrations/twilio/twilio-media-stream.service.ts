@@ -36,44 +36,16 @@ export class TwilioMediaStreamService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    if (isFullDuplexVoiceEnabled()) {
-      this.logger.log(
-        JSON.stringify({
-          event: 'twilio.legacy_media_stream_gateway_skipped',
-          reason: 'full_duplex_active',
-          usePath: '/api/realtime-voice/media-stream',
-        }),
-      );
-      return;
-    }
-    if (!isVoiceMediaStreamEnabled() && !isLegacyMediaStreamEnabled()) {
-      this.logger.log(
-        JSON.stringify({
-          event: 'twilio.legacy_media_stream_gateway_disabled',
-          reason: 'VOICE_MEDIA_STREAM_ENABLED not truthy',
-        }),
-      );
-      return;
-    }
-    const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();
-    this.wss = new WebSocketServer({ noServer: true });
-    const pathPrefix = '/api/twilio/voice/media-stream';
-
-    httpServer.on('upgrade', (request: IncomingMessage, socket: unknown, head: Buffer) => {
-      const url = request.url ?? '';
-      if (!url.startsWith(pathPrefix)) return;
-      this.wss?.handleUpgrade(request, socket as import('net').Socket, head, (ws) => {
-        this.wss?.emit('connection', ws, request);
-      });
-    });
-
-    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-      void this.handleConnection(ws, req);
-    });
-
-    this.logger.log(JSON.stringify({ event: 'twilio.media_stream.ws_ready', pathPrefix }));
+    this.logger.warn(
+      JSON.stringify({
+        event: 'twilio.legacy_media_stream_gateway_deprecated',
+        reason: 'voice_consolidated_to_services_voice_agent',
+        activePipeline: 'POST /voice/incoming → wss /ws/stream (services/voice-agent)',
+      }),
+    );
   }
 
+  /** @deprecated Preserved — WebSocket handler no longer registered. */
   private async handleConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
     const params = new URL(req.url ?? '', 'http://localhost').searchParams;
     const callSessionId = params.get('callSessionId')?.trim() ?? '';

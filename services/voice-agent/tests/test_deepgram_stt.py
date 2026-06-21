@@ -97,6 +97,8 @@ async def _run() -> list[str]:
 @pytest.mark.asyncio
 async def test_deepgram_roundtrip() -> None:
     """Confirm Deepgram returns a transcript that contains expected keywords."""
+    if not os.environ.get("DEEPGRAM_API_KEY") or not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("DEEPGRAM_API_KEY and OPENAI_API_KEY required for integration test")
     transcripts = await _run()
     assert transcripts, "Deepgram returned no final transcripts"
     full = " ".join(transcripts).lower()

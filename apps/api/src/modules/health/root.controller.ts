@@ -14,7 +14,8 @@ export class RootController {
       endpoints: {
         health: '/api/health',
         twilioConfigCheck: '/api/twilio/config-check',
-        twilioInboundVoice: '/api/twilio/voice/inbound',
+        twilioInboundVoiceDeprecated: '/api/twilio/voice/inbound (410 Gone — use services/voice-agent POST /voice/incoming)',
+        activeVoicePipeline: 'services/voice-agent: POST /voice/incoming → wss /ws/stream',
       },
     };
   }

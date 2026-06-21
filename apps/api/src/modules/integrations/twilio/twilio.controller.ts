@@ -11,6 +11,7 @@ import {
   BadRequestException,
   RawBodyRequest,
   Logger,
+  UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
@@ -32,6 +33,7 @@ import { normalizePublicWebhookBaseUrl, validatePublicWebhookBaseUrl } from '../
 import { buildFallbackTwiML } from './twiml/conversation-relay.twiml';
 import { resolveVoiceProviderPolicy } from './voice-provider-policy.util';
 import { computeGatherSpeechGate } from './gather-speech-gate.util';
+import { LegacyVoicePipelineGuard } from '../../../common/guards/legacy-voice-pipeline.guard';
 
 const inboundSchema = z.object({
   CallSid: z.string().trim().min(1),
@@ -226,6 +228,7 @@ export class TwilioVoiceController {
    */
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Get('voice/tts/:token')
   ttsAudio(@Param('token') token: string, @Res() res: Response) {
     const trimmed = token?.trim() ?? '';
@@ -252,6 +255,7 @@ export class TwilioVoiceController {
    */
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Post('voice/inbound')
   async inbound(
     @Req() req: RawBodyRequest<Request>,
@@ -309,6 +313,7 @@ export class TwilioVoiceController {
    */
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Post('inbound_call')
   async inboundLegacy(
     @Req() req: RawBodyRequest<Request>,
@@ -351,6 +356,7 @@ export class TwilioVoiceController {
    */
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Post('voice/gather')
   async gather(
     @Req() req: RawBodyRequest<Request>,
@@ -448,6 +454,7 @@ export class TwilioVoiceController {
    */
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Post('voice/deferred-poll')
   async deferredPoll(
     @Req() req: RawBodyRequest<Request>,
@@ -501,6 +508,7 @@ export class TwilioVoiceController {
    */
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Post('voice/status')
   async status(
     @Req() req: RawBodyRequest<Request>,

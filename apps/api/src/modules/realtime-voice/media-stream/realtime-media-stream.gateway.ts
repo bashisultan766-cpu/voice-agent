@@ -29,39 +29,12 @@ export class RealtimeMediaStreamGateway implements OnModuleInit, OnModuleDestroy
   ) {}
 
   onModuleInit(): void {
-    if (!isFullDuplexVoiceEnabled()) {
-      const flags = getRealtimePipelineFlags();
-      this.logger.warn(
-        JSON.stringify({
-          event: 'realtime.media_stream.gateway_disabled',
-          flags,
-          fix: 'Set VOICE_MEDIA_STREAM_ENABLED, OPENAI_REALTIME_ENABLED, REALTIME_MULTI_AGENT_ENABLED to true (or 1/yes/on) and restart.',
-        }),
-      );
-      return;
-    }
-
-    const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();
-
-    this.wss = new WebSocketServer({ noServer: true });
-
-    httpServer.on('upgrade', (request: IncomingMessage, socket: unknown, head: Buffer) => {
-      const url = request.url ?? '';
-      if (!url.startsWith(this.pathPrefix)) return;
-      this.wss?.handleUpgrade(request, socket as import('net').Socket, head, (ws) => {
-        this.wss?.emit('connection', ws, request);
-      });
-    });
-
-    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-      void this.handleConnection(ws, req);
-    });
-
-    this.logger.log(
+    this.logger.warn(
       JSON.stringify({
-        event: 'realtime.media_stream.ws_ready',
-        path: this.pathPrefix,
-        wssExample: 'wss://<PUBLIC_WEBHOOK_HOST>/api/realtime-voice/media-stream',
+        event: 'realtime.media_stream.gateway_deprecated',
+        reason: 'voice_consolidated_to_services_voice_agent',
+        blockedPath: this.pathPrefix,
+        activePipeline: 'POST /voice/incoming → wss /ws/stream (services/voice-agent)',
       }),
     );
   }

@@ -90,6 +90,9 @@ export function validateProductionEnv(): { ok: boolean; missing: string[] } {
     if (process.env.RESEND_API_KEY?.trim() && !process.env.RESEND_FROM_EMAIL?.trim()) {
       missing.push('RESEND_FROM_EMAIL (required when RESEND_API_KEY is set)');
     }
+    if (!process.env.VOICE_COMMERCE_API_KEY?.trim()) {
+      missing.push('VOICE_COMMERCE_API_KEY (required in production for /api/voice/* tool webhooks)');
+    }
   }
 
   if (process.env.LIVE_CALL_TEST_MODE === 'true') {

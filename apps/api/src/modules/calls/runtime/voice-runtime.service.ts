@@ -74,6 +74,9 @@ import { buildConversationalSupportReply } from './voice-intent-firewall.util';
 import { VoiceLatencyAnalyzerService } from './voice-latency-analyzer.service';
 import { logVoiceTurnPerformance } from './voice-turn-performance.util';
 import { LegacyVoiceBridgeService } from '../../realtime-voice/bridge/legacy-voice-bridge.service';
+import { VoiceIntentPipelineService } from '../../voice-intent-pipeline/voice-intent-pipeline.service';
+import type { OrchestratedVoiceResponse } from '../../voice-intent-pipeline/types/intent-analysis.types';
+import { summarizeForVoice, stubIntentForVoiceSummary } from '../../voice-intent-pipeline/voice-summarizer.util';
 
 /**
  * Voice runtime: assembles prompt, handles conversation flow.
@@ -100,6 +103,7 @@ export class VoiceRuntimeService {
     private readonly policyPrefetch: PolicyContextPrefetchService,
     private readonly voiceLatencyAnalyzer: VoiceLatencyAnalyzerService,
     private readonly productFastPath: VoiceProductFastPathService,
+    @Optional() private readonly voiceIntentPipeline?: VoiceIntentPipelineService,
     @Optional() private readonly multiAgentBridge?: LegacyVoiceBridgeService,
   ) {}
 
@@ -936,6 +940,8 @@ export class VoiceRuntimeService {
     conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [],
   ): Promise<{
     reply: string;
+    voiceText?: string;
+    structured?: OrchestratedVoiceResponse;
     turnProof?: Record<string, unknown>;
   }> {
     const turnStartedAt = Date.now();
@@ -1444,8 +1450,65 @@ export class VoiceRuntimeService {
         }),
       );
     }
-    const result = await this.llmAgent.handleTurn(callSessionId, orchestratorSpeech, historyFromDb);
-    openaiLatencyMs = Date.now() - llmStartedAt;
+
+    let voiceText: string | undefined;
+    let structured: OrchestratedVoiceResponse | undefined;
+    let pipelineTurnProof: Record<string, unknown> | undefined;
+    let result: Awaited<ReturnType<LlmAgentOrchestratorService['handleTurn']>> | null = null;
+
+    if (this.voiceIntentPipeline?.isEnabled()) {
+      const pipelineResult = await this.voiceIntentPipeline.processTurn({
+        callSessionId,
+        rawUserText: safeText,
+        orchestratorSpeech,
+        conversationHistory: historyFromDb,
+        ctx,
+        callerPhone: ctx.fromNumber ?? undefined,
+      });
+      reply = pipelineResult.text_response;
+      voiceText = pipelineResult.voice_text;
+      structured = pipelineResult;
+      pipelineTurnProof = pipelineResult.turnProof;
+      openaiLatencyMs = Date.now() - llmStartedAt;
+
+      if (pipelineResult.llmUsed) {
+        result = {
+          reply,
+          toolCallsCount: pipelineResult.toolNames?.length ?? 0,
+          toolNames: pipelineResult.toolNames ?? [],
+          state: {} as never,
+          proof: {
+            openaiCalled: true,
+            openaiSuccess: true,
+            openaiKeySource: 'pipeline',
+            modelUsed: 'pipeline',
+          },
+        };
+      } else {
+        result = {
+          reply,
+          toolCallsCount: pipelineResult.actions_executed.length,
+          toolNames: pipelineResult.actions_executed.map((a) => a.action),
+          state: {} as never,
+          proof: {
+            openaiCalled: false,
+            openaiSuccess: true,
+            openaiKeySource: 'none',
+            modelUsed: 'intent_pipeline',
+          },
+        };
+      }
+    } else {
+      result = await this.llmAgent.handleTurn(callSessionId, orchestratorSpeech, historyFromDb);
+      openaiLatencyMs = Date.now() - llmStartedAt;
+      reply = result.reply;
+      voiceText = summarizeForVoice({
+        text_response: reply,
+        intent: stubIntentForVoiceSummary(orchestratorSpeech, userIntent),
+        actions_executed: [],
+      });
+    }
+
     const responseDelayMs = openaiLatencyMs;
 
     if (result.toolCallsCount > 0) {
@@ -1457,7 +1520,6 @@ export class VoiceRuntimeService {
       );
     }
 
-    reply = result.reply;
     if (result.error?.code === 'OPENAI_429' || result.error?.code === 'OPENAI_ERROR' || result.error?.code === 'NO_KEY') {
       reply =
         ctx.agent.fallbackMessage ??
@@ -1470,7 +1532,11 @@ export class VoiceRuntimeService {
 
     const agentSeq = await this.transcriptBuffer.getNextSequence(callSessionId);
     await this.transcriptBuffer.append(callSessionId, 'agent', reply, agentSeq);
-    await this.callsService.mergeSessionMetadata(callSessionId, buildLlmReplyMetadataPatch(reply));
+    await this.callsService.mergeSessionMetadata(callSessionId, {
+      ...buildLlmReplyMetadataPatch(reply),
+      voiceText,
+      orchestratedVoiceResponse: structured ?? undefined,
+    });
 
     if (result.escalated) {
       await this.callsService.updateSessionStatus(callSessionId, {
@@ -1488,9 +1554,9 @@ export class VoiceRuntimeService {
         sessionId: callSessionId,
         replyPreview: reply.slice(0, 240),
         toolCallsUsed: result.toolNames,
-        intent: result.state.customerIntent ?? null,
-        stateStage: result.state.checkoutStage,
-        transactionalCheckoutState: result.state.transactionalCheckoutState ?? result.proof?.transactionalCheckoutState ?? null,
+        intent: result.state?.customerIntent ?? structured?.intent.primary_intent ?? null,
+        stateStage: result.state?.checkoutStage,
+        transactionalCheckoutState: result.state?.transactionalCheckoutState ?? result.proof?.transactionalCheckoutState ?? null,
         transactionalMode: result.proof?.transactionalMode ?? false,
         skipOpenAiGeneration: result.proof?.skipOpenAiGeneration ?? false,
         deterministicReplyUsed: result.proof?.deterministicReplyUsed ?? false,
@@ -1554,12 +1620,16 @@ export class VoiceRuntimeService {
 
     return {
       reply,
+      voiceText,
+      structured,
       turnProof: {
         ...turnProof,
+        ...pipelineTurnProof,
         totalTurnLatencyMs,
         intentLatencyMs,
         openaiLatencyMs: result.proof?.openaiCalled ? openaiLatencyMs : 0,
         instantReplyUsed: false,
+        voiceTextChars: voiceText?.length ?? 0,
       },
     };
   }

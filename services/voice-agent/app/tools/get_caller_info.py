@@ -179,7 +179,7 @@ _SCENARIO_MEDIUM = dict(
 _SCENARIO_LOW = dict(
     found=True, is_new_caller=False, caller_name=None, call_count=1,
     last_call_date="2026-06-01", past_purchases=[],
-    preferred_language="en", confidence=0.61,
+    preferred_language="en", confidence=0.45,
     confidence_reason="Phone number seen before but caller declined to give name.",
 )
 _SCENARIO_NEW = dict(

@@ -1,44 +1,54 @@
-"""Twilio Media Streams WebSocket handler."""
+"""
+Twilio Media Streams WebSocket handler.
+
+One call = one invocation of handle_media_stream().
+
+Architecture:
+    Twilio WS ─(µ-law frames)─► DeepgramSTT ─(STTEvents)─► StreamingOrchestrator
+                                                                      │
+                    ◄────────(µ-law frames via send_q)────────────────┘
+
+Send path: all Twilio writes go through a single sender task (send_q) to avoid
+concurrent WebSocket writes.
+
+STT consumer: a background task iterates stt.events() and forwards each
+STTEvent to orchestrator.on_stt_event(). This keeps the STT event loop
+decoupled from the Twilio recv loop.
+"""
 from __future__ import annotations
 
 import asyncio
 import base64
 import json
 import logging
+import uuid
 from typing import Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
+from openai import AsyncOpenAI
 
 from ..core.config import get_settings
-from ..pipeline.audio import chunk_for_twilio, pcm16_to_mulaw
+from ..pipeline.stt import DeepgramSTT
+from ..pipeline.orchestrator import StreamingOrchestrator
+from ..state.schema import SessionState
+from ..tenant.loader import get_tenant_loader
 
 logger = logging.getLogger(__name__)
 
-_GREETING = (
-    "Hello, thank you for calling SureShot Books! "
-    "My name is Alex, and I'm here to help you find books, "
-    "check on an order, or anything else you need. "
-    "How can I help you today?"
-)
-
 
 async def handle_media_stream(websocket: WebSocket) -> None:
-    """
-    Manage a single Twilio Media Streams WebSocket session.
-
-    Milestone 2 lifecycle:
-        connected  → log protocol
-        start      → capture stream_sid / call_sid, fire greeting TTS
-        media      → ignore (Milestone 3 wires this to Deepgram STT)
-        mark       → log Twilio echo (Milestone 3 uses for barge-in timing)
-        stop       → clean up and close
-    """
     await websocket.accept()
     settings = get_settings()
 
     stream_sid: Optional[str] = None
     call_sid: Optional[str] = None
-    greeting_task: Optional[asyncio.Task] = None
+    orchestrator: Optional[StreamingOrchestrator] = None
+    stt: Optional[DeepgramSTT] = None
+    stt_consumer: Optional[asyncio.Task] = None
+
+    # All Twilio sends go through this queue → single sender task
+    send_q: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1024)
+    sender = asyncio.create_task(_sender(websocket, send_q), name="ws-sender")
 
     try:
         async for raw in websocket.iter_text():
@@ -46,110 +56,125 @@ async def handle_media_stream(websocket: WebSocket) -> None:
             event = msg.get("event")
 
             if event == "connected":
-                logger.info("Media stream connected: protocol=%s", msg.get("protocol"))
+                logger.info(
+                    "Media stream connected: protocol=%s", msg.get("protocol")
+                )
 
             elif event == "start":
                 stream_sid = msg["streamSid"]
-                start_data = msg.get("start", {})
-                call_sid = start_data.get("callSid", "unknown")
-                custom = start_data.get("customParameters", {})
+                start = msg.get("start", {})
+                call_sid = start.get("callSid", "unknown")
+                custom = start.get("customParameters", {})
                 logger.info(
-                    "Stream started: stream_sid=%s call_sid=%s custom=%s",
+                    "Stream start: sid=%s call=%s params=%s",
                     stream_sid, call_sid, custom,
                 )
-                greeting_task = asyncio.create_task(
-                    _send_greeting(websocket, stream_sid, settings)
+
+                loader = get_tenant_loader()
+                agent_config = await loader.load_default()
+
+                session = SessionState(
+                    session_id=str(uuid.uuid4()),
+                    agent_id=agent_config.agent_id,
+                    tenant_id=agent_config.tenant_id,
+                    call_sid=call_sid,
+                    from_number=custom.get("from_number", "unknown"),
+                    to_number=custom.get("to_number", "unknown"),
                 )
 
+                openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+                orchestrator = StreamingOrchestrator(
+                    send_q=send_q,
+                    stream_sid=stream_sid,
+                    session=session,
+                    agent_config=agent_config,
+                    openai_client=openai_client,
+                    settings=settings,
+                )
+
+                if settings.deepgram_configured:
+                    stt = DeepgramSTT(api_key=settings.DEEPGRAM_API_KEY)
+                    await stt.start()
+                    stt_consumer = asyncio.create_task(
+                        _consume_stt(stt, orchestrator), name="stt-consumer"
+                    )
+                else:
+                    logger.warning(
+                        "DEEPGRAM_API_KEY not set — STT disabled, audio discarded"
+                    )
+
+                # Greeting runs as a cancellable task inside the orchestrator
+                await orchestrator.greet()
+
             elif event == "media":
-                # Consume without processing — keeps the WS responsive.
-                # Milestone 3 will pipe msg["media"]["payload"] into Deepgram STT.
-                pass
+                # Forward inbound µ-law to Deepgram (non-blocking; STT queues internally)
+                if stt:
+                    mulaw = base64.b64decode(msg["media"]["payload"])
+                    await stt.send(mulaw)
 
             elif event == "mark":
-                name = msg.get("mark", {}).get("name", "")
-                logger.debug("Mark echoed by Twilio: %s", name)
-                # Milestone 3: "greeting-done" triggers the STT listening window.
+                logger.debug("Mark: %s", msg.get("mark", {}).get("name"))
 
             elif event == "stop":
-                logger.info("Stream stopped: stream_sid=%s call_sid=%s", stream_sid, call_sid)
+                logger.info("Stream stop: sid=%s call=%s", stream_sid, call_sid)
                 break
 
             else:
-                logger.debug("Unknown WS event: %s", event)
+                logger.debug("Unknown Twilio event: %s", event)
 
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected: stream_sid=%s", stream_sid)
+        logger.info("WebSocket disconnected: sid=%s", stream_sid)
     except Exception:
-        logger.exception(
-            "Media stream error: stream_sid=%s call_sid=%s", stream_sid, call_sid
-        )
+        logger.exception("Media stream error: sid=%s", stream_sid)
     finally:
-        if greeting_task and not greeting_task.done():
-            greeting_task.cancel()
+        # Orderly shutdown: stop response → stop STT → drain sender
+        if orchestrator:
             try:
-                await greeting_task
-            except asyncio.CancelledError:
+                await orchestrator.close()
+            except Exception:
                 pass
 
+        if stt_consumer and not stt_consumer.done():
+            stt_consumer.cancel()
+            await asyncio.gather(stt_consumer, return_exceptions=True)
 
-async def _send_greeting(websocket: WebSocket, stream_sid: str, settings) -> None:
-    """Synthesize greeting with OpenAI TTS (PCM) and stream back as 8 kHz µ-law frames."""
-    try:
-        from openai import AsyncOpenAI
+        if stt:
+            try:
+                await stt.close()
+            except Exception:
+                pass
 
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        response = await client.audio.speech.create(
-            model=settings.OPENAI_TTS_MODEL,
-            voice=settings.OPENAI_TTS_VOICE,
-            input=_GREETING,
-            response_format="pcm",  # 24 kHz, 16-bit, mono — no container overhead
-        )
-        pcm_bytes: bytes = response.content
+        await send_q.put(None)              # sentinel → sender exits cleanly
+        await asyncio.gather(sender, return_exceptions=True)
 
-        await _stream_audio(websocket, stream_sid, pcm_bytes, src_rate=24000)
-        await _send_mark(websocket, stream_sid, "greeting-done")
-
-        logger.info(
-            "Greeting sent: stream_sid=%s pcm_bytes=%d chars=%d",
-            stream_sid, len(pcm_bytes), len(_GREETING),
-        )
-
-    except asyncio.CancelledError:
-        raise  # caller is shutting down — don't swallow
-    except Exception:
-        logger.exception("Greeting synthesis failed: stream_sid=%s", stream_sid)
+        logger.info("Media stream cleanup complete: sid=%s", stream_sid)
 
 
-async def _stream_audio(
-    websocket: WebSocket,
-    stream_sid: str,
-    pcm_bytes: bytes,
-    src_rate: int = 24000,
+async def _consume_stt(
+    stt: DeepgramSTT, orchestrator: StreamingOrchestrator
 ) -> None:
-    """Convert PCM → 8 kHz µ-law, then send one Twilio media message per 20 ms frame."""
-    mulaw = pcm16_to_mulaw(pcm_bytes, src_rate=src_rate)
-    for chunk in chunk_for_twilio(mulaw):
-        payload = base64.b64encode(chunk).decode()
-        await websocket.send_text(
-            json.dumps({
-                "event": "media",
-                "streamSid": stream_sid,
-                "media": {"payload": payload},
-            })
-        )
+    """Bridge: iterate STT events → orchestrator.on_stt_event()."""
+    try:
+        async for event in stt.events():
+            await orchestrator.on_stt_event(event)
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("STT consumer error")
 
 
-async def _send_mark(websocket: WebSocket, stream_sid: str, name: str) -> None:
-    """
-    Send a Twilio mark event.
-    Twilio echoes it back once all queued audio before the mark has finished playing.
-    Used in Milestone 3 to open the STT listen window after the greeting finishes.
-    """
-    await websocket.send_text(
-        json.dumps({
-            "event": "mark",
-            "streamSid": stream_sid,
-            "mark": {"name": name},
-        })
-    )
+async def _sender(websocket: WebSocket, q: asyncio.Queue) -> None:
+    """Single serialized writer: drains send_q and writes to Twilio WebSocket."""
+    try:
+        while True:
+            msg = await q.get()
+            if msg is None:
+                break
+            try:
+                await websocket.send_text(msg)
+            except Exception as exc:
+                logger.debug("WS send error (call likely ended): %s", exc)
+                break
+    except asyncio.CancelledError:
+        pass

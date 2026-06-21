@@ -1,6 +1,11 @@
-/** Collapse whitespace only — full OpenAI reply is spoken without truncation. */
-export function prepareVoiceTtsInputText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
+import { compressForVoice } from '../../voice-optimization/voice-text-compressor.util';
+import { normalizePreparedVoiceText } from '../../voice-intent-pipeline/voice-summarizer.util';
+
+/** Legacy path — compress unstructured text (avoid for pipeline voice_text). */
+export function prepareVoiceTtsInputText(text: string, opts?: { prepared?: boolean }): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (opts?.prepared) return normalizePreparedVoiceText(normalized);
+  return compressForVoice(normalized);
 }
 
 export const ELEVENLABS_PLAYBACK_CONTENT_TYPE = 'audio/mpeg';

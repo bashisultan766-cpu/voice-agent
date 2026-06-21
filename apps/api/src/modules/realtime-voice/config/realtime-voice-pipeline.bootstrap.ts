@@ -2,7 +2,6 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   getRealtimePipelineFlags,
-  readEnvFlag,
   resolveInboundVoicePipelinePath,
 } from './realtime-voice-flags.util';
 
@@ -34,44 +33,15 @@ export class RealtimeVoicePipelineBootstrapService implements OnModuleInit {
     const flags = getRealtimePipelineFlags();
     const inboundPath = resolveInboundVoicePipelinePath();
 
-    this.logger.log(
+    this.logger.warn(
       JSON.stringify({
-        event: 'realtime_pipeline_enabled',
-        voiceMediaStream: flags.voiceMediaStream,
-        openaiRealtime: flags.openaiRealtime,
-        multiAgent: flags.multiAgent,
-        elevenlabsStreaming: flags.elevenlabsStreaming,
-        gatherFallback: flags.gatherFallback,
-        fullDuplex: flags.fullDuplex,
-        legacyMediaStream: flags.legacyMediaStream,
+        event: 'realtime_pipeline_deprecated',
+        reason: 'voice_consolidated_to_services_voice_agent',
+        activeTwilioWebhook: 'POST https://<voice-host>/voice/incoming',
+        activeMediaStream: 'wss://<voice-host>/ws/stream',
+        flags,
         inboundPipelinePath: inboundPath,
-        mediaStreamWsPath: flags.fullDuplex
-          ? '/api/realtime-voice/media-stream'
-          : flags.legacyMediaStream
-            ? '/api/twilio/voice/media-stream'
-            : null,
-        envRaw: {
-          VOICE_MEDIA_STREAM_ENABLED: process.env.VOICE_MEDIA_STREAM_ENABLED ?? null,
-          OPENAI_REALTIME_ENABLED: process.env.OPENAI_REALTIME_ENABLED ?? null,
-          REALTIME_MULTI_AGENT_ENABLED: process.env.REALTIME_MULTI_AGENT_ENABLED ?? null,
-        },
-        parsedTruthy: {
-          VOICE_MEDIA_STREAM_ENABLED: readEnvFlag('VOICE_MEDIA_STREAM_ENABLED'),
-          OPENAI_REALTIME_ENABLED: readEnvFlag('OPENAI_REALTIME_ENABLED'),
-          REALTIME_MULTI_AGENT_ENABLED: readEnvFlag('REALTIME_MULTI_AGENT_ENABLED'),
-        },
       }),
     );
-
-    if (!flags.fullDuplex) {
-      this.logger.warn(
-        JSON.stringify({
-          event: 'realtime_pipeline_not_full_duplex',
-          inboundPipelinePath: inboundPath,
-          fix:
-            'Set VOICE_MEDIA_STREAM_ENABLED=true, OPENAI_REALTIME_ENABLED=true, REALTIME_MULTI_AGENT_ENABLED=true (values: true/1/yes/on) then restart API.',
-        }),
-      );
-    }
   }
 }

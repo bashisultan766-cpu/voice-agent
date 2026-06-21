@@ -31,42 +31,29 @@ export class VoiceStreamingAgent {
     const modelId = state.context.agent.elevenlabsModel?.trim();
 
     try {
-      const first = await this.elevenLabsStream.synthesizeFirstChunk(text, {
+      const replyText = state.reply?.trim() || text;
+      const once = await this.elevenLabsStream.synthesizeOnce(replyText, {
         apiKey: apiKey || undefined,
         voiceId: voiceId || undefined,
         modelId: modelId || undefined,
       });
 
-      const chunks: VoiceStreamChunk[] = [];
-      if (first) {
-        chunks.push({
-          text: first.chunkText,
-          audio: first.audio,
-          isFinal: first.chunkText.length >= text.length,
-          generationMs: first.generationMs,
-        });
-        this.events.emit('stream.chunk', {
-          callSessionId: state.callSessionId,
-          text: first.chunkText,
-          latencyMs: first.generationMs,
-        });
-      }
+      if (!once) return [{ text: replyText, isFinal: true }];
 
-      if (state.reply && state.reply !== state.immediateFiller && state.reply.length > (first?.chunkText.length ?? 0)) {
-        const full = await this.elevenLabsStream.synthesizeFull(state.reply, {
-          apiKey: apiKey || undefined,
-          voiceId: voiceId || undefined,
-          modelId: modelId || undefined,
-        });
-        chunks.push({
-          text: state.reply,
-          audio: full.audio,
+      this.events.emit('stream.chunk', {
+        callSessionId: state.callSessionId,
+        text: once.chunkText,
+        latencyMs: once.generationMs,
+      });
+
+      return [
+        {
+          text: once.chunkText,
+          audio: once.audio,
           isFinal: true,
-          generationMs: full.generationMs,
-        });
-      }
-
-      return chunks;
+          generationMs: once.generationMs,
+        },
+      ];
     } catch (err) {
       this.logger.warn(`VoiceStreamingAgent: ${(err as Error).message}`);
       return [{ text, isFinal: true }];

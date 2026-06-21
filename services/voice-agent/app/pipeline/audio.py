@@ -1,7 +1,7 @@
 """Audio format conversion: µ-law ↔ PCM ↔ base64 (Twilio ↔ OpenAI TTS ↔ Deepgram)."""
 from __future__ import annotations
 
-import audioop
+from .audioop_compat import audioop
 import base64
 
 

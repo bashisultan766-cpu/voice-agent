@@ -88,6 +88,9 @@ import {
 } from '../../calls/runtime/book-sales-voice.util';
 import { computeGatherSpeechGate } from './gather-speech-gate.util';
 import { resolveGatherTwiMLOptions } from '../../calls/runtime/telephony-spelling-capture.util';
+import { VoiceTtsGatewayService } from '../../voice-optimization/voice-tts-gateway.service';
+import { VoiceResponseControllerService } from '../../voice-optimization/voice-response-controller.service';
+import { resetTtsTurnGuardPatch } from '../../voice-optimization/voice-tts-session-guard.util';
 
 export interface InboundCallPayload {
   CallSid: string;
@@ -188,6 +191,8 @@ export class TwilioWebhookService implements OnModuleInit {
     private readonly voiceCost: VoiceCostAnalyticsService,
     private readonly streamingSession: VoiceStreamingSessionService,
     private readonly elevenStreaming: ElevenLabsStreamingService,
+    private readonly voiceTtsGateway: VoiceTtsGatewayService,
+    private readonly voiceResponseController: VoiceResponseControllerService,
   ) {
     const validated = validatePublicWebhookBaseUrl(this.config.get<string>('PUBLIC_WEBHOOK_BASE_URL'));
     if (!validated.ok) {
@@ -546,46 +551,56 @@ export class TwilioWebhookService implements OnModuleInit {
       apiKey: params.agent.elevenlabsApiKey ?? undefined,
       modelId: params.agent.elevenlabsModel ?? undefined,
     };
-    let r = await this.voicePromptAudio.createPhrasePlaybackUrl(params.origin, phraseOpts);
-    if (!r.playbackUrl && blockTwilioSay) {
-      r = await this.voicePromptAudio.createPhrasePlaybackUrl(params.origin, phraseOpts);
-    }
-    if (!r.playbackUrl) {
-      this.logger.warn(
+    const gatewayResult = await this.voiceTtsGateway.synthesizeForPlayback({
+      publicOrigin: params.origin,
+      text: phraseOpts.text,
+      voiceId,
+      apiKey: phraseOpts.apiKey,
+      modelId: phraseOpts.modelId,
+      callSessionId: params.callSessionId,
+      phase: params.logLabel,
+      cacheOnly: true,
+      allowTwilioSayFallback: !strictElOnly,
+    });
+    if (gatewayResult.playbackUrl) {
+      this.logger.log(
         JSON.stringify({
           event: 'twilio.voice.phrase_audio',
           callSessionId: params.callSessionId,
           phrase: params.logLabel,
           voiceProviderRequested,
           voiceIdUsed: voiceId,
-          voiceProviderActuallyUsed: resolveVoiceProviderActuallyUsed(false, policy),
-          twimlVerbUsed: strictElOnly ? 'silent' : 'Say',
-          voiceFallbackToTwilioSay: !strictElOnly,
-          fallbackReason: 'elevenlabs_phrase_failed',
-          strictElevenLabsOnly: strictElOnly,
-          twilioSayBlocked: blockTwilioSay,
+          voiceProviderActuallyUsed: 'elevenlabs',
+          twimlVerbUsed: 'Play',
+          fromPhraseCache: gatewayResult.audioCacheHit,
         }),
       );
-      if (strictElOnly) {
-        this.logTwilioSayWouldHaveBeenUsed(params.logLabel, 'elevenlabs_phrase_failed');
-      }
-      return strictElOnly
-        ? { playbackUrl: undefined, voiceProviderActuallyUsed: 'elevenlabs_silent_wait' }
-        : { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+      return { playbackUrl: gatewayResult.playbackUrl, voiceProviderActuallyUsed: 'elevenlabs' };
     }
-    this.logger.log(
+    if (gatewayResult.twilioSayText && !strictElOnly) {
+      return { voiceProviderActuallyUsed: 'twilio_say_fallback' };
+    }
+    this.logger.warn(
       JSON.stringify({
         event: 'twilio.voice.phrase_audio',
         callSessionId: params.callSessionId,
         phrase: params.logLabel,
         voiceProviderRequested,
         voiceIdUsed: voiceId,
-        voiceProviderActuallyUsed: 'elevenlabs',
-        twimlVerbUsed: 'Play',
-        fromPhraseCache: r.fromPhraseCache,
+        voiceProviderActuallyUsed: resolveVoiceProviderActuallyUsed(false, policy),
+        twimlVerbUsed: strictElOnly ? 'silent' : 'Say',
+        voiceFallbackToTwilioSay: !strictElOnly,
+        fallbackReason: gatewayResult.fallbackReason ?? 'phrase_cache_miss',
+        strictElevenLabsOnly: strictElOnly,
+        twilioSayBlocked: blockTwilioSay,
       }),
     );
-    return { playbackUrl: r.playbackUrl, voiceProviderActuallyUsed: 'elevenlabs' };
+    if (strictElOnly) {
+      this.logTwilioSayWouldHaveBeenUsed(params.logLabel, gatewayResult.fallbackReason ?? 'phrase_cache_miss');
+    }
+    return strictElOnly
+      ? { playbackUrl: undefined, voiceProviderActuallyUsed: 'elevenlabs_silent_wait' }
+      : { voiceProviderActuallyUsed: 'twilio_say_fallback' };
   }
 
   private async loadAgentWorkspaceFlags(agentId: string | undefined): Promise<{
@@ -1238,6 +1253,7 @@ export class TwilioWebhookService implements OnModuleInit {
       await this.streamMetrics.recordPartialTranscript(callSessionId, unstablePartial);
     }
     await this.streamingSession.cancelDeferredJobForBargeIn(callSessionId);
+    await this.callsService.mergeSessionMetadata(callSessionId, resetTtsTurnGuardPatch());
     await this.streamMetrics.merge(callSessionId, {
       sttLatencyMs: Date.now() - handlerStartedAt,
       streamingMode: 'gather_deferred',
@@ -2501,8 +2517,23 @@ export class TwilioWebhookService implements OnModuleInit {
       const llmStarted = Date.now();
       const utter = await this.voiceRuntime.processUtterance(callSessionId, speechText, []);
       const llmLatencyMs = Date.now() - llmStarted;
-      const assistantResponse = utter.reply;
       const proof = utter.turnProof as Record<string, unknown> | undefined;
+      const assistantResponse = utter.reply;
+      const voiceText =
+        utter.voiceText ??
+        utter.structured?.voice_text ??
+        utter.reply.slice(0, 220);
+      const structured =
+        utter.structured ??
+        this.voiceResponseController.build({
+          text: utter.reply,
+          hints: {
+            userIntent:
+              typeof proof?.lastIntentDetected === 'string'
+                ? (proof.lastIntentDetected as string)
+                : undefined,
+          },
+        });
       await this.streamMetrics.merge(callSessionId, {
         llmLatencyMs,
         streamingStatus: 'processing',
@@ -2543,9 +2574,12 @@ export class TwilioWebhookService implements OnModuleInit {
         isOrchestratorFinalReply: true,
       };
       const ttsStart = Date.now();
-      const tts = await this.buildElevenLabsPlaybackUrl(origin, assistantResponse, voiceOpts);
+      const tts = await this.buildElevenLabsPlaybackUrl(origin, voiceText, {
+        ...voiceOpts,
+        preparedVoiceText: true,
+      });
       const ttsGenerationTimeMs = tts.tts_generation_time_ms ?? Date.now() - ttsStart;
-      await this.voiceCost.recordElevenLabsUsage(callSessionId, assistantResponse.length);
+      await this.voiceCost.recordElevenLabsUsage(callSessionId, voiceText.length);
       const totalVoiceTurnLatencyMs = Date.now() - turnStarted;
       await this.streamMetrics.merge(callSessionId, {
         ttsLatencyMs: ttsGenerationTimeMs,
@@ -2585,6 +2619,10 @@ export class TwilioWebhookService implements OnModuleInit {
 
       await this.callsService.mergeSessionMetadata(callSessionId, {
         ...buildLlmReplyMetadataPatch(assistantResponse),
+        voiceText,
+        voiceControlledResponse: structured,
+        humanEscalationRequired: utter.structured?.human_queue ?? false,
+        aiRoute: utter.structured?.route?.route ?? null,
         deferredVoiceJob: {
           jobId,
           phase: 'ready',
@@ -2779,9 +2817,12 @@ export class TwilioWebhookService implements OnModuleInit {
       elevenlabsModel?: string;
       /** When true, this text is the orchestrator final reply for the turn. */
       isOrchestratorFinalReply?: boolean;
+      /** Pipeline voice_text — skip re-compression. */
+      preparedVoiceText?: boolean;
     },
   ): Promise<{
     playbackUrl?: string;
+    twilioSayText?: string;
     audioBytes?: number;
     tts_generation_time_ms?: number;
   }> {
@@ -2824,7 +2865,7 @@ export class TwilioWebhookService implements OnModuleInit {
 
     const ttsStart = Date.now();
     try {
-      const speechText = prepareVoiceTtsInputText(text);
+      const speechText = prepareVoiceTtsInputText(text, { prepared: opts.preparedVoiceText });
       if (!speechText) {
         this.logger.warn(
           JSON.stringify({
@@ -2848,14 +2889,21 @@ export class TwilioWebhookService implements OnModuleInit {
 
       const voiceId = opts.voiceId?.trim();
       if (!voiceId) {
-        return {};
+        return { twilioSayText: speechText };
       }
 
-      const ttsResult = await this.voicePromptAudio.createPhrasePlaybackUrl(publicOrigin, {
+      const ttsResult = await this.voiceTtsGateway.synthesizeForPlayback({
+        publicOrigin,
         text: speechText,
         voiceId,
         apiKey: opts.elevenlabsApiKey ?? this.config.get<string>('ELEVENLABS_API_KEY') ?? undefined,
+        modelId: opts.elevenlabsModel,
         callSessionId: opts.callSessionId,
+        phase: opts.phase,
+        isOrchestratorFinalReply: opts.isOrchestratorFinalReply ?? opts.phase === 'gather_reply',
+        cacheOnly: opts.phase === 'inbound_greeting',
+        allowTwilioSayFallback: true,
+        preparedVoiceText: opts.preparedVoiceText,
       });
       const tts_generation_time_ms = ttsResult.ttsLatencyMs ?? Date.now() - ttsStart;
 
@@ -2865,11 +2913,15 @@ export class TwilioWebhookService implements OnModuleInit {
             event: 'voice.tts.fallback_used',
             phase: opts.phase,
             callSessionId: opts.callSessionId,
-            reason: 'elevenlabs_phrase_playback_failed',
+            reason: ttsResult.fallbackReason ?? 'elevenlabs_phrase_playback_failed',
             tts_generation_time_ms,
+            twilioSayFallback: Boolean(ttsResult.twilioSayText),
           }),
         );
-        return { tts_generation_time_ms };
+        return {
+          twilioSayText: ttsResult.twilioSayText,
+          tts_generation_time_ms,
+        };
       }
 
       this.logger.log(
@@ -2882,9 +2934,10 @@ export class TwilioWebhookService implements OnModuleInit {
           ttsInputChars: speechText.length,
           tts_generation_time_ms,
           elevenlabsModel: ttsResult.elevenlabsModel,
-          audioCacheHit: ttsResult.audioCacheHit ?? false,
-          audioServedFromCache: ttsResult.audioServedFromCache ?? false,
+          audioCacheHit: ttsResult.audioCacheHit,
+          audioServedFromCache: ttsResult.audioCacheHit,
           ttsGenerated: ttsResult.ttsGenerated,
+          elevenlabsApiCallUsed: ttsResult.elevenlabsApiCallUsed,
         }),
       );
 
@@ -2896,11 +2949,12 @@ export class TwilioWebhookService implements OnModuleInit {
           ttsInputChars: speechText.length,
           tts_generation_time_ms,
           elevenlabsModel: ttsResult.elevenlabsModel,
-          audioCacheHit: ttsResult.audioCacheHit ?? false,
+          audioCacheHit: ttsResult.audioCacheHit,
         }),
       );
       return {
         playbackUrl: ttsResult.playbackUrl,
+        twilioSayText: ttsResult.twilioSayText,
         tts_generation_time_ms,
       };
     } catch (err) {

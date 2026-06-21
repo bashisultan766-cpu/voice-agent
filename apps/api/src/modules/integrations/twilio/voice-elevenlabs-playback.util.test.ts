@@ -7,15 +7,15 @@ import {
 } from './voice-elevenlabs-playback.util';
 
 describe('prepareVoiceTtsInputText', () => {
-  it('preserves long replies without shortening', () => {
+  it('compresses long replies for telephony TTS', () => {
     const long =
-      'I found several history books for you. World History is twenty-four ninety-nine. ' +
+      'Hello! Thanks for calling. I found several history books for you. World History is twenty-four ninety-nine. ' +
       'We also have Atomic Habits and a civil war collection. Which title would you like to order today? ' +
       'I can send a secure payment link as soon as you pick one.';
     assert.ok(long.length > 200, `expected long reply, got ${long.length} chars`);
     const prepared = prepareVoiceTtsInputText(`  ${long}  `);
-    assert.equal(prepared, long);
-    assert.ok(!prepared.includes('...'));
+    assert.ok(prepared.length < long.length * 0.7);
+    assert.ok(prepared.split(/[.!?]+/).filter(Boolean).length <= 2);
   });
 });
 

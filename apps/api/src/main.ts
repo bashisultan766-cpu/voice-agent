@@ -6,7 +6,6 @@ import * as express from 'express';
 import { assertProductionEnvOrExit } from './common/env-validation';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
 import { normalizeRedisUrl } from './common/redis-client.util';
-import { RealtimeVoiceGateway } from './modules/realtime-voice/websocket/realtime-voice.gateway';
 
 if (process.env.REDIS_URL) {
   const normalized = normalizeRedisUrl(process.env.REDIS_URL);
@@ -48,9 +47,9 @@ async function bootstrap() {
     );
   }
   await app.listen(port);
-  const httpServer = app.getHttpServer();
-  app.get(RealtimeVoiceGateway).attach(httpServer);
-  console.log(`[api] http://127.0.0.1:${port}/  (JSON) · http://127.0.0.1:${port}/api/health · Admin UI: http://127.0.0.1:3000`);
+  console.log(
+    `[api] http://127.0.0.1:${port}/  (JSON) · http://127.0.0.1:${port}/api/health · Admin UI: http://127.0.0.1:3000 · Twilio voice: services/voice-agent /voice/incoming`,
+  );
 }
 
 bootstrap();

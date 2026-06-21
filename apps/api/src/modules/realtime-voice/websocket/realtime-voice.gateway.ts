@@ -38,16 +38,12 @@ export class RealtimeVoiceGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   attach(server: Server): void {
-    if (this.wss) return;
-    this.wss = new WebSocketServer({ server, path: '/api/realtime-voice/ws' });
-    this.wss.on('connection', (ws) => {
-      this.subscriptions.set(ws, new Set());
-      ws.on('message', (raw) => void this.handleMessage(ws, raw.toString()));
-      ws.on('close', () => this.subscriptions.delete(ws));
-    });
-    this.logger.log('Realtime voice WebSocket gateway attached at /api/realtime-voice/ws');
+    this.logger.warn(
+      'Realtime voice WebSocket gateway deprecated — use services/voice-agent wss /ws/stream',
+    );
   }
 
+  /** @deprecated Preserved — gateway no longer attaches. */
   private async handleMessage(ws: WebSocket, raw: string): Promise<void> {
     let msg: ClientMessage;
     try {

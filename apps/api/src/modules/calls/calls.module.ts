@@ -35,6 +35,8 @@ import { ShopifyModule } from '../integrations/shopify/shopify.module';
 import { EmailModule } from '../integrations/email/email.module';
 import { ToolsModule } from '../tools/tools.module';
 import { RealtimeVoiceModule } from '../realtime-voice/realtime-voice.module';
+import { VoiceOptimizationModule } from '../voice-optimization/voice-optimization.module';
+import { VoiceIntentPipelineModule } from '../voice-intent-pipeline/voice-intent-pipeline.module';
 
 @Module({
   imports: [
@@ -47,6 +49,8 @@ import { RealtimeVoiceModule } from '../realtime-voice/realtime-voice.module';
     EmailModule,
     forwardRef(() => TwilioModule),
     forwardRef(() => RealtimeVoiceModule),
+    forwardRef(() => VoiceOptimizationModule),
+    forwardRef(() => VoiceIntentPipelineModule),
   ],
   controllers: [CallsController, VoiceRuntimeController, VoiceConfigCheckController, CallbackRequestsController],
   providers: [

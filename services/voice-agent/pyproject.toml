@@ -11,8 +11,9 @@ exclude = ["audio_cache*"]
 name = "voice-agent"
 version = "0.1.0"
 description = "AI Voice Sales Agent — Python FastAPI"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11"
 dependencies = [
+    "audioop-lts>=0.2.1; python_version>='3.13'",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.9.0",
@@ -39,6 +40,9 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: tests that require live API keys (Deepgram, OpenAI)",
+]
 
 [tool.ruff]
 line-length = 100

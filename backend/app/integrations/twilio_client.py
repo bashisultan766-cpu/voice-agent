@@ -40,6 +40,34 @@ def build_say_twiml(text: str, voice: str = "Polly.Joanna") -> str:
     return str(response)
 
 
+def build_ack_redirect_twiml(
+    ack_text: str,
+    redirect_url: str,
+    voice: str = "Polly.Joanna",
+) -> str:
+    """
+    TwiML: speak an acknowledgement phrase then immediately redirect.
+    Used by the fast-ack two-hop pattern so the caller hears something
+    within ~1 s while the background task runs.
+    """
+    response = VoiceResponse()
+    response.say(ack_text, voice=voice)
+    response.redirect(redirect_url, method="POST")
+    return str(response)
+
+
+def build_pause_redirect_twiml(pause_secs: int, redirect_url: str) -> str:
+    """
+    TwiML: pause briefly then redirect.
+    Used by /ready/{turn_id} to hold the call while waiting for the
+    background processing result.
+    """
+    response = VoiceResponse()
+    response.pause(length=pause_secs)
+    response.redirect(redirect_url, method="POST")
+    return str(response)
+
+
 def validate_twilio_signature(
     auth_token: str,
     signature: str,

@@ -1,23 +1,13 @@
-import { NextRequest } from 'next/server';
-import { proxyToApi } from '@/lib/api/proxy';
+import { deprecatedVoicePipelineResponse } from '@/lib/twilio/deprecated-voice-pipeline';
 
-async function proxy(request: NextRequest, pathSegments: string[], method: string) {
-  const suffix = pathSegments.length ? `/${pathSegments.join('/')}` : '';
-  return proxyToApi({
-    request,
-    method,
-    upstreamPath: `/api/twilio${suffix}`,
-    includeCookie: true,
-    unreachableMessage: 'API server is not running. Start apps/api.',
-  });
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+/** DEPRECATED — Twilio voice proxy retired; point Twilio at services/voice-agent */
+export async function GET() {
+  return deprecatedVoicePipelineResponse();
 }
 
-export async function GET(request: NextRequest, ctx: { params: Promise<{ path?: string[] }> }) {
-  const { path } = await ctx.params;
-  return proxy(request, path ?? [], 'GET');
-}
-
-export async function POST(request: NextRequest, ctx: { params: Promise<{ path?: string[] }> }) {
-  const { path } = await ctx.params;
-  return proxy(request, path ?? [], 'POST');
+export async function POST() {
+  return deprecatedVoicePipelineResponse();
 }

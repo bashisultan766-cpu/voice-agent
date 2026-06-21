@@ -16,6 +16,7 @@ import { VoiceAudioCacheService } from './voice-audio-cache.service';
 import { TwilioMediaStreamService } from './twilio-media-stream.service';
 import { TwilioMessagingModule } from './twilio-messaging.module';
 import { VoiceDiagnosticsModule } from '../../voice/voice-diagnostics.module';
+import { VoiceOptimizationModule } from '../../voice-optimization/voice-optimization.module';
 
 /**
  * Twilio voice webhooks + media stream.
@@ -29,6 +30,7 @@ import { VoiceDiagnosticsModule } from '../../voice/voice-diagnostics.module';
     TwilioMessagingModule,
     VoiceDiagnosticsModule,
     forwardRef(() => CallsModule),
+    forwardRef(() => VoiceOptimizationModule),
     AnalyticsModule,
     forwardRef(() => ElevenLabsModule),
     AgentsModule,
@@ -45,6 +47,12 @@ import { VoiceDiagnosticsModule } from '../../voice/voice-diagnostics.module';
     VoicePromptAudioService,
     TwilioMediaStreamService,
   ],
-  exports: [AgentResolutionService, TwilioMessagingModule],
+  exports: [
+    AgentResolutionService,
+    TwilioMessagingModule,
+    VoicePromptAudioService,
+    VoiceAudioCacheService,
+    TwilioTtsCacheService,
+  ],
 })
 export class TwilioModule {}

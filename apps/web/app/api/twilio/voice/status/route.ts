@@ -1,30 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerApiBaseUrl } from '@/lib/server-api-base';
+import { deprecatedVoicePipelineResponse } from '@/lib/twilio/deprecated-voice-pipeline';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: NextRequest) {
-  const rawBody = await request.text();
-  const proxySecret = process.env.TWILIO_PROXY_SHARED_SECRET?.trim();
-  const host = request.headers.get('host');
-  const externalProto = request.nextUrl.protocol.replace(':', '') || 'https';
-  const externalUrl = `${request.nextUrl.origin}${request.nextUrl.pathname}${request.nextUrl.search}`;
-  const upstream = await fetch(`${getServerApiBaseUrl()}/api/twilio/voice/status`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      ...(request.headers.get('x-twilio-signature')
-        ? { 'x-twilio-signature': request.headers.get('x-twilio-signature') as string }
-        : {}),
-      ...(host ? { 'x-forwarded-host': host } : {}),
-      'x-forwarded-proto': externalProto,
-      'x-original-url': externalUrl,
-      ...(proxySecret ? { 'x-twilio-proxy-secret': proxySecret } : {}),
-    },
-    body: rawBody,
-    cache: 'no-store',
-  });
-
-  return new NextResponse(null, { status: upstream.status });
+/** DEPRECATED — use services/voice-agent POST /voice/status */
+export async function POST() {
+  return deprecatedVoicePipelineResponse();
 }

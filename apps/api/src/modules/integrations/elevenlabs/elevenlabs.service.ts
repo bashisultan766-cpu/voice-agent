@@ -84,6 +84,15 @@ export class ElevenLabsService {
         });
         if (!res.ok) {
           const errText = await res.text();
+          if (res.status === 429 || res.status === 402) {
+            this.logger.warn(
+              JSON.stringify({
+                event: 'elevenlabs.quota_or_rate_limit',
+                status: res.status,
+                detail: errText.slice(0, 120),
+              }),
+            );
+          }
           throw new BadRequestException(`ElevenLabs error ${res.status}: ${errText.slice(0, 200)}`);
         }
         return Buffer.from(await res.arrayBuffer());

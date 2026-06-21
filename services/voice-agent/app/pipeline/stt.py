@@ -73,8 +73,9 @@ class DeepgramSTT(STTProvider):
         "sample_rate": "8000",
         "channels": "1",
         "interim_results": "true",
-        "utterance_end_ms": "1000",
-        "vad_events": "true",
+        "endpointing": "300",       # 300ms silence → speech_final=True; required for <800ms e2e latency
+        "utterance_end_ms": "1000", # fallback boundary if endpointing doesn't fire
+        "vad_events": "true",       # SpeechStarted events drive barge-in
         "smart_format": "true",
     }
 

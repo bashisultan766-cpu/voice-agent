@@ -4,6 +4,15 @@ import json
 from typing import Any, Dict, List, Optional
 import openai
 from app.config import settings
+from app.voice.latency import llm_timeout_secs
+
+
+async def _chat_completion(client: openai.AsyncOpenAI, **kwargs: Any):
+    """Single OpenAI chat completion with per-call latency budget."""
+    return await asyncio.wait_for(
+        client.chat.completions.create(**kwargs),
+        timeout=llm_timeout_secs(),
+    )
 
 
 async def run_llm_with_tools(
@@ -34,7 +43,7 @@ async def run_llm_with_tools(
             kwargs["tools"] = tool_schemas
             kwargs["tool_choice"] = "auto"
 
-        response = await client.chat.completions.create(**kwargs)
+        response = await _chat_completion(client, **kwargs)
         msg = response.choices[0].message
 
         if msg.tool_calls:
@@ -86,7 +95,7 @@ async def run_agentic_loop(
             kwargs["tools"] = tool_schemas
             kwargs["tool_choice"] = "auto"
 
-        response = await client.chat.completions.create(**kwargs)
+        response = await _chat_completion(client, **kwargs)
         msg = response.choices[0].message
 
         # If the LLM wants to call tools, execute them in parallel

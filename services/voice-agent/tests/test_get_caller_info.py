@@ -476,7 +476,7 @@ class TestRegistration:
         assert "get_caller_info" in registry.all_names()
 
     def test_schema_available_from_registry(self):
-        schemas = registry.get_schemas()
+        schemas = registry.get_schemas(["get_caller_info"])
         names = [s["function"]["name"] for s in schemas]
         assert "get_caller_info" in names
 

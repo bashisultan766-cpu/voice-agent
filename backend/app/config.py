@@ -65,6 +65,28 @@ class Settings(BaseSettings):
     SHOPIFY_CACHE_TTL: int = 60
     VOICE_RESPONSE_CACHE_TTL: int = 180
 
+    # ── Parallel orchestrator ─────────────────────────────────────────────────
+    # ENABLE_PARALLEL_ORCHESTRATOR=true returns OrchestratorResult directly (richer trace).
+    # ENABLE_PARALLEL_ORCHESTRATOR=false uses VoicePipeline, which delegates to the same engine.
+    ENABLE_PARALLEL_ORCHESTRATOR: bool = False
+    # FAST_ACK_ENABLED uses the two-hop TwiML pattern (caller hears ack within ~1 s).
+    FAST_ACK_ENABLED: bool = False
+    # Hard global budget for one voice turn (intent + tools + LLM + TTS).
+    VOICE_TURN_GLOBAL_TIMEOUT_SECS: float = 12.0
+    VOICE_INTENT_TIMEOUT_SECS: float = 0.8
+    VOICE_LLM_TIMEOUT_SECS: float = 3.0
+    VOICE_SHOPIFY_PRODUCT_TIMEOUT_SECS: float = 5.0
+    VOICE_SHOPIFY_ORDER_TIMEOUT_SECS: float = 5.0
+    VOICE_TTS_TIMEOUT_SECS: float = 3.0
+    # Legacy aliases kept for backward compatibility.
+    ORCHESTRATOR_LLM_DEADLINE_SECS: float = 3.0
+    ORCHESTRATOR_TOOL_DEADLINE_SECS: float = 5.0
+    # Hard timeout applied to the entire /process webhook handler.
+    # Should be < Twilio's 15 s webhook timeout.
+    WEBHOOK_HARD_TIMEOUT_SECS: float = 13.0
+    # How long to keep a background-turn result in Redis (fast-ack path).
+    TURN_RESULT_TTL_SECS: int = 120
+
     @field_validator("ENCRYPTION_KEY")
     @classmethod
     def validate_encryption_key(cls, v: str) -> str:

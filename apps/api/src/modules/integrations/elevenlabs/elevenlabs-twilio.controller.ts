@@ -1,4 +1,4 @@
-import { Body, Controller, Logger, Post, Res } from '@nestjs/common';
+import { Body, Controller, Logger, Post, Res, UseGuards } from '@nestjs/common';
 
 import { SkipThrottle } from '@nestjs/throttler';
 
@@ -7,6 +7,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 
 import { Public } from '../../../common/decorators/public.decorator';
+import { LegacyVoicePipelineGuard } from '../../../common/guards/legacy-voice-pipeline.guard';
 
 import { buildFallbackTwiML } from '../twilio/twiml/conversation-relay.twiml';
 
@@ -124,6 +125,7 @@ export class ElevenLabsTwilioController {
 
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Post('call-status')
   async callStatus(@Body() body: Record<string, string>, @Res() res: Response): Promise<void> {
     const parsed = parseTwilioVoiceStatusBody(body);
@@ -220,6 +222,7 @@ export class ElevenLabsTwilioController {
 
   @Public()
   @SkipThrottle()
+  @UseGuards(LegacyVoicePipelineGuard)
   @Post('inbound')
 
   async inbound(@Body() body: Record<string, string>, @Res() res: Response): Promise<void> {
