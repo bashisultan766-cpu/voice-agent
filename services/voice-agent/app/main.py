@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .core.env_validation import validate_startup_env
+from .core.logging import configure_logging
 from .api.health import router as health_router
 from .api.voice import router as voice_router
 from .ws.media_stream import handle_media_stream
@@ -15,6 +16,7 @@ from .ws.media_stream import handle_media_stream
 async def lifespan(app: FastAPI):
     settings = get_settings()
     validate_startup_env(settings)
+    configure_logging(settings.LOG_LEVEL)
     Path(settings.AUDIO_CACHE_DIR).mkdir(parents=True, exist_ok=True)
     yield
 
