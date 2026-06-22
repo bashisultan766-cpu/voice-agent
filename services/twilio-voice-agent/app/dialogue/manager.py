@@ -60,19 +60,8 @@ _SUBJECT_WORDS = re.compile(
 
 def spell_email_letter_by_letter(email: str) -> str:
     """Return comma-separated letters for voice read-back."""
-    if not email:
-        return ""
-    chars: list[str] = []
-    for ch in email.lower():
-        if ch.isalnum():
-            chars.append(ch)
-        elif ch == "@":
-            chars.append("at")
-        elif ch == ".":
-            chars.append("dot")
-        elif ch in "-_":
-            chars.append(ch)
-    return ", ".join(chars)
+    from ..pipeline.email_speller import spell_email_for_voice
+    return spell_email_for_voice(email)
 
 
 def _mask_email(email: str) -> str:
@@ -171,7 +160,7 @@ class DialogueManager:
         # ── Cart / ISBN memory questions ───────────────────────────────────────
         if intent in (
             "cart_count_question", "isbn_count_question", "titles_question",
-            "cart_review_question", "not_found_question",
+            "cart_review_question", "not_found_question", "memory_summary_question",
         ):
             decision.answer_from_memory = True
             decision.memory_action = intent
@@ -316,22 +305,24 @@ class DialogueManager:
 
     @staticmethod
     def build_spell_email_response(session: "SessionState") -> str:
+        from ..pipeline.email_speller import (
+            build_email_readback,
+            build_email_spell_only,
+            mask_email as spell_mask,
+        )
+
         confirmed = getattr(session, "confirmed_email", "") or ""
         pending = getattr(session, "pending_email", "") or ""
         fragments = getattr(session, "pending_email_fragments", []) or []
 
         if confirmed:
-            spelled = spell_email_letter_by_letter(confirmed)
+            spelled = build_email_spell_only(confirmed)
             return (
-                f"I have {_mask_email(confirmed)}. "
-                f"Letter by letter, that is: {spelled}."
+                f"I have {spell_mask(confirmed)}. "
+                f"{spelled}"
             )
         if pending:
-            spelled = spell_email_letter_by_letter(pending)
-            return (
-                f"I heard {_mask_email(pending)}. "
-                f"Letter by letter, that is: {spelled}. Is that correct?"
-            )
+            return build_email_readback(pending)
         if fragments:
             return (
                 "I have part of your email, but I want to make sure I get it right. "
@@ -373,6 +364,31 @@ class DialogueManager:
 
         if action == "spell_email":
             return DialogueManager.build_spell_email_response(session)
+
+        if action == "memory_summary_question":
+            parts: list[str] = []
+            if isbn_hist:
+                parts.append(
+                    f"You gave me {len(isbn_hist)} ISBN number"
+                    f"{'s' if len(isbn_hist) != 1 else ''}."
+                )
+            n = ledger.confirmed_count() or ledger.count()
+            if n:
+                parts.append(f"You have {n} book{'s' if n != 1 else ''} selected.")
+                titles = ledger.titles_one_by_one_summary()
+                if titles:
+                    parts.append(titles)
+            elif isbn_hist:
+                parts.append("I have your ISBNs but no confirmed titles yet.")
+            email = getattr(session, "confirmed_email", "") or getattr(session, "pending_email", "")
+            if email:
+                parts.append(f"I have your email as {_mask_email(email)}.")
+            pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+            if pfs != "idle":
+                parts.append(f"Payment step: {pfs.replace('_', ' ')}.")
+            if parts:
+                return " ".join(parts)
+            return "So far I do not have books or an email saved for this call."
 
         return ""
 

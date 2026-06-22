@@ -16,6 +16,7 @@ import re
 import time
 from typing import TYPE_CHECKING
 
+from ..cart.candidate import extract_variant_from_shopify_result, persist_worker_product_result
 from .base import WorkerResult
 
 if TYPE_CHECKING:
@@ -64,12 +65,12 @@ class ProductSearchWorker:
             # 1. Title exact match
             product = await cache.get_by_title(query)
             if product:
-                return _from_cached(product, "cache", t0)
+                return _from_cached(product, "cache", t0, session)
 
             # 2. Handle match
             product = await cache.get_by_handle(_to_handle(query))
             if product:
-                return _from_cached(product, "cache", t0)
+                return _from_cached(product, "cache", t0, session)
 
             # 3. Shopify live search
             from ..tools.shopify_tools import search_products
@@ -98,7 +99,30 @@ class ProductSearchWorker:
                     source="shopify",
                 )
 
+            if count == 0:
+                return WorkerResult(
+                    worker_name=self.name,
+                    success=True,
+                    data={"results": [], "query": query},
+                    safe_summary=f"No products found matching '{query}'.",
+                    latency_ms=(time.monotonic() - t0) * 1000,
+                    source="shopify",
+                )
+
             top = results[0]
+            product_id, variant_id = extract_variant_from_shopify_result(top)
+            data = {
+                "title": top.get("title", ""),
+                "price": top.get("price", "N/A"),
+                "available": top.get("available", False),
+                "product_id": product_id,
+                "variant_id": variant_id,
+                "query": query,
+            }
+            if variant_id and top.get("title"):
+                persist_worker_product_result(
+                    session, data, isbn=entities.get("isbn", ""), source="search",
+                )
             avail = "in stock" if top.get("available") else "out of stock"
             safe_results = [
                 {
@@ -111,7 +135,7 @@ class ProductSearchWorker:
             return WorkerResult(
                 worker_name=self.name,
                 success=True,
-                data={"results": safe_results, "count": count, "query": query},
+                data={**data, "results": safe_results, "count": count},
                 safe_summary=(
                     f"Found {count} result(s) for '{query}'. "
                     f"Top match: '{top.get('title', '')}', {avail}"
@@ -133,18 +157,22 @@ class ProductSearchWorker:
             )
 
 
-def _from_cached(product, source: str, t0: float) -> WorkerResult:
+def _from_cached(product, source: str, t0: float, session=None) -> WorkerResult:
     avail = "in stock" if product.available else "out of stock"
+    data = {
+        "title": product.title,
+        "price": product.price,
+        "available": product.available,
+        "author": product.author,
+        "variant_id": product.variant_id,
+        "product_id": getattr(product, "product_id", "") or "",
+    }
+    if session is not None and product.variant_id:
+        persist_worker_product_result(session, data, source="search")
     return WorkerResult(
         worker_name="product_search",
         success=True,
-        data={
-            "title": product.title,
-            "price": product.price,
-            "available": product.available,
-            "author": product.author,
-            "variant_id": product.variant_id,
-        },
+        data=data,
         safe_summary=(
             f"Found '{product.title}'"
             + (f" by {product.author}" if product.author else "")

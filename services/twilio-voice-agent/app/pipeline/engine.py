@@ -90,6 +90,8 @@ class RealtimePipelineEngine:
             session, intent_result, caller_text,
         )
         NaturalnessController.apply_frustration(session, caller_text)
+        if NaturalnessController.detect_already_gave(caller_text):
+            NaturalnessController.set_style(session, "repair_mode")
         if intent_result.intent in ("send_payment_link", "payment_execute", "checkout_request"):
             NaturalnessController.set_style(session, "payment_mode")
         session.last_dialogue_decision = dialogue_decision
@@ -432,7 +434,10 @@ def _apply_email_state(session: SessionState, intent_result: IntentResult) -> No
 
         if raw_email:
             try:
-                from .email_capture import email_confidence
+                from .email_capture import email_confidence, normalize_spoken_email
+                normalized = normalize_spoken_email(raw_text or raw_email) or normalize_spoken_email(raw_email)
+                if normalized:
+                    raw_email = normalized
                 confidence = email_confidence(raw_email, raw_text or raw_email)
             except Exception:
                 confidence = "medium"

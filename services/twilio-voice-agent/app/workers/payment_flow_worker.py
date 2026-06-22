@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ..cart.payment_scope import resolve_payment_scope
+from ..cart.recovery import attempt_cart_recovery
 from ..payment.flow_result import PaymentFlowResult
 from .base import WorkerResult
 from .checkout_worker import CheckoutWorker
@@ -80,6 +81,12 @@ class PaymentFlowWorker:
 
         scoped, scope_msg = resolve_payment_scope(session, entities, raw_text)
         flow.cart_count = len(scoped)
+
+        if not scoped and intent in PAYMENT_INTENTS:
+            recovery = await attempt_cart_recovery(session, raw_text, settings)
+            if recovery.success:
+                scoped, scope_msg = resolve_payment_scope(session, entities, raw_text)
+                flow.cart_count = len(scoped)
 
         if scope_msg:
             flow.stage = "scope_clarification"
@@ -263,8 +270,29 @@ class PaymentFlowWorker:
 
     @staticmethod
     def _missing_message(missing: list[str], session: "SessionState") -> str:
+        has_email = bool(getattr(session, "confirmed_email", ""))
+        isbn_hist = getattr(session, "isbn_history", []) or []
+
         if "cart_items" in missing or "variant_id" in missing:
-            return "Which book would you like to buy?"
+            if isbn_hist and not has_email:
+                return (
+                    "I have the ISBNs you gave me, but I still need to confirm "
+                    "the books I found before I can send the link."
+                )
+            if isbn_hist and has_email:
+                return (
+                    "I have the ISBNs you gave me, but I still need to confirm "
+                    "the books I found before I can send the payment link."
+                )
+            if has_email:
+                return (
+                    "I still need to confirm which book or books to include "
+                    "before I can send the payment link."
+                )
+            return (
+                "I still need to confirm which book or books to include "
+                "before I can send the payment link."
+            )
         if "email_confirmation" in missing:
             pending = getattr(session, "pending_email", "")
             return f"Just to confirm, I heard {_mask_email(pending)}. Is that correct?"

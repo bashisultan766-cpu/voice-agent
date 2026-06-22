@@ -32,6 +32,14 @@ from ..ai.system_prompt import build_system_message
 from ..cart.session import get_ledger
 from ..dialogue.manager import DialogueManager
 from ..dialogue.naturalness import NaturalnessController
+from ..dialogue.greeting import build_first_response_greeting
+from ..domain.sureshot_brain import build_domain_excerpt
+from ..conversation.call_memory import (
+    build_composer_context,
+    record_assistant_turn,
+    record_user_turn,
+    sync_from_session,
+)
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext
@@ -59,7 +67,52 @@ IMPORTANT — COMPOSER RULES (override everything else):
 - If payment_flow_result.safe_message exists, prioritize it exactly.
 - Do not repeat the same stock phrase ("Let me check", "Just to confirm") if already used recently.
 - When the customer seems frustrated, apologise and guide step by step.
+- If cart already has books, do not ask for ISBN again.
+- If customer says they already gave ISBN, summarize known ISBNs and cart.
+- For email spell requests, use the exact letter-by-letter spelling provided in context.
+- Never say payment was sent unless payment_flow_result email_sent=true.
 """
+
+
+def _deterministic_response(
+    session: SessionState,
+    router_result: "IntentResult",
+) -> str | None:
+    """
+    Return exact voice text when workers/plan already determined the reply.
+    Skips OpenAI for greeting, spell email, and high-priority safe messages.
+    """
+    plan = getattr(session, "response_plan", {}) or {}
+    action = plan.get("action", "")
+    say = (plan.get("say") or "").strip()
+
+    pfr = getattr(session, "payment_flow_result", {}) or {}
+    if pfr.get("safe_message") and pfr.get("ran"):
+        return str(pfr["safe_message"]).strip()
+
+    if router_result.intent == "greeting":
+        greeted = getattr(session, "twiml_greeting_spoken", False)
+        return build_first_response_greeting(session, greeted)
+
+    if action == "greet" and say:
+        return say
+
+    if action == "greeting" and say:
+        return say
+
+    if action in ("spell_email", "answer_memory", "store_info") and say:
+        return say
+
+    if action in (
+        "payment_blocked", "payment_sent", "payment_already_sent",
+        "payment_flow", "ask_send_confirmation", "confirm_email",
+    ) and say:
+        return say
+
+    if router_result.intent == "spell_email_request" and say:
+        return say
+
+    return None
 
 
 def _trim_history(history: list[dict]) -> list[dict]:
@@ -144,6 +197,14 @@ def _build_user_message(
     if rep:
         parts.append(f"[{rep}]")
 
+    domain_ctx = build_domain_excerpt(session, caller_text, router_result.intent)
+    if domain_ctx:
+        parts.append(f"[SureShot domain: {domain_ctx}]")
+
+    memory_ctx = build_composer_context(session)
+    if memory_ctx:
+        parts.append(memory_ctx)
+
     pfr = getattr(session, "payment_flow_result", {}) or {}
     if pfr.get("ran"):
         parts.append(
@@ -201,6 +262,21 @@ class MainLLMComposer:
         Makes exactly ONE OpenAI call per invocation. No tool loop.
         """
         s = settings or self._settings
+
+        record_user_turn(session, caller_text, router_result.intent)
+        sync_from_session(session)
+
+        deterministic = _deterministic_response(session, router_result)
+        if deterministic:
+            session.turn_count += 1
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": deterministic})
+            NaturalnessController.record_response(session, deterministic)
+            record_assistant_turn(session, deterministic)
+            yield {"type": "text_token", "token": deterministic}
+            yield {"type": "turn_done"}
+            return
+
         client = AsyncOpenAI(api_key=s.OPENAI_API_KEY)
 
         # Build/reuse system message
@@ -275,6 +351,7 @@ class MainLLMComposer:
             session.history.append({"role": "user", "content": caller_text})
             session.history.append({"role": "assistant", "content": response_text})
             NaturalnessController.record_response(session, response_text)
+            record_assistant_turn(session, response_text)
 
         yield {"type": "turn_done"}
 

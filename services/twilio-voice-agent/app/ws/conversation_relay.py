@@ -168,19 +168,10 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
             session.caller_profile_loaded = True
 
-            # Only greet if the caller hasn't already spoken. If the first
-            # prompt already arrived (first_prompt_received=True), sending a
-            # greeting now would interrupt mid-conversation — skip it instead
-            # and let the LLM greet via the SafeCallerContext in its prompt.
+            # v4.6: TwiML already spoke SureShot greeting — do not duplicate via WS.
+            # Returning-caller welcome-back is handled in TwiML or first composer turn.
             if not first_prompt_received:
                 greeting_sent = True
-                name_part = f", {profile.display_name}" if profile.display_name else ""
-                greeting = (
-                    f"Welcome back{name_part}! Great to hear from you again. "
-                    "How can I help you today?"
-                )
-                await send({"type": "text", "token": greeting, "last": False, "interruptible": True})
-                await send({"type": "text", "token": "", "last": True})
 
         except Exception:
             logger.warning(
@@ -201,10 +192,9 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                 profile_timeout_secs = settings.VOICE_FIRST_PROMPT_PROFILE_TIMEOUT_MS / 1000
                 await await_caller_profile_ready(profile_task, timeout_secs=profile_timeout_secs)
 
-        # greeting_sent is True only if the profile task greeted before the
-        # caller spoke. In all other cases greeted_already=False and the LLM
-        # may greet the caller in its first response.
-        ctx = build_safe_caller_context(session, greeted_already=greeting_sent)
+        # greeting_sent mirrors TwiML/WS greeting before caller spoke
+        greeted = greeting_sent or getattr(session, "twiml_greeting_spoken", False)
+        ctx = build_safe_caller_context(session, greeted_already=greeted)
 
         engine = get_engine(settings)
         try:
@@ -250,6 +240,7 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         agent_id=custom.get("agentId", ""),
                         store_domain=custom.get("storeDomain", settings.SHOPIFY_SHOP_DOMAIN),
                         custom_params=custom,
+                        twiml_greeting_spoken=True,
                     )
                     logger.info(
                         "ConversationRelay setup | sid=%s from=%s to=%s session=%s",

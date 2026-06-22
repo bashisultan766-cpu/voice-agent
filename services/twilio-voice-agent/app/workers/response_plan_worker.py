@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ..cart.session import get_ledger
 from ..dialogue.manager import DialogueManager
+from ..dialogue.naturalness import NaturalnessController
 from .base import WorkerResult
 
 if TYPE_CHECKING:
@@ -62,6 +63,12 @@ class ResponsePlanWorker:
         intent = entities.get("intent", "")
         pfs = getattr(session, "payment_flow_status", "idle") or "idle"
         isbn_buf = getattr(session, "isbn_buffer", "") or ""
+
+        if intent == "greeting":
+            from ..dialogue.greeting import build_first_response_greeting
+            greeted = getattr(session, "twiml_greeting_spoken", False)
+            say = build_first_response_greeting(session, greeted)
+            return {"action": "greet", "say": say}
 
         # ── v4.4: PaymentFlowWorker result (highest priority) ──────────────────
         if bundle:
@@ -118,6 +125,15 @@ class ResponsePlanWorker:
             r = bundle.results.get("spell_email")
             if r and r.safe_summary:
                 return {"action": "spell_email", "say": r.safe_summary}
+
+            r = bundle.results.get("cart_mutation")
+            if r and r.safe_summary:
+                action = (r.data or {}).get("action", "cart_mutation")
+                return {"action": action, "say": r.safe_summary}
+
+            r = bundle.results.get("store_info")
+            if r and r.safe_summary:
+                return {"action": "store_info", "say": r.safe_summary}
 
             r = bundle.results.get("dialogue")
             if r and r.success and r.safe_summary:
@@ -294,9 +310,12 @@ class ResponsePlanWorker:
 
         state = DialogueManager.get_state(session)
         if state.customer_mood == "frustrated":
+            repair = NaturalnessController.frustration_repair_message(session)
             return {
                 "action": "apologize_guide",
-                "say": (
+                "say": repair if NaturalnessController.detect_already_gave(
+                    entities.get("raw_text", "")
+                ) else (
                     "I'm sorry about the trouble. Let me help you step by step. "
                     + (state.unresolved_question or "What would you like to do next?")
                 ),

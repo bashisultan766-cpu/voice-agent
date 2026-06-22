@@ -135,6 +135,12 @@ class SessionState:
     isbn_history: list[str] = field(default_factory=list)  # ISBNs given this call
     isbn_not_found: list[str] = field(default_factory=list)  # ISBNs with no match
 
+    # ── v4.5 product candidate persistence ────────────────────────────────────
+    last_product_candidate: dict[str, Any] = field(default_factory=dict)
+    last_selected_product: dict[str, Any] = field(default_factory=dict)
+    last_selected_title: str = ""
+    requested_books: list[str] = field(default_factory=list)
+
     # ── v4.3 Dialogue intelligence ────────────────────────────────────────────
     dialogue: DialogueState = field(default_factory=DialogueState)
 
@@ -152,3 +158,9 @@ class SessionState:
 
     # ── v4.4 naturalness ──────────────────────────────────────────────────────
     naturalness: Any = None
+
+    # ── v4.6 call memory ──────────────────────────────────────────────────────
+    call_memory: Any = None
+
+    # Twilio TwiML welcomeGreeting was spoken at connect (v4.6).
+    twiml_greeting_spoken: bool = False

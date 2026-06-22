@@ -118,6 +118,8 @@ class CartLedger:
                 "title": i.title,
                 "price": i.price or "N/A",
                 "isbn": i.isbn,
+                "product_id": i.product_id,
+                "source": i.source,
                 "confirmation_status": i.confirmation_status,
                 "available": i.available,
             }
@@ -180,9 +182,11 @@ class CartLedger:
                 title=raw.get("title", ""),
                 isbn=raw.get("isbn", ""),
                 variant_id=raw.get("variant_id", ""),
+                product_id=raw.get("product_id", ""),
                 quantity=int(raw.get("quantity") or 1),
                 price=raw.get("price"),
                 available=raw.get("available", True),
+                source=raw.get("source", "search"),
                 confirmation_status=raw.get("confirmation_status", "candidate"),
             ))
         if ledger._items:

@@ -172,6 +172,8 @@ def normalize_spoken_email(text: str) -> Optional[str]:
     local_part  = local_raw.replace(" ", "")
     domain_part = re.sub(r"\s+", "", domain_raw)
 
+    local_part, _activate_stripped = _clean_activate_in_local(local_part, text)
+
     # Fix domain misspellings produced by ASR (applied after space removal)
     for wrong, right in _DOMAIN_FIXES.items():
         if domain_part == wrong or domain_part.startswith(wrong + "."):
@@ -193,6 +195,33 @@ def normalize_spoken_email(text: str) -> Optional[str]:
         return None
 
     return email.lower()
+
+
+def _clean_activate_in_local(local_part: str, raw_text: str) -> tuple[str, bool]:
+    """
+    Strip ASR 'activate' glued into the local part (Twilio @ artifact).
+
+    Returns (cleaned_local, was_stripped).
+    """
+    original = local_part
+    lower = local_part.lower()
+
+    # Glued before domain name without @: 766activategmail
+    local_part = re.sub(
+        r"activate(?=(?:gmail|yahoo|outlook|hotmail|icloud|aol|proton|live|msn|me)\b)",
+        "",
+        local_part,
+        flags=re.IGNORECASE,
+    )
+
+    # Trailing activate glued to digits/letters: bashisultan766activate
+    if lower.endswith("activate") and len(local_part) > len("activate"):
+        local_part = local_part[: -len("activate")]
+
+    # Dot-separated artifact: bashisultan.766activate
+    local_part = re.sub(r"\.activate$", "", local_part, flags=re.IGNORECASE)
+
+    return local_part, local_part != original
 
 
 # ── Prefix-artifact detection ─────────────────────────────────────────────────
@@ -271,6 +300,14 @@ def assemble_email_from_fragments(fragments: list[str]) -> Optional[str]:
 
 # ── Confidence scorer ─────────────────────────────────────────────────────────
 
+def _has_activate_local_artifact(email: Optional[str], raw_text: str) -> bool:
+    """True when 'activate' remains inside the normalized local part."""
+    if not email or "@" not in email:
+        return False
+    local = email.split("@", 1)[0].lower()
+    return "activate" in local
+
+
 def email_confidence(email: Optional[str], raw_text: str) -> str:
     """
     Return 'high', 'medium', or 'low' confidence for a normalized email.
@@ -280,6 +317,9 @@ def email_confidence(email: Optional[str], raw_text: str) -> str:
     low    — not valid, raw text very short/unclear, or prefix artifact detected
     """
     if not email:
+        return "low"
+
+    if _has_activate_local_artifact(email, raw_text):
         return "low"
 
     # If raw text has an accidental leading single-letter prefix → low confidence
@@ -300,8 +340,10 @@ def email_confidence(email: Optional[str], raw_text: str) -> str:
         "live.com", "me.com", "msn.com",
     )
 
-    # If the raw text contains "@" directly (typed-style) → high confidence
+    # If the raw text contains "@" directly (typed-style)
     if "@" in raw_text:
+        if re.search(r"activate", raw_text, re.IGNORECASE) and "activate" not in local:
+            return "medium"
         return "high"
 
     if common and len(local) >= 4:

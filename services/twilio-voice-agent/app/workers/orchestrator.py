@@ -53,8 +53,10 @@ from .payment_safety_worker import PaymentSafetyWorker
 from .response_plan_worker import ResponsePlanWorker
 from .payment_flow_worker import PaymentFlowWorker
 from .cart_memory_worker import CartMemoryWorker
+from .cart_mutation_worker import CartMutationWorker
 from .spell_email_worker import SpellEmailWorker
 from .dialogue_worker import DialogueWorker
+from .store_info_worker import StoreInfoWorker
 
 if TYPE_CHECKING:
     from ..pipeline.router import IntentResult
@@ -70,20 +72,23 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "author_search":        ["product_search"],
     "book_title_search":    ["product_search", "book_title_extractor"],
     "price_question":       ["product_search", "price_inventory"],
-    "multi_book_order":     ["product_search", "price_inventory"],
+    "multi_book_order":     ["product_search", "price_inventory", "cart_mutation"],
 
     # ── v4.3 dialogue / cart / payment ────────────────────────────────────────
     "vague_book_request":       ["conversation_memory"],
     "isbn_collection_start":    ["conversation_memory"],
     "title_collection_start":   ["conversation_memory"],
-    "another_book":             ["conversation_memory"],
-    "add_to_cart":              ["dialogue"],
+    "another_book":             ["cart_mutation"],
+    "add_to_cart":              ["cart_mutation"],
+    "confirm_product":          ["cart_mutation"],
+    "remove_from_cart":         ["cart_mutation"],
     "spell_email_request":      ["spell_email"],
     "isbn_count_question":      ["cart_memory"],
     "cart_count_question":      ["cart_memory"],
     "titles_question":          ["cart_memory"],
     "not_found_question":       ["cart_memory"],
     "cart_review_question":     ["cart_memory"],
+    "memory_summary_question":  ["cart_memory"],
     "payment_execute":          ["payment_flow"],
 
     # ── Orders ─────────────────────────────────────────────────────────────────
@@ -95,7 +100,7 @@ _INTENT_WORKERS: dict[str, list[str]] = {
 
     # ── Checkout / payment ─────────────────────────────────────────────────────
     "checkout_request":     ["payment_flow"],
-    "send_payment_link":    ["payment_flow"],
+    "send_payment_link":    ["cart_mutation", "payment_flow"],
     "payment_status_question": ["payment_flow"],
 
     # ── Shipping ───────────────────────────────────────────────────────────────
@@ -113,7 +118,7 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     # ── Address / cancellation ─────────────────────────────────────────────────
     "address_update":       ["address_update"],
     "cancellation_request": ["cancellation"],
-    "quantity_update":      ["quantity_extractor"],
+    "quantity_update":      ["quantity_extractor", "cart_mutation"],
 
     # ── Conversational (v4.2: no longer fallback to run_agent_turn) ────────────
     "greeting":             ["speech_cleanup", "caller_memory", "conversation_memory"],
@@ -123,10 +128,7 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "email_correction":     ["email_fragment", "conversation_memory"],
     "email_confirmation":   ["email_fragment", "conversation_memory"],
     "unknown":              ["speech_cleanup", "conversation_memory"],
-
-    # ── Cart ───────────────────────────────────────────────────────────────────
-    "cart_count_question":  ["conversation_memory"],
-    "titles_question":      ["conversation_memory"],
+    "store_info_question":  ["store_info"],
 }
 
 # All intents go through the worker path in v4.2.
@@ -167,6 +169,8 @@ _REGISTRY: dict[str, object] = {
     "payment_safety":           PaymentSafetyWorker(),
     "payment_flow":             PaymentFlowWorker(),
     "cart_memory":              CartMemoryWorker(),
+    "cart_mutation":            CartMutationWorker(),
+    "store_info":               StoreInfoWorker(),
     "spell_email":              SpellEmailWorker(),
     "dialogue":                 DialogueWorker(),
     # Wave 2 (managed separately, not in Wave 1)

@@ -12,6 +12,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from ..cart.candidate import extract_variant_from_shopify_result, persist_worker_product_result, save_product_not_found
 from .base import WorkerResult
 
 if TYPE_CHECKING:
@@ -45,17 +46,20 @@ class ProductISBNWorker:
             cache = ProductCache()
             product = await cache.get_by_isbn(isbn)
             if product:
+                data = {
+                    "title": product.title,
+                    "author": product.author,
+                    "price": product.price,
+                    "available": product.available,
+                    "variant_id": product.variant_id,
+                    "product_id": getattr(product, "product_id", "") or "",
+                    "isbn": isbn,
+                }
+                persist_worker_product_result(session, data, isbn=isbn, source="isbn_search")
                 return WorkerResult(
                     worker_name=self.name,
                     success=True,
-                    data={
-                        "title": product.title,
-                        "author": product.author,
-                        "price": product.price,
-                        "available": product.available,
-                        "variant_id": product.variant_id,
-                        "isbn": isbn,
-                    },
+                    data=data,
                     safe_summary=(
                         f"Found '{product.title}'"
                         + (f" by {product.author}" if product.author else "")
@@ -83,6 +87,7 @@ class ProductISBNWorker:
             results = result.get("results", [])
             count = result.get("count", 0)
             if count == 0:
+                save_product_not_found(session, isbn)
                 return WorkerResult(
                     worker_name=self.name,
                     success=True,
@@ -92,17 +97,22 @@ class ProductISBNWorker:
                     source="shopify",
                 )
             top = results[0]
+            product_id, variant_id = extract_variant_from_shopify_result(top)
+            data = {
+                "title": top.get("title", ""),
+                "price": top.get("price", "N/A"),
+                "available": top.get("available", False),
+                "isbn": isbn,
+                "count": count,
+                "product_id": product_id,
+                "variant_id": variant_id,
+            }
+            persist_worker_product_result(session, data, isbn=isbn, source="isbn_search")
             avail = "in stock" if top.get("available") else "out of stock"
             return WorkerResult(
                 worker_name=self.name,
                 success=True,
-                data={
-                    "title": top.get("title", ""),
-                    "price": top.get("price", "N/A"),
-                    "available": top.get("available", False),
-                    "isbn": isbn,
-                    "count": count,
-                },
+                data=data,
                 safe_summary=(
                     f"Found '{top.get('title', 'Unknown')}'"
                     + f", {avail}"

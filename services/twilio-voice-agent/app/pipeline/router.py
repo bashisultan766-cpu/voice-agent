@@ -267,6 +267,38 @@ _SPELL_EMAIL_Q = re.compile(
     re.IGNORECASE,
 )
 
+# v4.6: memory summary and natural phrase routing
+_MEMORY_SUMMARY_Q = re.compile(
+    r"\b(what did i give you|what do you have so far|what do you have|"
+    r"what did you hear|what do you know so far)\b",
+    re.IGNORECASE,
+)
+_ALREADY_GAVE_ISBN = re.compile(
+    r"\b(i already gave you the isbn|i already gave (you )?the isbn|"
+    r"i already gave you|already gave you the isbn|i already told you the isbn)\b",
+    re.IGNORECASE,
+)
+_ISBN_SENT_COUNT = re.compile(
+    r"\b(i sent you|i gave you).{0,25}(isbn|three|two|four|five|six|seven|eight|nine|ten|\d+)\b",
+    re.IGNORECASE,
+)
+_READ_BACK_Q = re.compile(
+    r"\b(read it back|read that back|read them back)\b",
+    re.IGNORECASE,
+)
+_SPELL_IT_Q = re.compile(
+    r"^\s*spell (it|this)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_SEND_BOTH_BOOKS = re.compile(
+    r"\bsend (both|those|these) books?\b",
+    re.IGNORECASE,
+)
+_NEED_BOTH_BOOKS = re.compile(
+    r"\bi need both books?\b",
+    re.IGNORECASE,
+)
+
 # v4.3: vague book request (no ISBN/title/author/subject)
 _VAGUE_BOOK_PAT = re.compile(
     r"^\s*(?:"
@@ -293,7 +325,33 @@ _ANOTHER_BOOK_Q = re.compile(
     re.IGNORECASE,
 )
 _ADD_TO_CART_Q = re.compile(
-    r"\b(add it|add this|put it in( the cart)?|i need this|this book|i.?ll take it)\b",
+    r"\b(add it|add this|put it in( the cart)?|i need this|this book|i.?ll take it|"
+    r"this one|include it|along with|these books?|both books?)\b",
+    re.IGNORECASE,
+)
+_MULTI_BOOK_CONFIRM = re.compile(
+    r"\b(i need (?:the )?(?:these|all|both)|these \d+ books?|both books?|"
+    r"all (?:the )?books?|include (?:them|both|all))\b",
+    re.IGNORECASE,
+)
+_STORE_INFO_Q = re.compile(
+    r"\b("
+    r"what(?:'s| is) (?:your )?store name"
+    r"|what(?:'s| is) (?:your )?company"
+    r"|what company is this"
+    r"|who am i (?:talking to|calling)"
+    r"|what(?:'s| is) (?:your )?business name"
+    r"|what(?:'s| is) (?:your )?(?:phone number|number)"
+    r"|store number name"
+    r")\b",
+    re.IGNORECASE,
+)
+_GENERIC_PRODUCT_BLOCKLIST = frozenset({
+    "book", "books", "a book", "the book", "some books", "store",
+    "your store", "store name", "your store name",
+})
+_PREAMBLE_STRIP = re.compile(
+    r"^\s*(?:okay|ok|yeah|yes|sure|well|um|uh)[,.]?\s+",
     re.IGNORECASE,
 )
 
@@ -362,6 +420,69 @@ def detect(text: str, session=None) -> IntentResult:
             intent="spell_email_request", confidence=0.94, entities=entities,
         )
 
+    # v4.6: spell "it" in email context
+    pfs_early = getattr(session, "payment_flow_status", "idle") if session else "idle"
+    email_ctx = bool(session and (
+        getattr(session, "pending_email", "")
+        or getattr(session, "confirmed_email", "")
+        or pfs_early in ("awaiting_email", "awaiting_email_confirmation")
+    ))
+    if _SPELL_IT_Q.match(t.strip()) and email_ctx:
+        return IntentResult(
+            intent="spell_email_request", confidence=0.93, entities=entities,
+        )
+
+    # v4.6: memory summary
+    if _MEMORY_SUMMARY_Q.search(t):
+        return IntentResult(
+            intent="memory_summary_question", confidence=0.92, entities=entities,
+        )
+
+    if _ALREADY_GAVE_ISBN.search(t):
+        entities["memory_repair"] = "isbn"
+        return IntentResult(
+            intent="memory_summary_question", confidence=0.91, entities=entities,
+        )
+
+    if _ISBN_SENT_COUNT.search(t):
+        return IntentResult(
+            intent="isbn_count_question", confidence=0.90, entities=entities,
+        )
+
+    if _READ_BACK_Q.search(t):
+        if email_ctx:
+            return IntentResult(
+                intent="spell_email_request", confidence=0.89, entities=entities,
+            )
+        if session:
+            from ..cart.session import get_ledger
+            if get_ledger(session).confirmed_count() or getattr(session, "isbn_history", []):
+                return IntentResult(
+                    intent="titles_question", confidence=0.88, entities=entities,
+                )
+
+    if _SEND_BOTH_BOOKS.search(t):
+        entities["payment_scope"] = "both"
+        return IntentResult(
+            intent="send_payment_link", confidence=0.90, entities=entities,
+        )
+
+    if _NEED_BOTH_BOOKS.search(t) and session:
+        from ..cart.session import get_ledger
+        if get_ledger(session).confirmed_count() >= 2 or len(getattr(session, "isbn_history", []) or []) >= 2:
+            entities["confirm_all"] = "true"
+            return IntentResult(
+                intent="add_to_cart", confidence=0.88, entities=entities,
+            )
+
+    # v4.5: store identity — before product search
+    if _STORE_INFO_Q.search(t):
+        topic = "phone" if re.search(r"\b(phone|number)\b", t, re.I) else "general"
+        entities["store_info_topic"] = topic
+        return IntentResult(
+            intent="store_info_question", confidence=0.92, entities=entities,
+        )
+
     # v4.3: cart / ISBN memory
     if _ISBN_COUNT_Q.search(t):
         entities["intent"] = "isbn_count_question"
@@ -389,6 +510,25 @@ def detect(text: str, session=None) -> IntentResult:
             intent="isbn_search", confidence=0.95, entities=entities,
             needs_filler=True, suggested_tools=["search_products"],
         )
+
+    # v4.5: multi-book cart confirm before vague/title search
+    if session and _MULTI_BOOK_CONFIRM.search(t):
+        from ..cart.session import get_ledger
+        ledger = get_ledger(session)
+        if ledger.candidate_item or ledger.confirmed_count() > 0:
+            m = re.search(
+                r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+books?\b",
+                t, re.I,
+            )
+            if m:
+                val = m.group(1).lower()
+                entities["requested_cart_count"] = (
+                    val if val.isdigit() else str(_SPOKEN_NUMS.get(val, 0))
+                )
+            entities["confirm_all"] = "true"
+            return IntentResult(
+                intent="add_to_cart", confidence=0.91, entities=entities,
+            )
 
     # v4.3: vague book — before title/product search
     if _is_vague_book_request(t, entities):
@@ -428,17 +568,31 @@ def detect(text: str, session=None) -> IntentResult:
             intent="send_payment_link", confidence=0.92, entities=entities,
         )
 
-    # v4.3: cart add confirmation
-    if _CONFIRM_YES.match(t) and dialogue_flow in ("cart_building", "isbn_collection", "title_collection"):
-        ledger_has_candidate = False
+    # v4.3: cart add confirmation — yes with pending candidate
+    if _CONFIRM_YES.match(t):
         if session:
             from ..cart.session import get_ledger
-            ledger_has_candidate = get_ledger(session).candidate_item is not None
-        if ledger_has_candidate:
-            return IntentResult(
-                intent="add_to_cart", confidence=0.92,
-                entities={**entities, "polarity": "yes"},
-            )
+            ledger = get_ledger(session)
+            pfs_now = getattr(session, "payment_flow_status", "idle") or "idle"
+            if (
+                ledger.candidate_item
+                and pfs_now not in ("awaiting_email_confirmation", "awaiting_send_confirmation")
+                and not getattr(session, "pending_email", "")
+            ):
+                return IntentResult(
+                    intent="add_to_cart", confidence=0.92,
+                    entities={**entities, "polarity": "yes"},
+                )
+        if dialogue_flow in ("cart_building", "isbn_collection", "title_collection"):
+            ledger_has_candidate = False
+            if session:
+                from ..cart.session import get_ledger
+                ledger_has_candidate = get_ledger(session).candidate_item is not None
+            if ledger_has_candidate:
+                return IntentResult(
+                    intent="add_to_cart", confidence=0.92,
+                    entities={**entities, "polarity": "yes"},
+                )
 
     if _ADD_TO_CART_Q.search(t) and not _REFUND_WORDS.search(t):
         return IntentResult(
@@ -544,6 +698,10 @@ def detect(text: str, session=None) -> IntentResult:
         )
 
     if _SEND_LINK_WORDS.search(t) and ("link" in t.lower() or "email" in t.lower()):
+        if _SEND_BOTH_BOOKS.search(t):
+            entities["payment_scope"] = "both"
+        elif re.search(r"\b(those|these) books?\b", t, re.I):
+            entities["payment_scope"] = "prior_cart"
         return IntentResult(
             intent="send_payment_link", confidence=0.85, entities=entities,
             suggested_tools=["send_payment_link_email"],
@@ -557,7 +715,19 @@ def detect(text: str, session=None) -> IntentResult:
 
     # Multi-book order (before checkout so it takes priority)
     if _MULTI_BOOK_WORDS.search(t):
+        if session:
+            from ..cart.session import get_ledger
+            ledger = get_ledger(session)
+            if ledger.candidate_item and _MULTI_BOOK_CONFIRM.search(t):
+                entities["confirm_all"] = "true"
+                return IntentResult(
+                    intent="add_to_cart", confidence=0.88, entities=entities,
+                )
         phrase = _extract_product_phrase(t)
+        if phrase and _is_blocklisted_product_phrase(phrase):
+            return IntentResult(
+                intent="vague_book_request", confidence=0.85, entities=entities,
+            )
         if phrase:
             entities["product_phrase"] = phrase
         return IntentResult(
@@ -583,6 +753,10 @@ def detect(text: str, session=None) -> IntentResult:
     # Explicit title search ("I need Game of Thrones", "the title is...")
     if _TITLE_EXPLICIT.search(t):
         phrase = _extract_product_phrase(t)
+        if _is_blocklisted_product_phrase(phrase):
+            return IntentResult(
+                intent="vague_book_request", confidence=0.86, entities=entities,
+            )
         if phrase:
             entities["product_phrase"] = phrase
         return IntentResult(
@@ -592,6 +766,15 @@ def detect(text: str, session=None) -> IntentResult:
 
     if _PRODUCT_WORDS.search(t):
         phrase = _extract_product_phrase(t)
+        if _is_blocklisted_product_phrase(phrase):
+            if re.search(r"\bstore name\b", t, re.I):
+                entities["store_info_topic"] = "general"
+                return IntentResult(
+                    intent="store_info_question", confidence=0.88, entities=entities,
+                )
+            return IntentResult(
+                intent="vague_book_request", confidence=0.84, entities=entities,
+            )
         if phrase:
             entities["product_phrase"] = phrase
         return IntentResult(
@@ -728,25 +911,40 @@ def _is_vague_book_request(text: str, entities: dict) -> bool:
     if _ISBN_PREFIX.search(text) or _ISBN_INTENT_HINT.search(text):
         return False
 
-    stripped = text.strip()
+    stripped = _PREAMBLE_STRIP.sub("", text.strip())
     if _VAGUE_BOOK_PAT.match(stripped):
         return True
     if re.match(
-        r"^\s*i (?:need|want) (?:to buy )?(?:a |the )?book\s*[.!?]?\s*$",
+        r"^\s*i (?:need|want) (?:to buy )?(?:a |the )?books?\s*[.!?]?\s*$",
         stripped,
         re.IGNORECASE,
     ):
         return True
     if re.match(
-        r"^\s*(?:can you give me|i am looking for|i'm looking for)\s+(?:a )?book\s*[.!?]?\s*$",
+        r"^\s*(?:can you give me|i am looking for|i'm looking for)\s+(?:a )?books?\s*[.!?]?\s*$",
+        stripped,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.match(
+        r"^\s*i (?:want|need) to buy books?\s*[.!?]?\s*$",
         stripped,
         re.IGNORECASE,
     ):
         return True
 
     phrase = _extract_product_phrase(text)
+    if phrase and _is_blocklisted_product_phrase(phrase):
+        return True
     if phrase and len(phrase) > 3:
         return False
     if _TITLE_EXPLICIT.search(text) and phrase:
         return False
     return False
+
+
+def _is_blocklisted_product_phrase(phrase: str) -> bool:
+    if not phrase:
+        return False
+    normalized = phrase.strip().lower().strip("?.!,")
+    return normalized in _GENERIC_PRODUCT_BLOCKLIST

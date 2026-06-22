@@ -42,7 +42,7 @@ def _cart(**extra):
 
 class TestPaymentIntentRouting:
     def test_send_payment_link_runs_payment_flow_worker(self):
-        assert _INTENT_WORKERS["send_payment_link"] == ["payment_flow"]
+        assert _INTENT_WORKERS["send_payment_link"] == ["cart_mutation", "payment_flow"]
 
     def test_send_payment_link_intent_detected(self):
         r = detect("Send me the payment link.")

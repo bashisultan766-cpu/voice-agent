@@ -80,6 +80,17 @@ class Settings(BaseSettings):
     # role="tool" or assistant tool_calls. Eliminates 400 errors on interrupt.
     VOICE_LIVE_DISABLE_OPENAI_TOOLS: bool = True
 
+    # ── v4.6: ElevenLabs voice via Twilio ConversationRelay ───────────────────
+    VOICE_TTS_PROVIDER: str = "ElevenLabs"
+    VOICE_ID: str = ""
+    VOICE_MODEL: str = "flash_v2_5"
+    VOICE_SPEED: float = 1.0
+    VOICE_STABILITY: float = 0.55
+    VOICE_SIMILARITY: float = 0.80
+    VOICE_LANGUAGE: str = "en-US"
+    # Optional — not used in live Twilio path yet; do not log.
+    ELEVENLABS_API_KEY: str = ""
+
     # ── Legacy flags — both must be false for ConversationRelay runtime ───────
     ENABLE_ELEVENLABS: bool = False
     ENABLE_DEEPGRAM: bool = False
@@ -100,6 +111,16 @@ class Settings(BaseSettings):
     @property
     def shopify_configured(self) -> bool:
         return bool(self.SHOPIFY_SHOP_DOMAIN and self.SHOPIFY_ADMIN_ACCESS_TOKEN)
+
+    def build_conversation_relay_voice(self) -> str:
+        """
+        Voice string for Twilio ConversationRelay.
+
+        ElevenLabs: {VOICE_ID}-{VOICE_MODEL} or Google fallback when not configured.
+        """
+        if self.VOICE_TTS_PROVIDER.lower() == "elevenlabs" and self.VOICE_ID:
+            return f"{self.VOICE_ID}-{self.VOICE_MODEL}"
+        return "Google.en-US-Neural2-J"
 
     def validate_production(self) -> None:
         """Fail fast on missing required secrets when not in DEBUG mode."""
