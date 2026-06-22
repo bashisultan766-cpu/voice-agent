@@ -97,7 +97,11 @@ class TestPaymentFlowWorker:
              patch("app.workers.payment_flow_worker.PaymentEmailWorker") as MockEm:
             MockCo.return_value.run = mock_checkout
             MockEm.return_value.run = mock_email
-            r = await worker.run(session, {}, _settings())
+            r = await worker.run(
+                session,
+                {"intent": "send_payment_link", "raw_text": "Send me the payment link."},
+                _settings(),
+            )
         assert r.success
         assert session.payment_flow_status == "payment_sent"
 

@@ -63,6 +63,26 @@ class ResponsePlanWorker:
         pfs = getattr(session, "payment_flow_status", "idle") or "idle"
         isbn_buf = getattr(session, "isbn_buffer", "") or ""
 
+        # ── v4.4: PaymentFlowWorker result (highest priority) ──────────────────
+        if bundle:
+            pf = bundle.results.get("payment_flow")
+            if pf and pf.data and pf.data.get("ran"):
+                data = pf.data
+                msg = data.get("safe_message") or pf.safe_summary or ""
+                if data.get("email_sent"):
+                    action = "payment_sent"
+                elif data.get("missing_fields"):
+                    action = "payment_blocked"
+                elif data.get("stage") == "already_sent":
+                    action = "payment_already_sent"
+                else:
+                    action = "payment_flow"
+                return {
+                    "action": action,
+                    "say": msg,
+                    "payment_flow": data,
+                }
+
         # ── Dialogue decision hints (v4.3) ─────────────────────────────────────
         ddec = getattr(session, "last_dialogue_decision", None)
         if ddec and getattr(ddec, "should_clarify", False) and ddec.clarification_prompt:

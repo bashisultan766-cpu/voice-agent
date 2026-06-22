@@ -94,8 +94,9 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "refund_detail":        ["caller_identity", "order_lookup", "refund"],
 
     # ── Checkout / payment ─────────────────────────────────────────────────────
-    "checkout_request":     ["product_search", "price_inventory", "checkout"],
-    "send_payment_link":    ["payment_safety"],
+    "checkout_request":     ["payment_flow"],
+    "send_payment_link":    ["payment_flow"],
+    "payment_status_question": ["payment_flow"],
 
     # ── Shipping ───────────────────────────────────────────────────────────────
     "shipping_question":    ["store_policy", "shipping"],

@@ -31,6 +31,7 @@ from ..state.models import SessionState
 from ..ai.system_prompt import build_system_message
 from ..cart.session import get_ledger
 from ..dialogue.manager import DialogueManager
+from ..dialogue.naturalness import NaturalnessController
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext
@@ -54,7 +55,10 @@ IMPORTANT — COMPOSER RULES (override everything else):
 - Speak naturally, as if you personally looked it up.
 - NEVER call any tools. You do not have tool access in this mode.
 - If a Response Plan is provided, follow it exactly for this turn — use the "say" text as your guide.
-- When the customer seems frustrated, apologise and guide them one step at a time.
+- If payment_flow_result says email_sent=false, MUST NOT say payment was sent.
+- If payment_flow_result.safe_message exists, prioritize it exactly.
+- Do not repeat the same stock phrase ("Let me check", "Just to confirm") if already used recently.
+- When the customer seems frustrated, apologise and guide step by step.
 """
 
 
@@ -131,6 +135,23 @@ def _build_user_message(
 
     if state.customer_mood == "frustrated":
         parts.append("[Customer mood: frustrated — be patient and guide step by step]")
+
+    from ..dialogue.naturalness import NaturalnessController
+    style = NaturalnessController.style_hint(session)
+    if style:
+        parts.append(f"[Response style: {style}]")
+    rep = NaturalnessController.avoid_repetition_note(session)
+    if rep:
+        parts.append(f"[{rep}]")
+
+    pfr = getattr(session, "payment_flow_result", {}) or {}
+    if pfr.get("ran"):
+        parts.append(
+            f"[Payment flow: stage={pfr.get('stage')} allowed={pfr.get('allowed')} "
+            f"email_sent={pfr.get('email_sent')} missing={pfr.get('missing_fields')}]"
+        )
+        if pfr.get("safe_message"):
+            parts.append(f"[Payment message — say this: {pfr.get('safe_message')}]")
 
     # v4.2: Response plan from ResponsePlanWorker
     plan = getattr(session, "response_plan", {}) or {}
@@ -253,6 +274,7 @@ class MainLLMComposer:
         if response_text:
             session.history.append({"role": "user", "content": caller_text})
             session.history.append({"role": "assistant", "content": response_text})
+            NaturalnessController.record_response(session, response_text)
 
         yield {"type": "turn_done"}
 

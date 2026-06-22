@@ -416,11 +416,16 @@ def detect(text: str, session=None) -> IntentResult:
                 intent="email_confirmation", confidence=0.93, entities=entities,
             )
 
-    # v4.3: payment final confirmation — "yes send it"
+    # v4.3: payment final confirmation — "yes send it" or explicit send phrases
     if _CONFIRM_YES.match(t) and pfs == "awaiting_send_confirmation":
         return IntentResult(
             intent="payment_execute", confidence=0.95,
             entities={**entities, "polarity": "yes"},
+        )
+
+    if pfs == "awaiting_send_confirmation" and _SEND_LINK_WORDS.search(t):
+        return IntentResult(
+            intent="send_payment_link", confidence=0.92, entities=entities,
         )
 
     # v4.3: cart add confirmation

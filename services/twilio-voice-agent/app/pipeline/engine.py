@@ -32,13 +32,15 @@ from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 from ..config import get_settings
 from ..state.models import SessionState
 from ..ai.openai_agent import run_agent_turn
-from .router import detect as detect_intent, IntentResult
+from .router import IntentResult
+from .compound_intent import detect as detect_intent
 from .latency import get_tracer, TurnLatency
 from .tasks import filler_for_intent, needs_filler, Intent
 from .tool_executor import run_tools_parallel
 from ..workers.orchestrator import WorkerOrchestrator, WORKER_PATH_INTENTS, get_orchestrator
 from ..composer.main_llm_composer import MainLLMComposer, get_composer
 from ..dialogue.manager import DialogueManager
+from ..dialogue.naturalness import NaturalnessController
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext
@@ -87,6 +89,9 @@ class RealtimePipelineEngine:
         dialogue_decision = DialogueManager.process_turn(
             session, intent_result, caller_text,
         )
+        NaturalnessController.apply_frustration(session, caller_text)
+        if intent_result.intent in ("send_payment_link", "payment_execute", "checkout_request"):
+            NaturalnessController.set_style(session, "payment_mode")
         session.last_dialogue_decision = dialogue_decision
         if dialogue_decision.override_intent:
             intent_result.intent = dialogue_decision.override_intent

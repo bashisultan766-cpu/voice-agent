@@ -78,12 +78,12 @@ class TestIntentWorkerMapping:
         assert "refund" in workers
         assert "order_lookup" in workers
 
-    def test_checkout_selects_product_and_checkout(self):
+    def test_checkout_selects_payment_flow(self):
         workers = _INTENT_WORKERS["checkout_request"]
-        assert "checkout" in workers
+        assert "payment_flow" in workers
 
-    def test_send_payment_link_selects_payment_safety(self):
-        assert "payment_safety" in _INTENT_WORKERS["send_payment_link"]
+    def test_send_payment_link_selects_payment_flow(self):
+        assert "payment_flow" in _INTENT_WORKERS["send_payment_link"]
 
     def test_payment_execute_selects_payment_flow(self):
         assert "payment_flow" in _INTENT_WORKERS["payment_execute"]

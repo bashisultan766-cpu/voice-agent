@@ -143,3 +143,12 @@ class SessionState:
 
     # ── v4.3 last dialogue decision (transient per turn) ────────────────────────
     last_dialogue_decision: Any = None
+
+    # ── v4.4 payment flow result (set by PaymentFlowWorker) ───────────────────
+    payment_flow_result: dict = field(default_factory=dict)
+    payment_scope_count: int = 0
+    payment_scope_mode: str = ""
+    payment_scope_items: list[str] = field(default_factory=list)
+
+    # ── v4.4 naturalness ──────────────────────────────────────────────────────
+    naturalness: Any = None
