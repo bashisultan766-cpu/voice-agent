@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "noreply@example.com"
     RESEND_FROM_NAME: str = "Bookstore Support"
+    RESEND_REPLY_TO_EMAIL: str = ""
+    RESEND_BRAND_NAME: str = "SureShot Books"
     SUPPORT_EMAIL: str = ""              # Optional reply-to / escalation email
 
     # ── Pipeline speed budgets ────────────────────────────────────────────────

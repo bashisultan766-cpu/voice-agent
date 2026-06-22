@@ -38,8 +38,10 @@ class TestCartMemory:
         ledger = CartLedger()
         for isbn in ("978111", "978222", "978333"):
             ledger.record_isbn_provided(isbn)
-        ledger.add_candidate(CartItem(title="Book One", isbn="978111"))
-        ledger.add_candidate(CartItem(title="Book Two", isbn="978222"))
+        ledger.add_candidate(CartItem(title="Book One", isbn="978111", variant_id="gid://1"))
+        ledger.add_candidate(CartItem(title="Book Two", isbn="978222", variant_id="gid://2"))
+        ledger.confirm_last_candidate()
+        ledger.confirm_last_candidate()
         ledger.record_isbn_not_found("978333")
         session = _session()
         sync_ledger_to_session(session, ledger)

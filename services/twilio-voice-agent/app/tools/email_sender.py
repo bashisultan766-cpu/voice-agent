@@ -13,6 +13,12 @@ from typing import Optional
 import httpx
 
 from ..config import get_settings
+from ..email.deliverability import (
+    build_payment_email_html,
+    build_payment_email_plain,
+    build_payment_email_subject,
+    validate_payment_email_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,38 +36,6 @@ def _mask_email(email: str) -> str:
         return "***"
     local, domain = email.split("@", 1)
     return local[0] + "***@" + domain
-
-
-def _payment_email_html(
-    checkout_url: str,
-    product_summary: str,
-    caller_name: Optional[str],
-    from_name: str,
-) -> str:
-    greeting = f"Hi {caller_name}," if caller_name else "Hello,"
-    return f"""
-<!DOCTYPE html>
-<html>
-<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-  <h2 style="color:#333">{from_name}</h2>
-  <p>{greeting}</p>
-  <p>Here is your secure payment link for:</p>
-  <p style="background:#f5f5f5;padding:12px;border-radius:4px">
-    <strong>{product_summary}</strong>
-  </p>
-  <p>
-    <a href="{checkout_url}"
-       style="background:#0070f3;color:#fff;padding:12px 24px;
-              text-decoration:none;border-radius:4px;display:inline-block">
-      Complete Your Purchase
-    </a>
-  </p>
-  <p style="color:#666;font-size:13px">
-    This link expires in 48 hours. If you have questions, just call us back.
-  </p>
-</body>
-</html>
-""".strip()
 
 
 async def send_payment_link_email(
@@ -96,27 +70,45 @@ async def send_payment_link_email(
             ),
         }
 
+    brand = str(getattr(settings, "RESEND_BRAND_NAME", None) or "SureShot Books")
+    from_name = settings.RESEND_FROM_NAME or brand
     from_addr = (
-        f"{settings.RESEND_FROM_NAME} <{settings.RESEND_FROM_EMAIL}>"
-        if settings.RESEND_FROM_NAME
+        f"{from_name} <{settings.RESEND_FROM_EMAIL}>"
+        if from_name
         else settings.RESEND_FROM_EMAIL
     )
+
+    subject = build_payment_email_subject(brand)
+    plain_body = build_payment_email_plain(checkout_url, brand)
+    html_body = build_payment_email_html(checkout_url, brand)
+
+    report = validate_payment_email_content(
+        subject=subject,
+        plain_body=plain_body,
+        html_body=html_body,
+        from_email=settings.RESEND_FROM_EMAIL,
+        reply_to=settings.RESEND_REPLY_TO_EMAIL or settings.SUPPORT_EMAIL,
+        checkout_url=checkout_url,
+        brand_name=brand,
+    )
+    if report.issues:
+        logger.warning(
+            "email_deliverability_issues issues=%s from_domain=%s",
+            report.issues,
+            report.from_domain,
+        )
 
     payload = {
         "from": from_addr,
         "to": [email.strip()],
-        "subject": f"Your Payment Link — {product_summary[:60]}",
-        "html": _payment_email_html(
-            checkout_url=checkout_url,
-            product_summary=product_summary,
-            caller_name=caller_name,
-            from_name=settings.RESEND_FROM_NAME or "Bookstore Support",
-        ),
+        "subject": subject,
+        "text": plain_body,
+        "html": html_body,
     }
 
-    # Add reply-to support email if configured.
-    if settings.SUPPORT_EMAIL:
-        payload["reply_to"] = settings.SUPPORT_EMAIL
+    reply_to = str(getattr(settings, "RESEND_REPLY_TO_EMAIL", "") or getattr(settings, "SUPPORT_EMAIL", "") or "")
+    if reply_to:
+        payload["reply_to"] = reply_to
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

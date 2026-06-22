@@ -317,31 +317,79 @@ class DialogueManager:
 
         if confirmed:
             spelled = build_email_spell_only(confirmed)
-            return (
-                f"I have {spell_mask(confirmed)}. "
-                f"{spelled}"
-            )
+            return spelled
         if pending:
             return build_email_readback(pending)
         if fragments:
-            return (
-                "I have part of your email, but I want to make sure I get it right. "
-                "Please spell the full email again slowly."
-            )
-        return "I do not have an email confirmed yet. Please spell it slowly."
+            return "I do not have a complete email yet. Please spell it slowly."
+        return "I do not have a complete email yet. Please spell it slowly."
 
     @staticmethod
     def build_memory_response(session: "SessionState", action: str) -> str:
         ledger = get_ledger(session)
         isbn_hist = getattr(session, "isbn_history", []) or ledger.isbn_provided
+        confirmed = ledger.confirmed_titles()
+
+        if action == "first_book_question":
+            if confirmed:
+                return f"The first book you added is {confirmed[0]}."
+            if isbn_hist:
+                return (
+                    "I have the ISBNs you gave me, but I still need to confirm "
+                    "which books to include."
+                )
+            return "I do not have any confirmed books yet."
+
+        if action == "selected_books_question":
+            if len(confirmed) == 1:
+                return f"You selected one book: {confirmed[0]}."
+            if len(confirmed) > 1:
+                if len(confirmed) == 2:
+                    joined = f"{confirmed[0]}, and {confirmed[1]}"
+                else:
+                    joined = ", ".join(confirmed[:-1]) + f", and {confirmed[-1]}"
+                return f"You selected {len(confirmed)} books: {joined}."
+            if isbn_hist:
+                return (
+                    "I have the ISBNs you gave me, but I still need to confirm "
+                    "which books to include."
+                )
+            return "I do not have any confirmed books yet."
+
+        if action in ("cart_titles_question", "titles_question"):
+            if confirmed:
+                parts = [f"The {'first' if i == 1 else str(i)} book is {t}."
+                         for i, t in enumerate(confirmed, start=1)]
+                summary = " ".join(parts)
+                if ledger.isbn_not_found:
+                    missing = ", ".join(ledger.isbn_not_found)
+                    summary += (
+                        f" ISBN {missing} did not return a matching title."
+                        if len(ledger.isbn_not_found) == 1
+                        else f" These ISBNs were not found: {missing}."
+                    )
+                return summary
+            if isbn_hist:
+                return (
+                    "I have the ISBNs you gave me, but I still need to confirm "
+                    "which books to include."
+                )
+            return "I do not have any book titles saved yet."
+
+        if action == "isbn_memory_question":
+            n = len(isbn_hist)
+            return f"You gave me {n} ISBN number{'s' if n != 1 else ''}."
 
         if action == "isbn_count_question":
             n = len(isbn_hist)
             return f"You gave me {n} ISBN number{'s' if n != 1 else ''}."
 
-        if action in ("cart_count_question", "cart_review_question"):
-            n = ledger.confirmed_count() or ledger.count()
-            if action == "cart_review_question":
+        if action in ("cart_count_question", "cart_review_question", "cart_summary_question"):
+            n = ledger.confirmed_count()
+            if action == "cart_review_question" or action == "cart_summary_question":
+                if confirmed:
+                    titles = ", ".join(confirmed)
+                    return f"You have {n} book{'s' if n != 1 else ''} selected: {titles}."
                 return ledger.cart_summary_text()
             return f"You have {n} book{'s' if n != 1 else ''} selected."
 
@@ -372,14 +420,21 @@ class DialogueManager:
                     f"You gave me {len(isbn_hist)} ISBN number"
                     f"{'s' if len(isbn_hist) != 1 else ''}."
                 )
-            n = ledger.confirmed_count() or ledger.count()
+            n = ledger.confirmed_count()
             if n:
                 parts.append(f"You have {n} book{'s' if n != 1 else ''} selected.")
-                titles = ledger.titles_one_by_one_summary()
-                if titles:
-                    parts.append(titles)
+                if confirmed:
+                    if len(confirmed) == 1:
+                        parts.append(f"The book is {confirmed[0]}.")
+                    else:
+                        parts.append(
+                            "The books are " + ", ".join(confirmed) + "."
+                        )
             elif isbn_hist:
-                parts.append("I have your ISBNs but no confirmed titles yet.")
+                parts.append(
+                    "I have the ISBNs you gave me, but I still need to confirm "
+                    "which books to include."
+                )
             email = getattr(session, "confirmed_email", "") or getattr(session, "pending_email", "")
             if email:
                 parts.append(f"I have your email as {_mask_email(email)}.")

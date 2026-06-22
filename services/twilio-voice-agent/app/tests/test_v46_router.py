@@ -7,7 +7,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from app.pipeline.router import detect
 from app.cart.candidate import save_product_candidate
-from app.cart.session import get_ledger
+from app.cart.session import get_ledger, confirm_last_candidate
 from app.state.models import SessionState
 
 
@@ -32,14 +32,14 @@ class TestRouterV46:
         s = _session()
         for isbn in ("978111", "978222"):
             save_product_candidate(s, title=f"B{isbn}", isbn=isbn, variant_id=f"gid://{isbn}")
-            get_ledger(s).confirm_last_candidate()
+            confirm_last_candidate(s)
         r = detect("send both books", session=s)
         assert r.intent == "send_payment_link"
 
     def test_send_those_books_payment(self):
         s = _session()
         save_product_candidate(s, title="Book", isbn="978111", variant_id="gid://1")
-        get_ledger(s).confirm_last_candidate()
+        confirm_last_candidate(s)
         r = detect("send those books", session=s)
         assert r.intent == "send_payment_link"
 
@@ -59,6 +59,6 @@ class TestRouterV46:
         s = _session()
         for isbn in ("978111", "978222"):
             save_product_candidate(s, title=f"B{isbn}", isbn=isbn, variant_id=f"gid://{isbn}")
-            get_ledger(s).confirm_last_candidate()
+            confirm_last_candidate(s)
         r = detect("I need both books", session=s)
         assert r.intent == "add_to_cart"

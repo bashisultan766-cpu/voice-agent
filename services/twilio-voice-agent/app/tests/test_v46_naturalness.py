@@ -29,8 +29,9 @@ class TestNaturalnessV2:
         s.isbn_history = ["978111"]
         from app.cart.candidate import save_product_candidate
         from app.cart.session import get_ledger
+        from app.cart.session import confirm_last_candidate
         save_product_candidate(s, title="Book", isbn="978111", variant_id="gid://1")
-        get_ledger(s).confirm_last_candidate()
+        confirm_last_candidate(s)
         msg = NaturalnessController.frustration_repair_message(s)
         assert "sorry" in msg.lower()
 

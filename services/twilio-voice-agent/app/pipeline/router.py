@@ -235,6 +235,40 @@ _MULTI_BOOK_WORDS = re.compile(
     re.IGNORECASE,
 )
 
+# v4.7: memory / cart recall — must never trigger product search
+_FIRST_BOOK_Q = re.compile(
+    r"\b("
+    r"what (?:is |was )?(?:the )?first book(?: title| name)?"
+    r"|which book (?:did )?i add first"
+    r"|which book i add first"
+    r"|what was the first book"
+    r"|first book (?:title|name)"
+    r")\b",
+    re.IGNORECASE,
+)
+_SELECTED_BOOKS_Q = re.compile(
+    r"\b("
+    r"what books did i select"
+    r"|which books did i (?:select|choose|pick|add)"
+    r"|what did i select"
+    r"|books i selected"
+    r")\b",
+    re.IGNORECASE,
+)
+_HOW_MANY_ISBN_GAVE = re.compile(
+    r"\bhow many isbn numbers? did i give you\b",
+    re.IGNORECASE,
+)
+_ENDING_THANKS_Q = re.compile(
+    r"^\s*(?:okay[,.]?\s*)?(?:thank you|thanks|thank u|that.?s all|"
+    r"no that.?s it|nothing else|i.?m good|all set)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_PAYMENT_SENT_Q = re.compile(
+    r"\b(did you send (?:it|the link|the payment)|have you sent (?:it|the link))\b",
+    re.IGNORECASE,
+)
+
 # v4.3: cart / ISBN memory questions
 _ISBN_COUNT_Q = re.compile(
     r"\bhow many isbn\b",
@@ -430,6 +464,41 @@ def detect(text: str, session=None) -> IntentResult:
     if _SPELL_IT_Q.match(t.strip()) and email_ctx:
         return IntentResult(
             intent="spell_email_request", confidence=0.93, entities=entities,
+        )
+
+    if _PAYMENT_SENT_Q.search(t):
+        return IntentResult(
+            intent="payment_status_question", confidence=0.91, entities=entities,
+        )
+
+    if _ENDING_THANKS_Q.match(t.strip()):
+        return IntentResult(
+            intent="ending_thanks", confidence=0.94, entities=entities,
+        )
+
+    # v4.7: first book / selected books — before product/title search
+    if _FIRST_BOOK_Q.search(t):
+        entities["intent"] = "first_book_question"
+        return IntentResult(
+            intent="first_book_question", confidence=0.94, entities=entities,
+        )
+
+    if _SELECTED_BOOKS_Q.search(t):
+        entities["intent"] = "selected_books_question"
+        return IntentResult(
+            intent="selected_books_question", confidence=0.93, entities=entities,
+        )
+
+    if _HOW_MANY_ISBN_GAVE.search(t):
+        entities["intent"] = "isbn_count_question"
+        return IntentResult(
+            intent="isbn_count_question", confidence=0.92, entities=entities,
+        )
+
+    if re.match(r"^\s*title\s*[.!?]?\s*$", t, re.I):
+        entities["intent"] = "first_book_question"
+        return IntentResult(
+            intent="first_book_question", confidence=0.88, entities=entities,
         )
 
     # v4.6: memory summary
@@ -708,6 +777,12 @@ def detect(text: str, session=None) -> IntentResult:
         )
 
     if _ORDER_WORDS.search(t):
+        # v4.7: "which book I add first in my order" is memory, not order lookup
+        if _FIRST_BOOK_Q.search(t):
+            entities["intent"] = "first_book_question"
+            return IntentResult(
+                intent="first_book_question", confidence=0.92, entities=entities,
+            )
         return IntentResult(
             intent="order_lookup", confidence=0.88, entities=entities,
             needs_filler=True, suggested_tools=["lookup_order"],

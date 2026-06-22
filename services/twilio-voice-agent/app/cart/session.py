@@ -23,6 +23,14 @@ def sync_ledger_to_session(session: "SessionState", ledger: CartLedger) -> None:
     session.isbn_not_found = ledger.isbn_not_found
 
 
+def confirm_last_candidate(session: "SessionState"):
+    """Confirm the last eligible candidate and persist to session."""
+    ledger = get_ledger(session)
+    item = ledger.confirm_last_candidate()
+    sync_ledger_to_session(session, ledger)
+    return item
+
+
 def add_product_candidate(
     session: "SessionState",
     *,

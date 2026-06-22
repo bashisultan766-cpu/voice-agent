@@ -26,15 +26,14 @@ def _confirmed_checkout_items(session: "SessionState") -> list[dict[str, Any]]:
     for raw in getattr(session, "cart_items", []) or []:
         if not isinstance(raw, dict):
             continue
-        if raw.get("confirmation_status") not in ("confirmed", "candidate"):
-            if raw.get("confirmation_status") == "rejected":
-                continue
+        if raw.get("confirmation_status") != "confirmed":
+            continue
+        if raw.get("eligible_for_checkout") is False:
+            continue
         if not raw.get("variant_id"):
             continue
         items.append(raw)
-    # Prefer confirmed only for payment
-    confirmed = [i for i in items if i.get("confirmation_status") == "confirmed"]
-    return confirmed if confirmed else items
+    return items
 
 
 def parse_scope_from_text(text: str, entities: dict) -> dict[str, Any]:

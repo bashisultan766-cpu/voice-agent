@@ -55,7 +55,7 @@ class ProductISBNWorker:
                     "product_id": getattr(product, "product_id", "") or "",
                     "isbn": isbn,
                 }
-                persist_worker_product_result(session, data, isbn=isbn, source="isbn_search")
+                persist_worker_product_result(session, data, isbn=isbn, source="isbn_search", source_intent="isbn_search", source_query=isbn)
                 return WorkerResult(
                     worker_name=self.name,
                     success=True,

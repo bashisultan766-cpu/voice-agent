@@ -34,6 +34,7 @@ from ..dialogue.manager import DialogueManager
 from ..dialogue.naturalness import NaturalnessController
 from ..dialogue.greeting import build_first_response_greeting
 from ..domain.sureshot_brain import build_domain_excerpt
+from ..safety.response_sanitizer import sanitize_customer_response
 from ..conversation.call_memory import (
     build_composer_context,
     record_assistant_turn,
@@ -109,10 +110,34 @@ def _deterministic_response(
     ) and say:
         return say
 
+    if router_result.intent == "ending_thanks":
+        return (
+            "You're welcome. Thank you for calling SureShot Books. Have a great day."
+        )
+
+    if action == "ending_thanks" and say:
+        return say
+
     if router_result.intent == "spell_email_request" and say:
         return say
 
     return None
+
+
+def _sanitize_and_finalize(
+    text: str,
+    session: SessionState,
+    router_result: "IntentResult",
+) -> str:
+    pfr = getattr(session, "payment_flow_result", {}) or {}
+    payment_sent = bool(pfr.get("email_sent"))
+    result = sanitize_customer_response(
+        text,
+        intent=router_result.intent,
+        call_sid=session.call_sid,
+        payment_sent=payment_sent,
+    )
+    return result.text
 
 
 def _trim_history(history: list[dict]) -> list[dict]:
@@ -268,6 +293,7 @@ class MainLLMComposer:
 
         deterministic = _deterministic_response(session, router_result)
         if deterministic:
+            deterministic = _sanitize_and_finalize(deterministic, session, router_result)
             session.turn_count += 1
             session.history.append({"role": "user", "content": caller_text})
             session.history.append({"role": "assistant", "content": deterministic})
@@ -285,6 +311,7 @@ class MainLLMComposer:
                 store_domain=session.store_domain,
                 caller_context=caller_context,
                 max_reply_words=s.VOICE_MAX_REPLY_WORDS,
+                live_composer=True,
             )
             # Append composer suffix to system content
             sys_msg = {
@@ -298,6 +325,7 @@ class MainLLMComposer:
                 store_domain=session.store_domain,
                 caller_context=caller_context,
                 max_reply_words=s.VOICE_MAX_REPLY_WORDS,
+                live_composer=True,
             )
             session.history[0] = {
                 "role": "system",
@@ -331,27 +359,29 @@ class MainLLMComposer:
                 delta = chunk.choices[0].delta
                 if delta.content:
                     text_tokens.append(delta.content)
-                    yield {"type": "text_token", "token": delta.content}
 
         except asyncio.CancelledError:
             logger.info("Composer turn cancelled (interrupt) sid=%s", session.call_sid[:6])
             return
         except Exception as exc:
             logger.exception("Composer OpenAI error sid=%s: %s", session.call_sid[:6], exc)
-            yield {
-                "type": "text_token",
-                "token": "I'm sorry, I had a technical problem. Could you repeat that?",
-            }
+            err = _sanitize_and_finalize(
+                "I'm sorry, I had a technical problem. Could you repeat that?",
+                session, router_result,
+            )
+            yield {"type": "text_token", "token": err}
             yield {"type": "turn_done"}
             return
 
         # Store the response in history so the conversation stays coherent
         response_text = "".join(text_tokens)
         if response_text:
+            response_text = _sanitize_and_finalize(response_text, session, router_result)
             session.history.append({"role": "user", "content": caller_text})
             session.history.append({"role": "assistant", "content": response_text})
             NaturalnessController.record_response(session, response_text)
             record_assistant_turn(session, response_text)
+            yield {"type": "text_token", "token": response_text}
 
         yield {"type": "turn_done"}
 

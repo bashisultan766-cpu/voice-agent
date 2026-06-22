@@ -84,11 +84,17 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "remove_from_cart":         ["cart_mutation"],
     "spell_email_request":      ["spell_email"],
     "isbn_count_question":      ["cart_memory"],
+    "isbn_memory_question":   ["cart_memory"],
     "cart_count_question":      ["cart_memory"],
+    "cart_summary_question":    ["cart_memory"],
+    "cart_titles_question":     ["cart_memory"],
     "titles_question":          ["cart_memory"],
+    "first_book_question":      ["cart_memory"],
+    "selected_books_question":  ["cart_memory"],
     "not_found_question":       ["cart_memory"],
     "cart_review_question":     ["cart_memory"],
     "memory_summary_question":  ["cart_memory"],
+    "ending_thanks":            ["cart_memory"],
     "payment_execute":          ["payment_flow"],
 
     # ── Orders ─────────────────────────────────────────────────────────────────

@@ -137,8 +137,32 @@ class CartMutationWorker:
 
     def _confirm_one(self, session: "SessionState", t0: float) -> WorkerResult:
         ledger = get_ledger(session)
-        candidate = ledger.candidate_item
+        candidate = ledger.eligible_candidate_item
         if not candidate:
+            blocked = [
+                i for i in ledger.items
+                if i.confirmation_status == "candidate" and not i.candidate_guard_allowed
+            ]
+            if blocked and ledger.confirmed_count() > 0:
+                logger.info(
+                    "cart_mutation_result action=confirm_last_candidate success=false "
+                    "reason=blocked_candidates_only sid=%s",
+                    session.call_sid[:6],
+                )
+                return WorkerResult(
+                    worker_name=self.name,
+                    success=True,
+                    data={
+                        "action": "cart_already_confirmed",
+                        "cart_count": ledger.confirmed_count(),
+                    },
+                    safe_summary=(
+                        "Those books are already in your cart. "
+                        "Would you like another book or a payment link?"
+                    ),
+                    latency_ms=(time.monotonic() - t0) * 1000,
+                    source="local",
+                )
             if ledger.confirmed_count() > 0:
                 logger.info(
                     "cart_mutation_result action=confirm_last_candidate success=true reason=already_confirmed cart_count=%d sid=%s",
@@ -241,7 +265,7 @@ class CartMutationWorker:
         t0: float,
     ) -> WorkerResult:
         ledger = get_ledger(session)
-        pending = [i for i in ledger.items if i.confirmation_status == "candidate"]
+        pending = ledger.eligible_pending_candidates()
         if not pending:
             return self._confirm_one(session, t0)
 
@@ -252,18 +276,27 @@ class CartMutationWorker:
             val = m.group(1).lower()
             limit = int(val) if val.isdigit() else _COUNT_WORDS.get(val)
 
-        if "both" in raw_text.lower() and len(pending) >= 2:
+        if re.search(r"\bboth\b", raw_text, re.I):
             limit = 2
+        m2 = re.search(r"\bthese\s+(\d+|one|two|three|four|five)\s+books?\b", raw_text, re.I)
+        if m2:
+            val = m2.group(1).lower()
+            limit = int(val) if val.isdigit() else _COUNT_WORDS.get(val, limit)
 
         confirmed_titles: list[str] = []
         confirmed = 0
         for item in pending:
             if limit is not None and confirmed >= limit:
                 break
-            if not item.variant_id:
+            if not item.variant_id or not item.candidate_guard_allowed:
                 continue
             if item.confirmation_status == "candidate":
                 item.confirmation_status = "confirmed"
+                item.eligible_for_checkout = True
+                if not item.selection_origin:
+                    item.selection_origin = (
+                        "isbn_confirmed" if item.isbn else "title_confirmed"
+                    )
                 confirmed += 1
                 confirmed_titles.append(item.title)
 

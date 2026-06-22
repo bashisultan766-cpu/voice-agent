@@ -1,4 +1,4 @@
-"""Deterministic email spell/readback for voice (v4.6)."""
+"""Deterministic email spell/readback for voice (v4.7)."""
 from __future__ import annotations
 
 import re
@@ -29,10 +29,10 @@ _EMAIL_RE = re.compile(
     r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$",
     re.IGNORECASE,
 )
+_NON_ASCII = re.compile(r"[^\x00-\x7F]+")
 
 
 def normalize_email_for_customer_readback(email: str) -> str:
-    """Lowercase normalized email for customer readback."""
     if not email:
         return ""
     return email.strip().lower()
@@ -53,7 +53,6 @@ def _domain_voice_part(domain: str) -> str:
     lower = domain.lower()
     if lower in _COMMON_DOMAINS:
         return _COMMON_DOMAINS[lower]
-  # split generic domains
     parts = lower.split(".")
     if len(parts) >= 2:
         return " dot ".join(parts)
@@ -73,30 +72,23 @@ def _local_voice_parts(local: str) -> list[str]:
 
 
 def spell_email_for_voice(email: str) -> str:
-    """
-    Letter-by-letter spell-back for voice.
-
-    Example: bashisultan766@gmail.com ->
-    "b, a, s, h, i, s, u, l, t, a, n, seven, six, six, at gmail dot com"
-    """
     normalized = normalize_email_for_customer_readback(email)
     if not normalized or "@" not in normalized:
         return ""
 
     local, domain = normalized.split("@", 1)
     local_parts = _local_voice_parts(local)
-    domain_part = _domain_voice_part(domain)
 
     if domain.lower() == "gmail.com":
         spelled = ", ".join(local_parts)
         return f"{spelled}, at gmail dot com"
 
+    domain_part = _domain_voice_part(domain)
     spelled = ", ".join(local_parts)
     return f"{spelled}, at {domain_part}"
 
 
 def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
-    """True when STT likely misheard @ as 'activate' or email fails validation."""
     normalized = normalize_email_for_customer_readback(email)
     if not normalized:
         return True
@@ -107,35 +99,30 @@ def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
             return True
     if not _EMAIL_RE.match(normalized):
         return True
+    if _NON_ASCII.search(normalized):
+        return True
     return False
 
 
 def build_email_readback(email: str, raw_text: str = "") -> str:
-    """Full readback: heard email + letter-by-letter spelling."""
+    """Pending email: heard + letter-by-letter + confirmation."""
     normalized = normalize_email_for_customer_readback(email)
     if not normalized:
-        return (
-            "I may have heard that wrong. Please spell the email again slowly."
-        )
+        return "I do not have a complete email yet. Please spell it slowly."
 
     if email_confidence_is_low(normalized, raw_text):
-        return (
-            "I may have heard that wrong. Please spell the email again slowly."
-        )
+        return "I do not have a complete email yet. Please spell it slowly."
 
     spelled = spell_email_for_voice(normalized)
     return (
-        f"I heard {normalized}. "
-        f"Letter by letter, that is: {spelled}."
+        f"I heard {normalized}. Letter by letter: {spelled}. Is that correct?"
     )
 
 
 def build_email_spell_only(email: str, raw_text: str = "") -> str:
-    """Spell-back without confirmation question."""
+    """Confirmed email: have + letter-by-letter."""
     normalized = normalize_email_for_customer_readback(email)
     if not normalized or email_confidence_is_low(normalized, raw_text):
-        return (
-            "I may have heard that wrong. Please spell the email again slowly."
-        )
+        return "I do not have a complete email yet. Please spell it slowly."
     spelled = spell_email_for_voice(normalized)
-    return f"Letter by letter, that is: {spelled}."
+    return f"I have {normalized}. Letter by letter: {spelled}."

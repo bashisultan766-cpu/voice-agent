@@ -22,6 +22,11 @@ class CartItem:
     available: bool = True
     source: str = "search"           # search | isbn | manual
     confirmation_status: str = "candidate"  # candidate | confirmed | rejected
+    selection_origin: str = ""       # isbn_confirmed | title_confirmed | author_confirmed | manual_selected
+    eligible_for_checkout: bool = False
+    source_intent: str = ""
+    source_query: str = ""
+    candidate_guard_allowed: bool = True
 
 
 class CartLedger:
@@ -66,11 +71,33 @@ class CartLedger:
         self._last_candidate_idx = len(self._items) - 1
 
     def confirm_last_candidate(self) -> Optional[CartItem]:
-        """Caller said yes — confirm the last candidate."""
-        candidate = self.candidate_item
+        """Caller said yes — confirm the last eligible candidate."""
+        candidate = self.eligible_candidate_item
         if candidate:
             candidate.confirmation_status = "confirmed"
+            candidate.eligible_for_checkout = True
+            if not candidate.selection_origin:
+                candidate.selection_origin = (
+                    "isbn_confirmed" if candidate.isbn else "title_confirmed"
+                )
         return candidate
+
+    @property
+    def eligible_candidate_item(self) -> Optional[CartItem]:
+        """Most recent pending candidate allowed by candidate guard."""
+        candidates = [
+            i for i in self._items
+            if i.confirmation_status == "candidate"
+            and i.candidate_guard_allowed
+        ]
+        return candidates[-1] if candidates else None
+
+    def eligible_pending_candidates(self) -> list[CartItem]:
+        return [
+            i for i in self._items
+            if i.confirmation_status == "candidate"
+            and i.candidate_guard_allowed
+        ]
 
     def reject_last_candidate(self) -> Optional[CartItem]:
         """Caller said no to last candidate."""
@@ -98,6 +125,9 @@ class CartLedger:
         ]
         return [i.title for i in items if i.title]
 
+    def confirmed_titles(self) -> list[str]:
+        return [i.title for i in self.confirmed_items if i.title]
+
     def to_checkout_items(self) -> list[dict]:
         return [
             {
@@ -122,6 +152,11 @@ class CartLedger:
                 "source": i.source,
                 "confirmation_status": i.confirmation_status,
                 "available": i.available,
+                "selection_origin": i.selection_origin,
+                "eligible_for_checkout": i.eligible_for_checkout,
+                "source_intent": i.source_intent,
+                "source_query": i.source_query,
+                "candidate_guard_allowed": i.candidate_guard_allowed,
             }
             for i in self._items
             if i.confirmation_status != "rejected"
@@ -188,6 +223,16 @@ class CartLedger:
                 available=raw.get("available", True),
                 source=raw.get("source", "search"),
                 confirmation_status=raw.get("confirmation_status", "candidate"),
+                selection_origin=raw.get("selection_origin", ""),
+                eligible_for_checkout=bool(
+                    raw.get(
+                        "eligible_for_checkout",
+                        raw.get("confirmation_status") == "confirmed",
+                    )
+                ),
+                source_intent=raw.get("source_intent", ""),
+                source_query=raw.get("source_query", ""),
+                candidate_guard_allowed=raw.get("candidate_guard_allowed", True),
             ))
         if ledger._items:
             for i, item in enumerate(ledger._items):

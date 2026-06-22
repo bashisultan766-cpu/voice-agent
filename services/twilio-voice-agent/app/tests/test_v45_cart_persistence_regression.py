@@ -15,7 +15,7 @@ from app.pipeline.compound_intent import detect
 from app.pipeline.engine import _apply_email_state
 from app.pipeline.router import IntentResult
 from app.cart.candidate import save_product_candidate
-from app.cart.session import get_ledger
+from app.cart.session import get_ledger, sync_ledger_to_session, confirm_last_candidate
 from app.state.models import SessionState
 from app.workers.orchestrator import WorkerOrchestrator
 from app.workers.base import WorkerResult
@@ -101,7 +101,7 @@ class TestV45LiveCallRegression:
             save_product_candidate(
                 session, title=f"Book {i}", isbn=isbn, variant_id=f"gid://{i}",
             )
-            get_ledger(session).confirm_last_candidate()
+            confirm_last_candidate(session)
         ir = IntentResult(
             intent="send_payment_link", confidence=0.9,
             entities={

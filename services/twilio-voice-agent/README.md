@@ -205,7 +205,22 @@ cp .env.example .env
 | `RESEND_API_KEY` | API key from [resend.com](https://resend.com) — required for `send_payment_link_email` |
 | `RESEND_FROM_EMAIL` | Verified sender address |
 | `RESEND_FROM_NAME` | Display name in the From header |
+| `RESEND_REPLY_TO_EMAIL` | Optional reply-to for transactional mail |
+| `RESEND_BRAND_NAME` | Brand name in payment email subject/body (default: SureShot Books) |
 | `SUPPORT_EMAIL` | If set, escalation events send a plain text notification here |
+
+### Email deliverability checklist
+
+Code cannot guarantee inbox placement — receiver filtering is controlled by Gmail and other mailbox providers. Use this checklist during setup and testing:
+
+1. Verify your sending domain in [Resend](https://resend.com).
+2. Ensure SPF and DKIM pass for the sending domain.
+3. Add a DMARC record for the domain.
+4. Use a branded sender such as `orders@mailcallcommunication.com` or `orders@sureshotbooks.com` after domain verification.
+5. Keep transactional payment content simple — one clear link, no spammy wording.
+6. Ask recipients to mark the first test email as not spam during testing.
+
+Run `python scripts/check_email_deliverability.py` to print a static configuration report (no secrets logged).
 
 ### Redis
 

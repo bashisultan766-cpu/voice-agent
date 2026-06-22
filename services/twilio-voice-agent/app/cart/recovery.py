@@ -57,7 +57,7 @@ def confirm_pending_candidates(
 ) -> CartRecoveryResult:
     """Promote pending candidates to confirmed when user phrase implies selection."""
     ledger = get_ledger(session)
-    pending = [i for i in ledger.items if i.confirmation_status == "candidate" and i.variant_id]
+    pending = ledger.eligible_pending_candidates()
     if not pending and not user_implies_recovery(raw_text):
         return CartRecoveryResult(reason="no_pending")
 
@@ -72,6 +72,11 @@ def confirm_pending_candidates(
     for item in pending:
         if item.confirmation_status == "candidate" and item.variant_id:
             item.confirmation_status = "confirmed"
+            item.eligible_for_checkout = True
+            if not item.selection_origin:
+                item.selection_origin = (
+                    "isbn_confirmed" if item.isbn else "title_confirmed"
+                )
             confirmed += 1
 
     sync_ledger_to_session(session, ledger)
@@ -139,6 +144,7 @@ async def rehydrate_from_isbn_history(
             item = ledger.candidate_item
             if item and item.variant_id:
                 item.confirmation_status = "confirmed"
+                item.eligible_for_checkout = True
                 recovered += 1
             sync_ledger_to_session(session, ledger)
             continue
@@ -170,6 +176,7 @@ async def rehydrate_from_isbn_history(
             item = ledger.candidate_item
             if item:
                 item.confirmation_status = "confirmed"
+                item.eligible_for_checkout = True
                 recovered += 1
             sync_ledger_to_session(session, ledger)
         except Exception:

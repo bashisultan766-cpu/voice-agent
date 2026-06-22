@@ -65,12 +65,12 @@ class ProductSearchWorker:
             # 1. Title exact match
             product = await cache.get_by_title(query)
             if product:
-                return _from_cached(product, "cache", t0, session)
+                return _from_cached(product, "cache", t0, session, entities)
 
             # 2. Handle match
             product = await cache.get_by_handle(_to_handle(query))
             if product:
-                return _from_cached(product, "cache", t0, session)
+                return _from_cached(product, "cache", t0, session, entities)
 
             # 3. Shopify live search
             from ..tools.shopify_tools import search_products
@@ -121,7 +121,11 @@ class ProductSearchWorker:
             }
             if variant_id and top.get("title"):
                 persist_worker_product_result(
-                    session, data, isbn=entities.get("isbn", ""), source="search",
+                    session, data,
+                    isbn=entities.get("isbn", ""),
+                    source="search",
+                    source_intent=entities.get("intent", "product_search"),
+                    source_query=query,
                 )
             avail = "in stock" if top.get("available") else "out of stock"
             safe_results = [
@@ -157,7 +161,7 @@ class ProductSearchWorker:
             )
 
 
-def _from_cached(product, source: str, t0: float, session=None) -> WorkerResult:
+def _from_cached(product, source: str, t0: float, session=None, entities=None) -> WorkerResult:
     avail = "in stock" if product.available else "out of stock"
     data = {
         "title": product.title,
@@ -168,7 +172,12 @@ def _from_cached(product, source: str, t0: float, session=None) -> WorkerResult:
         "product_id": getattr(product, "product_id", "") or "",
     }
     if session is not None and product.variant_id:
-        persist_worker_product_result(session, data, source="search")
+        ents = entities or {}
+        persist_worker_product_result(
+            session, data, source="search",
+            source_intent=ents.get("intent", "product_search"),
+            source_query=ents.get("product_phrase", "") or product.title,
+        )
     return WorkerResult(
         worker_name="product_search",
         success=True,

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from .ledger import CartItem, CartLedger
 from .session import get_ledger, sync_ledger_to_session
+from .candidate_guard import should_save_candidate, log_candidate_guard
 
 if TYPE_CHECKING:
     from ..state.models import SessionState
@@ -36,8 +37,21 @@ def save_product_candidate(
     available: bool = True,
     quantity: int = 1,
     source: str = "isbn_search",
-) -> CartItem:
+    source_intent: str = "",
+    source_query: str = "",
+    skip_guard: bool = False,
+) -> Optional[CartItem]:
     """Persist a book candidate immediately after product lookup."""
+    intent = source_intent or ("isbn_search" if isbn else source)
+    query = source_query or (isbn or title)
+    allowed, _reason = should_save_candidate(
+        intent, query, is_isbn=bool(isbn),
+    )
+    if not skip_guard and not allowed:
+        log_candidate_guard(False, intent, query, session.call_sid)
+        return None
+    log_candidate_guard(True, intent, query, session.call_sid)
+
     ledger = get_ledger(session)
     if isbn:
         ledger.record_isbn_provided(isbn)
@@ -52,6 +66,11 @@ def save_product_candidate(
         available=available,
         source=source,
         confirmation_status="candidate",
+        source_intent=intent,
+        source_query=query,
+        candidate_guard_allowed=True,
+        eligible_for_checkout=False,
+        selection_origin="isbn_confirmed" if isbn else "",
     )
     ledger.add_candidate(item)
     sync_ledger_to_session(session, ledger)
@@ -123,6 +142,8 @@ def persist_worker_product_result(
     *,
     isbn: str = "",
     source: str = "isbn_search",
+    source_intent: str = "",
+    source_query: str = "",
 ) -> Optional[CartItem]:
     """Save candidate from a product worker result dict, or record not-found."""
     if not data:
@@ -148,4 +169,6 @@ def persist_worker_product_result(
         price=str(data.get("price")) if data.get("price") else None,
         available=bool(data.get("available", True)),
         source=source,
+        source_intent=source_intent or source,
+        source_query=source_query or data.get("query", "") or isbn or title,
     )

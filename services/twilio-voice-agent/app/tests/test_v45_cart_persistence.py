@@ -12,7 +12,7 @@ os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://test.example.com")
 
 from app.cart.candidate import save_product_candidate, save_product_not_found
-from app.cart.session import get_ledger
+from app.cart.session import get_ledger, sync_ledger_to_session, confirm_last_candidate
 from app.pipeline.router import detect
 from app.pipeline.engine import _apply_email_state
 from app.pipeline.router import IntentResult
@@ -91,8 +91,7 @@ class TestCartMutationWorker:
             save_product_candidate(
                 session, title=f"Book {isbn}", isbn=isbn, variant_id=f"gid://{isbn}",
             )
-            ledger = get_ledger(session)
-            ledger.confirm_last_candidate()
+            confirm_last_candidate(session)
         for isbn in ("978444",):
             save_product_candidate(
                 session, title="Pending", isbn="978444", variant_id="gid://444",

@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from ..cart.payment_scope import resolve_payment_scope
 from ..cart.recovery import attempt_cart_recovery
+from ..cart.session import get_ledger
+from ..payment.scope_audit import audit_payment_scope
 from ..payment.flow_result import PaymentFlowResult
 from .base import WorkerResult
 from .checkout_worker import CheckoutWorker
@@ -79,7 +81,41 @@ class PaymentFlowWorker:
         if intent == "payment_status_question":
             return self._handle_status_question(session, flow, t0)
 
+        # v4.7: recover cart before scope audit when checkout items missing
+        if intent in PAYMENT_INTENTS:
+            pre_ledger = get_ledger(session)
+            if pre_ledger.confirmed_count() == 0 or not any(
+                i.eligible_for_checkout or i.confirmation_status == "confirmed"
+                for i in pre_ledger.confirmed_items
+            ):
+                recovery = await attempt_cart_recovery(session, raw_text, settings)
+                if recovery.success:
+                    logger.info(
+                        "payment_precheck_recovery recovered=%d sid=%s",
+                        recovery.confirmed_count,
+                        sid,
+                    )
+
+        # v4.7: payment scope audit — eligible confirmed items only
+        audited, audit = audit_payment_scope(session, entities, raw_text)
+        if audit.blocked:
+            flow.stage = "scope_mismatch"
+            flow.allowed = False
+            flow.safe_message = audit.clarification_message
+            flow.cart_count = audit.checkout_count
+            session.payment_flow_result = flow.to_dict()
+            _log_decision(intent, flow, sid)
+            return self._result(flow, t0, success=False, error_code="scope_mismatch")
+
         scoped, scope_msg = resolve_payment_scope(session, entities, raw_text)
+        if audited:
+            audited_keys = {
+                (i.get("isbn") or "", i.get("title") or "") for i in audited
+            }
+            scoped = [
+                i for i in scoped
+                if (i.get("isbn") or "", i.get("title") or "") in audited_keys
+            ] or audited
         flow.cart_count = len(scoped)
 
         if not scoped and intent in PAYMENT_INTENTS:

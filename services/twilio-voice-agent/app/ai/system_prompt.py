@@ -1,14 +1,12 @@
 """
 System prompt for the Twilio ConversationRelay voice agent — Eric at SureShot Books.
 
-v4.2: Full ElevenLabs-spec prompt adapted for the Twilio backend.
-  - All ElevenLabs persona, rules, flows, and privacy rules preserved.
-  - Tool names match app/ai/tool_schemas.py exactly (NormalizeVoiceIntent is
-    automatic via the deterministic router and is NOT an LLM-callable tool).
-  - Caller context section appended by build_system_message().
+v4.7: Live composer prompt excludes tool names and Available Tools section.
+  Legacy full prompt retained for reference; build_system_message uses live prompt.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -488,8 +486,60 @@ Only end the call after the customer confirms they do not need anything else.
 Say: "Thank you for calling SureShot Books. Have a great day."\
 """
 
+_LIVE_BACKEND_RULES = """\
+# Backend Data Rules
+Backend facts have already been checked by deterministic workers. Do not mention tools or backend. \
+Use only the provided worker context and response plan.
+Never guess order, inventory, shipping, pricing, facility, refund, or cancellation information.
+If worker context is missing or incomplete, apologize briefly and ask one clarifying question.
+"""
 
-def _build_base(max_words: int = 50, agent_name: str = "Eric") -> str:
+_TOOL_NAME_REPLACEMENTS = (
+    (r"\bGetOrder\b", "order lookup data"),
+    (r"\bSureShotCatalogSearch\b", "catalog data"),
+    (r"\bCalculatePricing\b", "pricing data"),
+    (r"\bCheckFacilityApproval\b", "facility approval data"),
+    (r"\bCheckOrderFacilityRestrictions\b", "facility restriction data"),
+    (r"\bAddressUpdateInstructions\b", "address update instructions"),
+    (r"\bCancelOrderRequest\b", "cancellation request data"),
+    (r"\bEscalateToCustomerService\b", "customer service escalation"),
+    (r"\bSendFacilityPaymentLink\b", "secure facility payment link"),
+    (r"\bSendPaymentLink\b", "payment link process"),
+    (r"\bGetCallerInfo\b", "caller context"),
+    (r"\bSaveCallerName\b", "caller name"),
+    (r"\bSureShotBooksSku\b", "product lookup"),
+    (r"\bSureShotBooksProductFetcher\b", "product details"),
+    (r"\bSureShotBooksProduct\b", "product search"),
+    (r"\bNormalizeVoiceIntent\b", "intent detection"),
+)
+
+
+def _build_live_prompt(base: str) -> str:
+    """Remove legacy tool sections and tool names from the live composer prompt."""
+    prompt = re.sub(
+        r"# Available Tools.*?# Do Not Expose Tool Data",
+        _LIVE_BACKEND_RULES + "\n\n# Do Not Expose Tool Data",
+        base,
+        count=1,
+        flags=re.DOTALL,
+    )
+    prompt = re.sub(
+        r"# Critical Tool Usage Rules.*?# Do Not Expose Tool Data",
+        _LIVE_BACKEND_RULES + "\n\n# Do Not Expose Tool Data",
+        prompt,
+        count=1,
+        flags=re.DOTALL,
+    )
+    for pattern, replacement in _TOOL_NAME_REPLACEMENTS:
+        prompt = re.sub(pattern, replacement, prompt)
+    prompt = re.sub(r"\bUse the correct backend tool\b", "Use the worker context", prompt)
+    prompt = re.sub(r"\bUse backend tools\b", "Use worker context", prompt)
+    prompt = re.sub(r"\bcall SendPaymentLink\b", "complete the payment link process", prompt, flags=re.I)
+    prompt = re.sub(r"\bOnly then call SendPaymentLink\b", "Only then send the payment link", prompt, flags=re.I)
+    return prompt
+
+
+def _build_base(max_words: int = 50, agent_name: str = "Eric", *, live: bool = True) -> str:
     """
     Return the full system prompt string.
 
@@ -501,6 +551,8 @@ def _build_base(max_words: int = 50, agent_name: str = "Eric") -> str:
     if agent_name != "Eric":
         prompt = prompt.replace("You are Eric,", f"You are {agent_name},", 1)
         prompt = prompt.replace("This is Eric.", f"This is {agent_name}.", 1)
+    if live:
+        prompt = _build_live_prompt(prompt)
     # Append the phone-call word-limit instruction
     prompt += (
         f"\n\nCALL RESPONSE LENGTH: This is a phone call. Keep every response under "
@@ -567,14 +619,16 @@ def build_system_message(
     agent_name: str = "Eric",
     caller_context: Optional["SafeCallerContext"] = None,
     max_reply_words: int = 50,
+    live_composer: bool = True,
 ) -> dict:
     """
     Build the OpenAI system message dict.
 
     agent_name defaults to "Eric". store_domain is informational.
+    live_composer=True strips tool names for the worker-to-composer path.
     """
     lines: list[str] = []
-    lines.append(_build_base(max_reply_words, agent_name=agent_name))
+    lines.append(_build_base(max_reply_words, agent_name=agent_name, live=live_composer))
     if store_domain:
         lines.append(f"Store domain: {store_domain}")
     if caller_context is not None:
