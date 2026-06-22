@@ -87,10 +87,10 @@ class SessionState:
     prefetch_cache: dict[str, str] = field(default_factory=dict)
 
     # ── Email confirmation state machine ──────────────────────────────────────
-    # pending_email:            normalized candidate awaiting "yes" from caller
-    # confirmed_email:          caller confirmed; safe for payment sends
-    # email_confidence:         high | medium | low
-    # email_rejected_count:     how many times caller said "no" this call
+    # pending_email:             normalized candidate awaiting "yes" from caller
+    # confirmed_email:           caller confirmed; safe for payment sends
+    # email_confidence:          high | medium | low
+    # email_rejected_count:      how many times caller said "no" this call
     # rejected_email_candidates: emails the caller explicitly rejected;
     #                            PaymentSafetyGuard blocks these permanently
     pending_email: str = ""
@@ -98,6 +98,25 @@ class SessionState:
     email_confidence: str = "low"
     email_rejected_count: int = 0
     rejected_email_candidates: list[str] = field(default_factory=list)
+
+    # ── Multi-turn email fragment accumulator ──────────────────────────────────
+    # Customer may say email across 2 turns: "bashisultan766 at gmail" / "dot com"
+    pending_email_fragments: list[str] = field(default_factory=list)
+    last_email_fragment_turn: int = -1
+
+    # ── Payment flow state machine ────────────────────────────────────────────
+    # Tracks where the caller is in the payment funnel so the engine can guide
+    # conversation deterministically without relying on the LLM for state.
+    #
+    # States:
+    #   idle                     — no active payment flow
+    #   awaiting_email           — need an email address
+    #   awaiting_email_confirmation — have pending_email, waiting for yes/no
+    #   awaiting_send_confirmation  — email confirmed, waiting for "yes send it"
+    #   checkout_created         — draft order created, checkout_url set
+    #   payment_sent             — payment email sent successfully
+    payment_flow_status: str = "idle"
+    payment_block_count: int = 0  # increments on each PaymentSafetyGuard block
 
     # ── Multi-book cart items ──────────────────────────────────────────────────
     # Each item: {title, isbn, variant_id, quantity, price, available, source}

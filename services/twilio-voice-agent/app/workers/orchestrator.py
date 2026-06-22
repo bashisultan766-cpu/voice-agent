@@ -71,6 +71,9 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "checkout_request":     ["product_search", "price_inventory", "checkout"],
     "send_payment_link":    ["payment_email"],
 
+    # Price — direct query after a product is already in session
+    "price_question":       ["price_inventory"],
+
     # Shipping
     "shipping_question":    ["store_policy", "shipping"],
     "shipping_price":       ["store_policy"],

@@ -35,6 +35,8 @@ class PriceInventoryWorker:
                 worker_name=self.name,
                 success=False,
                 error_code="no_product_id",
+                safe_summary="Which book are you asking about the price for?",
+                latency_ms=(time.monotonic() - t0) * 1000,
                 source="none",
             )
 
@@ -52,6 +54,14 @@ class PriceInventoryWorker:
                     source="cache",
                 )
             avail = "in stock" if product.available else "out of stock"
+            if product.price:
+                price_str = f"${product.price} {product.currency}" if product.currency else f"${product.price}"
+                summary = f"'{product.title}' is priced at {price_str} and is {avail}."
+            else:
+                summary = (
+                    f"I found '{product.title}', but I don't have a confirmed price for it right now. "
+                    "I can check again or connect you with customer service."
+                )
             return WorkerResult(
                 worker_name=self.name,
                 success=True,
@@ -61,11 +71,7 @@ class PriceInventoryWorker:
                     "currency": product.currency,
                     "available": product.available,
                 },
-                safe_summary=(
-                    f"'{product.title}' is {avail}"
-                    + (f" at ${product.price} {product.currency}" if product.price else "")
-                    + "."
-                ),
+                safe_summary=summary,
                 latency_ms=(time.monotonic() - t0) * 1000,
                 source="cache",
             )

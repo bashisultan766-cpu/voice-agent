@@ -88,6 +88,11 @@ class RealtimePipelineEngine:
             session.call_sid[:6],
         )
 
+        # ── 2. Email state machine (always, before path decision) ─────────────
+        # Updates session.pending_email / confirmed_email / payment_flow_status
+        # and accumulates multi-turn email fragments.
+        _apply_email_state(session, intent_result)
+
         use_worker_path = intent_result.intent in WORKER_PATH_INTENTS
 
         try:
@@ -237,11 +242,6 @@ class RealtimePipelineEngine:
         Used for greeting, confirmation, email intents, unknown.
         Preserved for backward compatibility and conversational flexibility.
         """
-        # ── Email state machine (v4.1) ─────────────────────────────────────────
-        # Update session email fields BEFORE passing to run_agent_turn so the
-        # LLM sees the correct state in its caller context.
-        _apply_email_state(session, intent_result)
-
         # ── Speculative prefetch ───────────────────────────────────────────────
         prefetch_task: Optional[asyncio.Task] = None
         if intent_result.suggested_tools and intent_result.confidence >= 0.8:
@@ -392,9 +392,9 @@ def _apply_email_state(session: SessionState, intent_result: IntentResult) -> No
     """
     Update session email state machine fields based on router intent.
 
-    email_provided   → set pending_email (requires confirmation)
-    email_correction → clear pending_email (caller rejected)
-    email_confirmation → promote pending → confirmed (if pending exists)
+    email_provided   → set pending_email (requires confirmation) or accumulate fragment
+    email_correction → clear pending_email (caller rejected); update payment_flow_status
+    email_confirmation → promote pending → confirmed; advance payment_flow_status
 
     Security: confirmed_email is only set here from pending. Never from raw
     entities without the confirmation step.
@@ -404,10 +404,8 @@ def _apply_email_state(session: SessionState, intent_result: IntentResult) -> No
 
     if intent == "email_provided":
         raw_email = e.get("email", "")
-        raw_text = e.get("email_raw", "")
-        if not raw_email and raw_text:
-            # Spoken form — normalizer already ran in router
-            pass
+        raw_text  = e.get("email_raw", "")
+
         if raw_email:
             try:
                 from .email_capture import email_confidence
@@ -416,10 +414,19 @@ def _apply_email_state(session: SessionState, intent_result: IntentResult) -> No
                 confidence = "medium"
             session.pending_email = raw_email
             session.email_confidence = confidence
+            # Clear any in-progress fragments — we have a complete email
+            if hasattr(session, "pending_email_fragments"):
+                session.pending_email_fragments = []
+            # Advance payment flow state
+            if not getattr(session, "confirmed_email", ""):
+                session.payment_flow_status = "awaiting_email_confirmation"
             logger.debug(
                 "email_provided: pending set conf=%s sid=%s",
                 confidence, session.call_sid[:6],
             )
+        elif raw_text:
+            # No normalized email — try multi-turn fragment accumulation
+            _accumulate_email_fragment(session, raw_text, intent_result)
 
     elif intent == "email_correction":
         if session.pending_email:
@@ -434,14 +441,76 @@ def _apply_email_state(session: SessionState, intent_result: IntentResult) -> No
                 candidates = session.rejected_email_candidates
             if rejected.lower().strip() not in [c.lower().strip() for c in candidates]:
                 candidates.append(rejected)
-            logger.debug("email_correction: pending cleared sid=%s", session.call_sid[:6])
+        # Clear fragments on correction
+        if hasattr(session, "pending_email_fragments"):
+            session.pending_email_fragments = []
+        # Revert payment flow state
+        pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+        if pfs in ("awaiting_email_confirmation", "awaiting_send_confirmation"):
+            session.payment_flow_status = "awaiting_email"
+        logger.debug("email_correction: pending cleared sid=%s", session.call_sid[:6])
 
     elif intent == "email_confirmation":
         if session.pending_email:
             session.confirmed_email = session.pending_email
             session.pending_email = ""
             session.email_confidence = "high"
+            # Advance payment flow state
+            pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+            if pfs == "awaiting_email_confirmation":
+                session.payment_flow_status = "awaiting_send_confirmation"
             logger.debug("email_confirmation: confirmed sid=%s", session.call_sid[:6])
+
+
+def _accumulate_email_fragment(
+    session: SessionState,
+    raw_text: str,
+    intent_result: IntentResult,
+) -> None:
+    """
+    Accumulate a partial spoken email fragment for multi-turn assembly.
+
+    Called from _apply_email_state when email_provided fires but the normalizer
+    could not produce a complete email (e.g. "bashisultan766@gmail" without ".com").
+    On the next turn if the caller says "dot com", fragments are assembled and
+    set as pending_email awaiting confirmation.
+    """
+    from .email_capture import is_domain_suffix_only, assemble_email_from_fragments, email_confidence
+
+    fragments: list = getattr(session, "pending_email_fragments", None)
+    if fragments is None:
+        session.pending_email_fragments = []
+        fragments = session.pending_email_fragments
+
+    current_turn = getattr(session, "turn_count", 0)
+    last_turn    = getattr(session, "last_email_fragment_turn", -1)
+
+    # Expire stale fragments after 4 turns
+    if last_turn >= 0 and (current_turn - last_turn) > 4:
+        fragments.clear()
+
+    if is_domain_suffix_only(raw_text) and fragments:
+        # This looks like a TLD completion ("dot com") — try to assemble
+        candidate_fragments = fragments + [raw_text]
+        assembled = assemble_email_from_fragments(candidate_fragments)
+        if assembled:
+            conf = email_confidence(assembled, " ".join(candidate_fragments))
+            session.pending_email = assembled
+            session.email_confidence = conf
+            session.payment_flow_status = "awaiting_email_confirmation"
+            fragments.clear()
+            logger.debug(
+                "email_fragment: assembled %d-part email conf=%s sid=%s",
+                len(candidate_fragments), conf, session.call_sid[:6],
+            )
+    else:
+        # Store this fragment for next-turn completion
+        fragments.append(raw_text)
+        session.last_email_fragment_turn = current_turn
+        logger.debug(
+            "email_fragment: stored fragment #%d sid=%s",
+            len(fragments), session.call_sid[:6],
+        )
 
 
 async def _prefetch_customer(session: SessionState, cache) -> None:
@@ -501,6 +570,19 @@ def _build_router_context(
     if session.prefetch_cache:
         n = len(session.prefetch_cache)
         lines.append(f"Pre-fetched: {n} tool result(s) ready in local cache")
+
+    # Payment flow context — tells LLM what stage we're in
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+    if pfs != "idle":
+        lines.append(f"Payment flow status: {pfs}")
+    if getattr(session, "confirmed_email", ""):
+        try:
+            from ..caller.repository import mask_email
+            lines.append(f"Confirmed email: {mask_email(session.confirmed_email)}")
+        except Exception:
+            lines.append("Confirmed email: [set]")
+    elif getattr(session, "pending_email", ""):
+        lines.append("Email status: pending confirmation (do NOT use for payment send)")
 
     return "\n".join(lines)
 

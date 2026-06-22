@@ -26,7 +26,7 @@ from ..tools.isbn import is_isbn, normalize_isbn
 # ── Compiled patterns (module-level, compiled once) ────────────────────────────
 
 _ISBN_PREFIX = re.compile(r"\b(?:isbn|i\s*s\s*b\s*n)\s*[\-:]?\s*", re.IGNORECASE)
-_ORDER_NUM = re.compile(r"#?\s*(\d{3,6})\b")
+_ORDER_NUM = re.compile(r"(?<![a-z0-9])#?\s*(\d{3,6})\b(?![@.\-a-z0-9])", re.IGNORECASE)
 _EMAIL_PAT = re.compile(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", re.IGNORECASE)
 
 _PHONE_PAT = re.compile(
@@ -148,12 +148,25 @@ _EMAIL_CONFIRMATION_WORDS = re.compile(
     r"that.?s my email|yes that.?s correct)\b",
     re.IGNORECASE,
 )
-# Spoken email fragments: "at gmail dot com", "b a s h i at..."
+# Spoken email fragments — catches all live ASR variants:
+#   "at gmail dot com", "at the rate gmail", "activate gmail",
+#   "b a s h i at...", "dot com" (fragment completion), "my email"
 _SPOKEN_EMAIL_WORDS = re.compile(
-    r"\b(at\s+\w+\s+dot\s+(com|net|org|edu|gov|io|me)|"
-    r"\w+\s+at\s+\w+|"
-    r"[a-z]\s+[a-z]\s+[a-z](\s+[a-z]){2,}.*\bat\b|"
-    r"my email)\b",
+    r"\b("
+    r"at\s+\w+\s+dot\s+(com|net|org|edu|gov|io|me)|"   # "at gmail dot com"
+    r"at the rate\s+\w+|"                                 # "at the rate gmail"
+    r"activate\s+\w+|"                                    # "activate g mail"
+    r"\w+\s+at\s+\w+|"                                   # "user at gmail"
+    r"[a-z]\s+[a-z]\s+[a-z](\s+[a-z]){2,}.*\bat\b|"   # spelled-out letters
+    r"dot\s+(com|net|org|edu|gov|io|me)|"                # "dot com" fragment
+    r"my email"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# AT-word variants used in the spoken email detection condition
+_AT_VARIANT_PAT = re.compile(
+    r"\b(at|activate|at the rate)\b",
     re.IGNORECASE,
 )
 
@@ -297,12 +310,32 @@ def detect(text: str, session=None) -> IntentResult:
             intent="email_confirmation", confidence=0.93, entities=entities,
         )
 
-    # Spoken email fragments: "my email is bashi at gmail dot com"
-    if _SPOKEN_EMAIL_WORDS.search(t) and "at" in t.lower() and "dot" in t.lower():
+    # Spoken email fragments: covers all live ASR variants.
+    # Require AT-variant + dot for a full email, OR a standalone TLD suffix ("dot com")
+    # to avoid false positives like "at the facility" or "dot (period) in a sentence".
+    # Skip if a typed @email was already extracted — regex already captured it correctly.
+    _already_typed_email = bool(
+        entities.get("email") and "@" in str(entities.get("email", ""))
+    )
+    _at_dot_present = bool(_AT_VARIANT_PAT.search(t)) and (
+        "dot" in t.lower() or "period" in t.lower()
+    )
+    _is_tld_suffix = bool(
+        re.search(r"\bdot\s+(com|net|org|edu|gov|io|me)\b", t, re.IGNORECASE)
+    )
+    _has_my_email = "my email" in t.lower() and not _already_typed_email
+    if (
+        not _already_typed_email
+        and _SPOKEN_EMAIL_WORDS.search(t)
+        and (_at_dot_present or _is_tld_suffix or _has_my_email)
+    ):
         from ..pipeline.email_capture import normalize_spoken_email
         normalized = normalize_spoken_email(t)
         if normalized:
             entities["email"] = normalized
+            entities["email_raw"] = t
+        else:
+            # Normalizer returned None — may be a domain suffix fragment
             entities["email_raw"] = t
         return IntentResult(
             intent="email_provided", confidence=0.88, entities=entities,

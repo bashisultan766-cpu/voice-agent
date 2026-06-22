@@ -489,9 +489,29 @@ async def create_checkout_link(
         return json.dumps({"error": "No items provided for checkout."})
 
     if session:
+        # Gate: block checkout creation during email confirmation
+        pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+        if pfs == "awaiting_email_confirmation":
+            logger.info(
+                "payment_tool_result tool=create_checkout_link allowed=false "
+                "reason=email_confirmation_pending",
+            )
+            return json.dumps({
+                "success": False,
+                "error": (
+                    "I need to confirm your email address before I can create the payment link. "
+                    "Is the email I have correct? Please say yes or no."
+                ),
+            })
+
         # Gate on confirmed cart when session is present
         cart_result = require_confirmed_cart(session)
         if not cart_result.allowed:
+            logger.info(
+                "payment_tool_result tool=create_checkout_link allowed=false "
+                "reason=%s missing=%s",
+                cart_result.reason, cart_result.missing_fields,
+            )
             return json.dumps({"success": False, "error": cart_result.safe_message})
 
         if not customer_name and session.caller_name:
@@ -581,11 +601,21 @@ async def send_payment_link_email_tool(
     # Full payment send gate: confirmed_email + checkout_url
     ready_result = require_payment_send_ready(session)
     if not ready_result.allowed:
+        logger.info(
+            "payment_tool_result tool=send_payment_link_email allowed=false "
+            "reason=%s missing=%s",
+            ready_result.reason, ready_result.missing_fields,
+        )
         return json.dumps({"success": False, "error": ready_result.safe_message})
 
     # Validate LLM-supplied email arg against confirmed_email
     arg_result = validate_tool_email_arg(email or None, session)
     if not arg_result.allowed:
+        logger.info(
+            "payment_tool_result tool=send_payment_link_email allowed=false "
+            "reason=%s",
+            arg_result.reason,
+        )
         return json.dumps({"success": False, "error": arg_result.safe_message})
 
     # Use confirmed_email from session — never the raw LLM arg
@@ -608,6 +638,14 @@ async def send_payment_link_email_tool(
 
     if result.get("success"):
         session.payment_email_sent_to.append(confirmed_email)
+        logger.info(
+            "payment_tool_result tool=send_payment_link_email allowed=true "
+            "email=%s",
+            arg_result.confirmed_email_masked or "***",
+        )
+        # Advance payment flow status
+        if hasattr(session, "payment_flow_status"):
+            session.payment_flow_status = "payment_sent"
 
     return json.dumps(result)
 
@@ -635,3 +673,408 @@ async def escalate_to_human(
             "Is there anything else I can help you with in the meantime?"
         ),
     })
+
+
+# ── ElevenLabs-aligned tool wrappers (v4.2) ────────────────────────────────────
+
+
+async def CheckFacilityApproval(
+    facility_name: str,
+    order_number: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Check whether SureShot Books is approved to ship to a facility."""
+    from ..workers.facility_approval_worker import FacilityApprovalWorker
+    from ..config import get_settings
+
+    worker = FacilityApprovalWorker()
+    entities: dict = {"facility_name": facility_name}
+    if order_number:
+        entities["order_number"] = order_number
+
+    if session is None:
+        return json.dumps({
+            "approval_status": "unknown",
+            "message": (
+                "I don't have specific approval information for that facility on file. "
+                "I'd recommend calling the facility to confirm, or I can forward this to customer service."
+            ),
+        })
+
+    result = await worker.run(session, entities, get_settings())
+    return json.dumps({
+        "facility_name": facility_name,
+        "approval_status": result.data.get("approval_status", "unknown") if result.data else "unknown",
+        "message": result.safe_summary or "",
+    })
+
+
+async def CheckOrderFacilityRestrictions(
+    order_number: Optional[str] = None,
+    facility_name: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Check book restrictions for a correctional facility on a specific order."""
+    from ..workers.facility_restriction_worker import FacilityRestrictionWorker
+    from ..config import get_settings
+
+    worker = FacilityRestrictionWorker()
+    entities: dict = {}
+    if order_number:
+        entities["order_number"] = order_number
+    if facility_name:
+        entities["facility_name"] = facility_name
+
+    if session is None:
+        return json.dumps({
+            "restrictions": [],
+            "message": (
+                "I don't have specific restriction information on file for that facility. "
+                "Common restrictions include: no hardcover books, new books only, and books must "
+                "ship directly from the retailer. I'd recommend calling the facility to confirm."
+            ),
+        })
+
+    result = await worker.run(session, entities, get_settings())
+    return json.dumps({
+        "facility_name": facility_name or getattr(session, "last_facility_name", ""),
+        "restrictions": result.data.get("restrictions", []) if result.data else [],
+        "message": result.safe_summary or "",
+    })
+
+
+async def AddressUpdateInstructions(
+    order_number: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Return instructions for updating a shipping address."""
+    settings = get_settings()
+    jessica_email = settings.SUPPORT_EMAIL or "support@sureshotbooks.com"
+    order_ref = f" for order {order_number}" if order_number else ""
+    return json.dumps({
+        "success": True,
+        "instructions": (
+            f"To update your shipping address{order_ref}, please email Jessica at {jessica_email}. "
+            "Include your order number and the correct new address in your message. "
+            "She will update it as quickly as possible."
+        ),
+        "contact_email": jessica_email,
+    })
+
+
+async def CancelOrderRequest(
+    order_number: str,
+    email: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Check cancellation eligibility for an order and initiate the request."""
+    order_json = await lookup_order(
+        order_number=order_number,
+        email=email,
+        phone=None,
+        session=session,
+    )
+    order = json.loads(order_json)
+
+    if not order.get("found"):
+        return json.dumps({
+            "success": False,
+            "cancellation_eligible": False,
+            "message": f"I couldn't find order {order_number}. Please double-check the order number.",
+        })
+
+    fulfillment = (order.get("fulfillment_status") or "").upper()
+    status = (order.get("status") or "").upper()
+
+    if fulfillment in ("FULFILLED", "PARTIALLY_FULFILLED"):
+        return json.dumps({
+            "success": True,
+            "cancellation_eligible": False,
+            "order_number": order.get("order_number", order_number),
+            "fulfillment_status": fulfillment,
+            "message": (
+                "This order has already shipped, so it cannot be cancelled directly. "
+                "I can forward this to customer service for the next steps."
+            ),
+        })
+
+    if status in ("REFUNDED", "VOIDED"):
+        return json.dumps({
+            "success": True,
+            "cancellation_eligible": False,
+            "order_number": order.get("order_number", order_number),
+            "message": f"This order already shows as {status.lower()}.",
+        })
+
+    return json.dumps({
+        "success": True,
+        "cancellation_eligible": True,
+        "order_number": order.get("order_number", order_number),
+        "fulfillment_status": fulfillment,
+        "message": (
+            "This order may be eligible for cancellation since it has not yet shipped. "
+            "Customer service can process the cancellation request."
+        ),
+    })
+
+
+async def EscalateToCustomerService(
+    reason: str,
+    summary: str = "",
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Escalate to a human customer service agent."""
+    caller_phone = getattr(session, "from_number", "") if session else ""
+    return await escalate_to_human(
+        reason=reason,
+        caller_phone=caller_phone,
+        summary=summary,
+        session=session,
+    )
+
+
+async def SendFacilityPaymentLink(
+    email: str,
+    order_number: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Send a secure facility/inmate payment link to the customer's email."""
+    if not email or "@" not in email:
+        return json.dumps({
+            "success": False,
+            "error": "A valid email address is required to send the secure link.",
+        })
+
+    settings = get_settings()
+    from_addr = (
+        f"{settings.RESEND_FROM_NAME} <{settings.RESEND_FROM_EMAIL}>"
+        if settings.RESEND_FROM_NAME
+        else settings.RESEND_FROM_EMAIL
+    )
+    order_ref = f"order {order_number}" if order_number else "your order"
+    masked_email = _mask(email, show=2)
+
+    logger.info(
+        "SendFacilityPaymentLink email=%s order=%s",
+        masked_email,
+        order_number or "N/A",
+    )
+
+    if not settings.RESEND_API_KEY:
+        return json.dumps({
+            "success": False,
+            "error": "Email service is not configured. Please contact customer service directly.",
+        })
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": from_addr,
+                    "to": [email],
+                    "subject": f"SureShot Books — Complete Your Facility Order",
+                    "text": (
+                        f"Hello,\n\n"
+                        f"Thank you for calling SureShot Books. "
+                        f"To complete {order_ref}, please follow the secure link below to provide "
+                        f"facility details, inmate information, and payment.\n\n"
+                        f"If you did not request this, please disregard this email.\n\n"
+                        f"SureShot Books Customer Service"
+                    ),
+                },
+            )
+        if resp.status_code in (200, 201):
+            return json.dumps({
+                "success": True,
+                "message": (
+                    "I've sent the secure link to your email. "
+                    "Please open it and complete the facility, inmate, and payment details. "
+                    "You may also check spam or junk if you do not see it."
+                ),
+            })
+        logger.warning("SendFacilityPaymentLink HTTP %s", resp.status_code)
+        return json.dumps({
+            "success": False,
+            "error": "Could not send the link at this time. Please try again or contact customer service.",
+        })
+    except Exception:
+        logger.exception("SendFacilityPaymentLink failed email=%s", masked_email)
+        return json.dumps({
+            "success": False,
+            "error": "Could not send the link at this time. Please try again shortly.",
+        })
+
+
+async def SendPaymentLink(
+    items: list[dict],
+    email: str,
+    customer_name: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """
+    Create a Shopify payment link and email it — the combined flow for buying books.
+
+    Call ONLY after: book confirmed, quantity confirmed, email confirmed by the customer.
+    """
+    if not email or "@" not in email:
+        return json.dumps({
+            "success": False,
+            "error": (
+                "I need a confirmed email address before I can create and send the payment link. "
+                "What email would you like me to use?"
+            ),
+        })
+
+    # Step 1: create the checkout link
+    checkout_json = await create_checkout_link(
+        items=items,
+        email=email,
+        customer_name=customer_name,
+        session=session,
+    )
+    checkout = json.loads(checkout_json)
+
+    if not checkout.get("success"):
+        return json.dumps(checkout)
+
+    # Step 2: email it
+    email_json = await send_payment_link_email_tool(email=email, session=session)
+    email_result = json.loads(email_json)
+
+    if email_result.get("success"):
+        return json.dumps({
+            "success": True,
+            "order_name": checkout.get("order_name"),
+            "message": (
+                "I've sent the payment link to your email. "
+                "Please check your inbox — and your spam folder if you don't see it. "
+                "Click the link to complete your purchase securely."
+            ),
+        })
+
+    # Checkout created but email failed — still useful
+    return json.dumps({
+        "success": False,
+        "checkout_created": True,
+        "order_name": checkout.get("order_name"),
+        "checkout_url": checkout.get("checkout_url"),
+        "error": (
+            "I created your payment link but had trouble sending the email. "
+            "Please try again or let me forward this to customer service."
+        ),
+    })
+
+
+async def GetCallerInfo(
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Return safe caller context from the current session."""
+    if not session:
+        return json.dumps({
+            "caller_recognized": False,
+            "message": "No session available.",
+        })
+
+    return json.dumps({
+        "caller_recognized": bool(getattr(session, "caller_name", "")),
+        "caller_name": getattr(session, "caller_name", "") or None,
+        "verified_email": bool(getattr(session, "verified_email", False)),
+        "verified_phone": bool(getattr(session, "verified_phone", False)),
+        "last_order_number": getattr(session, "last_order_number", "") or None,
+        "confirmed_email_masked": (
+            _mask(session.confirmed_email)
+            if getattr(session, "confirmed_email", "")
+            else None
+        ),
+    })
+
+
+async def SaveCallerName(
+    name: str,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Save the caller's name to their session."""
+    if not name or not name.strip():
+        return json.dumps({"success": False, "error": "Name cannot be empty."})
+
+    clean_name = name.strip()[:100]
+
+    if session:
+        session.caller_name = clean_name
+        logger.info("SaveCallerName sid=%s", session.call_sid[:6] if session.call_sid else "???")
+
+    return json.dumps({
+        "success": True,
+        "name": clean_name,
+        "message": f"Got it, thank you {clean_name}. How can I help you today?",
+    })
+
+
+# ── Legacy aliases ────────────────────────────────────────────────────────────
+
+async def SureShotCatalogSearch(query: str, limit: int = 5) -> str:
+    """ElevenLabs-named alias for search_products."""
+    return await search_products(query=query, limit=limit)
+
+
+async def SureShotBooksSku(query: str) -> str:
+    """Legacy: search by SKU/ISBN."""
+    return await search_products(query=query, limit=3)
+
+
+async def SureShotBooksProductFetcher(product_id_or_handle: str) -> str:
+    """Legacy: fetch full product details."""
+    return await get_product_details(product_id_or_handle=product_id_or_handle)
+
+
+async def SureShotBooksProduct(query: str, limit: int = 5) -> str:
+    """Legacy: search by keyword."""
+    return await search_products(query=query, limit=limit)
+
+
+async def CalculatePricing(
+    order_number: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Retrieve pricing and shipping details — alias for lookup_order focused on pricing."""
+    result_json = await lookup_order(
+        order_number=order_number,
+        email=email,
+        phone=phone,
+        session=session,
+    )
+    result = json.loads(result_json)
+    if not result.get("found"):
+        return result_json
+
+    # Filter to pricing-relevant fields only
+    pricing = {
+        "found": True,
+        "order_number": result.get("order_number"),
+        "subtotal": result.get("subtotal"),
+        "shipping": result.get("shipping"),
+        "note": "Subtotal is before shipping. Subtotal does not include shipping.",
+    }
+    return json.dumps(pricing)
+
+
+async def GetOrder(
+    order_number: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """ElevenLabs-named alias for lookup_order. Includes order details and refund info."""
+    return await lookup_order(
+        order_number=order_number,
+        email=email,
+        phone=phone,
+        session=session,
+    )

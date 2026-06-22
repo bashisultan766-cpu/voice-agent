@@ -2,21 +2,36 @@
 Spoken-to-typed email normalizer and confirmation state machine.
 
 Converts spoken-word email fragments to standard email addresses:
-  "bashi sultan seven six six at gmail dot com" → bashisultan766@gmail.com
-  "b a s h i s u l t a n 7 6 6 at gmail dot com" → bashisultan766@gmail.com
+  "bashi sultan seven six six at gmail dot com"   → bashisultan766@gmail.com
+  "bashi sultan 7 6 6 activate g mail dot com"    → bashisultan766@gmail.com
+  "b a s h i s u l t a n at the rate gmail dot c o m" → bashisultan766@gmail.com
+
+ASR variants handled:
+  "activate"    → "@"   (Twilio STT artifact for the @ symbol)
+  "at the rate" → "@"   (common spoken form)
+  "at rate"     → "@"
+  "add"         → "@"   (misheard "at"; only before known domains)
+  "period"      → "."   (alternate for "dot")
+  "gamil", "g a m i l", "g mail" → "gmail"
+  "dot c o m", "c o m" after "." → ".com"  (space-separated TLD letters)
+  Leading single-letter artifact  → lowered confidence (asks confirmation)
 
 Confidence levels:
-  high   — looks like a complete, valid email after normalization
-  medium — normalized but weak structure (may be missing TLD, etc.)
-  low    — partial or unclear; ask caller to spell slowly
+  high   — valid shape, common domain, typed "@" present, or no artifacts
+  medium — valid shape but unusual domain or short local
+  low    — partial/unclear, prefix artifact detected, or raw text very short
+
+Multi-turn fragment support:
+  is_domain_suffix_only(text)        — True if text is only "dot com" / ".com" / etc.
+  assemble_email_from_fragments(lst) — join and normalize multi-turn fragments
 
 Session state:
   pending_email        — normalized candidate awaiting confirmation
-  confirmed_email      — caller said "yes that's correct"
-  email_rejected       — caller said "no" for the pending candidate
+  confirmed_email      — caller said "yes" — safe for payment sends
+  email_rejected       — caller said "no" — clear and increment counter
 
 Security rules:
-  - PaymentEmailWorker and SendPaymentLink MUST use confirmed_email only.
+  - PaymentEmailWorker and send_payment_link_email MUST use confirmed_email only.
   - Pending email cannot be used for sending.
   - Rejection clears pending_email entirely.
   - Only confirmed_email is safe for logs (masked) and for payment sends.
@@ -57,6 +72,17 @@ _DOMAIN_ALIASES: dict[str, str] = {
     "me": "me.com",
 }
 
+# Domain misspellings produced by ASR (applied after space-removal)
+_DOMAIN_FIXES: dict[str, str] = {
+    "gamil": "gmail",
+    "gmaill": "gmail",
+    "gmale": "gmail",
+    "yahooo": "yahoo",
+    "yaho": "yahoo",
+    "outlok": "outlook",
+    "outloook": "outlook",
+}
+
 # ── Correction / confirmation patterns ────────────────────────────────────────
 
 _CORRECTION_PATS = re.compile(
@@ -81,6 +107,14 @@ _CONFIRMATION_PATS = re.compile(
     re.IGNORECASE,
 )
 
+# ── Domain-suffix-only fragment pattern ───────────────────────────────────────
+
+_SUFFIX_PAT = re.compile(
+    r"^\.?(com|net|org|edu|gov|io|me|co\.?uk)$",
+    re.IGNORECASE,
+)
+
+
 # ── Core normalizer ────────────────────────────────────────────────────────────
 
 def normalize_spoken_email(text: str) -> Optional[str]:
@@ -91,50 +125,67 @@ def normalize_spoken_email(text: str) -> Optional[str]:
     recognisably an email (no "@" equivalent found).
 
     Examples:
-      "bashi sultan seven six six at gmail dot com" → "bashisultan766@gmail.com"
-      "b a s h i s u l t a n 7 6 6 at gmail dot com" → "bashisultan766@gmail.com"
-      "alice dot jones at outlook dot com" → "alice.jones@outlook.com"
+      "bashi sultan seven six six at gmail dot com"    → "bashisultan766@gmail.com"
+      "bashi sultan 7 6 6 activate g mail dot com"     → "bashisultan766@gmail.com"
+      "b a s h i at the rate gmail dot c o m"          → "bashi@gmail.com"
+      "alice dot jones at outlook dot com"              → "alice.jones@outlook.com"
+      "P b a s h i at gmail dot com"                   → "pbashi@gmail.com" (low conf)
     """
     t = text.strip().lower()
 
     # Strip filler lead-in phrases
-    t = re.sub(r"^(my email (address )?is|send (it )?to|email is)\s+", "", t, flags=re.IGNORECASE)
+    t = re.sub(
+        r"^(my email (?:address )?is|send (?:it )?to|email (?:address )?is|it.?s)\s+",
+        "", t, flags=re.IGNORECASE,
+    )
 
-    # Normalise "at" → "@" and "dot" → "."
-    # Use word boundaries to avoid replacing "at" inside words like "atlas"
-    t = re.sub(r"\bat\b", "@", t)
+    # ── AT-word normalization (before the generic "at" → "@" substitution) ────
+    # Multi-word forms first (most specific)
+    t = re.sub(r"\bat the rate\b", "at", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bat rate\b",     "at", t, flags=re.IGNORECASE)
+    # "activate" → "at" — common Twilio STT artifact for the "@" symbol
+    t = re.sub(r"\bactivate\b", "at", t, flags=re.IGNORECASE)
+    # "add" → "at" only when immediately before a known domain name
+    t = re.sub(
+        r"\badd\b(?=\s+(?:gmail|yahoo|outlook|hotmail|icloud|aol|proton|live|msn|me)\b)",
+        "at", t, flags=re.IGNORECASE,
+    )
+
+    # "period" → "dot" (alternative TLD-separator spoken form)
+    t = re.sub(r"\bperiod\b", "dot", t, flags=re.IGNORECASE)
+
+    # Normalise "dot" → "." and "at" → "@"
     t = re.sub(r"\bdot\b", ".", t)
+    t = re.sub(r"\bat\b",  "@", t)
 
-    # Replace spelled-out digits with their numeric equivalents
+    # Replace spelled-out digits
     for word, digit in _DIGIT_WORDS.items():
         t = re.sub(rf"\b{word}\b", digit, t)
 
-    # Expand single-domain aliases (e.g. "gmail" → "gmail.com")
-    # Only applies to the part after "@"
-    if "@" in t:
-        local, domain = t.split("@", 1)
-        domain = domain.strip()
-        # Check alias match (strip trailing dots)
-        domain_clean = domain.rstrip(".")
-        if domain_clean in _DOMAIN_ALIASES and "." not in domain_clean:
-            domain = _DOMAIN_ALIASES[domain_clean]
-        t = local + "@" + domain
-    else:
-        # No "@" found — not an email
+    # Require "@" to proceed
+    if "@" not in t:
         return None
 
-    # Remove all spaces (spoken letters are space-separated)
-    # But preserve @ and .
-    parts = t.split("@", 1)
-    local_part = parts[0].replace(" ", "")
-    domain_part = parts[1] if len(parts) > 1 else ""
+    local_raw, domain_raw = t.split("@", 1)
 
-    # In domain part, collapse spaces between domain label segments
-    domain_part = re.sub(r"\s+", "", domain_part)
+    # Remove spaces from both parts
+    local_part  = local_raw.replace(" ", "")
+    domain_part = re.sub(r"\s+", "", domain_raw)
+
+    # Fix domain misspellings produced by ASR (applied after space removal)
+    for wrong, right in _DOMAIN_FIXES.items():
+        if domain_part == wrong or domain_part.startswith(wrong + "."):
+            domain_part = domain_part.replace(wrong, right, 1)
+            break
+
+    # Expand domain aliases (e.g. "gmail" → "gmail.com")
+    domain_clean = domain_part.rstrip(".")
+    if domain_clean in _DOMAIN_ALIASES and "." not in domain_clean:
+        domain_part = _DOMAIN_ALIASES[domain_clean]
 
     email = local_part + "@" + domain_part
 
-    # Strip any residual non-email characters (except valid ones)
+    # Strip residual non-email characters (commas, quotes, spaces escaped earlier)
     email = re.sub(r"[^a-z0-9._%+\-@]", "", email, flags=re.IGNORECASE)
 
     # Validate minimal shape: something@something.tld
@@ -144,15 +195,95 @@ def normalize_spoken_email(text: str) -> Optional[str]:
     return email.lower()
 
 
+# ── Prefix-artifact detection ─────────────────────────────────────────────────
+
+def _has_prefix_artifact(raw_text: str) -> bool:
+    """
+    Heuristic: detect accidental leading UPPERCASE single letter before a spelled-out email.
+
+    Real Twilio STT pattern: "P b a s h i s u l t a n..." — STT capitalises the stray
+    leading letter but the rest of the spelling is lowercase single chars.
+
+    Returns False for:
+      "b a s h i s u l t a n at gmail dot com"   — all lowercase, no artifact
+      "B a s h i s u l t a n at gmail dot com"   — 'B' is legitimately the first letter
+      "bashisultan766@gmail.com"                  — typed email
+    Returns True for:
+      "P b a s h i s u l t a n at gmail dot com" — 'P' uppercase, rest lowercase singles
+    """
+    # Work on the raw (pre-lowercase) text to detect uppercase capitalisation artifact
+    t = raw_text.strip()
+    t = re.sub(r"^(my email (?:address )?is|send (?:it )?to)\s+", "", t, flags=re.IGNORECASE)
+    tokens = t.split()
+    if len(tokens) < 5:
+        return False
+    # Find index of AT marker (case-insensitive)
+    at_idx = next(
+        (i for i, tk in enumerate(tokens) if tk.lower() in {"at", "activate", "@"}),
+        len(tokens),
+    )
+    prefix = tokens[:at_idx]
+    if len(prefix) < 4:
+        return False
+    # Specific pattern: first token is an UPPERCASE single letter
+    # and the following 3+ tokens are single lowercase letters/digits
+    first_upper = len(prefix[0]) == 1 and prefix[0].isupper()
+    next_lower_singles = sum(
+        1 for tk in prefix[1:5] if len(tk) == 1 and (tk.islower() or tk.isdigit())
+    )
+    return first_upper and next_lower_singles >= 3
+
+
+# ── Domain suffix fragment detection ──────────────────────────────────────────
+
+def is_domain_suffix_only(text: str) -> bool:
+    """
+    True if text contains only a TLD completion: 'dot com', '.com', 'dot net', etc.
+
+    Used for multi-turn email fragment assembly:
+      turn 1: "bashisultan766@gmail"
+      turn 2: "dot com"  ← is_domain_suffix_only returns True
+    """
+    t = text.strip().lower()
+    # Strip trivial filler
+    t = re.sub(r"^(it.?s|that.?s|the|and)?\s*", "", t)
+    t = re.sub(r"\bdot\b",    ".", t)
+    t = re.sub(r"\bperiod\b", ".", t)
+    t = re.sub(r"\s+", "", t)
+    return bool(_SUFFIX_PAT.match(t))
+
+
+# ── Multi-turn fragment assembler ─────────────────────────────────────────────
+
+def assemble_email_from_fragments(fragments: list[str]) -> Optional[str]:
+    """
+    Try to assemble a complete email from multiple spoken turns.
+
+    Example:
+      fragments = ["bashisultan766@gmail", "dot com"]
+      → "bashisultan766@gmail.com"
+    """
+    if not fragments:
+        return None
+    combined = " ".join(fragments)
+    return normalize_spoken_email(combined)
+
+
+# ── Confidence scorer ─────────────────────────────────────────────────────────
+
 def email_confidence(email: Optional[str], raw_text: str) -> str:
     """
     Return 'high', 'medium', or 'low' confidence for a normalized email.
 
     high   — valid shape, common domain, no obvious issues
     medium — valid shape but unusual domain or short local part
-    low    — not a valid email or raw text very short/unclear
+    low    — not valid, raw text very short/unclear, or prefix artifact detected
     """
     if not email:
+        return "low"
+
+    # If raw text has an accidental leading single-letter prefix → low confidence
+    if _has_prefix_artifact(raw_text):
         return "low"
 
     try:
@@ -163,23 +294,29 @@ def email_confidence(email: Optional[str], raw_text: str) -> str:
     if len(local) < 2:
         return "low"
 
-    known_domain = any(email.endswith("." + d.split(".")[-1]) for d in _DOMAIN_ALIASES.values())
-    common = domain in ("gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
-                        "icloud.com", "aol.com", "proton.me", "protonmail.com",
-                        "live.com", "me.com", "msn.com")
+    common = domain in (
+        "gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
+        "icloud.com", "aol.com", "proton.me", "protonmail.com",
+        "live.com", "me.com", "msn.com",
+    )
 
-    # If the raw text contains "@" directly (typed-style), high confidence
+    # If the raw text contains "@" directly (typed-style) → high confidence
     if "@" in raw_text:
         return "high"
 
     if common and len(local) >= 4:
         return "high"
 
+    known_domain = any(
+        email.endswith("." + d.split(".")[-1]) for d in _DOMAIN_ALIASES.values()
+    )
     if known_domain and len(local) >= 3:
         return "medium"
 
     return "medium" if len(local) >= 3 else "low"
 
+
+# ── Correction / confirmation helpers ─────────────────────────────────────────
 
 def is_email_correction(text: str) -> bool:
     """True if the caller is rejecting / correcting the last captured email."""

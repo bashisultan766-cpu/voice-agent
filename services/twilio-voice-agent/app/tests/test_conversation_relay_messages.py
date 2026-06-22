@@ -72,19 +72,30 @@ def test_build_system_message_includes_store_domain():
 
 def test_tool_schemas_count():
     from app.ai.tool_schemas import TOOL_SCHEMAS
-    assert len(TOOL_SCHEMAS) == 7
+    # v4.2: 12 ElevenLabs-aligned tools + 3 legacy aliases = 15
+    assert len(TOOL_SCHEMAS) == 15
 
 
 def test_tool_schemas_names():
     from app.ai.tool_schemas import TOOL_SCHEMAS
     names = {t["function"]["name"] for t in TOOL_SCHEMAS}
-    assert "search_products" in names
-    assert "lookup_order" in names
-    assert "create_checkout_link" in names
-    assert "escalate_to_human" in names
-    assert "get_product_details" in names
-    assert "get_refund_status" in names
-    assert "send_payment_link_email" in names
+    # ElevenLabs-aligned primary tools
+    assert "GetOrder" in names
+    assert "SureShotCatalogSearch" in names
+    assert "CalculatePricing" in names
+    assert "CheckFacilityApproval" in names
+    assert "CheckOrderFacilityRestrictions" in names
+    assert "AddressUpdateInstructions" in names
+    assert "CancelOrderRequest" in names
+    assert "EscalateToCustomerService" in names
+    assert "SendFacilityPaymentLink" in names
+    assert "SendPaymentLink" in names
+    assert "GetCallerInfo" in names
+    assert "SaveCallerName" in names
+    # Legacy aliases
+    assert "SureShotBooksSku" in names
+    assert "SureShotBooksProductFetcher" in names
+    assert "SureShotBooksProduct" in names
 
 
 def test_tool_schemas_have_descriptions():

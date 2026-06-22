@@ -17,6 +17,12 @@ from ..security.twilio_signature import validate_twilio_signature
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice/twilio", tags=["voice"])
 
+
+def _mask_phone(number: str) -> str:
+    """Return last-4 masked phone for safe logging: ***1234."""
+    digits = "".join(c for c in (number or "") if c.isdigit())
+    return f"***{digits[-4:]}" if len(digits) >= 4 else "***"
+
 _XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>'
 
 
@@ -80,7 +86,12 @@ async def inbound_call(
     settings = get_settings()
     await validate_twilio_signature(request, settings)
 
-    logger.info("Inbound call sid=%s from=%s to=%s", CallSid, From, To)
+    logger.info(
+        "Inbound call sid=%s from=%s to=%s",
+        CallSid[:8] if CallSid else "???",
+        _mask_phone(From),
+        _mask_phone(To),
+    )
 
     # TODO: look up agent_id and store_domain from DB using the `To` number.
     # For now, read from env as a single-tenant default.
