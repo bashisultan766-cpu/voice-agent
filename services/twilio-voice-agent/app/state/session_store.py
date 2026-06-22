@@ -96,6 +96,27 @@ async def delete_session(session_id: str) -> None:
     await cache_delete(f"session:{session_id}")
 
 
+# ── Call resume snapshot by caller phone (v4.8) ───────────────────────────────
+
+def _resume_phone_key(phone: str) -> str:
+    digits = "".join(c for c in (phone or "") if c.isdigit())
+    return f"call_resume:{digits[-10:] if len(digits) >= 10 else digits}"
+
+
+async def save_call_resume_by_phone(phone: str, data: dict, ttl: int = 7200) -> None:
+    """Persist a safe resume snapshot keyed by caller phone (last 10 digits)."""
+    if not phone or phone == "unknown":
+        return
+    await cache_set(_resume_phone_key(phone), data, ttl=ttl)
+
+
+async def load_call_resume_by_phone(phone: str) -> Optional[dict]:
+    """Load the most recent resume snapshot for a caller phone."""
+    if not phone or phone == "unknown":
+        return None
+    return await cache_get(_resume_phone_key(phone))
+
+
 # ── Shopify product search cache ──────────────────────────────────────────────
 
 async def shopify_cache_get(key: str) -> Optional[Any]:

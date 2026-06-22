@@ -1,0 +1,151 @@
+"""
+Turn-taking policy for voice digit/email/ISBN collection (v4.8).
+
+Prevents agent from interrupting the customer too early when they are
+dictating ISBN numbers, order numbers, or email addresses.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
+# Defaults — overridden by Settings when classify_turn(settings=...) is passed
+_DEFAULT_MIN_SILENCE_MS = 1200
+_DEFAULT_DIGIT_SILENCE_MS = 2500
+_DEFAULT_EMAIL_SILENCE_MS = 2500
+_DEFAULT_ORDER_SILENCE_MS = 2500
+
+_ISBN_DIGIT_PATTERN = re.compile(r"\b\d[\d\s\-]{6,}\b")
+_EMAIL_FRAGMENT_PATTERN = re.compile(
+    r"\b[a-z0-9._%+\-]+\s*(?:at|@)\s*[a-z0-9.\-]+|"
+    r"\b[a-z0-9._%+\-]+\s+(?:dot|\.)\s+(?:com|net|org|edu|gov)\b",
+    re.IGNORECASE,
+)
+_ORDER_FRAGMENT_PATTERN = re.compile(r"\b\d{3,}\b")
+
+
+@dataclass
+class TurnTakingContext:
+    collecting_isbn: bool = False
+    collecting_email: bool = False
+    collecting_order: bool = False
+    is_fragment: bool = False
+    recommended_silence_ms: int = _DEFAULT_MIN_SILENCE_MS
+    hold_response: bool = False
+    hold_filler: str = ""
+
+
+def _silence_thresholds(settings=None) -> dict[str, int]:
+    if settings is not None:
+        return {
+            "min": getattr(settings, "VOICE_MIN_FINAL_SILENCE_MS", _DEFAULT_MIN_SILENCE_MS),
+            "digit": getattr(settings, "VOICE_DIGIT_COLLECTION_SILENCE_MS", _DEFAULT_DIGIT_SILENCE_MS),
+            "email": getattr(settings, "VOICE_EMAIL_COLLECTION_SILENCE_MS", _DEFAULT_EMAIL_SILENCE_MS),
+            "order": getattr(settings, "VOICE_ORDER_COLLECTION_SILENCE_MS", _DEFAULT_ORDER_SILENCE_MS),
+        }
+    try:
+        from ..config import get_settings
+        s = get_settings()
+        return {
+            "min": s.VOICE_MIN_FINAL_SILENCE_MS,
+            "digit": s.VOICE_DIGIT_COLLECTION_SILENCE_MS,
+            "email": s.VOICE_EMAIL_COLLECTION_SILENCE_MS,
+            "order": s.VOICE_ORDER_COLLECTION_SILENCE_MS,
+        }
+    except Exception:
+        return {
+            "min": _DEFAULT_MIN_SILENCE_MS,
+            "digit": _DEFAULT_DIGIT_SILENCE_MS,
+            "email": _DEFAULT_EMAIL_SILENCE_MS,
+            "order": _DEFAULT_ORDER_SILENCE_MS,
+        }
+
+
+def classify_turn(
+    text: str,
+    intent: str = "",
+    active_flow: str = "",
+    isbn_buffer: str = "",
+    settings=None,
+) -> TurnTakingContext:
+    """
+    Analyse the customer's turn text and intent to determine if we should
+    hold our response longer (the customer is still dictating digits or an email).
+
+    Returns a TurnTakingContext with recommended_silence_ms and hold_response.
+    """
+    ctx = TurnTakingContext()
+    text_lower = text.lower().strip()
+    thresholds = _silence_thresholds(settings)
+
+    # Determine collection mode from intent/flow
+    isbn_intents = {
+        "isbn_collection_start", "isbn_search", "isbn_fragment",
+    }
+    email_intents = {
+        "email_capture", "email_confirmation", "spell_email_request",
+        "email_correction", "send_payment_link",
+    }
+    order_intents = {
+        "order_status", "order_lookup", "refund_status",
+        "cancellation_request", "tracking_inquiry",
+    }
+
+    in_isbn = intent in isbn_intents or "isbn" in active_flow or bool(isbn_buffer)
+    in_email = intent in email_intents or "email" in active_flow
+    in_order = intent in order_intents or "order" in active_flow
+
+    # Override from text content
+    if _ISBN_DIGIT_PATTERN.search(text_lower):
+        in_isbn = True
+    if _EMAIL_FRAGMENT_PATTERN.search(text_lower):
+        in_email = True
+    if in_order and _ORDER_FRAGMENT_PATTERN.search(text_lower):
+        in_order = True
+
+    ctx.collecting_isbn = in_isbn
+    ctx.collecting_email = in_email
+    ctx.collecting_order = in_order
+
+    # Check if this looks like a fragment (digits only, incomplete email, etc.)
+    words = text_lower.split()
+    all_digits = all(w.isdigit() or w == "-" for w in words) if words else False
+    short_fragment = len(words) <= 4 and (all_digits or in_email or in_isbn)
+    ctx.is_fragment = short_fragment
+
+    if in_isbn:
+        ctx.recommended_silence_ms = thresholds["digit"]
+        if short_fragment:
+            ctx.hold_response = True
+            ctx.hold_filler = "Go ahead, I'm listening."
+    elif in_email:
+        ctx.recommended_silence_ms = thresholds["email"]
+        if short_fragment:
+            ctx.hold_response = True
+            ctx.hold_filler = "Please continue."
+    elif in_order:
+        ctx.recommended_silence_ms = thresholds["order"]
+    else:
+        ctx.recommended_silence_ms = thresholds["min"]
+
+    return ctx
+
+
+def get_silence_threshold_ms(ctx: TurnTakingContext) -> int:
+    return ctx.recommended_silence_ms
+
+
+def is_complete_isbn(text: str) -> bool:
+    """Return True if text contains what looks like a full 10- or 13-digit ISBN."""
+    digits = "".join(c for c in text if c.isdigit())
+    return len(digits) in (10, 13)
+
+
+def is_complete_order_number(text: str) -> bool:
+    """Return True if text contains a plausible order number (4+ digits)."""
+    digits = "".join(c for c in text if c.isdigit())
+    return len(digits) >= 4

@@ -97,6 +97,15 @@ class OrderLookupWorker:
                 )
             fin = result.get("status", "")
             ful = result.get("fulfillment_status", "")
+            shipping_method = (
+                result.get("shipping_method")
+                or result.get("shipping_title")
+                or result.get("carrier")
+                or ""
+            )
+            shipping_amount = result.get("shipping") or ""
+            subtotal = result.get("subtotal") or ""
+            tracking_number = result.get("tracking_number") or ""
             return WorkerResult(
                 worker_name=self.name,
                 success=True,
@@ -104,10 +113,14 @@ class OrderLookupWorker:
                     "order_number": result.get("order_number", order_number),
                     "financial_status": fin,
                     "fulfillment_status": ful,
+                    "shipping_method": shipping_method,
+                    "shipping_amount": shipping_amount,
+                    "subtotal": subtotal,
+                    "tracking_number": tracking_number,
                 },
-                safe_summary=(
-                    f"Order {result.get('order_number', order_number)}: "
-                    f"payment {fin}, fulfillment {ful}."
+                safe_summary=_order_summary_full(
+                    result.get("order_number", order_number),
+                    fin, ful, shipping_method, shipping_amount, subtotal,
                 ),
                 requires_verification=not verified,
                 latency_ms=(time.monotonic() - t0) * 1000,
@@ -126,9 +139,47 @@ class OrderLookupWorker:
 
 
 def _order_summary(order, verified: bool) -> str:
+    from ..shipping.policy import format_subtotal_message, extract_shipping_context, format_shipping_message
+
     parts = [f"Order {order.order_number}"]
     if order.financial_status:
         parts.append(f"payment {order.financial_status}")
     if order.fulfillment_status:
         parts.append(f"fulfillment {order.fulfillment_status}")
-    return ", ".join(parts) + "."
+    summary = ", ".join(parts) + "."
+
+    # Add shipping method if available
+    shipping_method = getattr(order, "shipping_method", "") or ""
+    if shipping_method:
+        summary += f" Shipping method: {shipping_method}."
+    return summary
+
+
+def _order_summary_full(
+    order_number: str,
+    financial_status: str,
+    fulfillment_status: str,
+    shipping_method: str,
+    shipping_amount: str,
+    subtotal: str,
+) -> str:
+    from ..shipping.policy import format_subtotal_message, format_shipping_message, ShippingContext
+
+    parts = [f"Order {order_number}"]
+    if financial_status:
+        parts.append(f"payment {financial_status}")
+    if fulfillment_status:
+        parts.append(f"fulfillment {fulfillment_status}")
+    summary = ", ".join(parts) + "."
+
+    if subtotal:
+        summary += " " + format_subtotal_message(subtotal)
+
+    ctx = ShippingContext(
+        method=shipping_method or None,
+        amount=shipping_amount or None,
+        is_known=bool(shipping_method or shipping_amount),
+    )
+    summary += " " + format_shipping_message(ctx)
+
+    return summary

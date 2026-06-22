@@ -82,6 +82,30 @@ class Settings(BaseSettings):
     # role="tool" or assistant tool_calls. Eliminates 400 errors on interrupt.
     VOICE_LIVE_DISABLE_OPENAI_TOOLS: bool = True
 
+    # ── v4.8: Business rules ──────────────────────────────────────────────────
+    # Jessica's email for address updates
+    JESSICA_EMAIL: str = ""
+    CUSTOMER_SERVICE_EMAIL: str = ""
+
+    # Shipping policy
+    SHIPPING_DEFAULT_METHOD: str = "Media Mail"
+    SHIPPING_ALT_METHOD: str = "Priority Mail"
+    SHIPPING_CALCULATION_MODE: str = "shopify_or_policy"
+    SHIPPING_MEDIA_MAIL_PRICE: str = ""
+    SHIPPING_PRIORITY_MAIL_PRICE: str = ""
+    SHIPPING_REQUIRE_DESTINATION: bool = True
+
+    # Call resume/cutoff window
+    CALL_RESUME_WINDOW_MINUTES: int = 30
+
+    # Turn-taking silence thresholds (ms)
+    VOICE_MIN_FINAL_SILENCE_MS: int = 1200
+    VOICE_DIGIT_COLLECTION_SILENCE_MS: int = 2500
+    VOICE_EMAIL_COLLECTION_SILENCE_MS: int = 2500
+    VOICE_ORDER_COLLECTION_SILENCE_MS: int = 2500
+    VOICE_ALLOW_BARGE_IN: bool = True
+    VOICE_INTERRUPT_GRACE_MS: int = 500
+
     # ── v4.6: ElevenLabs voice via Twilio ConversationRelay ───────────────────
     VOICE_TTS_PROVIDER: str = "ElevenLabs"
     VOICE_ID: str = ""

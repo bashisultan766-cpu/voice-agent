@@ -233,6 +233,25 @@ class CartMutationWorker:
                 source="local",
             )
 
+        from ..catalog.stock_overrides import is_out_of_stock_override
+        from ..catalog.availability import availability_response, AVAILABILITY_OUT_OF_STOCK
+        if is_out_of_stock_override(candidate.title):
+            logger.info(
+                "cart_mutation_result action=confirm_blocked reason=out_of_stock_override "
+                "title=%s sid=%s",
+                candidate.title[:40],
+                session.call_sid[:6],
+            )
+            return WorkerResult(
+                worker_name=self.name,
+                success=False,
+                error_code="out_of_stock",
+                data={"action": "out_of_stock_override", "title": candidate.title},
+                safe_summary=availability_response(AVAILABILITY_OUT_OF_STOCK),
+                latency_ms=(time.monotonic() - t0) * 1000,
+                source="override",
+            )
+
         product = DialogueManager.apply_cart_confirmation(session)
         ledger = get_ledger(session)
         logger.info(

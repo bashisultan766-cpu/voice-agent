@@ -164,3 +164,15 @@ class SessionState:
 
     # Twilio TwiML welcomeGreeting was spoken at connect (v4.6).
     twiml_greeting_spoken: bool = False
+
+    # ── v4.8 call cutoff / resume ─────────────────────────────────────────────
+    # Stores a safe, minimal session snapshot for reconnect-within-window.
+    call_resume_snapshot: dict = field(default_factory=dict)
+    # UTC epoch seconds when this session ended (set on disconnect).
+    call_ended_at: float = 0.0
+    # True when a resume was triggered for this reconnect.
+    is_resumed_call: bool = False
+    # Greeting spoken on resumed call (set by WS setup).
+    resume_greeting: str = ""
+    # v4.8 turn-taking hold flag (digit/email fragment in progress).
+    turn_taking_hold: bool = False

@@ -34,6 +34,10 @@ _LEAK_PHRASES: tuple[str, ...] = (
     "never mention that you are an ai",
     "mainllmcomposer",
     "llm",
+    # v4.8: client business rules — never say these to a customer
+    "processing fee",
+    "service fee",
+    "internal fee",
 )
 
 _HEADING_LEAK = re.compile(r"^#\s+[A-Z]", re.MULTILINE)

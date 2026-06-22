@@ -538,9 +538,20 @@ async def create_checkout_link(
             email = confirmed_email
 
     try:
+        # v4.8: filter out internal fee items before sending to Shopify
+        from ..payment.line_item_filter import filter_checkout_line_items
+        filter_result = filter_checkout_line_items(items)
+        if filter_result.excluded_fee_count:
+            logger.warning(
+                "checkout_line_filter excluded_fee_count=%d sid=%s",
+                filter_result.excluded_fee_count,
+                session.call_sid[:6] if session else "none",
+            )
+        clean_items = filter_result.included or items
+
         line_items = [
             {"variantId": item["variant_id"], "quantity": item.get("quantity", 1)}
-            for item in items
+            for item in clean_items
         ]
         draft_input: dict = {"lineItems": line_items}
         if email:
@@ -951,9 +962,10 @@ async def SendPaymentLink(
             "success": True,
             "order_name": checkout.get("order_name"),
             "message": (
-                "I've sent the payment link to your email. "
-                "Please check your inbox — and your spam folder if you don't see it. "
-                "Click the link to complete your purchase securely."
+                "I sent the payment link to your email. "
+                "On that link, you can enter the facility details, inmate details, "
+                "and complete your order. "
+                "Please check your inbox or spam folder."
             ),
         })
 

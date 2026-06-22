@@ -128,21 +128,45 @@ class FacilityApprovalWorker:
                     session.call_sid[:6],
                 )
 
+        # v4.8: check the approved list CSV first
+        if approval_status == "unknown":
+            try:
+                from ..facility.approved_list import lookup_facility
+                city = (
+                    entities.get("facility_city")
+                    or getattr(session, "last_facility_city", "")
+                )
+                state_val = (
+                    entities.get("facility_state")
+                    or getattr(session, "last_facility_state", "")
+                )
+                list_result = lookup_facility(facility_name, city=city, state=state_val)
+                if list_result.found:
+                    if list_result.approved:
+                        approval_status = "approved"
+                        reason = "Listed in the approved facility database."
+                    else:
+                        approval_status = "rejected"
+                        reason = "Not listed as approved in the facility database."
+            except Exception:
+                logger.warning(
+                    "FacilityApprovalWorker CSV lookup failed sid=%s", session.call_sid[:6]
+                )
+
         if approval_status == "approved":
-            safe_summary = (
-                f"Good news — we do ship to {facility_name}. {reason}"
-            )
+            if facility_name:
+                safe_summary = (
+                    f"Yes, SureShot Books is approved to ship to {facility_name}."
+                )
+            else:
+                safe_summary = (
+                    "Yes, SureShot Books is approved to ship to that facility."
+                )
         elif approval_status == "rejected":
-            safe_summary = (
-                f"Unfortunately, {facility_name} has not accepted our shipments "
-                f"in the past. {reason} I'd recommend calling the facility directly "
-                "to confirm their approved vendor list."
-            )
+            safe_summary = "I do not see that facility as approved for shipping."
         else:
             safe_summary = (
-                f"I don't have specific approval information for {facility_name} on file. "
-                "I'd recommend calling the facility to confirm they accept books from "
-                "our store, or I can escalate this to one of our specialists."
+                "I don't want to guess. I can forward this to customer service for confirmation."
             )
 
         return WorkerResult(

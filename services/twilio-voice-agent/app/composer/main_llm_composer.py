@@ -93,6 +93,10 @@ def _deterministic_response(
 
     if router_result.intent == "greeting":
         greeted = getattr(session, "twiml_greeting_spoken", False)
+        if getattr(session, "is_resumed_call", False):
+            resume_msg = getattr(session, "resume_greeting", None)
+            if resume_msg:
+                return resume_msg
         return build_first_response_greeting(session, greeted)
 
     if action == "greet" and say:

@@ -48,6 +48,8 @@ class PaymentScopeAudit:
 
 
 def _eligible_items(session: "SessionState") -> list[dict[str, Any]]:
+    from ..payment.line_item_filter import detect_internal_fee_item
+
     items: list[dict] = []
     for raw in getattr(session, "cart_items", []) or []:
         if not isinstance(raw, dict):
@@ -57,6 +59,12 @@ def _eligible_items(session: "SessionState") -> list[dict[str, Any]]:
         if raw.get("eligible_for_checkout") is False:
             continue
         if not raw.get("variant_id"):
+            continue
+        if detect_internal_fee_item(raw):
+            logger.warning(
+                "payment_scope_audit excluded internal_fee title=%s",
+                str(raw.get("title", ""))[:30],
+            )
             continue
         items.append(raw)
     return items
@@ -133,13 +141,22 @@ def audit_payment_scope(
             audit.excluded_reasons.append(reason)
 
     sid = getattr(session, "call_sid", "")[:6]
+    # Count internal fee items that were excluded before eligible_items ran
+    from ..payment.line_item_filter import detect_internal_fee_item
+    all_items = getattr(session, "cart_items", []) or []
+    excluded_internal_fee = sum(
+        1 for i in all_items
+        if isinstance(i, dict) and detect_internal_fee_item(i)
+    )
     logger.info(
-        "payment_scope_audit sid=%s requested=%s confirmed=%d checkout=%d excluded=%d titles=%d",
+        "payment_scope_audit sid=%s requested=%s confirmed=%d checkout=%d excluded=%d "
+        "excluded_internal_fee=%d titles=%d",
         sid,
         audit.requested_count,
         audit.confirmed_count,
         audit.checkout_count,
         audit.excluded_count,
+        excluded_internal_fee,
         len(audit.titles_included),
     )
 

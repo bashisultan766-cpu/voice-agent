@@ -10,6 +10,11 @@ _SPAMMY = re.compile(
     r"\b(urgent|act now|free|guarantee|click immediately|winner|limited time)\b",
     re.IGNORECASE,
 )
+
+_FEE_LEAK = re.compile(
+    r"\b(processing\s*fee|service\s*fee|internal\s*fee)\b",
+    re.IGNORECASE,
+)
 _URL_SHORTENER = re.compile(
     r"https?://(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly)/",
     re.IGNORECASE,
@@ -113,6 +118,9 @@ def validate_payment_email_content(
     if _SPAMMY.search(body_combined):
         body_safe = False
         issues.append("spammy_body")
+    if _FEE_LEAK.search(body_combined) or _FEE_LEAK.search(subject):
+        body_safe = False
+        issues.append("processing_fee_in_email")
     if _URL_SHORTENER.search(body_combined):
         body_safe = False
         issues.append("url_shortener")

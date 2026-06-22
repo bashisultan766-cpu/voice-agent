@@ -40,6 +40,12 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from ..config import get_settings
 from ..state.models import SessionState
+from ..state.session_store import load_call_resume_by_phone, save_call_resume_by_phone
+from ..conversation.call_memory import (
+    apply_resume_from_stored_data,
+    get_resume_greeting,
+    store_resume_snapshot,
+)
 from ..ai.openai_agent import run_agent_turn
 from ..caller.repository import (
     get_caller_profile,
@@ -249,6 +255,26 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         _mask_phone(session.to_number),
                         session.session_id,
                     )
+                    # v4.8: resume prior call context if caller reconnected within window
+                    try:
+                        prior_data = await load_call_resume_by_phone(session.from_number)
+                        if prior_data:
+                            if apply_resume_from_stored_data(
+                                session,
+                                prior_data,
+                                resume_window_minutes=settings.CALL_RESUME_WINDOW_MINUTES,
+                            ):
+                                session.resume_greeting = get_resume_greeting()
+                                logger.info(
+                                    "call_resume_detected sid=%s from=%s",
+                                    session.call_sid[:6],
+                                    _mask_phone(session.from_number),
+                                )
+                    except Exception:
+                        logger.warning(
+                            "call_resume_load_failed sid=%s",
+                            session.call_sid[:6],
+                        )
                     # Store the task handle so _run_turn can await it on turn 1.
                     profile_task = asyncio.create_task(
                         _load_caller_profile(session.from_number),
@@ -328,6 +354,23 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
         )
     finally:
         await _cancel_current()
+        if session is not None:
+            try:
+                store_resume_snapshot(session)
+                await save_call_resume_by_phone(
+                    session.from_number,
+                    {
+                        "call_sid": session.call_sid,
+                        "call_ended_at": session.call_ended_at,
+                        "snapshot": session.call_resume_snapshot,
+                    },
+                    ttl=settings.CALL_RESUME_WINDOW_MINUTES * 120,
+                )
+            except Exception:
+                logger.warning(
+                    "call_resume_store_failed sid=%s",
+                    session.call_sid[:6] if session else "?",
+                )
         await _save_caller_profile()
         await send_q.put(None)
         await asyncio.gather(sender_task, return_exceptions=True)

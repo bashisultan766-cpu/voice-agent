@@ -108,6 +108,38 @@ class RealtimePipelineEngine:
             DialogueManager.safe_log_context(session),
         )
 
+        # ── v4.8 turn-taking: hold on digit/email fragments ───────────────────
+        from ..voice.turn_taking import classify_turn, is_complete_isbn, is_complete_order_number
+        dialogue_state = DialogueManager.get_state(session)
+        turn_ctx = classify_turn(
+            caller_text,
+            intent=intent_result.intent,
+            active_flow=dialogue_state.active_flow or "",
+            settings=settings,
+        )
+        session.turn_taking_hold = turn_ctx.hold_response
+
+        if turn_ctx.hold_response:
+            complete = True
+            if turn_ctx.collecting_isbn and not is_complete_isbn(caller_text):
+                complete = False
+            elif turn_ctx.collecting_order and not is_complete_order_number(caller_text):
+                complete = False
+            elif turn_ctx.collecting_email and "@" not in caller_text and " dot " not in caller_text.lower():
+                complete = False
+
+            if not complete:
+                filler = turn_ctx.hold_filler or "Go ahead, I'm listening."
+                await send({
+                    "type": "text",
+                    "token": filler,
+                    "last": False,
+                    "interruptible": True,
+                })
+                await send({"type": "text", "token": "", "last": True})
+                self._tracer.finish(turn)
+                return
+
         # ── 2. Email state machine (always, before path decision) ─────────────
         # Updates session.pending_email / confirmed_email / payment_flow_status
         # and accumulates multi-turn email fragments.

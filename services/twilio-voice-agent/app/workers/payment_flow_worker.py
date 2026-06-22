@@ -17,6 +17,7 @@ from ..cart.recovery import attempt_cart_recovery
 from ..cart.session import get_ledger
 from ..payment.scope_audit import audit_payment_scope
 from ..payment.flow_result import PaymentFlowResult
+from ..brain.eric_policy import get_response_template
 from .base import WorkerResult
 from .checkout_worker import CheckoutWorker
 from .payment_email_worker import PaymentEmailWorker
@@ -223,10 +224,14 @@ class PaymentFlowWorker:
             flow.checkout_created = checkout_created or bool(session.pending_checkout_url)
             session.payment_flow_status = "payment_sent"
             masked = flow.masked_email or _mask_email(session.confirmed_email)
-            flow.safe_message = (
-                f"I've sent the payment link to {masked}. "
-                "Please check your inbox and spam folder."
-            )
+            sent_template = get_response_template("payment_link_sent")
+            if sent_template:
+                flow.safe_message = sent_template
+            else:
+                flow.safe_message = (
+                    f"I've sent the payment link to {masked}. "
+                    "Please check your inbox and spam folder."
+                )
             session.payment_flow_result = flow.to_dict()
             logger.info("payment_email_success sid=%s email=%s", sid, masked)
             _log_decision(intent, flow, sid)
@@ -334,6 +339,9 @@ class PaymentFlowWorker:
             return f"Just to confirm, I heard {_mask_email(pending)}. Is that correct?"
         if "confirmed_email" in missing:
             block = getattr(session, "payment_block_count", 0)
+            before_send = get_response_template("payment_link_before_send")
+            if before_send:
+                return before_send
             if block >= 1:
                 return (
                     "I haven't sent it yet because I still need a confirmed email address. "

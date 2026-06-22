@@ -67,12 +67,12 @@ logger = logging.getLogger(__name__)
 # Intent → Wave 1 worker names (run in parallel before ResponsePlanWorker).
 _INTENT_WORKERS: dict[str, list[str]] = {
     # ── Product / ISBN ─────────────────────────────────────────────────────────
-    "isbn_search":          ["product_isbn", "isbn_fragment"],
-    "product_search":       ["product_search", "book_title_extractor"],
-    "author_search":        ["product_search"],
-    "book_title_search":    ["product_search", "book_title_extractor"],
-    "price_question":       ["product_search", "price_inventory"],
-    "multi_book_order":     ["product_search", "price_inventory", "cart_mutation"],
+    "isbn_search":          ["product_isbn", "isbn_fragment", "availability_backorder"],
+    "product_search":       ["product_search", "book_title_extractor", "availability_backorder"],
+    "author_search":        ["product_search", "availability_backorder"],
+    "book_title_search":    ["product_search", "book_title_extractor", "availability_backorder"],
+    "price_question":       ["product_search", "price_inventory", "availability_backorder"],
+    "multi_book_order":     ["product_search", "price_inventory", "availability_backorder", "cart_mutation"],
 
     # ── v4.3 dialogue / cart / payment ────────────────────────────────────────
     "vague_book_request":       ["conversation_memory"],
@@ -80,7 +80,7 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "title_collection_start":   ["conversation_memory"],
     "another_book":             ["cart_mutation"],
     "add_to_cart":              ["cart_mutation"],
-    "confirm_product":          ["cart_mutation"],
+    "confirm_product":          ["availability_backorder", "cart_mutation"],
     "remove_from_cart":         ["cart_mutation"],
     "spell_email_request":      ["spell_email"],
     "isbn_count_question":      ["cart_memory"],

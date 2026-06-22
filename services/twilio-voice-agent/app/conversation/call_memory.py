@@ -271,3 +271,117 @@ def safe_history_append(session: "SessionState", role: str, content: str) -> Non
     if "tool_calls" in (content or ""):
         return
     session.history.append({"role": role, "content": content})
+
+
+# ── Call cutoff / resume support (v4.8) ─────────────────────────────────────
+
+def build_resume_snapshot(session: "SessionState") -> dict:
+    """
+    Build a safe, minimal snapshot of the session for reconnect-within-window.
+
+    Never includes full email, phone, card data, or raw history.
+    """
+    state = get_call_memory(session)
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+    return {
+        "cart_count": len([
+            i for i in (getattr(session, "cart_items", []) or [])
+            if isinstance(i, dict) and i.get("confirmation_status") == "confirmed"
+        ]),
+        "payment_flow_status": pfs,
+        "has_checkout_url": bool(getattr(session, "pending_checkout_url", "")),
+        "email_state": state.email_state,
+        "last_order_number": getattr(session, "last_order_number", ""),
+        "facility_context": state.facility_context,
+        "current_topic": state.current_topic,
+        "important_facts": state.important_facts[-5:],
+        "isbn_count": len(state.isbns_provided),
+    }
+
+
+def store_resume_snapshot(session: "SessionState") -> None:
+    """Store a safe resume snapshot on the session before disconnect."""
+    import time
+    snapshot = build_resume_snapshot(session)
+    session.call_resume_snapshot = snapshot
+    session.call_ended_at = time.time()
+    logger.debug(
+        "call_resume_snapshot stored sid=%s cart=%d topic=%s",
+        session.call_sid[:6],
+        snapshot.get("cart_count", 0),
+        snapshot.get("current_topic", ""),
+    )
+
+
+def apply_resume_from_stored_data(
+    new_session: "SessionState",
+    stored: dict,
+    resume_window_minutes: int = 30,
+) -> bool:
+    """
+    Apply resume context from a persisted snapshot dict (Redis/in-memory).
+
+    stored keys: call_sid, call_ended_at, snapshot
+    """
+    if not stored:
+        return False
+
+    class _PriorStub:
+        pass
+
+    prior = _PriorStub()
+    prior.call_sid = stored.get("call_sid", "prior")
+    prior.call_ended_at = stored.get("call_ended_at", 0.0)
+    prior.call_resume_snapshot = stored.get("snapshot", {}) or {}
+    prior.call_memory = None
+    return check_and_apply_resume(new_session, prior, resume_window_minutes)
+
+
+def check_and_apply_resume(
+    new_session: "SessionState",
+    prior_session: "SessionState",
+    resume_window_minutes: int = 30,
+) -> bool:
+    """
+    If prior_session ended recently (within window), copy safe context to new_session.
+
+    Returns True if resume was applied; False otherwise.
+    Never copies PII beyond what is explicitly safe.
+    """
+    import time
+    ended = getattr(prior_session, "call_ended_at", 0.0) or 0.0
+    if ended <= 0:
+        return False
+    age_minutes = (time.time() - ended) / 60.0
+    if age_minutes > resume_window_minutes:
+        return False
+
+    snapshot = getattr(prior_session, "call_resume_snapshot", {}) or {}
+    if not snapshot:
+        return False
+
+    state = get_call_memory(new_session)
+    state.current_topic = snapshot.get("current_topic", "")
+    state.facility_context = snapshot.get("facility_context", "")
+    for fact in snapshot.get("important_facts", []):
+        _append_fact(state, fact)
+
+    if snapshot.get("payment_flow_status") not in ("idle", "", None):
+        new_session.payment_flow_status = snapshot["payment_flow_status"]
+
+    if snapshot.get("last_order_number"):
+        new_session.last_order_number = snapshot["last_order_number"]
+
+    new_session.is_resumed_call = True
+    logger.info(
+        "call_resume_applied sid=%s prior_sid=%s age_min=%.1f",
+        new_session.call_sid[:6],
+        prior_session.call_sid[:6],
+        age_minutes,
+    )
+    return True
+
+
+def get_resume_greeting() -> str:
+    """Return the standard dropped-call resume greeting."""
+    return "I'm sorry about that. Let me continue from where we left off."

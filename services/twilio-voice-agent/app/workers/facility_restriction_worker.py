@@ -115,7 +115,47 @@ class FacilityRestrictionWorker:
                     "FacilityRestrictionWorker lookup failed sid=%s", session.call_sid[:6]
                 )
 
-        if restrictions:
+        # v4.8: also check order line items against the restrictions module
+        order_books: list[str] = []
+        if order_number:
+            try:
+                from ..tools.shopify_tools import lookup_order
+                result_json2 = await lookup_order(
+                    order_number=order_number,
+                    email=None,
+                    phone=None,
+                    session=session,
+                )
+                import json as _json
+                result2 = _json.loads(result_json2)
+                if result2.get("found") and result2.get("items"):
+                    for item_str in result2["items"]:
+                        # items are formatted as "1x Title"
+                        parts = item_str.split("x ", 1)
+                        if len(parts) == 2:
+                            order_books.append(parts[1].strip())
+            except Exception:
+                pass
+
+        if order_books:
+            try:
+                from ..facility.restrictions import check_order_restrictions
+                check_result = check_order_restrictions(order_books, facility_name)
+                if check_result["all_clear"]:
+                    safe_summary = check_result["safe_response"]
+                elif check_result["restricted"]:
+                    safe_summary = check_result["safe_response"]
+                else:
+                    safe_summary = check_result["safe_response"]
+            except Exception:
+                if restrictions:
+                    restriction_text = " ".join(restrictions)
+                    safe_summary = f"Known restrictions for {facility_name}: {restriction_text}"
+                else:
+                    safe_summary = (
+                        "I don't want to guess. I can forward this to customer service for review."
+                    )
+        elif restrictions:
             restriction_text = " ".join(restrictions)
             safe_summary = f"Known restrictions for {facility_name}: {restriction_text}"
         else:

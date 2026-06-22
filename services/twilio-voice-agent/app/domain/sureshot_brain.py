@@ -13,6 +13,7 @@ from .policies import (
     politics_redirect_message,
     sports_redirect_message,
 )
+from ..brain.eric_policy import build_composer_policy
 
 if TYPE_CHECKING:
     from ..state.models import SessionState
@@ -23,7 +24,11 @@ _DOMAIN_SUMMARY = (
     "and correctional facilities. You help with ISBN/title search, carts, payment links, "
     "orders, tracking, refunds, shipping, facility questions, address updates, "
     "cancellations, and escalation. Stay in this domain. Never invent catalog, prices, "
-    "refunds, or facility rules — use worker data only."
+    "refunds, or facility rules — use worker data only. "
+    "Never say Processing Fee. "
+    "Subtotal is always described as before shipping. "
+    "Subtotal does not include shipping. "
+    "Red River Vengeance is always out of stock."
 )
 
 
@@ -35,7 +40,7 @@ def build_domain_excerpt(
     """
     Compact domain context injected into the composer user message.
     """
-    parts = [_DOMAIN_SUMMARY]
+    parts = [_DOMAIN_SUMMARY, build_composer_policy()]
 
     faq_answer = match_faq(caller_text)
     if faq_answer:

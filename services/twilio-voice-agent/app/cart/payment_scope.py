@@ -22,6 +22,8 @@ _WORDS = {
 
 
 def _confirmed_checkout_items(session: "SessionState") -> list[dict[str, Any]]:
+    from ..payment.line_item_filter import detect_internal_fee_item
+
     items: list[dict] = []
     for raw in getattr(session, "cart_items", []) or []:
         if not isinstance(raw, dict):
@@ -31,6 +33,8 @@ def _confirmed_checkout_items(session: "SessionState") -> list[dict[str, Any]]:
         if raw.get("eligible_for_checkout") is False:
             continue
         if not raw.get("variant_id"):
+            continue
+        if detect_internal_fee_item(raw):
             continue
         items.append(raw)
     return items
