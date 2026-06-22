@@ -2,86 +2,31 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, cleanup/**]
   pull_request:
     branches: [main, develop]
 
 jobs:
-  api:
+  twilio-voice-agent:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/api
+        working-directory: services/twilio-voice-agent
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+          python-version: '3.11'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: .
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Lint
-        run: pnpm run lint
-        working-directory: apps/api
-        continue-on-error: true
+      - name: Run tests
+        run: python -m pytest -q
 
-      - name: Typecheck
-        run: pnpm run typecheck
-        working-directory: apps/api
-
-      - name: Shopify runtime smoke checks
-        run: pnpm run smoke:shopify
-        working-directory: apps/api
-
-      - name: Prisma generate
-        run: pnpm exec prisma generate
-        working-directory: apps/api
-
-      - name: Build
-        run: pnpm run build
-        working-directory: apps/api
-        env:
-          DATABASE_URL: postgresql://user:pass@localhost:5432/db
-          ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
-
-  web:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: .
-
-      - name: Typecheck
-        run: pnpm run typecheck
-        working-directory: apps/web
-        continue-on-error: true
-
-      - name: Build
-        run: pnpm run build
-        working-directory: apps/web
+      - name: Compile check
+        run: python -m compileall app

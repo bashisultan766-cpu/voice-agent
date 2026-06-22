@@ -2,35 +2,23 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "db:generate (API + voice)",
+      "label": "twilio-voice-agent: test",
       "type": "shell",
-      "command": "pnpm db:generate:all",
-      "options": { "cwd": "${workspaceFolder}" },
+      "command": "python -m pytest -q",
+      "options": {
+        "cwd": "${workspaceFolder}/services/twilio-voice-agent"
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "twilio-voice-agent: dev server",
+      "type": "shell",
+      "command": "python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
+      "options": {
+        "cwd": "${workspaceFolder}/services/twilio-voice-agent"
+      },
       "group": "build",
-      "problemMatcher": []
-    },
-    {
-      "label": "db:migrate (API)",
-      "type": "shell",
-      "command": "pnpm db:migrate",
-      "options": { "cwd": "${workspaceFolder}" },
-      "problemMatcher": []
-    },
-    {
-      "label": "db:voice:migrate",
-      "type": "shell",
-      "command": "pnpm db:voice:migrate",
-      "options": { "cwd": "${workspaceFolder}" },
-      "problemMatcher": []
-    },
-    {
-      "label": "monorepo build",
-      "type": "shell",
-      "command": "pnpm build",
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": { "kind": "build", "isDefault": true },
-      "dependsOn": ["db:generate (API + voice)"],
-      "dependsOrder": "sequence",
       "problemMatcher": []
     }
   ]
