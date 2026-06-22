@@ -1,103 +1,105 @@
-# Deployment notes
+# VPS Deployment — Twilio ConversationRelay Voice Agent
 
-Guidance for shipping **apps/api** (NestJS + Prisma) and **apps/web** (Next.js) to a client’s infrastructure. Adjust for your host (VPS, Kubernetes, PaaS).
+Deploy the Python service at `services/twilio-voice-agent` behind Nginx with PM2.
 
-## 1. Build-time requirements
+## Port map
 
-- **Node.js 20+** and **pnpm 9+** on the build machine.
-- Run from repo root:
-  - `pnpm install`
-  - `pnpm --filter api exec prisma generate` (or your root `db:generate` script)
-  - `pnpm --filter api build`
-  - `pnpm --filter web build`
-- Ensure `DATABASE_URL` and other env vars needed at build time for Next.js are available if your Next config reads them (public vars use `NEXT_PUBLIC_*`).
+| Service | Port | Notes |
+|---------|------|-------|
+| twilio-voice-agent | **8001** | FastAPI + uvicorn |
+| Redis | **6379** | Session + caller memory + Shopify cache |
 
-## 2. Database
-
-- Provision **PostgreSQL** (managed or self-hosted).
-- Run migrations against the **production** database (never `migrate dev` in CI for prod; use `prisma migrate deploy`):
+## 1. Server prerequisites
 
 ```bash
-cd apps/api
-pnpm exec prisma migrate deploy
+sudo apt update && sudo apt install -y python3 python3-venv python3-pip nginx redis-server
+sudo systemctl enable redis-server
 ```
 
-- Keep backups and a restore drill documented for the client.
+## 2. Clone and configure
 
-## 3. API (Nest)
+```bash
+cd /var/www/voice-agent
+git pull origin main
 
-- Start command (after build): from `apps/api`, `node dist/main.js` or `pnpm --filter api start`.
-- Set **all** variables from `apps/api/.env.example` for production; see root `.env.example` for a consolidated list.
-- Critical production flags:
-  - `NODE_ENV=production`
-  - `JWT_SECRET` (strong, unique)
-  - `ENCRYPTION_KEY` (64 hex chars for AES-256-GCM secret storage)
-  - `ALLOW_HEADER_TENANT_FALLBACK=false`
-  - `PUBLIC_WEBHOOK_BASE_URL` = public HTTPS origin (no path suffix; routes include `/api/...`)
-  - `VALIDATE_TWILIO_SIGNATURES=true` and `TWILIO_AUTH_TOKEN` set
-  - `CORS_ORIGIN` = your Next.js origin(s), comma-separated
-  - `TRUST_PROXY=true` when behind a reverse proxy
-- **Dev ops HTTP routes** (`/api/ops/...` POST simulate-tool, sync-products, test-email): disabled in production unless `ENABLE_DEV_OPS_ENDPOINTS=true`. Leave unset/false for client delivery; enable only on staging if needed.
-- Expose the API on a stable host/port; terminate TLS at the proxy or load balancer.
+cd services/twilio-voice-agent
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env
+nano .env   # set PUBLIC_BASE_URL, Twilio, OpenAI, Shopify, Redis, Resend
+```
 
-## 4. Web (Next.js)
+Required in `.env`:
 
-- Set `NEXT_PUBLIC_API_URL` to the **browser-visible** API base (HTTPS).
-- Set server-side API base for server actions / SSR (see `apps/web/.env.example`: `INTERNAL_API_URL` or equivalent if you split internal vs public URL).
-- Start with `pnpm --filter web start` (or host-specific adapter).
+- `PUBLIC_BASE_URL=https://your-domain.com` (no trailing slash)
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
+- `OPENAI_API_KEY`
+- `SHOPIFY_SHOP_DOMAIN`, `SHOPIFY_ADMIN_ACCESS_TOKEN`
+- `REDIS_URL=redis://127.0.0.1:6379`
+- `VALIDATE_TWILIO_SIGNATURES=true` (production)
 
-## 5. Reverse proxy
+## 3. PM2
 
-- Route `/api/*` to the Nest app **or** split so Twilio/Shopify hit the API host directly (common: `api.customer.com` for API, `app.customer.com` for Next).
-- Preserve `X-Forwarded-Proto` and `X-Forwarded-Host` for Twilio signature validation when `TRUST_PROXY=true`.
+From repo root:
 
-## 6. Secrets
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 logs twilio-voice-agent --lines 50
+```
 
-- Never commit `.env` files.
-- Prefer secret manager or host env injection in production.
-- Rotate `JWT_SECRET`, `ENCRYPTION_KEY`, Twilio token, Shopify tokens, and API keys on compromise or offboarding.
+Verify locally:
 
-## 7. Optional workers
+```bash
+curl -sS http://127.0.0.1:8001/health
+```
 
-- If product sync or jobs use **BullMQ** + Redis, run worker processes with the same `DATABASE_URL` / Redis config as documented in your ops runbook (confirm against current `apps/api` queue modules).
+## 4. Nginx
 
-## 8. Seed data
+Copy the site config:
 
-- `pnpm --filter api db:seed` runs a **no-op** Prisma seed (log only). Tenants and users are created through **`/register`** in the admin app, not from the seed script.
+```bash
+sudo cp infra/nginx/voice-agent.mailcallcommunication.com.conf \
+  /etc/nginx/sites-available/voice-agent.conf
+sudo ln -sf /etc/nginx/sites-available/voice-agent.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
 
-## 9. Post-deployment verification checklist
+Routes proxied to port 8001:
 
-Run this checklist immediately after each production deployment:
+- `POST /voice/twilio/inbound`
+- `GET /voice/twilio/ws` (WebSocket upgrade)
+- `GET /health`
 
-- [ ] `GET /api/health` returns HTTP 200 on the public API URL.
-- [ ] Web app loads and authenticated users can access tenant-scoped data.
-- [ ] `ALLOW_HEADER_TENANT_FALLBACK=false` in production env.
-- [ ] Place a test call and confirm:
-  - [ ] call session row created
-  - [ ] transcript rows appear
-  - [ ] no Twilio signature failures when validation is enabled
-- [ ] Shopify for one production tenant:
-  - [ ] connection status is OK
-  - [ ] product sync succeeds (manual or queued)
-  - [ ] search + product details resolve from cache
-- [ ] Checkout flow:
-  - [ ] checkout link created
-  - [ ] URL opens hosted Shopify checkout
-  - [ ] duplicate protection behaves as expected for same call/cart
-- [ ] Email flow:
-  - [ ] payment email event created
-  - [ ] send status transitions to SENT
-  - [ ] retry/dedupe behavior confirmed by sending the same request twice
-- [ ] Audit / observability:
-  - [ ] tool execution rows are recorded
-  - [ ] webhook events are logged for expected tenant
-  - [ ] no unhandled exception spikes in logs
+## 5. Twilio Console
 
-## 10. Rollback notes (minimal)
+| Setting | Value |
+|---------|-------|
+| A call comes in | Webhook |
+| URL | `https://your-domain.com/voice/twilio/inbound` |
+| HTTP | POST |
 
-- Keep the previous API and web build artifacts available for fast rollback.
-- On schema changes, ensure forward/backward compatibility before deploy; if not possible, deploy API with feature flags disabled until migration completes.
-- If rollback is required after migration:
-  - restore DB snapshot taken pre-deploy
-  - redeploy prior API + web versions
-  - verify health and tenant-scoped access before reopening traffic
+ConversationRelay WebSocket URL is derived from `PUBLIC_BASE_URL` automatically.
+
+## 6. Deploy script
+
+From repo root after `git pull`:
+
+```bash
+chmod +x scripts/vps-deploy.sh
+./scripts/vps-deploy.sh
+```
+
+## 7. Smoke test
+
+```bash
+curl -sS https://your-domain.com/health
+```
+
+Place a test call to your Twilio number and confirm the agent responds.
+
+## Local Redis (optional)
+
+```bash
+docker compose -f infra/docker/docker-compose.yml up -d
+```
