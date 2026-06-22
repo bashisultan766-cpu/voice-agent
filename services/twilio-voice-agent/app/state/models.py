@@ -126,3 +126,11 @@ class SessionState:
     last_facility_name: str = ""    # Facility/jail name spoken this call
     last_facility_city: str = ""
     last_facility_state: str = ""
+
+    # ── ISBN collection state (v4.2) ──────────────────────────────────────────
+    isbn_buffer: str = ""           # digits collected so far this ISBN
+    isbn_buffer_turn: int = -1      # turn when buffer was last updated
+    isbn_history: list[str] = field(default_factory=list)  # ISBNs given this call
+
+    # ── Response plan (set by ResponsePlanWorker, read by composer) ───────────
+    response_plan: dict = field(default_factory=dict)

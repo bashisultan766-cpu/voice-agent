@@ -183,47 +183,31 @@ class TestInjectRouterContext:
 # ── Engine passes router_context to run_agent_turn ────────────────────────────
 
 class TestEnginePassesRouterContext:
-    async def test_router_context_received_by_agent(self):
-        """Engine builds and passes router_context to run_agent_turn (fallback path).
+    def test_router_context_built_for_confirmation(self):
+        """Engine builds router_context for non-unknown intents.
 
-        Note: Tool intents (isbn_search, product_search, etc.) now route through
-        the WorkerOrchestrator → MainLLMComposer path and do NOT call run_agent_turn.
-        router_context is only passed to run_agent_turn on the conversational fallback path.
+        v4.2: _build_router_context still works; it produces context for
+        both the legacy run_agent_turn path and the worker→composer path.
         """
-        from app.pipeline.engine import RealtimePipelineEngine
-        from app.config import Settings
+        from app.pipeline.engine import _build_router_context
+        from app.pipeline.router import detect
 
-        settings = Settings(OPENAI_API_KEY="test", DEBUG=True, VOICE_FILLER_AFTER_MS=0)
-        engine = RealtimePipelineEngine(settings=settings)
-        received_kwargs = {}
-
-        async def capturing_agent(session, text, settings, **kwargs):
-            received_kwargs.update(kwargs)
-            yield {"type": "turn_done"}
-
-        sent = []
-
-        async def fake_send(msg):
-            sent.append(msg)
-
-        # Use a conversational (non-tool) intent so it routes to run_agent_turn.
-        # "please confirm my order" → confirmation intent → fallback path.
-        with patch("app.pipeline.engine.run_agent_turn", capturing_agent):
-            session = _make_session()
-            await engine.handle_turn(session, "yes please confirm", fake_send)
-
-        # router_context should be a string (non-None for non-unknown intents)
-        assert "router_context" in received_kwargs
-        ctx = received_kwargs["router_context"]
-        # confirmation/greeting context is a string with the detected intent
+        session = _make_session()
+        ir = detect("yes please confirm", session)
+        ctx = _build_router_context(ir, session)
+        # confirmation intent context is a string or None for unknown
         assert ctx is None or isinstance(ctx, str)
 
     async def test_unknown_intent_router_context_is_none(self):
-        """Unknown intent produces None router_context."""
+        """Unknown intent produces None router_context (legacy path)."""
         from app.pipeline.engine import RealtimePipelineEngine
         from app.config import Settings
 
-        settings = Settings(OPENAI_API_KEY="test", DEBUG=True, VOICE_FILLER_AFTER_MS=0)
+        settings = Settings(
+            OPENAI_API_KEY="test", DEBUG=True,
+            VOICE_FILLER_AFTER_MS=0,
+            VOICE_LIVE_DISABLE_OPENAI_TOOLS=False,
+        )
         engine = RealtimePipelineEngine(settings=settings)
         received_kwargs = {}
 

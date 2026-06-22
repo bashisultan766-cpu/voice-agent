@@ -290,6 +290,21 @@ class TestMaskEmail:
 # ── F. SafeCallerContext passed to run_agent_turn ─────────────────────────────
 
 class TestAgentTurnCallerContext:
+    """Tests for run_agent_turn caller context injection.
+
+    These tests use VOICE_LIVE_DISABLE_OPENAI_TOOLS=False to test the
+    legacy tool-calling path directly. In production v4.2, this path is
+    disabled and all turns use the worker→composer path instead.
+    """
+
+    def _legacy_settings(self):
+        from app.config import Settings
+        return Settings(
+            OPENAI_API_KEY="test",
+            DEBUG=True,
+            VOICE_LIVE_DISABLE_OPENAI_TOOLS=False,  # allow legacy path for these tests
+        )
+
     async def test_system_message_includes_caller_name_on_first_turn(self):
         """When caller_context is provided, session.history[0] should mention the name."""
         from unittest.mock import AsyncMock, patch
@@ -301,7 +316,6 @@ class TestAgentTurnCallerContext:
         )
         ctx = build_safe_caller_context(session, greeted_already=True)
 
-        # Patch OpenAI to avoid live API calls — simulate a simple text response.
         mock_chunk = AsyncMock()
         mock_chunk.choices = [
             type("C", (), {
@@ -324,10 +338,11 @@ class TestAgentTurnCallerContext:
             from app.ai.openai_agent import run_agent_turn
 
             events = []
-            async for event in run_agent_turn(session, "Hello", caller_context=ctx):
+            async for event in run_agent_turn(
+                session, "Hello", settings=self._legacy_settings(), caller_context=ctx
+            ):
                 events.append(event)
 
-        # System message must be first in history and mention Darren
         assert session.history[0]["role"] == "system"
         assert "Darren" in session.history[0]["content"]
 
@@ -359,13 +374,13 @@ class TestAgentTurnCallerContext:
 
             from app.ai.openai_agent import run_agent_turn
 
-            async for _ in run_agent_turn(session, "Hello", caller_context=ctx):
+            async for _ in run_agent_turn(
+                session, "Hello", settings=self._legacy_settings(), caller_context=ctx
+            ):
                 pass
 
         system_content = session.history[0]["content"]
-        # Should say "no profile" not a fake name
         assert "no profile" in system_content.lower() or "new caller" in system_content.lower()
-        # No "Name: <something>" claim
         assert "Name:" not in system_content
 
     async def test_caller_context_none_still_works(self):
@@ -396,9 +411,10 @@ class TestAgentTurnCallerContext:
             from app.ai.openai_agent import run_agent_turn
 
             events = []
-            async for event in run_agent_turn(session, "Hello", caller_context=None):
+            async for event in run_agent_turn(
+                session, "Hello", settings=self._legacy_settings(), caller_context=None
+            ):
                 events.append(event)
 
         assert any(e["type"] == "turn_done" for e in events)
-        # System message present but no CALLER CONTEXT section
         assert "CALLER CONTEXT" not in session.history[0]["content"]

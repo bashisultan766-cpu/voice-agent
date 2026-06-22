@@ -40,13 +40,15 @@ logger = logging.getLogger(__name__)
 _MAX_HISTORY = 20
 _COMPOSER_SYSTEM_SUFFIX = """
 IMPORTANT — COMPOSER RULES (override everything else):
-- Worker data above is the ONLY source of facts for this response.
+- Worker data below is the ONLY source of facts for this response.
 - If a worker result is marked "requires verification", do NOT reveal details.
 - Never invent prices, availability, order status, refund amounts, or shipping times.
 - If workers returned no data or failed, apologise briefly and offer alternatives.
 - Keep the response under the word limit. This is a phone call.
-- Do not mention "workers", "tools", "cache", or any internal system names.
+- Do not mention "workers", "tools", "cache", "backend", or any internal system names.
 - Speak naturally, as if you personally looked it up.
+- NEVER call any tools. You do not have tool access in this mode.
+- If a Response Plan is provided, follow it exactly for this turn.
 """
 
 
@@ -68,6 +70,7 @@ def _build_user_message(
     Build the user turn message that includes router context and worker data.
 
     Keeps everything compact and safe — no raw Shopify JSON, no full emails.
+    Includes response_plan hint if ResponsePlanWorker produced one.
     """
     parts: list[str] = []
 
@@ -84,6 +87,16 @@ def _build_user_message(
             parts.append(f"[Search phrase: {e['product_phrase'][:60]}]")
         if e.get("quantity"):
             parts.append(f"[Quantity: {e['quantity']}]")
+
+    # v4.2: Response plan from ResponsePlanWorker
+    plan = getattr(session, "response_plan", {}) or {}
+    plan_say = plan.get("say", "") if plan else ""
+    plan_action = plan.get("action", "") if plan else ""
+    if plan_action and plan_action not in ("clarify", ""):
+        if plan_say:
+            parts.append(f"[Response Plan — say this: {plan_say}]")
+        else:
+            parts.append(f"[Response Plan — action: {plan_action}]")
 
     # Worker data (gated by verification)
     worker_ctx = worker_bundle.to_llm_context(

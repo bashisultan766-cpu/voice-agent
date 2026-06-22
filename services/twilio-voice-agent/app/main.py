@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
@@ -9,12 +10,19 @@ from .api.twilio_voice import router as twilio_router
 from .sync.webhooks import webhooks_router, admin_router
 from .ws.conversation_relay import handle_conversation_relay
 
+_log = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.LOG_LEVEL)
     settings.validate_production()
+    if settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS:
+        _log.info(
+            "live_openai_tools_disabled=true voice_runtime=%s",
+            settings.VOICE_RUNTIME,
+        )
     yield
 
 

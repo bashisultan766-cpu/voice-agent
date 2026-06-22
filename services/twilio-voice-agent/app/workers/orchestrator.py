@@ -1,21 +1,16 @@
 """
-WorkerOrchestrator — routes intents to workers and runs them concurrently.
+WorkerOrchestrator — routes intents to workers and runs them in two waves.
+
+v4.2 changes:
+- ALL intents now have workers (conversational intents get lightweight workers).
+- Wave 1: parallel domain workers (product, order, facility, etc.).
+- Wave 2: ResponsePlanWorker receives the Wave 1 bundle → builds response_plan.
+- WORKER_PATH_INTENTS includes all intents (no more fallback to run_agent_turn).
 
 Rules:
-- Receives IntentResult from the deterministic router.
-- Selects the appropriate worker(s) based on intent.
-- Runs all selected workers concurrently with per-worker timeouts.
-- Returns a WorkerBundle; partial results are returned if any worker fails/times out.
 - Never calls OpenAI.
-- Never crashes the call — all failures are caught per-worker.
-
-v4.1 additions:
-- facility_approval, facility_restriction intents → facility workers
-- email_provided, email_correction, email_confirmation → conversational fallback
-- multi_book_order, book_title_search → product workers
-- refund_detail → refund worker (same as refund_status but intent is more specific)
-- cancellation_request, address_update, quantity_update → fallback (LLM handles)
-- shipping_price → store_policy worker
+- All failures caught per-worker.
+- Returns WorkerBundle even if all workers fail.
 """
 from __future__ import annotations
 
@@ -42,6 +37,20 @@ from .facility_approval_worker import FacilityApprovalWorker
 from .facility_restriction_worker import FacilityRestrictionWorker
 from .facility_policy_notes_worker import FacilityPolicyNotesWorker
 from .order_facility_review_worker import OrderFacilityReviewWorker
+# v4.2 new workers
+from .speech_cleanup_worker import SpeechCleanupWorker
+from .isbn_fragment_worker import ISBNFragmentAccumulatorWorker
+from .email_fragment_worker import EmailFragmentAccumulatorWorker
+from .book_title_extractor_worker import BookTitleExtractorWorker
+from .quantity_extractor_worker import QuantityExtractorWorker
+from .conversation_memory_worker import ConversationMemoryWorker
+from .caller_memory_worker import CallerMemoryWorker
+from .availability_backorder_worker import AvailabilityBackorderWorker
+from .product_details_worker import ProductDetailsWorker
+from .address_update_worker import AddressUpdateWorker
+from .cancellation_worker import CancellationWorker
+from .payment_safety_worker import PaymentSafetyWorker
+from .response_plan_worker import ResponsePlanWorker
 
 if TYPE_CHECKING:
     from ..pipeline.router import IntentResult
@@ -49,63 +58,64 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Intent → list of worker names to run concurrently.
-# Order within a list has no effect on concurrency — all run in parallel.
+# Intent → Wave 1 worker names (run in parallel before ResponsePlanWorker).
 _INTENT_WORKERS: dict[str, list[str]] = {
-    # Product / ISBN
-    "isbn_search":          ["product_isbn"],
-    "product_search":       ["product_search"],
+    # ── Product / ISBN ─────────────────────────────────────────────────────────
+    "isbn_search":          ["product_isbn", "isbn_fragment"],
+    "product_search":       ["product_search", "book_title_extractor"],
     "author_search":        ["product_search"],
-    "book_title_search":    ["product_search"],
+    "book_title_search":    ["product_search", "book_title_extractor"],
     "price_question":       ["product_search", "price_inventory"],
     "multi_book_order":     ["product_search", "price_inventory"],
 
-    # Orders
+    # ── Orders ─────────────────────────────────────────────────────────────────
     "order_lookup":         ["caller_identity", "order_lookup", "tracking"],
 
-    # Refunds
+    # ── Refunds ────────────────────────────────────────────────────────────────
     "refund_status":        ["caller_identity", "order_lookup", "refund"],
     "refund_detail":        ["caller_identity", "order_lookup", "refund"],
 
-    # Checkout / payment
+    # ── Checkout / payment ─────────────────────────────────────────────────────
     "checkout_request":     ["product_search", "price_inventory", "checkout"],
-    "send_payment_link":    ["payment_email"],
+    "send_payment_link":    ["payment_email", "payment_safety"],
 
-    # Price — direct query after a product is already in session
-    "price_question":       ["price_inventory"],
-
-    # Shipping
+    # ── Shipping ───────────────────────────────────────────────────────────────
     "shipping_question":    ["store_policy", "shipping"],
     "shipping_price":       ["store_policy"],
 
-    # Facility / inmate
+    # ── Facility / inmate ──────────────────────────────────────────────────────
     "facility_approval":    ["facility_approval"],
     "facility_restriction": ["facility_restriction"],
 
-    # Escalation
+    # ── Escalation ─────────────────────────────────────────────────────────────
     "escalation":           ["escalation"],
     "human_escalation":     ["escalation"],
 
-    # Conversational intents — handled by run_agent_turn fallback.
-    "greeting":             [],
-    "confirmation":         [],
-    "email_capture":        [],
-    "email_provided":       [],
-    "email_correction":     [],
-    "email_confirmation":   [],
-    "cancellation_request": [],
-    "address_update":       [],
-    "quantity_update":      [],
-    "unknown":              [],
+    # ── Address / cancellation ─────────────────────────────────────────────────
+    "address_update":       ["address_update"],
+    "cancellation_request": ["cancellation"],
+    "quantity_update":      ["quantity_extractor"],
+
+    # ── Conversational (v4.2: no longer fallback to run_agent_turn) ────────────
+    "greeting":             ["speech_cleanup", "caller_memory", "conversation_memory"],
+    "confirmation":         ["speech_cleanup", "conversation_memory"],
+    "email_capture":        ["email_fragment", "conversation_memory"],
+    "email_provided":       ["email_fragment", "conversation_memory"],
+    "email_correction":     ["email_fragment", "conversation_memory"],
+    "email_confirmation":   ["email_fragment", "conversation_memory"],
+    "unknown":              ["speech_cleanup", "conversation_memory"],
+
+    # ── Cart ───────────────────────────────────────────────────────────────────
+    "cart_count_question":  ["conversation_memory"],
+    "titles_question":      ["conversation_memory"],
 }
 
-# Intents that should take the worker path (non-empty worker lists above).
-WORKER_PATH_INTENTS: frozenset[str] = frozenset(
-    k for k, v in _INTENT_WORKERS.items() if v
-)
+# All intents go through the worker path in v4.2.
+WORKER_PATH_INTENTS: frozenset[str] = frozenset(_INTENT_WORKERS.keys())
 
 # Registry maps worker name → worker instance (instantiated once).
 _REGISTRY: dict[str, object] = {
+    # Original 17 workers
     "caller_identity":          CallerIdentityWorker(),
     "customer_profile":         CustomerProfileWorker(),
     "product_isbn":             ProductISBNWorker(),
@@ -123,15 +133,31 @@ _REGISTRY: dict[str, object] = {
     "facility_restriction":     FacilityRestrictionWorker(),
     "facility_policy_notes":    FacilityPolicyNotesWorker(),
     "order_facility_review":    OrderFacilityReviewWorker(),
+    # v4.2 new workers (14)
+    "speech_cleanup":           SpeechCleanupWorker(),
+    "isbn_fragment":            ISBNFragmentAccumulatorWorker(),
+    "email_fragment":           EmailFragmentAccumulatorWorker(),
+    "book_title_extractor":     BookTitleExtractorWorker(),
+    "quantity_extractor":       QuantityExtractorWorker(),
+    "conversation_memory":      ConversationMemoryWorker(),
+    "caller_memory":            CallerMemoryWorker(),
+    "availability_backorder":   AvailabilityBackorderWorker(),
+    "product_details":          ProductDetailsWorker(),
+    "address_update":           AddressUpdateWorker(),
+    "cancellation":             CancellationWorker(),
+    "payment_safety":           PaymentSafetyWorker(),
+    # Wave 2 (managed separately, not in Wave 1)
+    "response_plan":            ResponsePlanWorker(),
 }
 
 
 class WorkerOrchestrator:
     """
-    Selects and runs workers concurrently based on router intent.
+    Selects and runs workers in two waves based on router intent.
 
-    All workers run in parallel. A per-worker timeout (VOICE_TOOL_TIMEOUT_MS)
-    prevents slow Shopify calls from blocking the whole turn.
+    Wave 1: domain workers run in parallel (product, order, facility…).
+    Wave 2: ResponsePlanWorker runs after Wave 1 with the Wave 1 bundle,
+            building a deterministic response plan in session.response_plan.
     """
 
     async def run(
@@ -140,22 +166,45 @@ class WorkerOrchestrator:
         session: "SessionState",
         settings,
     ) -> WorkerBundle:
-        """
-        Dispatch workers for the given intent and return aggregated results.
+        timeout_secs = settings.VOICE_TOOL_TIMEOUT_MS / 1000
+        entities = router_result.entities
 
-        Returns a WorkerBundle even if all workers fail or time out.
-        Never raises.
-        """
+        # ── Wave 1: parallel domain workers ───────────────────────────────────
+        bundle = await self._run_wave1(router_result, session, settings, timeout_secs)
+
+        # ── Wave 2: ResponsePlanWorker ─────────────────────────────────────────
+        plan_worker: ResponsePlanWorker = _REGISTRY["response_plan"]
+        try:
+            plan_result = await asyncio.wait_for(
+                plan_worker.run(session, entities, settings, worker_bundle=bundle),
+                timeout=0.3,  # 300ms hard cap — must be fast
+            )
+            bundle.results["response_plan"] = plan_result
+            bundle.workers_ran.append("response_plan")
+        except asyncio.TimeoutError:
+            logger.warning("ResponsePlanWorker timed out sid=%s", session.call_sid[:6])
+        except Exception:
+            logger.exception("ResponsePlanWorker error sid=%s", session.call_sid[:6])
+
+        return bundle
+
+    async def _run_wave1(
+        self,
+        router_result: "IntentResult",
+        session: "SessionState",
+        settings,
+        timeout_secs: float,
+    ) -> WorkerBundle:
         worker_names = _INTENT_WORKERS.get(router_result.intent, [])
         bundle = WorkerBundle(workers_ran=list(worker_names))
 
         if not worker_names:
+            bundle.total_ms = 0.0
             return bundle
 
-        timeout_secs = settings.VOICE_TOOL_TIMEOUT_MS / 1000
         entities = router_result.entities
-
         t0 = time.monotonic()
+
         tasks = {
             name: asyncio.create_task(
                 _run_one(name, session, entities, settings, timeout_secs),
@@ -185,7 +234,7 @@ class WorkerOrchestrator:
 
         bundle.total_ms = (time.monotonic() - t0) * 1000
         logger.debug(
-            "orchestrator intent=%s workers=%s total=%.0fms sid=%s",
+            "orchestrator wave1 intent=%s workers=%s total=%.0fms sid=%s",
             router_result.intent,
             list(bundle.results.keys()),
             bundle.total_ms,

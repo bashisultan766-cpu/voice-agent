@@ -93,26 +93,35 @@ class TestIntentWorkerMapping:
     def test_escalation_selects_escalation_worker(self):
         assert "escalation" in _INTENT_WORKERS["escalation"]
 
-    def test_greeting_has_no_workers(self):
-        assert _INTENT_WORKERS["greeting"] == []
+    def test_greeting_has_workers(self):
+        # v4.2: greeting now has lightweight workers (no fallback to run_agent_turn)
+        assert len(_INTENT_WORKERS["greeting"]) > 0
+        assert "conversation_memory" in _INTENT_WORKERS["greeting"] or \
+               "speech_cleanup" in _INTENT_WORKERS["greeting"]
 
-    def test_unknown_has_no_workers(self):
-        assert _INTENT_WORKERS["unknown"] == []
+    def test_unknown_has_workers(self):
+        # v4.2: unknown now has lightweight workers
+        assert len(_INTENT_WORKERS["unknown"]) > 0
 
-    def test_worker_path_intents_excludes_conversational(self):
+    def test_worker_path_intents_includes_all_intents(self):
+        # v4.2: ALL intents use worker path; run_agent_turn not called in live voice
         conversational = {"greeting", "confirmation", "email_capture", "unknown"}
-        assert WORKER_PATH_INTENTS.isdisjoint(conversational)
+        for intent in conversational:
+            assert intent in WORKER_PATH_INTENTS, f"{intent} should be in WORKER_PATH_INTENTS"
 
 
 # ── Orchestrator runs workers ──────────────────────────────────────────────────
 
 class TestOrchestratorRunning:
-    async def test_empty_intent_returns_empty_bundle(self):
+    async def test_greeting_intent_runs_lightweight_workers(self):
+        # v4.2: greeting has workers (speech_cleanup, conversation_memory, etc.)
         orch = WorkerOrchestrator()
         session = _make_session()
         bundle = await orch.run(_intent_result("greeting"), session, _make_settings())
-        assert bundle.results == {}
-        assert bundle.workers_ran == []
+        # Workers ran (lightweight ones, not empty)
+        assert len(bundle.workers_ran) > 0
+        # response_plan worker always runs in wave 2
+        assert "response_plan" in bundle.results
 
     async def test_product_isbn_worker_is_called(self):
         orch = WorkerOrchestrator()

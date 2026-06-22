@@ -21,6 +21,11 @@ from app.pipeline.engine import RealtimePipelineEngine, get_engine, _build_specu
 from app.pipeline.router import IntentResult
 from app.pipeline.tasks import Intent
 from app.state.models import SessionState, SafeCallerContext
+from app.workers.base import WorkerBundle, WorkerResult
+
+
+def _empty_bundle() -> WorkerBundle:
+    return WorkerBundle()
 
 
 def _make_session(**kwargs) -> SessionState:
@@ -62,14 +67,16 @@ async def _run_turn_capture(engine, session, text, caller_context=None):
 
 class TestHandleTurnBasic:
     async def test_emits_text_tokens_and_turn_done(self):
+        # v4.2: ALL intents use worker→composer path (including greeting "hi")
         engine = RealtimePipelineEngine(settings=_fake_settings())
 
-        async def fake_run_agent_turn(session, text, settings, **kwargs):
+        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
             yield {"type": "text_token", "token": "Hello"}
             yield {"type": "text_token", "token": " there"}
             yield {"type": "turn_done"}
 
-        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn):
+        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", fake_stream):
             session = _make_session()
             sent = await _run_turn_capture(engine, session, "hi")
 
@@ -81,10 +88,11 @@ class TestHandleTurnBasic:
     async def test_turn_done_sends_last_true(self):
         engine = RealtimePipelineEngine(settings=_fake_settings())
 
-        async def fake_run_agent_turn(session, text, settings, **kwargs):
+        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
             yield {"type": "turn_done"}
 
-        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn):
+        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", fake_stream):
             session = _make_session()
             sent = await _run_turn_capture(engine, session, "ok")
 
@@ -93,11 +101,12 @@ class TestHandleTurnBasic:
     async def test_all_text_tokens_are_interruptible(self):
         engine = RealtimePipelineEngine(settings=_fake_settings())
 
-        async def fake_run_agent_turn(session, text, settings, **kwargs):
+        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
             yield {"type": "text_token", "token": "Hi"}
             yield {"type": "turn_done"}
 
-        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn):
+        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", fake_stream):
             session = _make_session()
             sent = await _run_turn_capture(engine, session, "hello")
 
@@ -145,41 +154,35 @@ class TestFillerSuppression:
         filler_tokens = [m.get("token") for m in sent if m.get("token") == filler_token]
         assert len(filler_tokens) == 0
 
-    async def test_agent_filler_passed_through_for_unknown_intent(self):
-        """For unknown intent (no engine filler), agent filler is forwarded."""
+    async def test_worker_path_for_unknown_intent_completes_turn(self):
+        # v4.2: unknown intent uses worker→composer path (no run_agent_turn)
         engine = RealtimePipelineEngine(settings=_fake_settings())
-        agent_filler = "Let me check that for you."
 
-        async def fake_run_agent_turn(session, text, settings, **kwargs):
-            yield {"type": "filler", "token": agent_filler}
+        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
+            yield {"type": "text_token", "token": "I can help with that."}
             yield {"type": "turn_done"}
 
-        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn):
+        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", fake_stream):
             session = _make_session()
             sent = await _run_turn_capture(engine, session, "xkcd foo bar")
 
-        filler_tokens = [m.get("token") for m in sent if m.get("token") == agent_filler]
-        assert len(filler_tokens) >= 1
+        assert any(m.get("last") is True for m in sent)
 
-    async def test_no_filler_for_greeting(self):
+    async def test_greeting_completes_turn_via_worker_path(self):
+        # v4.2: greeting uses worker→composer path, not run_agent_turn
         engine = RealtimePipelineEngine(settings=_fake_settings())
 
-        async def fake_run_agent_turn(session, text, settings, **kwargs):
+        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
             yield {"type": "text_token", "token": "Hello!"}
             yield {"type": "turn_done"}
 
-        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn):
+        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", fake_stream):
             session = _make_session()
             sent = await _run_turn_capture(engine, session, "hello")
 
-        # No filler before the text tokens
-        filler_count = sum(
-            1 for m in sent
-            if m.get("token") and "moment" in m["token"].lower() or "let me" in (m.get("token") or "").lower()
-        )
-        # This is soft — filler for greeting should be 0
         text_first = next((m for m in sent if m.get("token")), None)
-        # Greeting text should be the first token, not a filler
         if text_first:
             assert text_first["token"] == "Hello!"
 
@@ -187,14 +190,16 @@ class TestFillerSuppression:
 # ── Error handling ────────────────────────────────────────────────────────────
 
 class TestErrorHandling:
-    async def test_agent_exception_sends_error_message(self):
+    async def test_composer_exception_sends_error_message(self):
+        # v4.2: error path is through composer, not run_agent_turn
         engine = RealtimePipelineEngine(settings=_fake_settings())
 
-        async def bad_agent(session, text, settings, **kwargs):
+        async def bad_stream(sess, text, ir, wb, ctx, settings=None):
             raise RuntimeError("OpenAI error")
             yield  # make it a generator
 
-        with patch("app.pipeline.engine.run_agent_turn", bad_agent):
+        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", bad_stream):
             session = _make_session()
             sent = await _run_turn_capture(engine, session, "hi")
 
@@ -233,17 +238,19 @@ class TestErrorHandling:
 # ── Caller context forwarding ─────────────────────────────────────────────────
 
 class TestCallerContextForwarding:
-    async def test_caller_context_passed_to_run_agent_turn(self):
+    async def test_caller_context_passed_to_composer(self):
+        # v4.2: caller_context is forwarded to the composer (worker path)
         engine = RealtimePipelineEngine(settings=_fake_settings())
         received_ctx = []
 
-        async def capturing_agent(session, text, settings, **kwargs):
-            received_ctx.append(kwargs.get("caller_context"))
+        async def capturing_stream(sess, text, ir, wb, ctx, settings=None):
+            received_ctx.append(ctx)
             yield {"type": "turn_done"}
 
         ctx = SafeCallerContext(is_returning_caller=True, caller_name="Alice")
 
-        with patch("app.pipeline.engine.run_agent_turn", capturing_agent):
+        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", capturing_stream):
             session = _make_session()
             await _run_turn_capture(engine, session, "hi", caller_context=ctx)
 

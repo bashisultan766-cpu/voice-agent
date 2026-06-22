@@ -1,25 +1,26 @@
 """
 RealtimePipelineEngine — orchestrates per-turn pipeline logic.
 
-TWO PATHS per turn (decided by detected intent):
+v4.2: Single worker→composer path for ALL intents when
+VOICE_LIVE_DISABLE_OPENAI_TOOLS=True (default).
 
-FAST PATH (tool intents — isbn_search, product_search, order_lookup, etc.):
+WORKER PATH (all intents in v4.2):
   1. Deterministic intent router (regex, no LLM, microseconds)
-  2. Filler phrase sent if intent is slow (VOICE_FILLER_AFTER_MS gate)
-  3. WorkerOrchestrator runs 1-4 deterministic async workers in parallel
-     (cache-first; Shopify fallback only on miss; no LLM calls)
-  4. MainLLMComposer called exactly ONCE to write the voice response
-  5. Stream text tokens → Twilio ConversationRelay
+  2. Email state machine update
+  3. Filler phrase sent if workers are slow (VOICE_FILLER_AFTER_MS gate)
+  4. WorkerOrchestrator Wave 1: parallel domain workers
+     WorkerOrchestrator Wave 2: ResponsePlanWorker builds response_plan
+  5. MainLLMComposer: ONE text-only OpenAI call (no tools, no tool_calls)
+  6. Stream text tokens → Twilio ConversationRelay
 
-FALLBACK PATH (conversational intents — greeting, confirmation, unknown):
-  1. Deterministic intent router
-  2. Speculative prefetch (optional, warms session.prefetch_cache)
-  3. Filler phrase if needed
-  4. run_agent_turn (OpenAI with tools — backward-compatible path)
-  5. Stream text tokens → Twilio ConversationRelay
+OpenAI never receives tool schemas. session.history never stores
+role="tool" or assistant tool_calls. 400 errors on interrupt are eliminated.
 
-Only MainLLMComposer and run_agent_turn are allowed to call OpenAI.
-Workers never call LLMs.
+LEGACY FALLBACK PATH (only when VOICE_LIVE_DISABLE_OPENAI_TOOLS=False):
+  For conversational intents, falls back to run_agent_turn with tool calling.
+  Not used in production v4.2+.
+
+Workers never call OpenAI.
 """
 from __future__ import annotations
 
@@ -93,7 +94,12 @@ class RealtimePipelineEngine:
         # and accumulates multi-turn email fragments.
         _apply_email_state(session, intent_result)
 
-        use_worker_path = intent_result.intent in WORKER_PATH_INTENTS
+        # v4.2: when VOICE_LIVE_DISABLE_OPENAI_TOOLS is True (default), ALL
+        # intents use the worker→composer path. run_agent_turn is never called.
+        if settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS:
+            use_worker_path = True
+        else:
+            use_worker_path = intent_result.intent in WORKER_PATH_INTENTS
 
         try:
             if use_worker_path:

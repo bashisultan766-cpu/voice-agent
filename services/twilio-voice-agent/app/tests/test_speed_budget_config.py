@@ -106,7 +106,12 @@ class TestOpenAITimeoutWired:
         from app.state.models import SessionState
         from app.ai.openai_agent import run_agent_turn
 
-        settings = Settings(OPENAI_API_KEY="test", DEBUG=True, VOICE_OPENAI_TIMEOUT_MS=4000)
+        # VOICE_LIVE_DISABLE_OPENAI_TOOLS=False: test the legacy path directly
+        settings = Settings(
+            OPENAI_API_KEY="test", DEBUG=True,
+            VOICE_OPENAI_TIMEOUT_MS=4000,
+            VOICE_LIVE_DISABLE_OPENAI_TOOLS=False,
+        )
         session = SessionState(
             session_id="s", call_sid="CA1", from_number="+1", to_number="+2",
         )

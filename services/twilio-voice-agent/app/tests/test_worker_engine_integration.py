@@ -155,35 +155,54 @@ class TestWorkerPathForToolIntents:
 
 # ── Fallback path for conversational intents ──────────────────────────────────
 
-class TestFallbackPathForConversationalIntents:
-    async def test_greeting_uses_run_agent_turn(self):
+class TestAllIntentsUseWorkerPath:
+    # v4.2: ALL intents (including greeting, unknown) use worker→composer path.
+    # run_agent_turn is never called when VOICE_LIVE_DISABLE_OPENAI_TOOLS=True (default).
+
+    async def test_greeting_uses_worker_path_not_run_agent_turn(self):
         engine = RealtimePipelineEngine(settings=_fake_settings())
         session = _make_session()
         agent_called = []
+        composer_called = []
 
         async def fake_run_agent_turn(sess, text, settings, **kwargs):
             agent_called.append(True)
+            yield {"type": "turn_done"}
+
+        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
+            composer_called.append(True)
             yield {"type": "text_token", "token": "Hello!"}
             yield {"type": "turn_done"}
 
-        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn):
+        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn), \
+             patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", fake_stream):
             await _run_turn(engine, session, "hi")
 
-        assert agent_called, "run_agent_turn should be called for greeting"
+        assert not agent_called, "run_agent_turn must NOT be called in v4.2"
+        assert composer_called, "composer must be called for greeting"
 
-    async def test_unknown_intent_uses_run_agent_turn(self):
+    async def test_unknown_intent_uses_worker_path_not_run_agent_turn(self):
         engine = RealtimePipelineEngine(settings=_fake_settings())
         session = _make_session()
         agent_called = []
+        composer_called = []
 
         async def fake_run_agent_turn(sess, text, settings, **kwargs):
             agent_called.append(True)
             yield {"type": "turn_done"}
 
-        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn):
+        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
+            composer_called.append(True)
+            yield {"type": "turn_done"}
+
+        with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn), \
+             patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
+             patch.object(engine._composer, "stream_response", fake_stream):
             await _run_turn(engine, session, "xkcd foo bar baz")
 
-        assert agent_called
+        assert not agent_called, "run_agent_turn must NOT be called in v4.2"
+        assert composer_called, "composer must be called for unknown intent"
 
     async def test_run_agent_turn_NOT_called_for_isbn_search(self):
         """On worker path, run_agent_turn must NOT be called."""

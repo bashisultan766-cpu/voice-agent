@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     # Bearer key for the /admin/sync endpoint — keep server-side only.
     INTERNAL_ADMIN_KEY: str = ""
 
+    # ── v4.2: Live voice OpenAI tool-calling guard ────────────────────────────
+    # When true (default), ALL intents are routed through the worker→composer
+    # path. OpenAI never receives tool schemas; session.history never stores
+    # role="tool" or assistant tool_calls. Eliminates 400 errors on interrupt.
+    VOICE_LIVE_DISABLE_OPENAI_TOOLS: bool = True
+
     # ── Legacy flags — both must be false for ConversationRelay runtime ───────
     ENABLE_ELEVENLABS: bool = False
     ENABLE_DEEPGRAM: bool = False

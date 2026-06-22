@@ -89,9 +89,20 @@ async def run_agent_turn(
     caller_context: optional SafeCallerContext injected into system prompt.
     router_context: optional compact pre-processing context injected into the
         first user message only (not persisted in history).
+
+    v4.2 guard: raises RuntimeError if VOICE_LIVE_DISABLE_OPENAI_TOOLS=True.
+    All live voice turns must use the worker→composer path instead.
     """
     if settings is None:
         settings = get_settings()
+
+    # v4.2: block tool-calling in live voice mode
+    if getattr(settings, "VOICE_LIVE_DISABLE_OPENAI_TOOLS", True):
+        raise RuntimeError(
+            "run_agent_turn is disabled: VOICE_LIVE_DISABLE_OPENAI_TOOLS=true. "
+            "All intents must use the worker→composer path. "
+            "Check engine.py — this should never be called in production."
+        )
 
     client = _get_client(settings.OPENAI_API_KEY)
 

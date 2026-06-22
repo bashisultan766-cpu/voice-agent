@@ -169,10 +169,11 @@ class TestOrchestratorNewIntents:
         assert "facility_restriction" in WORKER_PATH_INTENTS
         assert _INTENT_WORKERS["facility_restriction"] == ["facility_restriction"]
 
-    def test_email_intents_are_fallback(self):
+    def test_email_intents_use_worker_path(self):
+        # v4.2: email intents now use worker path (no fallback to run_agent_turn)
         from app.workers.orchestrator import WORKER_PATH_INTENTS
         for intent in ("email_provided", "email_correction", "email_confirmation"):
-            assert intent not in WORKER_PATH_INTENTS
+            assert intent in WORKER_PATH_INTENTS, f"{intent} should be in WORKER_PATH_INTENTS"
 
     def test_refund_detail_has_workers(self):
         from app.workers.orchestrator import _INTENT_WORKERS, WORKER_PATH_INTENTS
@@ -187,9 +188,10 @@ class TestOrchestratorNewIntents:
         from app.workers.orchestrator import WORKER_PATH_INTENTS
         assert "book_title_search" in WORKER_PATH_INTENTS
 
-    def test_cancellation_is_fallback(self):
+    def test_cancellation_uses_worker_path(self):
+        # v4.2: cancellation_request now routes to the cancellation worker
         from app.workers.orchestrator import WORKER_PATH_INTENTS
-        assert "cancellation_request" not in WORKER_PATH_INTENTS
+        assert "cancellation_request" in WORKER_PATH_INTENTS
 
     def test_new_workers_in_registry(self):
         from app.workers.orchestrator import _REGISTRY
