@@ -1,10 +1,41 @@
 # Twilio ConversationRelay Voice Agent
 
-AI phone sales agent for Shopify bookstores. Uses **Twilio ConversationRelay** for managed STT/TTS — this service handles only plain-text JSON over WebSocket. No Deepgram, no ElevenLabs, no raw audio.
+AI phone sales agent for Shopify bookstores, specialising in books for incarcerated individuals (SureShot Books). Uses **Twilio ConversationRelay** for managed STT/TTS — this service handles only plain-text JSON over WebSocket. No Deepgram, no ElevenLabs, no raw audio.
 
 ## Architecture
 
-### v4.0 — Worker-First Pipeline (current)
+### v4.1.1 — Global Payment Safety Guard (current)
+
+Closes the final P0 vulnerability: the LLM fallback tool path (`send_payment_link_email_tool`) accepted raw email arguments without verifying `session.confirmed_email`.
+
+**New module: `app/payment/safety.py` — `PaymentSafetyGuard`**
+
+- `get_confirmed_email(session)` — returns `confirmed_email` or `None`; never `pending_email`
+- `require_confirmed_email(session)` — allowed only when `confirmed_email` is set
+- `require_confirmed_cart(session)` — items exist, qty ≥ 1, variant_id set
+- `require_payment_send_ready(session)` — full gate: confirmed_email + checkout_url
+- `validate_tool_email_arg(arg, session)` — validates LLM email arg; blocks rejected candidates
+
+**Changes:**
+- `send_payment_link_email_tool` — uses `validate_tool_email_arg`; sends to `confirmed_email` only
+- `create_checkout_link` — gates on confirmed cart; ignores unconfirmed LLM email args; blocks rejected candidate emails
+- `CheckoutWorker` — uses `confirmed_email` instead of `caller_email`
+- `_apply_email_state` (engine.py) — stores rejected emails in `session.rejected_email_candidates`
+- 23 new tests → **660/660 passing**
+
+### v4.1 — Production Bug Fixes
+
+Addresses 11 live-call bugs:
+
+1. **Shopify GraphQL fix** — removed invalid `metafields(identifiers:...)` (Storefront API only); added `GET_PRODUCT_METAFIELDS` with correct Admin API connection syntax.
+2. **Email capture (P0)** — deterministic spoken→typed normalizer (`email_capture.py`); confirmation state machine (`pending_email` → confirmed → `confirmed_email`); `PaymentEmailWorker` now uses `confirmed_email` only — refuses to send if unconfirmed.
+3. **Router v4.1** — 11 new intents: `email_provided`, `email_correction`, `email_confirmation`, `multi_book_order`, `book_title_search`, `facility_approval`, `facility_restriction`, `refund_detail`, `cancellation_request`, `address_update`, `quantity_update`, `shipping_price`.
+4. **Facility/inmate workers** — `FacilityApprovalWorker`, `FacilityRestrictionWorker`, `FacilityPolicyNotesWorker`, `OrderFacilityReviewWorker` — data from Shopify order notes/tags/attributes; never guesses approval; escalates if unknown.
+5. **Enhanced RefundWorker** — shipping refund status, per-item detail, safe reason/note, masked email in result.
+6. **System prompt v4.1** — agent name **Eric**, SureShot Books, facility/inmate context, never mention AI, never say "Processing Fee", confirmed email rules.
+7. **Privacy logging** — `_mask_phone()` in all `conversation_relay.py` log lines; `_mask_email()` in `PaymentEmailWorker` and `RefundWorker`.
+
+### v4.0 — Worker-First Pipeline
 
 ```
 Twilio Phone Call
@@ -107,6 +138,13 @@ Workers are deterministic async Python — they hit Redis caches, Shopify, or re
 | 22 | **v4.0** ProductCache first-check in `search_products` (title/ISBN/handle) | `app/tools/shopify_tools.py` |
 | 23 | **v4.0** `VOICE_SHOPIFY_TIMEOUT_MS` takes precedence over legacy timeout | `app/shopify/client.py` |
 | 24 | **v4.0** Full latency instrumentation — shopify_api_ms / resend_api_ms from workers | `app/pipeline/engine.py` |
+| 25 | **v4.1** Email normalizer — spoken→typed, confidence score, confirmation state machine | `app/pipeline/email_capture.py` |
+| 26 | **v4.1** PaymentEmailWorker uses confirmed_email only — refuses to send if unconfirmed | `app/workers/payment_email_worker.py` |
+| 27 | **v4.1** Facility/inmate workers — approval, restriction, policy notes, order review | `app/workers/facility_*_worker.py` |
+| 28 | **v4.1** Enhanced RefundWorker — shipping refund, item detail, safe note, masked email | `app/workers/refund_worker.py` |
+| 29 | **v4.1** System prompt — Eric/SureShot Books/facility context, no AI disclosure | `app/ai/system_prompt.py` |
+| 30 | **v4.1** Router v4.1 — 11 new intents, bidirectional facility patterns, shipping_price | `app/pipeline/router.py` |
+| 31 | **v4.1** Privacy logging — phone masked to last-4, email masked in all log lines | `app/ws/conversation_relay.py` |
 
 ## Environment Variables
 
@@ -421,7 +459,7 @@ cd services/twilio-voice-agent
 .venv/bin/python -m pytest app/tests/ -v
 ```
 
-526 tests, all mocked — no live API calls required. Coverage includes:
+637 tests, all mocked — no live API calls required. Coverage includes:
 
 - Twilio inbound webhook and TwiML generation
 - WebSocket message handling (setup, prompt, interrupt, dtmf, error)
@@ -454,3 +492,26 @@ cd services/twilio-voice-agent
 - **v4.0** Dual-path engine: tool intents use workers→composer; conversational intents use run_agent_turn fallback
 - **v4.0** `VOICE_SHOPIFY_TIMEOUT_MS` precedence over `SHOPIFY_TIMEOUT_SECS` in ShopifyGraphQLClient
 - **v4.0** ProductCache first-check in search_products: ISBN/title/handle hit skips Shopify; cache error falls through gracefully
+- **v4.1** Email normalizer: spoken→typed (digit words, domain aliases, spaced letters), confidence scoring, confirmation state machine
+- **v4.1** PaymentEmailWorker security: refuses send without confirmed_email; unconfirmed state prompts caller; duplicate guard uses confirmed_email
+- **v4.1** Engine email state machine: email_provided sets pending, email_correction clears pending, email_confirmation promotes to confirmed
+- **v4.1** FacilityApprovalWorker: tag/note/attribute parsing, approved/rejected/unknown status, session facility context
+- **v4.1** FacilityRestrictionWorker: hardcover/used/publisher restriction detection, default guidance when no data
+- **v4.1** FacilityPolicyNotesWorker: order note pull, default SureShot policy as fallback
+- **v4.1** OrderFacilityReviewWorker: returned-by-facility tag detection, verification gate, facility issues in data
+- **v4.1** Enhanced RefundWorker: shipping refund field, item detail, safe note (sensitive terms redacted), masked email
+- **v4.1** Router v4.1: 11 new intents, facility bidirectional patterns, shipping_price plural fix
+- **v4.1** Privacy logging: _mask_phone last-4 format, _mask_email, no full PII in any log line
+- **v4.1** System prompt: Eric/SureShot Books/facility context, agent_name parameter override, no AI disclosure rule
+
+## Roadmap
+
+### ElevenLabs Voice (future)
+
+Twilio ConversationRelay currently handles TTS using Twilio's built-in voices. A future upgrade path:
+
+1. Replace Twilio's TTS with **ElevenLabs** for higher-quality voices by routing audio through a custom TTS endpoint.
+2. Twilio ConversationRelay supports a `ttsProvider` parameter — setting `ttsProvider=custom` with a `ttsEndpoint` pointing to an ElevenLabs proxy would let the existing WebSocket pipeline remain unchanged.
+3. No changes to the agent logic, workers, or composer are needed — TTS is entirely at the Twilio edge.
+
+**Important:** The existing Twilio ConversationRelay WebSocket integration must not be changed. ElevenLabs would be added as a TTS layer only, not replacing the ConversationRelay transport.

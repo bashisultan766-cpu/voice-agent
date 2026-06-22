@@ -234,9 +234,14 @@ class RealtimePipelineEngine:
         """
         Original path: optional speculative prefetch → run_agent_turn.
 
-        Used for greeting, confirmation, email_capture, unknown intents.
+        Used for greeting, confirmation, email intents, unknown.
         Preserved for backward compatibility and conversational flexibility.
         """
+        # ── Email state machine (v4.1) ─────────────────────────────────────────
+        # Update session email fields BEFORE passing to run_agent_turn so the
+        # LLM sees the correct state in its caller context.
+        _apply_email_state(session, intent_result)
+
         # ── Speculative prefetch ───────────────────────────────────────────────
         prefetch_task: Optional[asyncio.Task] = None
         if intent_result.suggested_tools and intent_result.confidence >= 0.8:
@@ -382,6 +387,62 @@ class RealtimePipelineEngine:
 
 
 # ── Helper functions ───────────────────────────────────────────────────────────
+
+def _apply_email_state(session: SessionState, intent_result: IntentResult) -> None:
+    """
+    Update session email state machine fields based on router intent.
+
+    email_provided   → set pending_email (requires confirmation)
+    email_correction → clear pending_email (caller rejected)
+    email_confirmation → promote pending → confirmed (if pending exists)
+
+    Security: confirmed_email is only set here from pending. Never from raw
+    entities without the confirmation step.
+    """
+    intent = intent_result.intent
+    e = intent_result.entities
+
+    if intent == "email_provided":
+        raw_email = e.get("email", "")
+        raw_text = e.get("email_raw", "")
+        if not raw_email and raw_text:
+            # Spoken form — normalizer already ran in router
+            pass
+        if raw_email:
+            try:
+                from .email_capture import email_confidence
+                confidence = email_confidence(raw_email, raw_text or raw_email)
+            except Exception:
+                confidence = "medium"
+            session.pending_email = raw_email
+            session.email_confidence = confidence
+            logger.debug(
+                "email_provided: pending set conf=%s sid=%s",
+                confidence, session.call_sid[:6],
+            )
+
+    elif intent == "email_correction":
+        if session.pending_email:
+            rejected = session.pending_email
+            session.pending_email = ""
+            session.email_confidence = "low"
+            session.email_rejected_count = getattr(session, "email_rejected_count", 0) + 1
+            # Store rejected candidate so PaymentSafetyGuard can block reuse
+            candidates: list = getattr(session, "rejected_email_candidates", None)
+            if candidates is None:
+                session.rejected_email_candidates = []
+                candidates = session.rejected_email_candidates
+            if rejected.lower().strip() not in [c.lower().strip() for c in candidates]:
+                candidates.append(rejected)
+            logger.debug("email_correction: pending cleared sid=%s", session.call_sid[:6])
+
+    elif intent == "email_confirmation":
+        if session.pending_email:
+            session.confirmed_email = session.pending_email
+            session.pending_email = ""
+            session.email_confidence = "high"
+            logger.debug("email_confirmation: confirmed sid=%s", session.call_sid[:6])
+
 
 async def _prefetch_customer(session: SessionState, cache) -> None:
     try:

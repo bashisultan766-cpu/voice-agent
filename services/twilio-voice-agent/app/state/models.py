@@ -85,3 +85,25 @@ class SessionState:
     # Keyed by prefetch_key(tool_name, args) — populated by RealtimePipelineEngine.
     # registry.dispatch checks this before making live Shopify calls.
     prefetch_cache: dict[str, str] = field(default_factory=dict)
+
+    # ── Email confirmation state machine ──────────────────────────────────────
+    # pending_email:            normalized candidate awaiting "yes" from caller
+    # confirmed_email:          caller confirmed; safe for payment sends
+    # email_confidence:         high | medium | low
+    # email_rejected_count:     how many times caller said "no" this call
+    # rejected_email_candidates: emails the caller explicitly rejected;
+    #                            PaymentSafetyGuard blocks these permanently
+    pending_email: str = ""
+    confirmed_email: str = ""
+    email_confidence: str = "low"
+    email_rejected_count: int = 0
+    rejected_email_candidates: list[str] = field(default_factory=list)
+
+    # ── Multi-book cart items ──────────────────────────────────────────────────
+    # Each item: {title, isbn, variant_id, quantity, price, available, source}
+    # Replaces the old flat cart_items list (backward-compatible: same field name)
+
+    # ── Facility context ──────────────────────────────────────────────────────
+    last_facility_name: str = ""    # Facility/jail name spoken this call
+    last_facility_city: str = ""
+    last_facility_state: str = ""

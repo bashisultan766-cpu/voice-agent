@@ -515,15 +515,18 @@ class TestPaymentEmailWorker:
         from app.workers.payment_email_worker import PaymentEmailWorker
         worker = PaymentEmailWorker()
         session = _make_session()
+        # v4.1: no confirmed_email → no_confirmed_email error
         result = await worker.run(session, {}, _make_settings())
         assert result.success is False
-        assert result.error_code == "no_email"
+        assert result.error_code in ("no_email", "no_confirmed_email")
 
     async def test_no_checkout_url_returns_failure(self):
         from app.workers.payment_email_worker import PaymentEmailWorker
         worker = PaymentEmailWorker()
         session = _make_session()
-        result = await worker.run(session, {"email": "alice@example.com"}, _make_settings())
+        # v4.1: must use confirmed_email; entities email is NOT used directly
+        session.confirmed_email = "alice@example.com"
+        result = await worker.run(session, {}, _make_settings())
         assert result.success is False
         assert result.error_code == "no_checkout_url"
 
@@ -531,9 +534,10 @@ class TestPaymentEmailWorker:
         from app.workers.payment_email_worker import PaymentEmailWorker
         worker = PaymentEmailWorker()
         session = _make_session()
+        session.confirmed_email = "alice@example.com"
         session.pending_checkout_url = "https://example.com/pay/123"
         session.payment_email_sent_to = ["alice@example.com"]
-        result = await worker.run(session, {"email": "alice@example.com"}, _make_settings())
+        result = await worker.run(session, {}, _make_settings())
         assert result.success is True
         assert result.data.get("duplicate") is True
 

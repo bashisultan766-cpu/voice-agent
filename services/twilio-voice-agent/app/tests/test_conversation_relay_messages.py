@@ -51,7 +51,9 @@ def test_build_system_message_role():
     from app.ai.system_prompt import build_system_message
     msg = build_system_message()
     assert msg["role"] == "system"
-    assert "bookstore" in msg["content"].lower()
+    # v4.1: prompt says "SureShot Books" and mentions books/incarcerated context
+    assert "books" in msg["content"].lower()
+    assert "eric" in msg["content"].lower()
 
 
 def test_build_system_message_includes_agent_name():

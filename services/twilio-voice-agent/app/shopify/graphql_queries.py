@@ -130,15 +130,24 @@ query SearchVariantsByBarcode($barcode: String!, $first: Int!) {
           handle
           onlineStoreUrl
           tags
-          metafields(identifiers: [
-            {namespace: "book", key: "author"},
-            {namespace: "book", key: "isbn"},
-            {namespace: "custom", key: "author"}
-          ]) {
-            key
-            namespace
-            value
-          }
+        }
+      }
+    }
+  }
+}
+"""
+
+GET_PRODUCT_METAFIELDS = """
+query GetProductMetafields($id: ID!, $first: Int!, $namespace: String!) {
+  product(id: $id) {
+    id
+    metafields(first: $first, namespace: $namespace) {
+      edges {
+        node {
+          namespace
+          key
+          value
+          type
         }
       }
     }
@@ -154,9 +163,15 @@ query GetOrderWithRefunds($id: ID!) {
     displayFinancialStatus
     displayFulfillmentStatus
     cancelledAt
+    note
+    tags
+    totalShippingPriceSet {
+      shopMoney { amount currencyCode }
+    }
     refunds {
       id
       createdAt
+      note
       totalRefundedSet {
         shopMoney { amount currencyCode }
       }
@@ -164,12 +179,20 @@ query GetOrderWithRefunds($id: ID!) {
         edges {
           node {
             quantity
-            lineItem { title }
+            subtotalSet {
+              shopMoney { amount currencyCode }
+            }
+            lineItem {
+              title
+              originalUnitPriceSet {
+                shopMoney { amount currencyCode }
+              }
+            }
           }
         }
       }
-      transactions(first: 5) {
-        gateway
+      orderAdjustments(first: 5) {
+        kind
         amountSet { shopMoney { amount currencyCode } }
       }
     }

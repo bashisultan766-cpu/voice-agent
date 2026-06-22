@@ -51,6 +51,14 @@ from ..pipeline.engine import get_engine
 logger = logging.getLogger(__name__)
 
 
+def _mask_phone(number: str) -> str:
+    """Return last-4 masked phone: ***7890. Safe for all log lines."""
+    digits = "".join(c for c in (number or "") if c.isdigit())
+    if len(digits) >= 4:
+        return f"***{digits[-4:]}"
+    return "***"
+
+
 async def await_caller_profile_ready(
     task: Optional[asyncio.Task],
     timeout_secs: float = 0.75,
@@ -176,8 +184,7 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
         except Exception:
             logger.warning(
-                "Failed to load caller profile for %s",
-                from_number[:4] + "***" if len(from_number) > 4 else "***",
+                "Failed to load caller profile for %s", _mask_phone(from_number)
             )
             session.caller_profile_loaded = True
 
@@ -247,8 +254,8 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                     logger.info(
                         "ConversationRelay setup | sid=%s from=%s to=%s session=%s",
                         session.call_sid,
-                        session.from_number,
-                        session.to_number,
+                        _mask_phone(session.from_number),
+                        _mask_phone(session.to_number),
                         session.session_id,
                     )
                     # Store the task handle so _run_turn can await it on turn 1.

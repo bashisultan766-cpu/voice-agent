@@ -1,12 +1,17 @@
 """
 PaymentEmailWorker — sends a payment link via Resend.
 
-Prevents duplicate sends within the same call.
-Does not call OpenAI. Calls tools.email_sender directly.
+Security rules (v4.1):
+- MUST use session.confirmed_email only — never pending_email or session.caller_email.
+- If confirmed_email is empty, refuses to send and prompts caller to confirm email.
+- Prevents duplicate sends within the same call.
+- Does NOT call OpenAI. Calls tools.email_sender directly.
+- Never logs full email addresses.
 """
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -16,6 +21,16 @@ if TYPE_CHECKING:
     from ..state.models import SessionState
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_email(email: str) -> str:
+    """Return masked email: a***@example.com. Safe for logs."""
+    if not email or "@" not in email:
+        return "***@***"
+    local, domain = email.split("@", 1)
+    if len(local) <= 1:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
 
 
 class PaymentEmailWorker:
@@ -28,16 +43,37 @@ class PaymentEmailWorker:
         settings,
     ) -> WorkerResult:
         t0 = time.monotonic()
-        email = entities.get("email") or session.caller_email
-        if not email:
+
+        # v4.1: MUST use confirmed_email only.
+        # Never fall back to caller_email or a pending (unconfirmed) email.
+        confirmed_email = getattr(session, "confirmed_email", "")
+        if not confirmed_email:
+            pending = getattr(session, "pending_email", "")
+            if pending:
+                return WorkerResult(
+                    worker_name=self.name,
+                    success=False,
+                    error_code="email_unconfirmed",
+                    safe_summary=(
+                        "I have an email address on file but it hasn't been confirmed yet. "
+                        "Is that email correct? Please say yes or no."
+                    ),
+                    latency_ms=(time.monotonic() - t0) * 1000,
+                    source="none",
+                )
             return WorkerResult(
                 worker_name=self.name,
                 success=False,
-                error_code="no_email",
-                safe_summary="I need an email address to send the payment link.",
+                error_code="no_confirmed_email",
+                safe_summary=(
+                    "I need a confirmed email address to send the payment link. "
+                    "Could you give me your email address?"
+                ),
                 latency_ms=(time.monotonic() - t0) * 1000,
                 source="none",
             )
+
+        email = confirmed_email
 
         if not session.pending_checkout_url:
             return WorkerResult(
@@ -55,7 +91,7 @@ class PaymentEmailWorker:
                 worker_name=self.name,
                 success=True,
                 data={"duplicate": True},
-                safe_summary=f"The payment link was already sent to that email this call.",
+                safe_summary="The payment link was already sent to that email this call.",
                 latency_ms=(time.monotonic() - t0) * 1000,
                 source="local",
             )
@@ -72,10 +108,16 @@ class PaymentEmailWorker:
 
             if result.get("success") and email not in session.payment_email_sent_to:
                 session.payment_email_sent_to.append(email)
+                # Update caller_email only if we don't already have one
                 if not session.caller_email:
                     session.caller_email = email
 
             if result.get("success"):
+                logger.info(
+                    "PaymentEmailWorker sent to %s sid=%s",
+                    _mask_email(email),
+                    session.call_sid[:6],
+                )
                 return WorkerResult(
                     worker_name=self.name,
                     success=True,

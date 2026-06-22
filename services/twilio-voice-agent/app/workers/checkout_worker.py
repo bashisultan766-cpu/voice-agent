@@ -60,7 +60,8 @@ class CheckoutWorker:
 
         try:
             from ..tools.shopify_tools import create_checkout_link
-            email = session.caller_email or None
+            # Use confirmed_email only — never caller_email or pending_email
+            email = getattr(session, "confirmed_email", "") or None
             result_json = await create_checkout_link(
                 items=items,
                 email=email,

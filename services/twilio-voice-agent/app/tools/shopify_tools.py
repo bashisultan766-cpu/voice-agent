@@ -474,7 +474,13 @@ async def create_checkout_link(
 ) -> str:
     """
     Create a Shopify draft order. Prevents duplicate draft orders within the same call.
+
+    Safety: when session is present, requires confirmed cart (items with quantity ≥ 1 and
+    variant_id). Email is sourced from session.confirmed_email only; raw LLM email args are
+    ignored (not blocked — checkout can still proceed without email).
     """
+    from ..payment.safety import require_confirmed_cart, validate_tool_email_arg
+
     client = get_shopify_client()
     if not client.configured:
         return json.dumps({"error": "Shopify not configured"})
@@ -483,10 +489,14 @@ async def create_checkout_link(
         return json.dumps({"error": "No items provided for checkout."})
 
     if session:
-        if not email and session.caller_email:
-            email = session.caller_email
+        # Gate on confirmed cart when session is present
+        cart_result = require_confirmed_cart(session)
+        if not cart_result.allowed:
+            return json.dumps({"success": False, "error": cart_result.safe_message})
+
         if not customer_name and session.caller_name:
             customer_name = session.caller_name
+
         if session.pending_checkout_url:
             return json.dumps({
                 "success": True,
@@ -495,6 +505,17 @@ async def create_checkout_link(
                 "duplicate": True,
                 "message": "You already have a payment link from this call. Shall I email it to you?",
             })
+
+        # Resolve email: prefer confirmed_email; if LLM passed one, validate it
+        confirmed_email = getattr(session, "confirmed_email", "") or ""
+        if email and email.strip():
+            arg_result = validate_tool_email_arg(email, session)
+            if not arg_result.allowed and arg_result.reason == "rejected_candidate":
+                return json.dumps({"success": False, "error": arg_result.safe_message})
+            # Non-rejected mismatch: ignore LLM arg, use confirmed_email (don't block checkout)
+            email = confirmed_email or None
+        elif confirmed_email:
+            email = confirmed_email
 
     try:
         line_items = [
@@ -541,34 +562,52 @@ async def send_payment_link_email_tool(
     email: str,
     session: Optional["SessionState"] = None,
 ) -> str:
-    """Email the pending checkout link to the caller. Prevents duplicate sends per call."""
-    if not email:
-        return json.dumps({"success": False, "error": "No email address provided."})
+    """
+    Email the pending checkout link to the caller.
 
-    if not session or not session.pending_checkout_url:
+    Safety: enforces confirmed_email via PaymentSafetyGuard. Raw LLM email arg is
+    validated against session.confirmed_email; rejected candidates are hard-blocked.
+    Never sends to pending_email or unconfirmed addresses.
+    """
+    from ..payment.safety import validate_tool_email_arg, require_payment_send_ready
+
+    if not session:
+        # No session — cannot enforce confirmed_email; refuse send
         return json.dumps({
             "success": False,
-            "error": "No payment link available. Please create a checkout link first.",
+            "error": "No session available. Cannot verify email address.",
         })
 
-    if email in session.payment_email_sent_to:
+    # Full payment send gate: confirmed_email + checkout_url
+    ready_result = require_payment_send_ready(session)
+    if not ready_result.allowed:
+        return json.dumps({"success": False, "error": ready_result.safe_message})
+
+    # Validate LLM-supplied email arg against confirmed_email
+    arg_result = validate_tool_email_arg(email or None, session)
+    if not arg_result.allowed:
+        return json.dumps({"success": False, "error": arg_result.safe_message})
+
+    # Use confirmed_email from session — never the raw LLM arg
+    confirmed_email = session.confirmed_email
+
+    if confirmed_email in session.payment_email_sent_to:
         return json.dumps({
             "success": True,
             "duplicate": True,
-            "message": f"I already sent the payment link to {email} during this call.",
+            "message": "I already sent the payment link to your email during this call.",
         })
 
     result = await send_payment_link_email(
-        email=email,
+        email=confirmed_email,
         checkout_url=session.pending_checkout_url,
         product_summary=session.last_product_title or "your selected items",
         caller_name=session.caller_name or None,
         order_or_draft_id=session.pending_draft_order_id or None,
     )
 
-    if result.get("success") and session:
-        session.payment_email_sent_to.append(email)
-        session.caller_email = email
+    if result.get("success"):
+        session.payment_email_sent_to.append(confirmed_email)
 
     return json.dumps(result)
 

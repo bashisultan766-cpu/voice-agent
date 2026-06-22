@@ -8,6 +8,14 @@ Rules:
 - Returns a WorkerBundle; partial results are returned if any worker fails/times out.
 - Never calls OpenAI.
 - Never crashes the call — all failures are caught per-worker.
+
+v4.1 additions:
+- facility_approval, facility_restriction intents → facility workers
+- email_provided, email_correction, email_confirmation → conversational fallback
+- multi_book_order, book_title_search → product workers
+- refund_detail → refund worker (same as refund_status but intent is more specific)
+- cancellation_request, address_update, quantity_update → fallback (LLM handles)
+- shipping_price → store_policy worker
 """
 from __future__ import annotations
 
@@ -30,6 +38,10 @@ from .checkout_worker import CheckoutWorker
 from .payment_email_worker import PaymentEmailWorker
 from .escalation_worker import EscalationWorker
 from .store_policy_worker import StorePolicyWorker
+from .facility_approval_worker import FacilityApprovalWorker
+from .facility_restriction_worker import FacilityRestrictionWorker
+from .facility_policy_notes_worker import FacilityPolicyNotesWorker
+from .order_facility_review_worker import OrderFacilityReviewWorker
 
 if TYPE_CHECKING:
     from ..pipeline.router import IntentResult
@@ -40,21 +52,48 @@ logger = logging.getLogger(__name__)
 # Intent → list of worker names to run concurrently.
 # Order within a list has no effect on concurrency — all run in parallel.
 _INTENT_WORKERS: dict[str, list[str]] = {
-    "isbn_search":       ["product_isbn"],
-    "product_search":    ["product_search"],
-    "author_search":     ["product_search"],
-    "price_question":    ["product_search", "price_inventory"],
-    "order_lookup":      ["caller_identity", "order_lookup", "tracking"],
-    "refund_status":     ["caller_identity", "order_lookup", "refund"],
-    "checkout_request":  ["product_search", "price_inventory", "checkout"],
-    "send_payment_link": ["payment_email"],
-    "shipping_question": ["store_policy", "shipping"],
-    "escalation":        ["escalation"],
-    # Conversational intents handled by the run_agent_turn fallback.
-    "greeting":          [],
-    "confirmation":      [],
-    "email_capture":     [],
-    "unknown":           [],
+    # Product / ISBN
+    "isbn_search":          ["product_isbn"],
+    "product_search":       ["product_search"],
+    "author_search":        ["product_search"],
+    "book_title_search":    ["product_search"],
+    "price_question":       ["product_search", "price_inventory"],
+    "multi_book_order":     ["product_search", "price_inventory"],
+
+    # Orders
+    "order_lookup":         ["caller_identity", "order_lookup", "tracking"],
+
+    # Refunds
+    "refund_status":        ["caller_identity", "order_lookup", "refund"],
+    "refund_detail":        ["caller_identity", "order_lookup", "refund"],
+
+    # Checkout / payment
+    "checkout_request":     ["product_search", "price_inventory", "checkout"],
+    "send_payment_link":    ["payment_email"],
+
+    # Shipping
+    "shipping_question":    ["store_policy", "shipping"],
+    "shipping_price":       ["store_policy"],
+
+    # Facility / inmate
+    "facility_approval":    ["facility_approval"],
+    "facility_restriction": ["facility_restriction"],
+
+    # Escalation
+    "escalation":           ["escalation"],
+    "human_escalation":     ["escalation"],
+
+    # Conversational intents — handled by run_agent_turn fallback.
+    "greeting":             [],
+    "confirmation":         [],
+    "email_capture":        [],
+    "email_provided":       [],
+    "email_correction":     [],
+    "email_confirmation":   [],
+    "cancellation_request": [],
+    "address_update":       [],
+    "quantity_update":      [],
+    "unknown":              [],
 }
 
 # Intents that should take the worker path (non-empty worker lists above).
@@ -64,19 +103,23 @@ WORKER_PATH_INTENTS: frozenset[str] = frozenset(
 
 # Registry maps worker name → worker instance (instantiated once).
 _REGISTRY: dict[str, object] = {
-    "caller_identity":   CallerIdentityWorker(),
-    "customer_profile":  CustomerProfileWorker(),
-    "product_isbn":      ProductISBNWorker(),
-    "product_search":    ProductSearchWorker(),
-    "price_inventory":   PriceInventoryWorker(),
-    "order_lookup":      OrderLookupWorker(),
-    "tracking":          TrackingWorker(),
-    "refund":            RefundWorker(),
-    "shipping":          ShippingWorker(),
-    "checkout":          CheckoutWorker(),
-    "payment_email":     PaymentEmailWorker(),
-    "escalation":        EscalationWorker(),
-    "store_policy":      StorePolicyWorker(),
+    "caller_identity":          CallerIdentityWorker(),
+    "customer_profile":         CustomerProfileWorker(),
+    "product_isbn":             ProductISBNWorker(),
+    "product_search":           ProductSearchWorker(),
+    "price_inventory":          PriceInventoryWorker(),
+    "order_lookup":             OrderLookupWorker(),
+    "tracking":                 TrackingWorker(),
+    "refund":                   RefundWorker(),
+    "shipping":                 ShippingWorker(),
+    "checkout":                 CheckoutWorker(),
+    "payment_email":            PaymentEmailWorker(),
+    "escalation":               EscalationWorker(),
+    "store_policy":             StorePolicyWorker(),
+    "facility_approval":        FacilityApprovalWorker(),
+    "facility_restriction":     FacilityRestrictionWorker(),
+    "facility_policy_notes":    FacilityPolicyNotesWorker(),
+    "order_facility_review":    OrderFacilityReviewWorker(),
 }
 
 
@@ -129,7 +172,6 @@ class WorkerOrchestrator:
                 elif result.source == "resend":
                     bundle.resend_api_ms = max(bundle.resend_api_ms, result.latency_ms)
             else:
-                # Exception or timeout already handled inside _run_one
                 bundle.results[name] = WorkerResult(
                     worker_name=name,
                     success=False,
