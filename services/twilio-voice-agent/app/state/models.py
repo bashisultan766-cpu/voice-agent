@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from ..dialogue.states import DialogueState
+
 
 @dataclass
 class SafeCallerContext:
@@ -131,6 +133,13 @@ class SessionState:
     isbn_buffer: str = ""           # digits collected so far this ISBN
     isbn_buffer_turn: int = -1      # turn when buffer was last updated
     isbn_history: list[str] = field(default_factory=list)  # ISBNs given this call
+    isbn_not_found: list[str] = field(default_factory=list)  # ISBNs with no match
+
+    # ── v4.3 Dialogue intelligence ────────────────────────────────────────────
+    dialogue: DialogueState = field(default_factory=DialogueState)
 
     # ── Response plan (set by ResponsePlanWorker, read by composer) ───────────
     response_plan: dict = field(default_factory=dict)
+
+    # ── v4.3 last dialogue decision (transient per turn) ────────────────────────
+    last_dialogue_decision: Any = None

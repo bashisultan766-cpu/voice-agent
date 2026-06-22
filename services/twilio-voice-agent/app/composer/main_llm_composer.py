@@ -29,6 +29,8 @@ from openai import AsyncOpenAI
 from ..config import get_settings
 from ..state.models import SessionState
 from ..ai.system_prompt import build_system_message
+from ..cart.session import get_ledger
+from ..dialogue.manager import DialogueManager
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext
@@ -41,14 +43,18 @@ _MAX_HISTORY = 20
 _COMPOSER_SYSTEM_SUFFIX = """
 IMPORTANT — COMPOSER RULES (override everything else):
 - Worker data below is the ONLY source of facts for this response.
+- Use the Response Plan as the source of truth. If the plan asks a clarification question, ask that one question only.
+- Do not search, list random products, or invent alternatives when the plan says to clarify.
+- Do not answer a different topic than the plan specifies.
 - If a worker result is marked "requires verification", do NOT reveal details.
 - Never invent prices, availability, order status, refund amounts, or shipping times.
 - If workers returned no data or failed, apologise briefly and offer alternatives.
 - Keep the response under the word limit. This is a phone call.
-- Do not mention "workers", "tools", "cache", "backend", or any internal system names.
+- Do not mention "workers", "tools", "cache", "backend", "JSON", or any internal system names.
 - Speak naturally, as if you personally looked it up.
 - NEVER call any tools. You do not have tool access in this mode.
-- If a Response Plan is provided, follow it exactly for this turn.
+- If a Response Plan is provided, follow it exactly for this turn — use the "say" text as your guide.
+- When the customer seems frustrated, apologise and guide them one step at a time.
 """
 
 
@@ -87,6 +93,44 @@ def _build_user_message(
             parts.append(f"[Search phrase: {e['product_phrase'][:60]}]")
         if e.get("quantity"):
             parts.append(f"[Quantity: {e['quantity']}]")
+
+    # v4.3: Dialogue + memory context
+    state = DialogueManager.get_state(session)
+    if state.active_flow and state.active_flow != "idle":
+        parts.append(f"[Active flow: {state.active_flow}]")
+    if state.expected_next:
+        parts.append(f"[Expected next: {state.expected_next}]")
+
+    ledger = get_ledger(session)
+    if ledger.confirmed_count():
+        parts.append(f"[Cart: {ledger.confirmed_count()} confirmed book(s)]")
+    isbn_n = len(getattr(session, "isbn_history", []) or [])
+    if isbn_n:
+        parts.append(f"[ISBNs given this call: {isbn_n}]")
+
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+    if pfs != "idle":
+        parts.append(f"[Payment stage: {pfs}]")
+    if getattr(session, "pending_email", ""):
+        try:
+            from ..caller.repository import mask_email
+            parts.append(f"[Pending email: {mask_email(session.pending_email)}]")
+        except Exception:
+            parts.append("[Pending email: on file]")
+    if getattr(session, "confirmed_email", ""):
+        try:
+            from ..caller.repository import mask_email
+            parts.append(f"[Confirmed email: {mask_email(session.confirmed_email)}]")
+        except Exception:
+            parts.append("[Confirmed email: on file]")
+
+    if state.last_product_candidate.get("title"):
+        parts.append(f"[Last book discussed: {state.last_product_candidate['title'][:60]}]")
+    if session.last_order_number:
+        parts.append(f"[Last order: {session.last_order_number}]")
+
+    if state.customer_mood == "frustrated":
+        parts.append("[Customer mood: frustrated — be patient and guide step by step]")
 
     # v4.2: Response plan from ResponsePlanWorker
     plan = getattr(session, "response_plan", {}) or {}

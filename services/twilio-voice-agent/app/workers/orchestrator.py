@@ -51,6 +51,10 @@ from .address_update_worker import AddressUpdateWorker
 from .cancellation_worker import CancellationWorker
 from .payment_safety_worker import PaymentSafetyWorker
 from .response_plan_worker import ResponsePlanWorker
+from .payment_flow_worker import PaymentFlowWorker
+from .cart_memory_worker import CartMemoryWorker
+from .spell_email_worker import SpellEmailWorker
+from .dialogue_worker import DialogueWorker
 
 if TYPE_CHECKING:
     from ..pipeline.router import IntentResult
@@ -68,6 +72,20 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "price_question":       ["product_search", "price_inventory"],
     "multi_book_order":     ["product_search", "price_inventory"],
 
+    # ── v4.3 dialogue / cart / payment ────────────────────────────────────────
+    "vague_book_request":       ["conversation_memory"],
+    "isbn_collection_start":    ["conversation_memory"],
+    "title_collection_start":   ["conversation_memory"],
+    "another_book":             ["conversation_memory"],
+    "add_to_cart":              ["dialogue"],
+    "spell_email_request":      ["spell_email"],
+    "isbn_count_question":      ["cart_memory"],
+    "cart_count_question":      ["cart_memory"],
+    "titles_question":          ["cart_memory"],
+    "not_found_question":       ["cart_memory"],
+    "cart_review_question":     ["cart_memory"],
+    "payment_execute":          ["payment_flow"],
+
     # ── Orders ─────────────────────────────────────────────────────────────────
     "order_lookup":         ["caller_identity", "order_lookup", "tracking"],
 
@@ -77,7 +95,7 @@ _INTENT_WORKERS: dict[str, list[str]] = {
 
     # ── Checkout / payment ─────────────────────────────────────────────────────
     "checkout_request":     ["product_search", "price_inventory", "checkout"],
-    "send_payment_link":    ["payment_email", "payment_safety"],
+    "send_payment_link":    ["payment_safety"],
 
     # ── Shipping ───────────────────────────────────────────────────────────────
     "shipping_question":    ["store_policy", "shipping"],
@@ -146,6 +164,10 @@ _REGISTRY: dict[str, object] = {
     "address_update":           AddressUpdateWorker(),
     "cancellation":             CancellationWorker(),
     "payment_safety":           PaymentSafetyWorker(),
+    "payment_flow":             PaymentFlowWorker(),
+    "cart_memory":              CartMemoryWorker(),
+    "spell_email":              SpellEmailWorker(),
+    "dialogue":                 DialogueWorker(),
     # Wave 2 (managed separately, not in Wave 1)
     "response_plan":            ResponsePlanWorker(),
 }
@@ -168,6 +190,7 @@ class WorkerOrchestrator:
     ) -> WorkerBundle:
         timeout_secs = settings.VOICE_TOOL_TIMEOUT_MS / 1000
         entities = router_result.entities
+        entities["intent"] = router_result.intent
 
         # ── Wave 1: parallel domain workers ───────────────────────────────────
         bundle = await self._run_wave1(router_result, session, settings, timeout_secs)

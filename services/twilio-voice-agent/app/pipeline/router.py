@@ -235,6 +235,68 @@ _MULTI_BOOK_WORDS = re.compile(
     re.IGNORECASE,
 )
 
+# v4.3: cart / ISBN memory questions
+_ISBN_COUNT_Q = re.compile(
+    r"\bhow many isbn\b",
+    re.IGNORECASE,
+)
+_CART_COUNT_Q = re.compile(
+    r"\b(how many books?|what books? (are )?in my cart|what('s| is) in my cart)\b",
+    re.IGNORECASE,
+)
+_TITLES_Q = re.compile(
+    r"\b(titles? one by one|tell me the titles?|list the titles?|read them back|"
+    r"what are the titles?)\b",
+    re.IGNORECASE,
+)
+_NOT_FOUND_Q = re.compile(
+    r"\b(which (isbn|book|one) (was )?not found|what (isbn )?didn.?t (you )?find)\b",
+    re.IGNORECASE,
+)
+
+# v4.3: spell / read-back email
+_SPELL_EMAIL_Q = re.compile(
+    r"\b("
+    r"spell (my |the |this )?email"
+    r"|spell (it |this )?(letter by letter|for me)"
+    r"|letter by letter"
+    r"|read (my )?email back"
+    r"|what email do you have"
+    r"|what did you hear (for )?(my )?email"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# v4.3: vague book request (no ISBN/title/author/subject)
+_VAGUE_BOOK_PAT = re.compile(
+    r"^\s*(?:"
+    r"i (?:need|want|'d like|would like|am looking for|m looking for)"
+    r"|can you (?:give|get|find) me"
+    r"|looking for"
+    r")\s+(?:to (?:buy|get|order) )?(?:a |the |some )?books?\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_SUBJECT_HINT = re.compile(
+    r"\b(about|on the subject|topic of|books about)\b",
+    re.IGNORECASE,
+)
+_ISBN_INTENT_HINT = re.compile(
+    r"\b(book by isbn|by isbn|have the isbn|got the isbn|using (an )?isbn|isbn number)\b",
+    re.IGNORECASE,
+)
+_TITLE_INTENT_HINT = re.compile(
+    r"\b(i know the title|have the title|book called|title is)\b",
+    re.IGNORECASE,
+)
+_ANOTHER_BOOK_Q = re.compile(
+    r"\b(another book|one more book|next book|add another|more books?|different book)\b",
+    re.IGNORECASE,
+)
+_ADD_TO_CART_Q = re.compile(
+    r"\b(add it|add this|put it in( the cart)?|i need this|this book|i.?ll take it)\b",
+    re.IGNORECASE,
+)
+
 _PREAMBLE = re.compile(
     r"^\s*(do you have|looking for|find|search for|got any|have any|"
     r"any books by|books by|written by|anything by|by|a copy of|copies of|"
@@ -290,12 +352,97 @@ def detect(text: str, session=None) -> IntentResult:
     if facility:
         entities["facility_name"] = facility
 
+    entities["raw_text"] = t
+
     # ── Intent detection (most-specific first) ─────────────────────────────────
 
-    if entities.get("isbn") or _ISBN_PREFIX.search(t):
+    # v4.3: spell email — before author/product search
+    if _SPELL_EMAIL_Q.search(t):
+        return IntentResult(
+            intent="spell_email_request", confidence=0.94, entities=entities,
+        )
+
+    # v4.3: cart / ISBN memory
+    if _ISBN_COUNT_Q.search(t):
+        entities["intent"] = "isbn_count_question"
+        return IntentResult(
+            intent="isbn_count_question", confidence=0.93, entities=entities,
+        )
+    if _TITLES_Q.search(t):
+        entities["intent"] = "titles_question"
+        return IntentResult(
+            intent="titles_question", confidence=0.93, entities=entities,
+        )
+    if _NOT_FOUND_Q.search(t):
+        entities["intent"] = "not_found_question"
+        return IntentResult(
+            intent="not_found_question", confidence=0.90, entities=entities,
+        )
+    if _CART_COUNT_Q.search(t):
+        entities["intent"] = "cart_count_question"
+        return IntentResult(
+            intent="cart_count_question", confidence=0.90, entities=entities,
+        )
+
+    if entities.get("isbn") or (_ISBN_PREFIX.search(t) and _extract_isbn(t)):
         return IntentResult(
             intent="isbn_search", confidence=0.95, entities=entities,
             needs_filler=True, suggested_tools=["search_products"],
+        )
+
+    # v4.3: vague book — before title/product search
+    if _is_vague_book_request(t, entities):
+        return IntentResult(
+            intent="vague_book_request", confidence=0.91, entities=entities,
+            needs_filler=False,
+        )
+
+    # v4.3: ISBN spoken without digits yet
+    if _ISBN_INTENT_HINT.search(t) and not entities.get("isbn"):
+        return IntentResult(
+            intent="isbn_collection_start", confidence=0.88, entities=entities,
+        )
+
+    # Email confirmation — context-aware (v4.3)
+    pfs = getattr(session, "payment_flow_status", "idle") if session else "idle"
+    dialogue_flow = ""
+    if session and getattr(session, "dialogue", None):
+        d = session.dialogue
+        dialogue_flow = getattr(d, "active_flow", "") if hasattr(d, "active_flow") else d.get("active_flow", "")
+
+    if _EMAIL_CONFIRMATION_WORDS.match(t.strip()):
+        if session and getattr(session, "pending_email", ""):
+            return IntentResult(
+                intent="email_confirmation", confidence=0.93, entities=entities,
+            )
+
+    # v4.3: payment final confirmation — "yes send it"
+    if _CONFIRM_YES.match(t) and pfs == "awaiting_send_confirmation":
+        return IntentResult(
+            intent="payment_execute", confidence=0.95,
+            entities={**entities, "polarity": "yes"},
+        )
+
+    # v4.3: cart add confirmation
+    if _CONFIRM_YES.match(t) and dialogue_flow in ("cart_building", "isbn_collection", "title_collection"):
+        ledger_has_candidate = False
+        if session:
+            from ..cart.session import get_ledger
+            ledger_has_candidate = get_ledger(session).candidate_item is not None
+        if ledger_has_candidate:
+            return IntentResult(
+                intent="add_to_cart", confidence=0.92,
+                entities={**entities, "polarity": "yes"},
+            )
+
+    if _ADD_TO_CART_Q.search(t) and not _REFUND_WORDS.search(t):
+        return IntentResult(
+            intent="add_to_cart", confidence=0.88, entities=entities,
+        )
+
+    if _ANOTHER_BOOK_Q.search(t):
+        return IntentResult(
+            intent="another_book", confidence=0.90, entities=entities,
         )
 
     # Email correction must come before confirmation (more specific)
@@ -304,10 +451,10 @@ def detect(text: str, session=None) -> IntentResult:
             intent="email_correction", confidence=0.93, entities=entities,
         )
 
-    # Email confirmation (caller says "yes that's correct" in email context)
-    if _EMAIL_CONFIRMATION_WORDS.match(t.strip()) and session and getattr(session, "pending_email", ""):
+    # v4.3: title collection (no title extracted yet)
+    if _TITLE_INTENT_HINT.search(t) and not _extract_product_phrase(t):
         return IntentResult(
-            intent="email_confirmation", confidence=0.93, entities=entities,
+            intent="title_collection_start", confidence=0.86, entities=entities,
         )
 
     # Spoken email fragments: covers all live ASR variants.
@@ -478,6 +625,12 @@ def detect(text: str, session=None) -> IntentResult:
         return IntentResult(intent="greeting", confidence=0.90, entities=entities)
 
     if _CONFIRM_YES.match(t):
+        # v4.3: "yes" only confirms email when awaiting email confirmation
+        if pfs == "awaiting_email_confirmation" and session and getattr(session, "pending_email", ""):
+            return IntentResult(
+                intent="email_confirmation", confidence=0.92,
+                entities={**entities, "polarity": "yes"},
+            )
         return IntentResult(
             intent="confirmation", confidence=0.92,
             entities={**entities, "polarity": "yes"},
@@ -538,11 +691,6 @@ def _extract_quantity(text: str) -> Optional[int]:
     return None
 
 
-def _extract_product_phrase(text: str) -> str:
-    clean = _PREAMBLE.sub("", text).strip().strip("?.!,")
-    return clean[:80] if clean else ""
-
-
 def _extract_facility(text: str) -> Optional[str]:
     """
     Extract a facility/jail name if spoken.
@@ -557,3 +705,43 @@ def _extract_facility(text: str) -> Optional[str]:
     if m:
         return m.group(1).strip()[:60]
     return None
+
+
+def _extract_product_phrase(text: str) -> str:
+    clean = _PREAMBLE.sub("", text).strip().strip("?.!,")
+    return clean[:80] if clean else ""
+
+
+def _is_vague_book_request(text: str, entities: dict) -> bool:
+    """True when caller wants a book but gave no ISBN, title, author, or subject."""
+    if entities.get("isbn"):
+        return False
+    if _AUTHOR_WORDS.search(text):
+        return False
+    if _SUBJECT_HINT.search(text):
+        return False
+    if _ISBN_PREFIX.search(text) or _ISBN_INTENT_HINT.search(text):
+        return False
+
+    stripped = text.strip()
+    if _VAGUE_BOOK_PAT.match(stripped):
+        return True
+    if re.match(
+        r"^\s*i (?:need|want) (?:to buy )?(?:a |the )?book\s*[.!?]?\s*$",
+        stripped,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.match(
+        r"^\s*(?:can you give me|i am looking for|i'm looking for)\s+(?:a )?book\s*[.!?]?\s*$",
+        stripped,
+        re.IGNORECASE,
+    ):
+        return True
+
+    phrase = _extract_product_phrase(text)
+    if phrase and len(phrase) > 3:
+        return False
+    if _TITLE_EXPLICIT.search(text) and phrase:
+        return False
+    return False

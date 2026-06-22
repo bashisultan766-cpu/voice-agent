@@ -4,7 +4,32 @@ AI phone sales agent for Shopify bookstores, specialising in books for incarcera
 
 ## Architecture
 
-### v4.1.1 — Global Payment Safety Guard (current)
+### v4.3 — Professional Dialogue Intelligence (current)
+
+Deterministic dialogue layer so Eric behaves like a professional support rep — not a random product search bot.
+
+**New module: `app/dialogue/` — `DialogueManager`**
+
+- Tracks `active_flow`, `expected_next`, cart/email/order memory per call
+- Vague book requests → clarification (ISBN/title/author/subject) — **no Shopify search**
+- Cart/ISBN memory answers ("how many ISBNs?", "titles one by one")
+- Email spell-back (`spell_email_request`) — never routed to author search
+- Sales flow: find book → confirm add → another book or payment
+- Payment end-to-end: `payment_execute` → `PaymentFlowWorker` (checkout + Resend)
+- Safe diagnostic logging (masked email only)
+
+**New workers:** `PaymentFlowWorker`, `CartMemoryWorker`, `SpellEmailWorker`, `DialogueWorker`
+
+**816/816 tests passing** (27 new v4.3 tests)
+
+### v4.2 — Professional Voice Orchestrator
+
+- Live OpenAI tool-calling disabled (`VOICE_LIVE_DISABLE_OPENAI_TOOLS=true`)
+- All intents → parallel workers → `MainLLMComposer` (text only)
+- No `role="tool"` / `tool_calls` in live history
+- ISBN fragment accumulator, cart ledger, response planner
+
+### v4.1.1 — Global Payment Safety Guard
 
 Closes the final P0 vulnerability: the LLM fallback tool path (`send_payment_link_email_tool`) accepted raw email arguments without verifying `session.confirmed_email`.
 

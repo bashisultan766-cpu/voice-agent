@@ -13,9 +13,17 @@ class PaymentSafetyWorker:
         cart = getattr(session, "cart_items", []) or []
         confirmed_cart = [
             c for c in cart
-            if isinstance(c, dict) and c.get("confirmation_status") != "rejected"
+            if isinstance(c, dict)
+            and c.get("confirmation_status") == "confirmed"
         ]
-        has_book = bool(confirmed_cart or session.last_product_title)
+        has_book = bool(
+            confirmed_cart
+            or session.last_product_title
+            or any(
+                isinstance(c, dict) and c.get("confirmation_status") != "rejected"
+                for c in cart
+            )
+        )
         has_email = bool(getattr(session, "confirmed_email", ""))
 
         if pfs == "payment_sent":

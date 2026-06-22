@@ -1,5 +1,42 @@
 # Deployment Ready Report — Twilio ConversationRelay Voice Agent
 
+## v4.3 — Professional Dialogue Intelligence (2026-06-22)
+
+### Status: READY FOR DEPLOYMENT
+
+### Test Results
+
+```
+816 passed in ~36s
+0 failed
+0 errors
+All mocked — no live API calls required
+```
+
+### Changes in v4.3
+
+| Feature | Files |
+|---------|-------|
+| **DialogueManager** — flow state, clarifications, memory | `app/dialogue/manager.py`, `states.py` |
+| Vague book request → ask ISBN/title/author/subject (no search) | `app/pipeline/router.py`, `response_plan_worker.py` |
+| Cart/ISBN memory ("how many ISBN?", titles one by one) | `app/cart/ledger.py`, `cart_memory_worker.py` |
+| Email spell/readback | `spell_email_worker.py`, router `spell_email_request` |
+| Stronger email fragment assembly (multi-turn) | `app/pipeline/engine.py` |
+| Payment end-to-end on final confirmation | `payment_flow_worker.py` |
+| Composer rich context (flow, cart, email stage) | `app/composer/main_llm_composer.py` |
+| Safe dialogue logging | `app/pipeline/engine.py`, `dialogue/manager.py` |
+| 27 new tests | `test_v43_dialogue.py`, `test_v43_cart_payment.py` |
+
+### Architecture preserved
+
+- OpenAI tool-calling **disabled** in live voice
+- Workers **never** call OpenAI
+- `MainLLMComposer` final-only
+- `PaymentSafetyGuard` unchanged
+- Privacy masking unchanged
+
+---
+
 ## v4.1.1 — Global Payment Safety Guard (2026-06-22)
 
 ### Status: READY FOR DEPLOYMENT

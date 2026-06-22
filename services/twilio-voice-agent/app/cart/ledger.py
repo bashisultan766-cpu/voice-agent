@@ -30,6 +30,8 @@ class CartLedger:
     def __init__(self) -> None:
         self._items: list[CartItem] = []
         self._last_candidate_idx: Optional[int] = None
+        self._isbn_provided: list[str] = []
+        self._isbn_not_found: list[str] = []
 
     @property
     def items(self) -> list[CartItem]:
@@ -117,7 +119,79 @@ class CartLedger:
                 "price": i.price or "N/A",
                 "isbn": i.isbn,
                 "confirmation_status": i.confirmation_status,
+                "available": i.available,
             }
             for i in self._items
             if i.confirmation_status != "rejected"
         ]
+
+    def record_isbn_provided(self, isbn: str) -> None:
+        if isbn and isbn not in self._isbn_provided:
+            self._isbn_provided.append(isbn)
+
+    def record_isbn_not_found(self, isbn: str) -> None:
+        self.record_isbn_provided(isbn)
+        if isbn and isbn not in self._isbn_not_found:
+            self._isbn_not_found.append(isbn)
+
+    @property
+    def isbn_provided(self) -> list[str]:
+        return list(self._isbn_provided)
+
+    @property
+    def isbn_not_found(self) -> list[str]:
+        return list(self._isbn_not_found)
+
+    def isbn_provided_count(self) -> int:
+        return len(self._isbn_provided)
+
+    def found_titles_ordered(self) -> list[str]:
+        """Titles for found products (candidate or confirmed), in order."""
+        return [
+            i.title for i in self._items
+            if i.title and i.confirmation_status != "rejected"
+        ]
+
+    def titles_one_by_one_summary(self) -> str:
+        """Voice-friendly list of found titles and not-found ISBNs."""
+        parts: list[str] = []
+        found = self.found_titles_ordered()
+        for idx, title in enumerate(found, start=1):
+            parts.append(f"The {'first' if idx == 1 else f'{idx}'} book is {title}.")
+        for isbn in self._isbn_not_found:
+            parts.append(f"ISBN {isbn} did not return a matching title.")
+        return " ".join(parts) if parts else ""
+
+    def cart_summary_text(self) -> str:
+        confirmed = self.confirmed_items
+        if not confirmed:
+            return "No books confirmed in your cart yet."
+        titles = ", ".join(i.title for i in confirmed if i.title)
+        return f"{len(confirmed)} book{'s' if len(confirmed) != 1 else ''} in cart: {titles}."
+
+    @classmethod
+    def from_session(cls, cart_items: list, isbn_history: list | None = None,
+                     isbn_not_found: list | None = None) -> "CartLedger":
+        ledger = cls()
+        for raw in cart_items or []:
+            if not isinstance(raw, dict):
+                continue
+            ledger._items.append(CartItem(
+                title=raw.get("title", ""),
+                isbn=raw.get("isbn", ""),
+                variant_id=raw.get("variant_id", ""),
+                quantity=int(raw.get("quantity") or 1),
+                price=raw.get("price"),
+                available=raw.get("available", True),
+                confirmation_status=raw.get("confirmation_status", "candidate"),
+            ))
+        if ledger._items:
+            for i, item in enumerate(ledger._items):
+                if item.confirmation_status == "candidate":
+                    ledger._last_candidate_idx = i
+                    break
+        for isbn in isbn_history or []:
+            ledger.record_isbn_provided(isbn)
+        for isbn in isbn_not_found or []:
+            ledger.record_isbn_not_found(isbn)
+        return ledger

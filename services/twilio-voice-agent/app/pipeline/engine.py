@@ -38,6 +38,7 @@ from .tasks import filler_for_intent, needs_filler, Intent
 from .tool_executor import run_tools_parallel
 from ..workers.orchestrator import WorkerOrchestrator, WORKER_PATH_INTENTS, get_orchestrator
 from ..composer.main_llm_composer import MainLLMComposer, get_composer
+from ..dialogue.manager import DialogueManager
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext
@@ -81,18 +82,30 @@ class RealtimePipelineEngine:
         intent_result = detect_intent(caller_text, session)
         turn.router_ms = (time.monotonic() - t0) * 1000
         turn.intent = intent_result.intent
+
+        # ── v4.3 DialogueManager ───────────────────────────────────────────────
+        dialogue_decision = DialogueManager.process_turn(
+            session, intent_result, caller_text,
+        )
+        session.last_dialogue_decision = dialogue_decision
+        if dialogue_decision.override_intent:
+            intent_result.intent = dialogue_decision.override_intent
+            turn.intent = intent_result.intent
+
         logger.debug(
-            "intent=%s conf=%.2f entities=%s sid=%s",
+            "intent=%s conf=%.2f entities=%s sid=%s dialogue=%s",
             intent_result.intent,
             intent_result.confidence,
             list(intent_result.entities.keys()),
             session.call_sid[:6],
+            DialogueManager.safe_log_context(session),
         )
 
         # ── 2. Email state machine (always, before path decision) ─────────────
         # Updates session.pending_email / confirmed_email / payment_flow_status
         # and accumulates multi-turn email fragments.
         _apply_email_state(session, intent_result)
+        _apply_payment_state(session, intent_result)
 
         # v4.2: when VOICE_LIVE_DISABLE_OPENAI_TOOLS is True (default), ALL
         # intents use the worker→composer path. run_agent_turn is never called.
@@ -426,6 +439,11 @@ def _apply_email_state(session: SessionState, intent_result: IntentResult) -> No
             # Advance payment flow state
             if not getattr(session, "confirmed_email", ""):
                 session.payment_flow_status = "awaiting_email_confirmation"
+            if confidence == "low":
+                logger.debug(
+                    "email_provided low confidence sid=%s",
+                    session.call_sid[:6],
+                )
             logger.debug(
                 "email_provided: pending set conf=%s sid=%s",
                 confidence, session.call_sid[:6],
@@ -466,6 +484,24 @@ def _apply_email_state(session: SessionState, intent_result: IntentResult) -> No
             if pfs == "awaiting_email_confirmation":
                 session.payment_flow_status = "awaiting_send_confirmation"
             logger.debug("email_confirmation: confirmed sid=%s", session.call_sid[:6])
+
+
+def _apply_payment_state(session: SessionState, intent_result: IntentResult) -> None:
+    """Advance payment funnel for send/checkout intents (v4.3)."""
+    intent = intent_result.intent
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+
+    if intent in ("send_payment_link", "checkout_request"):
+        if pfs in ("idle", "awaiting_email"):
+            if getattr(session, "confirmed_email", ""):
+                session.payment_flow_status = "awaiting_send_confirmation"
+            elif getattr(session, "pending_email", ""):
+                session.payment_flow_status = "awaiting_email_confirmation"
+            else:
+                session.payment_flow_status = "awaiting_email"
+
+    if intent == "payment_execute" and pfs == "awaiting_send_confirmation":
+        pass  # PaymentFlowWorker handles execution
 
 
 def _accumulate_email_fragment(
@@ -513,6 +549,21 @@ def _accumulate_email_fragment(
         # Store this fragment for next-turn completion
         fragments.append(raw_text)
         session.last_email_fragment_turn = current_turn
+        # Assemble when multiple fragments or TLD suffix completes prior part
+        should_try = len(fragments) >= 2 or is_domain_suffix_only(raw_text)
+        if should_try:
+            assembled = assemble_email_from_fragments(fragments)
+            if assembled:
+                conf = email_confidence(assembled, " ".join(fragments))
+                session.pending_email = assembled
+                session.email_confidence = conf
+                session.payment_flow_status = "awaiting_email_confirmation"
+                fragments.clear()
+                logger.debug(
+                    "email_fragment: assembled multi-part email conf=%s sid=%s",
+                    conf, session.call_sid[:6],
+                )
+                return
         logger.debug(
             "email_fragment: stored fragment #%d sid=%s",
             len(fragments), session.call_sid[:6],

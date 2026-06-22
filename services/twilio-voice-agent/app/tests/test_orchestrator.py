@@ -82,8 +82,11 @@ class TestIntentWorkerMapping:
         workers = _INTENT_WORKERS["checkout_request"]
         assert "checkout" in workers
 
-    def test_send_payment_link_selects_payment_email(self):
-        assert "payment_email" in _INTENT_WORKERS["send_payment_link"]
+    def test_send_payment_link_selects_payment_safety(self):
+        assert "payment_safety" in _INTENT_WORKERS["send_payment_link"]
+
+    def test_payment_execute_selects_payment_flow(self):
+        assert "payment_flow" in _INTENT_WORKERS["payment_execute"]
 
     def test_shipping_question_selects_store_policy_and_shipping(self):
         workers = _INTENT_WORKERS["shipping_question"]
@@ -225,19 +228,24 @@ class TestOrchestratorRunning:
         orch = WorkerOrchestrator()
         session = _make_session()
         session.pending_checkout_url = "https://example.com/pay/1"
-        session.caller_email = "alice@example.com"
+        session.confirmed_email = "alice@example.com"
+        session.cart_items = [{
+            "title": "Book", "variant_id": "gid://1", "quantity": 1,
+            "confirmation_status": "confirmed",
+        }]
+        session.payment_flow_status = "awaiting_send_confirmation"
 
         async def resend_run(self, session, entities, settings):
             return WorkerResult(
-                worker_name="payment_email",
+                worker_name="payment_flow",
                 success=True,
                 source="resend",
                 latency_ms=300.0,
             )
 
-        with patch("app.workers.payment_email_worker.PaymentEmailWorker.run", resend_run):
+        with patch("app.workers.payment_flow_worker.PaymentFlowWorker.run", resend_run):
             bundle = await orch.run(
-                _intent_result("send_payment_link", {"email": "alice@example.com"}),
+                _intent_result("payment_execute", {}),
                 session,
                 _make_settings(),
             )
