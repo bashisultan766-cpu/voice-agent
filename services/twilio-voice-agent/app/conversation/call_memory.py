@@ -136,6 +136,10 @@ def record_isbn(session: "SessionState", isbn: str) -> None:
     if isbn and isbn not in state.isbns_provided:
         state.isbns_provided.append(isbn)
         _append_fact(state, f"Customer gave ISBN {isbn}")
+        logger.info(
+            "memory_fact_saved sid=%s type=isbn",
+            session.call_sid[:6],
+        )
 
 
 def record_product_candidate(session: "SessionState", title: str, found: bool) -> None:
@@ -150,6 +154,10 @@ def record_cart_confirmed(session: "SessionState", title: str, count: int) -> No
     state = get_call_memory(session)
     state.cart_facts.append(f"Confirmed: {title[:50]}")
     _append_fact(state, f"Cart count: {count}")
+    logger.info(
+        "memory_fact_saved sid=%s type=cart count=%d",
+        session.call_sid[:6], count,
+    )
 
 
 def sync_email_state(session: "SessionState") -> None:
@@ -161,9 +169,11 @@ def sync_email_state(session: "SessionState") -> None:
     if confirmed:
         state.email_state = "confirmed"
         _append_fact(state, "Customer confirmed email")
+        logger.info("memory_fact_saved sid=%s type=email state=confirmed", session.call_sid[:6])
     elif pending:
         state.email_state = "pending"
         _append_fact(state, "Customer provided email")
+        logger.info("memory_fact_saved sid=%s type=email state=pending", session.call_sid[:6])
     elif rejected:
         state.email_state = "rejected"
         _append_fact(state, "Email rejected or corrected")
@@ -178,6 +188,7 @@ def sync_payment_state(session: "SessionState") -> None:
     pfr = getattr(session, "payment_flow_result", {}) or {}
     if pfr.get("email_sent"):
         _append_fact(state, "Payment link sent")
+        logger.info("memory_fact_saved sid=%s type=payment sent=true", session.call_sid[:6])
 
 
 def sync_facility_context(session: "SessionState") -> None:
@@ -262,6 +273,93 @@ def build_composer_context(session: "SessionState") -> str:
         parts.append(f"[Mood: {state.customer_mood}]")
 
     return "\n".join(parts)
+
+
+def build_brain_context(session: "SessionState") -> str:
+    """Memory block for EricDialogueBrain planner."""
+    state = get_call_memory(session)
+    parts: list[str] = ["[Call memory]"]
+
+    if state.rolling_summary:
+        parts.append(f"Summary: {state.rolling_summary[:600]}")
+
+    recent_users = state.user_turns[-12:]
+    recent_assistants = state.assistant_turns[-12:]
+    for i, ut in enumerate(recent_users):
+        parts.append(f"User: {_mask_for_log(ut)}")
+        if i < len(recent_assistants):
+            parts.append(f"Agent: {_mask_for_log(recent_assistants[i])}")
+
+    if state.important_facts:
+        parts.append("Facts: " + "; ".join(state.important_facts[-15:]))
+
+    if state.isbns_provided:
+        parts.append(f"ISBNs: {', '.join(state.isbns_provided[-10:])}")
+
+    if state.cart_facts:
+        parts.append("Cart: " + "; ".join(state.cart_facts[-5:]))
+
+    if state.email_state != "none":
+        parts.append(f"Email: {state.email_state}")
+
+    if getattr(session, "is_resumed_call", False):
+        parts.append("Call was resumed after disconnect")
+
+    if getattr(session, "resume_greeting_delivered", False):
+        parts.append("Resume apology already delivered")
+
+    n_facts = len(state.important_facts)
+    logger.debug(
+        "memory_context_used sid=%s facts=%d",
+        session.call_sid[:6], n_facts,
+    )
+    return "\n".join(parts)
+
+
+def record_brain_fact(session: "SessionState", intent: str) -> None:
+    """Extract important fact after brain decision."""
+    if not intent or intent == "unknown":
+        return
+    state = get_call_memory(session)
+    fact = f"Brain intent: {intent.replace('_', ' ')}"
+    _append_fact(state, fact)
+
+    if intent in ("frustration_repair",):
+        state.customer_mood = "frustrated"
+        _append_fact(state, "Caller frustration detected")
+        logger.info("memory_fact_saved sid=%s type=frustration", session.call_sid[:6])
+
+    if intent in ("send_payment_link", "payment_execute"):
+        logger.info("memory_fact_saved sid=%s type=payment intent=%s", session.call_sid[:6], intent)
+
+    if intent in ("facility_approval_question", "facility_approval"):
+        logger.info("memory_fact_saved sid=%s type=facility", session.call_sid[:6])
+
+
+def extract_turn_facts(
+    session: "SessionState",
+    intent: str,
+    caller_text: str,
+) -> None:
+    """Extract important facts after every turn."""
+    state = get_call_memory(session)
+    sync_from_session(session)
+
+    lower = (caller_text or "").lower()
+    if "already told" in lower or "i gave you" in lower:
+        _append_fact(state, "Caller says they already provided info")
+        state.customer_mood = "frustrated"
+
+    if intent == "memory_summary_question":
+        _append_fact(state, "Caller asked what was collected")
+
+    if getattr(session, "last_order_number", ""):
+        _append_fact(state, f"Order number: {session.last_order_number}")
+
+    mood = getattr(getattr(session, "dialogue", None), "customer_mood", "")
+    if mood == "frustrated":
+        state.customer_mood = "frustrated"
+        _append_fact(state, "Caller frustration noted")
 
 
 def safe_history_append(session: "SessionState", role: str, content: str) -> None:
@@ -373,6 +471,9 @@ def check_and_apply_resume(
         new_session.last_order_number = snapshot["last_order_number"]
 
     new_session.is_resumed_call = True
+    new_session.resume_greeting_pending = True
+    new_session.resume_context_available = True
+    new_session.resume_greeting_delivered = False
     logger.info(
         "call_resume_applied sid=%s prior_sid=%s age_min=%.1f",
         new_session.call_sid[:6],

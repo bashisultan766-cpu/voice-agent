@@ -111,7 +111,7 @@ def build_email_readback(email: str, raw_text: str = "") -> str:
         return "I do not have a complete email yet. Please spell it slowly."
 
     if email_confidence_is_low(normalized, raw_text):
-        return "I do not have a complete email yet. Please spell it slowly."
+        return "I may have heard that wrong. Please spell the email slowly."
 
     spelled = spell_email_for_voice(normalized)
     return (

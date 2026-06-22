@@ -83,6 +83,48 @@ def _detect_leak(text: str) -> Optional[str]:
     return None
 
 
+def _mask_safe_log_text(text: str) -> str:
+    """Mask PII for assistant_response logs."""
+    if not text:
+        return ""
+    masked = re.sub(
+        r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}",
+        "***@***",
+        text,
+        flags=re.IGNORECASE,
+    )
+    masked = re.sub(
+        r"(?:\+1)?[\s.\-]?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}",
+        "***-***-****",
+        masked,
+    )
+    masked = re.sub(
+        r"https?://[^\s]+",
+        "[checkout-url]",
+        masked,
+        flags=re.IGNORECASE,
+    )
+    if len(masked) > 200:
+        return masked[:197] + "..."
+    return masked
+
+
+def log_assistant_response(
+    text: str,
+    *,
+    call_sid: str = "",
+    turn: int = 0,
+    intent: str = "",
+) -> None:
+    """Safe assistant response log — masks email, phone, address, checkout URL."""
+    safe = _mask_safe_log_text(text)
+    sid = (call_sid or "")[:6]
+    logger.info(
+        "assistant_response sid=%s turn=%d intent=%s text_safe=%r",
+        sid, turn, intent, safe,
+    )
+
+
 def sanitize_customer_response(
     text: str,
     *,

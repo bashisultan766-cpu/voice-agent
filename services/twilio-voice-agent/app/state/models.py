@@ -174,5 +174,11 @@ class SessionState:
     is_resumed_call: bool = False
     # Greeting spoken on resumed call (set by WS setup).
     resume_greeting: str = ""
+    # v4.9 resume single-use greeting flags
+    resume_greeting_pending: bool = False
+    resume_greeting_delivered: bool = False
+    resume_context_available: bool = False
+    # v4.9 last brain decision (transient per turn)
+    last_brain_decision: Any = None
     # v4.8 turn-taking hold flag (digit/email fragment in progress).
     turn_taking_hold: bool = False

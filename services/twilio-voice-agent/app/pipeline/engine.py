@@ -79,11 +79,39 @@ class RealtimePipelineEngine:
         settings = self._settings
         turn = self._tracer.start_turn(session.call_sid)
 
-        # ── 1. Intent detection ────────────────────────────────────────────────
+        # ── 1. Intent detection (v4.8 deterministic router) ───────────────────
         t0 = time.monotonic()
         intent_result = detect_intent(caller_text, session)
+        input_intent = intent_result.intent
         turn.router_ms = (time.monotonic() - t0) * 1000
+
+        # ── v4.9 short utterance resolver ─────────────────────────────────────
+        from ..dialogue.short_utterance_resolver import resolve_short_utterance
+        short_result = resolve_short_utterance(
+            caller_text, session, input_intent=input_intent,
+        )
+
+        # ── v4.9 EricDialogueBrain ────────────────────────────────────────────
+        from ..brain.eric_dialogue_brain import (
+            apply_brain_to_intent,
+            get_dialogue_brain,
+        )
+        from ..conversation.call_memory import extract_turn_facts
+
+        brain = get_dialogue_brain(settings)
+        brain_decision = await brain.plan(
+            session,
+            caller_text,
+            input_intent,
+            short_resolved_intent=short_result.intent if short_result.resolved else "",
+        )
+        session.last_brain_decision = brain_decision
+        apply_brain_to_intent(intent_result, brain_decision)
         turn.intent = intent_result.intent
+
+        if brain_decision.customer_mood != "normal":
+            from ..conversation.call_memory import get_call_memory
+            get_call_memory(session).customer_mood = brain_decision.customer_mood
 
         # ── v4.3 DialogueManager ───────────────────────────────────────────────
         dialogue_decision = DialogueManager.process_turn(
@@ -145,6 +173,7 @@ class RealtimePipelineEngine:
         # and accumulates multi-turn email fragments.
         _apply_email_state(session, intent_result)
         _apply_payment_state(session, intent_result)
+        extract_turn_facts(session, intent_result.intent, caller_text)
 
         # v4.2: when VOICE_LIVE_DISABLE_OPENAI_TOOLS is True (default), ALL
         # intents use the worker→composer path. run_agent_turn is never called.

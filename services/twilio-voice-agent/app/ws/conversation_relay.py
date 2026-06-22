@@ -53,6 +53,7 @@ from ..caller.repository import (
     build_safe_caller_context,
 )
 from ..pipeline.engine import get_engine
+from ..voice.turn_assembler import clear_turn_assembler, get_turn_assembler
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,9 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                                 resume_window_minutes=settings.CALL_RESUME_WINDOW_MINUTES,
                             ):
                                 session.resume_greeting = get_resume_greeting()
+                                session.resume_greeting_pending = True
+                                session.resume_context_available = True
+                                session.resume_greeting_delivered = False
                                 logger.info(
                                     "call_resume_detected sid=%s from=%s",
                                     session.call_sid[:6],
@@ -306,10 +310,20 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         voice_prompt[:100],
                     )
 
-                    await _cancel_current()
-                    current_task = asyncio.create_task(
-                        _run_turn(voice_prompt),
-                        name=f"turn-{session.turn_count + 1}",
+                    assembler = get_turn_assembler(session.call_sid, settings)
+
+                    async def _emit_assembled(assembled_text: str) -> None:
+                        nonlocal current_task
+                        await _cancel_current()
+                        current_task = asyncio.create_task(
+                            _run_turn(assembled_text),
+                            name=f"turn-{session.turn_count + 1}",
+                        )
+
+                    await assembler.ingest(
+                        voice_prompt,
+                        _emit_assembled,
+                        call_sid=session.call_sid,
                     )
 
                 case "interrupt":
@@ -372,6 +386,8 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                     session.call_sid[:6] if session else "?",
                 )
         await _save_caller_profile()
+        if session is not None:
+            clear_turn_assembler(session.call_sid)
         await send_q.put(None)
         await asyncio.gather(sender_task, return_exceptions=True)
 

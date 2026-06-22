@@ -34,13 +34,14 @@ from ..dialogue.manager import DialogueManager
 from ..dialogue.naturalness import NaturalnessController
 from ..dialogue.greeting import build_first_response_greeting
 from ..domain.sureshot_brain import build_domain_excerpt
-from ..safety.response_sanitizer import sanitize_customer_response
+from ..safety.response_sanitizer import sanitize_customer_response, log_assistant_response
 from ..conversation.call_memory import (
     build_composer_context,
     record_assistant_turn,
     record_user_turn,
     sync_from_session,
 )
+from ..brain.eric_policy import get_small_talk_response
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext
@@ -93,11 +94,46 @@ def _deterministic_response(
 
     if router_result.intent == "greeting":
         greeted = getattr(session, "twiml_greeting_spoken", False)
-        if getattr(session, "is_resumed_call", False):
-            resume_msg = getattr(session, "resume_greeting", None)
-            if resume_msg:
-                return resume_msg
+        if (
+            getattr(session, "resume_greeting_pending", False)
+            and not getattr(session, "resume_greeting_delivered", False)
+        ):
+            session.resume_greeting_delivered = True
+            session.resume_greeting_pending = False
+            return getattr(session, "resume_greeting", None) or (
+                "I'm sorry about that. Let me continue from where we left off."
+            )
         return build_first_response_greeting(session, greeted)
+
+    # v4.9: deterministic small talk from Eric brain
+    if router_result.intent in (
+        "small_talk", "identity_question", "agent_name_question",
+        "store_info_question", "company_origin_question",
+        "keepalive_question", "small_talk_keepalive", "frustration_repair",
+    ):
+        text = get_small_talk_response(router_result.intent, session)
+        if text:
+            if getattr(session, "resume_greeting_pending", False):
+                session.resume_greeting_delivered = True
+                session.resume_greeting_pending = False
+            return text
+
+    # v4.9: email readback bypasses LLM every time (when confidence ok)
+    if router_result.intent == "email_provided":
+        conf = getattr(session, "email_confidence", "medium") or "medium"
+        if conf == "low":
+            return "I may have heard that wrong. Please spell the email slowly."
+        from ..pipeline.email_speller import build_email_readback
+        email = getattr(session, "pending_email", "") or router_result.entities.get("email", "")
+        raw = router_result.entities.get("email_raw", "") or email
+        if email:
+            return build_email_readback(email, raw)
+
+    if router_result.intent == "email_confirmation":
+        from ..pipeline.email_speller import build_email_spell_only
+        email = getattr(session, "confirmed_email", "") or getattr(session, "pending_email", "")
+        if email:
+            return build_email_spell_only(email)
 
     if action == "greet" and say:
         return say
@@ -105,7 +141,7 @@ def _deterministic_response(
     if action == "greeting" and say:
         return say
 
-    if action in ("spell_email", "answer_memory", "store_info") and say:
+    if action in ("spell_email", "answer_memory", "store_info", "small_talk") and say:
         return say
 
     if action in (
@@ -298,6 +334,12 @@ class MainLLMComposer:
         deterministic = _deterministic_response(session, router_result)
         if deterministic:
             deterministic = _sanitize_and_finalize(deterministic, session, router_result)
+            log_assistant_response(
+                deterministic,
+                call_sid=session.call_sid,
+                turn=session.turn_count + 1,
+                intent=router_result.intent,
+            )
             session.turn_count += 1
             session.history.append({"role": "user", "content": caller_text})
             session.history.append({"role": "assistant", "content": deterministic})
@@ -381,6 +423,12 @@ class MainLLMComposer:
         response_text = "".join(text_tokens)
         if response_text:
             response_text = _sanitize_and_finalize(response_text, session, router_result)
+            log_assistant_response(
+                response_text,
+                call_sid=session.call_sid,
+                turn=session.turn_count,
+                intent=router_result.intent,
+            )
             session.history.append({"role": "user", "content": caller_text})
             session.history.append({"role": "assistant", "content": response_text})
             NaturalnessController.record_response(session, response_text)

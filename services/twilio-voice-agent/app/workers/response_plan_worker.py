@@ -67,8 +67,43 @@ class ResponsePlanWorker:
         if intent == "greeting":
             from ..dialogue.greeting import build_first_response_greeting
             greeted = getattr(session, "twiml_greeting_spoken", False)
-            say = build_first_response_greeting(session, greeted)
+            if (
+                getattr(session, "resume_greeting_pending", False)
+                and not getattr(session, "resume_greeting_delivered", False)
+            ):
+                say = getattr(session, "resume_greeting", "") or (
+                    "I'm sorry about that. Let me continue from where we left off."
+                )
+            else:
+                say = build_first_response_greeting(session, greeted)
             return {"action": "greet", "say": say}
+
+        # v4.9 small talk intents
+        if intent in (
+            "small_talk", "identity_question", "agent_name_question",
+            "store_info_question", "company_origin_question",
+            "keepalive_question", "small_talk_keepalive", "frustration_repair",
+        ):
+            if bundle:
+                st = bundle.results.get("small_talk")
+                if st and st.safe_summary:
+                    return {"action": "small_talk", "say": st.safe_summary}
+            from ..brain.eric_policy import get_small_talk_response
+            say = get_small_talk_response(intent, session) or ""
+            return {"action": "small_talk", "say": say}
+
+        # v4.9: email readback
+        if intent == "email_provided":
+            conf = getattr(session, "email_confidence", "medium") or "medium"
+            if conf == "low":
+                return {
+                    "action": "spell_email",
+                    "say": "I may have heard that wrong. Please spell the email slowly.",
+                }
+            from ..pipeline.email_speller import build_email_readback
+            email = getattr(session, "pending_email", "") or entities.get("email", "")
+            if email:
+                return {"action": "confirm_email", "say": build_email_readback(email)}
 
         # ── v4.4: PaymentFlowWorker result (highest priority) ──────────────────
         if bundle:

@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     JESSICA_EMAIL: str = ""
     CUSTOMER_SERVICE_EMAIL: str = ""
 
+    # ── v4.9: EricDialogueBrain ───────────────────────────────────────────────
+    VOICE_LLM_BRAIN_ENABLED: bool = True
+    VOICE_LLM_BRAIN_MODEL: str = "gpt-4o-mini"
+    VOICE_LLM_BRAIN_TIMEOUT_MS: int = 1200
+    VOICE_LLM_BRAIN_MAX_RETRIES: int = 1
+
+    # Turn assembler debounce (ms) for normal speech
+    VOICE_TURN_ASSEMBLER_DEBOUNCE_MS: int = 750
+
     # Shipping policy
     SHIPPING_DEFAULT_METHOD: str = "Media Mail"
     SHIPPING_ALT_METHOD: str = "Priority Mail"

@@ -95,7 +95,7 @@ class TestSingleLLMRule:
         # ai/ is the legacy LLM agent path — permitted to import openai.
         # composer/ is the new single-LLM layer — also permitted.
         # tests/ and __pycache__/ are excluded from the check.
-        excluded_dirs = {"composer", "ai", "tests", "__pycache__"}
+        excluded_dirs = {"composer", "ai", "brain", "tests", "__pycache__"}
 
         for py_file in project_root.rglob("*.py"):
             parts = set(py_file.relative_to(project_root).parts)

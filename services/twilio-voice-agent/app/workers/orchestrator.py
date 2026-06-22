@@ -55,6 +55,7 @@ from .payment_flow_worker import PaymentFlowWorker
 from .cart_memory_worker import CartMemoryWorker
 from .cart_mutation_worker import CartMutationWorker
 from .spell_email_worker import SpellEmailWorker
+from .small_talk_worker import SmallTalkWorker
 from .dialogue_worker import DialogueWorker
 from .store_info_worker import StoreInfoWorker
 
@@ -126,6 +127,15 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "cancellation_request": ["cancellation"],
     "quantity_update":      ["quantity_extractor", "cart_mutation"],
 
+    # ── v4.9 small talk / identity ────────────────────────────────────────────
+    "small_talk":             ["small_talk", "conversation_memory"],
+    "identity_question":      ["small_talk", "conversation_memory"],
+    "agent_name_question":    ["small_talk", "conversation_memory"],
+    "company_origin_question": ["small_talk", "store_info"],
+    "keepalive_question":     ["small_talk", "conversation_memory"],
+    "small_talk_keepalive":   ["small_talk", "conversation_memory"],
+    "frustration_repair":     ["small_talk", "conversation_memory"],
+
     # ── Conversational (v4.2: no longer fallback to run_agent_turn) ────────────
     "greeting":             ["speech_cleanup", "caller_memory", "conversation_memory"],
     "confirmation":         ["speech_cleanup", "conversation_memory"],
@@ -178,6 +188,7 @@ _REGISTRY: dict[str, object] = {
     "cart_mutation":            CartMutationWorker(),
     "store_info":               StoreInfoWorker(),
     "spell_email":              SpellEmailWorker(),
+    "small_talk":               SmallTalkWorker(),
     "dialogue":                 DialogueWorker(),
     # Wave 2 (managed separately, not in Wave 1)
     "response_plan":            ResponsePlanWorker(),
