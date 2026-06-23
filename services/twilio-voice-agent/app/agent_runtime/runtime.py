@@ -688,8 +688,12 @@ _runtime: EricAgentRuntime | None = None
 
 def get_eric_runtime(settings=None) -> EricAgentRuntime:
     global _runtime
+    from ..config import get_settings
+    s = settings or get_settings()
     if _runtime is None:
-        _runtime = EricAgentRuntime(settings=settings)
+        _runtime = EricAgentRuntime(settings=s)
+    else:
+        _runtime._settings = s
     return _runtime
 
 
@@ -703,3 +707,10 @@ def is_main_llm_agent_mode(settings=None) -> bool:
     from ..config import get_settings
     s = settings or get_settings()
     return s.VOICE_AGENT_RUNTIME_MODE == "main_llm_agent"
+
+
+def resolve_live_turn_handler(settings=None) -> str:
+    """Return the configured live WebSocket turn handler label."""
+    from ..config import get_settings
+    s = settings or get_settings()
+    return s.VOICE_AGENT_RUNTIME_MODE

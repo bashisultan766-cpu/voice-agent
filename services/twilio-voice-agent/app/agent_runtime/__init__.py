@@ -17,6 +17,7 @@ from .runtime import (
     get_eric_runtime,
     is_eric_runtime_mode,
     is_main_llm_agent_mode,
+    resolve_live_turn_handler,
 )
 from .llm_supervisor import LLMSupervisor, get_supervisor
 from .main_llm_agent import MainLLMAgent, decide_and_answer
@@ -38,6 +39,7 @@ __all__ = [
     "get_eric_runtime",
     "is_eric_runtime_mode",
     "is_main_llm_agent_mode",
+    "resolve_live_turn_handler",
     "LLMSupervisor",
     "get_supervisor",
     "MainLLMAgent",

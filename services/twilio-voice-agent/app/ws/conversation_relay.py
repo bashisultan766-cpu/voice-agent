@@ -52,6 +52,7 @@ from ..caller.repository import (
     upsert_caller_profile,
     build_safe_caller_context,
 )
+from ..agent_runtime.runtime import get_eric_runtime, resolve_live_turn_handler
 from ..pipeline.engine import get_engine
 from ..voice.turn_assembler import clear_turn_assembler, get_turn_assembler
 from .conversation_relay_sender import ConversationRelayOutbound, ConversationRelayStats
@@ -65,6 +66,46 @@ def _mask_phone(number: str) -> str:
     if len(digits) >= 4:
         return f"***{digits[-4:]}"
     return "***"
+
+
+async def dispatch_assembled_turn(
+    settings,
+    session: SessionState,
+    user_text: str,
+    send,
+    caller_context,
+) -> None:
+    """Route one assembled ConversationRelay turn to the configured runtime handler."""
+    mode = settings.VOICE_AGENT_RUNTIME_MODE
+    handler = resolve_live_turn_handler(settings)
+    sid = session.call_sid[:6]
+
+    logger.info(
+        "voice_turn_handler sid=%s mode=%s handler=%s",
+        sid,
+        mode,
+        handler,
+    )
+
+    if mode in ("main_llm_agent", "eric_agent_runtime"):
+        await get_eric_runtime(settings).handle_turn(
+            session,
+            user_text,
+            send,
+            caller_context=caller_context,
+        )
+        return
+
+    if mode == "legacy_v410":
+        engine = get_engine(settings)
+        await engine.handle_turn(session, user_text, send, caller_context=caller_context)
+        return
+
+    logger.error(
+        "runtime_mode_mismatch sid=%s env_mode=%s attempted=legacy_v410",
+        sid,
+        mode,
+    )
 
 
 async def await_caller_profile_ready(
@@ -234,9 +275,14 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
         greeted = greeting_sent or getattr(session, "twiml_greeting_spoken", False)
         ctx = build_safe_caller_context(session, greeted_already=greeted)
 
-        engine = get_engine(settings)
         try:
-            await engine.handle_turn(session, user_text, send, caller_context=ctx)
+            await dispatch_assembled_turn(
+                settings,
+                session,
+                user_text,
+                send,
+                ctx,
+            )
         except asyncio.CancelledError:
             logger.info("Turn cancelled by interrupt")
             raise
@@ -293,6 +339,12 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         _mask_phone(session.from_number),
                         _mask_phone(session.to_number),
                         session.session_id,
+                    )
+                    logger.info(
+                        "voice_runtime_selected sid=%s env_mode=%s handler=%s",
+                        session.call_sid[:6],
+                        settings.VOICE_AGENT_RUNTIME_MODE,
+                        resolve_live_turn_handler(settings),
                     )
                     # v4.8: resume prior call context if caller reconnected within window
                     try:

@@ -223,14 +223,10 @@ class ConversationRelayOutbound:
         preemptible: bool,
         lang: str | None,
     ) -> None:
-        from ..agent_runtime.runtime import is_eric_runtime_mode
+        from ..agent_runtime.runtime import resolve_live_turn_handler
 
         sid = self._call_sid[:6]
-        runtime_mode = (
-            "eric_agent_runtime"
-            if is_eric_runtime_mode(self._settings)
-            else "legacy_v410"
-        )
+        runtime_mode = resolve_live_turn_handler(self._settings)
         cleaned = _sanitize_outbound_text(text, call_sid=self._call_sid)
         if not cleaned:
             await self._send_fallback(sid, interruptible, preemptible, lang)
