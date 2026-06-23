@@ -159,7 +159,10 @@ _SMALL_TALK_RESPONSES = {
     ),
     "keepalive_question": "Yes, I'm here. Go ahead.",
     "small_talk_keepalive": "Yes, I'm here. Go ahead.",
-    "frustration_repair": "I understand. Let me slow down and fix this.",
+    "frustration_repair": (
+        "I understand. Let me slow down and help clearly. "
+        "My name is Eric, and I'm with SureShot Books."
+    ),
     "out_of_domain_question": (
         "I can help with SureShot Books. If you're looking for books about that topic, "
         "I can search our catalog."

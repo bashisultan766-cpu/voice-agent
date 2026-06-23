@@ -31,6 +31,38 @@ _WAIT_PHRASE = re.compile(
     re.IGNORECASE,
 )
 
+_ISBN_CONTEXT_PAT = re.compile(
+    r"\b(isbn|i\s+s\s+b\s+n|book number|barcode number|the number is)\b",
+    re.IGNORECASE,
+)
+_NON_ISBN_DIGIT_PAT = re.compile(
+    r"\b("
+    r"gpt|openai|llm|l and m|model|version|4o|4\.13|11 model|one model|"
+    r"why are you not using|not using llm|not using l and m"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def should_collect_isbn(text: str, *, book_collection: bool = False) -> bool:
+    """True only when transcript context indicates ISBN digit collection."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _NON_ISBN_DIGIT_PAT.search(t):
+        return False
+    digits = "".join(c for c in t if c.isdigit())
+    if len(digits) in (10, 13):
+        return True
+    if _ISBN_CONTEXT_PAT.search(t):
+        return True
+    if book_collection:
+        if len(digits) >= 10:
+            return True
+        if re.search(r"\bthe number is\b", t, re.I) and len(digits) >= 3:
+            return True
+    return False
+
 
 @dataclass
 class TurnTakingContext:
@@ -109,8 +141,10 @@ def classify_turn(
     in_email = intent in email_intents or "email" in active_flow
     in_order = intent in order_intents or "order" in active_flow
 
-    # Override from text content
-    if _ISBN_DIGIT_PATTERN.search(text_lower):
+    # Override from text content — ISBN only with explicit context
+    if should_collect_isbn(text_lower, book_collection="book" in active_flow or "isbn" in active_flow):
+        in_isbn = True
+    elif _ISBN_DIGIT_PATTERN.search(text_lower) and should_collect_isbn(text_lower):
         in_isbn = True
     if _EMAIL_FRAGMENT_PATTERN.search(text_lower):
         in_email = True

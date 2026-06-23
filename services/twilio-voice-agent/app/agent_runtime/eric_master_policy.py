@@ -97,6 +97,22 @@ DETERMINISTIC_TEMPLATES = {
         "for sports-related books."
     ),
     "call_resume": "I'm sorry about that. Let me continue from where we left off.",
+    "identity_name": "My name is Eric. I'm with SureShot Books.",
+    "identity_name_clarify": (
+        "I understand. My name is Eric. I'm with SureShot Books."
+    ),
+    "company_intro": (
+        "I'm with SureShot Books. I can help with books, orders, shipping, "
+        "refunds, and payment links."
+    ),
+    "capability_repair": (
+        "I understand. Let me slow down and help clearly. "
+        "My name is Eric, and I'm with SureShot Books."
+    ),
+    "capability_boundary": (
+        "I'm here to help with SureShot Books. I can help with books, orders, "
+        "shipping, refunds, and payment links."
+    ),
 }
 
 def _build_inline_master_prompt() -> str:

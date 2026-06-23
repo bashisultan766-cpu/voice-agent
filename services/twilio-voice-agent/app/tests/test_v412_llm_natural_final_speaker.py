@@ -95,8 +95,7 @@ class TestV412LLMNaturalFinalSpeaker:
         assert text != _FALLBACK
         assert "book" in text.lower() or "order" in text.lower()
 
-    async def test_name_question_natural_llm(self):
-        from unittest.mock import AsyncMock
+    async def test_name_question_deterministic_v4131(self):
         from app.agent_runtime.final_response_composer import get_final_composer
         from app.agent_runtime.types import SupervisorDecision
         from app.agent_runtime.fact_packet import FactPacket
@@ -109,16 +108,12 @@ class TestV412LLMNaturalFinalSpeaker:
         intent = IntentResult(intent="identity_question", confidence=0.95)
 
         composer = get_final_composer()
-        composer._composer.compose_final_response = AsyncMock(
-            return_value="My name is Eric. I'm with SureShot Books.",
-        )
-
         text, source = await composer.compose(
             session, "What is your name?", decision, intent,
             MemoryPacket(), FactPacket(), WorkerBundle(),
         )
-        assert source == "llm"
-        assert "Eric" in text
+        assert source == "deterministic"
+        assert text == "My name is Eric. I'm with SureShot Books."
 
     async def test_critical_payment_remains_deterministic(self):
         from app.agent_runtime.final_response_composer import get_final_composer

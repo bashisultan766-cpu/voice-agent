@@ -25,9 +25,19 @@ class SmallTalkWorker:
     ) -> WorkerResult:
         t0 = time.monotonic()
         intent = entities.get("intent", "small_talk")
-        text = get_small_talk_response(intent, session) or (
-            "I'm here to help. What can I do for you today?"
-        )
+        from ..agent_runtime.action_gate import is_name_question
+        from ..agent_runtime.eric_master_policy import get_deterministic_template
+
+        if intent in ("identity_question", "agent_name_question", "name_question") or (
+            entities.get("query") and is_name_question(entities.get("query", ""))
+        ):
+            text = get_deterministic_template("identity_name") or (
+                "My name is Eric. I'm with SureShot Books."
+            )
+        else:
+            text = get_small_talk_response(intent, session) or (
+                "I'm here to help. What can I do for you today?"
+            )
 
         # Mark resume greeting delivered after first small-talk response
         if getattr(session, "resume_greeting_pending", False):

@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
-from .turn_taking import is_complete_isbn, is_complete_order_number
+from .turn_taking import is_complete_isbn, is_complete_order_number, should_collect_isbn
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +81,23 @@ class TurnAssembler:
     def _new_group_id(self) -> str:
         return str(uuid.uuid4())[:12]
 
-    def _detect_mode(self, text: str) -> str:
+    def _detect_mode(self, text: str, *, call_sid: str = "") -> str:
         t = text.lower().strip()
         if _EMAIL_COMPLETE.search(text) or _EMAIL_SPOKEN.search(t) or " at " in t or "@" in t:
             return "email"
-        digits = "".join(c for c in text if c.isdigit())
-        if _ISBN_DIGIT_HINT(text) or (digits and len(digits) < 13):
+        book_collection = False
+        if call_sid:
+            from ..agent_runtime.conversation_state_machine import get_conversation_state
+            cs = get_conversation_state(call_sid)
+            book_collection = cs.mode in ("book_collection", "isbn_collection")
+        if self._state.mode == "isbn" and should_collect_isbn(text, book_collection=book_collection):
             return "isbn"
-        if len(digits) >= 13:
+        if not should_collect_isbn(text, book_collection=book_collection):
+            return "normal"
+        digits = "".join(c for c in text if c.isdigit())
+        if len(digits) >= 10:
+            return "isbn"
+        if _ISBN_DIGIT_HINT(text):
             return "isbn"
         return "normal"
 
@@ -263,7 +272,7 @@ class TurnAssembler:
                 )
                 return True
 
-            detected = self._detect_mode(frag)
+            detected = self._detect_mode(frag, call_sid=sid)
             if st.buffer and st.mode != "normal":
                 mode = st.mode
             else:
@@ -355,10 +364,18 @@ class TurnAssembler:
 
 
 def _ISBN_DIGIT_HINT(text: str) -> bool:
+    if not should_collect_isbn(text):
+        return False
     digits = "".join(c for c in text if c.isdigit())
     words = text.strip().split()
-    digit_words = sum(1 for w in words if w.isdigit() or w in {"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"})
-    return len(digits) >= 3 or digit_words >= 3
+    digit_words = sum(
+        1 for w in words
+        if w.isdigit() or w in {
+            "zero", "one", "two", "three", "four", "five",
+            "six", "seven", "eight", "nine",
+        }
+    )
+    return len(digits) >= 10 or digit_words >= 10
 
 
 _assemblers: dict[str, TurnAssembler] = {}

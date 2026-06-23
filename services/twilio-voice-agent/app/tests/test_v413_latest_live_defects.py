@@ -83,8 +83,9 @@ class TestLatestLiveDefects:
             await _run_turn(engine, session, text)
             assert _candidate_count(session) == 0, f"candidate saved on: {text}"
 
-        assert not getattr(session, "last_action_gate_approved", True) or _candidate_count(session) == 0
-        assert "action_gate_blocked" in caplog.text or "product_search_blocked" in caplog.text
+        assert _candidate_count(session) == 0
+        assert "product_candidate_saved" not in caplog.text
+        assert "eric_final_response sid=CA0000 intent=company_question" not in caplog.text
 
     async def test_identity_turn_no_product_search(self):
         from app.agent_runtime.action_gate import evaluate_action_gate
@@ -121,14 +122,14 @@ class TestLatestLiveDefects:
         text, source = await composer.compose(
             session,
             "You are not social book assistant.",
-            SupervisorDecision(user_intent="company_question", source="action_gate"),
-            IntentResult(intent="company_question", confidence=0.9),
+            SupervisorDecision(user_intent="frustration_repair", source="action_gate"),
+            IntentResult(intent="frustration_repair", confidence=0.9),
             MemoryPacket(),
             FactPacket(),
             WorkerBundle(),
             action_gate=session.last_action_gate_result,
         )
-        assert source == "llm"
+        assert source == "deterministic"
         assert "Eric" in text or "SureShot" in text
         assert text != "I'm here. How can I help you with SureShot Books today?"
 

@@ -211,21 +211,31 @@ class EricAgentRuntime:
         )
         session.last_action_gate_approved = gate.allowed
         session.last_action_gate_result = gate.to_dict()
-        if not gate.allowed and gate.safe_intent:
-            router_result.intent = gate.safe_intent
-            pipeline_intent = gate.safe_intent
+        if not gate.allowed and gate.product_search_blocked:
             cs_result.state.blocked_product_search_count += 1
-            decision = SupervisorDecision(
-                user_intent=gate.safe_intent,
-                confidence=decision.confidence,
-                customer_mood=decision.customer_mood,
-                domain_boundary=decision.domain_boundary,
-                worker_requests=[],
-                should_answer_now=True,
-                response_strategy="repair" if gate.safe_intent == "frustration_repair" else "direct",
-                source="action_gate",
-            )
-            session.last_supervisor_decision = decision
+            preserved = gate.semantic_intent or pipeline_intent
+            if preserved and preserved != pipeline_intent:
+                router_result.intent = preserved
+                pipeline_intent = preserved
+            sup_user = decision.user_intent
+            if preserved == "identity_question":
+                sup_user = "identity"
+            elif preserved in ("company_question", "job_question", "frustration_repair"):
+                sup_user = preserved.replace("_question", "") if preserved.endswith("_question") else preserved
+            if sup_user != decision.user_intent or decision.source != "action_gate":
+                decision = SupervisorDecision(
+                    user_intent=sup_user,
+                    confidence=decision.confidence,
+                    customer_mood=decision.customer_mood,
+                    domain_boundary=decision.domain_boundary,
+                    worker_requests=[],
+                    should_answer_now=True,
+                    response_strategy=(
+                        "repair" if preserved == "frustration_repair" else "direct"
+                    ),
+                    source="action_gate",
+                )
+                session.last_supervisor_decision = decision
 
         from ..dialogue.manager import DialogueManager
         from ..dialogue.naturalness import NaturalnessController

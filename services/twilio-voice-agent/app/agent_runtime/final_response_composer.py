@@ -7,6 +7,7 @@ No direct openai import in this module.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Optional
 
 from .eric_master_policy import (
@@ -27,6 +28,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _EMERGENCY_FALLBACK = "I'm here. How can I help you with SureShot Books today?"
+
+_IDENTITY_INTENTS = frozenset({
+    "identity", "identity_question", "agent_name_question", "name_question",
+})
+_COMPANY_JOB_INTENTS = frozenset({
+    "company_question", "company_origin_question", "job_question", "what_do_you_do",
+    "store_info_question",
+})
+_CAPABILITY_COMPLAINT_PAT = re.compile(
+    r"\b("
+    r"not using llm|not using l and m|l and m|you're not using|you are not using|"
+    r"not working good|this is not working|why are you not responding|"
+    r"why are you not using|openai|gpt|llm model|11 model|one model|version \d"
+    r")\b",
+    re.I,
+)
+_MODEL_PROVIDER_PAT = re.compile(
+    r"\b(why are you not using.*model|what model|openai|gpt|llm|version \d+\.\d+)\b",
+    re.I,
+)
 
 _CRITICAL_PLAN_ACTIONS = frozenset({
     "payment_sent", "payment_blocked", "payment_already_sent",
@@ -49,6 +70,77 @@ _ACTION_GATE_LLM_INTENTS = frozenset({
 })
 
 
+def _is_identity_turn(intent: str, decision: SupervisorDecision, caller_text: str) -> bool:
+    from .action_gate import is_name_question
+    if is_name_question(caller_text):
+        return True
+    if intent in _IDENTITY_INTENTS:
+        return True
+    if decision.user_intent == "identity":
+        return True
+    return False
+
+
+def _is_company_job_turn(intent: str, decision: SupervisorDecision, caller_text: str) -> bool:
+    from .action_gate import is_name_question
+    if is_name_question(caller_text):
+        return False
+    if intent in _COMPANY_JOB_INTENTS:
+        return True
+    if decision.user_intent in ("company_question", "job_question"):
+        return True
+    return False
+
+
+def _is_capability_complaint(caller_text: str) -> bool:
+    return bool(_CAPABILITY_COMPLAINT_PAT.search(caller_text or ""))
+
+
+def _is_model_provider_question(caller_text: str) -> bool:
+    return bool(_MODEL_PROVIDER_PAT.search(caller_text or ""))
+
+
+def _conversational_deterministic_response(
+    session: "SessionState",
+    decision: SupervisorDecision,
+    intent_result: "IntentResult",
+    caller_text: str,
+) -> Optional[str]:
+    """Exact templates for identity, company/job, and capability complaints (v4.13.1)."""
+    intent = intent_result.intent
+    t = (caller_text or "").strip()
+
+    if re.search(r"\bnot asking about your job\b", t, re.I):
+        return get_deterministic_template("identity_name_clarify")
+
+    if intent == "frustration_repair" or decision.user_intent == "frustration_repair":
+        if (
+            _is_model_provider_question(caller_text)
+            or decision.response_strategy == "capability_boundary"
+        ):
+            return get_deterministic_template("capability_boundary")
+        return get_deterministic_template("capability_repair")
+
+    if _is_identity_turn(intent, decision, caller_text):
+        return get_deterministic_template("identity_name")
+
+    if _is_capability_complaint(caller_text):
+        if (
+            _is_model_provider_question(caller_text)
+            or decision.response_strategy == "capability_boundary"
+        ):
+            return get_deterministic_template("capability_boundary")
+        return get_deterministic_template("capability_repair")
+
+    if _is_company_job_turn(intent, decision, caller_text):
+        if intent in ("job_question", "what_do_you_do") or decision.user_intent == "job_question":
+            from ..brain.eric_policy import get_small_talk_response
+            return get_small_talk_response("job_question", session)
+        return get_deterministic_template("company_intro")
+
+    return None
+
+
 def _is_llm_first_mode(settings) -> bool:
     return (getattr(settings, "VOICE_FINAL_RESPONSE_MODE", "llm_first") or "llm_first") == "llm_first"
 
@@ -67,30 +159,39 @@ def _should_use_final_llm(settings, decision: SupervisorDecision, intent: str) -
     if sup in ("payment_link", "payment_execute", "address_update", "email_capture", "email_spell"):
         return False
 
+    if intent in ("identity_question", "agent_name_question", "name_question"):
+        return False
+    if sup == "identity":
+        return False
+
     if sup == "unknown" and settings.VOICE_FINAL_LLM_FOR_UNKNOWN:
         return True
     if sup == "out_of_domain" and settings.VOICE_FINAL_LLM_FOR_OUT_OF_DOMAIN:
         return True
-    if sup in ("small_talk", "identity", "company_question", "greeting") and settings.VOICE_FINAL_LLM_FOR_SMALL_TALK:
+    if sup in ("small_talk", "company_question", "greeting") and settings.VOICE_FINAL_LLM_FOR_SMALL_TALK:
         return True
     if sup in ("repeat_clarification", "vague_book_request") and settings.VOICE_FINAL_LLM_FOR_CLARIFICATION:
         return True
     if sup == "frustration_repair":
-        return True
+        return False
 
     if intent in _LLM_FIRST_INTENTS:
         if intent == "out_of_domain_question" and not settings.VOICE_FINAL_LLM_FOR_OUT_OF_DOMAIN:
             return False
         if intent == "unknown" and not settings.VOICE_FINAL_LLM_FOR_UNKNOWN:
             return False
-        if intent in ("small_talk", "identity_question", "agent_name_question", "greeting"):
+        if intent in ("small_talk", "greeting"):
             return settings.VOICE_FINAL_LLM_FOR_SMALL_TALK
         if intent in ("vague_book_request", "repeat_clarification"):
             return settings.VOICE_FINAL_LLM_FOR_CLARIFICATION
+        if intent in ("identity_question", "agent_name_question"):
+            return False
+        if intent == "frustration_repair":
+            return False
         return True
 
-    if decision.source == "action_gate_blocked" or intent in _ACTION_GATE_LLM_INTENTS:
-        return True
+    if intent in _ACTION_GATE_LLM_INTENTS:
+        return intent not in ("identity_question",)
 
     return False
 
@@ -189,26 +290,17 @@ class FinalResponseComposer:
         if not decision.should_answer_now:
             return "", "hold"
 
-        gate = action_gate or getattr(session, "last_action_gate_result", None) or {}
-        if gate and not gate.get("allowed", True) and gate.get("blocked_worker") == "product_search":
-            blocked_reason = gate.get("reason", "")
-            session.last_action_gate_blocked_reason = blocked_reason
-            if blocked_reason in (
-                "agent_identity_or_generic", "defect_pattern:company_identity",
-                "no_explicit_book_context", "generic_query",
-            ):
-                decision = SupervisorDecision(
-                    user_intent=gate.get("safe_intent") or "company_question",
-                    confidence=decision.confidence,
-                    should_answer_now=True,
-                    response_strategy="repair",
-                    response_draft=(
-                        "I may have misunderstood. Are you asking whether I'm with "
-                        "SureShot Books, or are you looking for a specific book?"
-                    ),
-                    source="action_gate_blocked",
-                )
-                intent_result.intent = gate.get("safe_intent") or "company_question"
+        conv = _conversational_deterministic_response(
+            session, decision, intent_result, caller_text,
+        )
+        if conv:
+            text = block_processing_fee(conv)
+            text, _ = sanitize_policy_leak(text)
+            logger.info(
+                "eric_final_response sid=%s intent=%s source=deterministic",
+                sid, decision.user_intent,
+            )
+            return text, "deterministic"
 
         det = _critical_deterministic_response(session, decision, intent_result, fact_packet)
         if det:

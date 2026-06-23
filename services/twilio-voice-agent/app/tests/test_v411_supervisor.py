@@ -62,7 +62,7 @@ class TestLLMSupervisor:
         s = get_supervisor()
         session = _session()
         d = await s.decide(session, "What is your job?", _memory(), _state())
-        assert d.user_intent == "company_question"
+        assert d.user_intent == "job_question"
 
     async def test_order_routes_order_lookup(self):
         from app.agent_runtime.llm_supervisor import get_supervisor

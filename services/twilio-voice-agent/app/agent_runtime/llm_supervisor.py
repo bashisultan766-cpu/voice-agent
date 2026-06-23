@@ -68,7 +68,24 @@ _SHIPPING_Q = re.compile(r"\b(shipping|subtotal|delivery)\b", re.I)
 _REFUND_Q = re.compile(r"\b(refund|money back|charge back)\b", re.I)
 _FACILITY_Q = re.compile(r"\b(facility|approved|inmate|prison|jail)\b", re.I)
 _WAIT_PHRASE = re.compile(
-    r"\b(wait|hold on|one second|one moment|let me repeat|i repeat)\b", re.I,
+    r"\b(wait|hold on|one moment|one second|i will give you|let me get)\b",
+    re.I,
+)
+_NAME_CLARIFY = re.compile(
+    r"\b(not asking about your job|asking about your name|asking about what is your name)\b",
+    re.I,
+)
+_CAPABILITY = re.compile(
+    r"\b("
+    r"not using llm|not using l and m|l and m|you're not using|you are not using|"
+    r"why are you not using.*model|openai model|gpt|llm model|not working good|"
+    r"this is not working|you are not working"
+    r")\b",
+    re.I,
+)
+_MODEL_Q = re.compile(
+    r"\b(why are you not using.*model|what model|openai|gpt|llm|version \d)\b",
+    re.I,
 )
 _RED_RIVER = re.compile(r"red\s+river\s+vengeance", re.I)
 
@@ -216,6 +233,25 @@ def _fast_path(
             source="fast_path",
         )
 
+    if _NAME_CLARIFY.search(t) or (_NAME_Q.search(t) and "job" not in t.lower()):
+        return SupervisorDecision(
+            user_intent="identity",
+            confidence=0.97,
+            response_strategy="direct",
+            source="fast_path",
+        )
+
+    if _CAPABILITY.search(t):
+        strategy = "repair"
+        if _MODEL_Q.search(t):
+            strategy = "capability_boundary"
+        return SupervisorDecision(
+            user_intent="frustration_repair",
+            confidence=0.93,
+            response_strategy=strategy,
+            source="fast_path",
+        )
+
     if _NAME_Q.search(t):
         return SupervisorDecision(
             user_intent="identity",
@@ -250,16 +286,16 @@ def _fast_path(
             source="fast_path",
         )
 
-    if _JOB_Q.search(t) and not _NAME_Q.search(t):
+    if _JOB_Q.search(t) and not _NAME_Q.search(t) and not _NAME_CLARIFY.search(t):
         return SupervisorDecision(
-            user_intent="company_question",
+            user_intent="job_question",
             confidence=0.95,
             worker_requests=[],
             response_strategy="direct",
             source="fast_path",
         )
 
-    if _COMPANY_Q.search(t) and not _NAME_Q.search(t):
+    if _COMPANY_Q.search(t) and not _NAME_Q.search(t) and not _NAME_CLARIFY.search(t):
         return SupervisorDecision(
             user_intent="company_question",
             confidence=0.94,

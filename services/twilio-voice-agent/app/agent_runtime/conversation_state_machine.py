@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from ..voice.turn_taking import should_collect_isbn
+
 logger = logging.getLogger(__name__)
 
 _VALID_MODES = frozenset({
@@ -206,12 +208,16 @@ def process_turn(
     utterance = classify_utterance(t, state, pipeline_intent=pipeline_intent)
     result.utterance_class = utterance
 
-    # ISBN collection mode detection
+    # ISBN collection mode detection — digits alone are not enough
     digits_in_turn = _digit_count(t)
-    if isbn_buffer or digits_in_turn >= 3 or pipeline_intent in (
-        "isbn_search", "isbn_collection",
-    ):
-        if state.mode != "isbn_collection" and digits_in_turn >= 3:
+    isbn_context = should_collect_isbn(
+        t,
+        book_collection=state.mode in ("book_collection", "isbn_collection"),
+    )
+    if isbn_buffer and should_collect_isbn(isbn_buffer, book_collection=True):
+        isbn_context = True
+    if isbn_context or pipeline_intent in ("isbn_search", "isbn_collection"):
+        if state.mode != "isbn_collection" and digits_in_turn >= 10 and isbn_context:
             _transition(sid, state, "isbn_collection", "isbn_digits_detected")
             state.expected_next = "isbn_13_digits"
             state.active_task = "collect_isbn"
