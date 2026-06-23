@@ -79,6 +79,20 @@ class RealtimePipelineEngine:
         settings = self._settings
         turn = self._tracer.start_turn(session.call_sid)
 
+        # ── v4.11 Eric Agent Runtime (default) ────────────────────────────────
+        from ..agent_runtime.runtime import get_eric_runtime, is_eric_runtime_mode
+        if is_eric_runtime_mode(settings):
+            try:
+                await get_eric_runtime(settings).handle_turn(
+                    session, caller_text, send, caller_context,
+                    orchestrator=self._orchestrator,
+                    composer=self._composer,
+                    turn=turn,
+                )
+            finally:
+                self._tracer.finish(turn)
+            return
+
         # ── 1. Intent detection (v4.8 deterministic router) ───────────────────
         t0 = time.monotonic()
         intent_result = detect_intent(caller_text, session)
@@ -108,6 +122,23 @@ class RealtimePipelineEngine:
         session.last_brain_decision = brain_decision
         apply_brain_to_intent(intent_result, brain_decision)
         turn.intent = intent_result.intent
+
+        # ── v4.10 intent execution contract ─────────────────────────────────
+        from ..pipeline.intent_contract import validate_intent_contract
+
+        contract = validate_intent_contract(
+            intent_result.intent,
+            context={
+                "product_phrase": intent_result.entities.get("product_phrase", ""),
+                "query": caller_text,
+                "call_sid": session.call_sid,
+            },
+        )
+        if contract.resolved_intent and contract.resolved_intent != intent_result.intent:
+            intent_result.intent = contract.resolved_intent
+            turn.intent = intent_result.intent
+            if contract.resolved_intent == "vague_book_request":
+                intent_result.entities.pop("product_phrase", None)
 
         if brain_decision.customer_mood != "normal":
             from ..conversation.call_memory import get_call_memory
@@ -277,6 +308,7 @@ class RealtimePipelineEngine:
 
         # ── Composer: ONE OpenAI call ──────────────────────────────────────────
         first_token_time: Optional[float] = None
+        response_sent = False
         try:
             async for event in self._composer.stream_response(
                 session, caller_text, intent_result, worker_bundle,
@@ -284,18 +316,39 @@ class RealtimePipelineEngine:
             ):
                 etype = event["type"]
                 if etype == "text_token":
-                    if first_token_time is None:
+                    token = event.get("token", "")
+                    if token:
+                        response_sent = True
+                    if first_token_time is None and token:
                         first_token_time = time.monotonic()
                         turn.openai_first_token_ms = (
                             (first_token_time - turn._start) * 1000
                         )
                     await send({
                         "type": "text",
-                        "token": event["token"],
+                        "token": token,
                         "last": False,
                         "interruptible": True,
                     })
                 elif etype == "turn_done":
+                    await send({"type": "text", "token": "", "last": True})
+
+            if not response_sent and not session.turn_taking_hold:
+                from ..pipeline.response_guard import apply_response_guard
+                fallback = apply_response_guard(
+                    "",
+                    intent_result.intent,
+                    call_sid=session.call_sid,
+                    response_plan=getattr(session, "response_plan", None),
+                    turn_holding=bool(session.turn_taking_hold),
+                )
+                if fallback:
+                    await send({
+                        "type": "text",
+                        "token": fallback,
+                        "last": False,
+                        "interruptible": True,
+                    })
                     await send({"type": "text", "token": "", "last": True})
 
         except asyncio.CancelledError:

@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING
 
 from ..cart.candidate import extract_variant_from_shopify_result, persist_worker_product_result
+from ..catalog.query_specificity import is_generic_product_query, score_product_query_specificity
 from .base import WorkerResult
 
 if TYPE_CHECKING:
@@ -55,6 +56,32 @@ class ProductSearchWorker:
                 success=False,
                 error_code="no_query",
                 source="none",
+            )
+
+        intent = entities.get("intent", "product_search")
+        if is_generic_product_query(query):
+            logger.info(
+                "product_search_blocked generic query=%r intent=%s sid=%s",
+                query[:60], intent, session.call_sid[:6],
+            )
+            return WorkerResult(
+                worker_name=self.name,
+                success=True,
+                data={"results": [], "query": query, "blocked": True},
+                safe_summary="",
+                latency_ms=0,
+                source="local",
+            )
+
+        spec = score_product_query_specificity(query)
+        if not spec.is_searchable:
+            return WorkerResult(
+                worker_name=self.name,
+                success=True,
+                data={"results": [], "query": query, "blocked": True},
+                safe_summary="",
+                latency_ms=0,
+                source="local",
             )
 
         t0 = time.monotonic()
@@ -119,7 +146,7 @@ class ProductSearchWorker:
                 "variant_id": variant_id,
                 "query": query,
             }
-            if variant_id and top.get("title"):
+            if variant_id and top.get("title") and spec.may_save_candidate:
                 persist_worker_product_result(
                     session, data,
                     isbn=entities.get("isbn", ""),
@@ -173,11 +200,15 @@ def _from_cached(product, source: str, t0: float, session=None, entities=None) -
     }
     if session is not None and product.variant_id:
         ents = entities or {}
-        persist_worker_product_result(
-            session, data, source="search",
-            source_intent=ents.get("intent", "product_search"),
-            source_query=ents.get("product_phrase", "") or product.title,
+        spec = score_product_query_specificity(
+            ents.get("product_phrase", "") or product.title,
         )
+        if spec.may_save_candidate:
+            persist_worker_product_result(
+                session, data, source="search",
+                source_intent=ents.get("intent", "product_search"),
+                source_query=ents.get("product_phrase", "") or product.title,
+            )
     return WorkerResult(
         worker_name="product_search",
         success=True,

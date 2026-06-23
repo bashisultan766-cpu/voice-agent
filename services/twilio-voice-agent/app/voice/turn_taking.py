@@ -26,6 +26,10 @@ _EMAIL_FRAGMENT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _ORDER_FRAGMENT_PATTERN = re.compile(r"\b\d{3,}\b")
+_WAIT_PHRASE = re.compile(
+    r"\b(wait|hold on|one second|one moment|let me repeat|i repeat)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -81,6 +85,12 @@ def classify_turn(
     ctx = TurnTakingContext()
     text_lower = text.lower().strip()
     thresholds = _silence_thresholds(settings)
+
+    if _WAIT_PHRASE.search(text_lower):
+        ctx.hold_response = True
+        ctx.is_fragment = True
+        ctx.hold_filler = ""
+        return ctx
 
     # Determine collection mode from intent/flow
     isbn_intents = {

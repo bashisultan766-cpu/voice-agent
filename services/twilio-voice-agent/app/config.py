@@ -87,10 +87,19 @@ class Settings(BaseSettings):
     JESSICA_EMAIL: str = ""
     CUSTOMER_SERVICE_EMAIL: str = ""
 
+    # ── v4.11: Eric Agent Runtime ─────────────────────────────────────────────
+    VOICE_AGENT_RUNTIME_MODE: str = "eric_agent_runtime"  # eric_agent_runtime | legacy_v410
+    VOICE_SUPERVISOR_MODEL: str = "gpt-4o-mini"
+    VOICE_FINAL_MODEL: str = "gpt-4o-mini"
+    VOICE_SUPERVISOR_TIMEOUT_MS: int = 1800
+    VOICE_FINAL_TIMEOUT_MS: int = 2500
+    VOICE_WORKER_FANOUT_TIMEOUT_MS: int = 2500
+    VOICE_MEMORY_TURNS: int = 50
+
     # ── v4.9: EricDialogueBrain ───────────────────────────────────────────────
     VOICE_LLM_BRAIN_ENABLED: bool = True
     VOICE_LLM_BRAIN_MODEL: str = "gpt-4o-mini"
-    VOICE_LLM_BRAIN_TIMEOUT_MS: int = 1200
+    VOICE_LLM_BRAIN_TIMEOUT_MS: int = 1800
     VOICE_LLM_BRAIN_MAX_RETRIES: int = 1
 
     # Turn assembler debounce (ms) for normal speech

@@ -1,5 +1,5 @@
 """
-EricDialogueBrain — LLM-first dialogue planner (v4.9).
+EricDialogueBrain — LLM-first dialogue planner (v4.10).
 
 JSON-only OpenAI planner that runs BEFORE final intent selection.
 Falls back to v4.8 deterministic router on timeout or failure.
@@ -17,7 +17,8 @@ from openai import AsyncOpenAI
 
 from ..config import get_settings
 from ..conversation.call_memory import build_brain_context, record_brain_fact
-from .eric_policy import build_brain_policy_summary, get_small_talk_response
+from ..catalog.query_specificity import is_generic_product_query
+from .eric_prompt_compiler import compile_brain_user_prompt
 from .schema import BrainDecision, parse_brain_json
 
 if TYPE_CHECKING:
@@ -27,32 +28,80 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _HOW_ARE_YOU = re.compile(
-    r"\b(how are you|how.?s it going|how you doing|how do you do)\b",
+    r"\b(how are you|how.?s it going|how you doing|how do you do|how are you doing)\b",
     re.IGNORECASE,
 )
 _NAME_Q = re.compile(
-    r"\b(what(?:'s| is) your name|who am i (?:speaking|talking) (?:to|with)|"
-    r"may i (?:have|get) your name|your name please)\b",
+    r"\b("
+    r"what(?:'s| is) your name|what(?:'s| is) (?:the )?name|"
+    r"who am i (?:speaking|talking) (?:to|with)|"
+    r"who are you|"
+    r"is your name|"
+    r"may i (?:have|get) your name|your name please|"
+    r"(?:tell me|what(?:'s| is)) (?:your )?name"
+    r")\b",
+    re.IGNORECASE,
+)
+_JOB_Q = re.compile(
+    r"\b("
+    r"what(?:'s| is) your job|what do you do|what can you do|"
+    r"what are you|what is your role|what do you do for work"
+    r")\b",
     re.IGNORECASE,
 )
 _ORIGIN_Q = re.compile(
-    r"\b(where are you from|what company|who do you work for|"
-    r"what store is this|where is this|sureshot)\b",
+    r"\b("
+    r"where are you from|what company|who do you work for|"
+    r"what store is this|where is this|what company is this|sureshot"
+    r")\b",
     re.IGNORECASE,
 )
 _KEEPALIVE = re.compile(
     r"^\s*(hello\??|are you (?:there|with me)\??|you there\??|can you hear me)\s*\.?\s*$",
     re.IGNORECASE,
 )
+_GREETING = re.compile(
+    r"^\s*(hi|hello|hey|good morning|good afternoon|good evening)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_GENERIC_BOOK = re.compile(
+    r"\b("
+    r"i need (?:a |the )?books?|i want (?:a |the )?books?|"
+    r"help me find (?:a )?books?|do you sell books?|"
+    r"can you (?:give|get|find) me (?:a )?books?"
+    r")\b",
+    re.IGNORECASE,
+)
 _PAYMENT_PHRASES = re.compile(
-    r"\b(send (?:me )?(?:the )?(?:bill|payment|checkout|link)|"
+    r"\b("
+    r"send (?:me )?(?:the )?(?:bill|payment|checkout|link)|"
     r"payment (?:link|thing)|checkout|send it|send both|send those|"
-    r"yes,? send it|bill book payment)\b",
+    r"yes,? send it|bill book payment"
+    r")\b",
+    re.IGNORECASE,
+)
+_THANKS = re.compile(
+    r"^\s*(?:okay|ok)?\s*(?:thank you|thanks|thank you so much|thanks a lot)\s*[.!?]?\s*$",
     re.IGNORECASE,
 )
 _FRUSTRATION = re.compile(
     r"\b(damn|hell|stupid|ridiculous|frustrated|angry|useless|"
     r"not working|what(?:'s| is) wrong)\b",
+    re.IGNORECASE,
+)
+_OUT_OF_DOMAIN = re.compile(
+    r"\b("
+    r"who is (?:donald )?trump|where is (?:donald )?trump|"
+    r"who won (?:the )?game|sports news|what(?:'s| is) the weather|"
+    r"who is the president|tell me (?:about )?(?:politics|sports)"
+    r")\b",
+    re.IGNORECASE,
+)
+_TOPIC_BOOK_SEARCH = re.compile(
+    r"\b("
+    r"(?:search|find|do you have|got any|looking for) (?:books? about|books on)|"
+    r"books about .+|books on .+"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -72,6 +121,14 @@ def _fast_path_decision(
     active = state.active_flow or ""
     pfs = getattr(session, "payment_flow_status", "idle") or "idle"
 
+    if _THANKS.match(t):
+        return BrainDecision(
+            intent="ending_thanks",
+            confidence=0.94,
+            response_style="closing",
+            source="fast_path",
+        )
+
     if _HOW_ARE_YOU.search(t):
         return BrainDecision(
             intent="small_talk",
@@ -89,15 +146,23 @@ def _fast_path_decision(
             source="fast_path",
         )
 
+    if _JOB_Q.search(t) and not _NAME_Q.search(t):
+        return BrainDecision(
+            intent="job_question",
+            confidence=0.95,
+            response_style="domain_answer",
+            source="fast_path",
+        )
+
     if _ORIGIN_Q.search(t) and not _NAME_Q.search(t):
         return BrainDecision(
-            intent="store_info_question",
+            intent="company_origin_question",
             confidence=0.94,
             response_style="domain_answer",
             source="fast_path",
         )
 
-    if _KEEPALIVE.match(t):
+    if _KEEPALIVE.match(t) or (_GREETING.match(t) and t.lower().strip("?.!") == "hello"):
         if active and active not in ("idle", "greeting", ""):
             return BrainDecision(
                 intent="keepalive_question",
@@ -105,7 +170,7 @@ def _fast_path_decision(
                 response_style="short",
                 source="fast_path",
             )
-        if "hello" in t.lower() and "how are you" in t.lower():
+        if "hello" in t.lower() and _HOW_ARE_YOU.search(t):
             return BrainDecision(
                 intent="small_talk",
                 confidence=0.92,
@@ -114,6 +179,35 @@ def _fast_path_decision(
         return BrainDecision(
             intent="keepalive_question",
             confidence=0.90,
+            response_style="short",
+            source="fast_path",
+        )
+
+    if _TOPIC_BOOK_SEARCH.search(t):
+        return BrainDecision(
+            intent="topic_book_search_offer",
+            confidence=0.91,
+            task_required=True,
+            worker_plan=["product_search"],
+            response_style="short",
+            source="fast_path",
+        )
+
+    if _OUT_OF_DOMAIN.search(t) and not _TOPIC_BOOK_SEARCH.search(t):
+        return BrainDecision(
+            intent="out_of_domain_question",
+            confidence=0.92,
+            response_style="domain_answer",
+            source="fast_path",
+        )
+
+    if _GENERIC_BOOK.search(t) or (
+        input_intent in ("vague_book_request", "book_title_search", "product_search")
+        and is_generic_product_query(t)
+    ):
+        return BrainDecision(
+            intent="vague_book_request",
+            confidence=0.93,
             response_style="short",
             source="fast_path",
         )
@@ -138,7 +232,6 @@ def _fast_path_decision(
             source="fast_path",
         )
 
-    # Greeting with small talk compound
     if input_intent == "greeting" and _HOW_ARE_YOU.search(t):
         return BrainDecision(
             intent="small_talk",
@@ -147,46 +240,6 @@ def _fast_path_decision(
         )
 
     return None
-
-
-def _build_brain_prompt(
-    caller_text: str,
-    input_intent: str,
-    session: "SessionState",
-) -> str:
-    from ..dialogue.manager import DialogueManager
-    from ..cart.session import get_ledger
-
-    state = DialogueManager.get_state(session)
-    ledger = get_ledger(session)
-    memory_block = build_brain_context(session)
-
-    lines = [
-        "You are Eric's dialogue brain for SureShot Books phone support.",
-        "Return JSON only. No tools. No markdown.",
-        "",
-        build_brain_policy_summary(),
-        "",
-        f"Customer turn: {caller_text[:300]}",
-        f"Router intent (hint): {input_intent}",
-        f"Active flow: {state.active_flow or 'idle'}",
-        f"Expected next: {state.expected_next or 'none'}",
-        f"Cart confirmed: {ledger.confirmed_count()}",
-        f"Payment status: {getattr(session, 'payment_flow_status', 'idle')}",
-        f"Email pending: {bool(getattr(session, 'pending_email', ''))}",
-        f"Email confirmed: {bool(getattr(session, 'confirmed_email', ''))}",
-        f"Resumed call: {getattr(session, 'is_resumed_call', False)}",
-        f"Resume delivered: {getattr(session, 'resume_greeting_delivered', False)}",
-        f"ISBN buffer: {getattr(session, 'isbn_buffer', '')[:20]}",
-    ]
-    if memory_block:
-        lines.append(memory_block)
-    lines.append(
-        'JSON schema: {"intent":"...","confidence":0.0,"customer_mood":"normal",'
-        '"task_required":true,"worker_plan":[],"response_style":"short",'
-        '"response_goal":"","ask_one_question":"","should_hold_for_more_speech":false}'
-    )
-    return "\n".join(lines)
 
 
 async def _call_llm_brain(
@@ -282,7 +335,7 @@ class EricDialogueBrain:
             )
 
         try:
-            prompt = _build_brain_prompt(caller_text, input_intent, session)
+            prompt = compile_brain_user_prompt(caller_text, input_intent, session)
             raw = await _call_llm_brain(prompt, settings)
             if raw:
                 decision = parse_brain_json(raw)
@@ -305,7 +358,7 @@ class EricDialogueBrain:
 
         logger.info("llm_brain_fallback sid=%s input_intent=%s", sid, input_intent)
         return BrainDecision(
-            intent=input_intent,
+            intent=input_intent if input_intent != "unknown" else "unknown",
             confidence=0.70,
             source="fallback",
         )
@@ -324,6 +377,7 @@ def apply_brain_to_intent(
 
 def get_brain_response_text(decision: BrainDecision, session: "SessionState") -> Optional[str]:
     """Return deterministic response for brain-handled small talk intents."""
+    from .eric_policy import get_small_talk_response
     return get_small_talk_response(decision.intent, session)
 
 

@@ -44,7 +44,7 @@ class TestEricBrainFastPath:
 
     def test_origin_store_info(self):
         d = _fast_path_decision("Where are you from?", "unknown", _session())
-        assert d.intent == "store_info_question"
+        assert d.intent == "company_origin_question"
 
     def test_keepalive(self):
         d = _fast_path_decision("Are you with me?", "unknown", _session())

@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _VAGUE_CLARIFY = (
-    "Sure, I can help with that. Do you have the ISBN, the title, "
-    "the author, or just the subject you are looking for?"
+    "Sure. Do you have the ISBN, title, author, or subject?"
 )
 
 
@@ -78,11 +77,13 @@ class ResponsePlanWorker:
                 say = build_first_response_greeting(session, greeted)
             return {"action": "greet", "say": say}
 
-        # v4.9 small talk intents
+        # v4.10 small talk intents
         if intent in (
             "small_talk", "identity_question", "agent_name_question",
-            "store_info_question", "company_origin_question",
+            "store_info_question", "company_origin_question", "company_question",
+            "job_question", "what_do_you_do",
             "keepalive_question", "small_talk_keepalive", "frustration_repair",
+            "out_of_domain_question",
         ):
             if bundle:
                 st = bundle.results.get("small_talk")
@@ -90,7 +91,18 @@ class ResponsePlanWorker:
                     return {"action": "small_talk", "say": st.safe_summary}
             from ..brain.eric_policy import get_small_talk_response
             say = get_small_talk_response(intent, session) or ""
-            return {"action": "small_talk", "say": say}
+            action = "out_of_domain" if intent == "out_of_domain_question" else "small_talk"
+            return {"action": action, "say": say}
+
+        if intent == "topic_book_search_offer":
+            if bundle:
+                r = bundle.results.get("product_search")
+                if r and r.success and r.safe_summary and not (r.data or {}).get("blocked"):
+                    return {"action": "confirm_product", "say": r.safe_summary}
+            return {
+                "action": "clarify",
+                "say": "I can search our catalog. What topic or title are you looking for?",
+            }
 
         # v4.9: email readback
         if intent == "email_provided":
@@ -356,7 +368,10 @@ class ResponsePlanWorker:
                 ),
             }
 
-        return {"action": "clarify", "say": ""}
+        return {
+            "action": "clarify",
+            "say": "I'm here. How can I help you with SureShot Books today?",
+        }
 
 
 def _mask_email(email: str) -> str:

@@ -97,7 +97,7 @@ class TestWorkerPathForToolIntents:
         assert len(bundles) == 1, "Composer should receive WorkerBundle"
 
     async def test_product_search_uses_worker_path(self):
-        sent, bundles = await self._run_with_mocked_composer("do you have Dune")
+        sent, bundles = await self._run_with_mocked_composer("search for Dune by Frank Herbert")
         assert len(bundles) == 1
 
     async def test_order_lookup_uses_worker_path(self):
@@ -110,16 +110,16 @@ class TestWorkerPathForToolIntents:
 
     async def test_composer_receives_worker_bundle(self):
         bundle = _success_bundle(product_search="Found Dune, in stock.")
-        _, bundles = await self._run_with_mocked_composer("find dune", bundle=bundle)
+        _, bundles = await self._run_with_mocked_composer("search for Dune by Frank Herbert", bundle=bundle)
         received = bundles[0]
         assert "product_search" in received.results
 
     async def test_worker_path_sends_turn_done(self):
-        sent, _ = await self._run_with_mocked_composer("isbn 9780441172719")
+        sent, _ = await self._run_with_mocked_composer("search for Dune by Frank Herbert")
         assert any(m.get("last") is True for m in sent)
 
     async def test_worker_path_sends_text_tokens(self):
-        sent, _ = await self._run_with_mocked_composer("find dune")
+        sent, _ = await self._run_with_mocked_composer("search for Dune by Frank Herbert")
         text_msgs = [m for m in sent if m.get("token") == "Found it."]
         assert len(text_msgs) >= 1
 
@@ -177,10 +177,10 @@ class TestAllIntentsUseWorkerPath:
         with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn), \
              patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
              patch.object(engine._composer, "stream_response", fake_stream):
-            await _run_turn(engine, session, "hi")
+            sent = await _run_turn(engine, session, "hi")
 
         assert not agent_called, "run_agent_turn must NOT be called in v4.2"
-        assert composer_called, "composer must be called for greeting"
+        assert any(m.get("token") for m in sent), "greeting must produce a response in v4.11"
 
     async def test_unknown_intent_uses_worker_path_not_run_agent_turn(self):
         engine = RealtimePipelineEngine(settings=_fake_settings())

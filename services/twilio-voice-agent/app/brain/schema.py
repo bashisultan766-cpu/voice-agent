@@ -16,6 +16,10 @@ VALID_INTENTS = frozenset({
     "email_correction", "isbn_collection_start", "keepalive_question",
     "agent_name_question", "company_origin_question", "small_talk_keepalive",
     "checkout_request", "product_search", "confirm_product",
+    # v4.10
+    "job_question", "what_do_you_do", "company_question",
+    "out_of_domain_question", "topic_book_search_offer",
+    "explicit_title_search", "book_title_search", "author_search",
 })
 
 VALID_MOODS = frozenset({"normal", "confused", "frustrated", "angry"})

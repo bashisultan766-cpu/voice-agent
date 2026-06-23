@@ -137,6 +137,18 @@ _SMALL_TALK_RESPONSES = {
     "small_talk": "I'm doing well, thank you. How can I help you today?",
     "identity_question": "My name is Eric. I'm with SureShot Books.",
     "agent_name_question": "My name is Eric. I'm with SureShot Books.",
+    "job_question": (
+        "I help SureShot Books customers with books, orders, shipping, refunds, "
+        "facility questions, and payment links."
+    ),
+    "what_do_you_do": (
+        "I help SureShot Books customers with books, orders, shipping, refunds, "
+        "facility questions, and payment links."
+    ),
+    "company_question": (
+        "I'm with SureShot Books. I can help with books, orders, shipping, "
+        "refunds, and payment links."
+    ),
     "store_info_question": (
         "I'm with SureShot Books. I can help with books, orders, shipping, "
         "refunds, and payment links."
@@ -148,6 +160,11 @@ _SMALL_TALK_RESPONSES = {
     "keepalive_question": "Yes, I'm here. Go ahead.",
     "small_talk_keepalive": "Yes, I'm here. Go ahead.",
     "frustration_repair": "I understand. Let me slow down and fix this.",
+    "out_of_domain_question": (
+        "I can help with SureShot Books. If you're looking for books about that topic, "
+        "I can search our catalog."
+    ),
+    "vague_book_request": "Sure. Do you have the ISBN, title, author, or subject?",
 }
 
 _POLICY = EricPolicy()
@@ -190,6 +207,8 @@ def build_brain_policy_summary() -> str:
 
 def get_small_talk_response(intent: str, session: Optional["SessionState"] = None) -> Optional[str]:
     """Return deterministic small-talk response for brain-handled intents."""
+    from ..dialogue.response_variation import get_varied_response
+
     if intent == "greeting" and session:
         from ..dialogue.greeting import build_first_response_greeting
         greeted = getattr(session, "twiml_greeting_spoken", False)
@@ -199,7 +218,10 @@ def get_small_talk_response(intent: str, session: Optional["SessionState"] = Non
         ):
             return _POLICY.call_cutoff_resume
         return build_first_response_greeting(session, greeted)
-    return _SMALL_TALK_RESPONSES.get(intent)
+    base = _SMALL_TALK_RESPONSES.get(intent)
+    if base is None:
+        return None
+    return get_varied_response(intent, base, session)
 
 
 def get_response_template(key: str, **kwargs) -> Optional[str]:

@@ -132,9 +132,14 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "identity_question":      ["small_talk", "conversation_memory"],
     "agent_name_question":    ["small_talk", "conversation_memory"],
     "company_origin_question": ["small_talk", "store_info"],
+    "company_question":       ["small_talk", "store_info"],
+    "job_question":           ["small_talk", "conversation_memory"],
+    "what_do_you_do":         ["small_talk", "conversation_memory"],
     "keepalive_question":     ["small_talk", "conversation_memory"],
     "small_talk_keepalive":   ["small_talk", "conversation_memory"],
     "frustration_repair":     ["small_talk", "conversation_memory"],
+    "out_of_domain_question": ["conversation_memory"],
+    "topic_book_search_offer": ["product_search", "conversation_memory"],
 
     # ── Conversational (v4.2: no longer fallback to run_agent_turn) ────────────
     "greeting":             ["speech_cleanup", "caller_memory", "conversation_memory"],

@@ -42,6 +42,7 @@ from ..conversation.call_memory import (
     sync_from_session,
 )
 from ..brain.eric_policy import get_small_talk_response
+from ..pipeline.response_guard import apply_response_guard
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext
@@ -105,11 +106,13 @@ def _deterministic_response(
             )
         return build_first_response_greeting(session, greeted)
 
-    # v4.9: deterministic small talk from Eric brain
+    # v4.10: deterministic small talk from Eric brain
     if router_result.intent in (
         "small_talk", "identity_question", "agent_name_question",
-        "store_info_question", "company_origin_question",
+        "store_info_question", "company_origin_question", "company_question",
+        "job_question", "what_do_you_do",
         "keepalive_question", "small_talk_keepalive", "frustration_repair",
+        "out_of_domain_question", "vague_book_request",
     ):
         text = get_small_talk_response(router_result.intent, session)
         if text:
@@ -142,6 +145,12 @@ def _deterministic_response(
         return say
 
     if action in ("spell_email", "answer_memory", "store_info", "small_talk") and say:
+        return say
+
+    if action in ("clarify_vague_book", "out_of_domain") and say:
+        return say
+
+    if action == "clarify" and say:
         return say
 
     if action in (
@@ -331,6 +340,26 @@ class MainLLMComposer:
         record_user_turn(session, caller_text, router_result.intent)
         sync_from_session(session)
 
+        # v4.10: brain timeout fallback — skip slow LLM when deterministic exists
+        brain = getattr(session, "last_brain_decision", None)
+        if brain and brain.source in ("fallback",) and brain.intent == "unknown":
+            from ..pipeline.response_guard import resolve_fallback_response
+            fb = resolve_fallback_response("unknown")
+            if fb:
+                text = _sanitize_and_finalize(fb.text, session, router_result)
+                log_assistant_response(
+                    text, call_sid=session.call_sid,
+                    turn=session.turn_count + 1, intent=router_result.intent,
+                )
+                session.turn_count += 1
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": text})
+                NaturalnessController.record_response(session, text)
+                record_assistant_turn(session, text)
+                yield {"type": "text_token", "token": text}
+                yield {"type": "turn_done"}
+                return
+
         deterministic = _deterministic_response(session, router_result)
         if deterministic:
             deterministic = _sanitize_and_finalize(deterministic, session, router_result)
@@ -421,6 +450,13 @@ class MainLLMComposer:
 
         # Store the response in history so the conversation stays coherent
         response_text = "".join(text_tokens)
+        if not response_text.strip():
+            response_text = apply_response_guard(
+                "",
+                router_result.intent,
+                call_sid=session.call_sid,
+                response_plan=getattr(session, "response_plan", None),
+            )
         if response_text:
             response_text = _sanitize_and_finalize(response_text, session, router_result)
             log_assistant_response(

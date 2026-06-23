@@ -1,9 +1,15 @@
-"""Guard product candidate persistence — block memory/vague queries (v4.7)."""
+"""Guard product candidate persistence — block memory/vague queries (v4.10)."""
 from __future__ import annotations
 
 import logging
 import re
 from typing import Optional
+
+from ..catalog.query_specificity import (
+    is_generic_product_query,
+    may_auto_save_candidate,
+    score_product_query_specificity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +33,13 @@ _BLOCKED_INTENTS = frozenset({
     "ending_thanks",
     "confirmation",
     "spell_email_request",
+    "vague_book_request",
+    "out_of_domain_question",
+    "topic_book_search_offer",
+    "identity_question",
+    "small_talk",
+    "job_question",
+    "keepalive_question",
 })
 
 _ALLOWED_INTENTS = frozenset({
@@ -40,12 +53,8 @@ _ALLOWED_INTENTS = frozenset({
     "product_search",
     "multi_book_order",
     "price_question",
-})
-
-_GENERIC_QUERIES = frozenset({
-    "book", "books", "a book", "the book", "title", "first book",
-    "which book", "my order", "store", "name", "the title",
-    "first book title", "which book i add first",
+    "confirm_product",
+    "add_to_cart",
 })
 
 _GENERIC_PATTERNS = (
@@ -55,25 +64,9 @@ _GENERIC_PATTERNS = (
     re.compile(r"first book title", re.I),
 )
 
-_MIN_SPECIFICITY_SCORE = 3
-
 
 def _query_specificity_score(query: str) -> int:
-    q = (query or "").strip().lower()
-    if not q:
-        return 0
-    if q in _GENERIC_QUERIES:
-        return 0
-    for pat in _GENERIC_PATTERNS:
-        if pat.search(q):
-            return 0
-    words = [w for w in re.split(r"\s+", q) if len(w) > 2]
-    score = len(words)
-    if re.search(r"\b(called|titled|named|about|author|isbn)\b", q):
-        score += 2
-    if len(q) >= 12:
-        score += 1
-    return score
+    return score_product_query_specificity(query).score
 
 
 def should_save_candidate(
@@ -88,25 +81,26 @@ def should_save_candidate(
     ISBN search with valid product is always allowed when is_isbn=True.
     """
     q = (query or "").strip()
-    q_lower = q.lower()
 
     if intent in _BLOCKED_INTENTS:
         return False, f"blocked_intent:{intent}"
 
-    if q_lower in _GENERIC_QUERIES:
+    if is_isbn:
+        return True, "isbn_search"
+
+    if is_generic_product_query(q):
         return False, "generic_query"
 
     for pat in _GENERIC_PATTERNS:
         if pat.search(q):
             return False, "generic_query_pattern"
 
-    if is_isbn:
-        return True, "isbn_search"
-
     if intent in _ALLOWED_INTENTS:
-        if intent == "product_search":
-            if _query_specificity_score(q) < _MIN_SPECIFICITY_SCORE:
+        if intent in ("product_search", "book_title_search", "author_search"):
+            if not may_auto_save_candidate(q, is_isbn=False):
                 return False, "low_specificity"
+        if intent == "topic_book_search_offer":
+            return False, "subject_search_no_auto_candidate"
         return True, f"allowed_intent:{intent}"
 
     if intent == "isbn_search":

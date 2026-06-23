@@ -828,7 +828,14 @@ def detect(text: str, session=None) -> IntentResult:
     # Explicit title search ("I need Game of Thrones", "the title is...")
     if _TITLE_EXPLICIT.search(t):
         phrase = _extract_product_phrase(t)
-        if _is_blocklisted_product_phrase(phrase):
+        from ..catalog.query_specificity import is_generic_product_query
+        if phrase and not is_generic_product_query(phrase):
+            entities["product_phrase"] = phrase
+            return IntentResult(
+                intent="book_title_search", confidence=0.84, entities=entities,
+                needs_filler=True, suggested_tools=["search_products"],
+            )
+        if _is_blocklisted_product_phrase(phrase) or is_generic_product_query(phrase or t):
             return IntentResult(
                 intent="vague_book_request", confidence=0.86, entities=entities,
             )
@@ -841,7 +848,8 @@ def detect(text: str, session=None) -> IntentResult:
 
     if _PRODUCT_WORDS.search(t):
         phrase = _extract_product_phrase(t)
-        if _is_blocklisted_product_phrase(phrase):
+        from ..catalog.query_specificity import is_generic_product_query
+        if _is_blocklisted_product_phrase(phrase) or is_generic_product_query(phrase or t):
             if re.search(r"\bstore name\b", t, re.I):
                 entities["store_info_topic"] = "general"
                 return IntentResult(
@@ -977,7 +985,11 @@ def _extract_product_phrase(text: str) -> str:
 
 def _is_vague_book_request(text: str, entities: dict) -> bool:
     """True when caller wants a book but gave no ISBN, title, author, or subject."""
+    from ..catalog.query_specificity import is_generic_product_query
+
     if entities.get("isbn"):
+        return False
+    if _CHECKOUT_WORDS.search(text):
         return False
     if _AUTHOR_WORDS.search(text):
         return False
@@ -985,6 +997,13 @@ def _is_vague_book_request(text: str, entities: dict) -> bool:
         return False
     if _ISBN_PREFIX.search(text) or _ISBN_INTENT_HINT.search(text):
         return False
+
+    # Explicit title with named book — not vague
+    m_title = re.search(r"\b(?:called|titled|named)\s+(.+)", text, re.I)
+    if m_title:
+        title_part = m_title.group(1).strip().strip("?.!,")
+        if title_part and not is_generic_product_query(title_part):
+            return False
 
     stripped = _PREAMBLE_STRIP.sub("", text.strip())
     if _VAGUE_BOOK_PAT.match(stripped):
@@ -1008,12 +1027,21 @@ def _is_vague_book_request(text: str, entities: dict) -> bool:
     ):
         return True
 
+    # v4.10: generic book + trailing filler ("I need a book. Can you please provide")
+    if re.search(r"\bi (?:need|want) (?:a |the )?books?\b", stripped, re.I):
+        phrase = _extract_product_phrase(text)
+        if not phrase or is_generic_product_query(phrase) or is_generic_product_query(text):
+            return True
+
     phrase = _extract_product_phrase(text)
     if phrase and _is_blocklisted_product_phrase(phrase):
         return True
-    if phrase and len(phrase) > 3:
+    if phrase and is_generic_product_query(phrase):
+        if re.search(r"\bbooks?\b", text, re.I) or _PRODUCT_WORDS.search(text) or _TITLE_EXPLICIT.search(text):
+            return True
+    if phrase and len(phrase) > 3 and not is_generic_product_query(phrase):
         return False
-    if _TITLE_EXPLICIT.search(text) and phrase:
+    if _TITLE_EXPLICIT.search(text) and phrase and not is_generic_product_query(phrase):
         return False
     return False
 

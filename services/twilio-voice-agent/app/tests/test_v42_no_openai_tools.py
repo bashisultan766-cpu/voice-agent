@@ -177,9 +177,10 @@ class TestHistoryNeverHasToolMessages:
             yield {"type": "turn_done"}
 
         with patch.object(engine._orchestrator, "run", AsyncMock(return_value=WorkerBundle())), \
-             patch.object(engine._composer, "stream_response", slow_stream):
+             patch.object(engine._composer, "stream_response", slow_stream), \
+             patch("app.agent_runtime.final_response_composer._deterministic_response", return_value=None):
             task = asyncio.create_task(
-                engine.handle_turn(session, "hi", lambda m: None)
+                engine.handle_turn(session, "isbn 9780441172719", _append_noop)
             )
             await asyncio.sleep(0.02)
             task.cancel()
@@ -195,3 +196,7 @@ class TestHistoryNeverHasToolMessages:
 
 async def _append(lst, msg):
     lst.append(msg)
+
+
+async def _append_noop(msg):
+    return None
