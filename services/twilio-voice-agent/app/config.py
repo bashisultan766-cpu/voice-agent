@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     CUSTOMER_SERVICE_EMAIL: str = ""
 
     # ── v4.11: Eric Agent Runtime ─────────────────────────────────────────────
-    VOICE_AGENT_RUNTIME_MODE: str = "eric_agent_runtime"  # eric_agent_runtime | legacy_v410
+    VOICE_AGENT_RUNTIME_MODE: str = "main_llm_agent"  # main_llm_agent | eric_agent_runtime | legacy_v410
     VOICE_SUPERVISOR_MODEL: str = "gpt-4o-mini"
     VOICE_FINAL_MODEL: str = "gpt-4o-mini"
     VOICE_SUPERVISOR_TIMEOUT_MS: int = 1800

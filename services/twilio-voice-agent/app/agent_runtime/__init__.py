@@ -1,4 +1,4 @@
-"""Eric Agent Runtime (v4.11) — ElevenLabs-style agent core."""
+"""Eric Agent Runtime (v4.14) — n8n-style LLM agent core."""
 from .eric_master_policy import (
     ERIC_BUSINESS_RULES,
     ERIC_CLIENT_RULES,
@@ -12,8 +12,14 @@ from .eric_master_policy import (
     block_processing_fee,
     sanitize_policy_leak,
 )
-from .runtime import EricAgentRuntime, get_eric_runtime, is_eric_runtime_mode
+from .runtime import (
+    EricAgentRuntime,
+    get_eric_runtime,
+    is_eric_runtime_mode,
+    is_main_llm_agent_mode,
+)
 from .llm_supervisor import LLMSupervisor, get_supervisor
+from .main_llm_agent import MainLLMAgent, decide_and_answer
 from .types import SupervisorDecision, RuntimeTurnResult, StatePacket
 
 __all__ = [
@@ -31,8 +37,11 @@ __all__ = [
     "EricAgentRuntime",
     "get_eric_runtime",
     "is_eric_runtime_mode",
+    "is_main_llm_agent_mode",
     "LLMSupervisor",
     "get_supervisor",
+    "MainLLMAgent",
+    "decide_and_answer",
     "SupervisorDecision",
     "RuntimeTurnResult",
     "StatePacket",
