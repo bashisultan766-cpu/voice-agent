@@ -114,6 +114,13 @@ class Settings(BaseSettings):
     VOICE_FINAL_LLM_FOR_OUT_OF_DOMAIN: bool = True
     VOICE_FINAL_LLM_FOR_CLARIFICATION: bool = True
 
+    # ── v4.13: Eric prompt file + conversation state machine ──────────────────
+    ERIC_SYSTEM_PROMPT_PATH: str = "app/data/eric_system_prompt.md"
+    ERIC_SYSTEM_PROMPT_VERSION: str = "v1"
+    VOICE_ISBN_PARTIAL_TIMEOUT_MS: int = 5000
+    VOICE_COLLECTION_MAX_HOLD_MS: int = 7000
+    VOICE_COLLECTION_KEEPALIVE_ENABLED: bool = True
+
     # ── v4.9: EricDialogueBrain ───────────────────────────────────────────────
     VOICE_LLM_BRAIN_ENABLED: bool = True
     VOICE_LLM_BRAIN_MODEL: str = "gpt-4o-mini"

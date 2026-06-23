@@ -11,12 +11,14 @@ sys.path.insert(0, str(ROOT))
 
 def main() -> int:
     from app.config import get_settings
-    from app.agent_runtime.eric_master_policy import build_eric_brain_system_prompt
+    from app.agent_runtime.prompt_loader import get_prompt_load_status, load_eric_system_prompt_text
     from app.agent_runtime.knowledge_base import is_knowledge_base_loaded
     from app.agent_runtime.worker_packet import READ_ONLY_WORKERS, MUTATING_WORKERS
 
     s = get_settings()
-    policy = build_eric_brain_system_prompt()
+    load_eric_system_prompt_text()
+    prompt_status = get_prompt_load_status()
+    policy_len = prompt_status["chars"]
 
     print("Eric Agent Runtime Check")
     print("=" * 40)
@@ -32,7 +34,10 @@ def main() -> int:
     print(f"Welcome greeting enabled: {'yes' if s.VOICE_WELCOME_GREETING_ENABLED else 'no'}")
     print(f"Welcome greeting configured: {'yes' if bool(s.VOICE_WELCOME_GREETING.strip()) else 'no'}")
     print(f"TTS provider:        {s.VOICE_TTS_PROVIDER}")
-    print(f"Policy loaded:       {'yes' if len(policy) > 100 else 'no'}")
+    print(f"Policy loaded:       {'yes' if policy_len > 100 else 'no'}")
+    print(f"Eric prompt file:    {'loaded' if prompt_status['loaded_from_file'] else 'inline_fallback'}")
+    print(f"Eric prompt version: {prompt_status['version']}")
+    print(f"Eric prompt chars:   {prompt_status['chars']}")
     print(f"Knowledge base:      {'yes' if is_knowledge_base_loaded() else 'no'}")
     print(f"Read-only workers:   {', '.join(sorted(READ_ONLY_WORKERS))}")
     print(f"Mutating workers:    {', '.join(sorted(MUTATING_WORKERS))}")

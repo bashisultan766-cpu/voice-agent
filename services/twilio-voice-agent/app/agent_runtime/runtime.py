@@ -18,7 +18,16 @@ from .fact_packet import build_fact_packet
 from .final_response_composer import FinalResponseComposer
 from .llm_supervisor import get_supervisor, supervisor_intent_to_pipeline
 from .memory_packet import build_memory_packet
-from .types import RuntimeTurnResult, StatePacket
+from .types import RuntimeTurnResult, StatePacket, SupervisorDecision
+from .action_gate import evaluate_action_gate
+from .conversation_state_machine import (
+    clear_conversation_state,
+    get_conversation_state,
+    process_turn as process_conversation_state,
+    record_safe_response,
+    clear_interrupt as clear_state_interrupt,
+)
+from .interruption_manager import try_interrupt_repair, record_interrupt as record_turn_interrupt
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext, SessionState
@@ -128,6 +137,52 @@ class EricAgentRuntime:
         router_result.intent = pipeline_intent
         router_result.confidence = decision.confidence
 
+        # v4.13: interrupt repair before workers
+        conv_state = get_conversation_state(session.call_sid)
+        handled, repair_text, repair_type = try_interrupt_repair(
+            session.call_sid,
+            caller_text,
+            last_safe_response=conv_state.last_safe_response,
+        )
+        if handled and repair_text:
+            logger.info("interrupt_repair sid=%s repair_type=%s", sid, repair_type)
+            sanitized = sanitize_customer_response(
+                repair_text,
+                intent="repeat_clarification",
+                call_sid=session.call_sid,
+            )
+            await _await_send(send, {"type": "text", "token": sanitized.text, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            record_safe_response(session.call_sid, sanitized.text)
+            clear_state_interrupt(session.call_sid)
+            CallMemoryManager.update_after_turn(session, caller_text, sanitized.text, "repeat_clarification")
+            return RuntimeTurnResult(response_text=sanitized.text, source="deterministic", supervisor=decision)
+
+        # v4.13: conversation state machine
+        cs_result = process_conversation_state(
+            session.call_sid,
+            caller_text,
+            pipeline_intent=pipeline_intent,
+            settings=settings,
+            isbn_buffer=getattr(session, "isbn_buffer", ""),
+        )
+        if cs_result.clear_isbn_buffer:
+            session.isbn_buffer = ""
+        if cs_result.repair_response and cs_result.should_answer:
+            text = sanitize_customer_response(
+                cs_result.repair_response,
+                intent=pipeline_intent,
+                call_sid=session.call_sid,
+            ).text
+            await _await_send(send, {"type": "text", "token": text, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            record_safe_response(session.call_sid, text)
+            CallMemoryManager.update_after_turn(session, caller_text, text, pipeline_intent)
+            return RuntimeTurnResult(response_text=text, source="deterministic", supervisor=decision)
+        if cs_result.should_hold and not cs_result.should_answer:
+            logger.info("skip_turn sid=%s reason=state_machine_hold", sid)
+            return RuntimeTurnResult(skip_turn=True, skip_reason="state_machine_hold", supervisor=decision)
+
         from ..pipeline.intent_contract import validate_intent_contract
         contract = validate_intent_contract(
             pipeline_intent,
@@ -140,6 +195,37 @@ class EricAgentRuntime:
         if contract.resolved_intent and contract.resolved_intent != pipeline_intent:
             router_result.intent = contract.resolved_intent
             pipeline_intent = contract.resolved_intent
+
+        # v4.13: action gate — no worker from router hint alone
+        from ..catalog.query_specificity import score_product_query_specificity
+        spec = score_product_query_specificity(caller_text)
+        gate = evaluate_action_gate(
+            call_sid=session.call_sid,
+            caller_text=caller_text,
+            supervisor=decision,
+            pipeline_intent=pipeline_intent,
+            router_hint=router_result.intent,
+            conversation_mode=cs_result.state.mode,
+            expected_next=cs_result.state.expected_next,
+            query_specificity_score=spec.score,
+        )
+        session.last_action_gate_approved = gate.allowed
+        session.last_action_gate_result = gate.to_dict()
+        if not gate.allowed and gate.safe_intent:
+            router_result.intent = gate.safe_intent
+            pipeline_intent = gate.safe_intent
+            cs_result.state.blocked_product_search_count += 1
+            decision = SupervisorDecision(
+                user_intent=gate.safe_intent,
+                confidence=decision.confidence,
+                customer_mood=decision.customer_mood,
+                domain_boundary=decision.domain_boundary,
+                worker_requests=[],
+                should_answer_now=True,
+                response_strategy="repair" if gate.safe_intent == "frustration_repair" else "direct",
+                source="action_gate",
+            )
+            session.last_supervisor_decision = decision
 
         from ..dialogue.manager import DialogueManager
         from ..dialogue.naturalness import NaturalnessController
@@ -220,6 +306,7 @@ class EricAgentRuntime:
             fact_packet,
             worker_bundle,
             caller_context,
+            action_gate=getattr(session, "last_action_gate_result", None),
         )
 
         if not response:
@@ -245,6 +332,8 @@ class EricAgentRuntime:
             await _await_send(send, {"type": "text", "token": "", "last": True})
             log_assistant_response(response, call_sid=session.call_sid, intent=pipeline_intent)
             CallMemoryManager.update_after_turn(session, caller_text, response, pipeline_intent)
+            record_safe_response(session.call_sid, response)
+            clear_state_interrupt(session.call_sid)
 
         total_ms = (time.monotonic() - t0) * 1000
         logger.info("eric_runtime_complete sid=%s total_ms=%.0f", sid, total_ms)

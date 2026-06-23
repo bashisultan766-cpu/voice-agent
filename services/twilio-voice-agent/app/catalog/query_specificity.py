@@ -101,6 +101,18 @@ _MISTRANSCRIPTION_TITLE_PAT = re.compile(
     r"^(?:black|white|hot|cold)\s+(?:office|coffee|water|tea)$",
     re.I,
 )
+_AGENT_IDENTITY_PAT = re.compile(
+    r"\b("
+    r"assistant|agent|you are|your name|your job|sureshot|sureshort|showshort|"
+    r"social book|support|short short book|what did you say|what is your job|"
+    r"i am asking|are you .* assistant|you are not .* assistant"
+    r")\b",
+    re.I,
+)
+_COMPLAINT_PAT = re.compile(
+    r"\b(not working|why not responding|why are you not responding|what the hell)\b",
+    re.I,
+)
 
 
 def is_general_how_to_query(query: str) -> bool:
@@ -169,6 +181,9 @@ def score_product_query_specificity(query: str) -> QuerySpecificity:
 
     if not q:
         return QuerySpecificity(0, QuerySpecificityLevel.GENERIC, False, False, "empty")
+
+    if _AGENT_IDENTITY_PAT.search(raw) or _COMPLAINT_PAT.search(raw):
+        return QuerySpecificity(0, QuerySpecificityLevel.GENERIC, False, False, "agent_identity")
 
     if is_off_domain_non_book_query(raw) or is_general_how_to_query(raw):
         return QuerySpecificity(0, QuerySpecificityLevel.GENERIC, False, False, "off_domain_or_how_to")

@@ -43,6 +43,11 @@ _LLM_FIRST_INTENTS = frozenset({
     "repeat_clarification", "unknown", "greeting", "store_info_question",
 })
 
+_ACTION_GATE_LLM_INTENTS = frozenset({
+    "company_question", "frustration_repair", "repeat_clarification",
+    "keepalive_question", "identity_question", "unknown",
+})
+
 
 def _is_llm_first_mode(settings) -> bool:
     return (getattr(settings, "VOICE_FINAL_RESPONSE_MODE", "llm_first") or "llm_first") == "llm_first"
@@ -82,6 +87,9 @@ def _should_use_final_llm(settings, decision: SupervisorDecision, intent: str) -
             return settings.VOICE_FINAL_LLM_FOR_SMALL_TALK
         if intent in ("vague_book_request", "repeat_clarification"):
             return settings.VOICE_FINAL_LLM_FOR_CLARIFICATION
+        return True
+
+    if decision.source == "action_gate_blocked" or intent in _ACTION_GATE_LLM_INTENTS:
         return True
 
     return False
@@ -173,12 +181,34 @@ class FinalResponseComposer:
         fact_packet: FactPacket,
         worker_bundle: "WorkerBundle",
         caller_context=None,
+        action_gate: dict | None = None,
     ) -> tuple[str, str]:
         """Returns (response_text, source) where source is 'deterministic', 'llm', or 'hold'."""
         sid = session.call_sid[:6]
 
         if not decision.should_answer_now:
             return "", "hold"
+
+        gate = action_gate or getattr(session, "last_action_gate_result", None) or {}
+        if gate and not gate.get("allowed", True) and gate.get("blocked_worker") == "product_search":
+            blocked_reason = gate.get("reason", "")
+            session.last_action_gate_blocked_reason = blocked_reason
+            if blocked_reason in (
+                "agent_identity_or_generic", "defect_pattern:company_identity",
+                "no_explicit_book_context", "generic_query",
+            ):
+                decision = SupervisorDecision(
+                    user_intent=gate.get("safe_intent") or "company_question",
+                    confidence=decision.confidence,
+                    should_answer_now=True,
+                    response_strategy="repair",
+                    response_draft=(
+                        "I may have misunderstood. Are you asking whether I'm with "
+                        "SureShot Books, or are you looking for a specific book?"
+                    ),
+                    source="action_gate_blocked",
+                )
+                intent_result.intent = gate.get("safe_intent") or "company_question"
 
         det = _critical_deterministic_response(session, decision, intent_result, fact_packet)
         if det:

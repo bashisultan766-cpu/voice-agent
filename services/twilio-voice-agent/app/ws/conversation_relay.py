@@ -147,6 +147,23 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
     async def _cancel_current() -> None:
         nonlocal current_task
         if current_task and not current_task.done():
+            from ..agent_runtime.interruption_manager import record_interrupt
+            from ..agent_runtime.conversation_state_machine import record_interrupt as record_sm_interrupt
+            prev_intent = ""
+            prev_response = ""
+            if session is not None:
+                dec = getattr(session, "last_supervisor_decision", None)
+                if dec:
+                    prev_intent = getattr(dec, "user_intent", "") or ""
+                mem = getattr(session, "call_memory", None)
+                if mem and getattr(mem, "assistant_turns", None):
+                    prev_response = mem.assistant_turns[-1] if mem.assistant_turns else ""
+                record_interrupt(
+                    session.call_sid,
+                    previous_intent=prev_intent,
+                    previous_response=prev_response,
+                )
+                record_sm_interrupt(session.call_sid)
             current_task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(current_task), timeout=1.0)
@@ -425,6 +442,10 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
         await _save_caller_profile()
         if session is not None:
             clear_turn_assembler(session.call_sid)
+            from ..agent_runtime.conversation_state_machine import clear_conversation_state
+            from ..agent_runtime.interruption_manager import clear_interrupt_context
+            clear_conversation_state(session.call_sid)
+            clear_interrupt_context(session.call_sid)
         await send_q.put(None)
         await asyncio.gather(sender_task, return_exceptions=True)
 

@@ -1,0 +1,19 @@
+[
+  {"pattern": "you are not .* assistant", "classification": "frustration_or_identity", "flags": "i"},
+  {"pattern": "short short book", "classification": "company_identity", "flags": "i"},
+  {"pattern": "showshort books", "classification": "company_identity", "flags": "i"},
+  {"pattern": "showshort book", "classification": "company_identity", "flags": "i"},
+  {"pattern": "social book assistant", "classification": "company_identity", "flags": "i"},
+  {"pattern": "are you .* book assistant", "classification": "company_identity", "flags": "i"},
+  {"pattern": "are you .* sureshot", "classification": "company_identity", "flags": "i"},
+  {"pattern": "are you .* sureshort", "classification": "company_identity", "flags": "i"},
+  {"pattern": "your what", "classification": "repeat_clarification", "flags": "i"},
+  {"pattern": "what you say", "classification": "repeat_clarification", "flags": "i"},
+  {"pattern": "what did you say", "classification": "repeat_clarification", "flags": "i"},
+  {"pattern": "why are you not responding", "classification": "repair_mode", "flags": "i"},
+  {"pattern": "why arent you responding", "classification": "repair_mode", "flags": "i"},
+  {"pattern": "what the hell", "classification": "frustration_repair", "flags": "i"},
+  {"pattern": "what the \\*\\*\\*\\*", "classification": "frustration_repair", "flags": "i"},
+  {"pattern": "hello\\?", "classification": "keepalive", "flags": "i"},
+  {"pattern": "are you there", "classification": "keepalive", "flags": "i"}
+]

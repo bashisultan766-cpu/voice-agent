@@ -532,6 +532,12 @@ class MainLLMComposer:
             "\nWrite one short natural spoken response as Eric. "
             "Stay inside SureShot Books. No JSON."
         )
+        gate_ctx = getattr(session, "last_action_gate_result", None) or {}
+        if gate_ctx and not gate_ctx.get("allowed", True):
+            user_prompt += (
+                f"\nAction gate blocked product search: reason={gate_ctx.get('reason', '')}. "
+                "Do not invent catalog results. Answer naturally about identity or clarify intent."
+            )
 
         memory_turns = len(memory.recent_turns) if memory else 0
         facts_n = len(fact_packet.safe_response_hints) if fact_packet else 0

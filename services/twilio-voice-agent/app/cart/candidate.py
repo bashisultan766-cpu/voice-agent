@@ -40,12 +40,17 @@ def save_product_candidate(
     source_intent: str = "",
     source_query: str = "",
     skip_guard: bool = False,
+    action_gate_approved: bool = True,
 ) -> Optional[CartItem]:
     """Persist a book candidate immediately after product lookup."""
     intent = source_intent or ("isbn_search" if isbn else source)
     query = source_query or (isbn or title)
     allowed, _reason = should_save_candidate(
-        intent, query, is_isbn=bool(isbn),
+        intent,
+        query,
+        is_isbn=bool(isbn),
+        action_gate_approved=action_gate_approved,
+        variant_id=variant_id,
     )
     if not skip_guard and not allowed:
         log_candidate_guard(False, intent, query, session.call_sid)
@@ -144,8 +149,17 @@ def persist_worker_product_result(
     source: str = "isbn_search",
     source_intent: str = "",
     source_query: str = "",
+    action_gate_approved: bool = True,
 ) -> Optional[CartItem]:
     """Save candidate from a product worker result dict, or record not-found."""
+    if not action_gate_approved:
+        log_candidate_guard(
+            False,
+            source_intent or source,
+            source_query or isbn,
+            session.call_sid,
+        )
+        return None
     if not data:
         return None
     if data.get("results") == []:
@@ -171,4 +185,5 @@ def persist_worker_product_result(
         source=source,
         source_intent=source_intent or source,
         source_query=source_query or data.get("query", "") or isbn or title,
+        action_gate_approved=action_gate_approved,
     )

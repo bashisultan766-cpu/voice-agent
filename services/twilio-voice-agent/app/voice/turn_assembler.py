@@ -22,9 +22,23 @@ _WAIT_EXTEND = re.compile(
     re.IGNORECASE,
 )
 _RESET_BUFFER = re.compile(
-    r"\b(check again|repeat again|start over|let me start)\b",
+    r"\b(check again|repeat again|start over|let me start|sorry repeat)\b",
     re.IGNORECASE,
 )
+_KEEPALIVE_FRAGMENT = re.compile(
+    r"\b(hello\??|are you there|why are you not responding|why aren't you responding|"
+    r"what the hell|what the \*+\??)\b",
+    re.IGNORECASE,
+)
+_ISBN_CONTINUATION = re.compile(
+    r"\b(isbn|digit|number|here it is|i will give you|wait)\b",
+    re.IGNORECASE,
+)
+_PARTIAL_ISBN_CLARIFY = (
+    "I only have twelve digits. Please give me the last digit, "
+    "or say repeat to start over."
+)
+_KEEPALIVE_RESPONSE = "No problem, I'm here. Go ahead when you're ready."
 _EMAIL_COMPLETE = re.compile(
     r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}",
     re.IGNORECASE,
@@ -44,6 +58,9 @@ class AssemblerState:
     last_emit_id: str = ""
     emitted_ids: set[str] = field(default_factory=set)
     extend_until: float = 0.0
+    isbn_partial_since: float = 0.0
+    hold_started_at: float = 0.0
+    pending_clarify: str = ""
 
 
 class TurnAssembler:
@@ -186,6 +203,8 @@ class TurnAssembler:
             if _RESET_BUFFER.search(frag):
                 st.buffer = ""
                 st.mode = "normal"
+                st.isbn_partial_since = 0.0
+                st.pending_clarify = ""
                 st.fragment_group_id = self._new_group_id()
                 logger.info(
                     "turn_assembler_hold sid=%s mode=%s reason=buffer_reset",
@@ -193,8 +212,48 @@ class TurnAssembler:
                 )
                 return True
 
+            # ISBN escape: keepalive/frustration should not merge into ISBN buffer
+            if st.mode == "isbn" and _KEEPALIVE_FRAGMENT.search(frag):
+                digits = "".join(c for c in st.buffer if c.isdigit())
+                st.pending_clarify = (
+                    f"Yes, I'm here. {_PARTIAL_ISBN_CLARIFY}"
+                    if len(digits) in (10, 11, 12)
+                    else "Yes, I'm here."
+                )
+                st.buffer = frag
+                st.mode = "normal"
+                st.isbn_partial_since = 0.0
+                logger.info(
+                    "turn_assembler_emit sid=%s mode=normal reason=isbn_escape_keepalive",
+                    sid,
+                )
+                return await self._emit_buffered(sid, on_emit, "isbn_escape_keepalive")
+
+            if st.mode == "isbn" and not _ISBN_CONTINUATION.search(frag):
+                frag_digits = "".join(c for c in frag if c.isdigit())
+                if not frag_digits:
+                    st.pending_clarify = ""
+                    st.buffer = frag
+                    st.mode = "normal"
+                    logger.info(
+                        "turn_assembler_emit sid=%s mode=normal reason=isbn_non_digit_escape",
+                        sid,
+                    )
+                    return await self._emit_buffered(sid, on_emit, "isbn_non_digit_escape")
+
             if _WAIT_EXTEND.search(frag):
+                import time
                 st.extend_until = asyncio.get_event_loop().time() + 3.0
+                max_hold_s = getattr(self._settings, "VOICE_COLLECTION_MAX_HOLD_MS", 7000) / 1000
+                if st.hold_started_at <= 0:
+                    st.hold_started_at = time.monotonic()
+                elif time.monotonic() - st.hold_started_at >= max_hold_s:
+                    keepalive = getattr(self._settings, "VOICE_COLLECTION_KEEPALIVE_ENABLED", True)
+                    if keepalive:
+                        st.buffer = _KEEPALIVE_RESPONSE
+                        st.mode = "normal"
+                        st.hold_started_at = 0.0
+                        return await self._emit_buffered(sid, on_emit, "wait_hold_timeout")
                 st.buffer = self._merge_text(st.buffer, frag)
                 if self._debounce_task and not self._debounce_task.done():
                     self._debounce_task.cancel()
@@ -255,6 +314,20 @@ class TurnAssembler:
             emit_mode = st.mode
             digits = "".join(c for c in st.buffer if c.isdigit())
             if emit_mode == "isbn" and len(digits) != 13:
+                import time
+                if st.isbn_partial_since <= 0:
+                    st.isbn_partial_since = time.monotonic()
+                timeout_s = getattr(self._settings, "VOICE_ISBN_PARTIAL_TIMEOUT_MS", 5000) / 1000
+                if 10 <= len(digits) <= 12 and time.monotonic() - st.isbn_partial_since >= timeout_s:
+                    st.buffer = _PARTIAL_ISBN_CLARIFY
+                    st.mode = "normal"
+                    st.isbn_partial_since = 0.0
+                    logger.info(
+                        "turn_assembler_emit sid=%s mode=normal reason=partial_isbn_timeout digits=%d",
+                        sid, len(digits),
+                    )
+                    await self._emit_buffered(sid, self._emit_callback, "partial_isbn_timeout")
+                    return
                 logger.info(
                     "turn_assembler_hold sid=%s mode=%s reason=incomplete_isbn digits=%d",
                     sid, emit_mode, len(digits),

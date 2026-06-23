@@ -59,6 +59,21 @@ class ProductSearchWorker:
             )
 
         intent = entities.get("intent", "product_search")
+        gate_ok = bool(getattr(session, "last_action_gate_approved", True))
+        if not gate_ok:
+            logger.info(
+                "product_search_blocked action_gate sid=%s query=%r",
+                session.call_sid[:6], query[:60],
+            )
+            return WorkerResult(
+                worker_name=self.name,
+                success=True,
+                data={"results": [], "query": query, "blocked": True, "reason": "action_gate"},
+                safe_summary="",
+                latency_ms=0,
+                source="local",
+            )
+
         if is_generic_product_query(query):
             logger.info(
                 "product_search_blocked generic query=%r intent=%s sid=%s",
@@ -146,13 +161,14 @@ class ProductSearchWorker:
                 "variant_id": variant_id,
                 "query": query,
             }
-            if variant_id and top.get("title") and spec.may_save_candidate:
+            if variant_id and top.get("title") and spec.may_save_candidate and gate_ok:
                 persist_worker_product_result(
                     session, data,
                     isbn=entities.get("isbn", ""),
                     source="search",
                     source_intent=entities.get("intent", "product_search"),
                     source_query=query,
+                    action_gate_approved=gate_ok,
                 )
             avail = "in stock" if top.get("available") else "out of stock"
             safe_results = [
@@ -200,14 +216,16 @@ def _from_cached(product, source: str, t0: float, session=None, entities=None) -
     }
     if session is not None and product.variant_id:
         ents = entities or {}
+        gate_ok = bool(getattr(session, "last_action_gate_approved", True))
         spec = score_product_query_specificity(
             ents.get("product_phrase", "") or product.title,
         )
-        if spec.may_save_candidate:
+        if spec.may_save_candidate and gate_ok:
             persist_worker_product_result(
                 session, data, source="search",
                 source_intent=ents.get("intent", "product_search"),
                 source_query=ents.get("product_phrase", "") or product.title,
+                action_gate_approved=gate_ok,
             )
     return WorkerResult(
         worker_name="product_search",

@@ -69,11 +69,26 @@ def _query_specificity_score(query: str) -> int:
     return score_product_query_specificity(query).score
 
 
+_IDENTITY_WORDS_PAT = re.compile(
+    r"\b("
+    r"assistant|agent|you are|your name|your job|sureshot|sureshort|showshort|"
+    r"social book|support|short short book"
+    r")\b",
+    re.I,
+)
+_COMPLAINT_PAT = re.compile(
+    r"\b(not working|why not responding|why are you not responding|what the hell)\b",
+    re.I,
+)
+
+
 def should_save_candidate(
     intent: str,
     query: str = "",
     *,
     is_isbn: bool = False,
+    action_gate_approved: bool = True,
+    variant_id: str = "",
 ) -> tuple[bool, str]:
     """
     Return (allowed, reason).
@@ -82,11 +97,22 @@ def should_save_candidate(
     """
     q = (query or "").strip()
 
+    if not action_gate_approved:
+        return False, "action_gate_not_approved"
+
+    if _IDENTITY_WORDS_PAT.search(q):
+        return False, "agent_identity_query"
+
+    if _COMPLAINT_PAT.search(q):
+        return False, "complaint_or_frustration"
+
     if intent in _BLOCKED_INTENTS:
         return False, f"blocked_intent:{intent}"
 
     if is_isbn:
-        return True, "isbn_search"
+        if variant_id or len(re.sub(r"\D", "", q)) >= 10:
+            return True, "isbn_search"
+        return False, "isbn_missing_variant"
 
     if is_generic_product_query(q):
         return False, "generic_query"

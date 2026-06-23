@@ -99,7 +99,9 @@ DETERMINISTIC_TEMPLATES = {
     "call_resume": "I'm sorry about that. Let me continue from where we left off.",
 }
 
-ERIC_MASTER_SYSTEM_PROMPT = f"""{ERIC_IDENTITY}
+def _build_inline_master_prompt() -> str:
+    """Inline fallback when eric_system_prompt.md is missing."""
+    return f"""{ERIC_IDENTITY}
 
 {ERIC_DOMAIN_BOUNDARIES}
 
@@ -116,6 +118,17 @@ Privacy:
 
 {ERIC_RESPONSE_STYLE}
 """
+
+
+ERIC_MASTER_SYSTEM_PROMPT = _build_inline_master_prompt()
+
+
+def _load_master_prompt() -> str:
+    try:
+        from .prompt_loader import load_eric_system_prompt_text
+        return load_eric_system_prompt_text()
+    except Exception:
+        return _build_inline_master_prompt()
 
 _POLICY_LEAK_PATTERNS: tuple[str, ...] = (
     "available tools",
@@ -146,7 +159,7 @@ def build_eric_brain_system_prompt() -> str:
         "facility_approval, facility_restriction, address_update, cancellation, "
         "payment_flow, email_capture, cart_memory, escalation, store_info."
     )
-    return f"{ERIC_MASTER_SYSTEM_PROMPT}\n\n{internal}"
+    return f"{_load_master_prompt()}\n\n{internal}"
 
 
 ERIC_FINAL_MEMORY_RULES = (
