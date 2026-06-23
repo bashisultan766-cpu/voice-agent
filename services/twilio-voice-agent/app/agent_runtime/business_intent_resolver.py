@@ -232,8 +232,14 @@ def extract_isbn_from_text(text: str) -> str | None:
 
 
 def _extract_title_query(text: str) -> str | None:
-    from .tool_entity_extractor import is_generic_followup_phrase, is_price_followup
+    from .tool_entity_extractor import (
+        is_commerce_control_phrase,
+        is_generic_followup_phrase,
+        is_price_followup,
+    )
 
+    if is_commerce_control_phrase(text):
+        return None
     if is_generic_followup_phrase(text) or is_price_followup(text):
         return None
     match = _TITLE_SEARCH_PAT.search(text) or _TITLE_I_NEED_PAT.search(text)
@@ -348,9 +354,13 @@ def resolve_business_intent(
     from .tool_entity_extractor import (
         is_add_to_cart_followup,
         is_availability_followup,
+        is_commerce_control_phrase,
         is_generic_followup_phrase,
+        is_multi_book_declaration,
+        is_payment_link_phrase,
         is_price_followup,
         is_remove_from_cart_followup,
+        is_strong_add_commitment,
     )
     from .commerce_session import get_last_selected_or_best_candidate
 
@@ -361,6 +371,70 @@ def resolve_business_intent(
     expected_next = _get_expected_next(session_state, memory_packet)
     commerce = _commerce_session_for(session_state)
     candidate = get_last_selected_or_best_candidate(commerce) if commerce else None
+
+    if is_acknowledgment(normalized):
+        prompt = _ack_prompt_for_expected(expected_next)
+        if prompt:
+            return _matched(
+                intent="acknowledgment",
+                response_mode="direct_answer",
+                confidence=0.90,
+                direct_answer=prompt,
+                reason="ack_with_expected_next",
+                normalized_text=normalized,
+            )
+        return _matched(
+            intent="acknowledgment",
+            response_mode="hold",
+            confidence=0.85,
+            direct_answer=None,
+            reason="ack_hold",
+            normalized_text=normalized,
+        )
+
+    if is_commerce_control_phrase(normalized) and not is_price_followup(normalized) and not is_availability_followup(normalized):
+        multi = is_multi_book_declaration(normalized)
+        if multi:
+            return _matched(
+                intent="multi_book_collection_start",
+                response_mode="direct_answer",
+                confidence=0.95,
+                direct_answer="Got it. Give me the first ISBN or title.",
+                expected_next="multi_isbn_or_title",
+                reason="multi_book_declaration",
+                normalized_text=normalized,
+            )
+        if is_payment_link_phrase(normalized):
+            return _matched(
+                intent="payment_flow",
+                response_mode="needs_tools",
+                confidence=0.91,
+                direct_answer=None,
+                tool_categories=["payment_flow"],
+                reason="payment_flow_request",
+                normalized_text=normalized,
+            )
+        if is_strong_add_commitment(normalized) and candidate and commerce:
+            from .cart_orchestrator import add_candidate_to_cart
+
+            result = add_candidate_to_cart(commerce, candidate.candidate_id, session_state=session_state)
+            return _matched(
+                intent="cart_mutation",
+                response_mode="direct_answer",
+                confidence=0.94,
+                direct_answer=result.get("message"),
+                reason="add_commitment_direct",
+                normalized_text=normalized,
+                expected_next="another_book_or_payment",
+            )
+        return _matched(
+            intent="commerce_control",
+            response_mode="hold",
+            confidence=0.90,
+            direct_answer=None,
+            reason="commerce_control_phrase",
+            normalized_text=normalized,
+        )
 
     cs = route_customer_service_intent(normalized)
     if cs.get("intent") == "refund_lookup":
@@ -496,6 +570,19 @@ def resolve_business_intent(
         )
 
     if is_add_to_cart_followup(normalized):
+        if commerce and candidate and candidate.variant_id:
+            from .cart_orchestrator import add_candidate_to_cart
+
+            result = add_candidate_to_cart(commerce, candidate.candidate_id, session_state=session_state)
+            return _matched(
+                intent="cart_mutation",
+                response_mode="direct_answer",
+                confidence=0.94,
+                direct_answer=result.get("message"),
+                reason="add_to_cart_direct",
+                normalized_text=normalized,
+                expected_next="another_book_or_payment",
+            )
         return _matched(
             intent="cart_mutation",
             response_mode="needs_tools",
@@ -520,10 +607,11 @@ def resolve_business_intent(
         )
 
     if re.search(
-        r"\b(send (?:me )?(?:the )?payment link|email me (?:the )?payment link|send checkout|send the link)\b",
+        r"\b(send (?:me )?(?:the )?payment link|send (?:me )?(?:the )?pen and link|"
+        r"email me (?:the )?payment link|send checkout|send the link)\b",
         normalized,
         re.I,
-    ):
+    ) or is_payment_link_phrase(normalized):
         return _matched(
             intent="payment_flow",
             response_mode="needs_tools",
@@ -551,26 +639,6 @@ def resolve_business_intent(
             confidence=0.85,
             direct_answer=None,
             reason="generic_followup_with_candidate",
-            normalized_text=normalized,
-        )
-
-    if is_acknowledgment(normalized):
-        prompt = _ack_prompt_for_expected(expected_next)
-        if prompt:
-            return _matched(
-                intent="acknowledgment",
-                response_mode="direct_answer",
-                confidence=0.90,
-                direct_answer=prompt,
-                reason="ack_with_expected_next",
-                normalized_text=normalized,
-            )
-        return _matched(
-            intent="acknowledgment",
-            response_mode="hold",
-            confidence=0.85,
-            direct_answer=None,
-            reason="ack_hold",
             normalized_text=normalized,
         )
 

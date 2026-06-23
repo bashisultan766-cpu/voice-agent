@@ -93,6 +93,23 @@ def handle_payment_request(
     _log_payment_state(sid, "payment_requested")
 
     if summary["count"] == 0:
+        candidates = [
+            c for c in commerce.last_candidates
+            if c.title and c.variant_id and c.availability != "out_of_stock"
+        ]
+        if candidates:
+            titles = [c.title for c in candidates[:3]]
+            joined = ", ".join(titles)
+            _log_payment_state(sid, "cart_confirm_required")
+            return {
+                "response_mode": "direct_answer",
+                "message": (
+                    f"I found {joined}, but I haven't added them to your order yet. "
+                    "Should I add them and prepare the payment link?"
+                ),
+                "expected_next": "confirm_add_candidates",
+                "tool_categories": [],
+            }
         _log_payment_state(sid, "failed")
         return {
             "response_mode": "direct_answer",

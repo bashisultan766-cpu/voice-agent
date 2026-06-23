@@ -67,6 +67,12 @@ class CommerceSession:
     last_product_answer: str | None = None
     last_order_answer: str | None = None
     last_refund_answer: str | None = None
+    multi_book_mode: bool = False
+    requested_cart_count: int | None = None
+    collected_identifiers: list = field(default_factory=list)
+    pending_identifier_buffer: str = ""
+    current_identifier_type: str | None = None
+    current_identifier_digits: str = ""
 
 
 def _short_sid(sid: str) -> str:
@@ -170,11 +176,13 @@ def add_selected_candidate_to_cart(
     )
     session.active_cart.append(line)
 
+    active_count = sum(1 for ln in session.active_cart if ln.status == "active")
     logger.info(
-        "commerce_cart_line_added sid=%s title_safe=%s variant_present=%s",
+        "commerce_cart_line_added sid=%s line_id=%s title_safe=%s cart_lines=%d",
         _short_sid(session.sid),
+        line.line_id,
         _title_safe(candidate.title),
-        bool(candidate.variant_id),
+        active_count,
     )
     save_commerce_session(session)
     return line
@@ -281,7 +289,7 @@ def create_or_update_destination_group(
 
 
 def sync_commerce_to_session_state(commerce: CommerceSession, session_state) -> None:
-    """Mirror selected candidate into SessionState for legacy workers."""
+    """Mirror selected candidate and active cart into SessionState for legacy workers."""
     candidate = get_last_selected_or_best_candidate(commerce)
     if candidate and session_state is not None:
         session_state.last_product_candidate = {
@@ -295,6 +303,28 @@ def sync_commerce_to_session_state(commerce: CommerceSession, session_state) -> 
             "author": candidate.author or "",
         }
         session_state.last_selected_product = dict(session_state.last_product_candidate)
+    sync_commerce_cart_to_session_state(commerce, session_state)
+
+
+def sync_commerce_cart_to_session_state(commerce: CommerceSession, session_state) -> None:
+    """Mirror CommerceSession active cart lines into SessionState cart_items."""
+    if session_state is None:
+        return
+    active = [ln for ln in commerce.active_cart if ln.status == "active"]
+    if not active:
+        return
+    session_state.cart_items = [
+        {
+            "title": ln.title,
+            "variant_id": ln.variant_id,
+            "product_id": ln.product_id,
+            "quantity": ln.quantity,
+            "confirmation_status": "confirmed",
+            "isbn": ln.isbn or "",
+            "price": ln.price or "",
+        }
+        for ln in active
+    ]
 
 
 def commerce_session_to_dict(session: CommerceSession) -> dict:

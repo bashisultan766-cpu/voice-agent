@@ -1,4 +1,4 @@
-"""Extract tool entities from caller text and agent decisions (v4.14.5)."""
+"""Extract tool entities from caller text and agent decisions (v4.14.6)."""
 from __future__ import annotations
 
 import logging
@@ -18,6 +18,69 @@ _GENERIC_FOLLOWUP_WORDS = frozenset({
     "price", "amount", "cost", "available", "availability", "stock",
     "these books", "this book", "that book",
 })
+_COMMERCE_CONTROL_PHRASES = (
+    r"this\s*1?\s*,?\s*and\s+i\s+need\s+another\s+book",
+    r"this\s+one\s+and\s+another\s+book",
+    r"these\s+\d+\s+books?",
+    r"those\s+books?",
+    r"these\s+books?",
+    r"another\s+book",
+    r"next\s+book",
+    r"second\s+book",
+    r"third\s+book",
+    r"i\s+give\s+you\s+\d+\s+isbn",
+    r"i\s+give\s+you\s+(?:the\s+)?\d+\s+isbn\s+numbers?",
+    r"send\s+payment\s+link",
+    r"payment\s+link",
+    r"pen\s+and\s+link",
+    r"^price\.?$",
+    r"^amount\.?$",
+    r"^add\s+it\.?$",
+    r"^yes\.?$",
+    r"^okay\.?$",
+)
+_STRONG_ADD_PAT = re.compile(
+    r"\b("
+    r"yes(?:\s+add\s+it)?|yeah|okay|ok|add\s+it|add\s+this(?:\s+book)?|"
+    r"i\s+need\s+this(?:\s+(?:book|one|1))?|i\s+want\s+this|"
+    r"put\s+it\s+in\s+my\s+(?:order|cart)|include\s+this|this\s+one|that\s+one"
+    r")\b",
+    re.I,
+)
+_ADD_AND_NEXT_PAT = re.compile(
+    r"\b("
+    r"(?:yes\.?\s*)?i\s+need\s+this\s*(?:one|1)?\s*,?\s*and\s+(?:i\s+need\s+)?another\s+book|"
+    r"i\s+need\s+this\s*1\s+and\s+another\s+book|"
+    r"add\s+this\s+and\s+i\s+have\s+another\s+isbn|"
+    r"add\s+it\s+and\s+i\s+need\s+(?:one\s+more|another\s+isbn)|"
+    r"this\s+one\s+and\s+another\s+book"
+    r")\b",
+    re.I,
+)
+_MULTI_BOOK_PAT = re.compile(
+    r"\b("
+    r"i\s+need\s+these\s+\d+\s+books?|i\s+need\s+(?:two|three|several|multiple)\s+books?|"
+    r"i\s+have\s+\d+\s+isbn\s+numbers?|i\s+give\s+you\s+(?:the\s+)?\d+\s+isbn|"
+    r"i\s+give\s+you\s+(?:the\s+)?\d+\s+isbn\s+numbers?|"
+    r"i\s+will\s+give\s+you\s+(?:the\s+)?(?:two|three|\d+)\s+isbns?|"
+    r"i\s+have\s+multiple\s+books?"
+    r")\b",
+    re.I,
+)
+_REJECT_PAT = re.compile(
+    r"\b(no|not\s+this\s+one|don'?t\s+add\s+it|remove\s+it|skip\s+this|exclude\s+this)\b",
+    re.I,
+)
+_PAYMENT_LINK_PAT = re.compile(
+    r"\b("
+    r"send\s+(?:me\s+)?(?:the\s+)?payment\s+link|"
+    r"send\s+(?:me\s+)?(?:the\s+)?pen\s+and\s+link|"
+    r"email\s+me\s+(?:the\s+)?payment\s+link|"
+    r"send\s+checkout(?:\s+link)?|send\s+(?:the\s+)?link\s+for\s+those\s+books?|"
+    r"payment\s+link\s+of\s+those\s+books?"
+    r")\b",
+    re.I,
+)
 _PRICE_PAT = re.compile(
     r"^\s*(?:price|amount|cost|what(?:'s| is) the (?:price|amount)|"
     r"how much(?: is it)?|what(?:'s| is) the cost)\s*[.!?]?\s*$",
@@ -32,7 +95,11 @@ _AVAIL_PAT = re.compile(
     re.I,
 )
 _ADD_PAT = re.compile(
-    r"\b(add it|add this|add this book|yes add it|put it in my cart|add to cart)\b",
+    r"\b("
+    r"add it|add this|add this book|yes add it|put it in my cart|add to cart|"
+    r"i need this|i need this book|i need this one|i want this|"
+    r"put it in my order|include this|this one|that one"
+    r")\b",
     re.I,
 )
 _REMOVE_PAT = re.compile(
@@ -79,9 +146,77 @@ _CART_COUNT_PAT = re.compile(
     re.I,
 )
 _PAYMENT_PAT = re.compile(
-    r"\b(send (?:me )?(?:the )?payment link|email me (?:the )?payment link|pay now|checkout)\b",
+    r"\b("
+    r"send (?:me )?(?:the )?payment link|send (?:me )?(?:the )?pen and link|"
+    r"email me (?:the )?payment link|pay now|checkout"
+    r")\b",
     re.I,
 )
+
+
+def extract_all_isbns(text: str) -> list[str]:
+    """Extract all complete 10- or 13-digit ISBNs from text."""
+    compact = re.sub(r"[\s-]", "", text or "")
+    found: list[str] = []
+    for match in re.finditer(r"\d{10,13}", compact):
+        digits = match.group(0)
+        if len(digits) in (10, 13):
+            found.append(digits)
+    return found
+
+
+def is_commerce_control_phrase(text: str) -> bool:
+    lowered = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not lowered:
+        return False
+    for pat in _COMMERCE_CONTROL_PHRASES:
+        if re.search(pat, lowered, re.I):
+            return True
+    if is_multi_book_declaration(lowered):
+        return True
+    if is_add_and_next_book_phrase(lowered):
+        return True
+    if is_payment_link_phrase(lowered):
+        return True
+    if is_strong_add_commitment(lowered) and not extract_isbn_from_text(lowered):
+        return True
+    return False
+
+
+def is_strong_add_commitment(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    if _STRONG_ADD_PAT.search(normalized):
+        return True
+    if re.fullmatch(r"(?:yes|yeah|okay|ok)[.!?]?\s*", normalized, re.I):
+        return True
+    return False
+
+
+def is_add_and_next_book_phrase(text: str) -> bool:
+    return bool(_ADD_AND_NEXT_PAT.search(text or ""))
+
+
+def is_multi_book_declaration(text: str) -> dict | None:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    if not _MULTI_BOOK_PAT.search(normalized):
+        return None
+    count: int | None = None
+    num_match = re.search(r"\b(\d+|two|three|several|multiple)\b", normalized, re.I)
+    if num_match:
+        val = num_match.group(1).lower()
+        count = {"two": 2, "three": 3, "several": 3, "multiple": 3}.get(val)
+        if count is None and val.isdigit():
+            count = int(val)
+    return {"count": count}
+
+
+def is_rejection_phrase(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    return bool(_REJECT_PAT.search(normalized))
+
+
+def is_payment_link_phrase(text: str) -> bool:
+    return bool(_PAYMENT_LINK_PAT.search(text or ""))
 _FACILITY_PAT = re.compile(
     r"\b(?:facility|prison|jail|inmate)\b.*?([A-Z][a-zA-Z\s]{2,40}((?:facility|jail|prison|correctional)?))",
     re.I,
@@ -149,6 +284,8 @@ def _normalize_query(text: str) -> str:
 
 def _is_noise_product_phrase(query: str) -> bool:
     lowered = query.lower().strip()
+    if is_commerce_control_phrase(lowered):
+        return True
     if is_generic_followup_phrase(lowered):
         return True
     if is_price_followup(lowered):
@@ -162,6 +299,8 @@ def _is_noise_product_phrase(query: str) -> bool:
 
 
 def _extract_title(text: str) -> str:
+    if is_commerce_control_phrase(text):
+        return ""
     if is_generic_followup_phrase(text):
         return ""
     for pat in _TITLE_PATS:
@@ -186,6 +325,8 @@ def _extract_author(text: str) -> str:
 
 
 def _extract_subject(text: str) -> str:
+    if is_commerce_control_phrase(text):
+        return ""
     if is_generic_followup_phrase(text):
         return ""
     for pat in _SUBJECT_PATS[:2]:
@@ -304,7 +445,7 @@ def extract_tool_entities(
     if _PAYMENT_PAT.search(normalized):
         entities["payment_request"] = "true"
 
-    if is_generic_followup_phrase(normalized) or decision.get("search_blocked"):
+    if is_generic_followup_phrase(normalized) or is_commerce_control_phrase(normalized) or decision.get("search_blocked"):
         entities.setdefault("raw_text", normalized)
         sid = session.call_sid[:6] if session else "?"
         logger.info("tool_entities_extracted sid=%s keys=%s", sid, sorted(entities.keys()))

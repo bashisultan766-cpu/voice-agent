@@ -415,20 +415,68 @@ class EricAgentRuntime:
 
         from .brand_alias_normalizer import normalize_brand_aliases
         from .followup_context_resolver import followup_result_to_decision, resolve_followup_context
-        from .commerce_session import get_commerce_session, sync_commerce_to_session_state
+        from .commerce_commit_resolver import resolve_commerce_commit
+        from .commerce_session import get_commerce_session, save_commerce_session, sync_commerce_to_session_state
 
-        brand = normalize_brand_aliases(caller_text)
-        turn_text = brand.canonical_text if brand.matched else caller_text
         commerce = get_commerce_session(session.call_sid)
         sync_commerce_to_session_state(commerce, session)
 
         followup = resolve_followup_context(
-            turn_text,
+            caller_text,
             sid=session.call_sid,
             session_state=session,
             commerce=commerce,
         )
-        if followup.resolved and followup.response_mode == "direct_answer" and followup.direct_answer:
+
+        brand = normalize_brand_aliases(caller_text)
+        turn_text = brand.canonical_text if brand.matched else caller_text
+
+        commit = resolve_commerce_commit(turn_text, commerce, session_state=session)
+
+        skip_main_llm = False
+        response_mode = ""
+        intent = ""
+        direct_answer = ""
+        tool_categories: list[str] = []
+        expected_next = ""
+
+        if commit.matched and commit.response_mode != "pass_through":
+            if commit.response_mode == "needs_tools" and commit.tool_categories:
+                skip_main_llm = True
+                response_mode = "needs_tools"
+                intent = commit.intent
+                direct_answer = commit.direct_answer or ""
+                tool_categories = list(commit.tool_categories)
+                expected_next = commit.expected_next or ""
+            elif commit.direct_answer:
+                sanitized = sanitize_customer_response(
+                    commit.direct_answer,
+                    intent=commit.intent,
+                    call_sid=session.call_sid,
+                )
+                text = sanitized.text
+                commerce.last_tool_answer = text
+                if commit.intent.startswith(("product", "cart", "payment", "multi")):
+                    commerce.last_product_answer = text
+                if commit.expected_next:
+                    commerce.expected_next = commit.expected_next
+                    if hasattr(session, "dialogue"):
+                        session.dialogue.expected_next = commit.expected_next
+                save_commerce_session(commerce)
+                sync_commerce_to_session_state(commerce, session)
+                await _await_send(send, {"type": "text", "token": text, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                log_assistant_response(text, call_sid=session.call_sid, intent=commit.intent)
+                from .conversation_state_machine import record_safe_response, clear_interrupt as clear_state_interrupt
+                record_safe_response(session.call_sid, text)
+                clear_state_interrupt(session.call_sid)
+                CallMemoryManager.update_after_turn(session, caller_text, text, commit.intent)
+                logger.info("tool_fanout_skipped reason=commerce_commit")
+                total_ms = (time.monotonic() - t0) * 1000
+                logger.info("main_llm_runtime_complete sid=%s total_ms=%.0f source=commerce_commit", sid, total_ms)
+                return RuntimeTurnResult(response_text=text, source="commerce_commit")
+
+        elif followup.resolved and followup.response_mode == "direct_answer" and followup.direct_answer:
             sanitized = sanitize_customer_response(
                 followup.direct_answer,
                 intent=followup.intent,
@@ -437,6 +485,11 @@ class EricAgentRuntime:
             text = sanitized.text
             commerce.last_product_answer = text if followup.intent.startswith("product") else commerce.last_product_answer
             commerce.last_tool_answer = text
+            if followup.expected_next:
+                commerce.expected_next = followup.expected_next
+                if hasattr(session, "dialogue"):
+                    session.dialogue.expected_next = followup.expected_next
+            save_commerce_session(commerce)
             await _await_send(send, {"type": "text", "token": text, "last": False, "interruptible": True})
             await _await_send(send, {"type": "text", "token": "", "last": True})
             log_assistant_response(text, call_sid=session.call_sid, intent=followup.intent)
@@ -444,43 +497,77 @@ class EricAgentRuntime:
             record_safe_response(session.call_sid, text)
             clear_state_interrupt(session.call_sid)
             CallMemoryManager.update_after_turn(session, caller_text, text, followup.intent)
-            if followup.expected_next and hasattr(session, "dialogue"):
-                session.dialogue.expected_next = followup.expected_next
             logger.info("tool_fanout_skipped reason=followup_context")
             total_ms = (time.monotonic() - t0) * 1000
             logger.info("main_llm_runtime_complete sid=%s total_ms=%.0f source=followup_context", sid, total_ms)
             return RuntimeTurnResult(response_text=text, source="followup_context")
 
-        from ..cart.session import get_ledger
-        ledger = get_ledger(session)
-        cart_summary = f"{ledger.confirmed_count()} confirmed book(s)" if ledger.confirmed_count() else ""
+        elif followup.resolved and followup.response_mode == "needs_tools" and followup.tool_categories:
+            skip_main_llm = True
+            decision = followup_result_to_decision(followup)
+            response_mode = decision["response_mode"]
+            intent = decision["intent"]
+            direct_answer = decision["direct_answer"]
+            tool_categories = decision["tool_categories"]
+            expected_next = decision.get("expected_next") or ""
 
-        email_state = "confirmed" if getattr(session, "confirmed_email", "") else (
-            "pending" if getattr(session, "pending_email", "") else "none"
-        )
-        order_state = getattr(session, "last_order_number", "") or ""
+        decision: dict = {}
+        if not skip_main_llm:
+            from ..cart.session import get_ledger
+            from .cart_orchestrator import cart_count
 
-        assistants = getattr(getattr(session, "call_memory", None), "assistant_turns", []) or []
-        last_assistant = assistants[-1] if assistants else ""
+            ledger = get_ledger(session)
+            commerce_cart = cart_count(commerce)
+            cart_summary = (
+                f"{commerce_cart} confirmed book(s)" if commerce_cart
+                else (f"{ledger.confirmed_count()} confirmed book(s)" if ledger.confirmed_count() else "")
+            )
 
-        decision = await main_llm_agent_decide(
-            user_turn=turn_text,
-            session=session,
-            memory_context=memory_context,
-            last_assistant=last_assistant,
-            cart_summary=cart_summary,
-            email_state=email_state,
-            order_state=order_state,
-            settings=settings,
-        )
+            email_state = "confirmed" if getattr(session, "confirmed_email", "") else (
+                "pending" if getattr(session, "pending_email", "") else "none"
+            )
+            order_state = getattr(session, "last_order_number", "") or ""
 
-        response_mode = decision["response_mode"]
-        intent = decision["intent"]
-        direct_answer = decision["direct_answer"]
-        tool_categories = decision["tool_categories"]
-        expected_next = decision.get("expected_next") or ""
+            assistants = getattr(getattr(session, "call_memory", None), "assistant_turns", []) or []
+            last_assistant = assistants[-1] if assistants else ""
+
+            decision = await main_llm_agent_decide(
+                user_turn=turn_text,
+                session=session,
+                memory_context=memory_context,
+                last_assistant=last_assistant,
+                cart_summary=cart_summary,
+                email_state=email_state,
+                order_state=order_state,
+                settings=settings,
+            )
+
+            response_mode = decision["response_mode"]
+            intent = decision["intent"]
+            direct_answer = decision["direct_answer"]
+            tool_categories = decision["tool_categories"]
+            expected_next = decision.get("expected_next") or ""
+        else:
+            decision = {
+                "response_mode": response_mode,
+                "intent": intent,
+                "confidence": 0.95,
+                "direct_answer": direct_answer,
+                "tool_categories": list(tool_categories),
+                "tool_reason": "commerce_commit_or_followup",
+                "one_question_to_ask": "",
+                "domain_boundary": "in_domain",
+                "safety_flags": [],
+                "memory_instruction": "",
+                "expected_next": expected_next,
+                "search_query": "",
+                "tool_entities": {},
+            }
         if expected_next and hasattr(session, "dialogue"):
             session.dialogue.expected_next = expected_next
+        if expected_next:
+            commerce.expected_next = expected_next
+            save_commerce_session(commerce)
 
         # ── direct_answer: immediate response, no workers ──────────────────────
         if response_mode == "direct_answer" and direct_answer:

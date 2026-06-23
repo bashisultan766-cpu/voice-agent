@@ -161,6 +161,9 @@ class Settings(BaseSettings):
     # Optional — not used in live Twilio path yet; do not log.
     ELEVENLABS_API_KEY: str = ""
 
+    # ── v4.14.6: Commerce demo hardening ─────────────────────────────────────
+    VOICE_COMMERCE_DEMO_HARDENING: bool | None = None
+
     # ── Legacy flags — both must be false for ConversationRelay runtime ───────
     ENABLE_ELEVENLABS: bool = False
     ENABLE_DEEPGRAM: bool = False

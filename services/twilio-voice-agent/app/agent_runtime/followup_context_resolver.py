@@ -16,8 +16,10 @@ from .tool_entity_extractor import (
     is_add_to_cart_followup,
     is_availability_followup,
     is_generic_followup_phrase,
+    is_payment_link_phrase,
     is_price_followup,
     is_remove_from_cart_followup,
+    is_strong_add_commitment,
 )
 
 if TYPE_CHECKING:
@@ -76,12 +78,7 @@ def _availability_answer(candidate) -> str:
 
 
 def _payment_link_phrase(text: str) -> bool:
-    return bool(re.search(
-        r"\b(send (?:me )?(?:the )?payment link|email me (?:the )?payment link|"
-        r"send checkout|send the link|pay now)\b",
-        text,
-        re.I,
-    ))
+    return is_payment_link_phrase(text)
 
 
 def _these_books_phrase(text: str) -> bool:
@@ -167,11 +164,13 @@ def resolve_followup_context(
             search_blocked=True,
         )
 
-    if is_add_to_cart_followup(normalized):
+    if is_add_to_cart_followup(normalized) or (
+        _these_books_phrase(normalized) and is_strong_add_commitment(normalized)
+    ):
         if candidate and candidate.variant_id:
             from .cart_orchestrator import add_candidate_to_cart
 
-            result = add_candidate_to_cart(commerce, candidate.candidate_id)
+            result = add_candidate_to_cart(commerce, candidate.candidate_id, session_state=session_state)
             if result.get("success"):
                 logger.info("followup_context_resolved sid=%s intent=cart_mutation source=commerce_context", sid[:6])
                 return FollowupContextResult(
@@ -194,22 +193,7 @@ def resolve_followup_context(
             source="commerce_context",
         )
 
-    if is_remove_from_cart_followup(normalized):
-        from .cart_orchestrator import remove_cart_item
-
-        result = remove_cart_item(commerce)
-        logger.info("followup_context_resolved sid=%s intent=cart_mutation source=commerce_context", sid[:6])
-        return FollowupContextResult(
-            resolved=True,
-            intent="cart_mutation",
-            response_mode="direct_answer",
-            direct_answer=result.get("message", "I removed that from your order."),
-            tool_categories=[],
-            expected_next=None,
-            source="commerce_context",
-        )
-
-    if _these_books_phrase(normalized) and candidate:
+    if _these_books_phrase(normalized) and candidate and not is_strong_add_commitment(normalized):
         logger.info("followup_context_resolved sid=%s intent=add_offer source=commerce_context", sid[:6])
         return FollowupContextResult(
             resolved=True,
@@ -222,6 +206,21 @@ def resolve_followup_context(
             expected_next="add_to_cart_confirm",
             source="commerce_context",
             search_blocked=True,
+        )
+
+    if is_remove_from_cart_followup(normalized):
+        from .cart_orchestrator import remove_cart_item
+
+        result = remove_cart_item(commerce, session_state=session_state)
+        logger.info("followup_context_resolved sid=%s intent=cart_mutation source=commerce_context", sid[:6])
+        return FollowupContextResult(
+            resolved=True,
+            intent="cart_mutation",
+            response_mode="direct_answer",
+            direct_answer=result.get("message", "I removed that from your order."),
+            tool_categories=[],
+            expected_next=None,
+            source="commerce_context",
         )
 
     if _did_you_find_phrase(normalized):

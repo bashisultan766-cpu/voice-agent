@@ -27,6 +27,8 @@ def main() -> int:
     from app.agent_runtime.cart_orchestrator import cart_summary_text
     from app.agent_runtime.payment_link_orchestrator import handle_payment_request
     from app.agent_runtime.customer_service_orchestrator import route_customer_service_intent
+    from app.agent_runtime.demo_hardening import is_commerce_demo_hardening
+    from app.agent_runtime.commerce_commit_resolver import resolve_commerce_commit
 
     s = get_settings()
     load_eric_system_prompt_text()
@@ -109,7 +111,7 @@ def main() -> int:
         multi_dest_ok = f"FAIL: {exc}"
         cs_ok = f"FAIL: {exc}"
 
-    print("Eric Agent Runtime Check (v4.14.5)")
+    print("Eric Agent Runtime Check (v4.14.6)")
     print("=" * 40)
     print(f"Agent runtime mode:     {s.VOICE_AGENT_RUNTIME_MODE}")
     print(f"Eric prompt file:       {'loaded' if prompt_status['loaded_from_file'] else 'inline_fallback'}")
@@ -120,7 +122,18 @@ def main() -> int:
     print(f"Cart orchestrator:      {cart_ok}")
     print(f"Payment link orchestrator: {payment_ok}")
     print(f"Multi-destination payments: {multi_dest_ok}")
-    print(f"Order/refund/facility orchestrator: {cs_ok}")
+    commit_ok = "OK"
+    hardening_ok = "enabled" if is_commerce_demo_hardening(s) else "disabled"
+    try:
+        cs2 = get_commerce_session("CAtest2")
+        cr = resolve_commerce_commit("I need these 2 books", cs2)
+        if not cr.matched:
+            commit_ok = "FAIL: commit resolver"
+    except Exception as exc:
+        commit_ok = f"FAIL: {exc}"
+
+    print(f"Commerce commit resolver: {commit_ok}")
+    print(f"Commerce demo hardening: {hardening_ok}")
     print(f"Main LLM agent:         {'enabled' if is_main_llm else 'disabled'}")
     print(f"Direct answer path:     {'enabled' if is_main_llm else 'via_supervisor'}")
     print(f"Tool fanout after LLM:  {'enabled' if is_main_llm else 'via_supervisor'}")
@@ -150,7 +163,7 @@ def main() -> int:
 
     checks = (
         mapper_ok, extractor_ok, pending_ok, commerce_ok, followup_ok,
-        normalizer_ok, cart_ok, payment_ok, multi_dest_ok, cs_ok,
+        normalizer_ok, cart_ok, payment_ok, multi_dest_ok, cs_ok, commit_ok,
     )
     if any("FAIL" in c for c in checks):
         return 1

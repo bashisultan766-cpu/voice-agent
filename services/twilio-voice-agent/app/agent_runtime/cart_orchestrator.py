@@ -1,8 +1,9 @@
-"""Cart orchestrator — deterministic cart mutations (v4.14.5)."""
+"""Cart orchestrator — deterministic cart mutations (v4.14.6)."""
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from .commerce_session import (
     CommerceSession,
@@ -11,7 +12,13 @@ from .commerce_session import (
     get_last_selected_or_best_candidate,
     remove_cart_line,
     select_candidate,
+    sync_commerce_cart_to_session_state,
 )
+
+if TYPE_CHECKING:
+    from ..state.models import SessionState
+
+logger = logging.getLogger(__name__)
 
 
 def title_safe_for_log(title: str, max_len: int = 40) -> str:
@@ -23,6 +30,7 @@ def add_candidate_to_cart(
     session: CommerceSession,
     candidate_id: str | None = None,
     quantity: int = 1,
+    session_state: Optional["SessionState"] = None,
 ) -> dict[str, Any]:
     if candidate_id:
         select_candidate(session, candidate_id)
@@ -33,24 +41,49 @@ def add_candidate_to_cart(
             return {
                 "success": False,
                 "message": (
-                    f"I found {candidate.title}, but it looks out of stock right now. "
-                    "I can take your email and have customer service follow up if we can get it."
+                    f"That book looks out of stock right now. "
+                    "I can take your email for customer service follow-up."
+                ),
+            }
+        if candidate and not candidate.variant_id:
+            return {
+                "success": False,
+                "message": (
+                    "I found the book, but I don't have a valid checkout option for it right now."
                 ),
             }
         return {
             "success": False,
             "message": "I couldn't add that book because I don't have a confirmed variant from the store.",
         }
+    sync_commerce_cart_to_session_state(session, session_state)
+    cart_lines = cart_summary(session)["count"]
+    logger.info(
+        "commerce_auto_add_selected sid=%s title_safe=%s cart_lines=%d",
+        session.sid[:6],
+        title_safe_for_log(line.title),
+        cart_lines,
+    )
     return {
         "success": True,
         "message": f"I added {line.title} to your order. Would you like to add another book?",
         "line_id": line.line_id,
+        "cart_lines": cart_lines,
     }
 
 
-def remove_cart_item(session: CommerceSession, title_or_line_id: str | None = None) -> dict[str, Any]:
-    line = remove_cart_line(session, line_id=title_or_line_id if title_or_line_id and len(title_or_line_id) <= 12 else None, title=title_or_line_id)
+def remove_cart_item(
+    session: CommerceSession,
+    title_or_line_id: str | None = None,
+    session_state: Optional["SessionState"] = None,
+) -> dict[str, Any]:
+    line = remove_cart_line(
+        session,
+        line_id=title_or_line_id if title_or_line_id and len(title_or_line_id) <= 12 else None,
+        title=title_or_line_id,
+    )
     if line:
+        sync_commerce_cart_to_session_state(session, session_state)
         return {"success": True, "message": f"I removed {line.title} from your order."}
     return {"success": False, "message": "I don't see that book in your order right now."}
 
