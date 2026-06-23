@@ -232,6 +232,10 @@ def extract_isbn_from_text(text: str) -> str | None:
 
 
 def _extract_title_query(text: str) -> str | None:
+    from .tool_entity_extractor import is_generic_followup_phrase, is_price_followup
+
+    if is_generic_followup_phrase(text) or is_price_followup(text):
+        return None
     match = _TITLE_SEARCH_PAT.search(text) or _TITLE_I_NEED_PAT.search(text)
     if not match:
         return None
@@ -243,10 +247,12 @@ def _extract_title_query(text: str) -> str | None:
         return None
     if re.fullmatch(r"(?:a\s+)+book", lowered):
         return None
+    if is_generic_followup_phrase(query) or is_price_followup(query):
+        return None
     if _VAGUE_BOOK_PAT.search(text):
         return None
     non_book = re.search(
-        r"\b(address|order|refund|shipping|payment|cancel|update my|facility|inmate)\b",
+        r"\b(address|order|refund|shipping|payment|cancel|update my|facility|inmate|price|amount)\b",
         lowered,
     )
     if non_book:
@@ -320,17 +326,233 @@ def is_off_domain_signal(text: str) -> bool:
     return False
 
 
+def _commerce_session_for(session_state: Optional["SessionState"]):
+    if session_state is None:
+        return None
+    from .commerce_session import get_commerce_session
+
+    sid = getattr(session_state, "call_sid", "") or getattr(session_state, "session_id", "")
+    if not sid:
+        return None
+    return get_commerce_session(sid)
+
+
 def resolve_business_intent(
     text: str,
     memory_packet: Optional["MemoryPacket"] = None,
     session_state: Optional["SessionState"] = None,
 ) -> BusinessIntentResult:
     """Resolve obvious bookstore/business intents without calling the LLM."""
+    from .cart_orchestrator import cart_summary_text
+    from .customer_service_orchestrator import route_customer_service_intent
+    from .tool_entity_extractor import (
+        is_add_to_cart_followup,
+        is_availability_followup,
+        is_generic_followup_phrase,
+        is_price_followup,
+        is_remove_from_cart_followup,
+    )
+    from .commerce_session import get_last_selected_or_best_candidate
+
     normalized = _normalize(text)
     if not normalized:
         return _unmatched(normalized)
 
     expected_next = _get_expected_next(session_state, memory_packet)
+    commerce = _commerce_session_for(session_state)
+    candidate = get_last_selected_or_best_candidate(commerce) if commerce else None
+
+    cs = route_customer_service_intent(normalized)
+    if cs.get("intent") == "refund_lookup":
+        if cs.get("response_mode") == "needs_tools":
+            return _matched(
+                intent="refund_lookup",
+                response_mode="needs_tools",
+                confidence=0.93,
+                direct_answer=None,
+                tool_categories=cs["tool_categories"],
+                reason="refund_lookup",
+                normalized_text=normalized,
+                tool_entities=cs.get("tool_entities", {}),
+            )
+        return _matched(
+            intent="refund_lookup",
+            response_mode="direct_answer",
+            confidence=0.90,
+            direct_answer=cs.get("direct_answer"),
+            reason="refund_lookup_missing_id",
+            normalized_text=normalized,
+            expected_next=cs.get("expected_next"),
+        )
+
+    if cs.get("intent") == "order_lookup":
+        if cs.get("response_mode") == "needs_tools":
+            return _matched(
+                intent="order_lookup",
+                response_mode="needs_tools",
+                confidence=0.92,
+                direct_answer=None,
+                tool_categories=cs["tool_categories"],
+                reason="order_lookup",
+                normalized_text=normalized,
+                tool_entities=cs.get("tool_entities", {}),
+            )
+        return _matched(
+            intent="order_lookup",
+            response_mode="direct_answer",
+            confidence=0.88,
+            direct_answer=cs.get("direct_answer"),
+            reason="order_lookup_missing_id",
+            normalized_text=normalized,
+            expected_next=cs.get("expected_next"),
+        )
+
+    if cs.get("intent") == "facility_approval":
+        return _matched(
+            intent="facility_approval",
+            response_mode="needs_tools",
+            confidence=0.90,
+            direct_answer=None,
+            tool_categories=cs["tool_categories"],
+            reason="facility_lookup",
+            normalized_text=normalized,
+        )
+
+    if cs.get("intent") == "address_update":
+        from .customer_service_orchestrator import compose_address_escalation
+
+        return _matched(
+            intent="address_update",
+            response_mode="needs_tools",
+            confidence=0.91,
+            direct_answer=None,
+            tool_categories=cs["tool_categories"],
+            expected_next=cs.get("expected_next"),
+            reason="address_update_escalation",
+            normalized_text=normalized,
+        )
+
+    if is_price_followup(normalized) and not re.search(
+        r"\b(shipping|subtotal|delivery|ship)\b", normalized, re.I,
+    ):
+        if candidate and candidate.price:
+            return _matched(
+                intent="product_price_question",
+                response_mode="direct_answer",
+                confidence=0.95,
+                direct_answer=(
+                    f"The price is {candidate.price}. "
+                    "Would you like me to add it to your order?"
+                ),
+                reason="price_followup_candidate",
+                normalized_text=normalized,
+                expected_next="add_to_cart_offer",
+            )
+        if candidate:
+            return _matched(
+                intent="product_price_question",
+                response_mode="direct_answer",
+                confidence=0.92,
+                direct_answer=(
+                    f"I found {candidate.title}, but I don't have a confirmed price "
+                    "from the store right now."
+                ),
+                reason="price_followup_no_price",
+                normalized_text=normalized,
+            )
+        return _matched(
+            intent="product_price_question",
+            response_mode="direct_answer",
+            confidence=0.88,
+            direct_answer="Which book are you asking about?",
+            reason="price_followup_no_candidate",
+            normalized_text=normalized,
+            expected_next="book_identifier",
+        )
+
+    if is_availability_followup(normalized):
+        if candidate:
+            avail = (
+                "It looks out of stock right now."
+                if candidate.availability == "out_of_stock"
+                else "Yes, it looks available."
+            )
+            return _matched(
+                intent="product_availability_question",
+                response_mode="direct_answer",
+                confidence=0.93,
+                direct_answer=avail,
+                reason="availability_followup",
+                normalized_text=normalized,
+            )
+        return _matched(
+            intent="product_availability_question",
+            response_mode="direct_answer",
+            confidence=0.88,
+            direct_answer="Which book are you asking about?",
+            reason="availability_followup_no_candidate",
+            normalized_text=normalized,
+            expected_next="book_identifier",
+        )
+
+    if is_add_to_cart_followup(normalized):
+        return _matched(
+            intent="cart_mutation",
+            response_mode="needs_tools",
+            confidence=0.92,
+            direct_answer=None,
+            tool_categories=["cart_mutation"],
+            reason="add_to_cart_followup",
+            normalized_text=normalized,
+            tool_entities={"cart_action": "add"},
+        )
+
+    if is_remove_from_cart_followup(normalized):
+        return _matched(
+            intent="cart_mutation",
+            response_mode="needs_tools",
+            confidence=0.92,
+            direct_answer=None,
+            tool_categories=["cart_mutation"],
+            reason="remove_from_cart_followup",
+            normalized_text=normalized,
+            tool_entities={"cart_action": "remove"},
+        )
+
+    if re.search(
+        r"\b(send (?:me )?(?:the )?payment link|email me (?:the )?payment link|send checkout|send the link)\b",
+        normalized,
+        re.I,
+    ):
+        return _matched(
+            intent="payment_flow",
+            response_mode="needs_tools",
+            confidence=0.91,
+            direct_answer=None,
+            tool_categories=["payment_flow"],
+            reason="payment_flow_request",
+            normalized_text=normalized,
+        )
+
+    if _CART_COUNT_PAT.search(normalized) and commerce:
+        return _matched(
+            intent="cart_count_question",
+            response_mode="direct_answer",
+            confidence=0.93,
+            direct_answer=cart_summary_text(commerce),
+            reason="cart_count_commerce",
+            normalized_text=normalized,
+        )
+
+    if is_generic_followup_phrase(normalized) and candidate:
+        return _matched(
+            intent="product_context_hold",
+            response_mode="hold",
+            confidence=0.85,
+            direct_answer=None,
+            reason="generic_followup_with_candidate",
+            normalized_text=normalized,
+        )
 
     if is_acknowledgment(normalized):
         prompt = _ack_prompt_for_expected(expected_next)

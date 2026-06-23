@@ -413,6 +413,44 @@ class EricAgentRuntime:
             CallMemoryManager.update_after_turn(session, caller_text, text, "pending_tool_status")
             return RuntimeTurnResult(response_text=text, source="pending_tool_status")
 
+        from .brand_alias_normalizer import normalize_brand_aliases
+        from .followup_context_resolver import followup_result_to_decision, resolve_followup_context
+        from .commerce_session import get_commerce_session, sync_commerce_to_session_state
+
+        brand = normalize_brand_aliases(caller_text)
+        turn_text = brand.canonical_text if brand.matched else caller_text
+        commerce = get_commerce_session(session.call_sid)
+        sync_commerce_to_session_state(commerce, session)
+
+        followup = resolve_followup_context(
+            turn_text,
+            sid=session.call_sid,
+            session_state=session,
+            commerce=commerce,
+        )
+        if followup.resolved and followup.response_mode == "direct_answer" and followup.direct_answer:
+            sanitized = sanitize_customer_response(
+                followup.direct_answer,
+                intent=followup.intent,
+                call_sid=session.call_sid,
+            )
+            text = sanitized.text
+            commerce.last_product_answer = text if followup.intent.startswith("product") else commerce.last_product_answer
+            commerce.last_tool_answer = text
+            await _await_send(send, {"type": "text", "token": text, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            log_assistant_response(text, call_sid=session.call_sid, intent=followup.intent)
+            from .conversation_state_machine import record_safe_response, clear_interrupt as clear_state_interrupt
+            record_safe_response(session.call_sid, text)
+            clear_state_interrupt(session.call_sid)
+            CallMemoryManager.update_after_turn(session, caller_text, text, followup.intent)
+            if followup.expected_next and hasattr(session, "dialogue"):
+                session.dialogue.expected_next = followup.expected_next
+            logger.info("tool_fanout_skipped reason=followup_context")
+            total_ms = (time.monotonic() - t0) * 1000
+            logger.info("main_llm_runtime_complete sid=%s total_ms=%.0f source=followup_context", sid, total_ms)
+            return RuntimeTurnResult(response_text=text, source="followup_context")
+
         from ..cart.session import get_ledger
         ledger = get_ledger(session)
         cart_summary = f"{ledger.confirmed_count()} confirmed book(s)" if ledger.confirmed_count() else ""
@@ -426,7 +464,7 @@ class EricAgentRuntime:
         last_assistant = assistants[-1] if assistants else ""
 
         decision = await main_llm_agent_decide(
-            user_turn=caller_text,
+            user_turn=turn_text,
             session=session,
             memory_context=memory_context,
             last_assistant=last_assistant,
@@ -496,9 +534,33 @@ class EricAgentRuntime:
                 sid, facts_n,
             )
 
+            from .commerce_session import get_commerce_session, update_candidates_from_facts, sync_commerce_to_session_state
+            from .product_fact_normalizer import normalize_product_candidates
+
+            commerce = get_commerce_session(session.call_sid)
+            worker_facts = {
+                name: (result.data or {})
+                for name, result in worker_bundle.results.items()
+                if getattr(result, "success", False) and result.data
+            }
+            if worker_facts:
+                candidates = normalize_product_candidates(
+                    worker_facts, caller_text, session.call_sid,
+                )
+                if candidates:
+                    update_candidates_from_facts(commerce, candidates)
+                    sync_commerce_to_session_state(commerce, session)
+
             response_text = compose_answer_from_tool_facts(
                 intent, fact_packet, worker_bundle, session=session,
             )
+
+            if response_text:
+                commerce.last_tool_answer = response_text
+                if intent in (
+                    "isbn_lookup", "book_title_search", "book_search", "product_search",
+                ):
+                    commerce.last_product_answer = response_text
 
             if not response_text:
                 from ..composer.main_llm_composer import get_composer
