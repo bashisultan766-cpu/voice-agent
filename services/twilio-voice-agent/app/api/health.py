@@ -20,4 +20,5 @@ async def health() -> dict:
         "tts_provider": s.VOICE_TTS_PROVIDER,
         "voice_configured": bool(s.VOICE_ID) if s.VOICE_TTS_PROVIDER.lower() == "elevenlabs" else True,
         "memory_turns": s.VOICE_MEMORY_TURNS,
+        "main_llm_timeout_ms": s.VOICE_MAIN_LLM_TIMEOUT_MS,
     }

@@ -23,7 +23,7 @@ def main() -> int:
 
     is_main_llm = s.VOICE_AGENT_RUNTIME_MODE == "main_llm_agent"
 
-    print("Eric Agent Runtime Check (v4.14)")
+    print("Eric Agent Runtime Check (v4.14.2)")
     print("=" * 40)
     print(f"Agent runtime mode:     {s.VOICE_AGENT_RUNTIME_MODE}")
     print(f"Eric prompt file:       {'loaded' if prompt_status['loaded_from_file'] else 'inline_fallback'}")
@@ -33,6 +33,7 @@ def main() -> int:
     print(f"Tool fanout after LLM:  {'enabled' if is_main_llm else 'via_supervisor'}")
     print(f"OpenAI configured:      {'yes' if bool(s.OPENAI_API_KEY) else 'no'}")
     print(f"Supervisor model:       {s.VOICE_SUPERVISOR_MODEL}")
+    print(f"Main LLM timeout:       {s.VOICE_MAIN_LLM_TIMEOUT_MS}ms")
     print(f"Final model:            {s.VOICE_FINAL_MODEL}")
     print(f"Memory turns:           {s.VOICE_MEMORY_TURNS}")
     print(f"LLM brain enabled:      {s.VOICE_LLM_BRAIN_ENABLED}")

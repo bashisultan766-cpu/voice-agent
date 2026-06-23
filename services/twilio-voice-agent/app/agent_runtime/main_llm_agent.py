@@ -17,6 +17,7 @@ from typing import Optional, TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
+from .brand_alias_normalizer import BrandAliasResult, normalize_brand_aliases
 from .prompt_loader import load_eric_system_prompt_text
 
 if TYPE_CHECKING:
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 AGENT_DECISION_SCHEMA = {
     "response_mode": "direct_answer | needs_tools | hold | repair",
-    "intent": "identity | small_talk | company | book_search | isbn_lookup | order_lookup | refund_lookup | shipping | facility | payment | address_update | cancellation | off_domain | unknown | frustration_repair",
+    "intent": "identity | small_talk | company | company_question | assistant_identity | book_search | isbn_lookup | order_lookup | refund_lookup | shipping | facility | payment | address_update | cancellation | off_domain | unknown | frustration_repair",
     "confidence": 0.0,
     "direct_answer": "string or empty",
     "tool_categories": [],
@@ -39,7 +40,8 @@ AGENT_DECISION_SCHEMA = {
 }
 
 VALID_INTENTS = frozenset({
-    "identity", "small_talk", "company", "book_search", "isbn_lookup",
+    "identity", "small_talk", "company", "company_question", "assistant_identity",
+    "book_search", "isbn_lookup",
     "order_lookup", "refund_lookup", "shipping", "facility", "payment",
     "address_update", "cancellation", "off_domain", "unknown", "frustration_repair",
 })
@@ -155,6 +157,27 @@ _CAPABILITY_COMPLAINT_PAT = re.compile(
 _EMAIL_PAT = re.compile(
     r"\b(email|email address|send email)\b", re.I,
 )
+_HEAR_ME_PAT = re.compile(r"\bcan you hear me\b", re.I)
+_SELL_QUESTION_PAT = re.compile(
+    r"\b(what do you sell|what does .+ sell|do you sell books?)\b", re.I,
+)
+_COMPANY_PURPOSE_PAT = re.compile(
+    r"\b(purpose of|what is your purpose|what is the purpose)\b", re.I,
+)
+
+_ANSWER_ASSISTANT_IDENTITY = (
+    "Yes, I'm Eric, the SureShot Books assistant. "
+    "I can help with books, orders, shipping, payment links, and facility questions."
+)
+_ANSWER_COMPANY_QUESTION = (
+    "SureShot Books is a bookstore service. We help customers find books, place orders, "
+    "and handle book-related questions like shipping, payments, facilities, and order status."
+)
+_ANSWER_COMPANY_PURPOSE = (
+    "Our purpose is to help customers find and order books quickly, "
+    "including regular book orders and facility-related book orders."
+)
+_ANSWER_SELL_BOOKS = "Yes. SureShot Books helps customers find and order books."
 
 
 def _parse_decision(raw: dict) -> dict:
@@ -203,6 +226,215 @@ def _parse_decision(raw: dict) -> dict:
         "safety_flags": safety_flags,
         "memory_instruction": memory_instruction,
     }
+
+
+def _parse_llm_json(raw: str) -> dict:
+    """Parse LLM JSON with markdown fence stripping and first-object extraction."""
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        raise
+
+
+def _extract_answer_from_content(raw: str) -> Optional[str]:
+    """Recover a spoken answer from non-JSON LLM content."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    for key in ("direct_answer", "answer", "response"):
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.I)
+        if m:
+            return m.group(1).replace('\\"', '"').strip()
+    stripped = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+    stripped = re.sub(r"\s*```$", "", stripped)
+    if stripped and not stripped.startswith("{"):
+        return stripped[:500].strip()
+    return None
+
+
+def _brand_alias_direct_answer(brand: BrandAliasResult) -> Optional[dict]:
+    """Deterministic direct answers for SureShot identity/company intents."""
+    if not brand.matched:
+        return None
+
+    intent = brand.likely_intent
+    if intent == "assistant_identity":
+        answer = _ANSWER_ASSISTANT_IDENTITY
+        mapped_intent = "assistant_identity"
+    elif intent == "company_purpose":
+        answer = _ANSWER_COMPANY_PURPOSE
+        mapped_intent = "company_question"
+    elif intent == "company_question":
+        answer = _ANSWER_COMPANY_QUESTION
+        mapped_intent = "company_question"
+    else:
+        return None
+
+    return {
+        "response_mode": "direct_answer",
+        "intent": mapped_intent,
+        "confidence": max(brand.confidence, 0.90),
+        "direct_answer": answer,
+        "tool_categories": [],
+        "tool_reason": "",
+        "one_question_to_ask": "",
+        "domain_boundary": "in_domain",
+        "safety_flags": [],
+        "memory_instruction": "",
+    }
+
+
+def _sell_question_direct_answer(text: str) -> Optional[dict]:
+    if _SELL_QUESTION_PAT.search(text):
+        return {
+            "response_mode": "direct_answer",
+            "intent": "company_question",
+            "confidence": 0.93,
+            "direct_answer": _ANSWER_SELL_BOOKS,
+            "tool_categories": [],
+            "tool_reason": "",
+            "one_question_to_ask": "",
+            "domain_boundary": "in_domain",
+            "safety_flags": [],
+            "memory_instruction": "",
+        }
+    return None
+
+
+def _company_purpose_direct_answer(text: str, brand: Optional[BrandAliasResult] = None) -> Optional[dict]:
+    if not _COMPANY_PURPOSE_PAT.search(text):
+        return None
+    if brand and brand.matched:
+        pass
+    elif not re.search(r"\b(sureshot|sure\s*shot|bookstore|books?)\b", text, re.I):
+        return None
+    return {
+        "response_mode": "direct_answer",
+        "intent": "company_question",
+        "confidence": 0.92,
+        "direct_answer": _ANSWER_COMPANY_PURPOSE,
+        "tool_categories": [],
+        "tool_reason": "",
+        "one_question_to_ask": "",
+        "domain_boundary": "in_domain",
+        "safety_flags": [],
+        "memory_instruction": "",
+    }
+
+
+def _timeout_recovery_fallback(
+    user_turn: str,
+    brand: BrandAliasResult,
+    sid: str,
+) -> dict:
+    """Context-aware fallback when the Main LLM call times out or errors."""
+    t = (user_turn or "").strip()
+    normalized = brand.canonical_text if brand.matched else t
+
+    if _HEAR_ME_PAT.search(t):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=hear_me_check", sid)
+        return _make_direct_decision(
+            "small_talk",
+            "Yes, I can hear you. How can I help?",
+            confidence=0.88,
+        )
+
+    if _IDENTITY_PAT.search(t):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=identity", sid)
+        return _make_direct_decision(
+            "identity",
+            "My name is Eric. I'm with SureShot Books.",
+            confidence=0.90,
+        )
+
+    sell = _sell_question_direct_answer(t) or _sell_question_direct_answer(normalized)
+    if sell:
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=company_question", sid)
+        return sell
+
+    purpose = _company_purpose_direct_answer(t, brand) or _company_purpose_direct_answer(normalized, brand)
+    if purpose:
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=company_purpose", sid)
+        return purpose
+
+    brand_decision = _brand_alias_direct_answer(brand)
+    if brand_decision:
+        logger.info(
+            "main_llm_timeout_recovered sid=%s recovered_intent=%s",
+            sid, brand.likely_intent,
+        )
+        return brand_decision
+
+    if _BOOK_NEED_PAT.search(t):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=book_search", sid)
+        return _make_direct_decision(
+            "book_search",
+            "Sure. Do you have the ISBN, title, author, or subject?",
+            confidence=0.88,
+        )
+
+    if _BOOK_TITLE_PAT.search(t):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=title_clarification", sid)
+        return _make_direct_decision(
+            "book_search",
+            "Got it. Please say the full title.",
+            confidence=0.85,
+        )
+
+    if brand.matched or re.search(
+        r"\b(bookstore|assistant|company|sell|purpose|sureshot|book assistant)\b",
+        t,
+        re.I,
+    ):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=company_question", sid)
+        return _make_direct_decision(
+            "company_question",
+            _ANSWER_COMPANY_QUESTION,
+            confidence=0.85,
+        )
+
+    logger.info("main_llm_timeout_unhandled sid=%s", sid)
+    return _make_direct_decision(
+        "unknown",
+        "I'm sorry, I didn't catch that. Could you repeat it?",
+        confidence=0.0,
+    )
+
+
+def _make_direct_decision(intent: str, answer: str, confidence: float = 0.90) -> dict:
+    return {
+        "response_mode": "direct_answer",
+        "intent": intent,
+        "confidence": confidence,
+        "direct_answer": answer,
+        "tool_categories": [],
+        "tool_reason": "",
+        "one_question_to_ask": "",
+        "domain_boundary": "in_domain",
+        "safety_flags": [],
+        "memory_instruction": "",
+    }
+
+
+def _log_decision(sid: str, decision: dict, source: str = "") -> None:
+    if decision["response_mode"] == "direct_answer" and decision.get("direct_answer"):
+        logger.info(
+            "main_llm_agent_direct_answer sid=%s chars=%d",
+            sid, len(decision["direct_answer"]),
+        )
+    extra = f" source={source}" if source else ""
+    logger.info(
+        "main_llm_agent_decision sid=%s response_mode=%s intent=%s tools=%s confidence=%.2f%s",
+        sid, decision["response_mode"], decision["intent"],
+        decision["tool_categories"], decision["confidence"], extra,
+    )
 
 
 def _build_agent_system_prompt(system_prompt: str) -> str:
@@ -303,6 +535,36 @@ def _fast_path(user_turn: str) -> Optional[dict]:
             "memory_instruction": "",
         }
 
+    # Company purpose (before generic company match)
+    if _COMPANY_PURPOSE_PAT.search(t):
+        return {
+            "response_mode": "direct_answer",
+            "intent": "company_question",
+            "confidence": 0.94,
+            "direct_answer": _ANSWER_COMPANY_PURPOSE,
+            "tool_categories": [],
+            "tool_reason": "",
+            "one_question_to_ask": "",
+            "domain_boundary": "in_domain",
+            "safety_flags": [],
+            "memory_instruction": "",
+        }
+
+    # What do you sell
+    if _SELL_QUESTION_PAT.search(t):
+        return {
+            "response_mode": "direct_answer",
+            "intent": "company_question",
+            "confidence": 0.93,
+            "direct_answer": _ANSWER_SELL_BOOKS,
+            "tool_categories": [],
+            "tool_reason": "",
+            "one_question_to_ask": "",
+            "domain_boundary": "in_domain",
+            "safety_flags": [],
+            "memory_instruction": "",
+        }
+
     # Company questions
     if _COMPANY_PAT.search(t) and not _IDENTITY_PAT.search(t):
         return {
@@ -354,7 +616,7 @@ def _fast_path(user_turn: str) -> Optional[dict]:
             "response_mode": "direct_answer",
             "intent": "book_search",
             "confidence": 0.93,
-            "direct_answer": "I'd be happy to help you find a book. Do you have the ISBN, title, author, or subject?",
+            "direct_answer": "Sure. Do you have the ISBN, title, author, or subject?",
             "tool_categories": [],
             "tool_reason": "",
             "one_question_to_ask": "Do you have the ISBN, title, author, or subject?",
@@ -576,36 +838,54 @@ async def decide_and_answer(
     s = settings or get_settings()
     sid = (session.call_sid[:6] if session else "?") if session else "?"
 
+    brand = normalize_brand_aliases(user_turn)
+    if brand.matched:
+        logger.info(
+            "brand_alias_normalized sid=%s aliases=%s likely_intent=%s",
+            sid, brand.aliases_found, brand.likely_intent,
+        )
+
     # Fast path for common patterns — no LLM call needed
     fast = _fast_path(user_turn)
     if fast:
-        if fast["response_mode"] == "direct_answer" and fast["direct_answer"]:
-            logger.info(
-                "main_llm_agent_direct_answer sid=%s chars=%d",
-                sid, len(fast["direct_answer"]),
-            )
-        logger.info(
-            "main_llm_agent_decision sid=%s response_mode=%s intent=%s tools=%s confidence=%.2f",
-            sid, fast["response_mode"], fast["intent"],
-            fast["tool_categories"], fast["confidence"],
-        )
+        _log_decision(sid, fast)
         return fast
+
+    # Sell / purpose questions (including normalized SureShot text)
+    for candidate in (user_turn, brand.canonical_text):
+        sell = _sell_question_direct_answer(candidate)
+        if sell:
+            _log_decision(sid, sell, source="brand_alias_fast_path")
+            return sell
+        purpose = _company_purpose_direct_answer(candidate, brand)
+        if purpose:
+            _log_decision(sid, purpose, source="brand_alias_fast_path")
+            return purpose
+
+    # Brand alias fast path — STT corruption recovery
+    brand_decision = _brand_alias_direct_answer(brand)
+    if brand_decision:
+        _log_decision(sid, brand_decision, source="brand_alias_fast_path")
+        return brand_decision
+
+    llm_turn = brand.canonical_text if brand.matched else user_turn
 
     system_prompt = load_eric_system_prompt_text()
     agent_system = _build_agent_system_prompt(system_prompt)
 
     user_prompt = _build_user_prompt(
-        user_turn, memory_context, last_assistant,
+        llm_turn, memory_context, last_assistant,
         cart_summary, email_state, order_state,
     )
 
     model = s.VOICE_SUPERVISOR_MODEL
-    timeout = s.VOICE_SUPERVISOR_TIMEOUT_MS / 1000
+    timeout = s.VOICE_MAIN_LLM_TIMEOUT_MS / 1000
 
-    logger.info("main_llm_agent_request sid=%s model=%s", sid, model)
+    logger.info("main_llm_agent_request sid=%s model=%s timeout_ms=%d", sid, model, s.VOICE_MAIN_LLM_TIMEOUT_MS)
 
     client = AsyncOpenAI(api_key=s.OPENAI_API_KEY)
 
+    raw_content = ""
     try:
         resp = await asyncio.wait_for(
             client.chat.completions.create(
@@ -620,22 +900,34 @@ async def decide_and_answer(
             ),
             timeout=timeout,
         )
-        raw = resp.choices[0].message.content or "{}"
-        parsed = json.loads(raw)
-    except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+        raw_content = resp.choices[0].message.content or "{}"
+        try:
+            parsed = _parse_llm_json(raw_content)
+        except json.JSONDecodeError:
+            logger.warning("main_llm_json_repair_failed sid=%s", sid)
+            recovered = _extract_answer_from_content(raw_content)
+            if recovered:
+                parsed = {
+                    "response_mode": "direct_answer",
+                    "intent": "unknown",
+                    "confidence": 0.75,
+                    "direct_answer": recovered,
+                    "tool_categories": [],
+                }
+            else:
+                parsed = _timeout_recovery_fallback(user_turn, brand, sid)
+                _log_decision(sid, parsed, source="timeout_recovery")
+                return parsed
+    except asyncio.TimeoutError:
+        logger.warning("main_llm_agent_timeout sid=%s", sid)
+        parsed = _timeout_recovery_fallback(user_turn, brand, sid)
+        _log_decision(sid, parsed, source="timeout_recovery")
+        return parsed
+    except Exception:
         logger.exception("main_llm_agent_error sid=%s", sid)
-        parsed = {
-            "response_mode": "direct_answer",
-            "intent": "unknown",
-            "confidence": 0.0,
-            "direct_answer": "I'm sorry, I didn't catch that. Could you repeat it?",
-            "tool_categories": [],
-            "tool_reason": "",
-            "one_question_to_ask": "",
-            "domain_boundary": "in_domain",
-            "safety_flags": [],
-            "memory_instruction": "",
-        }
+        parsed = _timeout_recovery_fallback(user_turn, brand, sid)
+        _log_decision(sid, parsed, source="timeout_recovery")
+        return parsed
 
     decision = _parse_decision(parsed)
 
@@ -646,17 +938,7 @@ async def decide_and_answer(
         decision["response_mode"] = "direct_answer"
         decision["direct_answer"] = _get_default_answer(decision["intent"])
 
-    if decision["response_mode"] == "direct_answer" and decision["direct_answer"]:
-        logger.info(
-            "main_llm_agent_direct_answer sid=%s chars=%d",
-            sid, len(decision["direct_answer"]),
-        )
-
-    logger.info(
-        "main_llm_agent_decision sid=%s response_mode=%s intent=%s tools=%s confidence=%.2f",
-        sid, decision["response_mode"], decision["intent"],
-        decision["tool_categories"], decision["confidence"],
-    )
+    _log_decision(sid, decision)
 
     return decision
 
