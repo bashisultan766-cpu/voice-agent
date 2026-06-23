@@ -131,6 +131,7 @@ class TestRegressions:
             user_turn="I need a book",
             settings=settings,
         )
+        assert decision["intent"] in ("vague_book_request", "book_search")
         assert decision["response_mode"] == "direct_answer"
         assert "ISBN" in decision["direct_answer"]
         assert "title" in decision["direct_answer"].lower()

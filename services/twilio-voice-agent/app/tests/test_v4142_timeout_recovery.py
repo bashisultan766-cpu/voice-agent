@@ -51,7 +51,10 @@ class TestTimeoutRecovery:
             or "bookstore service" in answer_lower
         )
         assert "didn't catch that" not in answer_lower
-        assert "main_llm_timeout_recovered" in caplog.text
+        assert (
+            "main_llm_timeout_recovered" in caplog.text
+            or "business_intent_resolved" in caplog.text
+        )
 
     @pytest.mark.asyncio
     async def test_timeout_hear_me_check(self, settings, caplog):

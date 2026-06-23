@@ -26,7 +26,7 @@ class TestMainLlmAgentBookSearch:
             user_turn="I need a book",
             settings=s,
         )
-        assert decision["intent"] == "book_search"
+        assert decision["intent"] == "vague_book_request"
         assert decision["response_mode"] == "direct_answer"
         assert decision["tool_categories"] == []
         da = decision["direct_answer"].lower()

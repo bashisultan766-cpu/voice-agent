@@ -421,6 +421,9 @@ class EricAgentRuntime:
         intent = decision["intent"]
         direct_answer = decision["direct_answer"]
         tool_categories = decision["tool_categories"]
+        expected_next = decision.get("expected_next") or ""
+        if expected_next and hasattr(session, "dialogue"):
+            session.dialogue.expected_next = expected_next
 
         # ── direct_answer: immediate response, no workers ──────────────────────
         if response_mode == "direct_answer" and direct_answer:
@@ -446,16 +449,32 @@ class EricAgentRuntime:
         # ── needs_tools: run only requested workers ────────────────────────────
         if response_mode == "needs_tools" and tool_categories:
             logger.info("tool_fanout_started categories=%s", tool_categories)
-            from ..workers.orchestrator import get_orchestrator
-            from ..pipeline.router import IntentResult
+            from ..pipeline.router import IntentResult, detect as router_detect
+            from .business_intent_resolver import extract_isbn_from_text
 
             router_result = IntentResult(intent=intent, entities={})
+            detected = router_detect(caller_text, session)
+            router_result.entities.update(detected.entities)
+            router_result.entities["raw_text"] = caller_text
+
+            search_query = (decision.get("search_query") or "").strip()
+            if search_query:
+                router_result.entities["product_phrase"] = search_query
+            tool_entities = decision.get("tool_entities") or {}
+            if isinstance(tool_entities, dict):
+                router_result.entities.update(tool_entities)
+
+            if "isbn_lookup" in tool_categories and not router_result.entities.get("isbn"):
+                isbn = extract_isbn_from_text(caller_text)
+                if isbn:
+                    router_result.entities["isbn"] = isbn
+
             worker_bundle = await self._execute_main_llm_tools(
-                tool_categories, router_result, session, settings,
+                tool_categories, router_result, session, settings, decision_intent=intent,
             )
             fact_packet = build_fact_packet(worker_bundle, session)
             facts_n = len(fact_packet.customer_facing_facts)
-            logger.info("tool_fanout_completed facts=%d", facts_n)
+            logger.info("tool_fanout_completed categories=%s facts=%d", tool_categories, facts_n)
 
             # Final LLM writes answer with full system prompt + facts
             from ..composer.main_llm_composer import get_composer
@@ -504,15 +523,13 @@ class EricAgentRuntime:
         router_result,
         session: "SessionState",
         settings,
+        decision_intent: str = "",
     ):
         """Execute only the requested tool categories in parallel."""
-        from ..workers.orchestrator import get_orchestrator
         from ..workers.base import WorkerBundle, WorkerResult
 
-        orchestrator = get_orchestrator()
-
         tool_to_intents = {
-            "catalog_search": "book_topic_allowed",
+            "catalog_search": "product_search",
             "isbn_lookup": "isbn_search",
             "order_lookup": "order_lookup",
             "refund_lookup": "refund_detail",
@@ -527,6 +544,9 @@ class EricAgentRuntime:
             "payment_flow": "send_payment_link",
             "escalation": "escalation",
         }
+
+        if decision_intent == "book_title_search":
+            tool_to_intents["catalog_search"] = "book_title_search"
 
         worker_name_to_tool = {
             "catalog_search": "catalog_search",
@@ -545,15 +565,6 @@ class EricAgentRuntime:
             "escalation": "escalation",
         }
 
-        from ..pipeline.router import IntentResult
-        intent_map = {}
-        for cat in tool_categories:
-            intent_map[cat] = tool_to_intents.get(cat, "unknown")
-
-        primary_intent = intent_map.get(tool_categories[0], "unknown") if tool_categories else "unknown"
-        router_result.intent = primary_intent
-        router_result.entities["intent"] = primary_intent
-
         from ..workers.orchestrator import _INTENT_WORKERS, _REGISTRY, _run_one
         import asyncio
         import time
@@ -564,9 +575,18 @@ class EricAgentRuntime:
 
         all_worker_names = []
         for cat in tool_categories:
-            tool = worker_name_to_tool.get(cat, cat)
-            wns = _INTENT_WORKERS.get(primary_intent, [tool])
+            worker_intent = tool_to_intents.get(cat, cat)
+            wns = _INTENT_WORKERS.get(worker_intent)
+            if not wns:
+                tool = worker_name_to_tool.get(cat, cat)
+                wns = _INTENT_WORKERS.get(tool, [tool])
             all_worker_names.extend(wns)
+
+        primary_intent = tool_to_intents.get(tool_categories[0], decision_intent or "unknown")
+        if decision_intent in _INTENT_WORKERS:
+            primary_intent = decision_intent
+        router_result.intent = primary_intent
+        router_result.entities["intent"] = primary_intent
 
         all_worker_names = list(dict.fromkeys(all_worker_names))
         bundle.workers_ran = list(all_worker_names)

@@ -18,6 +18,13 @@ from typing import Optional, TYPE_CHECKING
 from openai import AsyncOpenAI
 
 from .brand_alias_normalizer import BrandAliasResult, normalize_brand_aliases
+from .business_intent_resolver import (
+    ANSWER_OFF_DOMAIN,
+    business_result_to_decision,
+    context_aware_unknown_fallback,
+    is_generic_unknown_answer,
+    resolve_business_intent,
+)
 from .prompt_loader import load_eric_system_prompt_text
 
 if TYPE_CHECKING:
@@ -40,10 +47,13 @@ AGENT_DECISION_SCHEMA = {
 }
 
 VALID_INTENTS = frozenset({
-    "identity", "small_talk", "company", "company_question", "assistant_identity",
-    "book_search", "isbn_lookup",
+    "identity", "small_talk", "company", "company_question", "company_purpose",
+    "assistant_identity", "job_question",
+    "book_search", "book_title_search", "vague_book_request",
+    "isbn_lookup", "isbn_collection_start", "title_collection_start",
     "order_lookup", "refund_lookup", "shipping", "facility", "payment",
     "address_update", "cancellation", "off_domain", "unknown", "frustration_repair",
+    "acknowledgment",
 })
 
 VALID_MODES = frozenset({"direct_answer", "needs_tools", "hold", "repair"})
@@ -845,6 +855,18 @@ async def decide_and_answer(
             sid, brand.aliases_found, brand.likely_intent,
         )
 
+    business = resolve_business_intent(user_turn, session_state=session)
+    if business.matched:
+        decision = business_result_to_decision(business)
+        logger.info(
+            "business_intent_resolved sid=%s intent=%s source=business_fast_path expected_next=%s",
+            sid,
+            business.intent,
+            business.expected_next or "none",
+        )
+        _log_decision(sid, decision, source="business_fast_path")
+        return decision
+
     # Fast path for common patterns — no LLM call needed
     fast = _fast_path(user_turn)
     if fast:
@@ -931,6 +953,33 @@ async def decide_and_answer(
 
     decision = _parse_decision(parsed)
 
+    if decision["intent"] == "unknown" and decision["confidence"] <= 0.2:
+        recovered = resolve_business_intent(user_turn, session_state=session)
+        if recovered.matched:
+            decision = business_result_to_decision(recovered)
+            logger.info(
+                "llm_unknown_recovered sid=%s recovered_intent=%s",
+                sid,
+                recovered.intent,
+            )
+        else:
+            decision = context_aware_unknown_fallback(user_turn, session_state=session, sid=sid)
+    elif (
+        decision["intent"] == "unknown"
+        and decision["response_mode"] == "direct_answer"
+        and is_generic_unknown_answer(decision.get("direct_answer", ""))
+    ):
+        recovered = resolve_business_intent(user_turn, session_state=session)
+        if recovered.matched:
+            decision = business_result_to_decision(recovered)
+            logger.info(
+                "llm_unknown_recovered sid=%s recovered_intent=%s",
+                sid,
+                recovered.intent,
+            )
+        else:
+            decision = context_aware_unknown_fallback(user_turn, session_state=session, sid=sid)
+
     if not decision["direct_answer"] and decision["response_mode"] == "direct_answer":
         decision["direct_answer"] = _get_default_answer(decision["intent"])
 
@@ -960,10 +1009,13 @@ class MainLLMAgent:
 
 
 def _get_default_answer(intent: str) -> str:
+    from .business_intent_resolver import ANSWER_GENERIC_REPEAT, ANSWER_JOB
+
     defaults = {
         "identity": "My name is Eric. I'm with SureShot Books.",
         "small_talk": "I'm doing well, thank you. How can I help you today?",
-        "off_domain": "I can help with SureShot Books. If you're looking for books about that topic, I can search our catalog.",
-        "unknown": "I'm sorry, I didn't understand. Could you repeat that?",
+        "job_question": ANSWER_JOB,
+        "off_domain": ANSWER_OFF_DOMAIN,
+        "unknown": ANSWER_GENERIC_REPEAT,
     }
     return defaults.get(intent, "How can I help you with SureShot Books today?")

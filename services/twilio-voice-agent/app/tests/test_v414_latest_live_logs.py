@@ -97,7 +97,7 @@ class TestMainLlmAgentLiveSequence:
             settings=s,
         )
         assert decision["intent"] == "off_domain"
-        assert decision["direct_answer"].lower().startswith(("i can", "i'm here", "i can help"))
+        assert decision["direct_answer"].lower().startswith(("i mainly help", "i can", "i'm here", "i can help"))
         assert decision["tool_categories"] == []
 
     @pytest.mark.asyncio
