@@ -21,6 +21,10 @@ class MemoryPacket:
     customer_mood: str = "normal"
     turn_count: int = 0
     last_assistant_response: str = ""
+    has_verified_recent_call: bool = False
+    prior_call_age_minutes: float = 0.0
+    safe_memory_summary: str = ""
+    can_reference_prior_call: bool = False
 
     def to_supervisor_context(self) -> str:
         parts: list[str] = []
@@ -46,6 +50,8 @@ class MemoryPacket:
             parts.append(f"[Mood: {self.customer_mood}]")
         if self.last_assistant_response:
             parts.append(f"[Last Eric response: {self.last_assistant_response[:220]}]")
+        if self.can_reference_prior_call and self.safe_memory_summary:
+            parts.append(f"[Verified prior call: {self.safe_memory_summary[:200]}]")
         return "\n".join(parts)
 
     def to_composer_context(self) -> str:

@@ -391,6 +391,14 @@ class EricAgentRuntime:
 
         logger.info("main_llm_runtime_start sid=%s turn=%s", sid, caller_text[:40])
 
+        from .prompt_pack_loader import load_prompt_pack
+
+        try:
+            load_prompt_pack()
+        except Exception as exc:
+            logger.debug("prompt_pack_load_skipped sid=%s err=%s", sid, str(exc)[:40])
+        system_prompt_text = load_eric_system_prompt_text()
+
         memory = build_memory_packet(session, max_turns=settings.VOICE_MEMORY_TURNS)
         memory_context = memory.to_composer_context() if memory else ""
 
@@ -417,19 +425,49 @@ class EricAgentRuntime:
         from .followup_context_resolver import followup_result_to_decision, resolve_followup_context
         from .commerce_commit_resolver import resolve_commerce_commit
         from .commerce_session import get_commerce_session, save_commerce_session, sync_commerce_to_session_state
+        from .business_intent_resolver import resolve_business_intent, business_result_to_decision
+        from .catalog_taxonomy import is_catalog_request
 
         commerce = get_commerce_session(session.call_sid)
         sync_commerce_to_session_state(commerce, session)
 
+        brand = normalize_brand_aliases(caller_text)
+        turn_text = brand.canonical_text if brand.matched else caller_text
+
+        business_early = resolve_business_intent(turn_text, session_state=session)
+        catalog_intents = frozenset({
+            "newspaper_request", "magazine_request", "newspaper_search", "magazine_search",
+            "subscription_search", "catalog_product_search", "publication_search",
+            "website_catalog_claim", "website_price_claim",
+        })
+        skip_followup_for_catalog = (
+            business_early.matched and business_early.intent in catalog_intents
+        ) or is_catalog_request(turn_text)
+
         followup = resolve_followup_context(
-            caller_text,
+            turn_text,
             sid=session.call_sid,
             session_state=session,
             commerce=commerce,
+        ) if not skip_followup_for_catalog else followup_result_to_decision(
+            type("R", (), {
+                "resolved": False, "intent": "unknown", "response_mode": "pass_through",
+                "direct_answer": None, "tool_categories": [], "expected_next": None,
+                "source": "catalog_pass_through", "search_blocked": False,
+            })()
         )
-
-        brand = normalize_brand_aliases(caller_text)
-        turn_text = brand.canonical_text if brand.matched else caller_text
+        # Re-wrap skipped followup as unresolved FollowupContextResult
+        if skip_followup_for_catalog:
+            from .followup_context_resolver import FollowupContextResult
+            followup = FollowupContextResult(
+                resolved=False,
+                intent="unknown",
+                response_mode="pass_through",
+                direct_answer=None,
+                tool_categories=[],
+                expected_next=None,
+                source="catalog_pass_through",
+            )
 
         commit = resolve_commerce_commit(turn_text, commerce, session_state=session)
 
@@ -569,8 +607,63 @@ class EricAgentRuntime:
             commerce.expected_next = expected_next
             save_commerce_session(commerce)
 
-        # ── direct_answer: immediate response, no workers ──────────────────────
-        if response_mode == "direct_answer" and direct_answer:
+        from .llm_brain_contract import validate_llm_decision
+        from .tool_eligibility_gate import evaluate_tool_eligibility
+        from .fake_checking_guard import sanitize_fake_checking
+        from .direct_llm_answerer import answer_directly
+        from .main_llm_agent import AVAILABLE_TOOL_CATEGORIES
+        from .cart_orchestrator import cart_count as commerce_cart_count
+
+        has_cart = commerce_cart_count(commerce) > 0
+        decision = validate_llm_decision(
+            decision or {},
+            user_text=caller_text,
+            has_cart=has_cart,
+            valid_tool_categories=frozenset(AVAILABLE_TOOL_CATEGORIES),
+        )
+        response_mode = decision.get("response_mode", response_mode)
+        intent = decision.get("intent", intent)
+        direct_answer = decision.get("direct_answer", direct_answer)
+        tool_categories = list(decision.get("tool_categories") or tool_categories)
+
+        elig = evaluate_tool_eligibility(caller_text, decision, commerce)
+        if elig.blocked:
+            response_mode = "direct_answer"
+            intent = elig.intent or intent
+            tool_categories = []
+            if elig.use_direct_llm_answerer:
+                commerce_summary = (
+                    f"{commerce_cart_count(commerce)} confirmed item(s) in cart"
+                    if has_cart else ""
+                )
+                direct_result = await answer_directly(
+                    caller_text,
+                    session=session,
+                    memory_packet=memory,
+                    commerce_summary=commerce_summary,
+                    system_prompt=system_prompt_text,
+                    settings=settings,
+                    intent=elig.intent,
+                )
+                direct_answer = direct_result.answer
+                intent = direct_result.intent
+            else:
+                direct_answer = elig.direct_answer or direct_answer
+
+        guard_ctx = {
+            "user_text": caller_text,
+            "has_cart": has_cart,
+            "sid": session.call_sid,
+        }
+
+        # ── direct_answer / clarify: immediate response, no workers ────────────
+        if response_mode in ("direct_answer", "clarify") and direct_answer:
+            direct_answer = sanitize_fake_checking(
+                direct_answer,
+                tool_started=False,
+                intent=intent,
+                context=guard_ctx,
+            )
             from ..safety.response_sanitizer import sanitize_customer_response
             sanitized = sanitize_customer_response(
                 direct_answer,
@@ -631,8 +724,13 @@ class EricAgentRuntime:
                 if getattr(result, "success", False) and result.data
             }
             if worker_facts:
+                query_entities = dict(router_result.entities or {})
+                tool_ents = (decision or {}).get("tool_entities") or {}
+                if isinstance(tool_ents, dict):
+                    query_entities.update({k: v for k, v in tool_ents.items() if v})
                 candidates = normalize_product_candidates(
                     worker_facts, caller_text, session.call_sid,
+                    query_entities=query_entities,
                 )
                 if candidates:
                     update_candidates_from_facts(commerce, candidates)
@@ -646,17 +744,18 @@ class EricAgentRuntime:
                 commerce.last_tool_answer = response_text
                 if intent in (
                     "isbn_lookup", "book_title_search", "book_search", "product_search",
+                    "newspaper_search", "magazine_search", "subscription_search",
+                    "catalog_product_search",
                 ):
                     commerce.last_product_answer = response_text
 
             if not response_text:
                 from ..composer.main_llm_composer import get_composer
                 composer = get_composer(settings)
-                system_prompt = load_eric_system_prompt_text()
                 logger.info("final_llm_from_tools sid=%s", sid)
                 response_text = await self._compose_main_llm_answer(
                     session, caller_text, decision, memory,
-                    fact_packet, worker_bundle, system_prompt, composer,
+                    fact_packet, worker_bundle, system_prompt_text, composer,
                 )
 
             worker_failures = sum(
@@ -678,6 +777,12 @@ class EricAgentRuntime:
 
             if response_text:
                 from ..safety.response_sanitizer import sanitize_customer_response
+                response_text = sanitize_fake_checking(
+                    response_text,
+                    tool_started=True,
+                    intent=intent,
+                    context=guard_ctx,
+                )
                 sanitized = sanitize_customer_response(
                     response_text,
                     intent=intent,

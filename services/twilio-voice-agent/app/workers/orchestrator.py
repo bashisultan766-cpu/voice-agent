@@ -58,6 +58,7 @@ from .spell_email_worker import SpellEmailWorker
 from .small_talk_worker import SmallTalkWorker
 from .dialogue_worker import DialogueWorker
 from .store_info_worker import StoreInfoWorker
+from .universal_catalog_search_worker import UniversalCatalogSearchWorker
 
 if TYPE_CHECKING:
     from ..pipeline.router import IntentResult
@@ -72,6 +73,11 @@ _INTENT_WORKERS: dict[str, list[str]] = {
     "product_search":       ["product_search", "book_title_extractor", "availability_backorder"],
     "author_search":        ["product_search", "availability_backorder"],
     "book_title_search":    ["product_search", "book_title_extractor", "availability_backorder"],
+    "catalog_product_search": ["universal_catalog_search", "availability_backorder"],
+    "newspaper_search":     ["universal_catalog_search", "availability_backorder"],
+    "magazine_search":      ["universal_catalog_search", "availability_backorder"],
+    "subscription_search":  ["universal_catalog_search", "availability_backorder"],
+    "publication_search":   ["universal_catalog_search", "availability_backorder"],
     "price_question":       ["product_search", "price_inventory", "availability_backorder"],
     "multi_book_order":     ["product_search", "price_inventory", "availability_backorder", "cart_mutation"],
 
@@ -162,6 +168,7 @@ _REGISTRY: dict[str, object] = {
     "customer_profile":         CustomerProfileWorker(),
     "product_isbn":             ProductISBNWorker(),
     "product_search":           ProductSearchWorker(),
+    "universal_catalog_search": UniversalCatalogSearchWorker(),
     "price_inventory":          PriceInventoryWorker(),
     "order_lookup":             OrderLookupWorker(),
     "tracking":                 TrackingWorker(),

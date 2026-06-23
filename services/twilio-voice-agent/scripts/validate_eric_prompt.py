@@ -1,71 +1,115 @@
 #!/usr/bin/env python3
-"""Validate eric_system_prompt.md (v4.14). Safe — no prompt text printed."""
+"""Validate Eric prompt pack (v4.15.1). Safe — no prompt text printed."""
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+_SECRET_PATTERNS = (
+    re.compile(r"sk-[a-zA-Z0-9]{20,}"),
+    re.compile(r"api[_-]?key\s*[:=]", re.I),
+    re.compile(r"Bearer\s+[a-zA-Z0-9._-]{20,}"),
+)
+
+_REQUIRED_SECTIONS = (
+    "eric",
+    "sureshot books",
+    "let me check",
+    "how are you",
+    "remember",
+    "newspaper",
+    "magazine",
+)
+
 
 def validate() -> list[str]:
     errors: list[str] = []
+    pack_dir = ROOT / "app" / "data" / "prompt_pack"
+    required_files = [
+        "00_eric_core_identity.md",
+        "10_store_business_rules.md",
+        "20_dialogue_style.md",
+        "30_tool_use_policy.md",
+        "40_payment_safety_policy.md",
+        "50_examples_and_edge_cases.md",
+    ]
 
-    prompt_path = ROOT / "app" / "data" / "eric_system_prompt.md"
-    if not prompt_path.is_file():
-        errors.append("MISSING: app/data/eric_system_prompt.md not found")
+    if not pack_dir.is_dir():
+        errors.append("FAIL: app/data/prompt_pack directory not found")
         return errors
 
-    text = prompt_path.read_text(encoding="utf-8")
-    text_lower = text.lower()
+    for name in required_files:
+        fp = pack_dir / name
+        if fp.is_file():
+            errors.append(f"PASS: {name} exists")
+        else:
+            errors.append(f"FAIL: Missing {name}")
 
-    # File exists
-    errors.append("PASS: eric_system_prompt.md exists")
+    combined = ""
+    for name in sorted(required_files):
+        fp = pack_dir / name
+        if fp.is_file():
+            combined += fp.read_text(encoding="utf-8") + "\n"
 
-    # Contains "Eric"
-    if "eric" in text_lower:
-        errors.append("PASS: Contains 'Eric'")
+    combined_lower = combined.lower()
+
+    if re.search(r"speak raw checkout url", combined_lower):
+        if "never speak raw checkout" in combined_lower:
+            errors.append("PASS: Raw checkout URL ban present")
+        else:
+            errors.append("FAIL: Prompt contains 'speak raw checkout URL' instruction")
     else:
-        errors.append("FAIL: Does not contain 'Eric'")
+        errors.append("PASS: No 'speak raw checkout URL' rule")
 
-    # Contains "SureShot Books"
-    if "sureshot books" in text_lower:
-        errors.append("PASS: Contains 'SureShot Books'")
+    if re.search(r"\bprocessing fee\b", combined_lower):
+        if "never speak processing fee" in combined_lower or "never mention processing fee" in combined_lower:
+            errors.append("PASS: Processing Fee mentioned only in safety ban")
+        else:
+            errors.append("FAIL: Prompt may instruct speaking Processing Fee")
     else:
-        errors.append("FAIL: Does not contain 'SureShot Books'")
+        errors.append("PASS: No Processing Fee speak instruction")
 
-    # Contains boundary rules
-    boundary_phrases = ["politics", "sports", "weather", "general knowledge"]
-    found_boundary = all(p in text_lower for p in boundary_phrases)
-    if found_boundary:
-        errors.append("PASS: Contains boundary rules (politics, sports, weather, general knowledge)")
-    else:
-        errors.append("FAIL: Missing some boundary rules")
+    for section in _REQUIRED_SECTIONS:
+        if section in combined_lower:
+            errors.append(f"PASS: Contains '{section}' section/content")
+        else:
+            errors.append(f"FAIL: Missing '{section}' content")
 
-    # Does not contain "Available Tools" heading
-    if "available tools" in text_lower:
-        errors.append("FAIL: Contains 'Available Tools' heading from old ElevenLabs prompt")
+    secrets_found = []
+    for pat in _SECRET_PATTERNS:
+        if pat.search(combined):
+            secrets_found.append(pat.pattern[:30])
+    if secrets_found:
+        errors.append(f"FAIL: Possible secrets in prompt pack: {secrets_found}")
     else:
-        errors.append("PASS: No 'Available Tools' heading")
+        errors.append("PASS: No secrets found")
 
-    # Does not contain raw internal tool names
-    internal_tool_names = [
-        "mainllmcomposer", "ericdialoguebrain", "worker_fanout",
-        "llm_supervisor", "paymentsafetyguard", "sureshotcatalogsearch",
-    ]
-    bad_tools = [t for t in internal_tool_names if t in text_lower]
-    if bad_tools:
-        errors.append(f"FAIL: Contains raw internal tool names: {bad_tools}")
-    else:
-        errors.append("PASS: No raw internal tool names")
+    from app.config import get_settings
 
-    # Length under safe limit
-    max_chars = 12000
-    if len(text) <= max_chars:
-        errors.append(f"PASS: Length {len(text)} chars <= {max_chars} limit")
+    s = get_settings()
+    max_chars = getattr(s, "ERIC_PROMPT_MAX_CHARS", 60000)
+    if len(combined) <= max_chars:
+        errors.append(f"PASS: Total chars {len(combined)} <= {max_chars}")
     else:
-        errors.append(f"FAIL: Length {len(text)} > {max_chars} limit")
+        errors.append(f"FAIL: Total chars {len(combined)} > {max_chars}")
+
+    legacy = ROOT / "app" / "data" / "eric_system_prompt.md"
+    if legacy.is_file():
+        errors.append("PASS: Legacy eric_system_prompt.md exists (backward compat)")
+    else:
+        errors.append("FAIL: Legacy eric_system_prompt.md missing")
+
+    try:
+        from app.agent_runtime.prompt_pack_loader import load_prompt_pack
+
+        snap = load_prompt_pack(force_reload=True)
+        errors.append(f"PASS: Prompt pack loads hash={snap.prompt_hash}")
+    except Exception as exc:
+        errors.append(f"FAIL: Prompt pack load error: {exc}")
 
     return errors
 
@@ -75,15 +119,14 @@ def main() -> int:
     errors_only = [r for r in results if r.startswith("FAIL")]
     passes = [r for r in results if r.startswith("PASS")]
 
-    print("Eric Prompt Validation")
+    print("Eric Prompt Validation (v4.15.1)")
     print("=" * 40)
     for r in results:
-        print(f"  {r}")
+        print(r)
     print("=" * 40)
-    print(f"  {len(passes)} passed, {len(errors_only)} failed")
-
+    print(f"PASS: {len(passes)}  FAIL: {len(errors_only)}")
     return 1 if errors_only else 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

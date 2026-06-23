@@ -24,11 +24,12 @@ _MIN_ISBN_DIGITS = 10
 
 @dataclass
 class BookIdentifier:
-    type: str  # isbn | title | author | subject
+    type: str  # isbn | title | author | subject | newspaper | magazine | product
     value: str
     source_text: str
     status: str = "pending"  # pending | searched | found | not_found | added | skipped
     candidate_id: str | None = None
+    product_kind: str | None = None
 
 
 def _short_sid(sid: str) -> str:
@@ -309,22 +310,22 @@ def handle_multiple_isbns(
     for isbn in isbns:
         _append_identifier(
             session,
-            BookIdentifier(type="isbn", value=isbn, source_text=text, status="pending"),
+            BookIdentifier(type="isbn", value=isbn, source_text=text, status="pending", product_kind="book"),
         )
     save_commerce_session(session)
 
-    if len(isbns) == 2:
+    if len(isbns) >= 2:
         return CommerceCommitResult(
             matched=True,
             intent="multi_isbn_detected",
             action="search_multiple",
             direct_answer=None,
-            expected_next="confirm_add_both",
+            expected_next="confirm_add_both" if len(isbns) == 2 else "confirm_add_all",
             selected_candidate_id=session.selected_candidate_id,
-            quantity=2,
+            quantity=len(isbns),
             needs_next_book=False,
             needs_payment=False,
-            reason="two_isbns_detected",
+            reason="multiple_isbns_detected",
             tool_categories=["isbn_lookup", "catalog_search"],
             response_mode="needs_tools",
         )
@@ -345,3 +346,86 @@ def handle_multiple_isbns(
         tool_categories=["isbn_lookup", "catalog_search"],
         response_mode="needs_tools",
     )
+
+
+def handle_mixed_identifiers(
+    text: str,
+    session: CommerceSession,
+    identifiers: list[dict[str, str]],
+    *,
+    session_state: Optional["SessionState"] = None,
+):
+    """Handle mixed book/newspaper/magazine identifiers in one utterance."""
+    from .commerce_commit_resolver import CommerceCommitResult
+
+    for ident in identifiers:
+        kind = ident.get("product_kind") or ident.get("type", "product")
+        id_type = ident.get("type", "product")
+        if id_type == "isbn" or kind == "book" and ident.get("value", "").isdigit():
+            id_type = "isbn"
+        elif kind == "newspaper":
+            id_type = "newspaper"
+        elif kind == "magazine":
+            id_type = "magazine"
+        _append_identifier(
+            session,
+            BookIdentifier(
+                type=id_type,
+                value=ident["value"],
+                source_text=text,
+                status="pending",
+                product_kind=kind,
+            ),
+        )
+    save_commerce_session(session)
+
+    names = [i["value"] for i in identifiers[:3]]
+    joined = ", ".join(names[:-1]) + f", and {names[-1]}" if len(names) > 1 else names[0]
+    categories = ["catalog_search"]
+    if any(i.get("type") == "isbn" for i in identifiers):
+        categories.append("isbn_lookup")
+
+    return CommerceCommitResult(
+        matched=True,
+        intent="mixed_identifiers_detected",
+        action="search_multiple",
+        direct_answer=(
+            f"I found {len(identifiers)} items to look up: {joined}. "
+            "I'll search for each one."
+        ),
+        expected_next="confirm_add_all",
+        selected_candidate_id=session.selected_candidate_id,
+        quantity=len(identifiers),
+        needs_next_book=False,
+        needs_payment=False,
+        reason="mixed_identifiers",
+        tool_categories=categories,
+        response_mode="needs_tools",
+    )
+
+
+def multi_found_offer_message(session: CommerceSession) -> str:
+    """Ask to add all found candidates."""
+    titles = [c.title for c in session.last_candidates if c.title]
+    if not titles:
+        return "I couldn't find those items. Would you like to try another identifier?"
+    if len(titles) == 1:
+        return f"I found {titles[0]}. Would you like me to add this to your order?"
+    joined = ", ".join(titles[:-1]) + f", and {titles[-1]}"
+    return f"I found {joined}. Would you like me to add all of them to your order?"
+
+
+async def search_collected_identifiers_parallel(
+    session: CommerceSession,
+    identifiers: list,
+    search_fn,
+) -> str:
+    """Run parallel read-only search for collected identifiers."""
+    from .multi_identifier_search import search_identifiers_parallel
+
+    id_dicts = [
+        {"type": i.type, "value": i.value, "product_kind": i.product_kind or i.type}
+        for i in identifiers
+    ]
+    result = await search_identifiers_parallel(id_dicts, search_fn, sid=session.sid)
+    return result.summary_message

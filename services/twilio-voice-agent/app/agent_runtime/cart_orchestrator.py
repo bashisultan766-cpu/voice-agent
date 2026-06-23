@@ -34,6 +34,29 @@ def add_candidate_to_cart(
 ) -> dict[str, Any]:
     if candidate_id:
         select_candidate(session, candidate_id)
+    candidate = get_last_selected_or_best_candidate(session)
+    if not candidate or not candidate.variant_id or not candidate.product_id:
+        return {
+            "success": False,
+            "message": "I couldn't add that item because I don't have a confirmed checkout option from the store.",
+        }
+    if candidate.can_add_to_cart is False:
+        reason = candidate.unavailable_reason or "not available for checkout"
+        return {
+            "success": False,
+            "message": (
+                f"I found {candidate.title}, but it does not look available for checkout right now. "
+                "I can take your email and have customer service follow up."
+            ),
+        }
+    if candidate.status and candidate.status.upper() in ("DRAFT", "ARCHIVED"):
+        return {
+            "success": False,
+            "message": (
+                f"I found {candidate.title} in the store data, but it is not active for checkout. "
+                "I can take your email and have customer service follow up."
+            ),
+        }
     line = add_selected_candidate_to_cart(session, quantity=quantity)
     if not line:
         candidate = get_last_selected_or_best_candidate(session)
@@ -99,6 +122,14 @@ def cart_count(session: CommerceSession) -> int:
     return cart_summary(session)["count"]
 
 
+def _cart_item_label(session: CommerceSession) -> str:
+    active = [ln for ln in session.active_cart if ln.status == "active"]
+    kinds = {(ln.product_kind or "book").lower() for ln in active}
+    if len(kinds) == 1 and "book" in kinds:
+        return "books"
+    return "items"
+
+
 def cart_summary_text(session: CommerceSession) -> str:
     summary = cart_summary(session)
     count = summary["count"]
@@ -111,10 +142,59 @@ def cart_summary_text(session: CommerceSession) -> str:
         joined = f"{titles[0]} and {titles[1]}"
     else:
         joined = ", ".join(titles[:-1]) + f", and {titles[-1]}"
+    label = _cart_item_label(session)
     subtotal = summary.get("subtotal")
     if subtotal:
         return (
-            f"You have {count} books in your order: {joined}. "
+            f"You have {count} {label} in your order: {joined}. "
             f"Your subtotal before shipping is {subtotal}."
         )
-    return f"You have {count} books in your order: {joined}."
+    return f"You have {count} {label} in your order: {joined}."
+
+
+def select_candidate_by_ordinal(session: CommerceSession, ordinal: int) -> str | None:
+    """Select candidate by 1-based index. Returns candidate_id or None."""
+    if ordinal < 1 or ordinal > len(session.last_candidates):
+        return None
+    candidate = session.last_candidates[ordinal - 1]
+    select_candidate(session, candidate.candidate_id)
+    return candidate.candidate_id
+
+
+def select_candidate_by_title_hint(session: CommerceSession, hint: str) -> str | None:
+    """Select candidate matching title hint (e.g. 'USA Today')."""
+    lowered = hint.lower()
+    for candidate in session.last_candidates:
+        if lowered in candidate.title.lower():
+            select_candidate(session, candidate.candidate_id)
+            return candidate.candidate_id
+    return None
+
+
+def remove_cart_item_by_ordinal(
+    session: CommerceSession,
+    ordinal: int,
+    session_state: Optional["SessionState"] = None,
+) -> dict[str, Any]:
+    active = [ln for ln in session.active_cart if ln.status == "active"]
+    if ordinal < 1 or ordinal > len(active):
+        return {"success": False, "message": "I don't see that item in your order right now."}
+    return remove_cart_item(session, active[ordinal - 1].line_id, session_state=session_state)
+
+
+def skip_candidate_by_hint(session: CommerceSession, hint: str) -> dict[str, Any]:
+    """Skip/reject a candidate without adding to cart."""
+    cid = select_candidate_by_title_hint(session, hint)
+    if not cid:
+        return {"success": False, "message": f"I don't see {hint} in the current options."}
+    session.selected_candidate_id = None
+    return {"success": True, "message": f"Okay, I'll skip {hint}."}
+
+
+def what_did_i_add_text(session: CommerceSession) -> str:
+    active = [ln for ln in session.active_cart if ln.status == "active"]
+    if not active:
+        return "You haven't added anything to your order yet."
+    titles = [ln.title for ln in active]
+    joined = titles[0] if len(titles) == 1 else ", ".join(titles[:-1]) + f", and {titles[-1]}"
+    return f"You added: {joined}."

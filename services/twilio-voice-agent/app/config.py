@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     # ── v4.13: Eric prompt file + conversation state machine ──────────────────
     ERIC_SYSTEM_PROMPT_PATH: str = "app/data/eric_system_prompt.md"
     ERIC_SYSTEM_PROMPT_VERSION: str = "v1"
+
+    # ── v4.15.1: Eric prompt pack (multi-file system prompt) ──────────────────
+    ERIC_PROMPT_PACK_DIR: str = "app/data/prompt_pack"
+    ERIC_PROMPT_PACK_ENABLED: bool = True
+    ERIC_PROMPT_PACK_REQUIRE_ALL: bool = True
+    ERIC_PROMPT_MAX_CHARS: int = 60000
     VOICE_ISBN_PARTIAL_TIMEOUT_MS: int = 5000
     VOICE_COLLECTION_MAX_HOLD_MS: int = 7000
     VOICE_COLLECTION_KEEPALIVE_ENABLED: bool = True
@@ -163,6 +169,17 @@ class Settings(BaseSettings):
 
     # ── v4.14.6: Commerce demo hardening ─────────────────────────────────────
     VOICE_COMMERCE_DEMO_HARDENING: bool | None = None
+
+    # ── v4.15.0: Payment certification + parallel catalog search ─────────────
+    VOICE_PAYMENT_CERTIFICATION_MODE: bool = False
+    VOICE_PAYMENT_CERTIFICATION_DRY_RUN: bool = True
+    VOICE_PAYMENT_CERTIFICATION_ALLOW_REAL_EMAIL: bool = False
+    VOICE_PAYMENT_CERTIFICATION_ALLOW_REAL_CHECKOUT: bool = False
+    VOICE_PAYMENT_CERTIFICATION_TEST_EMAILS: str = ""
+    VOICE_PAYMENT_CERTIFICATION_MAX_CART_LINES: int = 10
+    VOICE_PAYMENT_IDEMPOTENCY_TTL_SECONDS: int = 1800
+    VOICE_CATALOG_PARALLEL_SEARCH_LIMIT: int = 4
+    VOICE_CATALOG_IDENTIFIER_TIMEOUT_MS: int = 5000
 
     # ── Legacy flags — both must be false for ConversationRelay runtime ───────
     ENABLE_ELEVENLABS: bool = False

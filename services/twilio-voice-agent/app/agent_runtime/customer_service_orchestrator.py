@@ -16,7 +16,10 @@ _ORDER_PAT = re.compile(
 )
 _REFUND_PAT = re.compile(r"\b(refund|money back|charge\s?back)\b", re.I)
 _FACILITY_PAT = re.compile(
-    r"\b(facility approved|is this facility allowed|restriction|inmate|prison|jail)\b",
+    r"\b("
+    r"facility approved|is this facility allowed|facility allow|"
+    r"does this facility allow|restriction|inmate|prison|jail"
+    r")\b",
     re.I,
 )
 _ADDRESS_PAT = re.compile(

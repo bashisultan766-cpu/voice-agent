@@ -169,13 +169,14 @@ _POLICY_LEAK_PATTERNS: tuple[str, ...] = (
 
 def build_eric_brain_system_prompt() -> str:
     """Full policy for LLM Supervisor — includes internal worker categories."""
+    business = "\n".join(f"- {r}" for r in ERIC_BUSINESS_RULES)
     internal = (
         "Internal fact categories (never mention to customer): "
         "catalog_search, isbn_lookup, order_lookup, shipping_lookup, refund_lookup, "
         "facility_approval, facility_restriction, address_update, cancellation, "
         "payment_flow, email_capture, cart_memory, escalation, store_info."
     )
-    return f"{_load_master_prompt()}\n\n{internal}"
+    return f"{_load_master_prompt()}\n\nBusiness rules:\n{business}\n\n{internal}"
 
 
 ERIC_FINAL_MEMORY_RULES = (

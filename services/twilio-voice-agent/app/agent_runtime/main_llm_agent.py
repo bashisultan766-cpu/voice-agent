@@ -48,15 +48,15 @@ AGENT_DECISION_SCHEMA = {
 
 VALID_INTENTS = frozenset({
     "identity", "small_talk", "company", "company_question", "company_purpose",
-    "assistant_identity", "job_question",
+    "assistant_identity", "job_question", "memory_question", "presence_check", "capabilities",
     "book_search", "book_title_search", "vague_book_request",
     "isbn_lookup", "isbn_collection_start", "title_collection_start",
     "order_lookup", "refund_lookup", "shipping", "facility", "payment",
     "address_update", "cancellation", "off_domain", "unknown", "frustration_repair",
-    "acknowledgment",
+    "acknowledgment", "newspaper_request", "magazine_request", "payment_clarify",
 })
 
-VALID_MODES = frozenset({"direct_answer", "needs_tools", "hold", "repair"})
+VALID_MODES = frozenset({"direct_answer", "needs_tools", "hold", "repair", "clarify", "safe_refusal"})
 
 VALID_BOUNDARIES = frozenset({"in_domain", "book_topic_allowed", "off_domain_redirect"})
 
@@ -168,6 +168,12 @@ _EMAIL_PAT = re.compile(
     r"\b(email|email address|send email)\b", re.I,
 )
 _HEAR_ME_PAT = re.compile(r"\bcan you hear me\b", re.I)
+_ARE_YOU_THERE_PAT = re.compile(r"\bare you there\b|\byou still there\b", re.I)
+_MEMORY_PAT = re.compile(
+    r"\b(remember me|do you remember|spoke with you|talked to you|called before|"
+    r"i spoke with you|last year|previous call|you remember my)\b",
+    re.I,
+)
 _SELL_QUESTION_PAT = re.compile(
     r"\b(what do you sell|what does .+ sell|do you sell books?)\b", re.I,
 )
@@ -347,6 +353,34 @@ def _timeout_recovery_fallback(
     """Context-aware fallback when the Main LLM call times out or errors."""
     t = (user_turn or "").strip()
     normalized = brand.canonical_text if brand.matched else t
+
+    if _ARE_YOU_THERE_PAT.search(t):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=presence_check", sid)
+        return _make_direct_decision(
+            "presence_check",
+            "Yes, I'm here. How can I help you today?",
+            confidence=0.88,
+        )
+
+    if _MEMORY_PAT.search(t):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=memory_question", sid)
+        if re.search(r"\blast year\b|\blong ago\b|\bfar back\b", t, re.I):
+            answer = (
+                "I may not have the details from a call that far back, but I can help you now."
+            )
+        else:
+            answer = (
+                "I may not have the details from that call, but I'm here now. How can I help?"
+            )
+        return _make_direct_decision("memory_question", answer, confidence=0.85)
+
+    if _HOW_ARE_YOU_PAT.search(t):
+        logger.info("main_llm_timeout_recovered sid=%s recovered_intent=small_talk", sid)
+        return _make_direct_decision(
+            "small_talk",
+            "I'm doing well, thank you. How can I help you today?",
+            confidence=0.88,
+        )
 
     if _HEAR_ME_PAT.search(t):
         logger.info("main_llm_timeout_recovered sid=%s recovered_intent=hear_me_check", sid)
@@ -537,6 +571,47 @@ def _fast_path(user_turn: str) -> Optional[dict]:
             "intent": "small_talk",
             "confidence": 0.95,
             "direct_answer": "I'm doing well, thank you. How can I help you today?",
+            "tool_categories": [],
+            "tool_reason": "",
+            "one_question_to_ask": "",
+            "domain_boundary": "in_domain",
+            "safety_flags": [],
+            "memory_instruction": "",
+        }
+
+    if _ARE_YOU_THERE_PAT.search(t) or _HEAR_ME_PAT.search(t):
+        answer = (
+            "Yes, I can hear you. How can I help?"
+            if _HEAR_ME_PAT.search(t)
+            else "Yes, I'm here. How can I help you today?"
+        )
+        return {
+            "response_mode": "direct_answer",
+            "intent": "presence_check",
+            "confidence": 0.94,
+            "direct_answer": answer,
+            "tool_categories": [],
+            "tool_reason": "",
+            "one_question_to_ask": "",
+            "domain_boundary": "in_domain",
+            "safety_flags": [],
+            "memory_instruction": "",
+        }
+
+    if _MEMORY_PAT.search(t):
+        if re.search(r"\blast year\b|\blong ago\b|\bfar back\b", t, re.I):
+            answer = (
+                "I may not have the details from a call that far back, but I can help you now."
+            )
+        else:
+            answer = (
+                "I may not have the details from that call, but I'm here now. How can I help?"
+            )
+        return {
+            "response_mode": "direct_answer",
+            "intent": "memory_question",
+            "confidence": 0.92,
+            "direct_answer": answer,
             "tool_categories": [],
             "tool_reason": "",
             "one_question_to_ask": "",
@@ -845,8 +920,29 @@ async def decide_and_answer(
 ) -> dict:
     """Main entry point: decide response mode and produce answer or tool request."""
     from ..config import get_settings
+    from .call_memory_manager import CallMemoryManager
+    from .llm_brain_contract import validate_llm_decision
+    from .prompt_pack_loader import load_prompt_pack
+
     s = settings or get_settings()
     sid = (session.call_sid[:6] if session else "?") if session else "?"
+
+    try:
+        load_prompt_pack()
+    except Exception:
+        logger.debug("prompt_pack_preload_skipped sid=%s", sid)
+
+    if session:
+        memory_packet = CallMemoryManager.build_packet(session)
+        mem_answer = CallMemoryManager.memory_answer_for_question(user_turn, memory_packet)
+        if mem_answer:
+            decision = _make_direct_decision("memory_question", mem_answer, confidence=0.93)
+            _log_decision(sid, decision, source="memory_fast_path")
+            return validate_llm_decision(
+                decision,
+                user_text=user_turn,
+                valid_tool_categories=frozenset(AVAILABLE_TOOL_CATEGORIES),
+            )
 
     brand = normalize_brand_aliases(user_turn)
     if brand.matched:
@@ -984,8 +1080,17 @@ async def decide_and_answer(
         decision["direct_answer"] = _get_default_answer(decision["intent"])
 
     if decision["response_mode"] == "needs_tools" and not decision["tool_categories"]:
-        decision["response_mode"] = "direct_answer"
+        decision["response_mode"] = "clarify"
         decision["direct_answer"] = _get_default_answer(decision["intent"])
+
+    has_cart = bool(cart_summary)
+    decision = validate_llm_decision(
+        decision,
+        user_text=user_turn,
+        tool_started=False,
+        has_cart=has_cart,
+        valid_tool_categories=frozenset(AVAILABLE_TOOL_CATEGORIES),
+    )
 
     _log_decision(sid, decision)
 

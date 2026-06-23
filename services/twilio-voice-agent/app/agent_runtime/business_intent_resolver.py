@@ -34,6 +34,15 @@ ANSWER_COMPANY_PURPOSE = (
 )
 ANSWER_SELL = "SureShot Books helps customers find and order books."
 ANSWER_VAGUE_BOOK = "Sure. Do you have the ISBN, title, author, or subject?"
+ANSWER_VAGUE_NEWSPAPER = "Sure. Which newspaper are you looking for?"
+ANSWER_VAGUE_MAGAZINE = "Sure. Which magazine are you looking for?"
+ANSWER_WEBSITE_TITLE = (
+    "I may not be seeing that item through the store data I can access. "
+    "What is the exact title shown on the website, and I can send it to customer service to check."
+)
+ANSWER_CALLER_PRICE_VERIFY = (
+    "Thanks. I still need to verify it in the store before I can create a payment link."
+)
 ANSWER_ISBN_COLLECT = "Yes, please say the ISBN number."
 ANSWER_ISBN_COLLECT_LONG = "Yes. Give me the ISBN number and I'll look it up for you."
 ANSWER_TITLE_COLLECT = "Go ahead. Please say the full title."
@@ -232,12 +241,15 @@ def extract_isbn_from_text(text: str) -> str | None:
 
 
 def _extract_title_query(text: str) -> str | None:
+    from .catalog_taxonomy import is_catalog_request, is_newspaper_request, is_magazine_request
     from .tool_entity_extractor import (
         is_commerce_control_phrase,
         is_generic_followup_phrase,
         is_price_followup,
     )
 
+    if is_catalog_request(text) and (is_newspaper_request(text) or is_magazine_request(text)):
+        return None
     if is_commerce_control_phrase(text):
         return None
     if is_generic_followup_phrase(text) or is_price_followup(text):
@@ -332,6 +344,184 @@ def is_off_domain_signal(text: str) -> bool:
     return False
 
 
+def _build_publication_tool_entities(text: str, kind: str) -> dict[str, str]:
+    from .catalog_taxonomy import build_product_phrase, detect_publication_terms
+
+    terms = detect_publication_terms(text)
+    entities: dict[str, str] = {"product_kind": kind, "raw_text": text}
+    title = terms.get("title") or ""
+    if title:
+        entities["publication_title"] = title
+        entities["title"] = title
+    freq = terms.get("frequency") or ""
+    if freq:
+        entities["delivery_frequency"] = freq
+    duration = terms.get("duration") or ""
+    if duration:
+        entities["subscription_term"] = duration
+        entities["term"] = duration
+    months = terms.get("subscription_duration_months")
+    if months is not None:
+        entities["subscription_duration_months"] = str(months)
+    if terms.get("collection_hint"):
+        entities["collection_hint"] = str(terms["collection_hint"])
+    if terms.get("product_type"):
+        entities["product_type"] = str(terms["product_type"])
+    phrase = build_product_phrase(text, terms)
+    if phrase:
+        entities["product_phrase"] = phrase
+    if terms.get("website_claim"):
+        entities["website_claim"] = "true"
+    if terms.get("price_mentioned"):
+        entities["price_mentioned"] = str(terms["price_mentioned"])
+    return entities
+
+
+def _resolve_catalog_publication_intent(
+    normalized: str,
+    *,
+    commerce,
+    candidate,
+    session_state,
+) -> BusinessIntentResult | None:
+    from .catalog_taxonomy import (
+        ProductKind,
+        detect_product_kind,
+        has_publication_title,
+        is_generic_availability_only,
+        is_magazine_request,
+        is_newspaper_request,
+        is_vague_magazine_request,
+        is_vague_newspaper_request,
+        is_website_catalog_claim,
+        which_item_prompt,
+    )
+
+    kind = detect_product_kind(normalized)
+
+    if is_website_catalog_claim(normalized):
+        if candidate:
+            return None
+        return _matched(
+            intent="website_catalog_claim",
+            response_mode="direct_answer",
+            confidence=0.91,
+            direct_answer=ANSWER_WEBSITE_TITLE,
+            expected_next="publication_title",
+            reason="website_catalog_claim",
+            normalized_text=normalized,
+        )
+
+    if is_vague_newspaper_request(normalized) and not is_website_catalog_claim(normalized):
+        return _matched(
+            intent="newspaper_request",
+            response_mode="direct_answer",
+            confidence=0.94,
+            direct_answer=ANSWER_VAGUE_NEWSPAPER,
+            expected_next="publication_title",
+            reason="vague_newspaper_request",
+            normalized_text=normalized,
+        )
+
+    if is_vague_magazine_request(normalized):
+        return _matched(
+            intent="magazine_request",
+            response_mode="direct_answer",
+            confidence=0.94,
+            direct_answer=ANSWER_VAGUE_MAGAZINE,
+            expected_next="publication_title",
+            reason="vague_magazine_request",
+            normalized_text=normalized,
+        )
+
+    if is_newspaper_request(normalized) and has_publication_title(normalized):
+        entities = _build_publication_tool_entities(normalized, ProductKind.NEWSPAPER.value)
+        return _matched(
+            intent="newspaper_search",
+            response_mode="needs_tools",
+            confidence=0.95,
+            direct_answer=None,
+            tool_categories=["catalog_search"],
+            reason="newspaper_with_title",
+            normalized_text=normalized,
+            search_query=entities.get("publication_title", ""),
+            tool_entities=entities,
+        )
+
+    if is_magazine_request(normalized) and has_publication_title(normalized):
+        entities = _build_publication_tool_entities(normalized, ProductKind.MAGAZINE.value)
+        return _matched(
+            intent="magazine_search",
+            response_mode="needs_tools",
+            confidence=0.95,
+            direct_answer=None,
+            tool_categories=["catalog_search"],
+            reason="magazine_with_title",
+            normalized_text=normalized,
+            search_query=entities.get("publication_title", ""),
+            tool_entities=entities,
+        )
+
+    if is_newspaper_request(normalized) and not is_generic_availability_only(normalized):
+        return _matched(
+            intent="newspaper_request",
+            response_mode="direct_answer",
+            confidence=0.90,
+            direct_answer=ANSWER_VAGUE_NEWSPAPER,
+            expected_next="publication_title",
+            reason="newspaper_without_title",
+            normalized_text=normalized,
+        )
+
+    if is_magazine_request(normalized) and not is_generic_availability_only(normalized):
+        return _matched(
+            intent="magazine_request",
+            response_mode="direct_answer",
+            confidence=0.90,
+            direct_answer=ANSWER_VAGUE_MAGAZINE,
+            expected_next="publication_title",
+            reason="magazine_without_title",
+            normalized_text=normalized,
+        )
+
+    if kind == ProductKind.SUBSCRIPTION and has_publication_title(normalized):
+        entities = _build_publication_tool_entities(normalized, ProductKind.SUBSCRIPTION.value)
+        return _matched(
+            intent="subscription_search",
+            response_mode="needs_tools",
+            confidence=0.93,
+            direct_answer=None,
+            tool_categories=["catalog_search"],
+            reason="subscription_with_title",
+            normalized_text=normalized,
+            search_query=entities.get("publication_title", ""),
+            tool_entities=entities,
+        )
+
+    return None
+
+
+def _commerce_context_fallback(
+    normalized: str,
+    commerce,
+) -> str | None:
+    if commerce is None:
+        return None
+    cart_lines = [l for l in commerce.active_cart if getattr(l, "status", "active") == "active"]
+    if cart_lines:
+        n = len(cart_lines)
+        return (
+            f"I have {n} item{'s' if n != 1 else ''} in your order. "
+            "Are you asking about the cart, price, or payment link?"
+        )
+    if commerce.last_candidates:
+        return (
+            "Are you asking about the last item I found, "
+            "or do you want to search another item?"
+        )
+    return None
+
+
 def _commerce_session_for(session_state: Optional["SessionState"]):
     if session_state is None:
         return None
@@ -391,6 +581,15 @@ def resolve_business_intent(
             reason="ack_hold",
             normalized_text=normalized,
         )
+
+    catalog_pub = _resolve_catalog_publication_intent(
+        normalized,
+        commerce=commerce,
+        candidate=candidate,
+        session_state=session_state,
+    )
+    if catalog_pub is not None:
+        return catalog_pub
 
     if is_commerce_control_phrase(normalized) and not is_price_followup(normalized) and not is_availability_followup(normalized):
         multi = is_multi_book_declaration(normalized)
@@ -506,6 +705,19 @@ def resolve_business_intent(
             normalized_text=normalized,
         )
 
+    from .catalog_taxonomy import _PRICE_MENTION_PAT, which_item_prompt
+
+    if _PRICE_MENTION_PAT.search(normalized) and expected_next == "publication_title":
+        return _matched(
+            intent="website_price_claim",
+            response_mode="direct_answer",
+            confidence=0.88,
+            direct_answer=ANSWER_CALLER_PRICE_VERIFY,
+            expected_next="publication_title",
+            reason="caller_price_not_store_verified",
+            normalized_text=normalized,
+        )
+
     if is_price_followup(normalized) and not re.search(
         r"\b(shipping|subtotal|delivery|ship)\b", normalized, re.I,
     ):
@@ -534,14 +746,15 @@ def resolve_business_intent(
                 reason="price_followup_no_price",
                 normalized_text=normalized,
             )
+        kind_hint = getattr(candidate, "product_kind", None) if candidate else None
         return _matched(
             intent="product_price_question",
             response_mode="direct_answer",
             confidence=0.88,
-            direct_answer="Which book are you asking about?",
+            direct_answer=which_item_prompt(kind_hint),
             reason="price_followup_no_candidate",
             normalized_text=normalized,
-            expected_next="book_identifier",
+            expected_next="publication_title" if expected_next == "publication_title" else "book_identifier",
         )
 
     if is_availability_followup(normalized):
@@ -559,14 +772,15 @@ def resolve_business_intent(
                 reason="availability_followup",
                 normalized_text=normalized,
             )
+        kind_hint = getattr(candidate, "product_kind", None) if candidate else None
         return _matched(
             intent="product_availability_question",
             response_mode="direct_answer",
             confidence=0.88,
-            direct_answer="Which book are you asking about?",
+            direct_answer=which_item_prompt(kind_hint),
             reason="availability_followup_no_candidate",
             normalized_text=normalized,
-            expected_next="book_identifier",
+            expected_next="publication_title" if expected_next == "publication_title" else "book_identifier",
         )
 
     if is_add_to_cart_followup(normalized):
@@ -867,6 +1081,7 @@ def context_aware_unknown_fallback(
     business_keywords = (
         "book", "isbn", "title", "author", "subject", "order",
         "shipping", "payment", "refund", "facility", "inmate",
+        "newspaper", "magazine", "subscription", "publication",
     )
     if any(kw in lowered for kw in business_keywords):
         return {
@@ -876,6 +1091,29 @@ def context_aware_unknown_fallback(
             "direct_answer": ANSWER_BUSINESS_FALLBACK,
             "tool_categories": [],
             "tool_reason": "business_keyword_fallback",
+            "one_question_to_ask": "",
+            "domain_boundary": "in_domain",
+            "safety_flags": [],
+            "memory_instruction": "",
+            "expected_next": "",
+            "search_query": "",
+            "tool_entities": {},
+        }
+
+    from .commerce_session import get_commerce_session as _get_cs
+
+    sid_full = getattr(session_state, "call_sid", "") or getattr(session_state, "session_id", "")
+    commerce_fb = _get_cs(sid_full) if sid_full else None
+    commerce_answer = _commerce_context_fallback(normalized, commerce_fb)
+    if commerce_answer:
+        logger.info("commerce_context_fallback sid=%s", sid)
+        return {
+            "response_mode": "direct_answer",
+            "intent": "commerce_context_clarify",
+            "confidence": 0.75,
+            "direct_answer": commerce_answer,
+            "tool_categories": [],
+            "tool_reason": "commerce_context_fallback",
             "one_question_to_ask": "",
             "domain_boundary": "in_domain",
             "safety_flags": [],

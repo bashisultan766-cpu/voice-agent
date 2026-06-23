@@ -1,4 +1,4 @@
-"""Follow-up context resolver — commerce-aware utterance handling (v4.14.5)."""
+"""Follow-up context resolver — commerce-aware utterance handling (v4.14.7)."""
 from __future__ import annotations
 
 import logging
@@ -7,6 +7,14 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Optional
 
+from .catalog_taxonomy import (
+    is_catalog_request,
+    is_generic_availability_only,
+    is_newspaper_request,
+    is_magazine_request,
+    has_publication_title,
+    which_item_prompt,
+)
 from .commerce_session import (
     CommerceSession,
     get_commerce_session,
@@ -113,6 +121,13 @@ def resolve_followup_context(
     if not normalized:
         return unresolved
 
+    # New catalog search text must not be treated as a commerce follow-up.
+    if is_catalog_request(normalized) or has_publication_title(normalized):
+        if is_newspaper_request(normalized) or is_magazine_request(normalized):
+            return unresolved
+        if has_publication_title(normalized) and not is_generic_availability_only(normalized):
+            return unresolved
+
     if is_price_followup(normalized):
         if candidate:
             answer = _price_answer(candidate)
@@ -132,7 +147,7 @@ def resolve_followup_context(
             resolved=True,
             intent="product_price_question",
             response_mode="direct_answer",
-            direct_answer="Which book are you asking about?",
+            direct_answer=which_item_prompt(),
             tool_categories=[],
             expected_next="book_identifier",
             source="commerce_context",
@@ -140,6 +155,10 @@ def resolve_followup_context(
         )
 
     if is_availability_followup(normalized):
+        if not is_generic_availability_only(normalized):
+            return unresolved
+        if not candidate:
+            return unresolved
         if candidate:
             answer = _availability_answer(candidate)
             logger.info("followup_context_resolved sid=%s intent=product_availability_question source=commerce_context", sid[:6])
@@ -157,7 +176,7 @@ def resolve_followup_context(
             resolved=True,
             intent="product_availability_question",
             response_mode="direct_answer",
-            direct_answer="Which book are you asking about?",
+            direct_answer=which_item_prompt(getattr(candidate, "product_kind", None)),
             tool_categories=[],
             expected_next="book_identifier",
             source="commerce_context",

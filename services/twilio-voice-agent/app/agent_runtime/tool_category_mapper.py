@@ -46,6 +46,15 @@ class WorkerIntentPlan:
 def _resolve_catalog_intent(decision: dict | None, entities: dict) -> str:
     intent = str((decision or {}).get("intent") or "")
     categories = list((decision or {}).get("tool_categories") or [])
+    product_kind = (entities.get("product_kind") or "").lower()
+
+    if intent in (
+        "newspaper_search", "magazine_search", "subscription_search",
+        "catalog_product_search", "publication_search",
+    ):
+        return "catalog_product_search"
+    if product_kind in ("newspaper", "magazine", "subscription", "publication"):
+        return "catalog_product_search"
     if intent == "book_title_search":
         return "book_title_search"
     if entities.get("author"):
@@ -56,6 +65,8 @@ def _resolve_catalog_intent(decision: dict | None, entities: dict) -> str:
         return "isbn_search"
     if entities.get("title") or entities.get("product_phrase"):
         phrase = (entities.get("title") or entities.get("product_phrase") or "").lower()
+        if product_kind in ("newspaper", "magazine", "subscription"):
+            return "catalog_product_search"
         if phrase and len(phrase.split()) >= 2:
             return "book_title_search"
     return "product_search"

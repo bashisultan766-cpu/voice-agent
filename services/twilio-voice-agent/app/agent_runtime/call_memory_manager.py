@@ -91,13 +91,46 @@ class CallMemoryManager:
         if assistants:
             packet.last_assistant_response = assistants[-1].strip()
 
+        _enrich_verified_call_context(packet, session)
+
         logger.info(
-            "memory_packet_built sid=%s turns=%d facts=%d",
+            "memory_packet_built sid=%s turns=%d facts=%d verified_prior=%s",
             session.call_sid[:6],
             len(packet.recent_turns),
             len(packet.facts),
+            packet.can_reference_prior_call,
         )
         return packet
+
+    @staticmethod
+    def memory_answer_for_question(text: str, packet: MemoryPacket) -> str | None:
+        """Deterministic safe answer for memory questions."""
+        import re
+
+        t = (text or "").strip()
+        if not re.search(
+            r"\b(remember me|do you remember|spoke with you|talked to you|called before|"
+            r"last year|previous call|you remember my)\b",
+            t,
+            re.I,
+        ):
+            return None
+
+        if re.search(r"\blast year\b|\blong ago\b|\bfar back\b", t, re.I):
+            if not packet.can_reference_prior_call:
+                return (
+                    "I may not have the details from a call that far back, but I can help you now."
+                )
+
+        if packet.can_reference_prior_call and packet.safe_memory_summary:
+            return (
+                f"I can see we spoke recently about {packet.safe_memory_summary}. "
+                "How can I help you today?"
+            )
+
+        return (
+            "I may not have the details from that call, but I'm here now. How can I help?"
+        )
 
     @staticmethod
     def record_fact(session: "SessionState", fact_type: str, detail: str = "") -> None:
@@ -139,3 +172,43 @@ class CallMemoryManager:
     @staticmethod
     def safe_log_text(text: str) -> str:
         return _mask_for_log(text)
+
+
+def _enrich_verified_call_context(packet: MemoryPacket, session: "SessionState") -> None:
+    """Populate verified prior-call fields from session resume context."""
+    import time
+
+    from ..config import get_settings
+
+    resumed = bool(getattr(session, "is_resumed_call", False))
+    resume_ctx = bool(getattr(session, "resume_context_available", False))
+    if not resumed and not resume_ctx:
+        return
+
+    s = get_settings()
+    window = getattr(s, "CALL_RESUME_WINDOW_MINUTES", 30)
+    ended_at = getattr(session, "prior_call_ended_at", 0.0) or 0.0
+    age_min = 0.0
+    if ended_at > 0:
+        age_min = (time.time() - ended_at) / 60.0
+    elif getattr(session, "prior_call_age_minutes", None):
+        age_min = float(session.prior_call_age_minutes)
+
+    if age_min > window and age_min > 0:
+        packet.has_verified_recent_call = False
+        packet.can_reference_prior_call = False
+        return
+
+    packet.has_verified_recent_call = True
+    packet.prior_call_age_minutes = age_min
+    packet.can_reference_prior_call = True
+
+    topic = ""
+    state = getattr(session, "call_memory", None)
+    if state:
+        topic = getattr(state, "current_topic", "") or ""
+    if not topic and packet.facts:
+        topic = packet.facts[-1][:80]
+    if not topic and packet.order_context:
+        topic = f"order {packet.order_context[:20]}"
+    packet.safe_memory_summary = topic or "your recent request"

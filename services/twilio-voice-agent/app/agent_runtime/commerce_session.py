@@ -26,6 +26,20 @@ class ProductCandidate:
     source: str
     confidence: float
     raw_fact_ids: list[str] = field(default_factory=list)
+    product_kind: str | None = None
+    product_type: str | None = None
+    vendor: str | None = None
+    handle: str | None = None
+    tags: list[str] = field(default_factory=list)
+    delivery_frequency: str | None = None
+    subscription_term: str | None = None
+    inventory_policy: str | None = None
+    status: str | None = None
+    published: bool | None = None
+    online_store_visible: bool | None = None
+    can_add_to_cart: bool = True
+    unavailable_reason: str | None = None
+    checkout_variant_valid: bool = True
 
 
 @dataclass
@@ -39,6 +53,9 @@ class CartLine:
     quantity: int
     destination_group_id: str | None
     status: str  # active | removed | unavailable
+    product_kind: str | None = None
+    source_identifier: str | None = None
+    orderability_status: str | None = None  # orderable | out_of_stock | draft | blocked
 
 
 @dataclass
@@ -52,6 +69,14 @@ class DestinationGroup:
     confirmed_email: bool
     confirmed_destination: bool
     cart_line_ids: list[str] = field(default_factory=list)
+    confirmed_cart: bool = False
+    checkout_status: str = "pending"  # pending | created | failed
+    payment_link_status: str = "pending"  # pending | sent | failed | escalated
+    email_status: str = "pending"  # pending | spellback | confirmed | sent | failed
+    state: str = "group_created"
+    idempotency_key: str | None = None
+    failure_reason: str | None = None
+    resend_message_id: str | None = None
 
 
 @dataclass
@@ -161,8 +186,19 @@ def add_selected_candidate_to_cart(
     candidate = get_last_selected_or_best_candidate(session)
     if not candidate or not candidate.variant_id or not candidate.product_id:
         return None
-    if candidate.availability == "out_of_stock":
+    if candidate.can_add_to_cart is False:
         return None
+    if candidate.status and candidate.status.upper() in ("DRAFT", "ARCHIVED"):
+        return None
+    if candidate.availability in ("out_of_stock", "not_available_for_checkout"):
+        return None
+    orderability = "orderable"
+    if candidate.availability == "out_of_stock":
+        orderability = "out_of_stock"
+    elif candidate.status and candidate.status.upper() in ("DRAFT", "ARCHIVED"):
+        orderability = "draft"
+    elif candidate.can_add_to_cart is False:
+        orderability = "blocked"
     line = CartLine(
         line_id=str(uuid.uuid4())[:8],
         product_id=candidate.product_id,
@@ -173,6 +209,9 @@ def add_selected_candidate_to_cart(
         quantity=max(1, quantity),
         destination_group_id=None,
         status="active",
+        product_kind=candidate.product_kind,
+        source_identifier=candidate.isbn or candidate.handle or candidate.title,
+        orderability_status=orderability,
     )
     session.active_cart.append(line)
 

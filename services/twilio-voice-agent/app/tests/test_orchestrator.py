@@ -200,9 +200,11 @@ class TestOrchestratorRunning:
             await orch.run(_intent_result("order_lookup"), session, _make_settings())
             elapsed = time.monotonic() - t0
 
-        # All 3 workers run concurrently — total should be ~50ms, not ~150ms.
-        assert elapsed < 0.12, f"Workers appear to run sequentially: {elapsed:.3f}s"
+        # All 3 workers run concurrently — starts cluster together, not staggered ~50ms apart.
         assert len(start_times) == 3
+        spread = max(start_times) - min(start_times)
+        assert spread < 0.04, f"Workers did not start concurrently: spread={spread:.3f}s"
+        assert elapsed < 0.20, f"Total wall time too high (sequential?): {elapsed:.3f}s"
 
     async def test_bundle_records_shopify_latency(self):
         orch = WorkerOrchestrator()

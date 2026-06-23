@@ -216,3 +216,141 @@ mutation CreateDraftOrder($input: DraftOrderInput!) {
   }
 }
 """
+
+CATALOG_SCAN_PRODUCT_FIELDS = """
+  id
+  title
+  handle
+  status
+  productType
+  vendor
+  tags
+  onlineStoreUrl
+  publishedAt
+  totalInventory
+  resourcePublicationsV2(first: 5) {
+    edges {
+      node {
+        isPublished
+        publication { name id }
+      }
+    }
+  }
+  metafields(first: 10) {
+    edges {
+      node {
+        namespace
+        key
+        value
+        type
+      }
+    }
+  }
+  variants(first: 10) {
+    edges {
+      node {
+        id
+        title
+        sku
+        barcode
+        price
+        inventoryQuantity
+        availableForSale
+        inventoryPolicy
+      }
+    }
+  }
+"""
+
+CATALOG_SCAN_PRODUCTS = f"""
+query CatalogScanProducts($query: String!, $first: Int!) {{
+  products(first: $first, query: $query) {{
+    edges {{
+      node {{
+        {CATALOG_SCAN_PRODUCT_FIELDS}
+      }}
+    }}
+  }}
+}}
+"""
+
+CATALOG_SCAN_VARIANTS = """
+query CatalogScanVariants($query: String!, $first: Int!) {
+  productVariants(first: $first, query: $query) {
+    edges {
+      node {
+        id
+        title
+        sku
+        barcode
+        price
+        inventoryQuantity
+        availableForSale
+        inventoryPolicy
+        product {
+          id
+          title
+          handle
+          status
+          productType
+          vendor
+          tags
+          onlineStoreUrl
+          publishedAt
+        }
+      }
+    }
+  }
+}
+"""
+
+LIST_COLLECTIONS = """
+query ListCollections($first: Int!) {
+  collections(first: $first) {
+    edges {
+      node {
+        id
+        title
+        handle
+      }
+    }
+  }
+}
+"""
+
+COLLECTION_PRODUCTS = """
+query CollectionProducts($id: ID!, $first: Int!) {
+  collection(id: $id) {
+    id
+    title
+    handle
+    products(first: $first) {
+      edges {
+        node {
+          id
+          title
+          handle
+          status
+          productType
+          vendor
+          tags
+          onlineStoreUrl
+          publishedAt
+          variants(first: 5) {
+            edges {
+              node {
+                id
+                title
+                sku
+                price
+                availableForSale
+                inventoryQuantity
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""

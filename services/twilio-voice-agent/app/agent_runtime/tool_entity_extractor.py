@@ -32,6 +32,14 @@ _COMMERCE_CONTROL_PHRASES = (
     r"i\s+give\s+you\s+(?:the\s+)?\d+\s+isbn\s+numbers?",
     r"send\s+payment\s+link",
     r"payment\s+link",
+    r"add\s+both",
+    r"add\s+all",
+    r"remove\s+(?:the\s+)?(?:first|second|third|\d+(?:st|nd|rd|th)?)\s+one",
+    r"skip\s+(?:the\s+)?(?:first|second|third|\d+(?:st|nd|rd|th)?)\s+one",
+    r"the\s+other\s+(?:\d+|four|three|two|five)\b",
+    r"these\s+products?",
+    r"those\s+products?",
+    r"remove\s+second\s+one",
     r"pen\s+and\s+link",
     r"^price\.?$",
     r"^amount\.?$",
@@ -141,6 +149,25 @@ _CART_ADD_PAT = re.compile(
     re.I,
 )
 _CART_REMOVE_PAT = re.compile(r"\b(remove (?:it|this|that|from cart)|take it off)\b", re.I)
+_ORDINAL_ADD_PAT = re.compile(
+    r"\badd\s+(?:the\s+)?(first|second|third|fourth|1st|2nd|3rd|4th|\d+(?:st|nd|rd|th)?)\s+(?:one|book|item|newspaper|magazine)?\b",
+    re.I,
+)
+_ORDINAL_REMOVE_PAT = re.compile(
+    r"\b(?:remove|skip|exclude)\s+(?:the\s+)?(first|second|third|fourth|1st|2nd|3rd|4th|\d+(?:st|nd|rd|th)?)\s+(?:one|book|item|newspaper|magazine)?\b",
+    re.I,
+)
+_ADD_ALL_PAT = re.compile(r"\badd\s+(?:both|all|them all|everything)\b", re.I)
+_CART_SUMMARY_PAT = re.compile(
+    r"\b(how many items?(?:\s+(?:are\s+)?in my (?:order|cart))?|"
+    r"what did i add|what(?:'s| is) in my (?:order|cart)|"
+    r"how many books?(?:\s+(?:are\s+)?in my cart)?|cart count|books in cart)\b",
+    re.I,
+)
+_ORDINAL_MAP = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4,
+    "1st": 1, "2nd": 2, "3rd": 3, "4th": 4,
+}
 _CART_COUNT_PAT = re.compile(
     r"\b(how many books?(?:\s+(?:are\s+)?in my cart)?|cart count|books in cart)\b",
     re.I,
@@ -158,11 +185,92 @@ def extract_all_isbns(text: str) -> list[str]:
     """Extract all complete 10- or 13-digit ISBNs from text."""
     compact = re.sub(r"[\s-]", "", text or "")
     found: list[str] = []
+    seen: set[str] = set()
     for match in re.finditer(r"\d{10,13}", compact):
         digits = match.group(0)
-        if len(digits) in (10, 13):
+        if len(digits) in (10, 13) and digits not in seen:
+            seen.add(digits)
             found.append(digits)
     return found
+
+
+def _parse_ordinal(token: str) -> int | None:
+    lower = token.lower().strip()
+    if lower in _ORDINAL_MAP:
+        return _ORDINAL_MAP[lower]
+    m = re.match(r"(\d+)(?:st|nd|rd|th)?", lower)
+    if m:
+        n = int(m.group(1))
+        return n if 1 <= n <= 20 else None
+    return None
+
+
+def extract_ordinal_selection(text: str) -> dict[str, int | str]:
+    """Extract ordinal add/remove or title-hint selection."""
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    m = _ORDINAL_ADD_PAT.search(normalized)
+    if m:
+        n = _parse_ordinal(m.group(1))
+        if n:
+            return {"action": "add", "ordinal": n}
+    m = _ORDINAL_REMOVE_PAT.search(normalized)
+    if m:
+        n = _parse_ordinal(m.group(1))
+        if n:
+            return {"action": "remove", "ordinal": n}
+    hint = re.search(
+        r"\b(?:add|skip|remove|exclude)\s+(?:the\s+)?([A-Z][A-Za-z0-9'&\-\s]{2,40}?)\s+(?:one|book|newspaper|magazine)\b",
+        normalized,
+    )
+    if hint:
+        action = "add" if re.search(r"\badd\b", normalized, re.I) else "skip"
+        return {"action": action, "title_hint": hint.group(1).strip()}
+    return {}
+
+
+def is_add_all_phrase(text: str) -> bool:
+    return bool(_ADD_ALL_PAT.search(text or ""))
+
+
+def is_cart_summary_question(text: str) -> bool:
+    return bool(_CART_SUMMARY_PAT.search(text or ""))
+
+
+def extract_product_identifiers(text: str) -> list[dict[str, str]]:
+    """Extract multiple product identifiers from one utterance."""
+    from .catalog_taxonomy import classify_product_segment, extract_mixed_product_segments
+
+    if is_payment_link_phrase(text) or is_add_and_next_book_phrase(text):
+        return []
+    if is_add_all_phrase(text):
+        return []
+
+    isbns = extract_all_isbns(text)
+    if len(isbns) >= 2:
+        return [{"type": "isbn", "value": isbn, "product_kind": "book"} for isbn in isbns]
+
+    segments = extract_mixed_product_segments(text)
+    if len(segments) >= 2:
+        identifiers: list[dict[str, str]] = []
+        for seg in segments:
+            classified = classify_product_segment(seg)
+            if classified.get("isbn"):
+                identifiers.append({"type": "isbn", "value": classified["isbn"], "product_kind": "book"})
+            elif classified.get("title") or classified.get("product_phrase"):
+                identifiers.append({
+                    "type": classified.get("product_kind", "product"),
+                    "value": classified.get("title") or classified.get("product_phrase", seg),
+                    "product_kind": classified.get("product_kind", "product"),
+                })
+        if identifiers:
+            return identifiers
+
+    if is_commerce_control_phrase(text):
+        return []
+
+    if len(isbns) == 1:
+        return [{"type": "isbn", "value": isbns[0], "product_kind": "book"}]
+    return []
 
 
 def is_commerce_control_phrase(text: str) -> bool:
@@ -267,7 +375,24 @@ def is_price_followup(text: str) -> bool:
 
 
 def is_availability_followup(text: str) -> bool:
-    return bool(_AVAIL_PAT.search(text or ""))
+    from .catalog_taxonomy import (
+        has_publication_title,
+        is_catalog_request,
+        is_generic_availability_only,
+        is_newspaper_request,
+        is_magazine_request,
+    )
+    normalized = (text or "").strip()
+    if has_publication_title(normalized) or is_catalog_request(normalized):
+        return False
+    if is_newspaper_request(normalized) or is_magazine_request(normalized):
+        return False
+    if is_generic_availability_only(normalized):
+        return True
+    if not _AVAIL_PAT.search(normalized):
+        return False
+    cleaned = _AVAIL_PAT.sub("", normalized).strip(" .,!?")
+    return len(cleaned.split()) <= 4
 
 
 def is_add_to_cart_followup(text: str) -> bool:
@@ -409,6 +534,44 @@ def _match_last_candidate_title(text: str, session: Optional["SessionState"]) ->
     return {}
 
 
+def _extract_publication_entities(text: str) -> dict[str, str]:
+    from .catalog_taxonomy import build_product_phrase, detect_publication_terms
+
+    terms = detect_publication_terms(text)
+    if not terms.get("product_kind") and not terms.get("title"):
+        return {}
+    entities: dict[str, str] = {}
+    kind = terms.get("product_kind") or ""
+    if kind:
+        entities["product_kind"] = kind
+    title = terms.get("title") or ""
+    if title:
+        entities["publication_title"] = title
+        entities["title"] = title
+    freq = terms.get("frequency") or ""
+    if freq:
+        entities["delivery_frequency"] = freq
+    duration = terms.get("duration") or ""
+    if duration:
+        entities["subscription_term"] = duration
+        entities["term"] = duration
+    months = terms.get("subscription_duration_months")
+    if months is not None:
+        entities["subscription_duration_months"] = str(months)
+    if terms.get("collection_hint"):
+        entities["collection_hint"] = str(terms["collection_hint"])
+    if terms.get("product_type"):
+        entities["product_type"] = str(terms["product_type"])
+    phrase = build_product_phrase(text, terms)
+    if phrase:
+        entities["product_phrase"] = phrase
+    if terms.get("website_claim"):
+        entities["website_claim"] = "true"
+    if terms.get("price_mentioned"):
+        entities["price_mentioned"] = str(terms["price_mentioned"])
+    return entities
+
+
 def extract_tool_entities(
     text: str,
     decision: Optional[dict] = None,
@@ -462,6 +625,10 @@ def extract_tool_entities(
         for key, value in tool_entities.items():
             if value:
                 entities[key] = str(value)
+
+    pub_entities = _extract_publication_entities(normalized)
+    for key, value in pub_entities.items():
+        entities.setdefault(key, value)
 
     title = _extract_title(normalized)
     if title and not entities.get("title"):

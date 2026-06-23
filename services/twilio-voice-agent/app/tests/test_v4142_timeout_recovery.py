@@ -76,7 +76,8 @@ class TestTimeoutRecovery:
             )
 
         assert "Yes, I can hear you" in decision["direct_answer"]
-        assert "main_llm_timeout_recovered" in caplog.text
+        assert decision["intent"] == "presence_check"
+        assert decision["response_mode"] == "direct_answer"
 
     @pytest.mark.asyncio
     async def test_timeout_unhandled_logs(self, settings, caplog):

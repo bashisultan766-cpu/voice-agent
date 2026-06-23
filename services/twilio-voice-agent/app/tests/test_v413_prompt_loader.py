@@ -14,23 +14,32 @@ os.environ.setdefault("DEBUG", "true")
 @pytest.fixture(autouse=True)
 def _clear_prompt_cache():
     from app.agent_runtime.prompt_loader import clear_prompt_cache
+    from app.agent_runtime.prompt_pack_loader import clear_prompt_pack_cache
     clear_prompt_cache()
+    clear_prompt_pack_cache()
     from app.config import get_settings
     get_settings.cache_clear()
     yield
     clear_prompt_cache()
+    clear_prompt_pack_cache()
     get_settings.cache_clear()
 
 
 class TestPromptLoader:
     def test_prompt_file_loads(self):
+        from app.config import get_settings
         from app.agent_runtime.prompt_loader import load_eric_system_prompt_text, get_prompt_load_status
+
         text = load_eric_system_prompt_text()
         status = get_prompt_load_status()
+        expected_version = get_settings().ERIC_SYSTEM_PROMPT_VERSION
         assert len(text) > 100
         assert status["loaded_from_file"] is True
-        assert status["version"] == "v1"
+        assert status["version"] == expected_version
         assert status["chars"] == len(text)
+        if get_settings().ERIC_PROMPT_PACK_ENABLED:
+            assert status.get("source") == "prompt_pack"
+            assert status.get("pack_hash")
 
     def test_missing_prompt_falls_back(self, tmp_path, monkeypatch):
         from app.agent_runtime.prompt_loader import load_eric_system_prompt_text, clear_prompt_cache

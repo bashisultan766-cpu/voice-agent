@@ -22,7 +22,7 @@ def _mask_email(email: str) -> str:
 
 def _extract_product_rows(worker_bundle: "WorkerBundle") -> list[dict]:
     products: list[dict] = []
-    for name in ("product_isbn", "product_search", "book_title_extractor"):
+    for name in ("product_isbn", "product_search", "book_title_extractor", "universal_catalog_search"):
         result = worker_bundle.results.get(name)
         if not result or not result.success or not result.data:
             continue
@@ -30,13 +30,14 @@ def _extract_product_rows(worker_bundle: "WorkerBundle") -> list[dict]:
         if data.get("results") and isinstance(data["results"], list):
             for row in data["results"][:5]:
                 if isinstance(row, dict):
-                    products.append(_row_from_dict(row))
+                    products.append(_row_from_dict(row, parent=data))
             continue
         products.append(_row_from_dict(data))
     return [p for p in products if p.get("title")]
 
 
-def _row_from_dict(data: dict) -> dict:
+def _row_from_dict(data: dict, parent: dict | None = None) -> dict:
+    parent = parent or {}
     title = data.get("title") or data.get("product_title") or ""
     price = data.get("price") or data.get("formatted_price") or ""
     available = data.get("available")
@@ -47,32 +48,128 @@ def _row_from_dict(data: dict) -> dict:
             out_of_stock = int(inventory) <= 0
         except (TypeError, ValueError):
             pass
+    product_kind = (
+        data.get("product_kind")
+        or parent.get("product_kind")
+        or data.get("product_type")
+        or parent.get("product_type")
+        or ""
+    )
+    publication_title = (
+        data.get("publication_title")
+        or parent.get("publication_title")
+        or title
+    )
+    subscription_term = data.get("subscription_term") or parent.get("subscription_term") or ""
+    delivery_frequency = data.get("delivery_frequency") or parent.get("delivery_frequency") or ""
     return {
         "title": title,
         "price": str(price).strip() if price else "",
         "out_of_stock": out_of_stock,
-        "not_found": bool(data.get("not_found")),
+        "not_found": bool(data.get("not_found") or parent.get("not_found")),
         "variant_id": data.get("variant_id") or "",
+        "product_kind": str(product_kind).lower() if product_kind else "",
+        "publication_title": publication_title,
+        "subscription_term": subscription_term,
+        "delivery_frequency": delivery_frequency,
+        "can_add_to_cart": data.get("can_add_to_cart", parent.get("can_add_to_cart", True)),
+        "not_orderable": bool(data.get("not_orderable") or parent.get("not_orderable")),
     }
 
 
-def _format_single_product(product: dict) -> str:
-    title = product["title"]
-    if product.get("not_found"):
+def _item_label(product_kind: str) -> str:
+    kind = (product_kind or "").lower()
+    if kind == "newspaper":
+        return "newspaper"
+    if kind == "magazine":
+        return "magazine"
+    if kind == "subscription":
+        return "subscription"
+    if kind == "book":
+        return "book"
+    return "item"
+
+
+def _not_found_message(product: dict) -> str:
+    label = _item_label(product.get("product_kind", ""))
+    clean_title = product.get("publication_title") or product.get("title") or ""
+    if label == "book" and not clean_title:
         return (
             "I don't see that book listed right now. "
             "I can take your email and send it to customer service so they can check availability."
         )
+    if label == "item" and not clean_title:
+        return (
+            "I don't see that book listed right now. "
+            "I can take your email and send it to customer service so they can check availability."
+        )
+    if not clean_title:
+        clean_title = "that item"
+    if label in ("newspaper", "magazine", "subscription"):
+        return (
+            f"I don't see {clean_title} listed right now. "
+            "I can take your email and have customer service check it."
+        )
+    if label == "book":
+        return (
+            f"I don't see {clean_title} listed right now. "
+            "I can take your email and send it to customer service so they can check availability."
+        )
+    return (
+        f"I don't see {clean_title} listed right now. "
+        "I can take your email and have customer service check it."
+    )
+
+
+def _format_non_orderable(product: dict) -> str:
+    title = product.get("title") or product.get("publication_title") or "that item"
+    return (
+        f"I found {title} in the store data, but it does not look available for checkout right now. "
+        "I can take your email and have customer service follow up."
+    )
+
+
+def _format_no_store_match(query: str) -> str:
+    clean = query.strip() or "that item"
+    return (
+        f"I don't see {clean} in the store data I can access right now. "
+        "I can take your email and have customer service check it."
+    )
+
+
+def _format_single_product(product: dict) -> str:
+    if product.get("not_orderable") or product.get("can_add_to_cart") is False:
+        return _format_non_orderable(product)
+    title = product["title"]
+    kind = product.get("product_kind", "")
+    label = _item_label(kind)
+    if product.get("not_found"):
+        return _not_found_message(product)
     if product.get("out_of_stock"):
         return (
             f"I found {title}, but it looks out of stock right now. "
             "I can take your email and have customer service follow up if we can get it."
         )
+    term_part = ""
+    if kind == "subscription":
+        term = product.get("subscription_term") or product.get("delivery_frequency") or ""
+        if term:
+            term_part = f" for {term}"
     price_part = f"The price is {product['price']}." if product.get("price") else (
         f"I found {title}, but I don't have a confirmed price from the store right now."
     )
     if product.get("price"):
         avail = "It looks available."
+        if label in ("newspaper", "magazine"):
+            return (
+                f"I found {title}. {price_part} {avail} "
+                f"Would you like me to add this {label} to your order?"
+            )
+        if kind == "subscription":
+            return (
+                f"I found {title}{term_part}. {price_part} "
+                "Would you like me to add it to your order?"
+            )
         return (
             f"I found {title}. {price_part} {avail} "
             "Would you like me to add it to your order?"
@@ -135,24 +232,36 @@ def compose_answer_from_tool_facts(
             return _format_single_product(products[0])
         return _format_multiple_products(products)
 
-    if intent in ("isbn_lookup", "isbn_search", "book_title_search", "book_search", "product_search"):
-        for name in ("product_isbn", "product_search"):
+    if intent in (
+        "isbn_lookup", "isbn_search", "book_title_search", "book_search", "product_search",
+        "newspaper_search", "magazine_search", "subscription_search", "catalog_product_search",
+    ):
+        for name in ("product_isbn", "product_search", "universal_catalog_search"):
             result = worker_bundle.results.get(name)
             if result and result.success is False:
                 continue
             if result and result.data and result.data.get("not_found"):
-                return (
-                    "I don't see that book listed right now. "
-                    "I can take your email and send it to customer service so they can check availability."
-                )
+                pub_title = result.data.get("publication_title") or result.data.get("query") or ""
+                kind = result.data.get("product_kind") or ""
+                if not kind and intent in ("isbn_lookup", "isbn_search", "book_title_search", "book_search"):
+                    kind = "book"
+                if pub_title and intent not in ("isbn_lookup", "isbn_search", "book_title_search", "book_search"):
+                    return _format_no_store_match(pub_title)
+                return _not_found_message({
+                    "publication_title": pub_title,
+                    "product_kind": kind,
+                    "not_found": True,
+                })
+            if result and result.data and result.data.get("not_orderable"):
+                return _format_non_orderable(result.data)
         hints = fact_packet.safe_response_hints if fact_packet else []
         if hints:
             return hints[0]
         facts = fact_packet.customer_facing_facts if fact_packet else []
         if facts and "not found" in facts[0].lower():
             return (
-                "I don't see that book listed right now. "
-                "I can take your email and send it to customer service so they can check availability."
+                "I don't see that item listed right now. "
+                "I can take your email and have customer service check it."
             )
 
     from .customer_service_orchestrator import (
