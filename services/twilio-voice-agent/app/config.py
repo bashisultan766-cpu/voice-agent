@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     VOICE_WORKER_FANOUT_TIMEOUT_MS: int = 2500
     VOICE_MEMORY_TURNS: int = 50
 
+    # ── v4.11.1: ConversationRelay outbound text delivery ─────────────────────
+    VOICE_LOG_OUTBOUND_TEXT: bool = True
+    VOICE_OUTBOUND_TEXT_MAX_LOG_CHARS: int = 160
+    VOICE_CR_TEXT_INTERRUPTIBLE: bool = True
+    VOICE_CR_TEXT_PREEMPTIBLE: bool = False
+
     # ── v4.9: EricDialogueBrain ───────────────────────────────────────────────
     VOICE_LLM_BRAIN_ENABLED: bool = True
     VOICE_LLM_BRAIN_MODEL: str = "gpt-4o-mini"

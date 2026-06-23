@@ -54,6 +54,7 @@ from ..caller.repository import (
 )
 from ..pipeline.engine import get_engine
 from ..voice.turn_assembler import clear_turn_assembler, get_turn_assembler
+from .conversation_relay_sender import ConversationRelayOutbound, ConversationRelayStats
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,8 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
     # All sends go through a queue → single sender task.
     send_q: asyncio.Queue[Optional[dict]] = asyncio.Queue(maxsize=512)
+    cr_stats = ConversationRelayStats()
+    outbound: Optional[ConversationRelayOutbound] = None
 
     async def _sender() -> None:
         try:
@@ -128,11 +131,18 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
     sender_task = asyncio.create_task(_sender(), name="cr-sender")
 
-    async def send(msg: dict) -> None:
+    async def _queue_send(msg: dict) -> None:
         try:
             send_q.put_nowait(msg)
         except asyncio.QueueFull:
             logger.warning("Send queue full — dropping message: %s", msg.get("type"))
+
+    async def send(msg: dict) -> None:
+        """Engine/runtime send callback — routes through CR outbound adapter."""
+        if outbound is not None:
+            await outbound.engine_send(msg)
+        else:
+            await _queue_send(msg)
 
     async def _cancel_current() -> None:
         nonlocal current_task
@@ -190,16 +200,20 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
         """Generate a response for one caller utterance via the pipeline engine."""
         nonlocal first_prompt_received
 
+        if session is None:
+            return
+
+        session.turn_count += 1
+        if outbound is not None:
+            outbound.set_turn(session.turn_count)
+
         # ── First turn only: briefly await the profile task ────────────────
-        # Set first_prompt_received BEFORE the await so that if the profile
-        # task completes during our wait it sees the flag and skips greeting.
         if not first_prompt_received:
             first_prompt_received = True
             if not session.caller_profile_loaded:
                 profile_timeout_secs = settings.VOICE_FIRST_PROMPT_PROFILE_TIMEOUT_MS / 1000
                 await await_caller_profile_ready(profile_task, timeout_secs=profile_timeout_secs)
 
-        # greeting_sent mirrors TwiML/WS greeting before caller spoke
         greeted = greeting_sent or getattr(session, "twiml_greeting_spoken", False)
         ctx = build_safe_caller_context(session, greeted_already=greeted)
 
@@ -208,6 +222,10 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
             await engine.handle_turn(session, user_text, send, caller_context=ctx)
         except asyncio.CancelledError:
             logger.info("Turn cancelled by interrupt")
+            raise
+        finally:
+            if outbound is not None:
+                await outbound.flush()
 
     async def _save_caller_profile() -> None:
         """Upsert CallerProfile at end of call."""
@@ -248,6 +266,9 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         store_domain=custom.get("storeDomain", settings.SHOPIFY_SHOP_DOMAIN),
                         custom_params=custom,
                         twiml_greeting_spoken=True,
+                    )
+                    outbound = ConversationRelayOutbound(
+                        _queue_send, settings, session.call_sid, cr_stats,
                     )
                     logger.info(
                         "ConversationRelay setup | sid=%s from=%s to=%s session=%s",
@@ -295,7 +316,16 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         logger.warning("Received prompt before setup — ignoring")
                         continue
 
-                    if not msg.get("last", True):
+                    is_last = msg.get("last", True)
+                    cr_stats.prompts_received += 1
+                    logger.info(
+                        "conversationrelay_prompt_received sid=%s prompt_count=%d last=%s",
+                        session.call_sid[:6],
+                        cr_stats.prompts_received,
+                        is_last,
+                    )
+
+                    if not is_last:
                         continue
 
                     voice_prompt: str = msg.get("voicePrompt", "").strip()
@@ -314,6 +344,12 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
                     async def _emit_assembled(assembled_text: str) -> None:
                         nonlocal current_task
+                        cr_stats.assembled_turns += 1
+                        logger.info(
+                            "conversationrelay_assembled_turn sid=%s assembled_count=%d",
+                            session.call_sid[:6],
+                            cr_stats.assembled_turns,
+                        )
                         await _cancel_current()
                         current_task = asyncio.create_task(
                             _run_turn(assembled_text),
@@ -345,11 +381,12 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         )
 
                 case "error":
+                    desc = msg.get("description", "")
                     logger.error(
-                        "ConversationRelay error | sid=%s code=%s description=%s",
-                        session.call_sid if session else "?",
-                        msg.get("errorCode", "unknown"),
-                        msg.get("description", ""),
+                        "conversationrelay_error sid=%s description=%s last_outbound=%s",
+                        session.call_sid[:6] if session else "?",
+                        desc,
+                        cr_stats.last_outbound_type or "none",
                     )
 
                 case _:
@@ -392,8 +429,12 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
         await asyncio.gather(sender_task, return_exceptions=True)
 
         logger.info(
-            "ConversationRelay cleanup complete | sid=%s turns=%d duration=%.1fs",
+            "ConversationRelay cleanup complete | sid=%s turns=%d "
+            "prompts_received=%d assembled_turns=%d responses_sent=%d duration=%.1fs",
             session.call_sid if session else "?",
             session.turn_count if session else 0,
+            cr_stats.prompts_received,
+            cr_stats.assembled_turns,
+            cr_stats.responses_sent,
             time.monotonic() - call_start,
         )

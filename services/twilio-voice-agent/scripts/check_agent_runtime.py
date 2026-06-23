@@ -32,6 +32,9 @@ def main() -> int:
     print(f"Read-only workers:   {', '.join(sorted(READ_ONLY_WORKERS))}")
     print(f"Mutating workers:    {', '.join(sorted(MUTATING_WORKERS))}")
     print(f"OpenAI tools live:   {'blocked' if s.VOICE_LIVE_DISABLE_OPENAI_TOOLS else 'ENABLED'}")
+    print(f"Outbound text logging: {'yes' if s.VOICE_LOG_OUTBOUND_TEXT else 'no'}")
+    print(f"CR text interruptible: {str(s.VOICE_CR_TEXT_INTERRUPTIBLE).lower()}")
+    print(f"CR text preemptible:   {str(s.VOICE_CR_TEXT_PREEMPTIBLE).lower()}")
     print("=" * 40)
     print("No secrets, API keys, or prompts printed.")
     return 0
