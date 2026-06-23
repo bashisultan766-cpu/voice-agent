@@ -725,6 +725,21 @@ def _fast_path(user_turn: str) -> Optional[dict]:
             "memory_instruction": "",
         }
 
+    # Refund lookup (before order — refund phrases often mention "order")
+    if _REFUND_PAT.search(t):
+        return {
+            "response_mode": "needs_tools",
+            "intent": "refund_lookup",
+            "confidence": 0.88,
+            "direct_answer": "",
+            "tool_categories": ["refund_lookup"],
+            "tool_reason": "Customer asking about refund",
+            "one_question_to_ask": "",
+            "domain_boundary": "in_domain",
+            "safety_flags": [],
+            "memory_instruction": "",
+        }
+
     # Order lookup
     if _ORDER_PAT.search(t):
         return {
@@ -734,21 +749,6 @@ def _fast_path(user_turn: str) -> Optional[dict]:
             "direct_answer": "",
             "tool_categories": ["order_lookup"],
             "tool_reason": "Customer asking about order",
-            "one_question_to_ask": "",
-            "domain_boundary": "in_domain",
-            "safety_flags": [],
-            "memory_instruction": "",
-        }
-
-    # Refund lookup
-    if _REFUND_PAT.search(t):
-        return {
-            "response_mode": "needs_tools",
-            "intent": "refund_lookup",
-            "confidence": 0.88,
-            "direct_answer": "",
-            "tool_categories": ["refund_lookup"],
-            "tool_reason": "Customer asking about refund",
             "one_question_to_ask": "",
             "domain_boundary": "in_domain",
             "safety_flags": [],

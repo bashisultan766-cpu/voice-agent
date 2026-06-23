@@ -394,6 +394,25 @@ class EricAgentRuntime:
         memory = build_memory_packet(session, max_turns=settings.VOICE_MEMORY_TURNS)
         memory_context = memory.to_composer_context() if memory else ""
 
+        from .pending_tool_state import handle_pending_tool_status_query
+        expected_next_pre = getattr(getattr(session, "dialogue", None), "expected_next", "") or ""
+        pending_reply = handle_pending_tool_status_query(
+            session.call_sid, caller_text, expected_next=expected_next_pre,
+        )
+        if pending_reply:
+            sanitized = sanitize_customer_response(
+                pending_reply, intent="pending_tool_status", call_sid=session.call_sid,
+            )
+            text = sanitized.text
+            await _await_send(send, {"type": "text", "token": text, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            log_assistant_response(text, call_sid=session.call_sid, intent="pending_tool_status")
+            from .conversation_state_machine import record_safe_response, clear_interrupt as clear_state_interrupt
+            record_safe_response(session.call_sid, text)
+            clear_state_interrupt(session.call_sid)
+            CallMemoryManager.update_after_turn(session, caller_text, text, "pending_tool_status")
+            return RuntimeTurnResult(response_text=text, source="pending_tool_status")
+
         from ..cart.session import get_ledger
         ledger = get_ledger(session)
         cart_summary = f"{ledger.confirmed_count()} confirmed book(s)" if ledger.confirmed_count() else ""
@@ -448,42 +467,65 @@ class EricAgentRuntime:
 
         # ── needs_tools: run only requested workers ────────────────────────────
         if response_mode == "needs_tools" and tool_categories:
-            logger.info("tool_fanout_started categories=%s", tool_categories)
-            from ..pipeline.router import IntentResult, detect as router_detect
-            from .business_intent_resolver import extract_isbn_from_text
+            from .intent_result_builder import _build_intent_result_from_agent_decision
+            from .pending_tool_state import (
+                complete_pending_tool,
+                fail_pending_tool,
+                start_pending_tool,
+            )
+            from .tool_answer_composer import compose_answer_from_tool_facts
 
-            router_result = IntentResult(intent=intent, entities={})
-            detected = router_detect(caller_text, session)
-            router_result.entities.update(detected.entities)
-            router_result.entities["raw_text"] = caller_text
-
-            search_query = (decision.get("search_query") or "").strip()
-            if search_query:
-                router_result.entities["product_phrase"] = search_query
-            tool_entities = decision.get("tool_entities") or {}
-            if isinstance(tool_entities, dict):
-                router_result.entities.update(tool_entities)
-
-            if "isbn_lookup" in tool_categories and not router_result.entities.get("isbn"):
-                isbn = extract_isbn_from_text(caller_text)
-                if isbn:
-                    router_result.entities["isbn"] = isbn
+            router_result = _build_intent_result_from_agent_decision(
+                decision, caller_text, session=session, memory_packet=memory,
+            )
+            pending = start_pending_tool(
+                session.call_sid,
+                intent=intent,
+                categories=tool_categories,
+                entities=dict(router_result.entities),
+            )
 
             worker_bundle = await self._execute_main_llm_tools(
-                tool_categories, router_result, session, settings, decision_intent=intent,
+                tool_categories, router_result, session, settings,
+                decision=decision,
             )
             fact_packet = build_fact_packet(worker_bundle, session)
             facts_n = len(fact_packet.customer_facing_facts)
-            logger.info("tool_fanout_completed categories=%s facts=%d", tool_categories, facts_n)
-
-            # Final LLM writes answer with full system prompt + facts
-            from ..composer.main_llm_composer import get_composer
-            composer = get_composer(settings)
-            system_prompt = load_eric_system_prompt_text()
-            response_text = await self._compose_main_llm_answer(
-                session, caller_text, decision, memory,
-                fact_packet, worker_bundle, system_prompt, composer,
+            logger.info(
+                "fact_packet_built sid=%s facts=%d source=tools",
+                sid, facts_n,
             )
+
+            response_text = compose_answer_from_tool_facts(
+                intent, fact_packet, worker_bundle, session=session,
+            )
+
+            if not response_text:
+                from ..composer.main_llm_composer import get_composer
+                composer = get_composer(settings)
+                system_prompt = load_eric_system_prompt_text()
+                logger.info("final_llm_from_tools sid=%s", sid)
+                response_text = await self._compose_main_llm_answer(
+                    session, caller_text, decision, memory,
+                    fact_packet, worker_bundle, system_prompt, composer,
+                )
+
+            worker_failures = sum(
+                1 for r in worker_bundle.results.values()
+                if not getattr(r, "success", False)
+            )
+            if worker_failures and not response_text:
+                from .pending_tool_state import _GRACEFUL_WORKER_FAILURE
+                response_text = _GRACEFUL_WORKER_FAILURE
+                fail_pending_tool(session.call_sid, reason="worker_failures")
+            elif response_text:
+                complete_pending_tool(
+                    session.call_sid,
+                    facts_summary=f"{facts_n} facts",
+                    last_tool_answer=response_text,
+                )
+            else:
+                fail_pending_tool(session.call_sid, reason="no_answer")
 
             if response_text:
                 from ..safety.response_sanitizer import sanitize_customer_response
@@ -523,102 +565,124 @@ class EricAgentRuntime:
         router_result,
         session: "SessionState",
         settings,
+        decision: dict | None = None,
         decision_intent: str = "",
     ):
-        """Execute only the requested tool categories in parallel."""
+        """Execute requested tool categories: read-only in parallel, mutating sequential."""
         from ..workers.base import WorkerBundle, WorkerResult
+        from ..workers.orchestrator import _REGISTRY, _run_one
+        from .tool_category_mapper import (
+            MUTATING_CATEGORIES,
+            READ_ONLY_CATEGORIES,
+            map_tool_categories_to_worker_intents,
+        )
 
-        tool_to_intents = {
-            "catalog_search": "product_search",
-            "isbn_lookup": "isbn_search",
-            "order_lookup": "order_lookup",
-            "refund_lookup": "refund_detail",
-            "shipping_lookup": "shipping_question",
-            "facility_approval": "facility_approval",
-            "facility_restriction": "facility_restriction",
-            "store_info": "store_info_question",
-            "cart_memory": "memory_summary_question",
-            "address_update": "address_update",
-            "cancellation": "cancellation_request",
-            "email_capture": "email_provided",
-            "payment_flow": "send_payment_link",
-            "escalation": "escalation",
-        }
-
-        if decision_intent == "book_title_search":
-            tool_to_intents["catalog_search"] = "book_title_search"
-
-        worker_name_to_tool = {
-            "catalog_search": "catalog_search",
-            "isbn_lookup": "isbn_lookup",
-            "order_lookup": "order_lookup",
-            "refund_lookup": "refund_lookup",
-            "shipping_lookup": "shipping_lookup",
-            "facility_approval": "facility_approval",
-            "facility_restriction": "facility_restriction",
-            "store_info": "store_info",
-            "cart_memory": "cart_memory",
-            "address_update": "address_update",
-            "cancellation": "cancellation",
-            "email_capture": "email_capture",
-            "payment_flow": "payment_flow",
-            "escalation": "escalation",
-        }
-
-        from ..workers.orchestrator import _INTENT_WORKERS, _REGISTRY, _run_one
-        import asyncio
-        import time
-
+        decision = dict(decision or {})
+        if tool_categories and not decision.get("tool_categories"):
+            decision["tool_categories"] = list(tool_categories)
+        if decision_intent and not decision.get("intent"):
+            decision["intent"] = decision_intent
+        decision_intent = str(decision.get("intent") or router_result.intent)
+        sid = session.call_sid[:6]
         timeout_secs = settings.VOICE_TOOL_TIMEOUT_MS / 1000
         t0 = time.monotonic()
         bundle = WorkerBundle()
 
-        all_worker_names = []
-        for cat in tool_categories:
-            worker_intent = tool_to_intents.get(cat, cat)
-            wns = _INTENT_WORKERS.get(worker_intent)
-            if not wns:
-                tool = worker_name_to_tool.get(cat, cat)
-                wns = _INTENT_WORKERS.get(tool, [tool])
-            all_worker_names.extend(wns)
+        plans = map_tool_categories_to_worker_intents(decision, router_result.entities)
+        worker_intents = [p.worker_intent for p in plans]
+        logger.info(
+            "tool_plan_built sid=%s categories=%s worker_intents=%s entities=%s",
+            sid, tool_categories, worker_intents, sorted(router_result.entities.keys()),
+        )
 
-        primary_intent = tool_to_intents.get(tool_categories[0], decision_intent or "unknown")
-        if decision_intent in _INTENT_WORKERS:
-            primary_intent = decision_intent
+        primary_intent = worker_intents[0] if worker_intents else decision_intent
         router_result.intent = primary_intent
         router_result.entities["intent"] = primary_intent
 
-        all_worker_names = list(dict.fromkeys(all_worker_names))
-        bundle.workers_ran = list(all_worker_names)
+        read_only_workers: list[str] = []
+        mutating_workers: list[str] = []
+        for plan in plans:
+            names = [n for n in plan.worker_names if n in _REGISTRY]
+            if plan.category in MUTATING_CATEGORIES or plan.mutating:
+                mutating_workers.extend(names)
+            else:
+                read_only_workers.extend(names)
+
+        read_only_workers = list(dict.fromkeys(read_only_workers))
+        mutating_workers = list(dict.fromkeys(mutating_workers))
+        all_worker_names = list(dict.fromkeys(read_only_workers + mutating_workers))
+        bundle.workers_ran = all_worker_names
+
+        logger.info(
+            "tool_fanout_started sid=%s read_only=%s mutating=%s",
+            sid, read_only_workers, mutating_workers,
+        )
 
         if not all_worker_names:
             bundle.total_ms = 0.0
+            logger.info("tool_fanout_completed sid=%s ok=True facts=0 ms=0", sid)
             return bundle
 
-        tasks = {
-            name: asyncio.create_task(
-                _run_one(name, session, router_result.entities, settings, timeout_secs),
-                name=f"worker-{name}",
-            )
-            for name in all_worker_names
-            if name in _REGISTRY
-        }
-
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-
-        for name, result in zip(tasks.keys(), results):
-            if isinstance(result, WorkerResult):
-                bundle.results[name] = result
-            else:
-                bundle.results[name] = WorkerResult(
+        async def _run_worker(name: str) -> WorkerResult:
+            w_t0 = time.monotonic()
+            logger.info("tool_worker_started sid=%s worker=%s intent=%s", sid, name, primary_intent)
+            try:
+                result = await _run_one(
+                    name, session, router_result.entities, settings, timeout_secs,
+                )
+                ms = (time.monotonic() - w_t0) * 1000
+                facts_n = 1 if getattr(result, "safe_summary", "") else 0
+                if getattr(result, "success", False):
+                    logger.info(
+                        "tool_worker_completed sid=%s worker=%s ok=True facts=%d ms=%.0f",
+                        sid, name, facts_n, ms,
+                    )
+                else:
+                    logger.info(
+                        "tool_worker_failed sid=%s worker=%s error_type=%s ms=%.0f",
+                        sid, name, getattr(result, "error_code", "failed"), ms,
+                    )
+                return result
+            except Exception as exc:
+                ms = (time.monotonic() - w_t0) * 1000
+                logger.info(
+                    "tool_worker_failed sid=%s worker=%s error_type=%s ms=%.0f",
+                    sid, name, type(exc).__name__, ms,
+                )
+                return WorkerResult(
                     worker_name=name,
                     success=False,
-                    error_code="orchestrator_error",
-                    latency_ms=(time.monotonic() - t0) * 1000,
+                    error_code=type(exc).__name__,
+                    latency_ms=ms,
                     source="none",
                 )
 
+        if read_only_workers:
+            ro_tasks = {n: asyncio.create_task(_run_worker(n), name=f"worker-{n}") for n in read_only_workers}
+            ro_results = await asyncio.gather(*ro_tasks.values(), return_exceptions=True)
+            for name, result in zip(ro_tasks.keys(), ro_results):
+                if isinstance(result, WorkerResult):
+                    bundle.results[name] = result
+                else:
+                    bundle.results[name] = WorkerResult(
+                        worker_name=name,
+                        success=False,
+                        error_code=type(result).__name__ if isinstance(result, Exception) else "orchestrator_error",
+                        latency_ms=(time.monotonic() - t0) * 1000,
+                        source="none",
+                    )
+
+        for name in mutating_workers:
+            if name not in bundle.results:
+                result = await _run_worker(name)
+                bundle.results[name] = result
+
         bundle.total_ms = (time.monotonic() - t0) * 1000
+        facts_n = sum(1 for r in bundle.results.values() if getattr(r, "success", False))
+        logger.info(
+            "tool_fanout_completed sid=%s ok=True facts=%d ms=%.0f",
+            sid, facts_n, bundle.total_ms,
+        )
         return bundle
 
     async def _compose_main_llm_answer(

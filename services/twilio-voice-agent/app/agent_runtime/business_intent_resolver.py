@@ -89,7 +89,9 @@ _VAGUE_BOOK_PAT = re.compile(
     r"looking for(?:\s+a?)*\s*book\b|need to order(?:\s+a?)*\s*book\b|"
     r"i am looking for(?:\s+a?)*\s*book\b|"
     r"can you give me(?:\s+(?:the|a))?\s*book\b|"
-    r"give me(?:\s+(?:the|a))?\s*book\b"
+    r"give me(?:\s+(?:the|a))?\s*book\b|"
+    r"can you find(?:\s+me)?(?:\s+a)?\s*book(?:\s+for me)?\b|"
+    r"find(?:\s+me)?(?:\s+a)?\s*book(?:\s+for me)?\b"
     r")\b",
     re.I,
 )
@@ -144,6 +146,11 @@ _OFF_DOMAIN_PAT = re.compile(
 )
 _SPORTS_WITHOUT_BOOKS_PAT = re.compile(
     r"\b(football|soccer|cricket|basketball|baseball|hockey|tennis|match|game)\b",
+    re.I,
+)
+_CART_COUNT_PAT = re.compile(
+    r"\b(how many books?(?:\s+(?:are\s+)?in my cart)?|cart count|books in cart|"
+    r"how many (?:books|items) (?:are )?in (?:my )?cart)\b",
     re.I,
 )
 _ACK_PAT = re.compile(
@@ -414,6 +421,17 @@ def resolve_business_intent(
             direct_answer=ANSWER_VAGUE_BOOK,
             expected_next="book_identifier",
             reason="vague_book_request",
+            normalized_text=normalized,
+        )
+
+    if _CART_COUNT_PAT.search(normalized):
+        return _matched(
+            intent="cart_count_question",
+            response_mode="needs_tools",
+            confidence=0.92,
+            direct_answer=None,
+            tool_categories=["cart_memory"],
+            reason="cart_count_question",
             normalized_text=normalized,
         )
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Eric Agent Runtime configuration (v4.14). Safe — no secrets printed."""
+"""Check Eric Agent Runtime configuration (v4.14.4). Safe — no secrets printed."""
 from __future__ import annotations
 
 import sys
@@ -15,6 +15,9 @@ def main() -> int:
     from app.agent_runtime.knowledge_base import is_knowledge_base_loaded
     from app.agent_runtime.worker_packet import READ_ONLY_WORKERS, MUTATING_WORKERS
     from app.agent_runtime.main_llm_agent import AVAILABLE_TOOL_CATEGORIES
+    from app.agent_runtime.tool_category_mapper import assert_all_mapped_worker_intents_exist
+    from app.agent_runtime.tool_entity_extractor import extract_tool_entities
+    from app.agent_runtime.pending_tool_state import is_pending_tool_status_query
 
     s = get_settings()
     load_eric_system_prompt_text()
@@ -23,7 +26,28 @@ def main() -> int:
 
     is_main_llm = s.VOICE_AGENT_RUNTIME_MODE == "main_llm_agent"
 
-    print("Eric Agent Runtime Check (v4.14.3)")
+    mapper_ok = "OK"
+    try:
+        assert_all_mapped_worker_intents_exist()
+    except AssertionError as exc:
+        mapper_ok = f"FAIL: {exc}"
+
+    extractor_ok = "OK"
+    try:
+        entities = extract_tool_entities("ISBN is 9780441172719")
+        if not entities.get("isbn"):
+            extractor_ok = "FAIL: ISBN not extracted"
+    except Exception as exc:
+        extractor_ok = f"FAIL: {exc}"
+
+    pending_ok = "OK"
+    try:
+        if not is_pending_tool_status_query("Did you find this?"):
+            pending_ok = "FAIL: status query not detected"
+    except Exception as exc:
+        pending_ok = f"FAIL: {exc}"
+
+    print("Eric Agent Runtime Check (v4.14.4)")
     print("=" * 40)
     print(f"Agent runtime mode:     {s.VOICE_AGENT_RUNTIME_MODE}")
     print(f"Eric prompt file:       {'loaded' if prompt_status['loaded_from_file'] else 'inline_fallback'}")
@@ -31,6 +55,10 @@ def main() -> int:
     print(f"Main LLM agent:         {'enabled' if is_main_llm else 'disabled'}")
     print(f"Direct answer path:     {'enabled' if is_main_llm else 'via_supervisor'}")
     print(f"Tool fanout after LLM:  {'enabled' if is_main_llm else 'via_supervisor'}")
+    print(f"Tool category mapper:   {mapper_ok}")
+    print(f"Worker intent mapping:  {mapper_ok}")
+    print(f"Tool entity extractor:  {extractor_ok}")
+    print(f"Pending tool state:     {pending_ok}")
     print(f"OpenAI configured:      {'yes' if bool(s.OPENAI_API_KEY) else 'no'}")
     print(f"Supervisor model:       {s.VOICE_SUPERVISOR_MODEL}")
     print(f"Main LLM timeout:       {s.VOICE_MAIN_LLM_TIMEOUT_MS}ms")
@@ -50,6 +78,9 @@ def main() -> int:
     print(f"Outbound text logging:  {'yes' if s.VOICE_LOG_OUTBOUND_TEXT else 'no'}")
     print("=" * 40)
     print("No secrets, API keys, or prompts printed.")
+
+    if "FAIL" in mapper_ok or "FAIL" in extractor_ok or "FAIL" in pending_ok:
+        return 1
     return 0
 
 
