@@ -102,6 +102,18 @@ class Settings(BaseSettings):
     VOICE_CR_TEXT_INTERRUPTIBLE: bool = True
     VOICE_CR_TEXT_PREEMPTIBLE: bool = False
 
+    # ── v4.12: Welcome greeting + LLM-first final speaker ─────────────────────
+    VOICE_WELCOME_GREETING_ENABLED: bool = True
+    VOICE_WELCOME_GREETING: str = (
+        "Hello! Thank you for calling SureShot Books. How can I help you today?"
+    )
+    VOICE_WELCOME_GREETING_INTERRUPTIBLE: str = "any"
+    VOICE_FINAL_RESPONSE_MODE: str = "llm_first"  # llm_first | deterministic_legacy
+    VOICE_FINAL_LLM_FOR_SMALL_TALK: bool = True
+    VOICE_FINAL_LLM_FOR_UNKNOWN: bool = True
+    VOICE_FINAL_LLM_FOR_OUT_OF_DOMAIN: bool = True
+    VOICE_FINAL_LLM_FOR_CLARIFICATION: bool = True
+
     # ── v4.9: EricDialogueBrain ───────────────────────────────────────────────
     VOICE_LLM_BRAIN_ENABLED: bool = True
     VOICE_LLM_BRAIN_MODEL: str = "gpt-4o-mini"

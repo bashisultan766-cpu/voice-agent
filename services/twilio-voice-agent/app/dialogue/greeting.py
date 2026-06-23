@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-GREETING_NEW = "Hello, welcome to SureShot Books. How can I help you today?"
+GREETING_NEW = "Hello! Thank you for calling SureShot Books. How can I help you today?"
 GREETING_RETURNING = "Hello, welcome back to SureShot Books. How can I help you today?"
 GREETING_RETURNING_NAMED = (
     "Hello, welcome back to SureShot Books, {name}. How can I help you today?"
@@ -23,11 +23,25 @@ _FORBIDDEN_GREETING_WORDS = (
 
 def build_twiml_greeting(returning: bool = False, caller_name: str = "") -> str:
     """Greeting spoken by Twilio ConversationRelay before WebSocket setup."""
+    from ..config import get_settings
+
+    s = get_settings()
+    base = (s.VOICE_WELCOME_GREETING or GREETING_NEW).strip()
     if returning:
         if caller_name:
-            return GREETING_RETURNING_NAMED.format(name=caller_name.strip())
+            name = caller_name.strip()
+            if name:
+                return (
+                    f"Hello! Welcome back to SureShot Books, {name}. "
+                    "How can I help you today?"
+                )
         return GREETING_RETURNING
-    return GREETING_NEW
+    return base
+
+
+def build_resume_twiml_greeting() -> str:
+    """Resume greeting when caller reconnects within the resume window."""
+    return "I'm sorry about that. Let me continue from where we left off."
 
 
 def build_first_response_greeting(session: "SessionState", greeted_already: bool) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from .memory_packet import MemoryPacket
 
@@ -11,6 +11,17 @@ if TYPE_CHECKING:
     from ..state.models import SessionState
 
 logger = logging.getLogger(__name__)
+
+_REPEAT_CLARIFICATION_PAT = re.compile(
+    r"\b("
+    r"what did you say|what you say|say that again|repeat that|"
+    r"you are what|your what|it(?:'s| is) your what|"
+    r"i didn(?:'|')?t hear you|didn(?:'|')?t catch that|"
+    r"what was your name|what is your name again|can you repeat|"
+    r"pardon|come again|sorry what"
+    r")\b",
+    re.I,
+)
 
 
 def _mask_for_log(text: str) -> str:
@@ -30,6 +41,21 @@ def _mask_for_log(text: str) -> str:
     if len(masked) > 80:
         return masked[:77] + "..."
     return masked
+
+
+def is_repeat_or_clarification_request(text: str) -> bool:
+    """Detect when the caller wants the last assistant response repeated."""
+    return bool(_REPEAT_CLARIFICATION_PAT.search((text or "").strip()))
+
+
+def get_last_assistant_response(session: "SessionState") -> str:
+    """Return the most recent assistant turn from call memory."""
+    from ..conversation.call_memory import get_call_memory, sync_from_session
+
+    sync_from_session(session)
+    state = get_call_memory(session)
+    assistants = state.assistant_turns or []
+    return assistants[-1].strip() if assistants else ""
 
 
 class CallMemoryManager:
@@ -61,6 +87,9 @@ class CallMemoryManager:
         for i, ut in enumerate(users):
             ast = assistants[i] if i < len(assistants) else ""
             packet.recent_turns.append((ut, ast))
+
+        if assistants:
+            packet.last_assistant_response = assistants[-1].strip()
 
         logger.info(
             "memory_packet_built sid=%s turns=%d facts=%d",

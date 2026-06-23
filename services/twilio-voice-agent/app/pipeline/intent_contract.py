@@ -8,7 +8,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from ..catalog.query_specificity import is_generic_product_query, score_product_query_specificity
+from ..catalog.query_specificity import (
+    is_generic_product_query,
+    is_off_domain_non_book_query,
+    score_product_query_specificity,
+    should_block_router_product_search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +22,11 @@ EXEC_STORE_INFO = "StoreInfoWorker"
 EXEC_RESPONSE_PLAN = "ResponsePlanWorker"
 EXEC_PRODUCT_ISBN = "ProductISBNWorker"
 EXEC_PRODUCT_SEARCH = "ProductSearchWorker"
+EXEC_ORDER_LOOKUP = "OrderLookupWorker"
+EXEC_REFUND = "RefundWorker"
+EXEC_SHIPPING = "ShippingWorker"
+EXEC_FACILITY = "FacilityWorker"
+EXEC_CANCELLATION = "CancellationWorker"
 EXEC_PAYMENT = "PaymentFlowWorker"
 EXEC_CART_MEMORY = "CartMemoryWorker"
 EXEC_SPELL_EMAIL = "SpellEmailWorker"
@@ -58,6 +68,16 @@ _INTENT_EXECUTORS: dict[str, str] = {
     "product_search": EXEC_PRODUCT_SEARCH,
     "author_search": EXEC_PRODUCT_SEARCH,
     "topic_book_search_offer": EXEC_PRODUCT_SEARCH,
+    "order_lookup": EXEC_ORDER_LOOKUP,
+    "refund_detail": EXEC_REFUND,
+    "refund_status": EXEC_REFUND,
+    "shipping_question": EXEC_SHIPPING,
+    "shipping_price": EXEC_SHIPPING,
+    "facility_approval": EXEC_FACILITY,
+    "facility_approval_question": EXEC_FACILITY,
+    "facility_restriction": EXEC_FACILITY,
+    "cancellation_request": EXEC_CANCELLATION,
+    "repeat_clarification": EXEC_SMALL_TALK,
     "send_payment_link": EXEC_PAYMENT,
     "payment_execute": EXEC_PAYMENT,
     "checkout_request": EXEC_PAYMENT,
@@ -65,6 +85,7 @@ _INTENT_EXECUTORS: dict[str, str] = {
     "spell_email_request": EXEC_SPELL_EMAIL,
     "ending_thanks": EXEC_CART_MEMORY,
     "out_of_domain_question": EXEC_RESPONSE_PLAN,
+    "repeat_clarification": EXEC_SMALL_TALK,
     "unknown": EXEC_FALLBACK,
     "greeting": EXEC_RESPONSE_PLAN,
     "confirmation": EXEC_CONVERSATION,
@@ -95,6 +116,18 @@ def validate_intent_contract(
 
     if intent in ("book_title_search", "product_search", "explicit_title_search"):
         query = ctx.get("product_phrase") or ctx.get("query") or ""
+        if is_off_domain_non_book_query(query) or should_block_router_product_search(query, intent):
+            logger.info(
+                "intent_contract_blocked sid=%s intent=%s reason=off_domain_or_how_to",
+                sid, intent,
+            )
+            return ContractDecision(
+                intent=intent,
+                executor=EXEC_RESPONSE_PLAN,
+                allowed=False,
+                blocked_reason="off_domain_or_how_to",
+                resolved_intent="out_of_domain_question",
+            )
         spec = score_product_query_specificity(query)
         if spec.level.value == "generic" or is_generic_product_query(query):
             logger.info(

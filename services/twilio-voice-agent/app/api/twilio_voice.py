@@ -7,14 +7,16 @@ Twilio handles STT and TTS; we receive/send plain text JSON over the WebSocket.
 from __future__ import annotations
 
 import logging
+import time
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import APIRouter, Form, Request, Response
 
 from ..config import get_settings, Settings
 from ..caller.repository import get_caller_profile
-from ..dialogue.greeting import build_twiml_greeting
+from ..dialogue.greeting import build_resume_twiml_greeting, build_twiml_greeting
 from ..security.twilio_signature import validate_twilio_signature
+from ..state.session_store import load_call_resume_by_phone
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice/twilio", tags=["voice"])
@@ -42,18 +44,23 @@ def _conversation_relay_twiml(
     store_domain: str = "",
     settings: Settings | None = None,
     welcome_greeting: str | None = None,
+    include_welcome: bool = True,
 ) -> str:
     """Build TwiML that instructs Twilio to open a ConversationRelay WebSocket."""
     s = settings or get_settings()
-    greeting = welcome_greeting or build_twiml_greeting()
 
     voice_attrs: dict[str, str] = {
         "url": ws_url,
-        "welcomeGreeting": greeting,
         "interruptible": "true",
         "language": s.VOICE_LANGUAGE,
         "dtmfDetection": "true",
     }
+
+    if include_welcome and welcome_greeting:
+        voice_attrs["welcomeGreeting"] = welcome_greeting
+        interruptible = (s.VOICE_WELCOME_GREETING_INTERRUPTIBLE or "any").strip()
+        if interruptible:
+            voice_attrs["welcomeGreetingInterruptible"] = interruptible
 
     if s.VOICE_TTS_PROVIDER.lower() == "elevenlabs":
         voice_attrs["ttsProvider"] = "ElevenLabs"
@@ -75,20 +82,56 @@ def _conversation_relay_twiml(
     return _render(response)
 
 
-async def _resolve_welcome_greeting(from_number: str) -> str:
-    """Personalize TwiML greeting for returning callers when profile exists."""
+async def _is_resume_call(from_number: str, settings: Settings) -> bool:
+    """True when caller has a recent resume snapshot within the configured window."""
     if not from_number or from_number == "unknown":
-        return build_twiml_greeting()
+        return False
+    try:
+        prior_data = await load_call_resume_by_phone(from_number)
+        if not prior_data:
+            return False
+        ended = prior_data.get("call_ended_at", 0.0) or 0.0
+        if ended <= 0:
+            return False
+        age_minutes = (time.time() - ended) / 60.0
+        if age_minutes > settings.CALL_RESUME_WINDOW_MINUTES:
+            return False
+        snapshot = prior_data.get("snapshot", {}) or {}
+        return bool(snapshot)
+    except Exception:
+        logger.debug(
+            "Resume check for TwiML greeting failed for %s",
+            _mask_phone(from_number),
+        )
+        return False
+
+
+async def _resolve_welcome_greeting(from_number: str, settings: Settings) -> tuple[str | None, bool]:
+    """
+    Resolve TwiML welcome greeting and whether it should be included.
+
+    Returns (greeting_text_or_none, include_welcome).
+    """
+    if not settings.VOICE_WELCOME_GREETING_ENABLED:
+        return None, False
+
+    if await _is_resume_call(from_number, settings):
+        return build_resume_twiml_greeting(), True
+
+    if not from_number or from_number == "unknown":
+        return build_twiml_greeting(), True
+
     try:
         profile = await get_caller_profile(from_number)
         if profile and profile.call_count and profile.call_count > 0:
-            return build_twiml_greeting(
-                returning=True,
-                caller_name=profile.display_name or "",
-            )
+            name = (profile.display_name or "").strip()
+            return build_twiml_greeting(returning=True, caller_name=name), True
     except Exception:
-        logger.debug("Profile lookup for TwiML greeting failed for %s", _mask_phone(from_number))
-    return build_twiml_greeting()
+        logger.debug(
+            "Profile lookup for TwiML greeting failed for %s",
+            _mask_phone(from_number),
+        )
+    return build_twiml_greeting(), True
 
 
 @router.post("/inbound")
@@ -118,7 +161,7 @@ async def inbound_call(
 
     agent_id = ""
     store_domain = settings.SHOPIFY_SHOP_DOMAIN
-    welcome = await _resolve_welcome_greeting(From)
+    welcome, include_welcome = await _resolve_welcome_greeting(From, settings)
 
     twiml = _conversation_relay_twiml(
         ws_url=settings.ws_url,
@@ -129,6 +172,7 @@ async def inbound_call(
         store_domain=store_domain,
         settings=settings,
         welcome_greeting=welcome,
+        include_welcome=include_welcome,
     )
     # Never log voice ID or API keys — TwiML may contain voice attribute only.
     logger.debug("Returning TwiML for %s (voice configured)", CallSid[:8] if CallSid else "?")

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from openai import AsyncOpenAI
 
+from .call_memory_manager import is_repeat_or_clarification_request
 from .eric_master_policy import build_eric_brain_system_prompt
 from .knowledge_base import retrieve_knowledge_snippets
 from .memory_packet import MemoryPacket
@@ -22,6 +23,13 @@ if TYPE_CHECKING:
     from ..state.models import SessionState
 
 logger = logging.getLogger(__name__)
+
+from ..catalog.query_specificity import (
+    has_explicit_book_search_context,
+    is_general_how_to_query,
+    is_off_domain_non_book_query,
+    should_block_router_product_search,
+)
 
 _HOW_ARE_YOU = re.compile(
     r"\b(how are you|how.?s it going|how you doing|how do you do)\b", re.I,
@@ -53,8 +61,11 @@ _TOPIC_BOOK = re.compile(
 _GENERIC_BOOK = re.compile(
     r"\b(i need (?:a )?books?|i want (?:a )?books?|do you sell books?)\b", re.I,
 )
-_ORDER_Q = re.compile(r"\b(order|tracking|where is my order)\b", re.I)
+_ORDER_Q = re.compile(
+    r"\b(order|tracking|where is my order|where is (?:the )?order|check my order)\b", re.I,
+)
 _SHIPPING_Q = re.compile(r"\b(shipping|subtotal|delivery)\b", re.I)
+_REFUND_Q = re.compile(r"\b(refund|money back|charge back)\b", re.I)
 _FACILITY_Q = re.compile(r"\b(facility|approved|inmate|prison|jail)\b", re.I)
 _WAIT_PHRASE = re.compile(
     r"\b(wait|hold on|one second|one moment|let me repeat|i repeat)\b", re.I,
@@ -109,8 +120,63 @@ def _parse_supervisor_json(raw: dict) -> SupervisorDecision:
         one_question_to_ask=str(raw.get("one_question_to_ask", ""))[:200],
         must_not_say=[str(x) for x in must_not[:10]],
         memory_updates=[str(x) for x in mem[:8]],
+        response_draft=str(raw.get("response_draft", ""))[:300],
         source="llm",
     )
+
+
+def _override_router_hint(
+    caller_text: str,
+    router_intent: str,
+    router_entities: dict,
+) -> Optional[SupervisorDecision]:
+    """
+    Override router_hint when it would trigger a bad product search.
+
+    Router hint is advisory only — supervisor must not trust misheard titles.
+    """
+    t = (caller_text or "").strip()
+    if not t or not router_intent or router_intent == "unknown":
+        return None
+
+    search_intents = {"book_title_search", "product_search", "explicit_title_search", "author_search"}
+    if router_intent not in search_intents:
+        return None
+
+    if should_block_router_product_search(t, router_intent):
+        if has_explicit_book_search_context(t) and _TOPIC_BOOK.search(t):
+            phrase = router_entities.get("product_phrase", t)
+            return SupervisorDecision(
+                user_intent="book_topic_allowed",
+                confidence=0.90,
+                domain_boundary="book_topic_allowed",
+                worker_requests=[WorkerRequest(
+                    worker="catalog_search",
+                    reason="subject book search",
+                    can_run_parallel=True,
+                )],
+                entities={"product_phrase": phrase[:80]},
+                response_strategy="domain_redirect",
+                source="router_override",
+            )
+        return SupervisorDecision(
+            user_intent="out_of_domain",
+            confidence=0.91,
+            domain_boundary="outside_domain_redirect",
+            response_strategy="domain_redirect",
+            source="router_override",
+        )
+
+    if is_general_how_to_query(t) and not has_explicit_book_search_context(t):
+        return SupervisorDecision(
+            user_intent="out_of_domain",
+            confidence=0.92,
+            domain_boundary="outside_domain_redirect",
+            response_strategy="domain_redirect",
+            source="router_override",
+        )
+
+    return None
 
 
 def _fast_path(
@@ -142,11 +208,11 @@ def _fast_path(
             source="fast_path",
         )
 
-    if _HOW_ARE_YOU.search(t):
+    if is_repeat_or_clarification_request(t):
         return SupervisorDecision(
-            user_intent="small_talk",
-            confidence=0.95,
-            response_strategy="direct",
+            user_intent="repeat_clarification",
+            confidence=0.94,
+            response_strategy="repair",
             source="fast_path",
         )
 
@@ -154,6 +220,32 @@ def _fast_path(
         return SupervisorDecision(
             user_intent="identity",
             confidence=0.96,
+            response_strategy="direct",
+            source="fast_path",
+        )
+
+    if is_general_how_to_query(t) and not has_explicit_book_search_context(t):
+        return SupervisorDecision(
+            user_intent="out_of_domain",
+            confidence=0.93,
+            domain_boundary="outside_domain_redirect",
+            response_strategy="domain_redirect",
+            source="fast_path",
+        )
+
+    if is_off_domain_non_book_query(t) and not _TOPIC_BOOK.search(t):
+        return SupervisorDecision(
+            user_intent="out_of_domain",
+            confidence=0.92,
+            domain_boundary="outside_domain_redirect",
+            response_strategy="domain_redirect",
+            source="fast_path",
+        )
+
+    if _HOW_ARE_YOU.search(t):
+        return SupervisorDecision(
+            user_intent="small_talk",
+            confidence=0.95,
             response_strategy="direct",
             source="fast_path",
         )
@@ -235,6 +327,15 @@ def _fast_path(
             source="fast_path",
         )
 
+    if _REFUND_Q.search(t) or router_intent in ("refund_detail", "refund_status"):
+        return SupervisorDecision(
+            user_intent="refund_lookup",
+            confidence=0.88,
+            worker_requests=[WorkerRequest(worker="refund_lookup", reason="refund question")],
+            entities=dict(router_entities),
+            source="fast_path",
+        )
+
     if _FACILITY_Q.search(t) or router_intent == "facility_approval":
         return SupervisorDecision(
             user_intent="facility_approval",
@@ -288,6 +389,10 @@ def _fast_path(
             source="fast_path",
         )
 
+    override = _override_router_hint(t, router_intent, router_entities)
+    if override:
+        return override
+
     if router_intent and router_intent != "unknown":
         return SupervisorDecision(
             user_intent=router_intent,
@@ -322,6 +427,10 @@ def _supervisor_to_intent(decision: SupervisorDecision) -> str:
         "greeting": "greeting",
         "small_talk": "small_talk",
         "vague_book_request": "vague_book_request",
+        "repeat_clarification": "repeat_clarification",
+        "frustration_repair": "frustration_repair",
+        "refund_lookup": "refund_detail",
+        "order_lookup": "order_lookup",
     }
     return mapping.get(decision.user_intent, decision.user_intent)
 
@@ -330,10 +439,13 @@ async def _call_llm_supervisor(
     system: str,
     user_prompt: str,
     settings,
+    sid: str = "",
 ) -> Optional[dict]:
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
     timeout = settings.VOICE_SUPERVISOR_TIMEOUT_MS / 1000
     model = settings.VOICE_SUPERVISOR_MODEL
+
+    logger.info("supervisor_llm_request sid=%s model=%s", sid[:6] if sid else "?", model)
 
     try:
         resp = await asyncio.wait_for(
@@ -350,7 +462,13 @@ async def _call_llm_supervisor(
             timeout=timeout,
         )
         raw = resp.choices[0].message.content or "{}"
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        logger.info(
+            "supervisor_llm_response sid=%s intent=%s source=llm",
+            sid[:6] if sid else "?",
+            parsed.get("user_intent", "unknown"),
+        )
+        return parsed
     except (asyncio.TimeoutError, json.JSONDecodeError):
         return None
     except Exception:
@@ -415,18 +533,28 @@ class LLMSupervisor:
             "Respond JSON only with user_intent, confidence, customer_mood, "
             "domain_boundary, worker_requests, facts_needed, should_answer_now, "
             "should_wait_for_more_speech, response_strategy, one_question_to_ask, "
-            "must_not_say, memory_updates."
+            "must_not_say, memory_updates, response_draft."
         )
 
         system = build_eric_brain_system_prompt()
-        raw = await _call_llm_supervisor(system, user_prompt, settings)
+        raw = await _call_llm_supervisor(system, user_prompt, settings, sid=sid)
         if raw:
             decision = _parse_supervisor_json(raw)
             decision.entities = entities
             if decision.user_intent == "unknown" and router_intent != "unknown":
-                decision.user_intent = router_intent
-                decision.confidence = max(decision.confidence, 0.72)
-                decision.source = "llm_with_router_hint"
+                override = _override_router_hint(caller_text, router_intent, entities)
+                if override:
+                    decision = override
+                else:
+                    decision.user_intent = router_intent
+                    decision.confidence = max(decision.confidence, 0.72)
+                    decision.source = "llm_with_router_hint"
+            elif decision.user_intent in (
+                "book_title_search", "product_search", "book_search",
+            ):
+                override = _override_router_hint(caller_text, decision.user_intent, entities)
+                if override:
+                    decision = override
         else:
             decision = SupervisorDecision(
                 user_intent=router_intent or "unknown",

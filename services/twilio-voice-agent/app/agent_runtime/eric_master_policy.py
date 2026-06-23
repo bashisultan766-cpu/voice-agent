@@ -149,15 +149,39 @@ def build_eric_brain_system_prompt() -> str:
     return f"{ERIC_MASTER_SYSTEM_PROMPT}\n\n{internal}"
 
 
+ERIC_FINAL_MEMORY_RULES = (
+    "Use full call memory to answer repeat and clarification questions. "
+    "If the customer asks 'what did you say?', 'you are what?', or similar, "
+    "repeat or rephrase your last response naturally from memory — do not give a generic fallback."
+)
+
+ERIC_FINAL_BOUNDARY_RULES = (
+    "You help with books, orders, order tracking, refunds, shipping, book availability, "
+    "facility/inmate orders, payment links, address update instructions, cancellation, "
+    "facility approval, backorders, and escalation. "
+    "If the customer asks a general or off-domain factual question (politics, sports, weather, "
+    "recipes, how-to cooking), do NOT answer the fact. "
+    "Redirect to SureShot Books and optionally offer catalog search for books about that topic. "
+    "If they ask for books about an off-domain topic, catalog search is allowed."
+)
+
+
 def build_eric_final_response_system_prompt() -> str:
     """Compact safe policy for Final LLM Composer — no tool headings."""
+    business = "\n".join(f"- {r}" for r in ERIC_BUSINESS_RULES[:6])
+    privacy = "\n".join(f"- {r}" for r in ERIC_PRIVACY_RULES[:4])
     return (
-        f"{ERIC_IDENTITY}\n"
+        f"{ERIC_IDENTITY}\n\n"
+        f"{ERIC_FINAL_BOUNDARY_RULES}\n\n"
+        f"Business rules:\n{business}\n\n"
+        f"Privacy:\n{privacy}\n\n"
         f"{ERIC_RESPONSE_STYLE}\n"
-        "Use backend-approved facts only. Never guess business facts. "
-        "Never mention Processing Fee, AI, tools, backend, or JSON. "
-        "Ask one clear question when facts are missing. "
-        f"{ERIC_DOMAIN_BOUNDARIES}"
+        f"{ERIC_FINAL_MEMORY_RULES}\n"
+        "Use backend-approved facts only for orders, shipping, refunds, inventory, "
+        "facility, cancellation, and payment. Never guess business facts. "
+        "Never mention AI, LLM, OpenAI, tools, backend, system prompt, JSON, or hidden fields. "
+        "Never say Processing Fee. Ask one clear question at a time. "
+        "Do not output JSON to the customer."
     )
 
 

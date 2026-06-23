@@ -21,7 +21,8 @@ def _session():
 
 @pytest.mark.asyncio
 class TestFinalResponseComposer:
-    async def test_out_of_domain_no_factual_answer(self):
+    async def test_out_of_domain_no_factual_answer(self, monkeypatch):
+        from unittest.mock import AsyncMock
         from app.agent_runtime.final_response_composer import get_final_composer
         from app.agent_runtime.types import SupervisorDecision
         from app.agent_runtime.fact_packet import FactPacket
@@ -29,15 +30,28 @@ class TestFinalResponseComposer:
         from app.pipeline.router import IntentResult
         from app.workers.base import WorkerBundle
 
+        monkeypatch.setenv("VOICE_FINAL_RESPONSE_MODE", "llm_first")
+        from app.config import get_settings
+        get_settings.cache_clear()
+
         session = _session()
         decision = SupervisorDecision(user_intent="out_of_domain")
         intent = IntentResult(intent="out_of_domain_question", confidence=0.9)
-        text, source = await get_final_composer().compose(
+
+        composer = get_final_composer()
+        composer._composer.compose_final_response = AsyncMock(
+            return_value=(
+                "I can help with SureShot Books. If you're looking for books about that topic, "
+                "I can search our catalog."
+            ),
+        )
+
+        text, source = await composer.compose(
             session, "Who is Donald Trump?", decision, intent,
             MemoryPacket(), FactPacket(), WorkerBundle(),
         )
         assert "trump" not in text.lower() or "catalog" in text.lower()
-        assert source == "deterministic"
+        assert source == "llm"
 
     async def test_no_processing_fee(self):
         from app.agent_runtime.final_response_composer import get_final_composer
@@ -80,13 +94,18 @@ class TestFinalResponseComposer:
         assert "Jessica" in text
         assert source == "deterministic"
 
-    async def test_vague_book_asks_one_question(self):
+    async def test_vague_book_asks_one_question(self, monkeypatch):
+        from unittest.mock import AsyncMock
         from app.agent_runtime.final_response_composer import get_final_composer
         from app.agent_runtime.types import SupervisorDecision
         from app.agent_runtime.fact_packet import FactPacket
         from app.agent_runtime.memory_packet import MemoryPacket
         from app.pipeline.router import IntentResult
         from app.workers.base import WorkerBundle
+
+        monkeypatch.setenv("VOICE_FINAL_RESPONSE_MODE", "llm_first")
+        from app.config import get_settings
+        get_settings.cache_clear()
 
         session = _session()
         decision = SupervisorDecision(
@@ -95,7 +114,13 @@ class TestFinalResponseComposer:
             one_question_to_ask="Do you have the ISBN, title, author, or subject?",
         )
         intent = IntentResult(intent="vague_book_request", confidence=0.9)
-        text, _ = await get_final_composer().compose(
+
+        composer = get_final_composer()
+        composer._composer.compose_final_response = AsyncMock(
+            return_value="Sure. Do you have the ISBN, title, author, or subject?",
+        )
+
+        text, _ = await composer.compose(
             session, "I need a book", decision, intent,
             MemoryPacket(), FactPacket(), WorkerBundle(),
         )

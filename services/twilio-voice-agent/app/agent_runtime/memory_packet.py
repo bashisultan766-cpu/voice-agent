@@ -20,6 +20,7 @@ class MemoryPacket:
     facility_context: str = ""
     customer_mood: str = "normal"
     turn_count: int = 0
+    last_assistant_response: str = ""
 
     def to_supervisor_context(self) -> str:
         parts: list[str] = []
@@ -43,6 +44,8 @@ class MemoryPacket:
             parts.append(f"[Facility: {self.facility_context}]")
         if self.customer_mood != "normal":
             parts.append(f"[Mood: {self.customer_mood}]")
+        if self.last_assistant_response:
+            parts.append(f"[Last Eric response: {self.last_assistant_response[:220]}]")
         return "\n".join(parts)
 
     def to_composer_context(self) -> str:

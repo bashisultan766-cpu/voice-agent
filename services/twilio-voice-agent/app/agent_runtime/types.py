@@ -12,6 +12,7 @@ VALID_SUPERVISOR_INTENTS = frozenset({
     "email_capture", "email_spell", "cart_memory", "call_resume", "out_of_domain",
     "customer_service", "ending", "unknown", "book_topic_allowed", "greeting",
     "vague_book_request", "payment_execute", "frustration_repair",
+    "repeat_clarification",
 })
 
 VALID_WORKER_CATEGORIES = frozenset({
@@ -52,6 +53,7 @@ class SupervisorDecision:
     one_question_to_ask: str = ""
     must_not_say: list[str] = field(default_factory=list)
     memory_updates: list[str] = field(default_factory=list)
+    response_draft: str = ""
     source: str = "router"
     entities: dict[str, str] = field(default_factory=dict)
 

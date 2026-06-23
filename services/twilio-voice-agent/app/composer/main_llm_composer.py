@@ -474,6 +474,99 @@ class MainLLMComposer:
         yield {"type": "turn_done"}
 
 
+    async def compose_final_response(
+        self,
+        session: SessionState,
+        caller_text: str,
+        decision: "SupervisorDecision",
+        intent_result: "IntentResult",
+        memory: "MemoryPacket",
+        fact_packet: "FactPacket",
+        worker_bundle: "WorkerBundle",
+    ) -> str:
+        """
+        Single non-streaming Final LLM call for natural Eric responses (v4.12).
+
+        Uses Eric final response system prompt — no tools, no streaming.
+        """
+        from ..agent_runtime.eric_master_policy import build_eric_final_response_system_prompt
+        from ..agent_runtime.knowledge_base import retrieve_knowledge_snippets
+
+        s = self._settings
+        sid = session.call_sid[:6]
+        model = s.VOICE_FINAL_MODEL
+        timeout = s.VOICE_FINAL_TIMEOUT_MS / 1000
+
+        kb = retrieve_knowledge_snippets(caller_text, intent_result.intent, session)
+        kb_block = "\n".join(kb[:3]) if kb else ""
+
+        worker_ctx = worker_bundle.to_llm_context(
+            verified_email=session.verified_email,
+            verified_phone=session.verified_phone,
+        )
+        fact_ctx = fact_packet.to_composer_context() if fact_packet else ""
+        memory_ctx = memory.to_composer_context() if memory else ""
+
+        strategy_note = ""
+        if decision.response_strategy:
+            strategy_note = f"Response strategy: {decision.response_strategy}\n"
+        if decision.one_question_to_ask:
+            strategy_note += f"Suggested question: {decision.one_question_to_ask}\n"
+        draft = (decision.response_draft or "").strip()
+        if draft:
+            strategy_note += f"Supervisor draft (polish, do not invent facts): {draft}\n"
+
+        user_prompt = (
+            f"Customer turn: {caller_text}\n\n"
+            f"Supervisor intent: {decision.user_intent}\n"
+            f"Pipeline intent: {intent_result.intent}\n"
+            f"{strategy_note}\n"
+            f"Call memory:\n{memory_ctx}\n\n"
+            f"Worker facts (use only if present — never invent):\n{worker_ctx}\n"
+        )
+        if fact_ctx:
+            user_prompt += f"\nApproved facts:\n{fact_ctx}\n"
+        if kb_block:
+            user_prompt += f"\nKnowledge:\n{kb_block}\n"
+        user_prompt += (
+            "\nWrite one short natural spoken response as Eric. "
+            "Stay inside SureShot Books. No JSON."
+        )
+
+        memory_turns = len(memory.recent_turns) if memory else 0
+        facts_n = len(fact_packet.safe_response_hints) if fact_packet else 0
+        logger.info(
+            "final_llm_request sid=%s intent=%s model=%s memory_turns=%d facts=%d",
+            sid, decision.user_intent, model, memory_turns, facts_n,
+        )
+
+        client = AsyncOpenAI(api_key=s.OPENAI_API_KEY)
+        system = build_eric_final_response_system_prompt()
+
+        try:
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.65,
+                    max_tokens=150,
+                ),
+                timeout=timeout,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            logger.info(
+                "final_llm_response sid=%s intent=%s chars=%d",
+                sid, decision.user_intent, len(text),
+            )
+            return text
+        except Exception:
+            logger.exception("final_llm_error sid=%s", sid)
+            return ""
+
+
 _composer: MainLLMComposer | None = None
 
 

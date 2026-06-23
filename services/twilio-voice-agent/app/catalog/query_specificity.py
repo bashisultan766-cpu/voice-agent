@@ -68,8 +68,82 @@ _MIN_CANDIDATE_SCORE = 4
 
 _SINGLE_WORD_NON_TITLES = frozenset({
     "provide", "title", "author", "something", "payment", "order", "link", "bill",
-    "please", "hello", "help",
+    "please", "hello", "help", "coffee", "office", "recipe", "weather", "politics",
 })
+
+_HOW_TO_PAT = re.compile(
+    r"\b("
+    r"how (?:can|do) (?:i|you) (?:make|cook|brew|prepare)|"
+    r"how to (?:make|cook|brew|prepare)|"
+    r"can you tell me how|tell me (?:the )?recipe|"
+    r"what(?:'s| is) the recipe"
+    r")\b",
+    re.I,
+)
+_OFF_DOMAIN_TOPIC_PAT = re.compile(
+    r"\b("
+    r"coffee|recipe|cooking|weather|politics|president|trump|"
+    r"who is (?:donald )?trump|who won (?:the )?game|"
+    r"what(?:'s| is) the weather|how(?:'s| is) the weather|"
+    r"sports news|nba|nfl"
+    r")\b",
+    re.I,
+)
+_EXPLICIT_BOOK_CONTEXT_PAT = re.compile(
+    r"\b("
+    r"books? about|books? on|book called|book titled|do you have (?:a )?book|"
+    r"search (?:for )?books?|find (?:a )?book|need (?:the )?book|"
+    r"(?:called|titled|named)|isbn|title is|author is|written by"
+    r")\b",
+    re.I,
+)
+_MISTRANSCRIPTION_TITLE_PAT = re.compile(
+    r"^(?:black|white|hot|cold)\s+(?:office|coffee|water|tea)$",
+    re.I,
+)
+
+
+def is_general_how_to_query(query: str) -> bool:
+    """True for cooking/recipe/how-to questions that must not trigger product search."""
+    return bool(_HOW_TO_PAT.search((query or "").strip()))
+
+
+def has_explicit_book_search_context(query: str) -> bool:
+    """True when the caller explicitly asks about books in the catalog."""
+    return bool(_EXPLICIT_BOOK_CONTEXT_PAT.search((query or "").strip()))
+
+
+def is_off_domain_non_book_query(query: str) -> bool:
+    """
+    True for general factual/off-domain topics without explicit book-search context.
+
+    Examples: 'who is Donald Trump', 'how can I make black coffee', 'black office'.
+    """
+    text = (query or "").strip()
+    if not text:
+        return False
+    if is_general_how_to_query(text):
+        return True
+    if _MISTRANSCRIPTION_TITLE_PAT.match(text):
+        return True
+    if _OFF_DOMAIN_TOPIC_PAT.search(text) and not has_explicit_book_search_context(text):
+        return True
+    return False
+
+
+def should_block_router_product_search(query: str, router_intent: str = "") -> bool:
+    """Block router_hint product search for how-to and off-domain non-book queries."""
+    if router_intent not in ("book_title_search", "product_search", "explicit_title_search", "author_search"):
+        return False
+    if is_off_domain_non_book_query(query):
+        return True
+    if is_general_how_to_query(query):
+        return True
+    if not has_explicit_book_search_context(query) and _MISTRANSCRIPTION_TITLE_PAT.match(
+        _normalize_query(query)
+    ):
+        return True
+    return False
 
 
 def _normalize_query(query: str) -> str:
@@ -95,6 +169,12 @@ def score_product_query_specificity(query: str) -> QuerySpecificity:
 
     if not q:
         return QuerySpecificity(0, QuerySpecificityLevel.GENERIC, False, False, "empty")
+
+    if is_off_domain_non_book_query(raw) or is_general_how_to_query(raw):
+        return QuerySpecificity(0, QuerySpecificityLevel.GENERIC, False, False, "off_domain_or_how_to")
+
+    if _MISTRANSCRIPTION_TITLE_PAT.match(q) and not has_explicit_book_search_context(raw):
+        return QuerySpecificity(0, QuerySpecificityLevel.GENERIC, False, False, "mistranscription")
 
     digits = re.sub(r"\D", "", raw)
     if is_isbn(digits) or (len(digits) >= 10 and normalize_isbn(digits)):

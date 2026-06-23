@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Eric Agent Runtime configuration (v4.11). Safe — no secrets printed."""
+"""Check Eric Agent Runtime configuration (v4.12). Safe — no secrets printed."""
 from __future__ import annotations
 
 import sys
@@ -26,6 +26,11 @@ def main() -> int:
     print(f"Final model:         {s.VOICE_FINAL_MODEL}")
     print(f"Memory turns:        {s.VOICE_MEMORY_TURNS}")
     print(f"LLM brain enabled:   {s.VOICE_LLM_BRAIN_ENABLED}")
+    print(f"Final response mode: {s.VOICE_FINAL_RESPONSE_MODE}")
+    print(f"Final LLM for unknown: {'yes' if s.VOICE_FINAL_LLM_FOR_UNKNOWN else 'no'}")
+    print(f"Final LLM for small talk: {'yes' if s.VOICE_FINAL_LLM_FOR_SMALL_TALK else 'no'}")
+    print(f"Welcome greeting enabled: {'yes' if s.VOICE_WELCOME_GREETING_ENABLED else 'no'}")
+    print(f"Welcome greeting configured: {'yes' if bool(s.VOICE_WELCOME_GREETING.strip()) else 'no'}")
     print(f"TTS provider:        {s.VOICE_TTS_PROVIDER}")
     print(f"Policy loaded:       {'yes' if len(policy) > 100 else 'no'}")
     print(f"Knowledge base:      {'yes' if is_knowledge_base_loaded() else 'no'}")

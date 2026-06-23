@@ -24,6 +24,7 @@ os.environ.setdefault("PUBLIC_BASE_URL", "https://test.example.com")
 from app.pipeline.engine import RealtimePipelineEngine
 from app.workers.base import WorkerResult, WorkerBundle
 from app.state.models import SessionState, SafeCallerContext
+from app.tests.eric_composer_mocks import patch_eric_runtime_composer
 
 
 def _make_session(**kwargs) -> SessionState:
@@ -86,8 +87,7 @@ class TestWorkerPathForToolIntents:
             yield {"type": "text_token", "token": "Found it."}
             yield {"type": "turn_done"}
 
-        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=bundle)), \
-             patch.object(engine._composer, "stream_response", fake_stream):
+        with patch_eric_runtime_composer(engine, stream_fn=fake_stream, worker_bundle=bundle):
             sent = await _run_turn(engine, session, text)
 
         return sent, received_bundles
@@ -192,13 +192,12 @@ class TestAllIntentsUseWorkerPath:
             agent_called.append(True)
             yield {"type": "turn_done"}
 
-        async def fake_stream(sess, text, ir, wb, ctx, settings=None):
+        async def fake_final(*args, **kwargs):
             composer_called.append(True)
-            yield {"type": "turn_done"}
+            return "I can help with that."
 
         with patch("app.pipeline.engine.run_agent_turn", fake_run_agent_turn), \
-             patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
-             patch.object(engine._composer, "stream_response", fake_stream):
+             patch_eric_runtime_composer(engine, final_fn=fake_final):
             await _run_turn(engine, session, "xkcd foo bar baz")
 
         assert not agent_called, "run_agent_turn must NOT be called in v4.2"

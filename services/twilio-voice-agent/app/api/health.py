@@ -13,6 +13,8 @@ async def health() -> dict:
         "runtime": "twilio_conversation_relay",
         "runtime_mode": s.VOICE_AGENT_RUNTIME_MODE,
         "llm_brain_enabled": s.VOICE_LLM_BRAIN_ENABLED,
+        "final_response_mode": s.VOICE_FINAL_RESPONSE_MODE,
+        "welcome_greeting_enabled": s.VOICE_WELCOME_GREETING_ENABLED,
         "tts_provider": s.VOICE_TTS_PROVIDER,
         "voice_configured": bool(s.VOICE_ID) if s.VOICE_TTS_PROVIDER.lower() == "elevenlabs" else True,
         "memory_turns": s.VOICE_MEMORY_TURNS,

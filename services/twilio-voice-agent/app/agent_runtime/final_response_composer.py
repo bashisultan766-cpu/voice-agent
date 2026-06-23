@@ -1,7 +1,7 @@
 """
-Final LLM Composer — the only natural speaker (v4.11).
+Final LLM Composer — the only natural speaker (v4.12).
 
-Deterministic templates first; LLM streaming delegated to MainLLMComposer.
+Critical business templates first; conversational turns use Final LLM (llm_first mode).
 No direct openai import in this module.
 """
 from __future__ import annotations
@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Optional
 
 from .eric_master_policy import (
     block_processing_fee,
-    build_eric_final_response_system_prompt,
     get_deterministic_template,
     sanitize_policy_leak,
 )
@@ -27,22 +26,75 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_EMERGENCY_FALLBACK = "I'm here. How can I help you with SureShot Books today?"
 
-def _deterministic_response(
+_CRITICAL_PLAN_ACTIONS = frozenset({
+    "payment_sent", "payment_blocked", "payment_already_sent",
+    "payment_flow", "ask_send_confirmation", "confirm_email",
+    "facility_unknown", "backorder", "address_update",
+    "clarify_vague_book", "out_of_domain",
+})
+
+_LLM_FIRST_INTENTS = frozenset({
+    "small_talk", "identity_question", "agent_name_question",
+    "company_origin_question", "company_question", "job_question",
+    "what_do_you_do", "keepalive_question", "small_talk_keepalive",
+    "frustration_repair", "out_of_domain_question", "vague_book_request",
+    "repeat_clarification", "unknown", "greeting", "store_info_question",
+})
+
+
+def _is_llm_first_mode(settings) -> bool:
+    return (getattr(settings, "VOICE_FINAL_RESPONSE_MODE", "llm_first") or "llm_first") == "llm_first"
+
+
+def _should_use_final_llm(settings, decision: SupervisorDecision, intent: str) -> bool:
+    if not _is_llm_first_mode(settings):
+        return False
+
+    if intent in (
+        "email_provided", "email_confirmation", "spell_email_request",
+        "payment_execute", "send_payment_link", "address_update",
+    ):
+        return False
+
+    sup = decision.user_intent
+    if sup in ("payment_link", "payment_execute", "address_update", "email_capture", "email_spell"):
+        return False
+
+    if sup == "unknown" and settings.VOICE_FINAL_LLM_FOR_UNKNOWN:
+        return True
+    if sup == "out_of_domain" and settings.VOICE_FINAL_LLM_FOR_OUT_OF_DOMAIN:
+        return True
+    if sup in ("small_talk", "identity", "company_question", "greeting") and settings.VOICE_FINAL_LLM_FOR_SMALL_TALK:
+        return True
+    if sup in ("repeat_clarification", "vague_book_request") and settings.VOICE_FINAL_LLM_FOR_CLARIFICATION:
+        return True
+    if sup == "frustration_repair":
+        return True
+
+    if intent in _LLM_FIRST_INTENTS:
+        if intent == "out_of_domain_question" and not settings.VOICE_FINAL_LLM_FOR_OUT_OF_DOMAIN:
+            return False
+        if intent == "unknown" and not settings.VOICE_FINAL_LLM_FOR_UNKNOWN:
+            return False
+        if intent in ("small_talk", "identity_question", "agent_name_question", "greeting"):
+            return settings.VOICE_FINAL_LLM_FOR_SMALL_TALK
+        if intent in ("vague_book_request", "repeat_clarification"):
+            return settings.VOICE_FINAL_LLM_FOR_CLARIFICATION
+        return True
+
+    return False
+
+
+def _critical_deterministic_response(
     session: "SessionState",
     decision: SupervisorDecision,
     intent_result: "IntentResult",
     fact_packet: FactPacket,
 ) -> Optional[str]:
-    """Exact templates for business-critical cases."""
-    from ..brain.eric_policy import get_small_talk_response, get_response_template
-
+    """Exact templates only for business-critical cases."""
     intent = intent_result.intent
-
-    if decision.user_intent == "out_of_domain":
-        if "sport" in (intent_result.entities.get("product_phrase") or "").lower():
-            return get_deterministic_template("sports_redirect")
-        return get_deterministic_template("out_of_domain")
 
     pfr = getattr(session, "payment_flow_result", {}) or {}
     if pfr.get("safe_message") and pfr.get("ran"):
@@ -51,7 +103,7 @@ def _deterministic_response(
     if pfr.get("email_sent"):
         return get_deterministic_template("payment_sent")
 
-    if intent == "address_update":
+    if intent == "address_update" or decision.user_intent == "address_update":
         return get_deterministic_template("address_update")
 
     plan = getattr(session, "response_plan", {}) or {}
@@ -60,19 +112,8 @@ def _deterministic_response(
 
     if action == "subtotal" and say:
         return say
-    if "subtotal" in say.lower() and "shipping" in say.lower():
+    if say and "subtotal" in say.lower() and "shipping" in say.lower():
         return say
-
-    if intent in (
-        "small_talk", "identity_question", "agent_name_question",
-        "company_origin_question", "company_question", "job_question",
-        "what_do_you_do", "keepalive_question", "small_talk_keepalive",
-        "frustration_repair", "out_of_domain_question", "vague_book_request",
-        "greeting",
-    ):
-        text = get_small_talk_response(intent, session)
-        if text:
-            return text
 
     if intent == "email_provided":
         conf = getattr(session, "email_confidence", "medium") or "medium"
@@ -90,17 +131,25 @@ def _deterministic_response(
         if email:
             return build_email_spell_only(email)
 
-    if decision.one_question_to_ask and decision.response_strategy == "ask_one_question":
-        return decision.one_question_to_ask
-
-    if say and action in (
-        "payment_sent", "payment_blocked", "clarify_vague_book",
-        "out_of_domain", "facility_unknown", "backorder", "address_update",
-    ):
+    if say and action in _CRITICAL_PLAN_ACTIONS:
         return say
 
+    if decision.user_intent == "book_search" and "red river vengeance" in (
+        (intent_result.entities.get("product_phrase") or "").lower()
+    ):
+        return get_deterministic_template("red_river_vengeance")
+
+    red_river_phrase = intent_result.entities.get("product_phrase", "") or ""
+    if "red river vengeance" in red_river_phrase.lower():
+        return get_deterministic_template("red_river_vengeance")
+
     if fact_packet.safe_response_hints:
-        return fact_packet.safe_response_hints[0]
+        hint = fact_packet.safe_response_hints[0]
+        if hint and any(
+            kw in hint.lower()
+            for kw in ("payment link", "jessica", "subtotal", "not in stock", "backorder")
+        ):
+            return hint
 
     return None
 
@@ -125,10 +174,13 @@ class FinalResponseComposer:
         worker_bundle: "WorkerBundle",
         caller_context=None,
     ) -> tuple[str, str]:
-        """Returns (response_text, source) where source is 'deterministic' or 'llm'."""
+        """Returns (response_text, source) where source is 'deterministic', 'llm', or 'hold'."""
         sid = session.call_sid[:6]
 
-        det = _deterministic_response(session, decision, intent_result, fact_packet)
+        if not decision.should_answer_now:
+            return "", "hold"
+
+        det = _critical_deterministic_response(session, decision, intent_result, fact_packet)
         if det:
             text = block_processing_fee(det)
             text, _ = sanitize_policy_leak(text)
@@ -138,13 +190,82 @@ class FinalResponseComposer:
             )
             return text, "deterministic"
 
-        if not decision.should_answer_now:
-            return "", "hold"
-
         session.last_supervisor_decision = decision
         session.last_eric_memory_context = memory.to_composer_context()
         session.last_eric_fact_context = fact_packet.to_composer_context()
 
+        if _should_use_final_llm(self._settings, decision, intent_result.intent):
+            text = await self._composer.compose_final_response(
+                session,
+                caller_text,
+                decision,
+                intent_result,
+                memory,
+                fact_packet,
+                worker_bundle,
+            )
+            if text:
+                text = block_processing_fee(text)
+                text, _ = sanitize_policy_leak(text)
+                from ..safety.response_sanitizer import sanitize_customer_response
+                result = sanitize_customer_response(
+                    text,
+                    intent=intent_result.intent,
+                    call_sid=session.call_sid,
+                    payment_sent=bool(
+                        (getattr(session, "payment_flow_result", {}) or {}).get("email_sent")
+                    ),
+                )
+                text = result.text
+                logger.info(
+                    "eric_final_response sid=%s intent=%s source=llm",
+                    sid, decision.user_intent,
+                )
+                return text, "llm"
+
+            logger.info(
+                "final_llm_fallback sid=%s reason=empty_response intent=%s",
+                sid, decision.user_intent,
+            )
+            text = _EMERGENCY_FALLBACK
+            text = block_processing_fee(text)
+            text, _ = sanitize_policy_leak(text)
+            logger.info(
+                "eric_final_response sid=%s intent=%s source=deterministic",
+                sid, decision.user_intent,
+            )
+            return text, "deterministic"
+
+        text = await self._legacy_compose_fallback(
+            session, caller_text, decision, intent_result, worker_bundle, caller_context,
+        )
+        source = "llm" if text and _is_llm_first_mode(self._settings) else "deterministic"
+        if not text:
+            logger.info(
+                "final_llm_fallback sid=%s reason=all_paths_failed intent=%s",
+                sid, decision.user_intent,
+            )
+            text = _EMERGENCY_FALLBACK
+            source = "deterministic"
+
+        text = block_processing_fee(text)
+        text, _ = sanitize_policy_leak(text)
+        logger.info(
+            "eric_final_response sid=%s intent=%s source=%s",
+            sid, decision.user_intent, source,
+        )
+        return text, source
+
+    async def _legacy_compose_fallback(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        decision: SupervisorDecision,
+        intent_result: "IntentResult",
+        worker_bundle: "WorkerBundle",
+        caller_context,
+    ) -> str:
+        """Delegate to MainLLMComposer stream path when Final LLM unavailable."""
         tokens: list[str] = []
         try:
             async for event in self._composer.stream_response(
@@ -159,35 +280,16 @@ class FinalResponseComposer:
                     tok = event.get("token", "")
                     if tok:
                         tokens.append(tok)
-            text = "".join(tokens).strip()
-            source = "llm" if text else "deterministic"
+            return "".join(tokens).strip()
         except Exception:
-            logger.exception("final_composer_delegate_error sid=%s", sid)
+            logger.exception("final_composer_delegate_error sid=%s", session.call_sid[:6])
             from ..pipeline.response_guard import apply_response_guard
-            text = apply_response_guard(
-                "",
-                intent_result.intent,
-                call_sid=session.call_sid,
-                response_plan=getattr(session, "response_plan", None),
-            ) or "How can I help you with SureShot Books?"
-            source = "deterministic"
-
-        if not text:
-            from ..pipeline.response_guard import apply_response_guard
-            text = apply_response_guard(
+            return apply_response_guard(
                 "",
                 intent_result.intent,
                 call_sid=session.call_sid,
                 response_plan=getattr(session, "response_plan", None),
             ) or ""
-
-        text = block_processing_fee(text)
-        text, _ = sanitize_policy_leak(text)
-        logger.info(
-            "eric_final_response sid=%s intent=%s source=%s",
-            sid, decision.user_intent, source,
-        )
-        return text, source
 
 
 _composer: FinalResponseComposer | None = None
@@ -198,3 +300,7 @@ def get_final_composer(settings=None, composer=None) -> FinalResponseComposer:
     if _composer is None or composer is not None:
         _composer = FinalResponseComposer(settings=settings, composer=composer)
     return _composer
+
+
+# Backwards-compatible alias for tests and patches
+_deterministic_response = _critical_deterministic_response

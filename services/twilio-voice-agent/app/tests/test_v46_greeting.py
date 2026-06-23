@@ -33,7 +33,7 @@ def _session(**kwargs) -> SessionState:
 class TestSureShotGreetingText:
     def test_new_session_greeting(self):
         assert GREETING_NEW == (
-            "Hello, welcome to SureShot Books. How can I help you today?"
+            "Hello! Thank you for calling SureShot Books. How can I help you today?"
         )
 
     def test_returning_greeting(self):

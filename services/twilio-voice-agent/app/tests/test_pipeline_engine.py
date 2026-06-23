@@ -22,6 +22,7 @@ from app.pipeline.router import IntentResult
 from app.pipeline.tasks import Intent
 from app.state.models import SessionState, SafeCallerContext
 from app.workers.base import WorkerBundle, WorkerResult
+from app.tests.eric_composer_mocks import patch_eric_runtime_composer
 
 
 def _empty_bundle() -> WorkerBundle:
@@ -75,8 +76,7 @@ class TestHandleTurnBasic:
             yield {"type": "text_token", "token": " there"}
             yield {"type": "turn_done"}
 
-        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
-             patch.object(engine._composer, "stream_response", fake_stream):
+        with patch_eric_runtime_composer(engine, stream_fn=fake_stream, final_text="Hello there"):
             session = _make_session()
             sent = await _run_turn_capture(engine, session, "hi")
 
@@ -248,9 +248,10 @@ class TestCallerContextForwarding:
 
         ctx = SafeCallerContext(is_returning_caller=True, caller_name="Alice")
 
-        with patch.object(engine._orchestrator, "run", AsyncMock(return_value=_empty_bundle())), \
-             patch.object(engine._composer, "stream_response", capturing_stream), \
-             patch("app.agent_runtime.final_response_composer._deterministic_response", return_value=None):
+        with patch_eric_runtime_composer(engine, stream_fn=capturing_stream), patch(
+            "app.agent_runtime.final_response_composer._deterministic_response",
+            return_value=None,
+        ):
             session = _make_session()
             await _run_turn_capture(engine, session, "isbn 9780441172719", caller_context=ctx)
 
