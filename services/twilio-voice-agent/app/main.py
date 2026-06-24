@@ -18,6 +18,10 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.LOG_LEVEL)
     settings.validate_production()
+    # Prove OpenAI configuration at startup (no secrets logged).
+    from .agent_runtime.openai_health import log_startup_health
+
+    log_startup_health(settings)
     if settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS:
         _log.info(
             "live_openai_tools_disabled=true voice_runtime=%s",

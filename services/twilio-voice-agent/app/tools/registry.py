@@ -30,6 +30,10 @@ _TOOL_MAP = {
     "SendPaymentLink":               _st.SendPaymentLink,
     "GetCallerInfo":                 _st.GetCallerInfo,
     "SaveCallerName":                _st.SaveCallerName,
+    "SearchBookByISBN":              _st.SearchBookByISBN,
+    "SearchBookByTitle":             _st.SearchBookByTitle,
+    "SearchCustomerByPhone":         _st.SearchCustomerByPhone,
+    "SearchOrdersByPhone":           _st.SearchOrdersByPhone,
     # Legacy aliases (ElevenLabs prompt mentions these)
     "SureShotBooksSku":              _st.SureShotBooksSku,
     "SureShotBooksProductFetcher":   _st.SureShotBooksProductFetcher,
@@ -58,6 +62,9 @@ _SESSION_AWARE = frozenset({
     "SendPaymentLink",
     "GetCallerInfo",
     "SaveCallerName",
+    "SearchBookByISBN",
+    "SearchCustomerByPhone",
+    "SearchOrdersByPhone",
     # Backward-compat names
     "lookup_order",
     "get_refund_status",

@@ -107,6 +107,14 @@ class EricAgentRuntime:
         sid = session.call_sid[:6]
         t0 = time.monotonic()
 
+        # v4.17: LLM-first runtime — single consolidated brain.
+        if getattr(settings, "VOICE_AGENT_RUNTIME_MODE", "") == "llm_first":
+            from .llm_first_runtime import get_llm_first_runtime
+
+            return await get_llm_first_runtime(settings).handle_turn(
+                session, caller_text, send, caller_context=caller_context, turn=turn,
+            )
+
         # v4.14: Main LLM Agent mode — direct LLM decision path
         if is_main_llm_agent_mode(settings):
             if is_brain_orchestrator_mode(settings):

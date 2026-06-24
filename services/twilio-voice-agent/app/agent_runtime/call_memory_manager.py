@@ -154,12 +154,14 @@ class CallMemoryManager:
             record_user_turn,
             record_assistant_turn,
             extract_turn_facts,
+            schedule_persist_call_memory,
         )
 
         record_user_turn(session, user_text, intent)
         if assistant_text:
             record_assistant_turn(session, assistant_text)
         extract_turn_facts(session, intent, user_text)
+        schedule_persist_call_memory(session)
 
     @staticmethod
     def log_supervisor_use(session: "SessionState") -> None:

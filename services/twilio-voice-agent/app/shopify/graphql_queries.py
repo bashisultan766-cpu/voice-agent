@@ -112,6 +112,34 @@ query LookupOrders($query: String!, $first: Int!) {
 }
 """
 
+SEARCH_CUSTOMERS = """
+query SearchCustomers($query: String!, $first: Int!) {
+  customers(first: $first, query: $query) {
+    edges {
+      node {
+        id
+        firstName
+        lastName
+        phone
+        email
+        numberOfOrders
+        defaultAddress { phone }
+        orders(first: 3, sortKey: CREATED_AT, reverse: true) {
+          edges {
+            node {
+              name
+              displayFinancialStatus
+              displayFulfillmentStatus
+              createdAt
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 SEARCH_VARIANTS_BY_BARCODE = """
 query SearchVariantsByBarcode($barcode: String!, $first: Int!) {
   productVariants(first: $first, query: $barcode) {

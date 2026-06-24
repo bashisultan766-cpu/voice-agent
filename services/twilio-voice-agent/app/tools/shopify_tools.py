@@ -984,20 +984,44 @@ async def SendPaymentLink(
 
 async def GetCallerInfo(
     session: Optional["SessionState"] = None,
+    *,
+    allow_live: bool = True,
 ) -> str:
-    """Return safe caller context from the current session."""
+    """
+    Return safe caller context.
+
+    Recognises returning callers by phone number (friendly recognition only —
+    never full verification, never private details from caller-ID alone).
+    """
     if not session:
         return json.dumps({
             "caller_recognized": False,
             "message": "No session available.",
         })
 
+    # Enrich from the caller-identity resolver when we don't yet have a name.
+    identity: dict = {}
+    phone = getattr(session, "from_number", "") or ""
+    if phone and not getattr(session, "caller_name", ""):
+        try:
+            from ..agent_runtime.caller_identity import apply_to_session, get_caller_info
+
+            identity = await get_caller_info(phone, allow_live=allow_live)
+            apply_to_session(session, identity)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("GetCallerInfo identity enrichment skipped: %s", exc)
+
+    caller_name = getattr(session, "caller_name", "") or identity.get("allowed_greeting_name", "")
+
     return json.dumps({
-        "caller_recognized": bool(getattr(session, "caller_name", "")),
-        "caller_name": getattr(session, "caller_name", "") or None,
+        "caller_recognized": bool(caller_name),
+        "caller_name": caller_name or None,
+        "phone_match_confidence": identity.get("phone_match_confidence", "low"),
+        # Verification flags reflect THIS call only — phone match is NOT verification.
         "verified_email": bool(getattr(session, "verified_email", False)),
         "verified_phone": bool(getattr(session, "verified_phone", False)),
         "last_order_number": getattr(session, "last_order_number", "") or None,
+        "recent_orders": identity.get("recent_orders", []),
         "confirmed_email_masked": (
             _mask(session.confirmed_email)
             if getattr(session, "confirmed_email", "")
@@ -1024,6 +1048,74 @@ async def SaveCallerName(
         "success": True,
         "name": clean_name,
         "message": f"Got it, thank you {clean_name}. How can I help you today?",
+    })
+
+
+async def SearchBookByISBN(isbn: str, session: Optional["SessionState"] = None) -> str:
+    """
+    Find a book by ISBN. The ISBN is checksum-validated first; partial fragments
+    (e.g. "9780") are rejected so they can never return the wrong product.
+    """
+    from .isbn import extract_isbn_candidate, looks_like_isbn_fragment
+
+    valid = extract_isbn_candidate(isbn or "")
+    if not valid:
+        if looks_like_isbn_fragment(isbn or ""):
+            return json.dumps({
+                "found": False,
+                "needs_more_digits": True,
+                "message": "That looks like a partial ISBN. Could you read the full ISBN, all 13 digits?",
+            })
+        return json.dumps({
+            "found": False,
+            "message": "That doesn't look like a complete ISBN. Could you read the full ISBN slowly?",
+        })
+    return await search_products(query=valid, limit=3)
+
+
+async def SearchBookByTitle(title: str, limit: int = 5) -> str:
+    """Find a book by title."""
+    if not title or not title.strip():
+        return json.dumps({"found": False, "message": "What is the title of the book?"})
+    return await search_products(query=title.strip(), limit=limit)
+
+
+async def SearchCustomerByPhone(
+    phone: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Find a Shopify customer by phone (friendly recognition only — no PII)."""
+    from ..agent_runtime.caller_identity import get_caller_info
+
+    raw = phone or (getattr(session, "from_number", "") if session else "")
+    if not raw:
+        return json.dumps({"known": False, "message": "No phone number available."})
+    info = await get_caller_info(raw)
+    return json.dumps({
+        "known": info["known"],
+        "customer_id": info["customer_id"],
+        "first_name": info["first_name"],
+        "phone_match_confidence": info["phone_match_confidence"],
+        "recent_orders": info["recent_orders"],
+    })
+
+
+async def SearchOrdersByPhone(
+    phone: Optional[str] = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Find recent orders for a caller's phone (safe summaries only)."""
+    from ..agent_runtime.caller_identity import get_caller_info
+
+    raw = phone or (getattr(session, "from_number", "") if session else "")
+    if not raw:
+        return json.dumps({"found": False, "message": "No phone number available."})
+    info = await get_caller_info(raw)
+    orders = info.get("recent_orders", [])
+    return json.dumps({
+        "found": bool(orders),
+        "count": len(orders),
+        "orders": orders,
     })
 
 

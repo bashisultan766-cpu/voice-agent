@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _MAX_TURNS = 50
 _VERBATIM_TURNS = 12
 _FORBIDDEN_ROLES = frozenset({"tool", "function"})
+_SESSION_SNAPSHOT_TTL = 60 * 60 * 24  # 24 hours
 
 
 @dataclass
@@ -336,6 +337,112 @@ def record_brain_fact(session: "SessionState", intent: str) -> None:
         logger.info("memory_fact_saved sid=%s type=facility", session.call_sid[:6])
 
 
+_NAME_PAT = re.compile(
+    r"\b(?:my name is|this is|i am|i'm|it's|name's|call me)\s+"
+    r"([A-Z][a-zA-Z'\-]{1,20})(?:\s+([A-Z][a-zA-Z'\-]{1,20}))?",
+    re.IGNORECASE,
+)
+_NAME_STOPWORDS = frozenset({
+    "looking", "trying", "calling", "wondering", "not", "sorry", "good", "fine",
+    "okay", "ok", "here", "interested", "just", "actually", "still", "going",
+    "the", "a", "an", "yes", "no", "done", "ready", "back",
+})
+_EMAIL_PAT = re.compile(r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}", re.IGNORECASE)
+_QTY_PAT = re.compile(
+    r"\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"(?:cop(?:y|ies)|books?|of them|of these|of those)\b",
+    re.IGNORECASE,
+)
+_ORDER_PAT = re.compile(
+    r"(?:order\s*(?:number|no\.?|#)?\s*(?:is|:)?\s*#?|#)\s*(\d{3,})",
+    re.IGNORECASE,
+)
+_FACILITY_PAT = re.compile(
+    r"\b(facility|inmate|prison|correctional|jail|detention|institution|"
+    r"booking number|inmate number|cell block|unit)\b",
+    re.IGNORECASE,
+)
+_PAYMENT_PAT = re.compile(
+    r"\b(payment link|send (?:me )?the link|pay(?:ment)? by (?:email|link)|checkout link)\b",
+    re.IGNORECASE,
+)
+_WORD_NUM = {
+    "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+}
+
+
+def extract_durable_facts(session: "SessionState", caller_text: str) -> int:
+    """
+    Extract durable, customer-safe facts from a single caller utterance.
+
+    Returns the number of new facts recorded. Never stores raw email/phone in
+    plaintext facts (email is recorded as a flag; ISBNs are non-PII).
+    """
+    text = (caller_text or "").strip()
+    if not text:
+        return 0
+    state = get_call_memory(session)
+    before = len(state.important_facts)
+
+    # Caller name
+    m = _NAME_PAT.search(text)
+    if m:
+        first = m.group(1)
+        if first and first.lower() not in _NAME_STOPWORDS:
+            name = first
+            if m.group(2) and m.group(2).lower() not in _NAME_STOPWORDS:
+                name = f"{first} {m.group(2)}"
+            _append_fact(state, f"Caller name: {name}")
+            if not getattr(session, "caller_name", ""):
+                try:
+                    session.caller_name = name[:100]
+                except Exception:  # noqa: BLE001
+                    pass
+
+    # Preferred email (flag only — never store the address in a fact)
+    if _EMAIL_PAT.search(text):
+        _append_fact(state, "Caller provided an email address")
+        logger.info("memory_fact_saved sid=%s type=email_mentioned", session.call_sid[:6])
+
+    # ISBNs mentioned (checksum-validated only — no fragments)
+    try:
+        from ..tools.isbn import extract_isbn_candidate
+
+        isbn = extract_isbn_candidate(text)
+        if isbn:
+            record_isbn(session, isbn)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Quantity
+    qm = _QTY_PAT.search(text)
+    if qm:
+        qty = _WORD_NUM.get(qm.group(1).lower(), qm.group(1))
+        _append_fact(state, f"Quantity: {qty}")
+
+    # Order number
+    om = _ORDER_PAT.search(text)
+    if om:
+        _append_fact(state, f"Order number mentioned: {om.group(1)}")
+
+    # Facility / inmate context
+    if _FACILITY_PAT.search(text):
+        _append_fact(state, "Facility/inmate context mentioned")
+
+    # Payment link intent
+    if _PAYMENT_PAT.search(text):
+        _append_fact(state, "Payment link requested")
+
+    new_count = len(state.important_facts) - before
+    if new_count > 0:
+        logger.info(
+            "durable_facts_extracted sid=%s new=%d total=%d",
+            session.call_sid[:6], new_count, len(state.important_facts),
+        )
+    return new_count
+
+
 def extract_turn_facts(
     session: "SessionState",
     intent: str,
@@ -344,6 +451,9 @@ def extract_turn_facts(
     """Extract important facts after every turn."""
     state = get_call_memory(session)
     sync_from_session(session)
+
+    # Durable, content-derived facts (name, email, ISBN, quantity, order, ...).
+    extract_durable_facts(session, caller_text)
 
     lower = (caller_text or "").lower()
     if "already told" in lower or "i gave you" in lower:
@@ -356,10 +466,71 @@ def extract_turn_facts(
     if getattr(session, "last_order_number", ""):
         _append_fact(state, f"Order number: {session.last_order_number}")
 
+    if getattr(session, "caller_name", ""):
+        _append_fact(state, f"Caller name: {session.caller_name}")
+
     mood = getattr(getattr(session, "dialogue", None), "customer_mood", "")
     if mood == "frustrated":
         state.customer_mood = "frustrated"
         _append_fact(state, "Caller frustration noted")
+
+
+def build_memory_snapshot(session: "SessionState") -> dict:
+    """Safe, inspectable snapshot of working memory (no raw PII)."""
+    state = get_call_memory(session)
+    return {
+        "call_sid": getattr(session, "call_sid", ""),
+        "turn_count": len(state.user_turns),
+        "assistant_turns": len(state.assistant_turns),
+        "facts": list(state.important_facts[-40:]),
+        "facts_count": len(state.important_facts),
+        "isbns": list(state.isbns_provided[-10:]),
+        "cart_facts": list(state.cart_facts[-5:]),
+        "email_state": state.email_state,
+        "order_context": state.order_context,
+        "facility_context": state.facility_context,
+        "current_topic": state.current_topic,
+        "customer_mood": state.customer_mood,
+        "caller_name": getattr(session, "caller_name", ""),
+        "payment_flow_status": getattr(session, "payment_flow_status", "idle") or "idle",
+        "rolling_summary": state.rolling_summary[:600],
+    }
+
+
+def memory_snapshot_key(call_sid: str) -> str:
+    return f"caller:memory:{call_sid}"
+
+
+async def persist_call_memory(session: "SessionState") -> None:
+    """Best-effort persist of the working-memory snapshot for diagnostics."""
+    from ..state.session_store import cache_set
+
+    sid = getattr(session, "call_sid", "")
+    if not sid:
+        return
+    try:
+        await cache_set(memory_snapshot_key(sid), build_memory_snapshot(session), ttl=_SESSION_SNAPSHOT_TTL)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("persist_call_memory skipped: %s", exc)
+
+
+def schedule_persist_call_memory(session: "SessionState") -> None:
+    """Schedule snapshot persistence without blocking the turn (if loop running)."""
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(persist_call_memory(session))
+
+
+async def load_call_memory_snapshot(call_sid: str) -> Optional[dict]:
+    from ..state.session_store import cache_get
+
+    if not call_sid:
+        return None
+    return await cache_get(memory_snapshot_key(call_sid))
 
 
 def safe_history_append(session: "SessionState", role: str, content: str) -> None:

@@ -328,6 +328,72 @@ Via PM2 (production):
 pm2 start ecosystem.config.cjs --only twilio-voice-agent
 ```
 
+## LLM-First Runtime (v4.17)
+
+The agent is an LLM-first voice brain: every caller utterance goes through OpenAI
+unless it is an ultra-fast deterministic event (welcome / interrupt / DTMF /
+no-speech) or a trivially deterministic confirmation. The LLM always receives the
+system prompt pack, last 50 turns, durable memory facts, the caller profile
+summary, current cart/session state, the available Shopify tools, and a safe
+business policy. Business facts (price, stock, orders, refunds, tracking,
+facility approval, payment links) come from tools only — never from guessing.
+
+Enable the consolidated runtime by setting in `.env`:
+```bash
+VOICE_AGENT_RUNTIME_MODE=llm_first
+```
+(The default `main_llm_agent` + `VOICE_BRAIN_ORCHESTRATOR_ENABLED=true` path is
+also LLM-first; `llm_first` simply routes through the single
+`app/agent_runtime/llm_first_runtime.py` consolidation seam.)
+
+### Operational checks (safe — never print secrets)
+
+```bash
+# Verify OpenAI is configured, the model is reachable, and a tiny completion works.
+python -m app.scripts.check_openai_runtime
+
+# Inspect persisted call memory for a specific Call SID.
+python -m app.scripts.inspect_call_memory --sid <CALL_SID>
+
+# Verify agent runtime + Shopify config.
+python scripts/check_agent_runtime.py
+```
+
+`check_openai_runtime` exits non-zero and fails loudly if the API key is missing
+or the model/quota is unavailable. No keys, tokens, or prompts are ever printed.
+
+## Deployment (VPS)
+
+```bash
+# 1. Pull latest code (never commit .env — it stays on the server)
+cd /path/to/services/twilio-voice-agent
+git pull
+
+# 2. Install / update dependencies
+.venv/bin/pip install -r requirements.txt
+
+# 3. Run migrations if needed (DATABASE_URL-backed call logs only)
+#    (No schema migrations are required for the Redis-backed memory path.)
+
+# 4. Prove OpenAI is healthy BEFORE restarting (fails loudly on missing key/quota)
+.venv/bin/python -m app.scripts.check_openai_runtime
+
+# 5. Verify agent runtime + Shopify configuration
+.venv/bin/python scripts/check_agent_runtime.py
+
+# 6. Restart the process manager
+pm2 restart twilio-voice-agent
+
+# 7. Tail logs and confirm the LLM-first proof lines appear on a live call:
+#    openai_health scope=startup openai_configured=true ...
+#    llm_request_started ... / llm_response_completed ... total_tokens=...
+#    memory_packet_built ... facts=<N>
+pm2 logs twilio-voice-agent
+```
+
+`.env` is git-ignored and must never be committed. Run the OpenAI and Shopify
+checks on every deploy; if either fails, do not restart into production traffic.
+
 ## Returning Caller Memory
 
 On each call:

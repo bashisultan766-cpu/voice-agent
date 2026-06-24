@@ -119,3 +119,82 @@ def is_isbn(text: str) -> bool:
     # A sequence of 10 or more consecutive digits (possibly separated by spaces/hyphens)
     cleaned = _NONDIGIT_X.sub("", text.upper())
     return len(cleaned) in (10, 13)
+
+
+# ── Strict checksum validation (additive — used by the deterministic ranker) ──
+# `normalize_isbn` above is intentionally lenient (format-only for ISBN-10) for
+# backward compatibility. The helpers below enforce full checksum validation so
+# the runtime never treats a partial fragment (e.g. "9780") as a real ISBN and
+# can rank an exact valid ISBN above title/fuzzy/fragment matches.
+
+def isbn10_checksum_valid(s: str) -> bool:
+    """Validate an ISBN-10 check digit (last char may be 'X')."""
+    s = (s or "").upper().strip()
+    if len(s) != 10 or not s[:9].isdigit():
+        return False
+    if not (s[9].isdigit() or s[9] == "X"):
+        return False
+    total = 0
+    for i, c in enumerate(s):
+        val = 10 if c == "X" else int(c)
+        total += val * (10 - i)
+    return total % 11 == 0
+
+
+def isbn13_checksum_valid(s: str) -> bool:
+    """Validate an ISBN-13 check digit."""
+    s = (s or "").strip()
+    if len(s) != 13 or not s.isdigit():
+        return False
+    return _isbn13_check(s)
+
+
+def is_strict_valid_isbn(s: str) -> bool:
+    """True only for a complete ISBN-10 or ISBN-13 with a correct checksum."""
+    if not s:
+        return False
+    s = s.upper().strip()
+    if len(s) == 13:
+        return isbn13_checksum_valid(s)
+    if len(s) == 10:
+        return isbn10_checksum_valid(s)
+    return False
+
+
+def extract_isbn_candidate(text: str) -> str | None:
+    """
+    Extract a checksum-valid ISBN from spoken/typed text, or None.
+
+    Unlike ``normalize_isbn`` this NEVER returns a partial fragment and never
+    returns a structurally-valid-but-wrong-checksum string. Use this anywhere a
+    value will be searched or saved as a final ISBN candidate.
+
+    Returns a 13-digit ISBN-13 (ISBN-10 input is up-converted) or None.
+    """
+    candidate = normalize_isbn(text)
+    if not candidate:
+        return None
+    if len(candidate) == 13 and isbn13_checksum_valid(candidate):
+        return candidate
+    if len(candidate) == 10 and isbn10_checksum_valid(candidate):
+        upconverted = isbn10_to_isbn13(candidate)
+        if upconverted and isbn13_checksum_valid(upconverted):
+            return upconverted
+    return None
+
+
+def looks_like_isbn_fragment(text: str) -> bool:
+    """
+    True when text contains a digit run that resembles a partial ISBN
+    (4-12 digits, or a 978/979 prefix) but is NOT a complete valid ISBN.
+
+    Used to guard against searching/saving fragments like "9780".
+    """
+    cleaned = _NONDIGIT_X.sub("", (text or "").upper())
+    if not cleaned or not cleaned[:1].isdigit():
+        return False
+    if is_strict_valid_isbn(cleaned):
+        return False
+    if cleaned.startswith(("978", "979")):
+        return True
+    return 4 <= len(cleaned) < 13

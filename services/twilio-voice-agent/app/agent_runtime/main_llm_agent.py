@@ -1001,7 +1001,10 @@ async def decide_and_answer(
 
     logger.info("main_llm_agent_request sid=%s model=%s timeout_ms=%d", sid, model, s.VOICE_MAIN_LLM_TIMEOUT_MS)
 
+    from .openai_health import log_request_started, log_response_completed, log_error
+
     client = AsyncOpenAI(api_key=s.OPENAI_API_KEY)
+    _llm_started = log_request_started(sid, model, purpose="main_llm")
 
     raw_content = ""
     try:
@@ -1018,6 +1021,7 @@ async def decide_and_answer(
             ),
             timeout=timeout,
         )
+        log_response_completed(sid, model, response=resp, started_at=_llm_started, purpose="main_llm")
         raw_content = resp.choices[0].message.content or "{}"
         try:
             parsed = _parse_llm_json(raw_content)
@@ -1041,7 +1045,8 @@ async def decide_and_answer(
         parsed = _timeout_recovery_fallback(user_turn, brand, sid)
         _log_decision(sid, parsed, source="timeout_recovery")
         return parsed
-    except Exception:
+    except Exception as exc:
+        log_error(sid, exc, purpose="main_llm")
         logger.exception("main_llm_agent_error sid=%s", sid)
         parsed = _timeout_recovery_fallback(user_turn, brand, sid)
         _log_decision(sid, parsed, source="timeout_recovery")
