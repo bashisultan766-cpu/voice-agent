@@ -97,8 +97,8 @@ class TestWSRuntimeWiring:
         assert "handler=main_llm_agent" in caplog.text
         assert "conversationrelay_response_ready" in caplog.text
         assert "runtime_mode=main_llm_agent" in caplog.text
-        assert "main_llm_runtime_start" in caplog.text
-        assert "main_llm_agent_decision" in caplog.text
+        assert "main_llm_runtime_start" in caplog.text or "brain_runtime_start" in caplog.text
+        assert "main_llm_agent_decision" in caplog.text or "brain_decision" in caplog.text
         assert "eric_runtime_start" not in caplog.text
         assert "eric_supervisor_decision" not in caplog.text
         assert "intent_contract_resolved" not in caplog.text

@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-RELEASE_PACKAGE_VERSION = "v4.15.1"
+RELEASE_PACKAGE_VERSION = "v4.16.0"
 
 
 def main() -> int:
@@ -321,6 +321,8 @@ def main() -> int:
     print(f"Mutating workers:       {', '.join(sorted(MUTATING_WORKERS))}")
     print(f"Available tool cats:    {', '.join(sorted(AVAILABLE_TOOL_CATEGORIES))}")
     print(f"OpenAI tools live:      {'blocked' if s.VOICE_LIVE_DISABLE_OPENAI_TOOLS else 'ENABLED'}")
+    print(f"Brain orchestrator:     {'enabled' if getattr(s, 'VOICE_BRAIN_ORCHESTRATOR_ENABLED', False) else 'disabled'}")
+    print(f"Speculative prefetch:   {'enabled' if getattr(s, 'VOICE_SPECULATIVE_PREFETCH_ENABLED', False) else 'disabled'}")
     print(f"Outbound text logging:  {'yes' if s.VOICE_LOG_OUTBOUND_TEXT else 'no'}")
 
     cert_mode_ok = "OK"

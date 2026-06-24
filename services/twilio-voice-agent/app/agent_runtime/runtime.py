@@ -109,6 +109,10 @@ class EricAgentRuntime:
 
         # v4.14: Main LLM Agent mode — direct LLM decision path
         if is_main_llm_agent_mode(settings):
+            if is_brain_orchestrator_mode(settings):
+                return await self._handle_brain_orchestrator_turn(
+                    session, caller_text, send, caller_context, turn,
+                )
             return await self._handle_main_llm_agent_turn(
                 session, caller_text, send, caller_context, turn,
             )
@@ -813,6 +817,222 @@ class EricAgentRuntime:
         CallMemoryManager.update_after_turn(session, caller_text, fallback, intent)
         return RuntimeTurnResult(response_text=fallback, source="main_llm_fallback")
 
+    async def _handle_brain_orchestrator_turn(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        send: Callable[[dict], Awaitable[None]],
+        caller_context: Optional["SafeCallerContext"] = None,
+        turn=None,
+    ) -> RuntimeTurnResult:
+        """v4.16.0 — Single Brain with speculative parallel prefetch."""
+        from .prompt_loader import load_eric_system_prompt_text
+        from .prompt_pack_loader import load_prompt_pack, get_prompt_pack_status
+        from .memory_packet import build_memory_packet
+        from .pending_tool_state import handle_pending_tool_status_query
+        from .commerce_session import get_commerce_session, save_commerce_session, sync_commerce_to_session_state
+        from .cart_orchestrator import cart_count, cart_summary_text
+        from .brain_orchestrator import BrainOrchestrator, BrainOrchestratorInput, brain_decision_to_legacy_dict
+        from .speculative_prefetch_manager import (
+            SpeculativePrefetchManager,
+            start_prefetch_parallel,
+            wait_for_prefetch,
+        )
+        from .brain_prefetch_arbitrator import arbitrate_prefetch
+        from .tool_plan_executor import ToolPlanExecutor
+        from .fake_checking_guard import sanitize_fake_checking
+        from .fact_packet import build_fact_packet
+        from .tool_answer_composer import compose_answer_from_tool_facts
+
+        settings = self._settings
+        sid = session.call_sid[:6]
+        t0 = time.monotonic()
+        logger.info("brain_runtime_start sid=%s turn=%s", sid, caller_text[:40])
+
+        pack_snapshot = load_prompt_pack()
+        system_prompt_text = load_eric_system_prompt_text()
+        if getattr(settings, "VOICE_BRAIN_PROMPT_CACHE_OPTIMIZED", True):
+            cache_hit = bool(get_prompt_pack_status().get("cache_hit"))
+            logger.info("prompt_pack_cache_hit=%s", cache_hit)
+
+        memory = build_memory_packet(session, max_turns=settings.VOICE_MEMORY_TURNS)
+        memory_context = memory.to_composer_context() if memory else ""
+
+        expected_next_pre = getattr(getattr(session, "dialogue", None), "expected_next", "") or ""
+        pending_reply = handle_pending_tool_status_query(
+            session.call_sid, caller_text, expected_next=expected_next_pre,
+        )
+        if pending_reply:
+            sanitized = sanitize_customer_response(
+                pending_reply, intent="pending_tool_status", call_sid=session.call_sid,
+            )
+            text = sanitized.text
+            await _await_send(send, {"type": "text", "token": text, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            log_assistant_response(text, call_sid=session.call_sid, intent="pending_tool_status")
+            record_safe_response(session.call_sid, text)
+            clear_state_interrupt(session.call_sid)
+            CallMemoryManager.update_after_turn(session, caller_text, text, "pending_tool_status")
+            return RuntimeTurnResult(response_text=text, source="pending_tool_status")
+
+        commerce = get_commerce_session(session.call_sid)
+        sync_commerce_to_session_state(commerce, session)
+
+        from .brand_alias_normalizer import normalize_brand_aliases
+        brand = normalize_brand_aliases(caller_text)
+        turn_text = brand.canonical_text if brand.matched else caller_text
+
+        prefetch_manager = SpeculativePrefetchManager(settings)
+        prefetch_task = await start_prefetch_parallel(
+            prefetch_manager,
+            call_sid=session.call_sid,
+            user_text=turn_text,
+            memory_packet=memory,
+            commerce_session=commerce,
+        )
+
+        assistants = getattr(getattr(session, "call_memory", None), "assistant_turns", []) or []
+        last_assistant = assistants[-1] if assistants else ""
+        cart_summary = cart_summary_text(commerce) if cart_count(commerce) else ""
+        email_state = "confirmed" if getattr(session, "confirmed_email", "") else "none"
+        commerce_summary = f"cart={cart_count(commerce)} email={email_state}"
+
+        max_wait = getattr(settings, "VOICE_PREFETCH_MAX_WAIT_MS", 350)
+        early_prefetch = await wait_for_prefetch(prefetch_task, max_wait)
+
+        brain = BrainOrchestrator(settings)
+        brain_t0 = time.monotonic()
+        brain_decision = await brain.decide(
+            BrainOrchestratorInput(
+                call_sid=session.call_sid,
+                user_text=turn_text,
+                prompt_pack=pack_snapshot.text if pack_snapshot else system_prompt_text,
+                memory_packet=memory,
+                commerce_session_summary=commerce_summary,
+                cart_summary=cart_summary,
+                speculative_prefetch_packet=early_prefetch,
+                last_assistant_question=last_assistant,
+                active_expected_next=expected_next_pre,
+            )
+        )
+        brain_ms = (time.monotonic() - brain_t0) * 1000
+
+        if prefetch_task and not prefetch_task.done():
+            try:
+                late_prefetch = await asyncio.wait_for(prefetch_task, timeout=0.05)
+            except asyncio.TimeoutError:
+                late_prefetch = early_prefetch
+        else:
+            late_prefetch = prefetch_task.result() if prefetch_task and prefetch_task.done() else early_prefetch
+
+        prefetch_packet = late_prefetch or early_prefetch
+        prefetch_ms = 0.0
+        if prefetch_packet:
+            prefetch_ms = float(prefetch_packet.completed_at_ms - prefetch_packet.started_at_ms)
+
+        prefetch_ctx = arbitrate_prefetch(brain_decision, prefetch_packet)
+
+        direct_modes = ("direct_answer", "domain_answer", "out_of_domain_redirect", "clarify", "safe_refusal")
+        if brain_decision.response_mode in direct_modes and getattr(
+            settings, "VOICE_PREFETCH_CANCEL_ON_DIRECT_ANSWER", True,
+        ):
+            if prefetch_task and not prefetch_task.done():
+                prefetch_task.cancel()
+
+        guard_ctx = {"user_text": caller_text, "has_cart": cart_count(commerce) > 0, "sid": session.call_sid}
+        answer = brain_decision.answer or ""
+
+        if brain_decision.response_mode in direct_modes and answer:
+            answer = sanitize_fake_checking(answer, tool_started=False, intent=brain_decision.intent, context=guard_ctx)
+            sanitized = sanitize_customer_response(answer, intent=brain_decision.intent, call_sid=session.call_sid)
+            text = sanitized.text
+            await _await_send(send, {"type": "text", "token": text, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            log_assistant_response(text, call_sid=session.call_sid, intent=brain_decision.intent)
+            record_safe_response(session.call_sid, text)
+            clear_state_interrupt(session.call_sid)
+            CallMemoryManager.update_after_turn(session, caller_text, text, brain_decision.intent)
+            total_ms = (time.monotonic() - t0) * 1000
+            logger.info(
+                "brain_runtime_complete sid=%s total_ms=%.0f brain_ms=%.0f prefetch_ms=%.0f "
+                "prefetch_results=%d accepted=%d source=direct",
+                sid, total_ms, brain_ms, prefetch_ms,
+                len(prefetch_packet.results) if prefetch_packet else 0,
+                len(prefetch_ctx.accepted_results),
+            )
+            return RuntimeTurnResult(response_text=text, source="brain_direct")
+
+        if brain_decision.response_mode == "needs_tools" and brain_decision.tool_plan:
+            executor = ToolPlanExecutor()
+            tool_t0 = time.monotonic()
+            exec_result = await executor.execute(
+                brain_decision,
+                prefetch_ctx,
+                session=session,
+                settings=settings,
+                user_text=caller_text,
+                memory_packet=memory,
+                runtime_executor=self._execute_main_llm_tools,
+            )
+            tool_plan_ms = (time.monotonic() - tool_t0) * 1000
+            worker_bundle = exec_result.worker_bundle
+            legacy = brain_decision_to_legacy_dict(brain_decision)
+            fact_packet = build_fact_packet(worker_bundle, session) if worker_bundle else None
+            response_text = ""
+            if fact_packet and worker_bundle:
+                response_text = compose_answer_from_tool_facts(
+                    brain_decision.intent, fact_packet, worker_bundle, session=session,
+                )
+            if not response_text and fact_packet and worker_bundle:
+                from ..composer.main_llm_composer import get_composer
+                composer = get_composer(settings)
+                response_text = await self._compose_main_llm_answer(
+                    session, caller_text, legacy, memory,
+                    fact_packet, worker_bundle, system_prompt_text, composer,
+                )
+            if response_text:
+                response_text = sanitize_fake_checking(
+                    response_text, tool_started=True, intent=brain_decision.intent, context=guard_ctx,
+                )
+                sanitized = sanitize_customer_response(
+                    response_text, intent=brain_decision.intent, call_sid=session.call_sid,
+                )
+                response_text = sanitized.text
+                commerce.last_tool_answer = response_text
+                save_commerce_session(commerce)
+                await _await_send(send, {"type": "text", "token": response_text, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                log_assistant_response(response_text, call_sid=session.call_sid, intent=brain_decision.intent)
+                record_safe_response(session.call_sid, response_text)
+                clear_state_interrupt(session.call_sid)
+                CallMemoryManager.update_after_turn(session, caller_text, response_text, brain_decision.intent)
+            total_ms = (time.monotonic() - t0) * 1000
+            logger.info(
+                "brain_runtime_complete sid=%s total_ms=%.0f brain_ms=%.0f prefetch_ms=%.0f "
+                "tool_plan_ms=%.0f source=needs_tools",
+                sid, total_ms, brain_ms, prefetch_ms, tool_plan_ms,
+            )
+            return RuntimeTurnResult(response_text=response_text or "", source="brain_tools")
+
+        if brain_decision.response_mode == "hold":
+            logger.info("skip_turn sid=%s reason=brain_hold_blocked", sid)
+            fallback = answer or "How can I help you with SureShot Books today?"
+            fallback = sanitize_fake_checking(fallback, tool_started=False, intent=brain_decision.intent, context=guard_ctx)
+            sanitized = sanitize_customer_response(fallback, intent=brain_decision.intent, call_sid=session.call_sid)
+            await _await_send(send, {"type": "text", "token": sanitized.text, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            CallMemoryManager.update_after_turn(session, caller_text, sanitized.text, brain_decision.intent)
+            return RuntimeTurnResult(response_text=sanitized.text, source="brain_hold_fallback")
+
+        fallback = answer or "How can I help you with SureShot Books today?"
+        sanitized = sanitize_customer_response(fallback, intent=brain_decision.intent, call_sid=session.call_sid)
+        await _await_send(send, {"type": "text", "token": sanitized.text, "last": False, "interruptible": True})
+        await _await_send(send, {"type": "text", "token": "", "last": True})
+        CallMemoryManager.update_after_turn(session, caller_text, sanitized.text, brain_decision.intent)
+        total_ms = (time.monotonic() - t0) * 1000
+        logger.info("brain_runtime_complete sid=%s total_ms=%.0f source=fallback", sid, total_ms)
+        return RuntimeTurnResult(response_text=sanitized.text, source="brain_fallback")
+
     async def _execute_main_llm_tools(
         self,
         tool_categories: list[str],
@@ -1045,6 +1265,12 @@ def is_main_llm_agent_mode(settings=None) -> bool:
     from ..config import get_settings
     s = settings or get_settings()
     return s.VOICE_AGENT_RUNTIME_MODE == "main_llm_agent"
+
+
+def is_brain_orchestrator_mode(settings=None) -> bool:
+    from ..config import get_settings
+    s = settings or get_settings()
+    return bool(getattr(s, "VOICE_BRAIN_ORCHESTRATOR_ENABLED", False)) and is_main_llm_agent_mode(s)
 
 
 def resolve_live_turn_handler(settings=None) -> str:

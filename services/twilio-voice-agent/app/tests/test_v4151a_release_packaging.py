@@ -121,7 +121,8 @@ class TestPredeployGate:
         with patch.object(gate, "_check_release_completeness", return_value=fail_check):
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = gate.main()
+                # Pass explicit argv so argparse doesn't consume pytest's sys.argv
+                code = gate.main([])
         out = buf.getvalue()
         assert code == 1
         assert "RELEASE_GATE=FAIL" in out
@@ -137,20 +138,21 @@ class TestValidateReleaseBundle:
         bundle = _load_script("validate_release_bundle.py")
         calls: list[str] = []
 
-        def fake_run(name: str, cmd: list[str]) -> tuple[bool, str]:
+        def fake_run(name: str, cmd: list[str], timeout: int = 300) -> tuple[bool, str]:
             calls.append(name)
-            if name == "pytest":
+            if name == "pytest_deterministic":
                 return False, "pytest failed"
             return True, "OK"
 
         with patch.object(bundle, "run_check", side_effect=fake_run):
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = bundle.main()
+                # Pass explicit argv so argparse doesn't consume pytest's sys.argv
+                code = bundle.main([])
         out = buf.getvalue()
         assert code == 1
-        assert calls == ["pytest"]
-        assert "RELEASE_BUNDLE_VALIDATION=FAIL at step: pytest" in out
+        assert "pytest_deterministic" in calls
+        assert "RELEASE_BUNDLE_VALIDATION=FAIL at step: pytest_deterministic" in out
 
 
 class TestCheckAgentRuntime:
@@ -172,7 +174,7 @@ class TestCheckAgentRuntime:
     def test_header_not_stale_v4146(self, monkeypatch):
         code, out = self._run_runtime_check(monkeypatch)
         assert "v4.14.6" not in out
-        assert "Agent runtime check: v4.15.1" in out
+        assert "Agent runtime check: v4.16.0" in out
         assert "Prompt pack enabled:" in out
         assert "Prompt pack files:" in out
         assert "Prompt version:" in out

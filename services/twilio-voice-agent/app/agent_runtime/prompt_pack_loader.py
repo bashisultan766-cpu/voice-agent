@@ -27,6 +27,7 @@ _REQUIRED_FILES = (
 )
 
 _cache: dict[str, "PromptPackSnapshot"] = {}
+_last_cache_hit: bool = False
 
 
 @dataclass
@@ -131,6 +132,7 @@ def load_prompt_pack(
     force_reload: bool = False,
 ) -> PromptPackSnapshot:
     """Load prompt pack from directory with mtime-based cache."""
+    global _last_cache_hit
     from ..config import get_settings
 
     s = get_settings()
@@ -148,9 +150,11 @@ def load_prompt_pack(
     if not force_reload and cache_key in _cache:
         cached = _cache[cache_key]
         if not _pack_changed(full_dir, cached):
+            _last_cache_hit = True
             return cached
         logger.info("prompt_pack_reload_detected hash=%s", cached.prompt_hash)
 
+    _last_cache_hit = False
     snapshot = _load_pack_from_dir(full_dir, require_all=req, max_chars=limit)
     _cache[cache_key] = snapshot
     return snapshot
@@ -183,10 +187,13 @@ def get_prompt_pack_status() -> dict:
             "file_chars": snap.file_chars,
             "prompt_chars": snap.prompt_chars,
             "prompt_hash": snap.prompt_hash,
+            "cache_hit": _last_cache_hit,
         }
     except Exception as exc:
         return {"enabled": True, "source": "prompt_pack", "error": str(exc)[:120]}
 
 
 def clear_prompt_pack_cache() -> None:
+    global _last_cache_hit
     _cache.clear()
+    _last_cache_hit = False

@@ -181,6 +181,18 @@ class Settings(BaseSettings):
     VOICE_CATALOG_PARALLEL_SEARCH_LIMIT: int = 4
     VOICE_CATALOG_IDENTIFIER_TIMEOUT_MS: int = 5000
 
+    # ── v4.16.0: Single Brain + Speculative Prefetch ─────────────────────────
+    VOICE_BRAIN_ORCHESTRATOR_ENABLED: bool = True
+    VOICE_SPECULATIVE_PREFETCH_ENABLED: bool = True
+    VOICE_PREFETCH_MAX_WAIT_MS: int = 350
+    VOICE_PREFETCH_SCOUT_TIMEOUT_MS: int = 1500
+    VOICE_PREFETCH_CANCEL_ON_DIRECT_ANSWER: bool = True
+    VOICE_BRAIN_MODEL: str = "gpt-4o-mini"
+    VOICE_BRAIN_TIMEOUT_MS: int = 2500
+    VOICE_BRAIN_DETERMINISTIC_GREETING_FASTPATH: bool = True
+    VOICE_BRAIN_DOMAIN_BOUNDARY_STRICT: bool = True
+    VOICE_BRAIN_PROMPT_CACHE_OPTIMIZED: bool = True
+
     # ── Legacy flags — both must be false for ConversationRelay runtime ───────
     ENABLE_ELEVENLABS: bool = False
     ENABLE_DEEPGRAM: bool = False

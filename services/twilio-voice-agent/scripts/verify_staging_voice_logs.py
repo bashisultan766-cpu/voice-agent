@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify staging voice call logs against smoke plan markers (v4.15.0)."""
+"""Verify staging voice call logs against smoke plan markers (v4.16.1)."""
 from __future__ import annotations
 
 import argparse
@@ -11,6 +11,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 GOOD_MARKERS = (
+    # v4.16.0 Brain markers
+    "brain_decision_started",
+    "brain_decision_complete",
+    "speculative_prefetch_started",
+    "speculative_prefetch_completed",
+    "brain_prefetch_review_completed",
+    # Commerce/tool markers
     "commerce_session_loaded",
     "commerce_candidates_updated",
     "commerce_cart_line_added",
@@ -35,7 +42,13 @@ BAD_MARKERS = (
     "llm_brain_decision",
     "tool_calls",
     "role=tool",
+    # v4.16.0 specific regressions
+    "mixed_identifiers_detected",
     "generic_unknown_used",
+    "commerce_control hold",
+    "skip_turn reason=commerce_control",
+    "I found 2 items to look up",
+    "Could you say that one more time?",
     "Processing Fee",
     "processing fee",
 )

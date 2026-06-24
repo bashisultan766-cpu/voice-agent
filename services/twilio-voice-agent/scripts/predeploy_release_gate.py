@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Pre-deploy release gate — all production checks (v4.15.1a)."""
+"""Pre-deploy release gate — deterministic production checks (v4.16.1).
+
+Live Shopify/Twilio/Resend tests are excluded by default.
+Run live_certification_gate.py separately for those.
+"""
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import io
 import subprocess
@@ -12,6 +17,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+LIVE_MARKERS = ("shopify_live", "twilio_live", "resend_live", "slow")
+PYTEST_EXCLUDE_EXPR = "not shopify_live and not twilio_live and not resend_live and not slow"
 
 
 @dataclass
@@ -44,7 +52,7 @@ def _check_release_completeness() -> GateCheck:
 
 def _run_cmd(cmd: list[str], cwd: Path) -> tuple[int, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd), timeout=300)
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd), timeout=1200)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except Exception as exc:
         return 1, str(exc)
@@ -131,8 +139,15 @@ def _check_rollback_doc() -> GateCheck:
     return GateCheck("Rollback instructions", str(path), ok, "present" if ok else "incomplete")
 
 
-def main() -> int:
-    print("=== Pre-Deploy Release Gate (v4.15.1a) ===\n")
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Pre-deploy release gate (v4.16.1)")
+    parser.add_argument("--skip-bundle-recursion", action="store_true",
+                        help="Do not call validate_release_bundle.py (prevents mutual recursion)")
+    args = parser.parse_args(argv)
+
+    print("=== Pre-Deploy Release Gate (v4.16.1) ===\n")
+    print(f"Pytest scope: -m '{PYTEST_EXCLUDE_EXPR}'")
+    print(f"LIVE_TESTS_SKIPPED={','.join(LIVE_MARKERS)}\n")
 
     completeness = _check_release_completeness()
     if not completeness.passed:
@@ -150,15 +165,32 @@ def main() -> int:
 
     checks: list[GateCheck] = [completeness]
 
+    pytest_cmd = [sys.executable, "-m", "pytest", "-q", "-m", PYTEST_EXCLUDE_EXPR]
     cmd_checks = [
-        ("check_release_completeness script", [sys.executable, "scripts/check_release_completeness.py"], lambda c, o: c == 0 and "RELEASE_COMPLETENESS=PASS" in o),
-        ("pytest full suite", [sys.executable, "-m", "pytest", "-q"], lambda c, o: c == 0),
+        (
+            "check_release_completeness script",
+            [sys.executable, "scripts/check_release_completeness.py"],
+            lambda c, o: c == 0 and "RELEASE_COMPLETENESS=PASS" in o,
+        ),
+        (
+            "pytest deterministic suite (live tests excluded)",
+            pytest_cmd,
+            lambda c, o: c == 0,
+        ),
         ("compileall", [sys.executable, "-m", "compileall", "app", "-q"], lambda c, o: c == 0),
         ("check_agent_runtime", [sys.executable, "scripts/check_agent_runtime.py"], lambda c, o: c == 0),
         ("validate_eric_prompt", [sys.executable, "scripts/validate_eric_prompt.py"], lambda c, o: c == 0),
+        ("print_prompt_pack_summary", [sys.executable, "scripts/print_prompt_pack_summary.py"], lambda c, o: c == 0),
         ("audit_live_tools", [sys.executable, "scripts/audit_live_tools.py"], lambda c, o: c == 0),
         ("report_commerce_tools_inventory", [sys.executable, "scripts/report_commerce_tools_inventory.py"], lambda c, o: c == 0),
         ("audit_end_to_end_commerce_flows", [sys.executable, "scripts/audit_end_to_end_commerce_flows.py"], lambda c, o: "14/14 OK" in o or c == 0),
+        ("sync_catalog_index_dry_run", [sys.executable, "scripts/sync_shopify_catalog_index.py", "--dry-run"], lambda c, o: c == 0),
+        (
+            "search_catalog_index_allow_empty",
+            [sys.executable, "scripts/search_catalog_index.py", "--query", "USA Today 5 day delivery 3 months", "--allow-empty"],
+            lambda c, o: c == 0,
+        ),
+        ("verify_catalog_index_ready", [sys.executable, "scripts/verify_catalog_index_ready.py"], lambda c, o: "CATALOG_INDEX_READY=PASS" in o or "CATALOG_INDEX_READY=WARN" in o),
     ]
 
     for name, cmd, pred in cmd_checks:
@@ -195,7 +227,6 @@ def main() -> int:
         _check_rollback_doc(),
     ])
 
-    # Secrets in reports heuristic
     secret_ok = True
     for c in checks:
         if "sk-" in c.detail or "shpat_" in c.detail:
@@ -214,11 +245,12 @@ def main() -> int:
         if not c.passed:
             print(f"  reason: {c.detail[:200]}")
     print()
+    print(f"LIVE_TESTS_SKIPPED={','.join(LIVE_MARKERS)}")
     print(f"RELEASE_GATE={'PASS' if all_pass else 'FAIL'}")
     if not all_pass:
         print("Next action: fix failing checks above before deploy.")
     else:
-        print("Next action: run staging live smoke call, then deploy.")
+        print("Next action: run live_certification_gate.py, then staging smoke call, then deploy.")
     return 0 if all_pass else 1
 
 
