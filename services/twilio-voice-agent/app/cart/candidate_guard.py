@@ -110,7 +110,17 @@ def should_save_candidate(
         return False, f"blocked_intent:{intent}"
 
     if is_isbn:
-        if variant_id or len(re.sub(r"\D", "", q)) >= 10:
+        # A real product was found (has a variant) — always allowed, even when
+        # the spoken/typed ISBN string is unusual.
+        if variant_id:
+            return True, "isbn_search"
+        # No variant: never save a partial ISBN fragment (e.g. "9780", "9781")
+        # as a candidate — it can only ever resolve to the wrong product.
+        from ..tools.isbn import extract_isbn_candidate, looks_like_isbn_fragment
+
+        if not extract_isbn_candidate(q) and looks_like_isbn_fragment(q):
+            return False, "isbn_fragment"
+        if len(re.sub(r"\D", "", q)) >= 10:
             return True, "isbn_search"
         return False, "isbn_missing_variant"
 

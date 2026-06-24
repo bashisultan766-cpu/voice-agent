@@ -231,11 +231,24 @@ def _matched(
 
 
 def extract_isbn_from_text(text: str) -> str | None:
-    """Extract a 10- or 13-digit ISBN-like number from caller text."""
+    """
+    Extract a checksum-valid ISBN-10/ISBN-13 from caller text.
+
+    Returns None for partial fragments (e.g. "9780", "9781") and for
+    structurally-correct-length but invalid-checksum digit runs, so the runtime
+    never starts a product search on an incomplete ISBN. ISBN-10 inputs are
+    up-converted to ISBN-13.
+    """
+    from ..tools.isbn import extract_isbn_candidate, is_strict_valid_isbn
+
+    valid = extract_isbn_candidate(text or "")
+    if valid:
+        return valid
+    # Also accept a checksum-valid ISBN embedded in a longer utterance.
     compact = re.sub(r"[\s-]", "", text or "")
-    for match in re.finditer(r"\d{10,13}", compact):
+    for match in re.finditer(r"\d{13}", compact):
         digits = match.group(0)
-        if len(digits) in (10, 13):
+        if is_strict_valid_isbn(digits):
             return digits
     return None
 

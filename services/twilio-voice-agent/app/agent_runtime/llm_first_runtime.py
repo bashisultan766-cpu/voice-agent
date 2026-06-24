@@ -144,10 +144,18 @@ def _session_state(session: "SessionState") -> dict[str, Any]:
 class LLMFirstRuntime:
     """Single LLM-first runtime. Assembles context, routes, delegates tools."""
 
-    def __init__(self, settings=None):
+    def __init__(self, settings=None, sales_flow=None):
         from ..config import get_settings
 
         self._settings = settings or get_settings()
+        self._sales_flow = sales_flow
+
+    def _get_sales_flow(self):
+        if self._sales_flow is None:
+            from .sales_flow import SalesFlow
+
+            self._sales_flow = SalesFlow(self._settings)
+        return self._sales_flow
 
     # ── Context assembly ──────────────────────────────────────────────────
     def available_tools(self) -> list[dict[str, str]]:
@@ -271,6 +279,23 @@ class LLMFirstRuntime:
         ctx = self.build_llm_context(session, caller_text)
         if not ctx.has_prompt():
             logger.error("llm_first_no_prompt sid=%s — prompt pack failed to load", sid)
+
+        # ── v4.17 sales conversation policy (owns the buying flow) ───────────
+        # The LLM-first sales layer keeps cart/selection state, only runs ISBN
+        # lookups on valid ISBNs, and always composes the final spoken reply via
+        # the LLM final composer. It defers (returns None) for anything outside
+        # the deterministic sales policy (payment, identity, orders, etc.).
+        try:
+            sales_result = await self._get_sales_flow().handle(session, caller_text, send)
+        except Exception:  # noqa: BLE001 — never break the call on sales policy
+            logger.exception("sales_flow_error sid=%s", sid)
+            sales_result = None
+        if sales_result is not None and sales_result.handled:
+            logger.info(
+                "llm_first_sales_handled sid=%s intent=%s",
+                sid, sales_result.intent,
+            )
+            return _result(sales_result.response_text, sales_result.intent)
 
         decision = self.decide_conversational(session, caller_text)
         if decision is not None and decision.response_mode == "direct_answer" and decision.answer:

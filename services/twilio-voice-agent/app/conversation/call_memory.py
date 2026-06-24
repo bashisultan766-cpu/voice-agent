@@ -317,6 +317,41 @@ def build_brain_context(session: "SessionState") -> str:
     return "\n".join(parts)
 
 
+_SALES_FACT_TEMPLATES = {
+    "selected_product": "Selected book: {detail}",
+    "current_candidate": "Current book: {detail}",
+    "cart_line": "Added to order: {detail}",
+    "isbn": "ISBN: {detail}",
+    "pending_action": "Pending action: {detail}",
+    "another_book": "Customer wants another book",
+    "price_target": "Price asked for: {detail}",
+}
+
+
+def record_sales_fact(
+    session: "SessionState",
+    fact_type: str,
+    detail: str = "",
+) -> None:
+    """
+    Record a durable sales fact (selected product, cart line, ISBN, pending
+    action, another-book request, price target) and log it.
+
+    Facts increase after product selection and add decisions so the memory
+    packet reflects what the caller is buying.
+    """
+    state = get_call_memory(session)
+    template = _SALES_FACT_TEMPLATES.get(fact_type, "{detail}")
+    fact = template.format(detail=(detail or "").strip()[:60]).strip()
+    if fact:
+        _append_fact(state, fact)
+    logger.info(
+        "memory_fact_extracted sid=%s type=%s",
+        getattr(session, "call_sid", "")[:6],
+        fact_type,
+    )
+
+
 def record_brain_fact(session: "SessionState", intent: str) -> None:
     """Extract important fact after brain decision."""
     if not intent or intent == "unknown":
