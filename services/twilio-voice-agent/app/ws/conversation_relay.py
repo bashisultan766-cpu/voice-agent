@@ -87,6 +87,27 @@ async def dispatch_assembled_turn(
         handler,
     )
 
+    # ── v4.17: LLM-first runtime — the single consolidated brain ──────────────
+    if mode == "llm_first":
+        from ..agent_runtime.llm_first_runtime import get_llm_first_runtime
+
+        t0 = time.monotonic()
+        logger.info("llm_first_turn_started sid=%s", sid)
+        result = await get_llm_first_runtime(settings).handle_turn(
+            session,
+            user_text,
+            send,
+            caller_context=caller_context,
+        )
+        chars = len(getattr(result, "response_text", "") or "")
+        logger.info(
+            "llm_first_turn_completed sid=%s chars=%d total_ms=%d",
+            sid,
+            chars,
+            int((time.monotonic() - t0) * 1000),
+        )
+        return
+
     if mode in ("main_llm_agent", "eric_agent_runtime"):
         await get_eric_runtime(settings).handle_turn(
             session,
@@ -101,10 +122,20 @@ async def dispatch_assembled_turn(
         await engine.handle_turn(session, user_text, send, caller_context=caller_context)
         return
 
+    # Unknown mode — never leave the caller in silence. Use the LLM-first brain
+    # as the safe fallback so a valid spoken response is always produced.
     logger.error(
-        "runtime_mode_mismatch sid=%s env_mode=%s attempted=legacy_v410",
+        "runtime_mode_mismatch sid=%s env_mode=%s attempted=safe_fallback",
         sid,
         mode,
+    )
+    from ..agent_runtime.llm_first_runtime import get_llm_first_runtime
+
+    await get_llm_first_runtime(settings).handle_turn(
+        session,
+        user_text,
+        send,
+        caller_context=caller_context,
     )
 
 

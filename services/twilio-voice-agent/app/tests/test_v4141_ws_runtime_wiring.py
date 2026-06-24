@@ -122,21 +122,24 @@ class TestWSRuntimeWiring:
         mock_runtime.handle_turn.assert_not_called()
 
     async def test_unknown_mode_does_not_call_legacy_engine(self, caplog):
+        # v4.17: an unknown mode logs a mismatch but now falls back to the
+        # LLM-first brain so the caller is never left in silence.
         settings = _settings(VOICE_AGENT_RUNTIME_MODE="unknown_mode")
         mock_engine = MagicMock()
         mock_engine.handle_turn = AsyncMock()
-        mock_runtime = MagicMock()
-        mock_runtime.handle_turn = AsyncMock()
+        fake_llmf = MagicMock()
+        fake_llmf.handle_turn = AsyncMock()
         caplog.set_level(logging.ERROR)
 
         with patch("app.ws.conversation_relay.get_engine", return_value=mock_engine), patch(
-            "app.ws.conversation_relay.get_eric_runtime",
-            return_value=mock_runtime,
+            "app.agent_runtime.llm_first_runtime.get_llm_first_runtime",
+            return_value=fake_llmf,
         ):
             await _run_dispatch(settings, "Hello")
 
+        # Legacy engine must NOT be called; the safe fallback handles the turn.
         mock_engine.handle_turn.assert_not_called()
-        mock_runtime.handle_turn.assert_not_called()
+        fake_llmf.handle_turn.assert_called_once()
         assert "runtime_mode_mismatch" in caplog.text
 
 
