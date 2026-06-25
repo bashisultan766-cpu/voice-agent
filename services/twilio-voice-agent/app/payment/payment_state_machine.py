@@ -91,21 +91,48 @@ def _email_signal_present(caller_text: str, turn_mode: str = "") -> bool:
     return bool(extract_email_from_text(text))
 
 
-def extract_email_from_text(text: str) -> Optional[str]:
+def extract_email_from_text(
+    text: str,
+    session: Optional["SessionState"] = None,
+) -> Optional[str]:
     if not text:
         return None
     typed = _EMAIL_TYPED.search(text)
     if typed:
         return typed.group(1).lower().strip()
     try:
-        from ..pipeline.email_capture import normalize_spoken_email, parse_hyphen_spelled_email
+        from ..pipeline.email_capture import (
+            assemble_email_from_fragments,
+            is_domain_suffix_only,
+            normalize_spoken_email,
+            parse_hyphen_spelled_email,
+        )
 
         spelled = parse_hyphen_spelled_email(text)
         if spelled:
             return spelled
-        return normalize_spoken_email(text)
+
+        normalized = normalize_spoken_email(text)
+        if normalized:
+            return normalized
+
+        if session is not None:
+            fragments = list(getattr(session, "pending_email_fragments", None) or [])
+            if text.strip():
+                if is_domain_suffix_only(text) and fragments:
+                    assembled = assemble_email_from_fragments(fragments + [text])
+                    if assembled:
+                        return assembled
+                assembled = assemble_email_from_fragments(fragments + [text])
+                if assembled:
+                    return assembled
+                if fragments:
+                    assembled = assemble_email_from_fragments(fragments)
+                    if assembled:
+                        return assembled
     except Exception:  # noqa: BLE001
         return None
+    return None
 
 
 def speak_confirmation_prompt(email: str) -> str:
@@ -201,6 +228,57 @@ def confirm_pending_payment_email(session: "SessionState") -> PaymentTurnHint:
     return PaymentTurnHint(email_confirmed=True, skip_openai=True)
 
 
+def _looks_like_partial_email(text: str) -> bool:
+    """True when caller is likely mid-email (at/dot/domain fragment)."""
+    t = (text or "").lower()
+    if not t:
+        return False
+    markers = (" at ", " dot ", "@", "gmail", "yahoo", "outlook", "hotmail", "icloud", " activate ")
+    return any(m in f" {t} " for m in markers)
+
+
+def needs_deferred_payment_auto_send(session: "SessionState") -> bool:
+    """
+    True when email was confirmed on a prior turn but payment link was never sent.
+    Catches LLM-path confirmations that skipped auto-send.
+    """
+    if getattr(session, "payment_link_sent", False):
+        return False
+    if getattr(session, "awaiting_payment_email_confirmation", False):
+        return False
+    if not getattr(session, "payment_email_confirmed", False):
+        return False
+    confirmed = get_canonical_confirmed_email(session)
+    if not confirmed:
+        return False
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+    return pfs == "awaiting_send_confirmation"
+
+
+def _try_confirm_email_turn(
+    session: "SessionState",
+    text: str,
+) -> PaymentTurnHint:
+    """Confirm pending/last-offered email on yes/correct — highest priority."""
+    from ..pipeline.email_capture import is_email_confirmation
+    from ..agent_runtime.yes_engagement import is_bare_yes
+
+    awaiting = bool(getattr(session, "awaiting_payment_email_confirmation", False))
+    pending = get_pending_payment_email(session)
+    if not awaiting and not pending:
+        return PaymentTurnHint()
+
+    if not (is_email_confirmation(text) or is_bare_yes(text)):
+        return PaymentTurnHint()
+
+    hint = confirm_pending_payment_email(session)
+    if hint.email_confirmed:
+        from ..payment.payment_destination_groups import save_session_email_to_active_group
+
+        save_session_email_to_active_group(session)
+    return hint
+
+
 def process_payment_turn(
     session: "SessionState",
     caller_text: str,
@@ -227,6 +305,10 @@ def process_payment_turn(
     text = (caller_text or "").strip()
     if not text:
         return PaymentTurnHint()
+
+    confirm_hint = _try_confirm_email_turn(session, text)
+    if confirm_hint.email_confirmed or confirm_hint.force_reply:
+        return confirm_hint
 
     from ..payment.payment_destination_groups import (
         ensure_payment_groups,
@@ -266,7 +348,7 @@ def process_payment_turn(
 
     if is_email_correction(text):
         reject_pending_payment_email(session)
-        email = extract_email_from_text(text) or parse_hyphen_spelled_email(text)
+        email = extract_email_from_text(text, session) or parse_hyphen_spelled_email(text)
         if email:
             return capture_payment_email(session, email, raw_text=text)
         return PaymentTurnHint()
@@ -281,16 +363,31 @@ def process_payment_turn(
         log_payment_flow_diagnostics(session, stage="email_repeat")
         return PaymentTurnHint(force_reply=repeat_email_prompt(pending_offer), skip_openai=True)
 
-    if pending_offer and is_email_confirmation(text):
-        hint = confirm_pending_payment_email(session)
-        save_session_email_to_active_group(session)
-        return hint
-
-    email = extract_email_from_text(text)
+    email = extract_email_from_text(text, session)
     if email:
         hint = capture_payment_email(session, email, raw_text=text)
         save_session_email_to_active_group(session)
+        if hasattr(session, "pending_email_fragments"):
+            session.pending_email_fragments = []
         return hint
+
+    if email_signal and _looks_like_partial_email(text):
+        fragments = getattr(session, "pending_email_fragments", None)
+        if fragments is not None:
+            if text not in fragments:
+                session.pending_email_fragments = [*fragments, text]
+            logger.info(
+                "payment_email_fragment_stored sid=%s count=%d",
+                (session.call_sid or "")[:6],
+                len(session.pending_email_fragments),
+            )
+            return PaymentTurnHint(
+                force_reply=(
+                    "Got it — please continue with the rest of your email address, "
+                    "or say the full email again."
+                ),
+                skip_openai=True,
+            )
 
     from ..agent_runtime.yes_engagement import is_bare_yes, yes_engagement_reply
 

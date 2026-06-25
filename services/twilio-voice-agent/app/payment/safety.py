@@ -207,7 +207,10 @@ def require_payment_send_ready_with_checkout(session: "SessionState") -> Payment
     if not ready.allowed:
         return ready
 
-    checkout_url = getattr(session, "pending_checkout_url", "") or ""
+    checkout_url = (
+        (getattr(session, "pending_checkout_url", "") or "").strip()
+        or (getattr(session, "checkout_url", "") or "").strip()
+    )
     if not checkout_url:
         return PaymentSafetyResult(
             allowed=False,

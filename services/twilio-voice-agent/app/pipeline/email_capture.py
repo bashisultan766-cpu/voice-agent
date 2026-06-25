@@ -60,6 +60,8 @@ _FILLER_WORDS = {
 # Known common domain completions
 _DOMAIN_ALIASES: dict[str, str] = {
     "gmail": "gmail.com",
+    "g mail": "gmail.com",
+    "ymail": "yahoo.com",
     "yahoo": "yahoo.com",
     "outlook": "outlook.com",
     "hotmail": "hotmail.com",
@@ -70,6 +72,17 @@ _DOMAIN_ALIASES: dict[str, str] = {
     "live": "live.com",
     "msn": "msn.com",
     "me": "me.com",
+    "rediffmail": "rediffmail.com",
+    "rediff": "rediffmail.com",
+    "mail": "mail.com",
+    "zoho": "zoho.com",
+    "fastmail": "fastmail.com",
+    "gmx": "gmx.com",
+    "web": "web.de",
+    "yandex": "yandex.com",
+    "qq": "qq.com",
+    "163": "163.com",
+    "126": "126.com",
 }
 
 # Domain misspellings produced by ASR (applied after space-removal)
@@ -77,10 +90,15 @@ _DOMAIN_FIXES: dict[str, str] = {
     "gamil": "gmail",
     "gmaill": "gmail",
     "gmale": "gmail",
+    "gmai": "gmail",
     "yahooo": "yahoo",
     "yaho": "yahoo",
     "outlok": "outlook",
     "outloook": "outlook",
+    "hotmial": "hotmail",
+    "hotmil": "hotmail",
+    "iclod": "icloud",
+    "iclould": "icloud",
 }
 
 # ── Correction / confirmation patterns ────────────────────────────────────────
@@ -102,10 +120,11 @@ _CORRECTION_PATS = re.compile(
 )
 
 _CONFIRMATION_PATS = re.compile(
-    r"^\s*(yes|yeah|yep)\b"
+    r"^\s*(yes|yeah|yep|yup|sure|ok|okay|haan|han|ha|ji|theek|thik|sahi|bilkul|absolutely)\b"
     r"|^\s*(right|correct)\s*[.!]?\s*$"
     r"|^\s*(that\s*'?s\s+)?(right|correct)(\s+email)?\s*[.!]?\s*$"
     r"|^\s*that\s*'?s\s+(the\s+)?(right|correct)\s+email"
+    r"|\b(theek hai|thik hai|sahi hai|that is correct|that's correct|you got it|exactly right)\b"
     r"|sounds?\s+(right|correct|good)"
     r"|^\s*(perfect|exactly|go ahead|confirmed?)\b",
     re.IGNORECASE,

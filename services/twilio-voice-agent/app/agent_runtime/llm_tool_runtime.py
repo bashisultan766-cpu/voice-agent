@@ -253,6 +253,63 @@ class LLMToolRuntime:
 
         return await _call()
 
+    async def _execute_payment_auto_send(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        send: Callable[[dict], Awaitable[None]],
+        *,
+        sid: str,
+        stage: str,
+    ) -> dict:
+        """Deterministic checkout + Resend after confirmed email — no OpenAI."""
+        from ..payment.email_state import log_payment_flow_diagnostics
+        from ..payment.payment_link_service import PAYMENT_PROGRESS_MESSAGE
+
+        if not PAYMENT_AUTO_SEND_ENABLED:
+            logger.error("payment_auto_send_disabled sid=%s stage=%s", sid, stage)
+            spoken = self._finalize(
+                session,
+                "I have your email confirmed. I'm preparing your secure payment link now.",
+            )
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            return _result(spoken)
+
+        log_payment_flow_diagnostics(session, stage=stage)
+        await _await_send(
+            send,
+            {
+                "type": "text",
+                "token": PAYMENT_PROGRESS_MESSAGE,
+                "last": False,
+                "interruptible": True,
+            },
+        )
+        send_raw = await llm_tools.dispatch("send_payment_link", {}, session)
+        send_result = parse_tool_result(send_raw)
+        spoken = enforce_payment_response(
+            session,
+            send_result.get("customer_message") or "",
+            [("send_payment_link", send_result)],
+        )
+        spoken = self._finalize(session, spoken)
+        session.history.append({"role": "user", "content": caller_text})
+        session.history.append({"role": "assistant", "content": spoken})
+        await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+        await _await_send(send, {"type": "text", "token": "", "last": True})
+        self._record_turn(session, caller_text, spoken)
+        logger.info(
+            "llm_tool_runtime_payment_auto_send sid=%s stage=%s success=%s openai_skipped=true",
+            sid,
+            stage,
+            bool(send_result.get("email_sent")),
+        )
+        return _result(spoken)
+
     # ── Turn handling ─────────────────────────────────────────────────────
     async def handle_turn(
         self,
@@ -300,40 +357,29 @@ class LLMToolRuntime:
             return _result(spoken)
 
         if payment_hint.email_confirmed:
-            if not PAYMENT_AUTO_SEND_ENABLED:
-                logger.error("payment_auto_send_disabled sid=%s", session.call_sid[:6])
-            from ..payment.email_state import log_payment_flow_diagnostics
-            from ..payment.payment_link_service import PAYMENT_PROGRESS_MESSAGE
-
-            log_payment_flow_diagnostics(session, stage="auto_send_after_confirm")
-            await _await_send(
-                send,
-                {
-                    "type": "text",
-                    "token": PAYMENT_PROGRESS_MESSAGE,
-                    "last": False,
-                    "interruptible": True,
-                },
-            )
-            send_raw = await llm_tools.dispatch("send_payment_link", {}, session)
-            send_result = parse_tool_result(send_raw)
-            spoken = enforce_payment_response(
+            return await self._execute_payment_auto_send(
                 session,
-                send_result.get("customer_message") or "",
-                [("send_payment_link", send_result)],
+                caller_text,
+                send,
+                sid=sid,
+                stage="auto_send_after_confirm",
             )
-            spoken = self._finalize(session, spoken)
-            session.history.append({"role": "user", "content": caller_text})
-            session.history.append({"role": "assistant", "content": spoken})
-            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-            await _await_send(send, {"type": "text", "token": "", "last": True})
-            self._record_turn(session, caller_text, spoken)
-            logger.info(
-                "llm_tool_runtime_payment_auto_send sid=%s success=%s openai_skipped=true",
-                session.call_sid[:6],
-                bool(send_result.get("email_sent")),
+
+        from ..payment.payment_state_machine import needs_deferred_payment_auto_send
+
+        if needs_deferred_payment_auto_send(session):
+            logger.warning(
+                "payment_deferred_auto_send sid=%s confirmed_email_present=true "
+                "payment_link_sent=false",
+                sid,
             )
-            return _result(spoken)
+            return await self._execute_payment_auto_send(
+                session,
+                caller_text,
+                send,
+                sid=sid,
+                stage="deferred_auto_send",
+            )
 
         commerce_hint = process_commerce_turn(session, caller_text)
         if commerce_hint.force_reply:
@@ -375,7 +421,7 @@ class LLMToolRuntime:
                 extract_email_from_text,
             )
 
-            email_only = extract_email_from_text(caller_text)
+            email_only = extract_email_from_text(caller_text, session)
             if email_only and email_capture_context_active(session, turn_mode):
                 hint = capture_payment_email(session, email_only, raw_text=caller_text)
                 spoken = self._finalize(session, hint.force_reply or "")

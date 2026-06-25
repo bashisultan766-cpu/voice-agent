@@ -155,6 +155,19 @@ async def send_confirmed_payment_link(
         session=session,
     )
     result = json.loads(raw)
+
+    if not (result.get("success") and result.get("email_sent")):
+        err = result.get("error_code") or ""
+        if err in ("email_send_failed", "no_checkout_url") and _resend_configured():
+            logger.warning("payment_auto_send_retry sid=%s reason=%s", sid, err or "send_failed")
+            raw = await st.SendPaymentLink(
+                items=items,
+                email=confirmed_email,
+                customer_name=getattr(session, "caller_name", "") or None,
+                session=session,
+            )
+            result = json.loads(raw)
+
     session.payment_send_in_progress = False
 
     checkout_after = (

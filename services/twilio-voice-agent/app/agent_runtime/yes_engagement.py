@@ -47,11 +47,9 @@ def yes_engagement_reply(session: "SessionState") -> Optional[str]:
 
     if getattr(session, "awaiting_payment_email", False) or text_status == STATUS_AWAITING_EMAIL_COLLECTION:
         if not getattr(session, "pending_payment_email", "") and not getattr(session, "confirmed_email", ""):
-            return (
-                "Sure. What email should I send the secure payment link to? "
-                "You can use one email for everything, or tell me separate emails "
-                "like send two books to one address and the rest to another."
-            )
+            from ..payment.payment_prompts import payment_email_collection_prompt
+
+            return payment_email_collection_prompt()
 
     if text_status == STATUS_AWAITING_QUANTITY and candidate:
         return None

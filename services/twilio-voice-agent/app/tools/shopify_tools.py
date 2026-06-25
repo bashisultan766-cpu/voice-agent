@@ -632,6 +632,8 @@ async def create_checkout_link(
         if session and checkout_url:
             session.pending_checkout_url = checkout_url
             session.pending_draft_order_id = draft_id
+            session.checkout_url = checkout_url
+            session.checkout_id = draft_id
 
         return json.dumps({
             "success": True,
@@ -755,16 +757,40 @@ async def send_payment_link_email_tool(
         ))
 
     if confirmed_email in session.payment_email_sent_to:
+        if (
+            getattr(session, "email_send_success", False)
+            and getattr(session, "payment_link_sent", False)
+        ):
+            return json.dumps(build_payment_tool_result(
+                success=True,
+                email_sent=True,
+                customer_message="I already sent the payment link to your email during this call.",
+                error_code="duplicate",
+            ))
+        session.payment_email_sent_to = [
+            e for e in session.payment_email_sent_to if e != confirmed_email
+        ]
+
+    checkout_url = (
+        (getattr(session, "pending_checkout_url", "") or "").strip()
+        or (getattr(session, "checkout_url", "") or "").strip()
+    )
+    if not checkout_url:
+        session.last_payment_attempt_status = "blocked"
         return json.dumps(build_payment_tool_result(
-            success=True,
-            email_sent=True,
-            customer_message="I already sent the payment link to your email during this call.",
-            error_code="duplicate",
+            success=False,
+            email_sent=False,
+            customer_message=(
+                "No payment link has been created yet. "
+                "I'm creating one now — one moment please."
+            ),
+            error_code="no_checkout_url",
+            retryable=True,
         ))
 
     result = await send_payment_link_email(
         email=confirmed_email,
-        checkout_url=session.pending_checkout_url,
+        checkout_url=checkout_url,
         product_summary=session.last_product_title or "your selected items",
         caller_name=session.caller_name or None,
         order_or_draft_id=session.pending_draft_order_id or None,

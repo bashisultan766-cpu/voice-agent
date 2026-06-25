@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.27"
+COMMERCE_FLOW_VERSION = "v4.28"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -170,16 +170,13 @@ def next_book_prompt() -> str:
 def cart_summary_and_email_prompt(session: "SessionState") -> str:
     from ..cart.session import get_ledger
     from ..payment.payment_destination_groups import ensure_payment_groups
+    from ..payment.payment_prompts import payment_email_collection_prompt
     from ..payment.payment_state_machine import begin_awaiting_payment_email
 
     summary = get_ledger(session).cart_summary_text()
     ensure_payment_groups(session)
     begin_awaiting_payment_email(session)
-    return (
-        f"{summary} What email should I send the secure payment link to? "
-        f"You can use one email for all books, or separate emails like "
-        f"send two books to one address and the rest to another."
-    )
+    return payment_email_collection_prompt(cart_summary=summary)
 
 
 def stage_product_candidate(session: "SessionState", product: dict[str, Any]) -> None:
