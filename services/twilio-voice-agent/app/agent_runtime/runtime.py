@@ -1282,7 +1282,13 @@ def is_brain_orchestrator_mode(settings=None) -> bool:
 
 
 def resolve_live_turn_handler(settings=None) -> str:
-    """Return the configured live WebSocket turn handler label."""
-    from ..config import get_settings
-    s = settings or get_settings()
-    return s.VOICE_AGENT_RUNTIME_MODE
+    """
+    Return the active live WebSocket turn handler label.
+
+    v4.18: always the single LLM-first tool runtime. The legacy
+    VOICE_AGENT_RUNTIME_MODE values are quarantined and never serve the live
+    path; dispatch_assembled_turn ignores them.
+    """
+    from .llm_tool_runtime import RUNTIME_MODE
+
+    return RUNTIME_MODE

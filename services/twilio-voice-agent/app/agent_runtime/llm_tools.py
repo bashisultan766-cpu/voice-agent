@@ -1,0 +1,543 @@
+"""
+Canonical OpenAI tool surface for the LLM-first runtime.
+
+Exposes 17 backend capabilities as OpenAI function tools. For each tool:
+
+* a clean JSON schema is published to the model (``tool_specs``),
+* inputs are validated with Pydantic before any backend call,
+* execution reuses the existing, hardened Shopify / cart / email / escalation
+  logic (no business logic is duplicated here),
+* results are returned as structured JSON strings,
+* secrets, raw payment URLs, full card numbers, and unverified PII never leave
+  these functions — verification gating is enforced by the underlying order and
+  refund tools.
+
+This module is the ONLY tool registry the live runtime uses. The legacy
+worker/composer fan-out is not in the customer path.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any, Optional, TYPE_CHECKING
+
+from pydantic import BaseModel, Field, ValidationError
+
+from ..tools import shopify_tools as _st
+
+if TYPE_CHECKING:
+    from ..state.models import SessionState
+
+logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Pydantic input models (validation only — schemas published separately).
+# ──────────────────────────────────────────────────────────────────────────────
+class SearchProductsArgs(BaseModel):
+    query: str = Field(..., min_length=1, description="Title, author, ISBN, SKU, or keyword.")
+    limit: int = Field(5, ge=1, le=10)
+
+
+class GetProductDetailsArgs(BaseModel):
+    product_id_or_handle: str = Field(..., min_length=1)
+
+
+class CompareProductsArgs(BaseModel):
+    queries: list[str] = Field(..., min_length=2, max_length=4)
+
+
+class GetCartArgs(BaseModel):
+    pass
+
+
+class AddToCartArgs(BaseModel):
+    title: str = Field("", description="Book title to add.")
+    isbn: str = Field("", description="ISBN if known.")
+    variant_id: str = Field("", description="Shopify variant GID if known.")
+    price: str = Field("", description="Price if known.")
+    quantity: int = Field(1, ge=1, le=99)
+
+
+class UpdateCartArgs(BaseModel):
+    isbn_or_title: str = Field(..., min_length=1)
+    quantity: int = Field(..., ge=1, le=99)
+
+
+class RemoveFromCartArgs(BaseModel):
+    isbn_or_title: str = Field(..., min_length=1)
+
+
+class CreateCheckoutArgs(BaseModel):
+    email: str = Field("", description="Confirmed customer email (optional; session value preferred).")
+
+
+class SendPaymentLinkArgs(BaseModel):
+    email: str = Field(..., min_length=3, description="Confirmed customer email.")
+
+
+class LookupOrderStatusArgs(BaseModel):
+    order_number: str = Field("", description="Order number with or without #.")
+    email: str = Field("", description="Email for verification.")
+    phone: str = Field("", description="Phone for verification.")
+
+
+class LookupRefundStatusArgs(BaseModel):
+    order_number: str = Field(..., min_length=1)
+    email: str = Field("", description="Email for verification.")
+    phone: str = Field("", description="Phone for verification.")
+
+
+class LookupCustomerArgs(BaseModel):
+    email: str = Field("", description="Customer email.")
+    phone: str = Field("", description="Customer phone.")
+
+
+class ShippingPolicyArgs(BaseModel):
+    topic: str = Field("", description="Optional: address change, media mail, priority mail, cost.")
+
+
+class RefundPolicyArgs(BaseModel):
+    topic: str = Field("", description="Optional refund sub-topic.")
+
+
+class FacilityPolicyArgs(BaseModel):
+    facility_name: str = Field(..., min_length=1)
+    order_number: str = Field("", description="Optional order number to cross-reference.")
+
+
+class FaqLookupArgs(BaseModel):
+    question: str = Field(..., min_length=1)
+
+
+class EscalateArgs(BaseModel):
+    reason: str = Field(..., min_length=1)
+    summary: str = Field("", description="Short summary for the human agent.")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tool implementations (thin wrappers over existing hardened logic).
+# ──────────────────────────────────────────────────────────────────────────────
+def _err(message: str) -> str:
+    return json.dumps({"error": message})
+
+
+def _rerank_by_fuzzy(query: str, results: list[dict]) -> list[dict]:
+    """Re-rank product results by fuzzy similarity to the query (best-effort)."""
+    if not results:
+        return results
+    try:
+        from rapidfuzz import fuzz
+
+        def score(r: dict) -> float:
+            title = str(r.get("title", ""))
+            author = str(r.get("author", ""))
+            return max(
+                fuzz.WRatio(query, title),
+                fuzz.WRatio(query, f"{title} {author}".strip()),
+            )
+
+        return sorted(results, key=score, reverse=True)
+    except Exception:  # noqa: BLE001 — ranking is optional
+        return results
+
+
+async def _search_products(args: SearchProductsArgs, session) -> str:
+    raw = await _st.search_products(query=args.query, limit=args.limit)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(payload, dict) and payload.get("results"):
+        payload["results"] = _rerank_by_fuzzy(args.query, payload["results"])
+    return json.dumps(payload)
+
+
+async def _get_product_details(args: GetProductDetailsArgs, session) -> str:
+    return await _st.get_product_details(product_id_or_handle=args.product_id_or_handle)
+
+
+async def _compare_products(args: CompareProductsArgs, session) -> str:
+    items = []
+    for q in args.queries:
+        raw = await _st.search_products(query=q, limit=1)
+        try:
+            payload = json.loads(raw)
+            results = payload.get("results") or []
+            top = results[0] if results else None
+        except json.JSONDecodeError:
+            top = None
+        if top:
+            items.append({
+                "query": q,
+                "title": top.get("title"),
+                "price": top.get("price"),
+                "available": top.get("available"),
+                "author": top.get("author", ""),
+            })
+        else:
+            items.append({"query": q, "found": False})
+    return json.dumps({"comparison": items, "count": len(items)})
+
+
+def _ledger_view(session) -> dict:
+    from ..cart.session import get_ledger
+
+    ledger = get_ledger(session)
+    return {
+        "confirmed_count": ledger.confirmed_count(),
+        "confirmed_titles": ledger.confirmed_titles(),
+        "candidate_titles": [
+            i.title for i in ledger.items if i.confirmation_status == "candidate"
+        ],
+        "summary": ledger.cart_summary_text(),
+    }
+
+
+async def _get_cart(args: GetCartArgs, session) -> str:
+    if session is None:
+        return json.dumps({"confirmed_count": 0, "summary": "No active cart."})
+    return json.dumps(_ledger_view(session))
+
+
+async def _add_to_cart(args: AddToCartArgs, session) -> str:
+    if session is None:
+        return _err("No active session.")
+    if not (args.title or args.isbn or args.variant_id):
+        return _err("Need a title, ISBN, or product to add to the cart.")
+    from ..cart.session import add_product_candidate, confirm_last_candidate
+
+    add_product_candidate(
+        session,
+        title=args.title or args.isbn or "Selected book",
+        isbn=args.isbn,
+        variant_id=args.variant_id,
+        price=args.price or None,
+    )
+    # An explicit add-to-cart is an explicit selection; confirm it.
+    confirm_last_candidate(session)
+    if args.quantity > 1 and (args.isbn or args.title):
+        from ..cart.session import get_ledger, sync_ledger_to_session
+
+        ledger = get_ledger(session)
+        ledger.update_quantity(args.isbn or args.title, args.quantity)
+        sync_ledger_to_session(session, ledger)
+    return json.dumps({"success": True, "cart": _ledger_view(session)})
+
+
+async def _update_cart(args: UpdateCartArgs, session) -> str:
+    if session is None:
+        return _err("No active session.")
+    from ..cart.session import get_ledger, sync_ledger_to_session
+
+    ledger = get_ledger(session)
+    ok = ledger.update_quantity(args.isbn_or_title, args.quantity)
+    sync_ledger_to_session(session, ledger)
+    if not ok:
+        return _err(f"'{args.isbn_or_title}' was not found in the cart.")
+    return json.dumps({"success": True, "cart": _ledger_view(session)})
+
+
+async def _remove_from_cart(args: RemoveFromCartArgs, session) -> str:
+    if session is None:
+        return _err("No active session.")
+    from ..cart.session import get_ledger, sync_ledger_to_session
+
+    ledger = get_ledger(session)
+    target = args.isbn_or_title.lower().strip()
+    removed = False
+    for item in ledger.items:
+        if item.isbn == args.isbn_or_title or item.title.lower() == target:
+            item.confirmation_status = "rejected"
+            removed = True
+    sync_ledger_to_session(session, ledger)
+    if not removed:
+        return _err(f"'{args.isbn_or_title}' was not found in the cart.")
+    return json.dumps({"success": True, "cart": _ledger_view(session)})
+
+
+async def _create_checkout(args: CreateCheckoutArgs, session) -> str:
+    if session is None:
+        return _err("No active session.")
+    from ..cart.session import get_ledger
+
+    items = get_ledger(session).to_checkout_items()
+    if not items:
+        return _err("There are no confirmed books in the cart yet.")
+    return await _st.create_checkout_link(
+        items=items,
+        email=args.email or None,
+        session=session,
+    )
+
+
+async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
+    if session is None:
+        return _err("No active session.")
+    from ..cart.session import get_ledger
+
+    items = get_ledger(session).to_checkout_items()
+    if not items:
+        return _err("There are no confirmed books to pay for yet.")
+    # SendPaymentLink enforces the payment-safety guards (confirmed email, no
+    # duplicate sends) and never returns the raw URL for speaking.
+    return await _st.SendPaymentLink(
+        items=items,
+        email=args.email,
+        customer_name=getattr(session, "caller_name", "") or None,
+        session=session,
+    )
+
+
+async def _lookup_order_status(args: LookupOrderStatusArgs, session) -> str:
+    if not (args.order_number or args.email or args.phone):
+        return _err("Provide an order number, email, or phone to look up an order.")
+    return await _st.lookup_order(
+        order_number=args.order_number or None,
+        email=args.email or None,
+        phone=args.phone or None,
+        session=session,
+    )
+
+
+async def _lookup_refund_status(args: LookupRefundStatusArgs, session) -> str:
+    return await _st.get_refund_status(
+        order_number=args.order_number,
+        email=args.email or None,
+        phone=args.phone or None,
+        session=session,
+    )
+
+
+async def _lookup_customer(args: LookupCustomerArgs, session) -> str:
+    # Friendly recognition only (no PII). Phone-based recognition is supported by
+    # the existing identity resolver; email lookup falls back to phone match.
+    phone = args.phone or (getattr(session, "from_number", "") if session else "")
+    result = await _st.SearchCustomerByPhone(phone=phone or None, session=session)
+    return result
+
+
+async def _shipping_policy(args: ShippingPolicyArgs, session) -> str:
+    from ..config import get_settings
+    from .knowledge_base import retrieve_knowledge_snippets
+
+    settings = get_settings()
+    snippets = retrieve_knowledge_snippets(
+        args.topic or "shipping subtotal media mail priority", intent="shipping_question"
+    )
+    return json.dumps({
+        "default_method": settings.SHIPPING_DEFAULT_METHOD,
+        "alt_method": settings.SHIPPING_ALT_METHOD,
+        "note": "Subtotal is before shipping. Shipping depends on method and destination.",
+        "policy_snippets": snippets,
+    })
+
+
+async def _refund_policy(args: RefundPolicyArgs, session) -> str:
+    from .knowledge_base import retrieve_knowledge_snippets
+
+    snippets = retrieve_knowledge_snippets(
+        args.topic or "refund", intent="refund_policy"
+    )
+    return json.dumps({"policy_snippets": snippets})
+
+
+async def _facility_policy(args: FacilityPolicyArgs, session) -> str:
+    return await _st.CheckFacilityApproval(
+        facility_name=args.facility_name,
+        order_number=args.order_number or None,
+        session=session,
+    )
+
+
+async def _faq_lookup(args: FaqLookupArgs, session) -> str:
+    from .knowledge_base import retrieve_knowledge_snippets
+
+    snippets = retrieve_knowledge_snippets(args.question)
+    return json.dumps({"answers": snippets, "found": bool(snippets)})
+
+
+async def _escalate(args: EscalateArgs, session) -> str:
+    return await _st.escalate_to_human(
+        reason=args.reason,
+        caller_phone=getattr(session, "from_number", "") if session else "",
+        summary=args.summary,
+        session=session,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Registry: name -> (Pydantic model, impl, description, json schema)
+# ──────────────────────────────────────────────────────────────────────────────
+class _Tool:
+    __slots__ = ("name", "model", "impl", "description", "schema")
+
+    def __init__(self, name, model, impl, description, schema):
+        self.name = name
+        self.model = model
+        self.impl = impl
+        self.description = description
+        self.schema = schema
+
+
+def _obj(props: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": props, "required": required}
+
+
+_S = {"type": "string"}
+_I = {"type": "integer"}
+
+
+_TOOLS: dict[str, _Tool] = {}
+
+
+def _register(name, model, impl, description, schema):
+    _TOOLS[name] = _Tool(name, model, impl, description, schema)
+
+
+_register(
+    "search_products", SearchProductsArgs, _search_products,
+    "Search the SureShot Books catalog by title, author, ISBN, SKU, or keyword. "
+    "Authoritative source for availability, price, and stock. Call before any "
+    "product answer.",
+    _obj({"query": {**_S, "description": "Title, author, ISBN, SKU, or keyword."},
+          "limit": {**_I, "description": "Max results 1-10.", "default": 5}}, ["query"]),
+)
+_register(
+    "get_product_details", GetProductDetailsArgs, _get_product_details,
+    "Fetch full details (description, price, variants, availability) for one "
+    "product by Shopify GID or URL handle. Use for 'what is this book about?'.",
+    _obj({"product_id_or_handle": {**_S, "description": "Shopify product GID or handle."}},
+         ["product_id_or_handle"]),
+)
+_register(
+    "compare_products", CompareProductsArgs, _compare_products,
+    "Compare two to four books side by side (price, availability). Each query is "
+    "a title/author/ISBN.",
+    _obj({"queries": {"type": "array", "items": _S,
+                       "description": "2-4 book queries to compare."}}, ["queries"]),
+)
+_register(
+    "get_cart", GetCartArgs, _get_cart,
+    "Return the caller's current cart: confirmed books and pending candidates.",
+    _obj({}, []),
+)
+_register(
+    "add_to_cart", AddToCartArgs, _add_to_cart,
+    "Add a confirmed book to the caller's cart. Provide a title and/or ISBN and "
+    "variant_id (from a prior search) and quantity.",
+    _obj({"title": _S, "isbn": _S, "variant_id": _S, "price": _S,
+          "quantity": {**_I, "default": 1}}, []),
+)
+_register(
+    "update_cart", UpdateCartArgs, _update_cart,
+    "Change the quantity of a book already in the cart, identified by ISBN or title.",
+    _obj({"isbn_or_title": _S, "quantity": _I}, ["isbn_or_title", "quantity"]),
+)
+_register(
+    "remove_from_cart", RemoveFromCartArgs, _remove_from_cart,
+    "Remove a book from the cart, identified by ISBN or title.",
+    _obj({"isbn_or_title": _S}, ["isbn_or_title"]),
+)
+_register(
+    "create_checkout", CreateCheckoutArgs, _create_checkout,
+    "Create a secure Shopify checkout/draft order for the confirmed cart. Does "
+    "not speak the link. Call after items are confirmed.",
+    _obj({"email": {**_S, "description": "Confirmed email (optional)."}}, []),
+)
+_register(
+    "send_payment_link", SendPaymentLinkArgs, _send_payment_link,
+    "Email the secure payment link for the confirmed cart. Only call AFTER the "
+    "email has been confirmed by the caller. Never read the link aloud.",
+    _obj({"email": {**_S, "description": "Confirmed customer email."}}, ["email"]),
+)
+_register(
+    "lookup_order_status", LookupOrderStatusArgs, _lookup_order_status,
+    "Look up order status, fulfillment, tracking, and shipping. Full details "
+    "require order number plus a matching email or phone (verification).",
+    _obj({"order_number": _S, "email": _S, "phone": _S}, []),
+)
+_register(
+    "lookup_refund_status", LookupRefundStatusArgs, _lookup_refund_status,
+    "Look up refund amount, date, and status for an order. Requires order number "
+    "plus a matching email or phone for verification.",
+    _obj({"order_number": _S, "email": _S, "phone": _S}, ["order_number"]),
+)
+_register(
+    "lookup_customer_by_email_or_phone", LookupCustomerArgs, _lookup_customer,
+    "Find a returning customer record by email or phone for friendly recognition "
+    "only. Does not return private data and is not identity verification.",
+    _obj({"email": _S, "phone": _S}, []),
+)
+_register(
+    "shipping_policy_lookup", ShippingPolicyArgs, _shipping_policy,
+    "Get SureShot Books shipping policy: methods, subtotal-vs-shipping, address "
+    "change guidance.",
+    _obj({"topic": _S}, []),
+)
+_register(
+    "refund_policy_lookup", RefundPolicyArgs, _refund_policy,
+    "Get SureShot Books refund policy details (general, not a specific order).",
+    _obj({"topic": _S}, []),
+)
+_register(
+    "facility_policy_lookup", FacilityPolicyArgs, _facility_policy,
+    "Check whether SureShot Books is approved to ship to a correctional facility "
+    "and any known restrictions. Never guess facility rules.",
+    _obj({"facility_name": _S, "order_number": _S}, ["facility_name"]),
+)
+_register(
+    "faq_lookup", FaqLookupArgs, _faq_lookup,
+    "Look up an answer to a general SureShot Books FAQ / policy question.",
+    _obj({"question": _S}, ["question"]),
+)
+_register(
+    "escalate_to_human", EscalateArgs, _escalate,
+    "Hand the call to a human customer service agent and flag for follow-up.",
+    _obj({"reason": _S, "summary": _S}, ["reason"]),
+)
+
+
+def tool_names() -> list[str]:
+    return list(_TOOLS.keys())
+
+
+def tool_specs() -> list[dict]:
+    """Return OpenAI tool schemas for all canonical tools."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.schema,
+            },
+        }
+        for t in _TOOLS.values()
+    ]
+
+
+async def dispatch(name: str, args: dict, session: "SessionState | None") -> str:
+    """
+    Validate and execute a canonical tool. Always returns a JSON string and
+    never raises — failures become safe error JSON.
+    """
+    tool = _TOOLS.get(name)
+    if tool is None:
+        logger.warning("llm_tool_unknown name=%s", name)
+        return _err(f"Tool '{name}' is not available.")
+
+    try:
+        validated = tool.model(**(args or {}))
+    except ValidationError as exc:
+        logger.info("llm_tool_invalid_args name=%s errors=%d", name, len(exc.errors()))
+        return _err("Invalid tool arguments.")
+
+    sid = getattr(session, "call_sid", "")[:6] if session else "none"
+    logger.info("llm_tool_call sid=%s name=%s arg_keys=%s", sid, name, sorted((args or {}).keys()))
+    try:
+        result = await tool.impl(validated, session)
+        return result if isinstance(result, str) else json.dumps(result)
+    except Exception:  # noqa: BLE001 — tools must never break the call
+        logger.exception("llm_tool_error name=%s", name)
+        return _err("That tool is temporarily unavailable.")

@@ -87,8 +87,14 @@ class Settings(BaseSettings):
     JESSICA_EMAIL: str = ""
     CUSTOMER_SERVICE_EMAIL: str = ""
 
-    # ── v4.11: Eric Agent Runtime ─────────────────────────────────────────────
-    VOICE_AGENT_RUNTIME_MODE: str = "main_llm_agent"  # main_llm_agent | eric_agent_runtime | legacy_v410
+    # ── v4.18: LLM-first tool runtime (single active runtime) ─────────────────
+    # The only supported live runtime. Legacy modes (main_llm_agent,
+    # eric_agent_runtime, legacy_v410, llm_first) are quarantined and never run
+    # in the customer path — dispatch always routes to llm_tool_runtime.
+    VOICE_AGENT_RUNTIME_MODE: str = "llm_tool_runtime"
+    # Approximate token budget for the system prompt; above this the master
+    # prompt is sent section-by-section (safety sections always included).
+    VOICE_PROMPT_TOKEN_BUDGET: int = 4000
     VOICE_SUPERVISOR_MODEL: str = "gpt-4o-mini"
     VOICE_FINAL_MODEL: str = "gpt-4o-mini"
     VOICE_MAIN_LLM_TIMEOUT_MS: int = 6000

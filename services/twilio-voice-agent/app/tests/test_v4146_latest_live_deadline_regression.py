@@ -124,8 +124,14 @@ class TestLatestLiveDeadlineRegression:
         )
         assert commit.intent == "payment_flow"
 
-    def test_demo_hardening_enabled(self):
-        assert is_commerce_demo_hardening(get_settings()) is True
+    def test_demo_hardening_enabled(self, monkeypatch):
+        # v4.18: "demo hardening" made the deterministic commerce resolver win
+        # over the LLM. That anti-LLM override is removed; the LLM-first runtime
+        # is authoritative, so demo hardening is OFF by the code default.
+        monkeypatch.delenv("VOICE_AGENT_RUNTIME_MODE", raising=False)
+        monkeypatch.delenv("VOICE_COMMERCE_DEMO_HARDENING", raising=False)
+        from app.config import Settings
+        assert is_commerce_demo_hardening(Settings()) is False
 
     def test_no_legacy_runtime(self):
         assert get_settings().VOICE_AGENT_RUNTIME_MODE != "legacy_v410"

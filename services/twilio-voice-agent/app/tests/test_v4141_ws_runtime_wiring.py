@@ -1,4 +1,13 @@
-"""v4.14.1 — Live WebSocket runtime wiring integration tests."""
+"""
+Live WebSocket runtime wiring (updated for v4.18 single runtime).
+
+The legacy multi-mode wiring (main_llm_agent -> EricAgentRuntime,
+legacy_v410 -> pipeline engine) was removed. Every assembled turn now routes to
+the single LLM-first tool runtime; the legacy pipeline engine and Eric runtime
+are never invoked from the live path, and the /health endpoint reports the
+active handler honestly (always llm_tool_runtime), even when a legacy mode value
+is still configured.
+"""
 from __future__ import annotations
 
 import logging
@@ -17,7 +26,7 @@ def _settings(**overrides):
     defaults = dict(
         OPENAI_API_KEY="test",
         DEBUG=True,
-        VOICE_AGENT_RUNTIME_MODE="main_llm_agent",
+        VOICE_AGENT_RUNTIME_MODE="llm_tool_runtime",
         VOICE_CR_TEXT_INTERRUPTIBLE=True,
         VOICE_CR_TEXT_PREEMPTIBLE=False,
         VOICE_LANGUAGE="en-US",
@@ -38,113 +47,81 @@ def _session():
 
 
 async def _run_dispatch(settings, user_text: str, *, caplog=None):
-    from app.agent_runtime import runtime as runtime_module
     from app.ws.conversation_relay import dispatch_assembled_turn
-    from app.ws.conversation_relay_sender import ConversationRelayOutbound, ConversationRelayStats
-
-    runtime_module._runtime = None
 
     captured: list[dict] = []
-    stats = ConversationRelayStats()
-
-    async def capture(msg: dict):
-        captured.append(msg)
-
-    outbound = ConversationRelayOutbound(capture, settings, "CA41410001", stats)
-    outbound.set_turn(1)
 
     async def send(msg: dict):
-        await outbound.engine_send(msg)
+        captured.append(msg)
 
     session = _session()
     if caplog is not None:
         caplog.set_level(logging.INFO)
 
-    await dispatch_assembled_turn(
-        settings,
-        session,
-        user_text,
-        send,
-        caller_context=None,
-    )
-    await outbound.flush()
-    return captured, stats
+    await dispatch_assembled_turn(settings, session, user_text, send, caller_context=None)
+    return captured
 
 
 @pytest.mark.asyncio
 class TestWSRuntimeWiring:
-    async def test_main_llm_agent_uses_eric_runtime_not_legacy_engine(self, caplog):
-        settings = _settings(VOICE_AGENT_RUNTIME_MODE="main_llm_agent")
-        mock_engine = MagicMock()
-        mock_engine.handle_turn = AsyncMock()
+    async def test_routes_to_llm_tool_runtime(self, caplog):
+        settings = _settings(VOICE_AGENT_RUNTIME_MODE="llm_tool_runtime")
+        fake_runtime = MagicMock()
+        fake_runtime.handle_turn = AsyncMock(return_value=MagicMock(response_text="My name is Eric."))
 
-        with patch("app.ws.conversation_relay.get_engine", return_value=mock_engine), patch(
-            "app.brain.eric_dialogue_brain.get_dialogue_brain",
-        ) as mock_brain:
-            captured, stats = await _run_dispatch(
-                settings,
-                "What is your name?",
-                caplog=caplog,
-            )
+        with patch(
+            "app.agent_runtime.llm_tool_runtime.get_llm_tool_runtime",
+            return_value=fake_runtime,
+        ):
+            await _run_dispatch(settings, "What is your name?", caplog=caplog)
 
-        mock_engine.handle_turn.assert_not_called()
-        mock_brain.assert_not_called()
-        assert stats.responses_sent >= 1
-        response_text = " ".join(m.get("token", "") for m in captured)
-        assert "My name is Eric" in response_text
+        fake_runtime.handle_turn.assert_called_once()
         assert "voice_turn_handler" in caplog.text
-        assert "mode=main_llm_agent" in caplog.text
-        assert "handler=main_llm_agent" in caplog.text
-        assert "conversationrelay_response_ready" in caplog.text
-        assert "runtime_mode=main_llm_agent" in caplog.text
-        assert "main_llm_runtime_start" in caplog.text or "brain_runtime_start" in caplog.text
-        assert "main_llm_agent_decision" in caplog.text or "brain_decision" in caplog.text
-        assert "eric_runtime_start" not in caplog.text
-        assert "eric_supervisor_decision" not in caplog.text
-        assert "intent_contract_resolved" not in caplog.text
-        assert "llm_brain_decision" not in caplog.text
-        assert "runtime_mode=legacy_v410" not in caplog.text
+        assert "handler=llm_tool_runtime" in caplog.text
 
-    async def test_legacy_v410_uses_realtime_pipeline_engine(self):
+    async def test_legacy_engine_never_called(self):
         settings = _settings(VOICE_AGENT_RUNTIME_MODE="legacy_v410")
         mock_engine = MagicMock()
         mock_engine.handle_turn = AsyncMock()
-        mock_runtime = MagicMock()
-        mock_runtime.handle_turn = AsyncMock()
+        mock_eric = MagicMock()
+        mock_eric.handle_turn = AsyncMock()
+        fake_runtime = MagicMock()
+        fake_runtime.handle_turn = AsyncMock(return_value=MagicMock(response_text="ok"))
 
         with patch("app.ws.conversation_relay.get_engine", return_value=mock_engine), patch(
-            "app.ws.conversation_relay.get_eric_runtime",
-            return_value=mock_runtime,
+            "app.ws.conversation_relay.get_eric_runtime", return_value=mock_eric
+        ), patch(
+            "app.agent_runtime.llm_tool_runtime.get_llm_tool_runtime",
+            return_value=fake_runtime,
         ):
             await _run_dispatch(settings, "What is your name?")
 
-        mock_engine.handle_turn.assert_called_once()
-        mock_runtime.handle_turn.assert_not_called()
+        mock_engine.handle_turn.assert_not_called()
+        mock_eric.handle_turn.assert_not_called()
+        fake_runtime.handle_turn.assert_called_once()
 
-    async def test_unknown_mode_does_not_call_legacy_engine(self, caplog):
-        # v4.17: an unknown mode logs a mismatch but now falls back to the
-        # LLM-first brain so the caller is never left in silence.
+    async def test_unknown_mode_still_routes_to_new_runtime(self, caplog):
         settings = _settings(VOICE_AGENT_RUNTIME_MODE="unknown_mode")
         mock_engine = MagicMock()
         mock_engine.handle_turn = AsyncMock()
-        fake_llmf = MagicMock()
-        fake_llmf.handle_turn = AsyncMock()
-        caplog.set_level(logging.ERROR)
+        fake_runtime = MagicMock()
+        fake_runtime.handle_turn = AsyncMock(return_value=MagicMock(response_text="ok"))
+        caplog.set_level(logging.INFO)
 
         with patch("app.ws.conversation_relay.get_engine", return_value=mock_engine), patch(
-            "app.agent_runtime.llm_first_runtime.get_llm_first_runtime",
-            return_value=fake_llmf,
+            "app.agent_runtime.llm_tool_runtime.get_llm_tool_runtime",
+            return_value=fake_runtime,
         ):
-            await _run_dispatch(settings, "Hello")
+            await _run_dispatch(settings, "Hello", caplog=caplog)
 
-        # Legacy engine must NOT be called; the safe fallback handles the turn.
         mock_engine.handle_turn.assert_not_called()
-        fake_llmf.handle_turn.assert_called_once()
-        assert "runtime_mode_mismatch" in caplog.text
+        fake_runtime.handle_turn.assert_called_once()
+        assert "legacy_runtime_mode_ignored" in caplog.text
 
 
 class TestHealthLiveTurnHandler:
-    def test_health_includes_live_turn_handler(self, monkeypatch):
+    def test_health_live_turn_handler_is_always_new_runtime(self, monkeypatch):
+        # Even with a legacy mode configured, the live handler is the new runtime.
         monkeypatch.setenv("VOICE_AGENT_RUNTIME_MODE", "main_llm_agent")
         from app.config import get_settings
 
@@ -156,4 +133,5 @@ class TestHealthLiveTurnHandler:
         resp = client.get("/health")
         data = resp.json()
         assert data["runtime_mode"] == "main_llm_agent"
-        assert data["live_turn_handler"] == "main_llm_agent"
+        assert data["live_turn_handler"] == "llm_tool_runtime"
+        get_settings.cache_clear()

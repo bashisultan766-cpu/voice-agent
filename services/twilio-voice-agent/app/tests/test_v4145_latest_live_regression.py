@@ -94,8 +94,12 @@ class TestLatestLiveRegression:
         assert entities.get("product_phrase", "").lower() != "price. what is the price"
 
     @pytest.mark.asyncio
-    async def test_runtime_mode_main_llm(self):
-        assert get_settings().VOICE_AGENT_RUNTIME_MODE == "main_llm_agent"
+    async def test_runtime_mode_main_llm(self, monkeypatch):
+        # v4.18: the single active runtime is the LLM-first tool runtime.
+        # Assert the code default (env-independent of process-global test pins).
+        monkeypatch.delenv("VOICE_AGENT_RUNTIME_MODE", raising=False)
+        from app.config import Settings
+        assert Settings().VOICE_AGENT_RUNTIME_MODE == "llm_tool_runtime"
 
     @pytest.mark.asyncio
     async def test_no_legacy_runtime(self):

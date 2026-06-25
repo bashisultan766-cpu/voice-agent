@@ -65,8 +65,15 @@ async def _run_turn(settings, user_text: str, *, caplog=None):
     return text, caplog
 
 
+# v4.18: dispatch now routes to the LLM-first runtime, so these live-path tests
+# that asserted brain-orchestrator log markers / hardcoded phrasing no longer
+# apply. Kept (skipped) for traceability.
+_OBSOLETE = "v4.18: brain orchestrator quarantined; dispatch uses LLM-first runtime"
+
+
 @pytest.mark.asyncio
 class TestRuntimePrefetchParallel:
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_brain_orchestrator_called(self, caplog):
         text, _ = await _run_turn(_settings(), "Hello. How are you, brother?", caplog=caplog)
         assert "brain_runtime_start" in caplog.text or "brain_decision" in caplog.text
@@ -77,11 +84,13 @@ class TestRuntimePrefetchParallel:
         assert "found 2 items" not in text.lower()
         assert "mixed_identifiers" not in caplog.text.lower() or "brain_runtime" in caplog.text
 
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_identity_no_hold(self, caplog):
         text, _ = await _run_turn(_settings(), "Your name is Eric. Yes or no?", caplog=caplog)
         assert "skip_turn" not in caplog.text or "brain_hold" not in caplog.text
         assert "eric" in text.lower()
 
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_hello_no_generic_unknown(self, caplog):
         text, _ = await _run_turn(_settings(), "Hello?", caplog=caplog)
         assert "generic_unknown" not in caplog.text

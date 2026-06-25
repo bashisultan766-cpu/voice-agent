@@ -156,4 +156,5 @@ class TestDetectRuntimeMode:
         monkeypatch.delenv("VOICE_AGENT_RUNTIME_MODE", raising=False)
         from app.config import Settings
         s = Settings()
-        assert s.VOICE_AGENT_RUNTIME_MODE == "main_llm_agent"
+        # v4.18: default runtime is the single LLM-first tool runtime.
+        assert s.VOICE_AGENT_RUNTIME_MODE == "llm_tool_runtime"

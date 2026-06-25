@@ -75,67 +75,37 @@ async def dispatch_assembled_turn(
     send,
     caller_context,
 ) -> None:
-    """Route one assembled ConversationRelay turn to the configured runtime handler."""
-    mode = settings.VOICE_AGENT_RUNTIME_MODE
-    handler = resolve_live_turn_handler(settings)
+    """
+    Route one assembled ConversationRelay turn to the single LLM-first runtime.
+
+    v4.18: there is exactly one live runtime — LLM_TOOL_RUNTIME. Legacy modes
+    (main_llm_agent / eric_agent_runtime / legacy_v410 / llm_first) are
+    quarantined and never run in the customer path. Every assembled turn goes to
+    the new runtime so OpenAI always receives the caller question first and can
+    call tools.
+    """
+    from ..agent_runtime.llm_tool_runtime import get_llm_tool_runtime, RUNTIME_MODE
+
     sid = session.call_sid[:6]
-
-    logger.info(
-        "voice_turn_handler sid=%s mode=%s handler=%s",
-        sid,
-        mode,
-        handler,
-    )
-
-    # ── v4.17: LLM-first runtime — the single consolidated brain ──────────────
-    if mode == "llm_first":
-        from ..agent_runtime.llm_first_runtime import get_llm_first_runtime
-
-        t0 = time.monotonic()
-        logger.info("llm_first_turn_started sid=%s", sid)
-        result = await get_llm_first_runtime(settings).handle_turn(
-            session,
-            user_text,
-            send,
-            caller_context=caller_context,
+    configured = settings.VOICE_AGENT_RUNTIME_MODE
+    if configured != RUNTIME_MODE:
+        logger.warning(
+            "legacy_runtime_mode_ignored sid=%s configured=%s using=%s",
+            sid, configured, RUNTIME_MODE,
         )
-        chars = len(getattr(result, "response_text", "") or "")
-        logger.info(
-            "llm_first_turn_completed sid=%s chars=%d total_ms=%d",
-            sid,
-            chars,
-            int((time.monotonic() - t0) * 1000),
-        )
-        return
 
-    if mode in ("main_llm_agent", "eric_agent_runtime"):
-        await get_eric_runtime(settings).handle_turn(
-            session,
-            user_text,
-            send,
-            caller_context=caller_context,
-        )
-        return
-
-    if mode == "legacy_v410":
-        engine = get_engine(settings)
-        await engine.handle_turn(session, user_text, send, caller_context=caller_context)
-        return
-
-    # Unknown mode — never leave the caller in silence. Use the LLM-first brain
-    # as the safe fallback so a valid spoken response is always produced.
-    logger.error(
-        "runtime_mode_mismatch sid=%s env_mode=%s attempted=safe_fallback",
-        sid,
-        mode,
-    )
-    from ..agent_runtime.llm_first_runtime import get_llm_first_runtime
-
-    await get_llm_first_runtime(settings).handle_turn(
+    t0 = time.monotonic()
+    logger.info("voice_turn_handler sid=%s handler=%s", sid, RUNTIME_MODE)
+    result = await get_llm_tool_runtime(settings).handle_turn(
         session,
         user_text,
         send,
         caller_context=caller_context,
+    )
+    chars = len(getattr(result, "response_text", "") or "")
+    logger.info(
+        "llm_tool_turn_completed sid=%s chars=%d total_ms=%d",
+        sid, chars, int((time.monotonic() - t0) * 1000),
     )
 
 

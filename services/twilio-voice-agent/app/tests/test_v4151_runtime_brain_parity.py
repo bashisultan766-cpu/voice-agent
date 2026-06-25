@@ -63,28 +63,40 @@ async def _run_turn(settings, user_text: str, *, caplog=None):
     return text, caplog
 
 
+# v4.18: these asserted the quarantined brain runtime's hardcoded conversational
+# phrasing through the live dispatch path. Dispatch now routes to the LLM-first
+# runtime, where the wording is composed by OpenAI, so these fixed-string
+# assertions no longer apply. Kept (skipped) for historical traceability.
+_OBSOLETE = "v4.18: replaced by LLM-first runtime (see test_v418_llm_tool_runtime)"
+
+
 @pytest.mark.asyncio
 class TestRuntimeBrainParity:
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_how_are_you_direct_no_tools(self, caplog):
         text, _ = await _run_turn(_settings(), "How are you?", caplog=caplog)
         assert "let me check" not in text.lower()
         assert "help" in text.lower()
 
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_what_can_you_do_capabilities(self):
         text, _ = await _run_turn(_settings(), "What can you do?")
         assert "let me check" not in text.lower()
         assert "SureShot" in text or "books" in text.lower()
 
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_are_you_there_direct(self):
         text, _ = await _run_turn(_settings(), "Are you there?")
         assert "let me check" not in text.lower()
         assert "here" in text.lower()
 
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_can_you_hear_me_direct(self):
         text, _ = await _run_turn(_settings(), "Can you hear me?")
         assert "let me check" not in text.lower()
         assert "hear" in text.lower()
 
+    @pytest.mark.skip(reason=_OBSOLETE)
     async def test_newspaper_vague_clarification(self):
         text, _ = await _run_turn(_settings(), "Can you give me newspaper?")
         assert "let me check" not in text.lower()
