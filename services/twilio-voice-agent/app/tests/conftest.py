@@ -1,7 +1,12 @@
 """Shared pytest fixtures for twilio-voice-agent tests."""
 from __future__ import annotations
 
+import os
+
 import pytest
+
+os.environ.setdefault("RESEND_API_KEY", "re_test_key")
+os.environ.setdefault("RESEND_FROM_EMAIL", "noreply@example.com")
 
 
 @pytest.fixture(autouse=True)

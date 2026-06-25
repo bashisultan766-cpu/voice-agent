@@ -26,6 +26,7 @@ from app.agent_runtime import llm_tools
 from app.agent_runtime.commerce_flow_state import (
     STATUS_AWAITING_ANOTHER_BOOK,
     STATUS_AWAITING_BOOK_CONFIRM,
+    STATUS_AWAITING_QUANTITY,
     STATUS_AWAITING_EMAIL_COLLECTION,
     another_book_after_add_prompt,
     confirm_book_prompt,
@@ -37,6 +38,7 @@ from app.agent_runtime.payment_flow_state import PAYMENT_SUCCESS_MESSAGE
 from app.agent_runtime.tool_progress import dispatch_with_progress, progress_phrase_for_tool
 from app.agent_runtime.tool_runtime_gates import gate_tool_call
 from app.cart.session import add_product_candidate, confirm_last_candidate, get_ledger
+from app.pipeline.email_speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
 
 
@@ -103,7 +105,7 @@ class TestBookConfirmBeforeAdd:
     def test_search_stages_candidate(self):
         session = _session()
         stage_product_candidate(session, BOOK_A)
-        assert session.commerce_flow_status == STATUS_AWAITING_BOOK_CONFIRM
+        assert session.commerce_flow_status == STATUS_AWAITING_QUANTITY
         assert session.commerce_pending_candidate["title"] == BOOK_A["title"]
 
     def test_add_to_cart_blocked_until_confirm(self):
@@ -129,15 +131,19 @@ class TestBookConfirmBeforeAdd:
         assert get_ledger(session).confirmed_count() == 0
 
 
+def _yes_add_staged(session):
+    process_commerce_turn(session, "yes")
+    return process_commerce_turn(session, "yes")
+
+
 class TestMultiBookFlow:
     def test_yes_confirms_and_asks_another(self):
         session = _session()
         stage_product_candidate(session, BOOK_A)
-        hint = process_commerce_turn(session, "yes")
+        hint = _yes_add_staged(session)
         assert hint.force_reply
         assert hint.book_added
         assert "another book" in hint.force_reply.lower()
-        assert "Done, I added" in hint.force_reply
         assert get_ledger(session).confirmed_count() == 1
         assert session.commerce_flow_status == STATUS_AWAITING_ANOTHER_BOOK
 
@@ -163,7 +169,7 @@ class TestMultiBookFlow:
     def test_confirm_prompt_text(self):
         prompt = confirm_book_prompt(BOOK_A)
         assert BOOK_A["title"] in prompt
-        assert "add" in prompt.lower()
+        assert "copies" in prompt.lower()
 
 
 class TestRuntimeCommerceIntegration:
@@ -226,7 +232,7 @@ class TestRuntimeCommerceIntegration:
 
         result = await runtime.handle_turn(session, "I'm looking for Freedom Too", send)
         assert BOOK_A["title"] in result.response_text
-        assert "add" in result.response_text.lower()
+        assert "copies" in result.response_text.lower()
         assert get_ledger(session).confirmed_count() == 0
 
 
@@ -256,7 +262,8 @@ class TestEmailShortCircuitRegression:
         utterance = "Okay. My email address is bashisultan766@gmail.com."
         result = await runtime.handle_turn(session, utterance, send, assembled_turn_mode="email")
         assert not openai_called
-        assert "bashisultan766@gmail.com" in result.response_text
+        assert speak_email("bashisultan766@gmail.com") in result.response_text
+        assert spell_email_for_voice("bashisultan766@gmail.com") in result.response_text
         assert "correct" in result.response_text.lower()
 
 
@@ -268,7 +275,7 @@ class TestFullTwoBookPaymentFlow:
 
         # Book 1
         stage_product_candidate(session, BOOK_A)
-        h1 = process_commerce_turn(session, "yes")
+        h1 = _yes_add_staged(session)
         assert h1.book_added
         assert session.commerce_flow_status == STATUS_AWAITING_ANOTHER_BOOK
 
@@ -277,7 +284,8 @@ class TestFullTwoBookPaymentFlow:
 
         # Book 2 staged + confirmed
         stage_product_candidate(session, BOOK_B)
-        h2 = process_commerce_turn(session, "yes that's right")
+        process_commerce_turn(session, "yes that's right")
+        h2 = process_commerce_turn(session, "yes")
         assert h2.book_added
         assert get_ledger(session).confirmed_count() == 2
 
@@ -299,7 +307,7 @@ class TestFullTwoBookPaymentFlow:
             send,
             assembled_turn_mode="email",
         )
-        assert "bashisultan766@gmail.com" in email_result.response_text
+        assert speak_email("bashisultan766@gmail.com") in email_result.response_text
 
         checkout_calls: list[dict] = []
 

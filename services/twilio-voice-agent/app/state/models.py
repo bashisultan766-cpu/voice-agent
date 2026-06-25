@@ -121,12 +121,24 @@ class SessionState:
     payment_block_count: int = 0  # increments on each PaymentSafetyGuard block
 
     # ── v4.19 LLM payment state machine (explicit flags for llm_tool_runtime) ─
+    awaiting_payment_email: bool = False
     pending_payment_email: str = ""
     last_offered_payment_email: str = ""  # survives repeat-email turns until confirm/replace
     payment_email_confirmed: bool = False
     awaiting_payment_email_confirmation: bool = False
+    payment_send_in_progress: bool = False
+    payment_link_sent: bool = False
+    checkout_url: str = ""  # mirrors pending_checkout_url
+    checkout_id: str = ""  # mirrors pending_draft_order_id
+    email_send_attempted: bool = False
+    email_send_success: bool = False
     payment_cart_confirmed: bool = False
     last_payment_attempt_status: str = ""  # success | failed | blocked | pending_confirmation
+
+    # ── v4.27 multi-email payment groups (CartLedger-backed) ───────────────
+    payment_destination_groups: list[dict[str, Any]] = field(default_factory=list)
+    active_payment_group_index: int = 0
+    multi_email_payment_active: bool = False
 
     # ── Multi-book cart items ──────────────────────────────────────────────────
     # Each item: {title, isbn, variant_id, quantity, price, available, source}
@@ -194,6 +206,7 @@ class SessionState:
     # ── v4.24 multi-book commerce flow (CartLedger-backed) ─────────────────
     commerce_flow_status: str = "idle"
     commerce_pending_candidate: dict[str, Any] = field(default_factory=dict)
+    commerce_pending_quantity: int = 0
     commerce_allow_add: bool = False
     last_confirmed_product: dict[str, Any] = field(default_factory=dict)
     awaiting_product_confirmation: bool = False

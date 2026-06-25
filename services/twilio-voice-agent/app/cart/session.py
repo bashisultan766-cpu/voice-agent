@@ -39,6 +39,7 @@ def add_product_candidate(
     variant_id: str = "",
     price: str | None = None,
     available: bool = True,
+    quantity: int = 1,
 ) -> CartItem:
     ledger = get_ledger(session)
     item = CartItem(
@@ -47,6 +48,7 @@ def add_product_candidate(
         variant_id=variant_id,
         price=price,
         available=available,
+        quantity=max(1, int(quantity or 1)),
         source="isbn" if isbn else "search",
     )
     ledger.add_candidate(item)

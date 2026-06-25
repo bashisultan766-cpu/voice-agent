@@ -29,6 +29,7 @@ from app.payment.email_state import (
     get_canonical_confirmed_email,
     get_pending_payment_email,
 )
+from app.pipeline.email_speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
 
 
@@ -72,7 +73,8 @@ class TestLiveEmailTurnShortCircuit:
             session, LIVE_EMAIL_UTTERANCE, turn_mode="email",
         )
         assert hint.force_reply
-        assert LIVE_EMAIL in hint.force_reply
+        assert speak_email(LIVE_EMAIL) in hint.force_reply
+        assert spell_email_for_voice(LIVE_EMAIL) in hint.force_reply
         assert "Is that correct?" in hint.force_reply
         assert get_pending_payment_email(session) == LIVE_EMAIL
         assert session.awaiting_payment_email_confirmation is True
@@ -114,7 +116,8 @@ class TestLiveEmailTurnShortCircuit:
         assert not openai_calls
         assert "create_checkout" not in checkout_calls
         assert "send_payment_link" not in checkout_calls
-        assert LIVE_EMAIL in result.response_text
+        assert speak_email(LIVE_EMAIL) in result.response_text
+        assert spell_email_for_voice(LIVE_EMAIL) in result.response_text
         assert "correct" in result.response_text.lower()
         assert not [m for m in session.history if m.get("role") == "tool"]
 
@@ -170,7 +173,8 @@ class TestFullPaymentFlowTwoBooks:
             send,
             assembled_turn_mode="email",
         )
-        assert LIVE_EMAIL in result.response_text
+        assert speak_email(LIVE_EMAIL) in result.response_text
+        assert spell_email_for_voice(LIVE_EMAIL) in result.response_text
         assert session.awaiting_payment_email_confirmation is True
 
         checkout_calls: list[dict] = []

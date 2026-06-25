@@ -49,6 +49,7 @@ def run_case(name: str, utterance: str, expected: str) -> list[tuple[str, bool]]
         sync_payment_email_fields,
     )
     from app.pipeline.email_capture import normalize_spoken_email
+    from app.pipeline.email_speller import speak_email, spell_email_for_voice
     from app.state.models import SessionState
 
     results: list[tuple[str, bool]] = []
@@ -76,10 +77,12 @@ def run_case(name: str, utterance: str, expected: str) -> list[tuple[str, bool]]
     results.append(_check(f"{name}/pending_email_set", pending == expected))
 
     prompt = hint.force_reply or confirmation_prompt(expected)
+    spoken = speak_email(expected)
+    spelled = spell_email_for_voice(expected)
     results.append(
         _check(
             f"{name}/confirmation_prompt_has_full_email",
-            expected in prompt and "***" not in prompt,
+            spoken in prompt and spelled in prompt and "***" not in prompt,
         )
     )
 
@@ -125,7 +128,7 @@ def run_case(name: str, utterance: str, expected: str) -> list[tuple[str, bool]]
 
 
 def main() -> int:
-    print("Email Capture Flow Diagnostic (v4.22)")
+    print("Email Capture Flow Diagnostic (v4.26)")
     print("=" * 56)
     all_results: list[tuple[str, bool]] = []
     for name, utterance, expected in CASES:

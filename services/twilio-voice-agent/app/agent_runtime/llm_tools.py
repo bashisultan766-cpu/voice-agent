@@ -364,55 +364,16 @@ async def _create_checkout(args: CreateCheckoutArgs, session) -> str:
 async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
     if session is None:
         return _err("No active session.")
-    from .payment_flow_state import gate_send_payment_link, parse_tool_result
-    from ..payment.email_state import assert_ready_for_payment_send, get_canonical_confirmed_email
+    from .payment_flow_state import gate_send_payment_link
+    from ..payment.payment_link_service import send_confirmed_payment_link
 
     # Never trust LLM email args — gate uses session.confirmed_email only.
     gate = gate_send_payment_link(session, "")
     if not gate.allowed:
         return gate.tool_json
 
-    from ..cart.session import get_ledger
-
-    items = get_ledger(session).to_checkout_items()
-    if not items:
-        return json.dumps({
-            "success": False,
-            "email_sent": False,
-            "customer_message": "There are no confirmed books to pay for yet.",
-            "error_code": "no_items",
-            "retryable": True,
-            "escalation_recommended": False,
-        })
-
-    if not assert_ready_for_payment_send(session, stage="send_payment_link_impl"):
-        from .payment_flow_state import build_payment_tool_result
-        return json.dumps(build_payment_tool_result(
-            success=False,
-            email_sent=False,
-            customer_message=(
-                "I need a confirmed email address before I can send the payment link. "
-                "What email should I use?"
-            ),
-            error_code="email_unconfirmed",
-            retryable=True,
-        ))
-
-    confirmed = get_canonical_confirmed_email(session)
-
-    raw = await _st.SendPaymentLink(
-        items=items,
-        email=confirmed,
-        customer_name=getattr(session, "caller_name", "") or None,
-        session=session,
-    )
-    result = parse_tool_result(raw)
-    if result.get("success") and result.get("email_sent"):
-        session.last_payment_attempt_status = "success"
-        session.payment_flow_status = "payment_sent"
-    elif not result.get("success"):
-        session.last_payment_attempt_status = "failed"
-    return raw
+    result = await send_confirmed_payment_link(session)
+    return json.dumps(result)
 
 
 async def _lookup_order_status(args: LookupOrderStatusArgs, session) -> str:

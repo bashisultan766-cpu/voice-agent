@@ -20,6 +20,7 @@ from app.agent_runtime import llm_tools
 from app.agent_runtime.commerce_flow_state import (
     STATUS_AWAITING_ANOTHER_BOOK,
     STATUS_AWAITING_BOOK_CONFIRM,
+    STATUS_AWAITING_QUANTITY,
     another_book_after_add_prompt,
     confirm_book_prompt,
     process_commerce_turn,
@@ -38,6 +39,7 @@ from app.agent_runtime.tool_runtime_gates import gate_tool_call
 from app.cart.session import add_product_candidate, confirm_last_candidate, get_ledger
 from app.payment.email_state import get_canonical_confirmed_email, get_pending_payment_email
 from app.pipeline.email_capture import is_email_confirmation, is_email_spell_request
+from app.pipeline.email_speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
 
 
@@ -69,9 +71,9 @@ def _session(**kwargs) -> SessionState:
 class TestRuntimeIdentity:
     def test_identity_reports_v424_flags(self):
         identity = collect_runtime_identity()
-        assert identity["voice_sales_flow_version"] == "v4.24"
+        assert identity["voice_sales_flow_version"] == "v4.27"
         assert identity["tool_progress_prompts_enabled"] is True
-        assert identity["payment_email_state_version"] == "v4.22"
+        assert identity["payment_email_state_version"] == "v4.26"
         assert identity["email_capture_short_circuit_enabled"] is True
         assert identity["create_checkout_present_in_tool_specs"] is False
         assert identity["master_prompt_chars"] >= 12000
@@ -94,20 +96,23 @@ class TestToolSpecs:
 
 
 class TestYesHandling:
-    def test_yes_adds_one_copy_and_asks_another(self):
-        session = _session()
-        stage_product_candidate(session, BOOK_A)
-        hint = process_commerce_turn(session, "Yes")
-        assert hint.book_added
-        assert get_ledger(session).confirmed_count() == 1
-        assert "another book" in hint.force_reply.lower()
-        assert "Done, I added" in hint.force_reply
-
-    def test_repeated_yes_does_not_stall(self):
+    def test_yes_means_one_copy_then_add_confirm(self):
         session = _session()
         stage_product_candidate(session, BOOK_A)
         h1 = process_commerce_turn(session, "Yes")
         assert h1.force_reply
+        assert "Shall I add one copy" in h1.force_reply
+        h2 = process_commerce_turn(session, "Yes")
+        assert h2.book_added
+        assert get_ledger(session).confirmed_count() == 1
+        assert "another book" in h2.force_reply.lower()
+
+    def test_repeated_yes_does_not_stall(self):
+        session = _session()
+        stage_product_candidate(session, BOOK_A)
+        process_commerce_turn(session, "Yes")
+        process_commerce_turn(session, "Yes")
+        session.commerce_flow_status = STATUS_AWAITING_ANOTHER_BOOK
         h2 = process_commerce_turn(session, "Yes")
         assert h2.force_reply
         assert "isbn" in h2.force_reply.lower() or "title" in h2.force_reply.lower()
@@ -115,9 +120,13 @@ class TestYesHandling:
     def test_last_product_candidate_yes_when_awaiting_flag(self):
         session = _session()
         session.last_product_candidate = dict(BOOK_A)
+        session.commerce_flow_status = STATUS_AWAITING_QUANTITY
         session.awaiting_product_confirmation = True
-        hint = process_commerce_turn(session, "yeah sure")
-        assert hint.book_added
+        session.commerce_pending_candidate = dict(BOOK_A)
+        h1 = process_commerce_turn(session, "yeah sure")
+        assert "Shall I add one copy" in (h1.force_reply or "")
+        h2 = process_commerce_turn(session, "yes")
+        assert h2.book_added
         assert get_ledger(session).confirmed_count() == 1
 
     def test_no_another_book_is_another_request(self):
@@ -157,12 +166,14 @@ class TestEmailConfirmation:
         result = asyncio.run(runtime.handle_turn(
             session, f"My email is {EMAIL}", send, assembled_turn_mode="email",
         ))
-        assert EMAIL in result.response_text
+        assert speak_email(EMAIL) in result.response_text
+        assert spell_email_for_voice(EMAIL) in result.response_text
         assert "***" not in result.response_text
 
     def test_confirmation_includes_full_and_spelled_email(self):
         prompt = confirmation_prompt(EMAIL)
-        assert EMAIL in prompt
+        assert speak_email(EMAIL) in prompt
+        assert spell_email_for_voice(EMAIL) in prompt
         assert "***" not in prompt
         assert "gmail" in prompt.lower()
         assert "correct" in prompt.lower()
@@ -319,6 +330,7 @@ class TestLiveLogRegression:
         process_commerce_turn(session, "yes")
         stage_product_candidate(session, BOOK_B)
         process_commerce_turn(session, "yes that's right")
+        process_commerce_turn(session, "yes")
         assert get_ledger(session).confirmed_count() == 2
 
         done = process_commerce_turn(session, "No, that's all")
@@ -332,7 +344,7 @@ class TestLiveLogRegression:
         email_turn = await runtime.handle_turn(
             session, f"Okay. My email address is {EMAIL}.", send, assembled_turn_mode="email",
         )
-        assert EMAIL in email_turn.response_text
+        assert speak_email(EMAIL) in email_turn.response_text
         assert get_pending_payment_email(session) == EMAIL
 
         async def fake_send(items, email="", customer_name=None, session=None):

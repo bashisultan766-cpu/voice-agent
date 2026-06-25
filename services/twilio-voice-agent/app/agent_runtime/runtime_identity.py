@@ -16,7 +16,6 @@ from typing import Any
 from . import llm_tools
 from .commerce_flow_state import COMMERCE_FLOW_VERSION
 from .master_prompt import load_master_prompt, prompt_startup_diagnostic
-from .payment_flow_state import process_payment_turn
 from .tool_progress import TOOL_PROGRESS_ENABLED, dispatch_with_progress
 from ..payment.email_state import (
     CREATE_CHECKOUT_CUSTOMER_FACING,
@@ -25,6 +24,7 @@ from ..payment.email_state import (
     PAYMENT_EMAIL_STATE_VERSION,
     SEND_PAYMENT_LINK_CUSTOMER_FACING,
 )
+from ..payment.payment_state_machine import process_payment_turn
 
 # Minimum expected master prompt size on current release branch.
 MIN_MASTER_PROMPT_CHARS = 12_000
@@ -36,6 +36,8 @@ V4_FILES = (
     "app/agent_runtime/tool_progress.py",
     "app/agent_runtime/runtime_identity.py",
     "app/payment/email_state.py",
+    "app/payment/payment_state_machine.py",
+    "app/payment/payment_link_service.py",
     "app/scripts/runtime_identity_check.py",
 )
 
@@ -111,6 +113,8 @@ def collect_runtime_identity(service_root: Path | None = None) -> dict[str, Any]
         "voice_sales_flow_version": COMMERCE_FLOW_VERSION,
         "tool_progress_prompts_enabled": TOOL_PROGRESS_ENABLED,
         "payment_email_state_version": PAYMENT_EMAIL_STATE_VERSION,
+        "payment_state_machine_module": _module_file("app.payment.payment_state_machine"),
+        "payment_link_service_module": _module_file("app.payment.payment_link_service"),
         "email_capture_short_circuit_enabled": EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED,
         "payment_auto_send_enabled": PAYMENT_AUTO_SEND_ENABLED,
         "create_checkout_customer_facing": CREATE_CHECKOUT_CUSTOMER_FACING,
@@ -143,7 +147,7 @@ def validate_runtime_identity(identity: dict[str, Any]) -> list[str]:
         failures.append("email_capture_short_circuit_disabled")
     if not identity.get("tool_progress_prompts_enabled"):
         failures.append("tool_progress_disabled")
-    if identity.get("voice_sales_flow_version") != "v4.24":
+    if identity.get("voice_sales_flow_version") != "v4.27":
         failures.append(f"voice_sales_flow_version={identity.get('voice_sales_flow_version')}")
     if not identity.get("process_payment_turn_imported"):
         failures.append("process_payment_turn_missing")
@@ -152,7 +156,11 @@ def validate_runtime_identity(identity: dict[str, Any]) -> list[str]:
     for rel, present in (identity.get("v4_files_present") or {}).items():
         if not present:
             failures.append(f"missing_file:{rel}")
-    if identity.get("payment_email_state_version") != "v4.22":
+    if identity.get("payment_email_state_version") != "v4.26":
         failures.append(f"payment_email_state_version={identity.get('payment_email_state_version')}")
+    if identity.get("payment_state_machine_module", "").endswith("missing"):
+        failures.append("payment_state_machine_missing")
+    if identity.get("payment_link_service_module", "").endswith("missing"):
+        failures.append("payment_link_service_missing")
 
     return failures

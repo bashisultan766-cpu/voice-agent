@@ -1,5 +1,5 @@
 """
-Canonical payment email state for the voice agent (v4.22).
+Canonical payment email state for the voice agent (v4.26).
 
 Single source of truth after verbal confirmation: ``session.confirmed_email``.
 ``last_offered_payment_email`` survives repeat-email / LLM spell turns until
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PAYMENT_EMAIL_STATE_VERSION = "v4.22"
+PAYMENT_EMAIL_STATE_VERSION = "v4.26"
 EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED = True
 PAYMENT_AUTO_SEND_ENABLED = True
 CREATE_CHECKOUT_CUSTOMER_FACING = False
@@ -27,6 +27,35 @@ def _email_hash(email: str) -> str:
     if not email:
         return ""
     return hashlib.sha256(email.encode("utf-8")).hexdigest()[:8]
+
+
+def _sync_checkout_fields(session: "SessionState") -> None:
+    """Keep checkout_url / checkout_id aligned with legacy pending_* fields."""
+    pending_url = (getattr(session, "pending_checkout_url", "") or "").strip()
+    pending_id = (getattr(session, "pending_draft_order_id", "") or "").strip()
+    if pending_url:
+        session.checkout_url = pending_url
+    elif getattr(session, "checkout_url", ""):
+        session.pending_checkout_url = session.checkout_url
+    if pending_id:
+        session.checkout_id = pending_id
+    elif getattr(session, "checkout_id", ""):
+        session.pending_draft_order_id = session.checkout_id
+
+
+def transition_payment_state(
+    session: "SessionState",
+    from_state: str,
+    to_state: str,
+) -> None:
+    sid = (getattr(session, "call_sid", "") or "")[:6]
+    logger.info(
+        "payment_state_transition sid=%s from=%s to=%s",
+        sid,
+        from_state or "unknown",
+        to_state or "unknown",
+    )
+    session.payment_flow_status = to_state
 
 
 def sync_payment_email_fields(session: "SessionState") -> None:
@@ -48,6 +77,7 @@ def sync_payment_email_fields(session: "SessionState") -> None:
         session.confirmed_email = confirmed
         session.payment_email_confirmed = True
         session.awaiting_payment_email_confirmation = False
+        session.awaiting_payment_email = False
         session.pending_payment_email = ""
         session.pending_email = ""
         if not getattr(session, "caller_email", ""):
@@ -55,6 +85,8 @@ def sync_payment_email_fields(session: "SessionState") -> None:
     else:
         session.payment_email_confirmed = False
         session.awaiting_payment_email_confirmation = bool(pending or offered)
+
+    _sync_checkout_fields(session)
 
 
 def get_canonical_confirmed_email(session: "SessionState") -> str:
@@ -87,8 +119,11 @@ def set_pending_payment_email(session: "SessionState", email: str) -> None:
     session.confirmed_email = ""
     session.payment_email_confirmed = False
     session.awaiting_payment_email_confirmation = True
+    session.awaiting_payment_email = False
     session.payment_flow_status = "awaiting_email_confirmation"
     session.last_payment_attempt_status = "pending_confirmation"
+    session.payment_link_sent = False
+    session.email_send_success = False
 
 
 def confirm_payment_email(session: "SessionState") -> bool:
@@ -108,6 +143,7 @@ def confirm_payment_email(session: "SessionState") -> bool:
     session.pending_email = ""
     session.payment_email_confirmed = True
     session.awaiting_payment_email_confirmation = False
+    session.awaiting_payment_email = False
     session.email_confidence = "high"
     session.payment_flow_status = "awaiting_send_confirmation"
     session.last_payment_attempt_status = "confirmed"
@@ -122,6 +158,7 @@ def reject_pending_payment_email(session: "SessionState") -> None:
     session.confirmed_email = ""
     session.payment_email_confirmed = False
     session.awaiting_payment_email_confirmation = False
+    session.awaiting_payment_email = True
     session.last_offered_payment_email = ""
     session.email_confidence = "low"
     session.email_rejected_count = getattr(session, "email_rejected_count", 0) + 1
@@ -157,13 +194,17 @@ def log_payment_flow_diagnostics(session: "SessionState", *, stage: str = "") ->
         resend_ok = False
 
     sid = (getattr(session, "call_sid", "") or "")[:6]
+    checkout_url = (
+        getattr(session, "checkout_url", "")
+        or getattr(session, "pending_checkout_url", "")
+    )
     logger.info(
         "payment_flow_diag sid=%s stage=%s "
         "confirmed_email_present=%s confirmed_email_hash=%s "
         "payment_email_confirmed=%s awaiting_payment_email_confirmation=%s "
         "pending_payment_email_present=%s last_offered_present=%s "
         "cart_item_count=%d checkout_url_present=%s resend_config_present=%s "
-        "email_send_attempted=%s email_send_success=%s",
+        "email_send_attempted=%s email_send_success=%s payment_link_sent=%s",
         sid,
         stage or "unknown",
         bool(confirmed),
@@ -173,11 +214,11 @@ def log_payment_flow_diagnostics(session: "SessionState", *, stage: str = "") ->
         bool(pending and pending != confirmed),
         bool(getattr(session, "last_offered_payment_email", "")),
         cart_count,
-        bool(getattr(session, "pending_checkout_url", "")),
+        bool(checkout_url),
         resend_ok,
-        getattr(session, "last_payment_attempt_status", "")
-        in ("success", "failed", "blocked", "pending_confirmation", "confirmed", "attempting"),
-        getattr(session, "last_payment_attempt_status", "") == "success",
+        bool(getattr(session, "email_send_attempted", False)),
+        bool(getattr(session, "email_send_success", False)),
+        bool(getattr(session, "payment_link_sent", False)),
     )
 
 
@@ -196,7 +237,7 @@ def assert_ready_for_payment_send(session: "SessionState", *, stage: str) -> boo
     )
     if not ready:
         logger.error(
-            "payment_send_blocked sid=%s stage=%s reason=not_ready "
+            "payment_send_blocked sid=%s stage=%s reason=email_unconfirmed "
             "confirmed_email_present=%s payment_email_confirmed=%s "
             "awaiting_confirmation=%s",
             (getattr(session, "call_sid", "") or "")[:6],

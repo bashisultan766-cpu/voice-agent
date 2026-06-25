@@ -1,4 +1,4 @@
-"""Deterministic email spell/readback for voice (v4.7)."""
+"""Deterministic email speak/spell helpers for voice (v4.26)."""
 from __future__ import annotations
 
 import re
@@ -59,33 +59,43 @@ def _domain_voice_part(domain: str) -> str:
     return lower
 
 
-def _local_voice_parts(local: str) -> list[str]:
-    parts: list[str] = []
-    for ch in local.lower():
-        if ch.isalpha():
-            parts.append(ch)
-        elif ch.isdigit():
-            parts.append(_DIGIT_WORDS.get(ch, ch))
-        elif ch in "-_":
-            parts.append(ch)
-    return parts
+def speak_email(email: str) -> str:
+    """
+    Speak a normalized email for voice — uses ``at`` and ``dot``, never raw ``@`` or ``.``.
+
+    Example: bashisultan766@gmail.com → ``bashisultan766 at gmail dot com``
+    """
+    normalized = normalize_email_for_customer_readback(email)
+    if not normalized or "@" not in normalized:
+        return ""
+    local, domain = normalized.split("@", 1)
+    return f"{local} at {_domain_voice_part(domain)}"
 
 
 def spell_email_for_voice(email: str) -> str:
+    """
+    Spell the local part letter-by-letter (uppercase) and digits one-by-one.
+
+    Example: bashisultan766@gmail.com →
+    ``B-A-S-H-I-S-U-L-T-A-N-7-6-6 at gmail dot com``
+    """
     normalized = normalize_email_for_customer_readback(email)
     if not normalized or "@" not in normalized:
         return ""
 
     local, domain = normalized.split("@", 1)
-    local_parts = _local_voice_parts(local)
+    spelled_local: list[str] = []
+    for ch in local:
+        if ch.isalpha():
+            spelled_local.append(ch.upper())
+        elif ch.isdigit():
+            spelled_local.append(ch)
+        elif ch in "-_+.":
+            spelled_local.append(ch)
 
-    if domain.lower() == "gmail.com":
-        spelled = ", ".join(local_parts)
-        return f"{spelled}, at gmail dot com"
-
+    local_spelled = "-".join(spelled_local)
     domain_part = _domain_voice_part(domain)
-    spelled = ", ".join(local_parts)
-    return f"{spelled}, at {domain_part}"
+    return f"{local_spelled} at {domain_part}"
 
 
 def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
@@ -105,7 +115,7 @@ def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
 
 
 def build_email_readback(email: str, raw_text: str = "") -> str:
-    """Pending email: heard + letter-by-letter + confirmation."""
+    """Pending email: heard + spelled + confirmation."""
     normalized = normalize_email_for_customer_readback(email)
     if not normalized:
         return "I do not have a complete email yet. Please spell it slowly."
@@ -113,16 +123,18 @@ def build_email_readback(email: str, raw_text: str = "") -> str:
     if email_confidence_is_low(normalized, raw_text):
         return "I may have heard that wrong. Please spell the email slowly."
 
+    spoken = speak_email(normalized)
     spelled = spell_email_for_voice(normalized)
     return (
-        f"I heard {normalized}. Letter by letter: {spelled}. Is that correct?"
+        f"I heard {spoken}. That is {spelled}. Is that correct?"
     )
 
 
 def build_email_spell_only(email: str, raw_text: str = "") -> str:
-    """Confirmed email: have + letter-by-letter."""
+    """Confirmed email: have + spelled readback."""
     normalized = normalize_email_for_customer_readback(email)
     if not normalized or email_confidence_is_low(normalized, raw_text):
         return "I do not have a complete email yet. Please spell it slowly."
+    spoken = speak_email(normalized)
     spelled = spell_email_for_voice(normalized)
-    return f"I have {normalized}. Letter by letter: {spelled}."
+    return f"I have {spoken}. That is {spelled}."

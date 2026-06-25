@@ -34,6 +34,7 @@ from app.payment.email_state import (
 )
 from app.payment.safety import require_confirmed_email, require_payment_send_ready
 from app.pipeline.email_capture import normalize_spoken_email
+from app.pipeline.email_speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
 
 
@@ -81,7 +82,8 @@ class TestEmailCaptureDoesNotSendEarly:
 
         hint = process_payment_turn(session, "bashisultan766@gmail.com")
         assert hint.force_reply
-        assert "bashisultan766@gmail.com" in hint.force_reply
+        assert speak_email("bashisultan766@gmail.com") in hint.force_reply
+        assert spell_email_for_voice("bashisultan766@gmail.com") in hint.force_reply
         assert "***" not in hint.force_reply
         assert not checkout_called
         assert not send_called

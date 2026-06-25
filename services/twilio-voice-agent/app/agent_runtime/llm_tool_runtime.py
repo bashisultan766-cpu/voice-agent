@@ -303,8 +303,18 @@ class LLMToolRuntime:
             if not PAYMENT_AUTO_SEND_ENABLED:
                 logger.error("payment_auto_send_disabled sid=%s", session.call_sid[:6])
             from ..payment.email_state import log_payment_flow_diagnostics
+            from ..payment.payment_link_service import PAYMENT_PROGRESS_MESSAGE
 
             log_payment_flow_diagnostics(session, stage="auto_send_after_confirm")
+            await _await_send(
+                send,
+                {
+                    "type": "text",
+                    "token": PAYMENT_PROGRESS_MESSAGE,
+                    "last": False,
+                    "interruptible": True,
+                },
+            )
             send_raw = await llm_tools.dispatch("send_payment_link", {}, session)
             send_result = parse_tool_result(send_raw)
             spoken = enforce_payment_response(
@@ -341,17 +351,34 @@ class LLMToolRuntime:
             )
             return _result(spoken)
 
+        from .yes_engagement import is_bare_yes, yes_engagement_reply
+
+        if is_bare_yes(caller_text):
+            engage = yes_engagement_reply(session)
+            if engage:
+                spoken = self._finalize(session, engage)
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": spoken})
+                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                self._record_turn(session, caller_text, spoken)
+                logger.info(
+                    "yes_engagement_short_circuit sid=%s openai_skipped=true",
+                    session.call_sid[:6],
+                )
+                return _result(spoken)
+
         if EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED and turn_mode == "email":
-            from .payment_flow_state import extract_email_from_text, email_capture_context_active
-            from ..payment.email_state import set_pending_payment_email
+            from ..payment.payment_state_machine import (
+                capture_payment_email,
+                email_capture_context_active,
+                extract_email_from_text,
+            )
 
             email_only = extract_email_from_text(caller_text)
             if email_only and email_capture_context_active(session, turn_mode):
-                set_pending_payment_email(session, email_only)
-                spoken = self._finalize(
-                    session,
-                    confirmation_prompt(email_only),
-                )
+                hint = capture_payment_email(session, email_only, raw_text=caller_text)
+                spoken = self._finalize(session, hint.force_reply or "")
                 session.history.append({"role": "user", "content": caller_text})
                 session.history.append({"role": "assistant", "content": spoken})
                 await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
