@@ -315,29 +315,21 @@ class TestFacilityApprovedList:
 class TestFacilityRestriction:
     def test_restricted_book_triggers_review(self):
         from app.facility.restrictions import check_order_restrictions
-        import unittest.mock as mock
-        mock_data = {
-            "restricted_keywords": [],
-            "restricted_titles": ["violence book"],
-            "restricted_categories": [],
-            "facility_notes": {},
-        }
-        with mock.patch("app.facility.restrictions._load_restrictions", return_value=mock_data):
-            result = check_order_restrictions(["violence book", "Good Book"])
+
+        result = check_order_restrictions(
+            ["Street Violence and Gangs", "Daily Devotional Paperback"],
+            facility_name="Example Correctional Facility",
+        )
         assert result["all_clear"] is False
-        assert "customer service" in result["safe_response"].lower()
+        assert "violence" in result["safe_response"].lower() or "returned" in result["safe_response"].lower()
 
     def test_all_accepted_books_clear(self):
         from app.facility.restrictions import check_order_restrictions
-        import unittest.mock as mock
-        mock_data = {
-            "restricted_keywords": [],
-            "restricted_titles": [],
-            "restricted_categories": [],
-            "facility_notes": {},
-        }
-        with mock.patch("app.facility.restrictions._load_restrictions", return_value=mock_data):
-            result = check_order_restrictions(["Good Book A", "Good Book B"])
+
+        result = check_order_restrictions(
+            ["Daily Devotional Paperback", "Inspirational Stories Softcover"],
+            facility_name="Example Correctional Facility",
+        )
         assert result["all_clear"] is True
         assert "acceptable" in result["safe_response"].lower()
 

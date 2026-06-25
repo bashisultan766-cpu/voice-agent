@@ -32,18 +32,26 @@ def _make_settings():
     return Settings(OPENAI_API_KEY="test", DEBUG=True)
 
 
-def _order_json(tags="", note="", attrs=None):
-    """Build minimal lookup_order JSON response."""
-    order = {
-        "id": "gid://shopify/Order/1",
-        "name": "#1001",
-        "displayFinancialStatus": "PAID",
-        "displayFulfillmentStatus": "FULFILLED",
-        "tags": tags,
+def _order_json(tags="", note="", attrs=None, items=None):
+    """Build minimal lookup_order JSON response (matches shopify_tools.lookup_order shape)."""
+    attrs_list = attrs or []
+    if attrs_list and isinstance(attrs_list[0], dict):
+        custom_attributes = {a.get("key", ""): a.get("value", "") for a in attrs_list}
+    else:
+        custom_attributes = dict(attrs_list) if attrs_list else {}
+    tag_list = tags if isinstance(tags, list) else (
+        [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    )
+    return json.dumps({
+        "found": True,
+        "order_number": "#1001",
+        "status": "PAID",
+        "fulfillment_status": "FULFILLED",
         "note": note,
-        "customAttributes": attrs or [],
-    }
-    return json.dumps({"found": True, "orders": [order]})
+        "tags": tag_list,
+        "custom_attributes": custom_attributes,
+        "items": items or [],
+    })
 
 
 # ── FacilityApprovalWorker ───────────────────────────────────────────────────

@@ -27,7 +27,11 @@ fi
 .venv/bin/pip install -r requirements.txt
 
 echo "==> Tests"
-.venv/bin/python -m pytest -q
+if [[ "${DEPLOY_SKIP_TESTS:-}" == "1" ]]; then
+  echo "    DEPLOY_SKIP_TESTS=1 — skipping pytest"
+else
+  .venv/bin/python -m pytest -q
+fi
 
 echo "==> Restart PM2 (if installed)"
 cd "$ROOT"
