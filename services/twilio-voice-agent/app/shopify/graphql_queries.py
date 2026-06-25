@@ -121,6 +121,22 @@ query LookupOrders($query: String!, $first: Int!) {
         }
         cancelledAt
         canMarkAsPaid
+        note
+        tags
+        customAttributes {
+          key
+          value
+        }
+        shippingAddress {
+          name
+          company
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          countryCode
+        }
       }
     }
   }

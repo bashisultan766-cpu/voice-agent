@@ -104,18 +104,24 @@ class FacilityRestrictionWorker:
                 result_json = await lookup_order(
                     order_number=order_number,
                     email=None,
-                    phone=None,
+                    phone=session.from_number if getattr(session, "from_number", "") else None,
                     session=session,
                 )
                 result = json.loads(result_json)
-                if result.get("found") and result.get("orders"):
-                    restrictions = _parse_restrictions(result["orders"][0])
+                if result.get("found"):
+                    restrictions = _parse_restrictions({
+                        "note": result.get("note", ""),
+                        "tags": result.get("tags", []),
+                        "customAttributes": [
+                            {"key": k, "value": v}
+                            for k, v in (result.get("custom_attributes") or {}).items()
+                        ],
+                    })
             except Exception:
                 logger.warning(
                     "FacilityRestrictionWorker lookup failed sid=%s", session.call_sid[:6]
                 )
 
-        # v4.8: also check order line items against the restrictions module
         order_books: list[str] = []
         if order_number:
             try:
@@ -123,14 +129,12 @@ class FacilityRestrictionWorker:
                 result_json2 = await lookup_order(
                     order_number=order_number,
                     email=None,
-                    phone=None,
+                    phone=session.from_number if getattr(session, "from_number", "") else None,
                     session=session,
                 )
-                import json as _json
-                result2 = _json.loads(result_json2)
+                result2 = json.loads(result_json2)
                 if result2.get("found") and result2.get("items"):
                     for item_str in result2["items"]:
-                        # items are formatted as "1x Title"
                         parts = item_str.split("x ", 1)
                         if len(parts) == 2:
                             order_books.append(parts[1].strip())

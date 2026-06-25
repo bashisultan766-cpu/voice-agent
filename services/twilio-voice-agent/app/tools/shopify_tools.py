@@ -408,6 +408,12 @@ async def lookup_order(
                 f"{e['node']['quantity']}x {e['node']['title']}"
                 for e in node.get("lineItems", {}).get("edges", [])
             ]
+            result["note"] = node.get("note") or ""
+            result["tags"] = node.get("tags") or []
+            result["custom_attributes"] = {
+                a.get("key", ""): a.get("value", "")
+                for a in (node.get("customAttributes") or [])
+            }
             subtotal = node.get("subtotalPriceSet", {}).get("shopMoney", {})
             result["subtotal"] = f"{subtotal.get('amount', '?')} {subtotal.get('currencyCode', '')}"
             shipping = node.get("totalShippingPriceSet", {}).get("shopMoney", {})
@@ -417,6 +423,25 @@ async def lookup_order(
             tracking_info = (tracking.get("trackingInfo") or [{}])[0] if tracking else {}
             result["tracking_number"] = tracking_info.get("number")
             result["tracking_url"] = tracking_info.get("url")
+            ship = node.get("shippingAddress") or {}
+            if ship:
+                result["shipping_address"] = {
+                    "name": ship.get("name") or "",
+                    "company": ship.get("company") or "",
+                    "address1": ship.get("address1") or "",
+                    "address2": ship.get("address2") or "",
+                    "city": ship.get("city") or "",
+                    "state": ship.get("provinceCode") or "",
+                    "zip": ship.get("zip") or "",
+                }
+                try:
+                    from ..facility.facility_resolver import facility_from_order
+
+                    hint = facility_from_order(result)
+                    if hint:
+                        result["facility_hint"] = hint
+                except Exception:  # noqa: BLE001
+                    pass
             if customer_name:
                 result["customer_name"] = customer_name
             if order_email:
@@ -989,7 +1014,16 @@ async def CheckOrderFacilityRestrictions(
     facility_name: Optional[str] = None,
     session: Optional["SessionState"] = None,
 ) -> str:
-    """Check book restrictions for a correctional facility on a specific order."""
+    """Check book restrictions — uses facility guideline documents + Shopify order."""
+    if session and order_number:
+        from ..facility.order_reconciliation import reconcile_order_facility_json
+
+        return await reconcile_order_facility_json(
+            session,
+            order_number,
+            facility_name or getattr(session, "last_facility_name", "") or "",
+        )
+
     from ..workers.facility_restriction_worker import FacilityRestrictionWorker
     from ..config import get_settings
 
@@ -1004,9 +1038,9 @@ async def CheckOrderFacilityRestrictions(
         return json.dumps({
             "restrictions": [],
             "message": (
-                "I don't have specific restriction information on file for that facility. "
-                "Common restrictions include: no hardcover books, new books only, and books must "
-                "ship directly from the retailer. I'd recommend calling the facility to confirm."
+                "I need the order number and facility name to check which books "
+                "may have been rejected. I can also share the facility's official "
+                "mail-rules website when we have it on file."
             ),
         })
 

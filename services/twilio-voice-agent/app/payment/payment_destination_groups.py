@@ -111,13 +111,19 @@ def refresh_payment_groups_from_cart(session: "SessionState") -> list[dict[str, 
     sid = (getattr(session, "call_sid", "") or "")[:6]
 
     if not items:
-        logger.warning(
-            "payment_groups_refresh_empty_cart sid=%s confirmed_count=0",
-            sid,
-        )
+        if groups:
+            logger.debug(
+                "payment_groups_refresh_empty_cart sid=%s confirmed_count=0",
+                sid,
+            )
+        else:
+            logger.debug(
+                "payment_groups_skip_empty_cart sid=%s confirmed_count=0",
+                sid,
+            )
         if not groups:
-            init_single_group_from_cart(session)
-        return list(getattr(session, "payment_destination_groups", None) or [])
+            return []
+        return groups
 
     if not groups:
         init_single_group_from_cart(session)
@@ -149,12 +155,18 @@ def refresh_payment_groups_from_cart(session: "SessionState") -> list[dict[str, 
 
 
 def ensure_payment_groups(session: "SessionState") -> list[dict[str, Any]]:
+    from ..cart.session import get_ledger
+
     groups = list(getattr(session, "payment_destination_groups", None) or [])
+    cart_confirmed = get_ledger(session).confirmed_count() > 0
     if not groups:
+        if not cart_confirmed:
+            return []
         init_single_group_from_cart(session)
         return list(session.payment_destination_groups)
     if not getattr(session, "multi_email_payment_active", False) and len(groups) == 1:
-        return refresh_payment_groups_from_cart(session)
+        if cart_confirmed:
+            return refresh_payment_groups_from_cart(session)
     return groups
 
 

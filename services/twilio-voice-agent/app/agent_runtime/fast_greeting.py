@@ -30,6 +30,15 @@ def is_fast_greeting_turn(text: str, *, turn_count: int = 0) -> bool:
     return bool(_GREETING_PAT.search(t))
 
 
+def _greeting_safe_name(name: str) -> str:
+    n = (name or "").strip()
+    if not n or len(n.split()) > 4:
+        return ""
+    if "?" in n or re.search(r"\b(saying that|how are you|what can i)\b", n, re.I):
+        return ""
+    return n
+
+
 def fast_greeting_reply(session: "SessionState", caller_text: str) -> Optional[str]:
     """Deterministic greeting — no tools, no OpenAI."""
     if not is_fast_greeting_turn(caller_text, turn_count=getattr(session, "turn_count", 0)):
@@ -38,7 +47,7 @@ def fast_greeting_reply(session: "SessionState", caller_text: str) -> Optional[s
     from ..dialogue.greeting import GREETING_AFTER_TWIML, build_first_response_greeting
 
     greeted = bool(getattr(session, "twiml_greeting_spoken", False))
-    name = (getattr(session, "caller_name", "") or "").strip()
+    name = _greeting_safe_name(getattr(session, "caller_name", "") or "")
 
     if _HOW_ARE_YOU_PAT.search(caller_text):
         if name:

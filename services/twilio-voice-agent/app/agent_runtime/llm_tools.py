@@ -155,6 +155,13 @@ class CheckOrderFacilityRestrictionsArgs(BaseModel):
     book_title: str = Field("", description="Specific book title if asking about one book.")
 
 
+class ReconcileOrderFacilityBooksArgs(BaseModel):
+    order_number: str = Field(..., min_length=1, description="Shopify order number.")
+    facility_name: str = Field("", description="Correctional facility name.")
+    email: str = Field("", description="Email on order for verification.")
+    phone: str = Field("", description="Phone on order for verification.")
+
+
 class AddressUpdateInstructionsArgs(BaseModel):
     order_number: str = Field("", description="Order number if known.")
 
@@ -507,10 +514,35 @@ async def _check_facility_approval(args: CheckFacilityApprovalArgs, session) -> 
 async def _check_order_facility_restrictions(
     args: CheckOrderFacilityRestrictionsArgs, session,
 ) -> str:
+    if args.order_number and session is not None:
+        return await _reconcile_order_facility_books(
+            ReconcileOrderFacilityBooksArgs(
+                order_number=args.order_number,
+                facility_name=args.facility_name or "",
+            ),
+            session,
+        )
     return await _st.CheckOrderFacilityRestrictions(
         order_number=args.order_number or None,
         facility_name=args.facility_name or None,
         session=session,
+    )
+
+
+async def _reconcile_order_facility_books(
+    args: ReconcileOrderFacilityBooksArgs, session,
+) -> str:
+    """Full order + facility doc reconciliation with alternative book suggestions."""
+    if session is None:
+        return _err("No active session.")
+    from ..facility.order_reconciliation import reconcile_order_facility_json
+
+    return await reconcile_order_facility_json(
+        session,
+        args.order_number,
+        args.facility_name,
+        email=args.email or None,
+        phone=args.phone or None,
     )
 
 
@@ -728,8 +760,19 @@ _register(
 _register(
     "check_order_facility_restrictions", CheckOrderFacilityRestrictionsArgs,
     _check_order_facility_restrictions,
-    "Check whether books in an order may be accepted or restricted by a facility.",
+    "Check whether books in an order may be accepted or restricted by a facility. "
+    "Uses client facility documents + Shopify order line items. Suggests allowed alternatives.",
     _obj({"order_number": _S, "facility_name": _S, "book_title": _S}, []),
+)
+_register(
+    "reconcile_order_facility_books", ReconcileOrderFacilityBooksArgs,
+    _reconcile_order_facility_books,
+    "When some books arrived but others were returned/rejected by a correctional facility: "
+    "load the order from Shopify, match each book against facility guideline documents, "
+    "explain why each title was likely rejected, cite the facility website URL, and "
+    "suggest similar allowed paperback alternatives from the catalog.",
+    _obj({"order_number": _S, "facility_name": _S, "email": _S, "phone": _S},
+         ["order_number"]),
 )
 _register(
     "address_update_instructions", AddressUpdateInstructionsArgs,

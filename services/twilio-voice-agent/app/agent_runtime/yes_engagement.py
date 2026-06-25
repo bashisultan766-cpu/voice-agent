@@ -1,5 +1,5 @@
 """
-Bare "yes" engagement — agent must never go silent after yes (v4.27).
+Bare "yes" engagement — agent must never go silent after yes (v4.32).
 """
 from __future__ import annotations
 
@@ -19,10 +19,30 @@ def is_bare_yes(text: str) -> bool:
     return bool(_BARE_YES_PAT.match((text or "").strip()))
 
 
+def yes_engagement_fallback(session: "SessionState") -> str:
+    """Always speak something — never leave the caller waiting after bare yes/okay."""
+    from .order_flow_state import STATUS_AWAITING_ORDER_NUMBER, STATUS_AWAITING_ORDER_VERIFICATION
+
+    order_status = getattr(session, "order_flow_status", "") or ""
+    if order_status == STATUS_AWAITING_ORDER_NUMBER:
+        return "Sure — please read your order number when you're ready."
+    if order_status == STATUS_AWAITING_ORDER_VERIFICATION:
+        return (
+            "Thanks. Please confirm the email or phone number on the order "
+            "so I can pull up the details."
+        )
+    if getattr(session, "pending_isbn_buffer", ""):
+        return "Go ahead with the rest of the ISBN digits whenever you're ready."
+    return (
+        "Sure! I can help you find a book, check an order, or send a payment link. "
+        "What would you like to do?"
+    )
+
+
 def yes_engagement_reply(session: "SessionState") -> Optional[str]:
     """
-    Return a deterministic continue-the-conversation reply for bare yes,
-    or None if another handler should take it.
+    Return a deterministic continue-the-conversation reply for bare yes.
+    Falls back to ``yes_engagement_fallback`` — never returns None for bare yes.
     """
     from .commerce_flow_state import (
         STATUS_AWAITING_ADD_CONFIRM,
@@ -35,6 +55,7 @@ def yes_engagement_reply(session: "SessionState") -> Optional[str]:
         _status,
         add_confirm_prompt,
         cart_summary_and_email_prompt,
+        commerce_flow_active,
         next_book_prompt,
         quantity_prompt,
     )
@@ -43,7 +64,7 @@ def yes_engagement_reply(session: "SessionState") -> Optional[str]:
     candidate = _resolve_pending_candidate(session)
 
     if getattr(session, "awaiting_payment_email_confirmation", False):
-        return None
+        return yes_engagement_fallback(session)
 
     if getattr(session, "awaiting_payment_email", False) or text_status == STATUS_AWAITING_EMAIL_COLLECTION:
         if not getattr(session, "pending_payment_email", "") and not getattr(session, "confirmed_email", ""):
@@ -51,11 +72,18 @@ def yes_engagement_reply(session: "SessionState") -> Optional[str]:
 
             return payment_email_collection_prompt()
 
+    from .payment_flow_state import _cart_has_confirmed_items
+
+    if not commerce_flow_active(session) and not _cart_has_confirmed_items(session):
+        return yes_engagement_fallback(session)
+
     if text_status == STATUS_AWAITING_QUANTITY and candidate:
-        return None
+        return quantity_prompt(candidate)
 
     if text_status == STATUS_AWAITING_ADD_CONFIRM and candidate:
-        return None
+        return add_confirm_prompt(
+            candidate, int(getattr(session, "commerce_pending_quantity", 0) or 1),
+        )
 
     if text_status == STATUS_AWAITING_BOOK_CONFIRM and candidate:
         return quantity_prompt(candidate)

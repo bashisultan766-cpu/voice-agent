@@ -85,6 +85,7 @@ class TurnAssembler:
         self._debounce_task: Optional[asyncio.Task] = None
         self._emit_callback: Optional[Callable[[str], Awaitable[None]]] = None
         self._lock = asyncio.Lock()
+        self._call_sid = ""
 
     def _new_group_id(self) -> str:
         return str(uuid.uuid4())[:12]
@@ -211,6 +212,8 @@ class TurnAssembler:
         """
         async with self._lock:
             sid = (call_sid or "")[:6]
+            if call_sid:
+                self._call_sid = call_sid
             frag = (fragment or "").strip()
             if not frag:
                 return True
@@ -272,6 +275,11 @@ class TurnAssembler:
                         st.hold_started_at = 0.0
                         return await self._emit_buffered(sid, on_emit, "wait_hold_timeout")
                 st.buffer = self._merge_text(st.buffer, frag)
+                merged_mode = self._detect_mode(st.buffer, call_sid=call_sid)
+                if merged_mode != "normal":
+                    st.mode = merged_mode
+                elif is_complete_isbn(st.buffer):
+                    st.mode = "isbn"
                 if self._debounce_task and not self._debounce_task.done():
                     self._debounce_task.cancel()
                 logger.info(
@@ -280,7 +288,7 @@ class TurnAssembler:
                 )
                 return True
 
-            detected = self._detect_mode(frag, call_sid=sid)
+            detected = self._detect_mode(frag, call_sid=call_sid)
             if st.buffer and st.mode != "normal":
                 mode = st.mode
             else:
@@ -291,9 +299,16 @@ class TurnAssembler:
 
             if st.buffer:
                 st.buffer = self._merge_text(st.buffer, frag)
+                redetected = self._detect_mode(st.buffer, call_sid=call_sid)
+                if redetected != "normal":
+                    st.mode = redetected
+                elif mode != "normal":
+                    st.mode = mode
+                elif is_complete_isbn(st.buffer):
+                    st.mode = "isbn"
                 logger.info(
                     "turn_assembler_merge sid=%s mode=%s len=%d",
-                    sid, mode, len(st.buffer),
+                    sid, st.mode, len(st.buffer),
                 )
             else:
                 st.buffer = frag
@@ -327,6 +342,13 @@ class TurnAssembler:
             st = self._state
             if not st.buffer:
                 return
+
+            if is_complete_isbn(st.buffer):
+                st.mode = "isbn"
+            elif st.mode == "normal":
+                redetected = self._detect_mode(st.buffer, call_sid=self._call_sid)
+                if redetected != "normal":
+                    st.mode = redetected
 
             emit_mode = st.mode
             digits = "".join(c for c in st.buffer if c.isdigit())

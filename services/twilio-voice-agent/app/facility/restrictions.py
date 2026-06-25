@@ -42,49 +42,29 @@ def _normalize(s: str) -> str:
 
 
 def check_book_restriction(title: str, facility_name: str = "") -> Optional[str]:
-    """
-    Check a book title against restrictions.
+    """Return restriction reason key if restricted, else None."""
+    from .book_content_matcher import check_book_against_facility
+    from .guidelines_registry import lookup_facility_guideline
 
-    Returns a restriction reason string if restricted, else None.
-    """
-    data = _load_restrictions()
-    norm_title = _normalize(title)
-
-    restricted_titles = [_normalize(t) for t in data.get("restricted_titles", [])]
-    if norm_title in restricted_titles:
-        return "title_restricted"
-
-    keywords = [_normalize(k) for k in data.get("restricted_keywords", [])]
-    for kw in keywords:
-        if kw in norm_title:
-            return f"keyword_match:{kw}"
-
-    if facility_name:
-        facility_notes = data.get("facility_notes", {})
-        for fname, note in facility_notes.items():
-            if _normalize(fname) in _normalize(facility_name):
-                if isinstance(note, list):
-                    for n in note:
-                        if _normalize(n) in norm_title:
-                            return f"facility_specific_note:{n}"
-
-    return None
+    fac = lookup_facility_guideline(facility_name) if facility_name else None
+    result = check_book_against_facility(title=title, facility=fac)
+    if result.allowed:
+        return None
+    return result.violations[0] if result.violations else "restricted"
 
 
 def check_order_restrictions(
     book_titles: list[str],
     facility_name: str = "",
 ) -> dict:
-    """
-    Check all books on an order against facility restrictions.
+    from .book_content_matcher import check_book_against_facility
+    from .guidelines_registry import lookup_facility_guideline
 
-    Returns {restricted: list[str], all_clear: bool, safe_response: str}
-    """
-    data = _load_restrictions()
+    fac = lookup_facility_guideline(facility_name) if facility_name else None
     restricted = []
     for title in book_titles:
-        reason = check_book_restriction(title, facility_name)
-        if reason:
+        result = check_book_against_facility(title=title, facility=fac)
+        if not result.allowed:
             restricted.append(title)
 
     if not book_titles:
@@ -97,19 +77,26 @@ def check_order_restrictions(
         }
 
     if restricted:
+        titles = ", ".join(restricted[:3])
+        url = fac.website_url if fac else ""
+        msg = (
+            f"One or more books on the order may not be accepted by "
+            f"{facility_name or 'that facility'}: {titles}. "
+            "This may be why the shipment was returned."
+        )
+        if url:
+            msg += f" Official facility mail rules: {url}."
+        msg += " I can suggest similar allowed alternatives from our catalog."
         return {
             "restricted": restricted,
             "all_clear": False,
-            "safe_response": (
-                "One of the books on the order may not be accepted by the facility. "
-                "I can forward this to customer service for review."
-            ),
+            "safe_response": msg,
         }
 
     return {
         "restricted": [],
         "all_clear": True,
         "safe_response": (
-            "The books appear acceptable for that facility based on the information I have."
+            "The books appear acceptable for that facility based on the guidelines on file."
         ),
     }

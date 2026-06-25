@@ -27,7 +27,9 @@ class ISBNValidationResult:
 
 
 def extract_digits(text: str) -> str:
-    t = text.strip().lower()
+    from ..tools.isbn import expand_spoken_repeaters
+
+    t = expand_spoken_repeaters(text.strip().lower())
     for word, digit in _DIGIT_WORDS.items():
         t = re.sub(rf"\b{word}\b", digit, t)
     return re.sub(r"[^0-9xX]", "", t).upper()

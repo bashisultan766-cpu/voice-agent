@@ -106,7 +106,7 @@ class LLMToolRuntime:
         return self._client
 
     # ── Context assembly ──────────────────────────────────────────────────
-    def _system_message(self, session: "SessionState") -> dict:
+    def _system_message(self, session: "SessionState", caller_text: str = "") -> dict:
         """Build the system message: master prompt sections + live state."""
         try:
             master = get_master_prompt()
@@ -122,10 +122,10 @@ class LLMToolRuntime:
                 "replies short and natural."
             )
 
-        state = self._state_block(session)
+        state = self._state_block(session, caller_text=caller_text)
         return {"role": "system", "content": f"{prompt}\n\n{state}"}
 
-    def _state_block(self, session: "SessionState") -> str:
+    def _state_block(self, session: "SessionState", caller_text: str = "") -> str:
         from ..caller.repository import mask_email
 
         verified = bool(getattr(session, "verified_email", False)) or bool(
@@ -169,6 +169,21 @@ class LLMToolRuntime:
             )
         if getattr(session, "payment_email_confirmed", False):
             lines.append("- Payment email confirmed: yes — send_payment_link allowed.")
+        order_ctx = getattr(session, "order_context", "") or ""
+        if order_ctx:
+            lines.append(f"- Last order lookup summary: {order_ctx[:400]}")
+        order_flow = getattr(session, "order_flow_status", "idle") or "idle"
+        if order_flow != "idle":
+            lines.append(f"- Order collection flow: {order_flow}")
+        try:
+            from ..facility.knowledge_context import build_facility_knowledge_block
+
+            facility_block = build_facility_knowledge_block(session, caller_text=caller_text)
+            if facility_block:
+                lines.append("")
+                lines.append(facility_block)
+        except Exception:  # noqa: BLE001
+            pass
         lines.append(
             "If identity is not verified this call, you must ask for the email or "
             "phone on the order before sharing any order or refund details."
@@ -214,7 +229,7 @@ class LLMToolRuntime:
 
     def build_messages(self, session: "SessionState", caller_text: str) -> list[dict]:
         self._seed_history_from_memory(session)
-        messages: list[dict] = [self._system_message(session)]
+        messages: list[dict] = [self._system_message(session, caller_text)]
         messages.extend(self._safe_trim(session.history))
         messages.append({"role": "user", "content": caller_text})
         return messages
@@ -394,6 +409,79 @@ class LLMToolRuntime:
             logger.info("fast_greeting_short_circuit sid=%s openai_skipped=true", sid)
             return _result(spoken)
 
+        from .isbn_short_circuit import (
+            conversational_ack_reply,
+            is_conversational_ack,
+            try_isbn_short_circuit,
+        )
+
+        if is_conversational_ack(caller_text):
+            ack = conversational_ack_reply(session, turn_mode=turn_mode)
+            if ack:
+                spoken = self._finalize(session, ack)
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": spoken})
+                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                self._record_turn(session, caller_text, spoken)
+                logger.info("conversational_ack_short_circuit sid=%s openai_skipped=true", sid)
+                return _result(spoken)
+
+        isbn_hint = await try_isbn_short_circuit(session, caller_text, turn_mode=turn_mode)
+        if isbn_hint:
+            spoken = self._finalize(session, isbn_hint.force_reply)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info(
+                "isbn_short_circuit sid=%s isbn=%s openai_skipped=true",
+                sid,
+                isbn_hint.isbn or "partial",
+            )
+            return _result(spoken)
+
+        from .order_flow_state import (
+            ORDER_FLOW_VERSION,
+            extract_order_number,
+            process_order_turn,
+            try_order_enrichment_short_circuit,
+        )
+
+        order_collect = process_order_turn(session, caller_text, turn_mode=turn_mode)
+        if order_collect.force_reply:
+            spoken = self._finalize(session, order_collect.force_reply)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info(
+                "order_flow_collect sid=%s version=%s openai_skipped=true",
+                sid,
+                ORDER_FLOW_VERSION,
+            )
+            return _result(spoken)
+
+        if extract_order_number(caller_text) or turn_mode == "order":
+            order_enriched = await try_order_enrichment_short_circuit(
+                session, caller_text, turn_mode=turn_mode,
+            )
+            if order_enriched and order_enriched.force_reply:
+                spoken = self._finalize(session, order_enriched.force_reply)
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": spoken})
+                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                self._record_turn(session, caller_text, spoken)
+                logger.info(
+                    "order_parallel_short_circuit sid=%s enriched=%s openai_skipped=true",
+                    sid,
+                    order_enriched.enrichment_done,
+                )
+                return _result(spoken)
+
         commerce_hint = process_commerce_turn(session, caller_text)
         if commerce_hint.force_reply:
             spoken = self._finalize(session, commerce_hint.force_reply)
@@ -414,18 +502,17 @@ class LLMToolRuntime:
 
         if is_bare_yes(caller_text):
             engage = yes_engagement_reply(session)
-            if engage:
-                spoken = self._finalize(session, engage)
-                session.history.append({"role": "user", "content": caller_text})
-                session.history.append({"role": "assistant", "content": spoken})
-                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-                await _await_send(send, {"type": "text", "token": "", "last": True})
-                self._record_turn(session, caller_text, spoken)
-                logger.info(
-                    "yes_engagement_short_circuit sid=%s openai_skipped=true",
-                    session.call_sid[:6],
-                )
-                return _result(spoken)
+            spoken = self._finalize(session, engage or "")
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info(
+                "yes_engagement_short_circuit sid=%s openai_skipped=true",
+                session.call_sid[:6],
+            )
+            return _result(spoken)
 
         if EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED and turn_mode == "email":
             from ..payment.payment_state_machine import (
@@ -538,9 +625,8 @@ class LLMToolRuntime:
             messages.append(assistant_entry)
             session.history.append(assistant_entry)
 
-            for tc in tool_calls:
+            async def _dispatch_one(tc) -> tuple[Any, str]:
                 name = tc.function.name
-                tools_used.append(name)
                 try:
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
@@ -554,6 +640,37 @@ class LLMToolRuntime:
                     self._settings,
                     sid,
                 )
+                return tc, name, result_str
+
+            if len(tool_calls) > 1:
+                logger.info(
+                    "llm_tool_parallel_dispatch sid=%s count=%d",
+                    sid,
+                    len(tool_calls),
+                )
+                dispatched = await asyncio.gather(
+                    *[_dispatch_one(tc) for tc in tool_calls],
+                    return_exceptions=True,
+                )
+                for item in dispatched:
+                    if isinstance(item, Exception):
+                        logger.warning("llm_tool_parallel_error sid=%s err=%s", sid, item)
+                        continue
+                    tc, name, result_str = item
+                    tools_used.append(name)
+                    tool_results.append((name, parse_tool_result(result_str)))
+                    tool_entry = {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result_str,
+                    }
+                    messages.append(tool_entry)
+                    session.history.append(tool_entry)
+                continue
+
+            for tc in tool_calls:
+                _tc, name, result_str = await _dispatch_one(tc)
+                tools_used.append(name)
                 tool_results.append((name, parse_tool_result(result_str)))
                 tool_entry = {
                     "role": "tool",
