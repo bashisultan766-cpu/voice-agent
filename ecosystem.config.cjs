@@ -6,6 +6,8 @@
  *   cd services/twilio-voice-agent && python -m venv .venv && .venv/bin/pip install -r requirements.txt
  *   pm2 start ecosystem.config.cjs
  *   pm2 save
+ *   python -m app.scripts.runtime_identity_check   # must PASS before taking calls
+ *   curl -sS http://127.0.0.1:8001/health | jq .runtime_identity_ok
  *
  * Nginx must proxy:
  *   POST /voice/twilio/inbound  → http://127.0.0.1:8001
