@@ -18,6 +18,7 @@ No secrets are read or logged here.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -26,6 +27,8 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
+
+PROMPT_VERSION_LABEL = "v4.20-elevenlabs-aligned"
 
 # Default location relative to the ``app`` package root.
 _DEFAULT_REL_PATH = "data/agent_master_system_prompt.md"
@@ -192,3 +195,20 @@ def load_master_prompt(path: Optional[str] = None) -> MasterPrompt:
 def get_master_prompt(path: Optional[str] = None) -> MasterPrompt:
     """Cached master prompt for the hot path. Raises on missing/empty."""
     return load_master_prompt(path)
+
+
+def prompt_startup_diagnostic(path: Optional[str] = None) -> dict[str, int | str]:
+    """
+    Safe startup diagnostic: hash, section count, char count, version label.
+    Never logs or returns prompt body or secrets.
+    """
+    mp = load_master_prompt(path)
+    digest = hashlib.sha256(mp.text.encode("utf-8")).hexdigest()[:12]
+    return {
+        "version": PROMPT_VERSION_LABEL,
+        "hash": digest,
+        "chars": len(mp.text),
+        "sections": len(mp.sections),
+        "approx_tokens": mp.approx_tokens,
+        "path": Path(mp.path).name,
+    }

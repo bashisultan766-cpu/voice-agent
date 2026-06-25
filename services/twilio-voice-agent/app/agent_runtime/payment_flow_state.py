@@ -288,6 +288,22 @@ def gate_send_payment_link(session: "SessionState", tool_email: str = "") -> Pay
     return PaymentGateResult(allowed=True)
 
 
+def spoken_email_confirmation(session: "SessionState") -> Optional[str]:
+    """
+    Return the customer-facing email confirmation prompt with the FULL normalized
+    email when we are awaiting confirmation.
+
+    Payment email confirmation is an explicit exception to privacy masking rules:
+    the caller must hear the complete address to verify it.
+    """
+    if not getattr(session, "awaiting_payment_email_confirmation", False):
+        return None
+    pending = (session.pending_payment_email or session.pending_email or "").strip()
+    if not pending:
+        return None
+    return confirmation_prompt(pending)
+
+
 def enforce_payment_response(
     session: "SessionState",
     llm_text: str,
@@ -296,6 +312,22 @@ def enforce_payment_response(
     """
     Override LLM final text when payment tool results contradict it.
     """
+    confirm = spoken_email_confirmation(session)
+    if confirm:
+        if not llm_text or _FALSE_SUCCESS_PAT.search(llm_text or "") or "***" in (llm_text or ""):
+            return confirm
+        if pending := (session.pending_payment_email or session.pending_email or ""):
+            if pending.lower() not in (llm_text or "").lower():
+                return confirm
+
+    blocked_checkout = [
+        (n, r) for n, r in tool_results
+        if n == "create_checkout" and not r.get("success", True)
+    ]
+    if blocked_checkout and _FALSE_SUCCESS_PAT.search(llm_text or ""):
+        _name, result = blocked_checkout[-1]
+        return result.get("error") or result.get("customer_message") or llm_text
+
     payment_calls = [(n, r) for n, r in tool_results if n == "send_payment_link"]
     if payment_calls:
         _name, result = payment_calls[-1]

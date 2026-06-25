@@ -64,7 +64,8 @@ _INTENT_PATTERNS: list[tuple[str, re.Pattern]] = [
         r"\b(inmate|prisoner|incarcerat|detainee)\b", re.I)),
     ("book_search", re.compile(
         r"\b(book|isbn|title|author|catalog|in stock|backorder|price of|"
-        r"do you have|looking for)\b", re.I)),
+        r"do you have|looking for|newspaper|magazine|subscription|usa today|"
+        r"wall street journal|people magazine)\b", re.I)),
     ("order", re.compile(
         r"\b(order|ordinary|ordering|ordered|order number|my order|"
         r"i give you the order|i have order|check my order)\b", re.I)),
@@ -121,7 +122,10 @@ def normalize_voice_intent(text: str, *, context: str = "") -> str:
     elif detected == "refund":
         hints.append("Ask for order number if missing, then get_order or lookup_refund_status.")
     elif detected == "book_search":
-        hints.append("Call catalog_search before stating availability or price.")
+        hints.append(
+            "Call catalog_search before stating availability or price. "
+            "Includes newspapers, magazines, and subscriptions."
+        )
     elif detected == "facility":
         hints.append("Ask facility name/city/state if missing, then check_facility_approval.")
     elif detected == "payment_link":

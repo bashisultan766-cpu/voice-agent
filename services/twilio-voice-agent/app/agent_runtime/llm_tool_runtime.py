@@ -37,7 +37,13 @@ from . import llm_tools
 from . import openai_health
 from .master_prompt import MasterPromptError, get_master_prompt
 from .output_guardrails import apply_output_guardrails
-from .payment_flow_state import enforce_payment_response, parse_tool_result, process_payment_turn
+from .payment_flow_state import (
+    enforce_payment_response,
+    parse_tool_result,
+    process_payment_turn,
+    spoken_email_confirmation,
+)
+from .tool_runtime_gates import replace_blocked_order_phrase
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext, SessionState
@@ -374,6 +380,12 @@ class LLMToolRuntime:
     # ── Finalisation + safety ─────────────────────────────────────────────
     def _finalize(self, session: "SessionState", text: str) -> str:
         from ..safety.response_sanitizer import sanitize_customer_response
+
+        confirm = spoken_email_confirmation(session)
+        if confirm:
+            text = confirm
+        else:
+            text = replace_blocked_order_phrase(text or "")
 
         guarded = apply_output_guardrails(
             text,

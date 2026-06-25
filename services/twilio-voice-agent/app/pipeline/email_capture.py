@@ -153,6 +153,11 @@ def normalize_spoken_email(text: str) -> Optional[str]:
 
     # "period" → "dot" (alternative TLD-separator spoken form)
     t = re.sub(r"\bperiod\b", "dot", t, flags=re.IGNORECASE)
+    # Spoken punctuation in email addresses
+    t = re.sub(r"\bhyphen\b", "-", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bdash\b", "-", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bunderscore\b", "_", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bplus\b", "+", t, flags=re.IGNORECASE)
 
     # Normalise "dot" → "." and "at" → "@"
     t = re.sub(r"\bdot\b", ".", t)

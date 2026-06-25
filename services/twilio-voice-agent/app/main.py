@@ -23,16 +23,32 @@ async def lifespan(app: FastAPI):
     from .agent_runtime.runtime import resolve_live_turn_handler
 
     log_startup_health(settings)
+    from .agent_runtime import llm_tools
+    from .agent_runtime.master_prompt import prompt_startup_diagnostic
+
+    prompt_diag = prompt_startup_diagnostic()
     _log.info(
-        "voice_runtime=%s voice_agent_runtime_mode=%s active_turn_handler=%s",
+        "master_prompt_diag version=%s hash=%s chars=%d sections=%d approx_tokens=%d file=%s",
+        prompt_diag["version"],
+        prompt_diag["hash"],
+        prompt_diag["chars"],
+        prompt_diag["sections"],
+        prompt_diag["approx_tokens"],
+        prompt_diag["path"],
+    )
+    _log.info(
+        "voice_runtime=%s voice_agent_runtime_mode=%s active_turn_handler=%s "
+        "llm_tool_runtime_tools=%d",
         settings.VOICE_RUNTIME,
         settings.VOICE_AGENT_RUNTIME_MODE,
         resolve_live_turn_handler(settings),
+        len(llm_tools.tool_names()),
     )
     if settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS:
         _log.info(
-            "live_openai_tools_disabled=true voice_runtime=%s",
-            settings.VOICE_RUNTIME,
+            "legacy_openai_agent_tools_disabled=true "
+            "(blocks run_agent_turn only; llm_tool_runtime OpenAI tools active=%s)",
+            settings.VOICE_AGENT_RUNTIME_MODE == "llm_tool_runtime",
         )
     yield
 

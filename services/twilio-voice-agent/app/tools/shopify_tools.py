@@ -570,7 +570,18 @@ async def create_checkout_link(
                 "message": "You already have a payment link from this call. Shall I email it to you?",
             })
 
-        # Resolve email: prefer confirmed_email; if LLM passed one, validate it
+        # Resolve email: require confirmed_email — never create checkout without it
+        from ..payment.safety import require_confirmed_email
+
+        email_result = require_confirmed_email(session)
+        if not email_result.allowed:
+            logger.info(
+                "payment_tool_result tool=create_checkout_link allowed=false "
+                "reason=%s",
+                email_result.reason,
+            )
+            return json.dumps({"success": False, "error": email_result.safe_message})
+
         confirmed_email = getattr(session, "confirmed_email", "") or ""
         if email and email.strip():
             arg_result = validate_tool_email_arg(email, session)
@@ -1122,10 +1133,10 @@ async def GetCallerInfo(
             "message": "No session available.",
         })
 
-    # Enrich from the caller-identity resolver when we don't yet have a name.
+    # Enrich from the caller-identity resolver (cache-first, optional live Shopify).
     identity: dict = {}
     phone = getattr(session, "from_number", "") or ""
-    if phone and not getattr(session, "caller_name", ""):
+    if phone:
         try:
             from ..agent_runtime.caller_identity import apply_to_session, get_caller_info
 
@@ -1136,15 +1147,31 @@ async def GetCallerInfo(
 
     caller_name = getattr(session, "caller_name", "") or identity.get("allowed_greeting_name", "")
 
+    first_name = (
+        identity.get("first_name", "")
+        or (caller_name.split()[0] if caller_name else "")
+    )
+    recognized = bool(caller_name or identity.get("known"))
+    recent = identity.get("recent_orders", []) or []
+
     return json.dumps({
-        "caller_recognized": bool(caller_name),
+        "recognized": recognized,
+        "caller_recognized": recognized,
+        "customer_first_name": first_name or None,
+        "customer_id": (
+            identity.get("customer_id", "")
+            or getattr(session, "shopify_customer_id", "")
+            or None
+        ),
         "caller_name": caller_name or None,
         "phone_match_confidence": identity.get("phone_match_confidence", "low"),
+        "recent_orders_summary_safe": recent,
+        "verification_required_for_sensitive_details": True,
         # Verification flags reflect THIS call only — phone match is NOT verification.
         "verified_email": bool(getattr(session, "verified_email", False)),
         "verified_phone": bool(getattr(session, "verified_phone", False)),
         "last_order_number": getattr(session, "last_order_number", "") or None,
-        "recent_orders": identity.get("recent_orders", []),
+        "recent_orders": recent,
         "confirmed_email_masked": (
             _mask(session.confirmed_email)
             if getattr(session, "confirmed_email", "")

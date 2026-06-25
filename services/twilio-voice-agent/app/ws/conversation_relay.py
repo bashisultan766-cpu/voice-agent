@@ -225,22 +225,29 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
             return
         try:
             profile = await get_caller_profile(from_number)
-            if not profile:
-                session.caller_profile_loaded = True
-                return
+            if profile:
+                # Populate session with safe profile fields.
+                session.is_returning_caller = True
+                if profile.display_name:
+                    session.caller_name = profile.display_name
+                if profile.preferred_email:
+                    session.caller_email = profile.preferred_email
+                if profile.last_order_number:
+                    session.last_order_number = profile.last_order_number
+                if profile.call_count:
+                    session.caller_call_count = profile.call_count
+                if profile.last_summary:
+                    session.caller_last_summary = profile.last_summary
 
-            # Populate session with safe profile fields.
-            session.is_returning_caller = True
-            if profile.display_name:
-                session.caller_name = profile.display_name
-            if profile.preferred_email:
-                session.caller_email = profile.preferred_email
-            if profile.last_order_number:
-                session.last_order_number = profile.last_order_number
-            if profile.call_count:
-                session.caller_call_count = profile.call_count
-            if profile.last_summary:
-                session.caller_last_summary = profile.last_summary
+            # Caller identity (cache + optional live Shopify) for greeting name
+            # and recent-order summary — friendly recognition only, not verification.
+            try:
+                from ..agent_runtime.caller_identity import apply_to_session, get_caller_info
+
+                identity = await get_caller_info(from_number, allow_live=True)
+                apply_to_session(session, identity)
+            except Exception:
+                logger.debug("caller_identity_prefetch_failed sid=%s", session.call_sid[:6])
 
             session.caller_profile_loaded = True
 

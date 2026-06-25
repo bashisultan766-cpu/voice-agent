@@ -76,10 +76,11 @@ class Settings(BaseSettings):
     # Bearer key for the /admin/sync endpoint — keep server-side only.
     INTERNAL_ADMIN_KEY: str = ""
 
-    # ── v4.2: Live voice OpenAI tool-calling guard ────────────────────────────
-    # When true (default), ALL intents are routed through the worker→composer
-    # path. OpenAI never receives tool schemas; session.history never stores
-    # role="tool" or assistant tool_calls. Eliminates 400 errors on interrupt.
+    # ── v4.2: Legacy OpenAI agent tool-calling guard ─────────────────────────
+    # When true (default), blocks the OLD run_agent_turn streaming path and the
+    # RealtimePipelineEngine worker→composer fallback from using OpenAI tools.
+    # Does NOT affect llm_tool_runtime, which is the sole live runtime and
+    # always uses OpenAI function-calling via app/agent_runtime/llm_tools.py.
     VOICE_LIVE_DISABLE_OPENAI_TOOLS: bool = True
 
     # ── v4.8: Business rules ──────────────────────────────────────────────────

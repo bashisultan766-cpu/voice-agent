@@ -284,7 +284,13 @@ async def _add_to_cart(args: AddToCartArgs, session) -> str:
         ledger = get_ledger(session)
         ledger.update_quantity(args.isbn or args.title, args.quantity)
         sync_ledger_to_session(session, ledger)
-    return json.dumps({"success": True, "cart": _ledger_view(session)})
+    view = _ledger_view(session)
+    if view.get("confirmed_count", 0) > 0:
+        pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+        if pfs in ("idle", ""):
+            session.payment_flow_status = "awaiting_email"
+        session.payment_cart_confirmed = True
+    return json.dumps({"success": True, "cart": view})
 
 
 async def _update_cart(args: UpdateCartArgs, session) -> str:
@@ -797,6 +803,17 @@ async def dispatch(name: str, args: dict, session: "SessionState | None") -> str
 
     sid = getattr(session, "call_sid", "")[:6] if session else "none"
     logger.info("llm_tool_call sid=%s name=%s arg_keys=%s", sid, name, sorted((args or {}).keys()))
+
+    from .tool_runtime_gates import gate_tool_call
+
+    gate = gate_tool_call(name, session)
+    if gate is not None and not gate.allowed:
+        logger.info(
+            "llm_tool_gated sid=%s name=%s reason=%s",
+            sid, name, gate.reason,
+        )
+        return gate.tool_json
+
     try:
         result = await tool.impl(validated, session)
         return result if isinstance(result, str) else json.dumps(result)
