@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # ── ElevenLabs-aligned names (match tool_schemas.py) ─────────────────────────
 _TOOL_MAP = {
     # Primary ElevenLabs names
+    "NormalizeVoiceIntent":          _st.NormalizeVoiceIntent,
     "GetOrder":                      _st.GetOrder,
     "SureShotCatalogSearch":         _st.SureShotCatalogSearch,
     "CalculatePricing":              _st.CalculatePricing,
@@ -51,6 +52,7 @@ _TOOL_MAP = {
 # Tools that receive the live session for context injection and state mutation.
 _SESSION_AWARE = frozenset({
     # ElevenLabs names
+    "NormalizeVoiceIntent",
     "GetOrder",
     "CalculatePricing",
     "CheckFacilityApproval",

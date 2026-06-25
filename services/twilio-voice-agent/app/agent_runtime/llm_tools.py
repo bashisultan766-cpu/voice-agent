@@ -1,7 +1,7 @@
 """
 Canonical OpenAI tool surface for the LLM-first runtime.
 
-Exposes 17 backend capabilities as OpenAI function tools. For each tool:
+Exposes backend capabilities as OpenAI function tools. For each tool:
 
 * a clean JSON schema is published to the model (``tool_specs``),
 * inputs are validated with Pydantic before any backend call,
@@ -113,6 +113,63 @@ class FaqLookupArgs(BaseModel):
 class EscalateArgs(BaseModel):
     reason: str = Field(..., min_length=1)
     summary: str = Field("", description="Short summary for the human agent.")
+
+
+class NormalizeVoiceIntentArgs(BaseModel):
+    text: str = Field(..., min_length=1, description="Caller utterance to normalize.")
+    context: str = Field("", description="Optional prior context from the call.")
+
+
+class GetOrderArgs(BaseModel):
+    order_number: str = Field("", description="Order number with or without #.")
+    email: str = Field("", description="Email for verification.")
+    phone: str = Field("", description="Phone for verification.")
+
+
+class CatalogSearchArgs(BaseModel):
+    query: str = Field(..., min_length=1, description="Title, author, ISBN, SKU, or keyword.")
+    limit: int = Field(5, ge=1, le=10)
+
+
+class CalculatePricingArgs(BaseModel):
+    order_number: str = Field("", description="Order number.")
+    email: str = Field("", description="Email for verification.")
+    phone: str = Field("", description="Phone for verification.")
+
+
+class CheckFacilityApprovalArgs(BaseModel):
+    facility_name: str = Field(..., min_length=1)
+    city: str = Field("", description="Facility city if known.")
+    state: str = Field("", description="Facility state if known.")
+    order_number: str = Field("", description="Optional order number.")
+
+
+class CheckOrderFacilityRestrictionsArgs(BaseModel):
+    order_number: str = Field("", description="Order number.")
+    facility_name: str = Field("", description="Facility name.")
+    book_title: str = Field("", description="Specific book title if asking about one book.")
+
+
+class AddressUpdateInstructionsArgs(BaseModel):
+    order_number: str = Field("", description="Order number if known.")
+
+
+class CancelOrderRequestArgs(BaseModel):
+    order_number: str = Field(..., min_length=1)
+    email: str = Field("", description="Email for verification.")
+
+
+class SendFacilityPaymentLinkArgs(BaseModel):
+    email: str = Field(..., min_length=3, description="Confirmed customer email.")
+    order_number: str = Field("", description="Order number if known.")
+
+
+class GetCallerInfoArgs(BaseModel):
+    pass
+
+
+class SaveCallerNameArgs(BaseModel):
+    name: str = Field(..., min_length=1, description="Caller's name as stated.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -366,6 +423,105 @@ async def _escalate(args: EscalateArgs, session) -> str:
     )
 
 
+async def _normalize_voice_intent(args: NormalizeVoiceIntentArgs, session) -> str:
+    return await _st.NormalizeVoiceIntent(
+        text=args.text,
+        context=args.context,
+        session=session,
+    )
+
+
+async def _get_order(args: GetOrderArgs, session) -> str:
+    return await _st.GetOrder(
+        order_number=args.order_number or None,
+        email=args.email or None,
+        phone=args.phone or None,
+        session=session,
+    )
+
+
+async def _catalog_search(args: CatalogSearchArgs, session) -> str:
+    raw = await _st.SureShotCatalogSearch(query=args.query, limit=args.limit)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(payload, dict) and payload.get("results"):
+        payload["results"] = _rerank_by_fuzzy(args.query, payload["results"])
+    return json.dumps(payload)
+
+
+async def _calculate_pricing(args: CalculatePricingArgs, session) -> str:
+    return await _st.CalculatePricing(
+        order_number=args.order_number or None,
+        email=args.email or None,
+        phone=args.phone or None,
+        session=session,
+    )
+
+
+async def _check_facility_approval(args: CheckFacilityApprovalArgs, session) -> str:
+    facility = args.facility_name
+    if args.city:
+        facility = f"{facility}, {args.city}"
+    if args.state:
+        facility = f"{facility}, {args.state}"
+    return await _st.CheckFacilityApproval(
+        facility_name=facility,
+        order_number=args.order_number or None,
+        session=session,
+    )
+
+
+async def _check_order_facility_restrictions(
+    args: CheckOrderFacilityRestrictionsArgs, session,
+) -> str:
+    return await _st.CheckOrderFacilityRestrictions(
+        order_number=args.order_number or None,
+        facility_name=args.facility_name or None,
+        session=session,
+    )
+
+
+async def _address_update_instructions(args: AddressUpdateInstructionsArgs, session) -> str:
+    return await _st.AddressUpdateInstructions(
+        order_number=args.order_number or None,
+        session=session,
+    )
+
+
+async def _cancel_order_request(args: CancelOrderRequestArgs, session) -> str:
+    return await _st.CancelOrderRequest(
+        order_number=args.order_number,
+        email=args.email or None,
+        session=session,
+    )
+
+
+async def _send_facility_payment_link(args: SendFacilityPaymentLinkArgs, session) -> str:
+    return await _st.SendFacilityPaymentLink(
+        email=args.email,
+        order_number=args.order_number or None,
+        session=session,
+    )
+
+
+async def _get_caller_info(args: GetCallerInfoArgs, session) -> str:
+    return await _st.GetCallerInfo(session=session)
+
+
+async def _save_caller_name(args: SaveCallerNameArgs, session) -> str:
+    return await _st.SaveCallerName(name=args.name, session=session)
+
+
+async def _escalate_to_customer_service(args: EscalateArgs, session) -> str:
+    return await _st.EscalateToCustomerService(
+        reason=args.reason,
+        summary=args.summary,
+        session=session,
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Registry: name -> (Pydantic model, impl, description, json schema)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -494,6 +650,82 @@ _register(
 _register(
     "escalate_to_human", EscalateArgs, _escalate,
     "Hand the call to a human customer service agent and flag for follow-up.",
+    _obj({"reason": _S, "summary": _S}, ["reason"]),
+)
+
+# ── ElevenLabs-aligned tools (business source of truth) ─────────────────────
+_register(
+    "normalize_voice_intent", NormalizeVoiceIntentArgs, _normalize_voice_intent,
+    "Normalize unclear voice phrases in SureShot context. Maps 'ordinary' to "
+    "'order' when appropriate. Returns structured intent only — do not answer "
+    "the customer from this tool.",
+    _obj({"text": _S, "context": _S}, ["text"]),
+)
+_register(
+    "get_order", GetOrderArgs, _get_order,
+    "Look up order status, tracking, fulfillment, payment, refund, subtotal, "
+    "shipping method/cost, cancellation eligibility. Requires verification for "
+    "private details.",
+    _obj({"order_number": _S, "email": _S, "phone": _S}, []),
+)
+_register(
+    "catalog_search", CatalogSearchArgs, _catalog_search,
+    "Search SureShot Books catalog by title, author, ISBN, SKU, or keyword. "
+    "Authoritative for price, availability, stock/backorder. Never guess stock.",
+    _obj({"query": {**_S, "description": "Title, author, ISBN, SKU, or keyword."},
+          "limit": {**_I, "default": 5}}, ["query"]),
+)
+_register(
+    "calculate_pricing", CalculatePricingArgs, _calculate_pricing,
+    "Retrieve subtotal before shipping, shipping amount, method, and estimated "
+    "total for an order. Never exposes internal fees.",
+    _obj({"order_number": _S, "email": _S, "phone": _S}, []),
+)
+_register(
+    "check_facility_approval", CheckFacilityApprovalArgs, _check_facility_approval,
+    "Check if SureShot Books is approved to ship to a facility. Never guess.",
+    _obj({"facility_name": _S, "city": _S, "state": _S, "order_number": _S},
+         ["facility_name"]),
+)
+_register(
+    "check_order_facility_restrictions", CheckOrderFacilityRestrictionsArgs,
+    _check_order_facility_restrictions,
+    "Check whether books in an order may be accepted or restricted by a facility.",
+    _obj({"order_number": _S, "facility_name": _S, "book_title": _S}, []),
+)
+_register(
+    "address_update_instructions", AddressUpdateInstructionsArgs,
+    _address_update_instructions,
+    "Return customer-safe address update instructions (email Jessica).",
+    _obj({"order_number": _S}, []),
+)
+_register(
+    "cancel_order_request", CancelOrderRequestArgs, _cancel_order_request,
+    "Check cancellation eligibility for an order. Enforces verification.",
+    _obj({"order_number": _S, "email": _S}, ["order_number"]),
+)
+_register(
+    "send_facility_payment_link", SendFacilityPaymentLinkArgs,
+    _send_facility_payment_link,
+    "Send secure link for facility/inmate/payment details. Only after email "
+    "confirmed. Never speak the URL.",
+    _obj({"email": _S, "order_number": _S}, ["email"]),
+)
+_register(
+    "get_caller_info", GetCallerInfoArgs, _get_caller_info,
+    "Identify returning caller by phone/session. Friendly recognition only — "
+    "not full verification.",
+    _obj({}, []),
+)
+_register(
+    "save_caller_name", SaveCallerNameArgs, _save_caller_name,
+    "Save caller name when provided and not already recognized.",
+    _obj({"name": _S}, ["name"]),
+)
+_register(
+    "escalate_to_customer_service", EscalateArgs, _escalate_to_customer_service,
+    "Escalate to human customer service for unlisted books, unknown inventory, "
+    "facility issues, or staff-needed actions.",
     _obj({"reason": _S, "summary": _S}, ["reason"]),
 )
 

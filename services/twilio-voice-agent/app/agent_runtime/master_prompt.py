@@ -38,7 +38,9 @@ _HEADING_TO_SECTION: dict[str, str] = {
     "tool usage policy": "tool_rules",
     "privacy and verification": "privacy_rules",
     "payment rules": "payment_rules",
+    "product order refund rules": "product_order_refund_rules",
     "product, order, and refund rules": "product_order_refund_rules",
+    "facility rules": "facility_rules",
     "escalation rules": "escalation_rules",
     "business rules": "business_rules",
 }
@@ -52,6 +54,9 @@ ALWAYS_INCLUDED_SECTIONS: tuple[str, ...] = (
     "tool_rules",
     "privacy_rules",
     "payment_rules",
+    "product_order_refund_rules",
+    "facility_rules",
+    "escalation_rules",
 )
 
 

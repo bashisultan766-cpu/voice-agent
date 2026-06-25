@@ -37,6 +37,47 @@ _URL_PATTERN = re.compile(r"https?://\S+", re.I)
 # A run of 13-19 digits (optionally separated) ~ a payment card number.
 _CARD_PATTERN = re.compile(r"\b(?:\d[ -]?){13,19}\b")
 
+
+def _luhn_valid(digits: str) -> bool:
+    """Return True if digit string passes the Luhn checksum (payment cards)."""
+    if not digits.isdigit() or len(digits) < 13:
+        return False
+    total = 0
+    reverse = digits[::-1]
+    for i, ch in enumerate(reverse):
+        n = int(ch)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
+
+
+def _is_isbn_digits(digits: str) -> bool:
+    """True when digit run is a valid ISBN-10 or ISBN-13 (not a card)."""
+    try:
+        from ..tools.isbn import is_strict_valid_isbn
+
+        return is_strict_valid_isbn(digits)
+    except Exception:  # noqa: BLE001
+        return len(digits) in (10, 13)
+
+
+def _mask_cards(text: str, reasons: list[str]) -> str:
+    def _mask(m: re.Match) -> str:
+        digits = re.sub(r"\D", "", m.group(0))
+        if len(digits) < 13:
+            return m.group(0)
+        if _is_isbn_digits(digits):
+            return m.group(0)
+        if not _luhn_valid(digits):
+            return m.group(0)
+        reasons.append("card_masked")
+        return f"ending in {digits[-4:]}"
+
+    return _CARD_PATTERN.sub(_mask, text)
+
 _MARKDOWN_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"```.*?```", re.S),     # code fences
     re.compile(r"[*_`#>]+"),            # markdown markers
@@ -68,16 +109,6 @@ def _strip_urls(text: str, reasons: list[str]) -> str:
         reasons.append("url_blocked")
     return text
 
-
-def _mask_cards(text: str, reasons: list[str]) -> str:
-    def _mask(m: re.Match) -> str:
-        digits = re.sub(r"\D", "", m.group(0))
-        if len(digits) < 13:
-            return m.group(0)
-        reasons.append("card_masked")
-        return f"ending in {digits[-4:]}"
-
-    return _CARD_PATTERN.sub(_mask, text)
 
 
 def _strip_markdown(text: str, reasons: list[str]) -> str:

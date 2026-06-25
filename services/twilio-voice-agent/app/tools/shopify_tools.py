@@ -24,7 +24,7 @@ from ..shopify.graphql_queries import (
 )
 from ..state.session_store import shopify_cache_get, shopify_cache_set
 from ..config import get_settings
-from .isbn import normalize_isbn
+from .isbn import extract_isbn_candidate, looks_like_isbn_fragment, normalize_isbn
 from .email_sender import send_payment_link_email
 
 if TYPE_CHECKING:
@@ -171,6 +171,35 @@ def _cached_product_to_result(product) -> dict:
     }
 
 
+def _inventory_status(product: dict) -> str:
+    """Map Shopify availability to customer-safe inventory status."""
+    available = product.get("available")
+    if available is True:
+        return "in_stock"
+    if available is False:
+        inv = product.get("inventory")
+        if inv is not None and int(inv) <= 0:
+            return "out_of_stock"
+        return "out_of_stock"
+    return "unknown"
+
+
+def _enrich_catalog_payload(payload: dict) -> dict:
+    """Add inventory_status and not_found flag for catalog_search consumers."""
+    results = payload.get("results") or []
+    for item in results:
+        item["inventory_status"] = _inventory_status(item)
+        if not item.get("isbn") and item.get("variants"):
+            for v in item["variants"]:
+                if v.get("barcode"):
+                    item["isbn"] = v["barcode"]
+                    break
+    payload["results"] = results
+    payload["count"] = len(results)
+    payload["not_found"] = payload.get("count", 0) == 0 and not payload.get("error")
+    return payload
+
+
 async def search_products(query: str, limit: int = 5) -> str:
     """
     Search Shopify catalog.
@@ -181,16 +210,31 @@ async def search_products(query: str, limit: int = 5) -> str:
       3. ProductCache: handle match
       4. Redis search-result cache (shopify_cache_get)
       5. Shopify live API (barcode lookup for ISBNs, then title search)
+
+    Partial ISBN fragments (e.g. "9798") are rejected — caller must provide
+    a complete 10- or 13-digit ISBN before a catalog lookup runs.
     """
     limit = max(1, min(10, limit))
     settings = get_settings()
+
+    if looks_like_isbn_fragment(query) and not extract_isbn_candidate(query):
+        return json.dumps({
+            "results": [],
+            "count": 0,
+            "not_found": False,
+            "needs_more_digits": True,
+            "message": (
+                "That looks like a partial ISBN. Please read the rest of the ISBN — "
+                "all 10 or 13 digits."
+            ),
+        })
 
     # ── 1-3. ProductCache lookups (Redis, sub-ms) ──────────────────────────────
     try:
         from ..sync.repositories import ProductCache
         pc = ProductCache()
 
-        isbn = normalize_isbn(query)
+        isbn = extract_isbn_candidate(query) or normalize_isbn(query)
         if isbn:
             cached_product = await pc.get_by_isbn(isbn)
             if cached_product:
@@ -237,7 +281,7 @@ async def search_products(query: str, limit: int = 5) -> str:
         return json.dumps({"error": "Shopify not configured", "results": []})
 
     # ── 5. Live Shopify API ────────────────────────────────────────────────────
-    isbn = normalize_isbn(query)
+    isbn = extract_isbn_candidate(query) or normalize_isbn(query)
     if isbn:
         isbn_result = await _search_by_isbn(isbn, limit)
         if isbn_result and isbn_result.get("count", 0) > 0:
@@ -689,6 +733,17 @@ async def escalate_to_human(
 # ── ElevenLabs-aligned tool wrappers (v4.2) ────────────────────────────────────
 
 
+async def NormalizeVoiceIntent(
+    text: str,
+    context: str = "",
+    session: Optional["SessionState"] = None,
+) -> str:
+    """ElevenLabs-aligned voice intent normalizer."""
+    from .voice_intent import normalize_voice_intent
+
+    return normalize_voice_intent(text, context=context)
+
+
 async def CheckFacilityApproval(
     facility_name: str,
     order_number: Optional[str] = None,
@@ -1122,8 +1177,15 @@ async def SearchOrdersByPhone(
 # ── Legacy aliases ────────────────────────────────────────────────────────────
 
 async def SureShotCatalogSearch(query: str, limit: int = 5) -> str:
-    """ElevenLabs-named alias for search_products."""
-    return await search_products(query=query, limit=limit)
+    """ElevenLabs-named alias for search_products with inventory enrichment."""
+    raw = await search_products(query=query, limit=limit)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(payload, dict):
+        return json.dumps(_enrich_catalog_payload(payload))
+    return raw
 
 
 async def SureShotBooksSku(query: str) -> str:

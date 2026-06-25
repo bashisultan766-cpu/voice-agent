@@ -284,19 +284,25 @@ def test_master_prompt_is_single_file_with_sections():
 
     mp = load_master_prompt()
     for key in ("persona", "privacy_rules", "tool_rules", "payment_rules",
-                "escalation_rules", "domain_boundaries", "voice_style"):
+                "escalation_rules", "domain_boundaries", "voice_style",
+                "facility_rules", "product_order_refund_rules"):
         assert key in mp.sections, f"master prompt missing section {key}"
 
 
-def test_seventeen_tools_registered():
-    assert len(llm_tools.tool_names()) == 17
-    assert len(llm_tools.tool_specs()) == 17
+def test_elevenlabs_tools_registered():
     required = {
-        "search_products", "get_product_details", "compare_products", "get_cart",
-        "add_to_cart", "update_cart", "remove_from_cart", "create_checkout",
-        "send_payment_link", "lookup_order_status", "lookup_refund_status",
-        "lookup_customer_by_email_or_phone", "shipping_policy_lookup",
-        "refund_policy_lookup", "facility_policy_lookup", "faq_lookup",
-        "escalate_to_human",
+        "normalize_voice_intent", "get_order", "catalog_search",
+        "calculate_pricing", "check_facility_approval",
+        "check_order_facility_restrictions", "address_update_instructions",
+        "cancel_order_request", "send_facility_payment_link",
+        "get_caller_info", "save_caller_name", "escalate_to_customer_service",
     }
-    assert set(llm_tools.tool_names()) == required
+    names = set(llm_tools.tool_names())
+    missing = required - names
+    assert not missing, f"Missing ElevenLabs-aligned tools: {missing}"
+
+
+def test_core_tools_still_registered():
+    assert len(llm_tools.tool_names()) >= 28
+    assert "search_products" in llm_tools.tool_names()
+    assert "send_payment_link" in llm_tools.tool_names()
