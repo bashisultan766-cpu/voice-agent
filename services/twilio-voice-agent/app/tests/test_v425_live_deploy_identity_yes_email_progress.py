@@ -26,6 +26,7 @@ from app.agent_runtime.commerce_flow_state import (
     process_commerce_turn,
     stage_product_candidate,
 )
+from app.config import Settings
 from app.agent_runtime.llm_tool_runtime import LLMToolRuntime
 from app.agent_runtime.payment_flow_state import (
     PAYMENT_SUCCESS_MESSAGE,
@@ -57,6 +58,12 @@ BOOK_B = {
 }
 EMAIL = "bashisultan766@gmail.com"
 
+_LEGACY_RUNTIME_SETTINGS = Settings(
+    OPENAI_API_KEY="test-key",
+    VOICE_LLM_ONLY_FINAL_OUTPUT=False,
+    VOICE_ENFORCE_DETERMINISTIC_TOOL_RESPONSE=True,
+)
+
 
 def _session(**kwargs) -> SessionState:
     return SessionState(
@@ -71,9 +78,11 @@ def _session(**kwargs) -> SessionState:
 class TestRuntimeIdentity:
     def test_identity_reports_v424_flags(self):
         identity = collect_runtime_identity()
-        assert identity["voice_sales_flow_version"] == "v4.37"
+        assert identity["voice_sales_flow_version"] == "v4.39"
         assert identity["tool_progress_prompts_enabled"] is True
         assert identity["payment_email_state_version"] == "v4.33"
+        assert identity["llm_only_final_output"] is True
+        assert identity["openai_model"] == "gpt-4o"
         assert identity["email_capture_short_circuit_enabled"] is True
         assert identity["create_checkout_present_in_tool_specs"] is False
         assert identity["master_prompt_chars"] >= 12000
@@ -147,7 +156,7 @@ class TestYesHandling:
 
 class TestEmailConfirmation:
     def test_email_mode_short_circuits_before_openai(self):
-        runtime = LLMToolRuntime()
+        runtime = LLMToolRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
         session = _session()
         add_product_candidate(session, title=BOOK_A["title"], isbn=BOOK_A["isbn"],
                               variant_id=BOOK_A["variant_id"], price=BOOK_A["price"])
@@ -187,7 +196,7 @@ class TestEmailConfirmation:
 
     @pytest.mark.asyncio
     async def test_auto_send_uses_session_email_not_arg(self, monkeypatch):
-        runtime = LLMToolRuntime()
+        runtime = LLMToolRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
         session = _session()
         add_product_candidate(session, title=BOOK_A["title"], isbn=BOOK_A["isbn"],
                               variant_id=BOOK_A["variant_id"], price=BOOK_A["price"])
@@ -322,7 +331,7 @@ class TestProgressSends:
 class TestLiveLogRegression:
     @pytest.mark.asyncio
     async def test_full_two_book_email_payment_flow(self, monkeypatch):
-        runtime = LLMToolRuntime()
+        runtime = LLMToolRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
         session = _session()
 
         stage_product_candidate(session, BOOK_A)

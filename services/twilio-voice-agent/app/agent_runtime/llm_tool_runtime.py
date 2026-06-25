@@ -1,29 +1,21 @@
 """
 LLM_TOOL_RUNTIME — the single, clean, LLM-first voice runtime.
 
-Flow for every caller turn:
+Flow for every caller turn (when ``VOICE_LLM_ONLY_FINAL_OUTPUT`` is true, the default):
 
     caller message
+      -> optional session state updates (email/cart flags — no canned speech)
       -> context builder (master prompt sections + role-based history + state)
-      -> OpenAI chat completion WITH tools
-      -> [if the model requests tools] execute tools, return results to the model
+      -> OpenAI chat completion WITH tools (gpt-4o by default)
+      -> [if the model requests tools] execute tools in parallel, return results
       -> ... loop until the model writes a final answer ...
-      -> OpenAI writes the final spoken response
-      -> deterministic safety guardrails (sanitizer + output guardrails)
+      -> OpenAI writes the final spoken response (only the model speaks to caller)
+      -> deterministic safety guardrails (sanitizer + length trim — not business rules)
       -> Twilio/voice response
 
-Design rules honoured here:
-* Every normal caller question reaches OpenAI first. There is no regex fast path,
-  canned-answer template, JSON-only intent classifier, or deterministic business
-  resolver in front of the model.
-* Tools are real OpenAI function calls, validated with Pydantic, backed by the
-  existing hardened Shopify/cart/email logic.
-* Conversation memory is role-based (system / user / assistant / tool), not a
-  flattened text blob, and is persisted on ``session.history``.
-* No secret is ever logged. Order/refund PII is gated by the tools'
-  verification rules. The final answer passes deterministic guardrails.
-* If OpenAI is unavailable, a deterministic safe fallback is spoken (the only
-  place a non-LLM customer answer is allowed).
+Legacy deterministic short-circuits (commerce/isbn/payment templates) remain in the
+codebase for certification/tests but are disabled for live calls when llm-only mode
+is on. Tools never emit final customer-facing text; they return JSON for the model.
 """
 from __future__ import annotations
 
@@ -74,6 +66,22 @@ _OPENAI_FALLBACK = (
     "I'm sorry, I'm having trouble accessing that right now. "
     "Could you say that again, or would you like me to connect you with our team?"
 )
+
+
+def llm_only_final_output_enabled(settings=None) -> bool:
+    from ..config import get_settings
+
+    s = settings or get_settings()
+    return bool(getattr(s, "VOICE_LLM_ONLY_FINAL_OUTPUT", True))
+
+
+def enforce_deterministic_tool_response_enabled(settings=None) -> bool:
+    from ..config import get_settings
+
+    s = settings or get_settings()
+    if llm_only_final_output_enabled(s):
+        return bool(getattr(s, "VOICE_ENFORCE_DETERMINISTIC_TOOL_RESPONSE", False))
+    return True
 
 
 def _result(answer: str, source: str = "llm_tool_runtime"):
@@ -261,7 +269,7 @@ class LLMToolRuntime:
                     tools=llm_tools.tool_specs(),
                     tool_choice="auto",
                     temperature=0.6,
-                    max_tokens=400,
+                    max_tokens=500,
                 ),
                 timeout=timeout,
             )
@@ -350,202 +358,217 @@ class LLMToolRuntime:
         if not getattr(self._settings, "OPENAI_API_KEY", ""):
             return await self._fallback(session, caller_text, send, reason="missing_api_key")
 
+        llm_only = llm_only_final_output_enabled(self._settings)
+
         payment_hint = process_payment_turn(session, caller_text, turn_mode=turn_mode)
-        if payment_hint.force_reply:
-            spoken = self._finalize(session, payment_hint.force_reply)
-            session.history.append({"role": "user", "content": caller_text})
-            session.history.append({"role": "assistant", "content": spoken})
-            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-            await _await_send(send, {"type": "text", "token": "", "last": True})
-            self._record_turn(session, caller_text, spoken)
-            logger.info(
-                "email_capture_short_circuit sid=%s stage=confirm_prompt "
-                "payment_email_state_version=%s awaiting_confirmation=%s",
-                session.call_sid[:6],
-                PAYMENT_EMAIL_STATE_VERSION,
-                bool(getattr(session, "awaiting_payment_email_confirmation", False)),
-            )
-            logger.info(
-                "llm_tool_runtime_payment_confirm_prompt sid=%s openai_skipped=true",
-                session.call_sid[:6],
-            )
-            return _result(spoken)
-
-        if payment_hint.email_confirmed:
-            return await self._execute_payment_auto_send(
-                session,
-                caller_text,
-                send,
-                sid=sid,
-                stage="auto_send_after_confirm",
-            )
-
-        from ..payment.payment_state_machine import needs_deferred_payment_auto_send
-
-        if needs_deferred_payment_auto_send(session):
-            logger.warning(
-                "payment_deferred_auto_send sid=%s confirmed_email_present=true "
-                "payment_link_sent=false",
-                sid,
-            )
-            return await self._execute_payment_auto_send(
-                session,
-                caller_text,
-                send,
-                sid=sid,
-                stage="deferred_auto_send",
-            )
-
-        from .fast_greeting import fast_greeting_reply
-
-        greet = fast_greeting_reply(session, caller_text)
-        if greet:
-            spoken = self._finalize(session, greet)
-            session.history.append({"role": "user", "content": caller_text})
-            session.history.append({"role": "assistant", "content": spoken})
-            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-            await _await_send(send, {"type": "text", "token": "", "last": True})
-            self._record_turn(session, caller_text, spoken)
-            logger.info("fast_greeting_short_circuit sid=%s openai_skipped=true", sid)
-            return _result(spoken)
-
-        from .isbn_short_circuit import (
-            conversational_ack_reply,
-            is_conversational_ack,
-            try_isbn_short_circuit,
-            try_title_catalog_short_circuit,
-        )
-
-        if is_conversational_ack(caller_text):
-            ack = conversational_ack_reply(session, turn_mode=turn_mode)
-            if ack:
-                spoken = self._finalize(session, ack)
+        if not llm_only:
+            if payment_hint.force_reply:
+                spoken = self._finalize(session, payment_hint.force_reply)
                 session.history.append({"role": "user", "content": caller_text})
                 session.history.append({"role": "assistant", "content": spoken})
                 await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
                 await _await_send(send, {"type": "text", "token": "", "last": True})
                 self._record_turn(session, caller_text, spoken)
-                logger.info("conversational_ack_short_circuit sid=%s openai_skipped=true", sid)
+                logger.info(
+                    "email_capture_short_circuit sid=%s stage=confirm_prompt "
+                    "payment_email_state_version=%s awaiting_confirmation=%s",
+                    session.call_sid[:6],
+                    PAYMENT_EMAIL_STATE_VERSION,
+                    bool(getattr(session, "awaiting_payment_email_confirmation", False)),
+                )
+                logger.info(
+                    "llm_tool_runtime_payment_confirm_prompt sid=%s openai_skipped=true",
+                    session.call_sid[:6],
+                )
                 return _result(spoken)
 
-        isbn_hint = await try_isbn_short_circuit(session, caller_text, turn_mode=turn_mode)
-        if not isbn_hint:
-            isbn_hint = await try_title_catalog_short_circuit(
-                session, caller_text, turn_mode=turn_mode,
-            )
-        if isbn_hint:
-            spoken = self._finalize(session, isbn_hint.force_reply)
-            session.history.append({"role": "user", "content": caller_text})
-            session.history.append({"role": "assistant", "content": spoken})
-            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-            await _await_send(send, {"type": "text", "token": "", "last": True})
-            self._record_turn(session, caller_text, spoken)
-            logger.info(
-                "isbn_short_circuit sid=%s isbn=%s openai_skipped=true",
-                sid,
-                isbn_hint.isbn or "partial",
-            )
-            return _result(spoken)
+            if payment_hint.email_confirmed:
+                return await self._execute_payment_auto_send(
+                    session,
+                    caller_text,
+                    send,
+                    sid=sid,
+                    stage="auto_send_after_confirm",
+                )
 
-        from .order_flow_state import (
-            ORDER_FLOW_VERSION,
-            extract_order_number,
-            process_order_turn,
-            try_order_enrichment_short_circuit,
-        )
+            from ..payment.payment_state_machine import needs_deferred_payment_auto_send
 
-        order_collect = process_order_turn(session, caller_text, turn_mode=turn_mode)
-        if order_collect.force_reply:
-            spoken = self._finalize(session, order_collect.force_reply)
-            session.history.append({"role": "user", "content": caller_text})
-            session.history.append({"role": "assistant", "content": spoken})
-            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-            await _await_send(send, {"type": "text", "token": "", "last": True})
-            self._record_turn(session, caller_text, spoken)
+            if needs_deferred_payment_auto_send(session):
+                logger.warning(
+                    "payment_deferred_auto_send sid=%s confirmed_email_present=true "
+                    "payment_link_sent=false",
+                    sid,
+                )
+                return await self._execute_payment_auto_send(
+                    session,
+                    caller_text,
+                    send,
+                    sid=sid,
+                    stage="deferred_auto_send",
+                )
+        elif payment_hint.email_confirmed:
             logger.info(
-                "order_flow_collect sid=%s version=%s openai_skipped=true",
+                "llm_only_payment_email_confirmed sid=%s send_deferred_to_llm_tools=true",
                 sid,
+            )
+
+        if not llm_only:
+            from .fast_greeting import fast_greeting_reply
+
+            greet = fast_greeting_reply(session, caller_text)
+            if greet:
+                spoken = self._finalize(session, greet)
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": spoken})
+                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                self._record_turn(session, caller_text, spoken)
+                logger.info("fast_greeting_short_circuit sid=%s openai_skipped=true", sid)
+                return _result(spoken)
+
+            from .isbn_short_circuit import (
+                conversational_ack_reply,
+                is_conversational_ack,
+                try_isbn_short_circuit,
+                try_title_catalog_short_circuit,
+            )
+
+            if is_conversational_ack(caller_text):
+                ack = conversational_ack_reply(session, turn_mode=turn_mode)
+                if ack:
+                    spoken = self._finalize(session, ack)
+                    session.history.append({"role": "user", "content": caller_text})
+                    session.history.append({"role": "assistant", "content": spoken})
+                    await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                    await _await_send(send, {"type": "text", "token": "", "last": True})
+                    self._record_turn(session, caller_text, spoken)
+                    logger.info("conversational_ack_short_circuit sid=%s openai_skipped=true", sid)
+                    return _result(spoken)
+
+            isbn_hint = await try_isbn_short_circuit(session, caller_text, turn_mode=turn_mode)
+            if not isbn_hint:
+                isbn_hint = await try_title_catalog_short_circuit(
+                    session, caller_text, turn_mode=turn_mode,
+                )
+            if isbn_hint:
+                spoken = self._finalize(session, isbn_hint.force_reply)
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": spoken})
+                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                self._record_turn(session, caller_text, spoken)
+                logger.info(
+                    "isbn_short_circuit sid=%s isbn=%s openai_skipped=true",
+                    sid,
+                    isbn_hint.isbn or "partial",
+                )
+                return _result(spoken)
+
+            from .order_flow_state import (
                 ORDER_FLOW_VERSION,
+                extract_order_number,
+                process_order_turn,
+                try_order_enrichment_short_circuit,
             )
-            return _result(spoken)
 
-        if extract_order_number(caller_text, session, turn_mode=turn_mode) or turn_mode == "order":
-            order_enriched = await try_order_enrichment_short_circuit(
-                session, caller_text, turn_mode=turn_mode,
-            )
-            if order_enriched and order_enriched.force_reply:
-                spoken = self._finalize(session, order_enriched.force_reply)
+            order_collect = process_order_turn(session, caller_text, turn_mode=turn_mode)
+            if order_collect.force_reply:
+                spoken = self._finalize(session, order_collect.force_reply)
                 session.history.append({"role": "user", "content": caller_text})
                 session.history.append({"role": "assistant", "content": spoken})
                 await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
                 await _await_send(send, {"type": "text", "token": "", "last": True})
                 self._record_turn(session, caller_text, spoken)
                 logger.info(
-                    "order_parallel_short_circuit sid=%s enriched=%s openai_skipped=true",
+                    "order_flow_collect sid=%s version=%s openai_skipped=true",
                     sid,
-                    order_enriched.enrichment_done,
+                    ORDER_FLOW_VERSION,
                 )
                 return _result(spoken)
 
-        commerce_hint = process_commerce_turn(session, caller_text)
-        if commerce_hint.force_reply:
-            spoken = self._finalize(session, commerce_hint.force_reply)
-            session.history.append({"role": "user", "content": caller_text})
-            session.history.append({"role": "assistant", "content": spoken})
-            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-            await _await_send(send, {"type": "text", "token": "", "last": True})
-            self._record_turn(session, caller_text, spoken)
-            logger.info(
-                "commerce_flow_short_circuit sid=%s book_added=%s version=%s openai_skipped=true",
-                session.call_sid[:6],
-                commerce_hint.book_added,
-                COMMERCE_FLOW_VERSION,
-            )
-            return _result(spoken)
+            if extract_order_number(caller_text, session, turn_mode=turn_mode) or turn_mode == "order":
+                order_enriched = await try_order_enrichment_short_circuit(
+                    session, caller_text, turn_mode=turn_mode,
+                )
+                if order_enriched and order_enriched.force_reply:
+                    spoken = self._finalize(session, order_enriched.force_reply)
+                    session.history.append({"role": "user", "content": caller_text})
+                    session.history.append({"role": "assistant", "content": spoken})
+                    await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                    await _await_send(send, {"type": "text", "token": "", "last": True})
+                    self._record_turn(session, caller_text, spoken)
+                    logger.info(
+                        "order_parallel_short_circuit sid=%s enriched=%s openai_skipped=true",
+                        sid,
+                        order_enriched.enrichment_done,
+                    )
+                    return _result(spoken)
 
-        from .yes_engagement import is_bare_yes, yes_engagement_reply
-
-        if is_bare_yes(caller_text):
-            engage = yes_engagement_reply(session)
-            spoken = self._finalize(session, engage or "")
-            session.history.append({"role": "user", "content": caller_text})
-            session.history.append({"role": "assistant", "content": spoken})
-            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-            await _await_send(send, {"type": "text", "token": "", "last": True})
-            self._record_turn(session, caller_text, spoken)
-            logger.info(
-                "yes_engagement_short_circuit sid=%s openai_skipped=true",
-                session.call_sid[:6],
-            )
-            return _result(spoken)
-
-        if EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED and turn_mode == "email":
-            from ..payment.payment_state_machine import (
-                capture_payment_email,
-                email_capture_context_active,
-                extract_email_from_text,
-            )
-
-            email_only = extract_email_from_text(caller_text, session)
-            if email_only and email_capture_context_active(session, turn_mode):
-                hint = capture_payment_email(session, email_only, raw_text=caller_text)
-                spoken = self._finalize(session, hint.force_reply or "")
+            commerce_hint = process_commerce_turn(session, caller_text)
+            if commerce_hint.force_reply:
+                spoken = self._finalize(session, commerce_hint.force_reply)
                 session.history.append({"role": "user", "content": caller_text})
                 session.history.append({"role": "assistant", "content": spoken})
                 await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
                 await _await_send(send, {"type": "text", "token": "", "last": True})
                 self._record_turn(session, caller_text, spoken)
                 logger.info(
-                    "email_capture_short_circuit sid=%s stage=email_mode_fallback openai_skipped=true",
-                    sid,
+                    "commerce_flow_short_circuit sid=%s book_added=%s version=%s openai_skipped=true",
+                    session.call_sid[:6],
+                    commerce_hint.book_added,
+                    COMMERCE_FLOW_VERSION,
                 )
                 return _result(spoken)
-            logger.error(
-                "email_capture_miss sid=%s turn_mode=email payment_context=%s "
-                "payment_email_state_version=%s — OpenAI WILL run",
+
+            from .yes_engagement import is_bare_yes, yes_engagement_reply
+
+            if is_bare_yes(caller_text):
+                engage = yes_engagement_reply(session)
+                spoken = self._finalize(session, engage or "")
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": spoken})
+                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                self._record_turn(session, caller_text, spoken)
+                logger.info(
+                    "yes_engagement_short_circuit sid=%s openai_skipped=true",
+                    session.call_sid[:6],
+                )
+                return _result(spoken)
+
+            if EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED and turn_mode == "email":
+                from ..payment.payment_state_machine import (
+                    capture_payment_email,
+                    email_capture_context_active,
+                    extract_email_from_text,
+                )
+
+                email_only = extract_email_from_text(caller_text, session)
+                if email_only and email_capture_context_active(session, turn_mode):
+                    hint = capture_payment_email(session, email_only, raw_text=caller_text)
+                    spoken = self._finalize(session, hint.force_reply or "")
+                    session.history.append({"role": "user", "content": caller_text})
+                    session.history.append({"role": "assistant", "content": spoken})
+                    await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                    await _await_send(send, {"type": "text", "token": "", "last": True})
+                    self._record_turn(session, caller_text, spoken)
+                    logger.info(
+                        "email_capture_short_circuit sid=%s stage=email_mode_fallback openai_skipped=true",
+                        sid,
+                    )
+                    return _result(spoken)
+                logger.error(
+                    "email_capture_miss sid=%s turn_mode=email payment_context=%s "
+                    "payment_email_state_version=%s — OpenAI WILL run",
+                    sid,
+                    email_capture_context_active(session, turn_mode),
+                    PAYMENT_EMAIL_STATE_VERSION,
+                )
+        else:
+            logger.info(
+                "llm_only_final_output sid=%s turn_mode=%s openai_required=true",
                 sid,
-                email_capture_context_active(session, turn_mode),
-                PAYMENT_EMAIL_STATE_VERSION,
+                turn_mode or "normal",
             )
 
         messages = self.build_messages(session, caller_text)
@@ -566,11 +589,12 @@ class LLMToolRuntime:
         if not final_text:
             return await self._fallback(session, caller_text, send, reason="empty_response")
 
-        final_text = enforce_payment_response(session, final_text, tool_results)
-        final_text = enforce_commerce_response(session, final_text, tool_results)
-        commerce_followup = post_tool_commerce_message(session, tool_results)
-        if commerce_followup:
-            final_text = commerce_followup
+        if enforce_deterministic_tool_response_enabled(self._settings):
+            final_text = enforce_payment_response(session, final_text, tool_results)
+            final_text = enforce_commerce_response(session, final_text, tool_results)
+            commerce_followup = post_tool_commerce_message(session, tool_results)
+            if commerce_followup:
+                final_text = commerce_followup
 
         spoken = self._finalize(session, final_text)
         await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
@@ -706,9 +730,12 @@ class LLMToolRuntime:
     def _finalize(self, session: "SessionState", text: str) -> str:
         from ..safety.response_sanitizer import sanitize_customer_response
 
-        confirm = spoken_email_confirmation(session)
-        if confirm:
-            text = confirm
+        if not llm_only_final_output_enabled(self._settings):
+            confirm = spoken_email_confirmation(session)
+            if confirm:
+                text = confirm
+            else:
+                text = replace_blocked_order_phrase(text or "")
         else:
             text = replace_blocked_order_phrase(text or "")
 

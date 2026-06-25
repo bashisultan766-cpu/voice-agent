@@ -18,12 +18,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.37"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.38"
 
-_TITLE_NOT_ISBN_PAT = re.compile(
-    r"\b(title|newspaper|magazine|subscription|delivery|citizen|monday|sunday|weeks?)\b",
+_META_BOOK_PHRASE_PAT = re.compile(
+    r"\b(another\s+(?:book|one|\d)|need another|i need another|yeah|yep|sure|"
+    r"hold|wait|just\s+\d|only\s+\d|speak|quiet|hello)\b",
     re.I,
 )
+_ANOTHER_BOOK_INTENT_PAT = re.compile(
+    r"\b(another\s+book|need another|next\s+book|one more book|"
+    r"another\s+(?:one|\d+)|need another\s+\d+)\b",
+    re.I,
+)
+_TITLE_NOT_ISBN_PAT = re.compile(
+    r"\b(title|newspaper|magazine|subscription|delivery|citizen|monday|sunday|weeks?|times)\b",
+    re.I,
+)
+
+
+def payment_email_context_active(session: "SessionState", turn_mode: str = "") -> bool:
+    """True when caller is in payment email capture — never treat speech as ISBN."""
+    if (turn_mode or "").strip().lower() == "email":
+        return True
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+    if pfs in ("awaiting_email", "awaiting_email_confirmation", "awaiting_send_confirmation"):
+        return True
+    if getattr(session, "awaiting_payment_email", False):
+        return True
+    if getattr(session, "awaiting_payment_email_confirmation", False):
+        return True
+    return False
 
 
 def looks_like_book_title_request(text: str) -> bool:
@@ -34,12 +58,16 @@ def looks_like_book_title_request(text: str) -> bool:
         return False
     if re.search(r"\bisbn\b", lower):
         return False
+    if _ANOTHER_BOOK_INTENT_PAT.search(lower) and not _TITLE_NOT_ISBN_PAT.search(lower):
+        return False
+    if _META_BOOK_PHRASE_PAT.search(lower) and not _TITLE_NOT_ISBN_PAT.search(lower):
+        return False
     if re.search(r"\b(it'?s a title|the title is|another title|book title)\b", lower):
         return True
     letters = sum(1 for c in lower if c.isalpha())
     digits = sum(1 for c in lower if c.isdigit())
     words = [w for w in re.split(r"\s+", lower) if w]
-    if len(words) >= 4 and letters >= 12 and digits <= 2:
+    if len(words) >= 6 and letters >= 12 and digits <= 2:
         return True
     if _TITLE_NOT_ISBN_PAT.search(lower) and letters > digits * 2:
         return True
@@ -52,10 +80,15 @@ def should_skip_isbn_short_circuit(
     *,
     turn_mode: str = "",
 ) -> bool:
+    if payment_email_context_active(session, turn_mode):
+        session.pending_isbn_buffer = ""
+        return True
     if turn_mode == "isbn":
         return False
     status = getattr(session, "commerce_flow_status", "idle") or "idle"
-    if status == "awaiting_another_book" and looks_like_book_title_request(text):
+    if status == "awaiting_another_book" and (
+        looks_like_book_title_request(text) or _ANOTHER_BOOK_INTENT_PAT.search(text or "")
+    ):
         session.pending_isbn_buffer = ""
         return True
     if looks_like_book_title_request(text) and not getattr(session, "pending_isbn_buffer", ""):
@@ -275,11 +308,18 @@ async def try_title_catalog_short_circuit(
     turn_mode: str = "",
 ) -> Optional[IsbnShortCircuitResult]:
     """Catalog search when the caller speaks a title (not digits) for the next book."""
+    if payment_email_context_active(session, turn_mode):
+        return None
     if turn_mode == "isbn":
         return None
     status = getattr(session, "commerce_flow_status", "idle") or "idle"
     if status != "awaiting_another_book":
         return None
+    text = (caller_text or "").strip()
+    if _ANOTHER_BOOK_INTENT_PAT.search(text) and not looks_like_book_title_request(text):
+        return IsbnShortCircuitResult(
+            force_reply="Sure — what's the ISBN or title of the next book?",
+        )
     if not looks_like_book_title_request(caller_text):
         return None
 

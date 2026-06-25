@@ -88,6 +88,8 @@ def _email_signal_present(caller_text: str, turn_mode: str = "") -> bool:
         return False
     if (turn_mode or "").strip().lower() == "email":
         return True
+    if _looks_like_partial_email(text):
+        return True
     return bool(extract_email_from_text(text))
 
 
@@ -310,6 +312,12 @@ def process_payment_turn(
     if confirm_hint.email_confirmed or confirm_hint.force_reply:
         return confirm_hint
 
+    from ..agent_runtime.isbn_short_circuit import payment_email_context_active
+
+    email_payment_ctx = payment_email_context_active(session, turn_mode)
+    if email_payment_ctx:
+        session.pending_isbn_buffer = ""
+
     from ..payment.payment_destination_groups import (
         ensure_payment_groups,
         save_session_email_to_active_group,
@@ -326,8 +334,23 @@ def process_payment_turn(
                 return capture_payment_email(session, groups[0]["pending_email"], raw_text=text)
 
     sync_active_group_to_session_email(session)
+
+    email_ctx = email_capture_context_active(session, turn_mode) or email_payment_ctx
+    awaiting_email_confirm = bool(getattr(session, "awaiting_payment_email_confirmation", False))
+
+    if is_email_correction(text) and (email_ctx or awaiting_email_confirm):
+        reject_pending_payment_email(session)
+        session.pending_isbn_buffer = ""
+        email = extract_email_from_text(text, session) or parse_hyphen_spelled_email(text)
+        if email:
+            return capture_payment_email(session, email, raw_text=text)
+        return PaymentTurnHint(
+            force_reply="No problem — please tell me the correct email address.",
+            skip_openai=True,
+        )
+
     email_signal = _email_signal_present(text, turn_mode)
-    if not email_capture_context_active(session, turn_mode):
+    if not email_ctx:
         if email_signal:
             sid = (session.call_sid or "")[:6]
             logger.warning(
@@ -345,13 +368,6 @@ def process_payment_turn(
         if pending:
             log_payment_flow_diagnostics(session, stage="email_spell_request")
             return PaymentTurnHint(force_reply=repeat_email_prompt(pending), skip_openai=True)
-
-    if is_email_correction(text):
-        reject_pending_payment_email(session)
-        email = extract_email_from_text(text, session) or parse_hyphen_spelled_email(text)
-        if email:
-            return capture_payment_email(session, email, raw_text=text)
-        return PaymentTurnHint()
 
     awaiting_confirm = bool(getattr(session, "awaiting_payment_email_confirmation", False))
     if awaiting_confirm and email_signal and not is_email_confirmation(text):

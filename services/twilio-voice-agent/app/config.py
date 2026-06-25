@@ -32,7 +32,8 @@ class Settings(BaseSettings):
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    # Primary model for every caller turn — must be capable enough to own final speech.
+    OPENAI_MODEL: str = "gpt-4o"
     OPENAI_TIMEOUT_SECS: float = 30.0
 
     # ── Shopify ───────────────────────────────────────────────────────────────
@@ -97,8 +98,15 @@ class Settings(BaseSettings):
     # Approximate token budget for the system prompt; above this the master
     # prompt is sent section-by-section (safety sections always included).
     VOICE_PROMPT_TOKEN_BUDGET: int = 4000
-    VOICE_SUPERVISOR_MODEL: str = "gpt-4o-mini"
-    VOICE_FINAL_MODEL: str = "gpt-4o-mini"
+    # When true (default), every spoken reply is composed by OPENAI_MODEL from the
+    # master system prompt. Deterministic short-circuits may update session state
+    # but never bypass the model for customer-facing text.
+    VOICE_LLM_ONLY_FINAL_OUTPUT: bool = True
+    # When false (default with llm-only), do not override the model's final text
+    # with canned commerce/payment templates after tool calls.
+    VOICE_ENFORCE_DETERMINISTIC_TOOL_RESPONSE: bool = False
+    VOICE_SUPERVISOR_MODEL: str = "gpt-4o"
+    VOICE_FINAL_MODEL: str = "gpt-4o"
     VOICE_MAIN_LLM_TIMEOUT_MS: int = 6000
     VOICE_SUPERVISOR_TIMEOUT_MS: int = 1800
     VOICE_FINAL_TIMEOUT_MS: int = 2500

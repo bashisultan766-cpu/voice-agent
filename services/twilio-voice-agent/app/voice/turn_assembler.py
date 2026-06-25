@@ -349,6 +349,10 @@ class TurnAssembler:
             if not st.buffer:
                 return
 
+            if _BARE_AFFIRM.match(st.buffer.strip()):
+                await self._emit_buffered(sid, self._emit_callback, "debounce_affirmative")
+                return
+
             if is_complete_isbn(st.buffer):
                 st.mode = "isbn"
             elif st.mode == "normal":

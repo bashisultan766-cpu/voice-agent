@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.37"
+COMMERCE_FLOW_VERSION = "v4.39"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -84,6 +84,18 @@ _CONFIRM_FRUSTRATION_PAT = re.compile(
     re.IGNORECASE,
 )
 _YES_IN_UTTERANCE = re.compile(r"\b(yes|yeah|yep|yup|sure)\b", re.IGNORECASE)
+_HOLD_OR_WAIT_PAT = re.compile(
+    r"\b(hold|wait|one moment|second|hello|quiet|speak|not continue|isbn)\b",
+    re.IGNORECASE,
+)
+_ISBN_READY_PAT = re.compile(
+    r"\b(isbn|i give you|find for me|read the isbn)\b",
+    re.IGNORECASE,
+)
+_ANOTHER_BOOK_INTENT_PAT = re.compile(
+    r"\b(another\s+book|need another|next\s+book|one more book|\banother\b)",
+    re.IGNORECASE,
+)
 _QUANTITY_PAT = re.compile(
     r"\b(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten|"
     r"eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
@@ -122,18 +134,14 @@ def _is_add_affirmative(text: str) -> bool:
 
 def _confirms_pending_add(text: str) -> bool:
     """True when the caller is confirming a staged add-to-cart step."""
-    from ..cart.quantity import parse_spoken_quantity
-
     t = (text or "").strip()
     if not t:
         return False
+    if re.match(r"^\s*no\b", t, re.IGNORECASE) or _NEGATE_PAT.match(t):
+        return False
     if _is_add_affirmative(t):
         return True
-    if _YES_IN_UTTERANCE.search(t) and (
-        _ADD_INTENT_PAT.search(t)
-        or _CONFIRM_FRUSTRATION_PAT.search(t)
-        or parse_spoken_quantity(t) is not None
-    ):
+    if _YES_IN_UTTERANCE.search(t):
         return True
     return False
 
@@ -223,7 +231,7 @@ def stage_product_candidate(session: "SessionState", product: dict[str, Any]) ->
         "commerce_candidate_staged sid=%s title=%r status=%s",
         (getattr(session, "call_sid", "") or "")[:6],
         _title(session.commerce_pending_candidate),
-        STATUS_AWAITING_BOOK_CONFIRM,
+        STATUS_AWAITING_QUANTITY,
     )
 
 
@@ -377,6 +385,17 @@ def process_commerce_turn(session: "SessionState", caller_text: str) -> Commerce
         return CommerceTurnHint(force_reply=cart_summary_and_email_prompt(session))
 
     if status == STATUS_AWAITING_QUANTITY and candidate:
+        if _ISBN_READY_PAT.search(text) and not _parse_quantity(text):
+            session.commerce_pending_candidate = {}
+            session.commerce_flow_status = STATUS_IDLE
+            session.pending_isbn_buffer = ""
+            session.awaiting_product_confirmation = False
+            return CommerceTurnHint(force_reply="Sure — go ahead with the ISBN when you're ready.")
+        if _HOLD_OR_WAIT_PAT.search(text) and not _parse_quantity(text):
+            short = spoken_book_title(_title(candidate))
+            return CommerceTurnHint(
+                force_reply=f"No rush — how many copies of {short} would you like?",
+            )
         qty = _parse_quantity(text)
         if qty:
             session.commerce_pending_quantity = qty
@@ -421,8 +440,17 @@ def process_commerce_turn(session: "SessionState", caller_text: str) -> Commerce
                 ),
             )
         if _NEGATE_PAT.match(text):
-            session.commerce_flow_status = STATUS_AWAITING_QUANTITY
-            return CommerceTurnHint(force_reply=quantity_prompt(candidate))
+            session.commerce_pending_candidate = {}
+            session.commerce_flow_status = (
+                STATUS_AWAITING_ANOTHER_BOOK if _cart_has_confirmed_items(session) else STATUS_IDLE
+            )
+            session.awaiting_product_confirmation = False
+            session.commerce_pending_quantity = 0
+            return CommerceTurnHint(
+                force_reply=(
+                    "No problem — what's the ISBN or title of the book you want?"
+                ),
+            )
         return CommerceTurnHint(force_reply=add_confirm_prompt(
             candidate, int(getattr(session, "commerce_pending_quantity", 0) or 1),
         ))
@@ -454,10 +482,14 @@ def process_commerce_turn(session: "SessionState", caller_text: str) -> Commerce
             session.commerce_flow_status = STATUS_AWAITING_EMAIL_COLLECTION
             session.payment_flow_status = "awaiting_email"
             return CommerceTurnHint(force_reply=cart_summary_and_email_prompt(session))
-        if _is_affirmative(text) or _ANOTHER_PAT.search(text):
+        if _is_affirmative(text) or _ANOTHER_PAT.search(text) or _ANOTHER_BOOK_INTENT_PAT.search(text):
             session.commerce_flow_status = STATUS_IDLE
             session.pending_isbn_buffer = ""
             return CommerceTurnHint(force_reply=next_book_prompt())
+        if _HOLD_OR_WAIT_PAT.search(text) or _ISBN_READY_PAT.search(text):
+            return CommerceTurnHint(
+                force_reply="Sure — take your time. Give me the ISBN or title when you're ready.",
+            )
         return CommerceTurnHint()
 
     from .yes_engagement import is_bare_yes, yes_engagement_reply

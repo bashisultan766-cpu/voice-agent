@@ -81,12 +81,15 @@ async def lifespan(app: FastAPI):
     )
     _log.info(
         "voice_runtime=%s voice_agent_runtime_mode=%s active_turn_handler=%s "
-        "llm_tool_runtime_tools=%d customer_facing_tools=%d",
+        "llm_tool_runtime_tools=%d customer_facing_tools=%d openai_model=%s "
+        "llm_only_final_output=%s",
         settings.VOICE_RUNTIME,
         settings.VOICE_AGENT_RUNTIME_MODE,
         resolve_live_turn_handler(settings),
         len(llm_tools.tool_names()),
         len(llm_tools.customer_facing_tool_names()),
+        settings.OPENAI_MODEL,
+        settings.VOICE_LLM_ONLY_FINAL_OUTPUT,
     )
     if settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS:
         _log.info(

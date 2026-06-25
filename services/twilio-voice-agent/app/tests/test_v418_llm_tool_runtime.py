@@ -91,10 +91,12 @@ class _FakeClient:
 @dataclass
 class _FakeSettings:
     OPENAI_API_KEY: str = "sk-test-not-real"
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_MODEL: str = "gpt-4o"
     VOICE_OPENAI_TIMEOUT_MS: int = 8000
     VOICE_MAX_REPLY_WORDS: int = 50
     VOICE_PROMPT_TOKEN_BUDGET: int = 4000
+    VOICE_LLM_ONLY_FINAL_OUTPUT: bool = True
+    VOICE_ENFORCE_DETERMINISTIC_TOOL_RESPONSE: bool = False
 
 
 def _session() -> SessionState:

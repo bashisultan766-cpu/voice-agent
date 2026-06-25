@@ -96,6 +96,9 @@ def collect_runtime_identity(service_root: Path | None = None) -> dict[str, Any]
     mp = load_master_prompt()
     tool_spec_names = {s["function"]["name"] for s in llm_tools.tool_specs()}
 
+    from ..config import get_settings
+
+    settings = get_settings()
     identity: dict[str, Any] = {
         "process_cwd": str(Path.cwd().resolve()),
         "app_main_file": str(main_file),
@@ -116,6 +119,9 @@ def collect_runtime_identity(service_root: Path | None = None) -> dict[str, Any]
         "payment_state_machine_module": _module_file("app.payment.payment_state_machine"),
         "payment_link_service_module": _module_file("app.payment.payment_link_service"),
         "email_capture_short_circuit_enabled": EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED,
+        "llm_only_final_output": settings.VOICE_LLM_ONLY_FINAL_OUTPUT,
+        "openai_model": settings.OPENAI_MODEL,
+        "enforce_deterministic_tool_response": settings.VOICE_ENFORCE_DETERMINISTIC_TOOL_RESPONSE,
         "payment_auto_send_enabled": PAYMENT_AUTO_SEND_ENABLED,
         "create_checkout_customer_facing": CREATE_CHECKOUT_CUSTOMER_FACING,
         "send_payment_link_customer_facing": SEND_PAYMENT_LINK_CUSTOMER_FACING,
@@ -143,11 +149,13 @@ def validate_runtime_identity(identity: dict[str, Any]) -> list[str]:
         )
     if identity.get("create_checkout_present_in_tool_specs"):
         failures.append("create_checkout_exposed_to_llm")
-    if not identity.get("email_capture_short_circuit_enabled"):
+    if not identity.get("email_capture_short_circuit_enabled") and not identity.get("llm_only_final_output"):
         failures.append("email_capture_short_circuit_disabled")
     if not identity.get("tool_progress_prompts_enabled"):
         failures.append("tool_progress_disabled")
-    if identity.get("voice_sales_flow_version") != "v4.37":
+    if identity.get("llm_only_final_output") and identity.get("openai_model") != "gpt-4o":
+        failures.append(f"openai_model_weak={identity.get('openai_model')}")
+    if identity.get("voice_sales_flow_version") != "v4.39":
         failures.append(f"voice_sales_flow_version={identity.get('voice_sales_flow_version')}")
     if not identity.get("process_payment_turn_imported"):
         failures.append("process_payment_turn_missing")
