@@ -26,8 +26,11 @@ _RESET_BUFFER = re.compile(
     re.IGNORECASE,
 )
 _KEEPALIVE_FRAGMENT = re.compile(
-    r"\b(hello\??|are you there|why are you not (?:asking|responding|continuing)|"
-    r"why aren't you (?:asking|responding)|what the hell|what the \*+\??)\b",
+    r"\b(?:hello\??|are you there|"
+    r"why are you (?:not (?:responding|talking|proceeding|telling(?: anything)?)|silent|quiet)|"
+    r"why aren't you (?:asking|responding|talking|proceeding)|"
+    r"you are (?:silent|quiet|not talking)|"
+    r"not (?:responding|talking|proceeding))\b",
     re.IGNORECASE,
 )
 _BARE_AFFIRM = re.compile(
@@ -383,6 +386,19 @@ class TurnAssembler:
 
             emit_mode = st.mode
             digits = "".join(c for c in st.buffer if c.isdigit())
+            if emit_mode == "isbn" and len(digits) > 13:
+                from ..pipeline.isbn_validator import _sliding_window_isbn13
+
+                found = _sliding_window_isbn13(digits)
+                if found:
+                    st.mode = "isbn"
+                    logger.info(
+                        "turn_assembler_emit sid=%s mode=isbn reason=sliding_window_isbn len=%d",
+                        sid,
+                        len(digits),
+                    )
+                    await self._emit_buffered(sid, self._emit_callback, "sliding_window_isbn")
+                    return
             if emit_mode == "isbn" and len(digits) != 13:
                 import time
                 if st.isbn_partial_since <= 0:

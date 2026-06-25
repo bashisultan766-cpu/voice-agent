@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.42"
+COMMERCE_FLOW_VERSION = "v4.43"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -251,7 +251,7 @@ def advance_commerce_state_silent(session: "SessionState", caller_text: str) -> 
             session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
         if _confirms_pending_add(text):
             if not session.commerce_pending_quantity:
-                session.commerce_pending_quantity = qty or 1
+                session.commerce_pending_quantity = qty or _parse_quantity(text) or 1
             session.commerce_allow_add = True
 
     elif status == STATUS_AWAITING_ADD_CONFIRM:

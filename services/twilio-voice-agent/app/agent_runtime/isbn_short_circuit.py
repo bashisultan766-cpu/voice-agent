@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.41"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.43"
 
 _META_BOOK_PHRASE_PAT = re.compile(
     r"\b(another\s+(?:book|one|\d)|need another|i need another|yeah|yep|sure|"
@@ -42,7 +42,7 @@ _ORDER_SPEECH_CONTEXT = re.compile(
     re.I,
 )
 _QUANTITY_COPY_PAT = re.compile(
-    r"\b(?:need\s+)?(?:\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"\b(?:just\s+|need\s+)?(?:\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
     r"cop(?:y|ies)\b",
     re.I,
 )
@@ -202,7 +202,6 @@ def prepare_isbn_turn_context(
         buf = getattr(session, "pending_isbn_buffer", "") or ""
         if buf and len(buf) < 10 and turn_mode != "isbn":
             session.pending_isbn_buffer = ""
-        session.last_resolved_isbn_for_turn = ""
         return None
 
     isbn, buf = resolve_spoken_isbn(
@@ -258,7 +257,8 @@ def isbn_context_for_state_block(
     if resolved:
         return (
             f"- Resolved ISBN from caller speech: {resolved}. "
-            f"When calling catalog_search, use query=\"{resolved}\" exactly."
+            f"Call catalog_search immediately with query=\"{resolved}\" — do NOT ask "
+            f"the caller to repeat the ISBN unless catalog_search returns no results."
         )
     buf = getattr(session, "pending_isbn_buffer", "") or ""
     if buf:

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TURN_PREFETCH_VERSION = "v4.42"
+TURN_PREFETCH_VERSION = "v4.43"
 
 
 def _order_number_hint(session: "SessionState", caller_text: str, *, turn_mode: str = "") -> str:

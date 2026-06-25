@@ -211,6 +211,28 @@ class LLMToolRuntime:
                 f"or price on that order, call get_order(order_number=\"{on}\")."
             )
         try:
+            from .commerce_flow_state import _candidate, _status as commerce_status
+
+            cstatus = commerce_status(session)
+            candidate = _candidate(session)
+            if candidate and cstatus != "idle":
+                title = (candidate.get("title") or "")[:48]
+                lines.append(
+                    f"- Commerce flow: {cstatus}; staged book={title!r}; "
+                    f"allow_add_to_cart={'yes' if getattr(session, 'commerce_allow_add', False) else 'no'}."
+                )
+                if getattr(session, "commerce_allow_add", False):
+                    lines.append(
+                        "- commerce_allow_add is TRUE — call add_to_cart now with the staged "
+                        "ISBN/title/quantity; do NOT ask for email until all books are in cart."
+                    )
+                elif cstatus == "awaiting_quantity":
+                    lines.append(
+                        "- Ask how many copies, then on yes call add_to_cart."
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
             from .isbn_short_circuit import isbn_context_for_state_block
 
             isbn_line = isbn_context_for_state_block(

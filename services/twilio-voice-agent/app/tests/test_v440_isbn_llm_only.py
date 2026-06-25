@@ -29,7 +29,7 @@ def _session(**kwargs) -> SessionState:
 
 class TestIsbnNormalization:
     def test_version(self):
-        assert ISBN_SHORT_CIRCUIT_VERSION == "v4.41"
+        assert ISBN_SHORT_CIRCUIT_VERSION == "v4.43"
 
     def test_spaced_isbn_normalizes(self):
         q, isbn = normalize_catalog_search_query("9 7 8 1 6 4 5 5 6 3 2 4 2.")

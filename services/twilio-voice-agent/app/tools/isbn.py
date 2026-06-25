@@ -43,6 +43,11 @@ _SPOKEN_REPEAT = re.compile(
 
 def expand_spoken_repeaters(text: str) -> str:
     """Expand STT phrases like ``triple seven`` → ``7 7 7`` before ISBN parsing."""
+    t = text or ""
+    # STT often inserts "underscore" between digit groups — strip it.
+    t = re.sub(r"\bunderscore\b", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bdash\b", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bhyphen\b", " ", t, flags=re.IGNORECASE)
 
     def _repl(match: re.Match) -> str:
         mult = {"double": 2, "triple": 3, "quadruple": 4}[match.group(1).lower()]
@@ -52,7 +57,7 @@ def expand_spoken_repeaters(text: str) -> str:
             return match.group(0)
         return " ".join([digit] * mult)
 
-    return _SPOKEN_REPEAT.sub(_repl, text or "")
+    return _SPOKEN_REPEAT.sub(_repl, t)
 
 
 def _spoken_digits_to_string(text: str) -> str:
