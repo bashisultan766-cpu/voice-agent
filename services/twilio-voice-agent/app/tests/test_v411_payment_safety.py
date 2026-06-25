@@ -45,6 +45,8 @@ def _make_session(*, confirmed_email="", pending_email="", rejected=None, checko
     s.pending_email = pending_email
     s.rejected_email_candidates = list(rejected or [])
     s.pending_checkout_url = checkout_url
+    if confirmed_email:
+        s.payment_email_confirmed = True
     return s
 
 

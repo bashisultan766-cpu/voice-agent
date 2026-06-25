@@ -58,11 +58,11 @@ class PaymentSafetyResult:
 
 def get_confirmed_email(session: "SessionState") -> Optional[str]:
     """
-    Return confirmed_email or None.
-
-    Never returns pending_email, caller_email, or any unconfirmed value.
+    Return canonical confirmed payment email or None.
     """
-    email = getattr(session, "confirmed_email", "") or ""
+    from ..payment.email_state import get_canonical_confirmed_email
+
+    email = get_canonical_confirmed_email(session)
     return email if email else None
 
 
@@ -70,14 +70,20 @@ def require_confirmed_email(session: "SessionState") -> PaymentSafetyResult:
     """
     Check that session has a confirmed email.
 
-    Returns allowed=True only if confirmed_email is set.
-    Distinguishes: confirmed / pending (unconfirmed) / rejected / absent.
+    Returns allowed=True only if confirmed_email is set and payment_email_confirmed.
     """
-    confirmed = getattr(session, "confirmed_email", "") or ""
-    pending = getattr(session, "pending_email", "") or ""
+    from ..payment.email_state import (
+        get_canonical_confirmed_email,
+        get_pending_payment_email,
+        sync_payment_email_fields,
+    )
+
+    sync_payment_email_fields(session)
+    confirmed = get_canonical_confirmed_email(session)
+    pending = get_pending_payment_email(session)
     rejected_count = getattr(session, "email_rejected_count", 0)
 
-    if confirmed:
+    if confirmed and getattr(session, "payment_email_confirmed", False):
         return PaymentSafetyResult(
             allowed=True,
             reason="confirmed",
@@ -118,13 +124,21 @@ def require_confirmed_email(session: "SessionState") -> PaymentSafetyResult:
     )
 
 
-def require_confirmed_cart(session: "SessionState") -> PaymentSafetyResult:
+def require_confirmed_cart(
+    session: "SessionState",
+    checkout_items: list[dict] | None = None,
+) -> PaymentSafetyResult:
     """
-    Check that session cart has items, each with quantity ≥ 1 and variant_id.
+    Check that session cart has items, each with quantity >= 1 and variant_id.
+    """
+    items: list[dict] = list(checkout_items or [])
+    if not items:
+        try:
+            from ..cart.session import get_ledger
 
-    Used before creating a checkout draft order.
-    """
-    items: list[dict] = getattr(session, "cart_items", None) or []
+            items = get_ledger(session).to_checkout_items()
+        except Exception:  # noqa: BLE001
+            items = getattr(session, "cart_items", None) or []
 
     if not items:
         return PaymentSafetyResult(
@@ -170,14 +184,28 @@ def require_confirmed_cart(session: "SessionState") -> PaymentSafetyResult:
 
 def require_payment_send_ready(session: "SessionState") -> PaymentSafetyResult:
     """
-    Full gate for send_payment_link operations.
+    Full gate for send_payment_link email delivery.
 
-    Requires: confirmed_email AND pending_checkout_url.
-    Cart validation is skipped here (already validated at checkout creation).
+    Requires canonical confirmed_email. Checkout URL may be created inside
+    SendPaymentLink immediately before this check when absent.
     """
     email_result = require_confirmed_email(session)
     if not email_result.allowed:
         return email_result
+
+    return PaymentSafetyResult(
+        allowed=True,
+        reason="ready",
+        safe_message="",
+        confirmed_email_masked=email_result.confirmed_email_masked,
+    )
+
+
+def require_payment_send_ready_with_checkout(session: "SessionState") -> PaymentSafetyResult:
+    """Gate when checkout URL must already exist (email-only resend)."""
+    ready = require_payment_send_ready(session)
+    if not ready.allowed:
+        return ready
 
     checkout_url = getattr(session, "pending_checkout_url", "") or ""
     if not checkout_url:
@@ -191,12 +219,7 @@ def require_payment_send_ready(session: "SessionState") -> PaymentSafetyResult:
             missing_fields=["checkout_url"],
         )
 
-    return PaymentSafetyResult(
-        allowed=True,
-        reason="ready",
-        safe_message="",
-        confirmed_email_masked=email_result.confirmed_email_masked,
-    )
+    return ready
 
 
 def validate_tool_email_arg(

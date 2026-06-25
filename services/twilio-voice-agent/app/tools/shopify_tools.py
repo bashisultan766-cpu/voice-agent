@@ -548,16 +548,6 @@ async def create_checkout_link(
                 ),
             })
 
-        # Gate on confirmed cart when session is present
-        cart_result = require_confirmed_cart(session)
-        if not cart_result.allowed:
-            logger.info(
-                "payment_tool_result tool=create_checkout_link allowed=false "
-                "reason=%s missing=%s",
-                cart_result.reason, cart_result.missing_fields,
-            )
-            return json.dumps({"success": False, "error": cart_result.safe_message})
-
         if not customer_name and session.caller_name:
             customer_name = session.caller_name
 
@@ -570,7 +560,18 @@ async def create_checkout_link(
                 "message": "You already have a payment link from this call. Shall I email it to you?",
             })
 
-        # Resolve email: require confirmed_email — never create checkout without it
+        # Gate on confirmed cart when session is present
+        cart_result = require_confirmed_cart(session, checkout_items=items)
+        if not cart_result.allowed:
+            logger.info(
+                "payment_tool_result tool=create_checkout_link allowed=false "
+                "reason=%s missing=%s",
+                cart_result.reason, cart_result.missing_fields,
+            )
+            return json.dumps({"success": False, "error": cart_result.safe_message})
+
+        # Resolve email: require confirmed_email — never create NEW checkout without it
+        from ..payment.email_state import get_canonical_confirmed_email
         from ..payment.safety import require_confirmed_email
 
         email_result = require_confirmed_email(session)
@@ -582,7 +583,7 @@ async def create_checkout_link(
             )
             return json.dumps({"success": False, "error": email_result.safe_message})
 
-        confirmed_email = getattr(session, "confirmed_email", "") or ""
+        confirmed_email = get_canonical_confirmed_email(session)
         if email and email.strip():
             arg_result = validate_tool_email_arg(email, session)
             if not arg_result.allowed and arg_result.reason == "rejected_candidate":
@@ -657,7 +658,8 @@ async def send_payment_link_email_tool(
     validated against session.confirmed_email; rejected candidates are hard-blocked.
     Never sends to pending_email or unconfirmed addresses.
     """
-    from ..payment.safety import validate_tool_email_arg, require_payment_send_ready
+    from ..payment.safety import validate_tool_email_arg, require_payment_send_ready_with_checkout
+    from ..payment.email_state import get_canonical_confirmed_email, log_payment_flow_diagnostics
     from ..agent_runtime.payment_flow_state import (
         PAYMENT_FAILURE_MESSAGE,
         PAYMENT_SUCCESS_MESSAGE,
@@ -665,10 +667,12 @@ async def send_payment_link_email_tool(
         resolve_tool_email,
     )
 
-    tool_email = resolve_tool_email(
-        {"email": email, "customer_email": customer_email, "to_email": to_email},
-        session,
-    ) if session else (email or customer_email or to_email or "").strip()
+    tool_email = (email or customer_email or to_email or "").strip().lower()
+    if not tool_email and session:
+        tool_email = resolve_tool_email(
+            {"email": email, "customer_email": customer_email, "to_email": to_email},
+            session,
+        )
 
     if not session:
         return json.dumps(build_payment_tool_result(
@@ -679,7 +683,9 @@ async def send_payment_link_email_tool(
             retryable=True,
         ))
 
-    ready_result = require_payment_send_ready(session)
+    log_payment_flow_diagnostics(session, stage="send_payment_link_email_tool")
+
+    ready_result = require_payment_send_ready_with_checkout(session)
     if not ready_result.allowed:
         logger.info(
             "payment_tool_result tool=send_payment_link_email allowed=false "
@@ -712,7 +718,19 @@ async def send_payment_link_email_tool(
             retryable=True,
         ))
 
-    confirmed_email = session.confirmed_email
+    confirmed_email = get_canonical_confirmed_email(session)
+    if not confirmed_email:
+        session.last_payment_attempt_status = "blocked"
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message=(
+                "I need a confirmed email address to send the payment link. "
+                "What email should I use?"
+            ),
+            error_code="no_email",
+            retryable=True,
+        ))
 
     if confirmed_email in session.payment_email_sent_to:
         return json.dumps(build_payment_tool_result(
@@ -1048,18 +1066,23 @@ async def SendPaymentLink(
         gate_send_payment_link,
         resolve_tool_email,
     )
+    from ..payment.email_state import get_canonical_confirmed_email, log_payment_flow_diagnostics
+
+    if session:
+        log_payment_flow_diagnostics(session, stage="send_payment_link_start")
 
     resolved = resolve_tool_email(
         {"email": email, "customer_email": customer_email, "to_email": to_email},
         session,
-    ) if session else (email or customer_email or to_email or "").strip()
+    ) if session else (email or customer_email or to_email or "").strip().lower()
 
     if session:
         gate = gate_send_payment_link(session, resolved)
         if not gate.allowed:
             return gate.tool_json
 
-    if not resolved or "@" not in resolved:
+    confirmed = get_canonical_confirmed_email(session) if session else resolved
+    if not confirmed or "@" not in confirmed:
         return json.dumps(build_payment_tool_result(
             success=False,
             email_sent=False,
@@ -1071,9 +1094,11 @@ async def SendPaymentLink(
             retryable=True,
         ))
 
+    if session:
+        session.last_payment_attempt_status = "attempting"
     checkout_json = await create_checkout_link(
         items=items,
-        email=session.confirmed_email if session else resolved,
+        email=confirmed,
         customer_name=customer_name,
         session=session,
     )
@@ -1090,7 +1115,7 @@ async def SendPaymentLink(
         ))
 
     email_json = await send_payment_link_email_tool(
-        email=resolved,
+        email=confirmed,
         session=session,
     )
     email_result = json.loads(email_json)

@@ -31,6 +31,10 @@ PAYMENT_FAILURE_MESSAGE = (
     "I can try again or forward this to customer service."
 )
 
+_DIRECT_LINK_PHRASE = re.compile(
+    r"\b(use|using)\s+(the\s+)?(direct\s+)?(url|link)\b",
+    re.I,
+)
 _FALSE_SUCCESS_PAT = re.compile(
     r"\b("
     r"sent|created|emailed|payment link|checkout link|"
@@ -38,6 +42,17 @@ _FALSE_SUCCESS_PAT = re.compile(
     r")\b",
     re.I,
 )
+
+
+def scrub_false_payment_claims(text: str) -> str:
+    """Remove premature checkout/order claims and forbidden direct-link phrasing."""
+    if not text:
+        return text
+    if _DIRECT_LINK_PHRASE.search(text):
+        return PAYMENT_FAILURE_MESSAGE
+    if re.search(r"\border\s+(number\s+)?D\d+\b", text, re.I) and _FALSE_SUCCESS_PAT.search(text):
+        return PAYMENT_FAILURE_MESSAGE
+    return text
 
 
 @dataclass
@@ -54,16 +69,19 @@ class PaymentGateResult:
     reason: str = ""
 
 
+from ..payment.email_state import (
+    confirm_payment_email,
+    get_canonical_confirmed_email,
+    get_pending_payment_email,
+    log_payment_flow_diagnostics,
+    reject_pending_payment_email,
+    set_pending_payment_email,
+    sync_payment_email_fields,
+)
+
+
 def _sync_legacy_email_fields(session: "SessionState") -> None:
-    """Keep v4.19 flags aligned with legacy pending_email / confirmed_email."""
-    if session.pending_payment_email and not session.pending_email:
-        session.pending_email = session.pending_payment_email
-    if session.pending_email and not session.pending_payment_email:
-        session.pending_payment_email = session.pending_email
-    session.payment_email_confirmed = bool(session.confirmed_email)
-    session.awaiting_payment_email_confirmation = bool(
-        session.pending_payment_email and not session.payment_email_confirmed
-    )
+    sync_payment_email_fields(session)
 
 
 def _cart_has_confirmed_items(session: "SessionState") -> bool:
@@ -105,38 +123,16 @@ def confirmation_prompt(email: str) -> str:
 
 
 def _confirm_payment_email(session: "SessionState") -> None:
-    email = (session.pending_payment_email or session.pending_email or "").strip()
-    if not email:
-        return
-    session.confirmed_email = email
-    session.caller_email = email
-    session.pending_payment_email = ""
-    session.pending_email = ""
-    session.payment_email_confirmed = True
-    session.awaiting_payment_email_confirmation = False
-    session.email_confidence = "high"
-    session.payment_flow_status = "awaiting_send_confirmation"
-    session.last_payment_attempt_status = "confirmed"
-    logger.info(
-        "payment_email_confirmed sid=%s",
-        session.call_sid[:6] if session.call_sid else "?",
-    )
+    if confirm_payment_email(session):
+        log_payment_flow_diagnostics(session, stage="email_confirmed")
+        logger.info(
+            "payment_email_confirmed sid=%s",
+            session.call_sid[:6] if session.call_sid else "?",
+        )
 
 
 def _reject_pending_email(session: "SessionState") -> None:
-    rejected = session.pending_payment_email or session.pending_email
-    session.pending_payment_email = ""
-    session.pending_email = ""
-    session.awaiting_payment_email_confirmation = False
-    session.payment_email_confirmed = False
-    session.email_confidence = "low"
-    session.email_rejected_count = getattr(session, "email_rejected_count", 0) + 1
-    if rejected:
-        candidates = getattr(session, "rejected_email_candidates", None) or []
-        if rejected.lower() not in [c.lower() for c in candidates]:
-            session.rejected_email_candidates = [*candidates, rejected]
-    session.payment_flow_status = "awaiting_email"
-    session.last_payment_attempt_status = "rejected"
+    reject_pending_payment_email(session)
 
 
 def process_payment_turn(session: "SessionState", caller_text: str) -> PaymentTurnHint:
@@ -177,16 +173,8 @@ def process_payment_turn(session: "SessionState", caller_text: str) -> PaymentTu
 
     email = extract_email_from_text(text)
     if email:
-        session.pending_payment_email = email
-        session.pending_email = email
-        session.payment_email_confirmed = False
-        session.awaiting_payment_email_confirmation = True
-        session.payment_flow_status = "awaiting_email_confirmation"
-        session.last_payment_attempt_status = "pending_confirmation"
-        logger.info(
-            "payment_email_pending_confirmation sid=%s",
-            session.call_sid[:6] if session.call_sid else "?",
-        )
+        set_pending_payment_email(session, email)
+        log_payment_flow_diagnostics(session, stage="email_pending")
         return PaymentTurnHint(
             email_captured=True,
             force_reply=confirmation_prompt(email),
@@ -196,12 +184,18 @@ def process_payment_turn(session: "SessionState", caller_text: str) -> PaymentTu
 
 
 def resolve_tool_email(args: dict, session: "SessionState") -> str:
-    """Accept email / customer_email / to_email; fall back to session confirmed."""
+    """Return canonical confirmed email for payment send (never raw LLM args)."""
+    sync_payment_email_fields(session)
+    return get_canonical_confirmed_email(session)
+
+
+def resolve_tool_email_arg(args: dict) -> str:
+    """Read email from tool arguments only — for validation against confirmed."""
     for key in ("email", "customer_email", "to_email"):
         val = (args or {}).get(key) or ""
         if isinstance(val, str) and val.strip():
             return val.strip().lower()
-    return (getattr(session, "confirmed_email", "") or "").strip().lower()
+    return ""
 
 
 def build_payment_tool_result(
@@ -232,6 +226,7 @@ def build_payment_tool_result(
 def gate_send_payment_link(session: "SessionState", tool_email: str = "") -> PaymentGateResult:
     """Hard gate before send_payment_link executes."""
     _sync_legacy_email_fields(session)
+    log_payment_flow_diagnostics(session, stage="gate_send_payment_link")
 
     if not _cart_has_confirmed_items(session):
         session.last_payment_attempt_status = "blocked"
@@ -247,8 +242,9 @@ def gate_send_payment_link(session: "SessionState", tool_email: str = "") -> Pay
         )
         return PaymentGateResult(allowed=False, tool_json=json.dumps(payload), reason="no_cart")
 
-    if session.awaiting_payment_email_confirmation or not session.payment_email_confirmed:
-        pending = session.pending_payment_email or session.pending_email
+    confirmed = get_canonical_confirmed_email(session)
+    if not confirmed or session.awaiting_payment_email_confirmation or not session.payment_email_confirmed:
+        pending = get_pending_payment_email(session)
         if pending:
             msg = confirmation_prompt(pending)
         else:
@@ -344,7 +340,7 @@ def enforce_payment_response(
         if pending and _FALSE_SUCCESS_PAT.search(llm_text or ""):
             return confirmation_prompt(pending)
 
-    return llm_text
+    return scrub_false_payment_claims(llm_text)
 
 
 def parse_tool_result(result_str: str) -> dict:

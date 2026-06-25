@@ -64,10 +64,6 @@ async def send_payment_link_email(
         return {
             "success": False,
             "error": "Email service not configured.",
-            "fallback_message": (
-                "I wasn't able to send the email right now, but your payment link is: "
-                + checkout_url
-            ),
         }
 
     brand = str(getattr(settings, "RESEND_BRAND_NAME", None) or "SureShot Books")

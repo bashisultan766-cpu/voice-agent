@@ -271,6 +271,30 @@ class LLMToolRuntime:
             )
             return _result(spoken)
 
+        if payment_hint.email_confirmed:
+            from ..payment.email_state import log_payment_flow_diagnostics
+
+            log_payment_flow_diagnostics(session, stage="auto_send_after_confirm")
+            send_raw = await llm_tools.dispatch("send_payment_link", {}, session)
+            send_result = parse_tool_result(send_raw)
+            spoken = enforce_payment_response(
+                session,
+                send_result.get("customer_message") or "",
+                [("send_payment_link", send_result)],
+            )
+            spoken = self._finalize(session, spoken)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info(
+                "llm_tool_runtime_payment_auto_send sid=%s success=%s",
+                session.call_sid[:6],
+                bool(send_result.get("email_sent")),
+            )
+            return _result(spoken)
+
         messages = self.build_messages(session, caller_text)
         # Persist the user turn immediately so history stays consistent.
         session.history.append({"role": "user", "content": caller_text})

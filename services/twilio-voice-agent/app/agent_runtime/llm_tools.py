@@ -343,6 +343,7 @@ async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
     if session is None:
         return _err("No active session.")
     from .payment_flow_state import gate_send_payment_link, parse_tool_result, resolve_tool_email
+    from ..payment.email_state import get_canonical_confirmed_email
 
     tool_email = args.resolved_email() or resolve_tool_email({}, session)
     gate = gate_send_payment_link(session, tool_email)
@@ -362,7 +363,20 @@ async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
             "escalation_recommended": False,
         })
 
-    confirmed = getattr(session, "confirmed_email", "") or tool_email
+    confirmed = get_canonical_confirmed_email(session)
+    if not confirmed:
+        from .payment_flow_state import build_payment_tool_result
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message=(
+                "I need a confirmed email address before I can send the payment link. "
+                "What email should I use?"
+            ),
+            error_code="no_email",
+            retryable=True,
+        ))
+
     raw = await _st.SendPaymentLink(
         items=items,
         email=confirmed,
