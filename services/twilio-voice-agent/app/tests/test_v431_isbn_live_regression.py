@@ -123,7 +123,14 @@ class TestIsbnShortCircuit:
 
     @pytest.mark.asyncio
     async def test_runtime_short_circuits_isbn_turn(self):
-        runtime = LLMToolRuntime()
+        from app.config import Settings
+
+        runtime = LLMToolRuntime(
+            settings=Settings(
+                OPENAI_API_KEY="test",
+                VOICE_LLM_ONLY_FINAL_OUTPUT=False,
+            ),
+        )
         session = _session()
         book = {
             "title": "Live Book",

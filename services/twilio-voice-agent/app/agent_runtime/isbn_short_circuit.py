@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.38"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.40"
 
 _META_BOOK_PHRASE_PAT = re.compile(
     r"\b(another\s+(?:book|one|\d)|need another|i need another|yeah|yep|sure|"
@@ -125,6 +125,124 @@ def _isbn_collection_active(session: "SessionState", turn_mode: str = "") -> boo
         if getattr(session, "commerce_pending_candidate", None):
             return False
     return bool(getattr(session, "pending_isbn_buffer", ""))
+
+
+def prepare_isbn_turn_context(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[str]:
+    """
+    Deterministic ISBN resolution for LLM-only mode.
+
+    Updates session buffers and conversation mode but does NOT speak — the LLM
+    composes the customer-facing reply from tool results.
+    """
+    from ..conversation.call_memory import record_isbn
+
+    isbn, buf = resolve_spoken_isbn(
+        caller_text,
+        session=session,
+        turn_mode=turn_mode,
+    )
+    sid = (getattr(session, "call_sid", "") or "")[:6]
+
+    try:
+        from .conversation_state_machine import get_conversation_state
+
+        cs = get_conversation_state(session.call_sid)
+    except Exception:  # noqa: BLE001
+        cs = None
+
+    if isbn:
+        session.pending_isbn_buffer = ""
+        session.last_resolved_isbn_for_turn = isbn
+        record_isbn(session, isbn)
+        if cs is not None:
+            cs.mode = "book_collection"
+            cs.expected_next = "quantity"
+        logger.info(
+            "isbn_turn_context_resolved sid=%s isbn=%s turn_mode=%s",
+            sid,
+            isbn,
+            turn_mode or "normal",
+        )
+        return isbn
+
+    session.last_resolved_isbn_for_turn = ""
+    if buf:
+        if cs is not None:
+            cs.mode = "isbn_collection"
+        logger.info(
+            "isbn_turn_context_buffer sid=%s digits=%d turn_mode=%s",
+            sid,
+            len(buf),
+            turn_mode or "normal",
+        )
+    return None
+
+
+def isbn_context_for_state_block(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[str]:
+    """Human-readable ISBN hint for the LLM system state block."""
+    resolved = getattr(session, "last_resolved_isbn_for_turn", "") or ""
+    if resolved:
+        return (
+            f"- Resolved ISBN from caller speech: {resolved}. "
+            f"When calling catalog_search, use query=\"{resolved}\" exactly."
+        )
+    buf = getattr(session, "pending_isbn_buffer", "") or ""
+    if buf:
+        need = max(0, 13 - len(buf))
+        return (
+            f"- ISBN digit buffer: {len(buf)} digits collected ({buf}). "
+            f"Need {need} more digit(s) before catalog_search."
+        )
+    if turn_mode == "isbn" and caller_text.strip():
+        return (
+            "- Caller is reading an ISBN. Use catalog_search only after a full "
+            "checksum-valid 13-digit ISBN is resolved."
+        )
+    return None
+
+
+def normalize_catalog_search_query(
+    query: str,
+    session: "SessionState | None" = None,
+) -> tuple[str, Optional[str]]:
+    """
+    Normalize catalog_search query — never pass partial 978… fragments to Shopify.
+
+    Returns (query_for_search, resolved_isbn_or_none).
+    """
+    from ..pipeline.isbn_validator import _sliding_window_isbn13, extract_digits
+    from ..tools.isbn import extract_isbn_candidate
+
+    raw = (query or "").strip()
+    if not raw:
+        return raw, None
+
+    isbn = extract_isbn_candidate(raw)
+    if isbn:
+        return isbn, isbn
+
+    if session is not None:
+        resolved, _buf = resolve_spoken_isbn(raw, session=session, turn_mode="isbn")
+        if resolved:
+            return resolved, resolved
+
+    digits = extract_digits(raw)
+    if len(digits) >= 13:
+        found = _sliding_window_isbn13(digits)
+        if found:
+            return found, found
+
+    return raw, None
 
 
 def resolve_spoken_isbn(

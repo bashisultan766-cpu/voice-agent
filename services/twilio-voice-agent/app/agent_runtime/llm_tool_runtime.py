@@ -114,7 +114,13 @@ class LLMToolRuntime:
         return self._client
 
     # ── Context assembly ──────────────────────────────────────────────────
-    def _system_message(self, session: "SessionState", caller_text: str = "") -> dict:
+    def _system_message(
+        self,
+        session: "SessionState",
+        caller_text: str = "",
+        *,
+        turn_mode: str = "",
+    ) -> dict:
         """Build the system message: master prompt sections + live state."""
         try:
             master = get_master_prompt()
@@ -130,10 +136,20 @@ class LLMToolRuntime:
                 "replies short and natural."
             )
 
-        state = self._state_block(session, caller_text=caller_text)
+        state = self._state_block(
+            session,
+            caller_text=caller_text,
+            turn_mode=getattr(session, "_current_turn_mode", "") or "",
+        )
         return {"role": "system", "content": f"{prompt}\n\n{state}"}
 
-    def _state_block(self, session: "SessionState", caller_text: str = "") -> str:
+    def _state_block(
+        self,
+        session: "SessionState",
+        caller_text: str = "",
+        *,
+        turn_mode: str = "",
+    ) -> str:
         from ..caller.repository import mask_email
 
         verified = bool(getattr(session, "verified_email", False)) or bool(
@@ -183,6 +199,16 @@ class LLMToolRuntime:
         order_flow = getattr(session, "order_flow_status", "idle") or "idle"
         if order_flow != "idle":
             lines.append(f"- Order collection flow: {order_flow}")
+        try:
+            from .isbn_short_circuit import isbn_context_for_state_block
+
+            isbn_line = isbn_context_for_state_block(
+                session, caller_text, turn_mode=turn_mode,
+            )
+            if isbn_line:
+                lines.append(isbn_line)
+        except Exception:  # noqa: BLE001
+            pass
         try:
             from ..facility.knowledge_context import build_facility_knowledge_block
 
@@ -235,9 +261,17 @@ class LLMToolRuntime:
             break
         return trimmed
 
-    def build_messages(self, session: "SessionState", caller_text: str) -> list[dict]:
+    def build_messages(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        *,
+        turn_mode: str = "",
+    ) -> list[dict]:
         self._seed_history_from_memory(session)
-        messages: list[dict] = [self._system_message(session, caller_text)]
+        messages: list[dict] = [
+            self._system_message(session, caller_text=caller_text, turn_mode=turn_mode),
+        ]
         messages.extend(self._safe_trim(session.history))
         messages.append({"role": "user", "content": caller_text})
         return messages
@@ -359,6 +393,11 @@ class LLMToolRuntime:
             return await self._fallback(session, caller_text, send, reason="missing_api_key")
 
         llm_only = llm_only_final_output_enabled(self._settings)
+
+        session._current_turn_mode = turn_mode  # type: ignore[attr-defined]
+        from .isbn_short_circuit import prepare_isbn_turn_context
+
+        prepare_isbn_turn_context(session, caller_text, turn_mode=turn_mode)
 
         payment_hint = process_payment_turn(session, caller_text, turn_mode=turn_mode)
         if not llm_only:
@@ -571,7 +610,7 @@ class LLMToolRuntime:
                 turn_mode or "normal",
             )
 
-        messages = self.build_messages(session, caller_text)
+        messages = self.build_messages(session, caller_text, turn_mode=turn_mode)
         # Persist the user turn immediately so history stays consistent.
         session.history.append({"role": "user", "content": caller_text})
 

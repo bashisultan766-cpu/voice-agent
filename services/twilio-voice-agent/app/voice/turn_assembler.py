@@ -94,7 +94,7 @@ class TurnAssembler:
     def _new_group_id(self) -> str:
         return str(uuid.uuid4())[:12]
 
-    def _detect_mode(self, text: str, *, call_sid: str = "") -> str:
+    def _detect_mode(self, text: str, *, call_sid: str = "", pending_isbn_buffer: str = "") -> str:
         t = text.lower().strip()
         if _EMAIL_COMPLETE.search(text) or _EMAIL_SPOKEN.search(t) or " at " in t or "@" in t:
             return "email"
@@ -103,6 +103,9 @@ class TurnAssembler:
             from ..agent_runtime.conversation_state_machine import get_conversation_state
             cs = get_conversation_state(call_sid)
             book_collection = cs.mode in ("book_collection", "isbn_collection")
+        if pending_isbn_buffer or self._state.mode == "isbn":
+            if _DIGIT_FRAGMENT.match(text.strip()) or should_collect_isbn(text, book_collection=True):
+                return "isbn"
         if self._state.mode == "isbn" and should_collect_isbn(text, book_collection=book_collection):
             return "isbn"
         if not should_collect_isbn(text, book_collection=book_collection):
@@ -209,6 +212,7 @@ class TurnAssembler:
         on_emit: Callable[[AssembledTurn], Awaitable[None]],
         *,
         call_sid: str = "",
+        pending_isbn_buffer: str = "",
     ) -> bool:
         """
         Accept a transcript fragment.
@@ -220,6 +224,7 @@ class TurnAssembler:
             sid = (call_sid or "")[:6]
             if call_sid:
                 self._call_sid = call_sid
+            self._pending_isbn_buffer = pending_isbn_buffer or ""
             frag = (fragment or "").strip()
             if not frag:
                 return True
@@ -281,7 +286,11 @@ class TurnAssembler:
                         st.hold_started_at = 0.0
                         return await self._emit_buffered(sid, on_emit, "wait_hold_timeout")
                 st.buffer = self._merge_text(st.buffer, frag)
-                merged_mode = self._detect_mode(st.buffer, call_sid=call_sid)
+                merged_mode = self._detect_mode(
+                    st.buffer,
+                    call_sid=call_sid,
+                    pending_isbn_buffer=self._pending_isbn_buffer,
+                )
                 if merged_mode != "normal":
                     st.mode = merged_mode
                 elif is_complete_isbn(st.buffer):
@@ -294,7 +303,11 @@ class TurnAssembler:
                 )
                 return True
 
-            detected = self._detect_mode(frag, call_sid=call_sid)
+            detected = self._detect_mode(
+                frag,
+                call_sid=call_sid,
+                pending_isbn_buffer=self._pending_isbn_buffer,
+            )
             if st.buffer and st.mode != "normal":
                 mode = st.mode
             else:
@@ -305,7 +318,11 @@ class TurnAssembler:
 
             if st.buffer:
                 st.buffer = self._merge_text(st.buffer, frag)
-                redetected = self._detect_mode(st.buffer, call_sid=call_sid)
+                redetected = self._detect_mode(
+                    st.buffer,
+                    call_sid=call_sid,
+                    pending_isbn_buffer=self._pending_isbn_buffer,
+                )
                 if redetected != "normal":
                     st.mode = redetected
                 elif mode != "normal":
@@ -356,7 +373,11 @@ class TurnAssembler:
             if is_complete_isbn(st.buffer):
                 st.mode = "isbn"
             elif st.mode == "normal":
-                redetected = self._detect_mode(st.buffer, call_sid=self._call_sid)
+                redetected = self._detect_mode(
+                    st.buffer,
+                    call_sid=self._call_sid,
+                    pending_isbn_buffer=getattr(self, "_pending_isbn_buffer", ""),
+                )
                 if redetected != "normal":
                     st.mode = redetected
 

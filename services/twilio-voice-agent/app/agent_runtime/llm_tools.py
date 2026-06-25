@@ -476,7 +476,18 @@ async def _get_order(args: GetOrderArgs, session) -> str:
 
 
 async def _catalog_search(args: CatalogSearchArgs, session) -> str:
-    raw = await _st.SureShotCatalogSearch(query=args.query, limit=args.limit)
+    from .isbn_short_circuit import normalize_catalog_search_query
+
+    query, resolved_isbn = normalize_catalog_search_query(args.query, session)
+    if resolved_isbn and query != (args.query or "").strip():
+        sid = (getattr(session, "call_sid", "") or "")[:6] if session else ""
+        logger.info(
+            "catalog_search_query_normalized sid=%s raw=%r normalized=%s",
+            sid,
+            (args.query or "")[:40],
+            resolved_isbn,
+        )
+    raw = await _st.SureShotCatalogSearch(query=query, limit=args.limit)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:

@@ -451,6 +451,7 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         voice_prompt,
                         _emit_assembled,
                         call_sid=session.call_sid,
+                        pending_isbn_buffer=getattr(session, "pending_isbn_buffer", "") or "",
                     )
 
                 case "interrupt":
