@@ -73,19 +73,48 @@ async def send_confirmed_payment_link(
     sid = (session.call_sid or "")[:6]
     log_payment_flow_diagnostics(session, stage="payment_link_service_start")
 
-    if not _cart_has_items(session):
-        logger.error("payment_send_blocked sid=%s reason=empty_cart", sid)
+    if items is None:
+        from ..cart.session import get_ledger
+        from .payment_destination_groups import group_checkout_items, refresh_payment_groups_from_cart
+
+        refresh_payment_groups_from_cart(session)
+        items = group_checkout_items(session) or get_ledger(session).to_checkout_items()
+    else:
+        items = list(items)
+
+    if not items:
+        try:
+            from ..cart.session import get_ledger
+
+            cart_debug = get_ledger(session)
+            logger.error(
+                "payment_send_blocked sid=%s reason=empty_cart_after_refresh "
+                "confirmed_count=%d cart_lines=%d payment_groups=%d",
+                sid,
+                cart_debug.confirmed_count(),
+                len(getattr(session, "cart_items", None) or []),
+                len(getattr(session, "payment_destination_groups", None) or []),
+            )
+        except Exception:  # noqa: BLE001
+            pass
         session.last_payment_attempt_status = "blocked"
         return build_payment_tool_result(
             success=False,
             email_sent=False,
             customer_message=(
-                "I need to confirm the book before I can send a payment link. "
-                "Which book would you like to order?"
+                "I still have your books on file, but the checkout did not pick them up. "
+                "Let me try again — how many books should be on this payment link?"
             ),
             error_code="empty_cart",
             retryable=True,
         )
+
+    logger.info(
+        "payment_checkout_items_resolved sid=%s line_count=%d qty_total=%d",
+        sid,
+        len(items),
+        sum(int(i.get("quantity", 1) or 1) for i in items),
+    )
 
     if not assert_ready_for_payment_send(session, stage="payment_link_service"):
         return build_payment_tool_result(
@@ -112,12 +141,6 @@ async def send_confirmed_payment_link(
             error_code="email_unconfirmed",
             retryable=True,
         )
-
-    if items is None:
-        from ..cart.session import get_ledger
-        from .payment_destination_groups import group_checkout_items
-
-        items = group_checkout_items(session) or get_ledger(session).to_checkout_items()
 
     session.payment_send_in_progress = True
     session.email_send_attempted = True

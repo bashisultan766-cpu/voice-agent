@@ -381,6 +381,19 @@ class LLMToolRuntime:
                 stage="deferred_auto_send",
             )
 
+        from .fast_greeting import fast_greeting_reply
+
+        greet = fast_greeting_reply(session, caller_text)
+        if greet:
+            spoken = self._finalize(session, greet)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info("fast_greeting_short_circuit sid=%s openai_skipped=true", sid)
+            return _result(spoken)
+
         commerce_hint = process_commerce_turn(session, caller_text)
         if commerce_hint.force_reply:
             spoken = self._finalize(session, commerce_hint.force_reply)

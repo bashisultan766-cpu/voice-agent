@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.28"
+COMMERCE_FLOW_VERSION = "v4.29"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -234,6 +234,9 @@ def add_staged_book_to_cart(session: "SessionState", quantity: int = 1) -> Optio
         quantity=qty,
     )
     confirm_last_candidate(session)
+    from ..payment.payment_destination_groups import refresh_payment_groups_from_cart
+
+    refresh_payment_groups_from_cart(session)
     session.commerce_pending_candidate = {}
     session.commerce_pending_quantity = 0
     session.commerce_allow_add = False

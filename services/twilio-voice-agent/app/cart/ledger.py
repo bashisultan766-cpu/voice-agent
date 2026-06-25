@@ -65,6 +65,8 @@ class CartLedger:
                     existing.title = item.title or existing.title
                     existing.variant_id = item.variant_id or existing.variant_id
                     existing.price = item.price or existing.price
+                    if item.quantity > 0:
+                        existing.quantity = max(existing.quantity, item.quantity)
                     self._last_candidate_idx = self._items.index(existing)
                     return
         self._items.append(item)

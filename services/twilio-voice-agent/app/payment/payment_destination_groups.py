@@ -99,11 +99,62 @@ def init_single_group_from_cart(session: "SessionState") -> dict[str, Any]:
     return group
 
 
+def refresh_payment_groups_from_cart(session: "SessionState") -> list[dict[str, Any]]:
+    """
+    Re-sync default (single-email) payment groups with the live confirmed cart.
+
+    Groups are created once; if the caller adds more books afterward, stale
+    variant_ids caused empty checkout ("no items") at send time.
+    """
+    items = _ledger_confirmed(session)
+    groups = list(getattr(session, "payment_destination_groups", None) or [])
+    sid = (getattr(session, "call_sid", "") or "")[:6]
+
+    if not items:
+        logger.warning(
+            "payment_groups_refresh_empty_cart sid=%s confirmed_count=0",
+            sid,
+        )
+        if not groups:
+            init_single_group_from_cart(session)
+        return list(getattr(session, "payment_destination_groups", None) or [])
+
+    if not groups:
+        init_single_group_from_cart(session)
+        logger.info(
+            "payment_groups_initialized sid=%s item_count=%d",
+            sid,
+            len(items),
+        )
+        return list(session.payment_destination_groups)
+
+    if len(groups) == 1 and not getattr(session, "multi_email_payment_active", False):
+        g = groups[0]
+        new_vids = [i["variant_id"] for i in items]
+        new_titles = [i["title"] for i in items if i.get("title")]
+        old_vids = list(g.get("variant_ids") or [])
+        if old_vids != new_vids:
+            g["variant_ids"] = new_vids
+            g["titles"] = new_titles
+            session.payment_destination_groups = groups
+            logger.info(
+                "payment_groups_refreshed sid=%s old_count=%d new_count=%d",
+                sid,
+                len(old_vids),
+                len(new_vids),
+            )
+        return groups
+
+    return groups
+
+
 def ensure_payment_groups(session: "SessionState") -> list[dict[str, Any]]:
     groups = list(getattr(session, "payment_destination_groups", None) or [])
     if not groups:
         init_single_group_from_cart(session)
         return list(session.payment_destination_groups)
+    if not getattr(session, "multi_email_payment_active", False) and len(groups) == 1:
+        return refresh_payment_groups_from_cart(session)
     return groups
 
 
@@ -226,14 +277,25 @@ def save_session_email_to_active_group(session: "SessionState") -> None:
 
 
 def group_checkout_items(session: "SessionState", group: dict[str, Any] | None = None) -> list[dict]:
-    group = group or get_active_group(session)
-    if not group:
-        from ..cart.session import get_ledger
-        return get_ledger(session).to_checkout_items()
-    wanted = set(group.get("variant_ids") or [])
     from ..cart.session import get_ledger
 
-    return [
+    refresh_payment_groups_from_cart(session)
+    group = group or get_active_group(session)
+    ledger_items = get_ledger(session).to_checkout_items()
+
+    if not group:
+        return ledger_items
+
+    wanted = set(group.get("variant_ids") or [])
+    if not wanted:
+        logger.warning(
+            "payment_group_empty_variant_ids sid=%s falling_back_to_full_cart count=%d",
+            (getattr(session, "call_sid", "") or "")[:6],
+            len(ledger_items),
+        )
+        return ledger_items
+
+    filtered = [
         {
             "variant_id": i.variant_id,
             "quantity": i.quantity,
@@ -243,6 +305,16 @@ def group_checkout_items(session: "SessionState", group: dict[str, Any] | None =
         for i in get_ledger(session).confirmed_items
         if i.variant_id in wanted
     ]
+    if not filtered and ledger_items:
+        logger.warning(
+            "payment_group_stale_filter sid=%s wanted=%d ledger=%d using_full_cart",
+            (getattr(session, "call_sid", "") or "")[:6],
+            len(wanted),
+            len(ledger_items),
+        )
+        refresh_payment_groups_from_cart(session)
+        return ledger_items
+    return filtered
 
 
 def group_titles_phrase(group: dict[str, Any]) -> str:

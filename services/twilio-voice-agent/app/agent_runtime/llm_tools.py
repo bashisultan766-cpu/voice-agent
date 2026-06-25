@@ -287,15 +287,13 @@ async def _add_to_cart(args: AddToCartArgs, session) -> str:
         isbn=args.isbn,
         variant_id=args.variant_id,
         price=args.price or None,
+        quantity=max(1, int(args.quantity or 1)),
     )
     # An explicit add-to-cart is an explicit selection; confirm it.
     confirm_last_candidate(session)
-    if args.quantity > 1 and (args.isbn or args.title):
-        from ..cart.session import get_ledger, sync_ledger_to_session
+    from ..payment.payment_destination_groups import refresh_payment_groups_from_cart
 
-        ledger = get_ledger(session)
-        ledger.update_quantity(args.isbn or args.title, args.quantity)
-        sync_ledger_to_session(session, ledger)
+    refresh_payment_groups_from_cart(session)
     view = _ledger_view(session)
     if view.get("confirmed_count", 0) > 0:
         pfs = getattr(session, "payment_flow_status", "idle") or "idle"
