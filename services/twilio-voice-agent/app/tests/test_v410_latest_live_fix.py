@@ -151,9 +151,10 @@ class TestV410LiveLogRegression:
         await asm.ingest("6 0 6 4 8.", on_emit, call_sid="CA08")
         await asyncio.sleep(0.25)
         assert len(emitted) >= 1
-        digits = "".join(c for c in emitted[-1] if c.isdigit())
+        last_text = emitted[-1].text if hasattr(emitted[-1], "text") else emitted[-1]
+        digits = "".join(c for c in last_text if c.isdigit())
         assert len(digits) == 13
-        r = detect(emitted[-1])
+        r = detect(last_text)
         assert r.intent == "isbn_search"
         assert r.entities.get("isbn")
 

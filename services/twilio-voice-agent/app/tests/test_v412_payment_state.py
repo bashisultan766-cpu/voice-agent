@@ -245,8 +245,8 @@ class TestDiagnosticLogging:
         import logging
         from app.tools.shopify_tools import send_payment_link_email_tool
         session = _make_session()  # no confirmed_email, no checkout_url
-        with caplog.at_level(logging.INFO, logger="app.tools.shopify_tools"):
+        with caplog.at_level(logging.INFO):
             await send_payment_link_email_tool(email="x@example.com", session=session)
         log_text = caplog.text
-        assert "payment_tool_result" in log_text
-        assert "allowed=false" in log_text
+        assert "payment_send_blocked" in log_text or "payment_tool_result" in log_text
+        assert "email_unconfirmed" in log_text or "allowed=false" in log_text

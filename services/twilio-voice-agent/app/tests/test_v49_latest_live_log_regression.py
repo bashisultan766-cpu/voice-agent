@@ -22,7 +22,7 @@ from app.conversation.call_memory import check_and_apply_resume
 from app.dialogue.manager import DialogueManager
 from app.dialogue.short_utterance_resolver import resolve_short_utterance
 from app.pipeline.compound_intent import detect
-from app.pipeline.email_speller import build_email_readback
+from app.pipeline.email_speller import build_email_readback, speak_email, spell_email_for_voice
 from app.pipeline.engine import _apply_email_state, _apply_payment_state
 from app.pipeline.router import IntentResult
 from app.payment.scope_audit import audit_payment_scope
@@ -164,9 +164,10 @@ class TestV49LiveLogRegression:
         assert intent != "product_search"
 
     def test_17_email_readback_exact(self):
-        text = build_email_readback("bashisultan766@gmail.com")
-        assert text.startswith("I heard bashisultan766@gmail.com.")
-        assert "seven, six, six, at gmail dot com" in text
+        email = "bashisultan766@gmail.com"
+        text = build_email_readback(email)
+        assert text.startswith(f"I heard {speak_email(email)}.")
+        assert spell_email_for_voice(email) in text
         assert text.endswith("Is that correct?")
 
     @pytest.mark.asyncio

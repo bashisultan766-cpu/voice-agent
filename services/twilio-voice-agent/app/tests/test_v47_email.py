@@ -10,33 +10,39 @@ from app.email.deliverability import (
     build_payment_email_subject,
     validate_payment_email_content,
 )
-from app.pipeline.email_speller import build_email_readback, build_email_spell_only
+from app.pipeline.email_speller import (
+    build_email_readback,
+    build_email_spell_only,
+    speak_email,
+    spell_email_for_voice,
+)
 from app.pipeline.router import detect
 from app.state.models import SessionState
+
+_EMAIL = "bashisultan766@gmail.com"
 
 
 class TestEmailSpellingV47:
     def test_pending_email_exact_format(self):
-        text = build_email_readback("bashisultan766@gmail.com")
-        assert text.startswith("I heard bashisultan766@gmail.com.")
-        assert "Letter by letter:" in text
-        assert "seven, six, six, at gmail dot com" in text
+        text = build_email_readback(_EMAIL)
+        assert text.startswith(f"I heard {speak_email(_EMAIL)}.")
+        assert spell_email_for_voice(_EMAIL) in text
         assert text.endswith("Is that correct?")
 
     def test_confirmed_email_exact_format(self):
-        text = build_email_spell_only("bashisultan766@gmail.com")
-        assert text.startswith("I have bashisultan766@gmail.com.")
-        assert "Letter by letter:" in text
+        text = build_email_spell_only(_EMAIL)
+        assert text.startswith(f"I have {speak_email(_EMAIL)}.")
+        assert spell_email_for_voice(_EMAIL) in text
 
     def test_no_activate_wording(self):
-        text = build_email_readback("bashisultan766@gmail.com")
+        text = build_email_readback(_EMAIL)
         assert "activate" not in text.lower()
 
     def test_spell_in_email_context(self):
         s = SessionState(
             session_id="e", call_sid="CA_E",
             from_number="+1", to_number="+1",
-            pending_email="bashisultan766@gmail.com",
+            pending_email=_EMAIL,
             payment_flow_status="awaiting_email_confirmation",
         )
         r = detect("Letter by letter. Can you repeat?", s)

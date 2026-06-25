@@ -62,7 +62,8 @@ class TestElevenStyleRuntime:
         await asm.ingest("9788893960648", on_emit, call_sid="CA2")
         await asm.flush(on_emit, call_sid="CA2")
         if emitted:
-            digits = "".join(c for c in emitted[-1] if c.isdigit())
+            last_text = emitted[-1].text if hasattr(emitted[-1], "text") else emitted[-1]
+            digits = "".join(c for c in last_text if c.isdigit())
             assert len(digits) in (10, 13) or len(emitted) >= 1
 
     async def test_06_subtotal_wording(self):

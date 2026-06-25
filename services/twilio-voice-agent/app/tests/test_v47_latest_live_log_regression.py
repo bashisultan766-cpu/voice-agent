@@ -19,7 +19,7 @@ from app.dialogue.manager import DialogueManager
 from app.pipeline.compound_intent import detect
 from app.pipeline.engine import _apply_email_state
 from app.pipeline.router import IntentResult
-from app.payment.scope_audit import audit_payment_scope
+from app.pipeline.email_speller import build_email_readback, spell_email_for_voice, speak_email
 from app.safety.response_sanitizer import sanitize_customer_response
 from app.state.models import SessionState
 from app.workers.orchestrator import WorkerOrchestrator
@@ -101,8 +101,8 @@ class TestV47LiveLogRegression:
                      payment_flow_status="awaiting_email_confirmation")
         assert detect("Letter by letter. Can you repeat?", s).intent == "spell_email_request"
         spell = DialogueManager.build_spell_email_response(s)
-        assert "Letter by letter:" in spell
-        assert "bashisultan766@gmail.com" in spell
+        assert spell_email_for_voice("bashisultan766@gmail.com") in spell
+        assert speak_email("bashisultan766@gmail.com") in spell
 
     def test_13_email_confirm(self):
         s = _session(pending_email="bashisultan766@gmail.com",

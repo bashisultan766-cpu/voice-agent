@@ -18,6 +18,8 @@ fi
 echo "==> git fetch + pull --ff-only origin $BRANCH"
 git fetch origin "$BRANCH"
 git pull --ff-only origin "$BRANCH"
+echo "    branch=$(git rev-parse --abbrev-ref HEAD) commit=$(git rev-parse --short HEAD)"
+git log -1 --oneline
 
 echo "==> Python venv + dependencies"
 cd "$SERVICE_DIR"
@@ -32,6 +34,13 @@ if [[ "${DEPLOY_SKIP_TESTS:-}" == "1" ]]; then
 else
   .venv/bin/python -m pytest -q
 fi
+
+echo "==> Runtime identity"
+cd "$SERVICE_DIR"
+.venv/bin/python -m app.scripts.runtime_identity_check || {
+  echo "ERROR: runtime_identity_check FAILED — do not take live calls." >&2
+  exit 1
+}
 
 echo "==> Restart PM2 (if installed)"
 cd "$ROOT"

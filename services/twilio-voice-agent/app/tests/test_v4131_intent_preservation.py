@@ -177,4 +177,5 @@ class TestIsbnModeEmergencyFix:
         assert held is True
         await asyncio.sleep(0.25)
         assert len(emitted) == 1
-        assert "model" in emitted[0].lower()
+        last_text = emitted[0].text if hasattr(emitted[0], "text") else emitted[0]
+        assert "model" in last_text.lower()

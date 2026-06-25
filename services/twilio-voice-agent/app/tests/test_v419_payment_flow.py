@@ -23,7 +23,10 @@ from app.agent_runtime.payment_flow_state import (
     process_payment_turn,
 )
 from app.cart.session import add_product_candidate, confirm_last_candidate, get_ledger
+from app.pipeline.email_speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
+
+_EMAIL = "bashisultan766@gmail.com"
 
 
 def _session(**kwargs) -> SessionState:
@@ -54,7 +57,7 @@ class TestPaymentStateMachine:
         _cart_with_book(session)
         hint = process_payment_turn(session, "Yes. My email address is bashisultan766@gmail.com")
         assert hint.force_reply is not None
-        assert "bashisultan766@gmail.com" in hint.force_reply
+        assert spell_email_for_voice(_EMAIL) in hint.force_reply
         assert session.awaiting_payment_email_confirmation is True
         assert session.payment_email_confirmed is False
         assert session.pending_payment_email == "bashisultan766@gmail.com"
@@ -206,7 +209,7 @@ class TestLLMRuntimePaymentShortCircuit:
             "My email is bashisultan766@gmail.com",
             send,
         )
-        assert "bashisultan766@gmail.com" in result.response_text
+        assert spell_email_for_voice(_EMAIL) in result.response_text
         assert "correct" in result.response_text.lower()
         tool_msgs = [m for m in session.history if m.get("role") == "tool"]
         assert not tool_msgs

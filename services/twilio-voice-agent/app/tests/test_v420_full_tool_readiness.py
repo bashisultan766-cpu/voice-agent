@@ -30,9 +30,11 @@ from app.agent_runtime.tool_runtime_gates import (
     replace_blocked_order_phrase,
 )
 from app.cart.session import add_product_candidate, confirm_last_candidate, get_ledger
-from app.pipeline.email_capture import normalize_spoken_email
+from app.pipeline.email_speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
 from app.tools import voice_intent
+
+_EMAIL = "bashisultan766@gmail.com"
 
 
 def _session(**kwargs) -> SessionState:
@@ -113,7 +115,7 @@ class TestEmailConfirmationGates:
         _make_books(session, 1)
         hint = process_payment_turn(session, "bashisultan766@gmail.com")
         assert hint.force_reply
-        assert "bashisultan766@gmail.com" in hint.force_reply
+        assert spell_email_for_voice(_EMAIL) in hint.force_reply
         assert "***" not in hint.force_reply
 
     def test_send_blocked_before_confirmation(self):
@@ -124,7 +126,7 @@ class TestEmailConfirmationGates:
         gate = gate_send_payment_link(session)
         assert not gate.allowed
         payload = json.loads(gate.tool_json)
-        assert "test@gmail.com" in payload["customer_message"]
+        assert speak_email("test@gmail.com") in payload["customer_message"]
 
     @pytest.mark.asyncio
     async def test_create_checkout_blocked_before_email_confirmed(self):
@@ -310,7 +312,7 @@ class TestPhraseAndUrlGuardrails:
             session,
             "Just to confirm, is that email address ***@***?",
         )
-        assert "bashisultan766@gmail.com" in spoken
+        assert spell_email_for_voice(_EMAIL) in spoken
         assert "***" not in spoken
 
 

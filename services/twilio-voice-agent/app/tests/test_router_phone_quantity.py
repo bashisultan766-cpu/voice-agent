@@ -123,9 +123,9 @@ class TestQuantityExtraction:
     def test_quantity_helper_none(self):
         assert _extract_quantity("hello world") is None
 
-    def test_quantity_above_99_not_extracted(self):
-        # 100 is probably a price or order number, not a quantity
-        assert _extract_quantity("100 copies") is None
+    def test_quantity_above_99_allowed_for_bulk(self):
+        # v4.30: facility bulk orders often need 100+ copies
+        assert _extract_quantity("100 copies") == 100
 
 
 # ── ISBN-10 router tests ──────────────────────────────────────────────────────

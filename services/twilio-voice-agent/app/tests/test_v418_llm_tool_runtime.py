@@ -132,7 +132,7 @@ def _build_runtime(scripted) -> LLMToolRuntime:
 # ── Tests ──────────────────────────────────────────────────────────────────────
 def test_normal_question_reaches_openai_and_llm_writes_answer():
     runtime = _build_runtime([_text_response("Sure, I can help with that.")])
-    result, sent = _run_turn(runtime, _session(), "hello, can you help me?")
+    result, sent = _run_turn(runtime, _session(), "can you help me find a paperback book?")
 
     # OpenAI was actually called for this turn.
     assert runtime._client.chat.completions.calls, "OpenAI client was not invoked"

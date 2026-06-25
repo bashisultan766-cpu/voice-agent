@@ -9,6 +9,7 @@ from app.pipeline.email_speller import (
     build_email_readback,
     build_email_spell_only,
     normalize_email_for_customer_readback,
+    speak_email,
     spell_email_for_voice,
 )
 from app.pipeline.router import detect
@@ -27,10 +28,9 @@ def _session(**kwargs) -> SessionState:
 class TestEmailSpeller:
     def test_bashisultan_spelling(self):
         spelled = spell_email_for_voice("bashisultan766@gmail.com")
-        assert "seven" in spelled
-        assert "six" in spelled
+        assert "7-6-6" in spelled
         assert "gmail dot com" in spelled
-        assert "b" in spelled
+        assert "B-A-S-H" in spelled
 
     def test_uppercase_normalizes(self):
         norm = normalize_email_for_customer_readback("BASHISULTAN766@gmail.com")
@@ -43,12 +43,12 @@ class TestEmailSpeller:
     def test_spell_my_email_uses_formatter(self):
         s = _session(pending_email="bashisultan766@gmail.com")
         text = DialogueManager.build_spell_email_response(s)
-        assert "seven" in text or "bashisultan766" in text
+        assert spell_email_for_voice("bashisultan766@gmail.com") in text
 
     def test_spell_this_after_email(self):
         s = _session(confirmed_email="bashisultan766@gmail.com")
         text = DialogueManager.build_spell_email_response(s)
-        assert "letter" in text.lower() or "seven" in text
+        assert spell_email_for_voice("bashisultan766@gmail.com") in text
 
     def test_spell_email_request_not_product_search(self):
         r = detect("can you spell my email", session=_session())

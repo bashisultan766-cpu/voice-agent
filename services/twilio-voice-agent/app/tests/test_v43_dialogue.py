@@ -12,6 +12,7 @@ os.environ.setdefault("PUBLIC_BASE_URL", "https://test.example.com")
 
 from app.dialogue.manager import DialogueManager, spell_email_letter_by_letter
 from app.dialogue.states import DialogueState
+from app.pipeline.email_speller import spell_email_for_voice
 from app.pipeline.router import detect
 from app.state.models import SessionState
 
@@ -89,7 +90,7 @@ class TestDialogueManager:
         session = _session(confirmed_email="alice@example.com")
         text = DialogueManager.build_spell_email_response(session)
         assert "alice" in text.lower() or "a" in text
-        assert "letter by letter" in text.lower()
+        assert spell_email_for_voice("alice@example.com") in text
 
     def test_spell_email_no_email(self):
         session = _session()
