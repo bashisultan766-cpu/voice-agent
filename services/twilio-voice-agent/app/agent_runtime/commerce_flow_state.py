@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.40"
+COMMERCE_FLOW_VERSION = "v4.42"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -207,6 +207,61 @@ def cart_summary_and_email_prompt(session: "SessionState") -> str:
     ensure_payment_groups(session)
     begin_awaiting_payment_email(session)
     return payment_email_collection_prompt(cart_summary=summary)
+
+
+def advance_commerce_state_silent(session: "SessionState", caller_text: str) -> None:
+    """
+    LLM-only: advance commerce gates from caller speech without canned replies.
+
+    Unlocks ``add_to_cart`` after quantity + confirmation so the LLM can call
+    the tool without ``book_not_confirmed`` gates.
+    """
+    if commerce_blocks_open_commerce(session):
+        return
+    text = (caller_text or "").strip()
+    if not text:
+        return
+
+    if _DONE_SHOPPING_PAT.search(text) and _cart_has_confirmed_items(session):
+        session.commerce_flow_status = STATUS_AWAITING_EMAIL_COLLECTION
+        session.payment_flow_status = "awaiting_email"
+        session.awaiting_product_confirmation = False
+        from ..payment.payment_destination_groups import ensure_payment_groups
+
+        ensure_payment_groups(session)
+        return
+
+    status = _status(session)
+
+    if status == STATUS_AWAITING_ANOTHER_BOOK:
+        if _ANOTHER_PAT.search(text) or _NO_BUT_ANOTHER_PAT.search(text):
+            session.commerce_flow_status = STATUS_IDLE
+            session.commerce_pending_candidate = {}
+            session.awaiting_product_confirmation = False
+        return
+
+    candidate = _resolve_pending_candidate(session)
+    if not candidate:
+        return
+
+    if status == STATUS_AWAITING_QUANTITY:
+        qty = _parse_quantity(text)
+        if qty:
+            session.commerce_pending_quantity = qty
+            session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
+        if _confirms_pending_add(text):
+            if not session.commerce_pending_quantity:
+                session.commerce_pending_quantity = qty or 1
+            session.commerce_allow_add = True
+
+    elif status == STATUS_AWAITING_ADD_CONFIRM:
+        if _confirms_pending_add(text):
+            if not session.commerce_pending_quantity:
+                session.commerce_pending_quantity = 1
+            session.commerce_allow_add = True
+
+    elif status == STATUS_AWAITING_BOOK_CONFIRM and _confirms_pending_add(text):
+        session.commerce_flow_status = STATUS_AWAITING_QUANTITY
 
 
 def stage_product_candidate(session: "SessionState", product: dict[str, Any]) -> None:

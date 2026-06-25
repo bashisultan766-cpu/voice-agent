@@ -181,11 +181,16 @@ class LLMToolRuntime:
             f"- Returning caller (friendly only, NOT verified): {'yes' if returning else 'no'}",
             f"- Email on file (masked): {email_masked or 'none'}",
             f"- Identity verified THIS call: {'yes' if verified else 'no'}",
-            f"- Cart: {cart_line}",
+            f"- Cart (new purchase in progress): {cart_line}",
             f"- Last order mentioned: {last_order or 'none'}",
             f"- Payment flow status: {pay_status}",
             f"- Awaiting payment email confirmation: {'yes' if awaiting_email else 'no'}",
         ]
+        if cart_line and cart_line != "No active cart." and last_order:
+            lines.append(
+                "- Cart is from a resumed or in-progress purchase — do NOT cite cart "
+                "titles when answering about a looked-up order. Use get_order results."
+            )
         if pending_pay_email:
             lines.append(
                 f"- Pending payment email (unconfirmed): {pending_pay_email} — "
@@ -199,6 +204,12 @@ class LLMToolRuntime:
         order_flow = getattr(session, "order_flow_status", "idle") or "idle"
         if order_flow != "idle":
             lines.append(f"- Order collection flow: {order_flow}")
+        if last_order:
+            on = str(last_order).lstrip("#")
+            lines.append(
+                f"- Active order lookup: #{on}. For follow-ups about books, status, "
+                f"or price on that order, call get_order(order_number=\"{on}\")."
+            )
         try:
             from .isbn_short_circuit import isbn_context_for_state_block
 
@@ -207,6 +218,20 @@ class LLMToolRuntime:
             )
             if isbn_line:
                 lines.append(isbn_line)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from .turn_prefetch import (
+                payment_groups_hint_for_state_block,
+                prefetch_hint_for_state_block,
+            )
+
+            prefetch_line = prefetch_hint_for_state_block(session)
+            if prefetch_line:
+                lines.append(prefetch_line)
+            pay_groups_line = payment_groups_hint_for_state_block(session)
+            if pay_groups_line:
+                lines.append(pay_groups_line)
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -219,8 +244,9 @@ class LLMToolRuntime:
         except Exception:  # noqa: BLE001
             pass
         lines.append(
-            "If identity is not verified this call, you must ask for the email or "
-            "phone on the order before sharing any order or refund details."
+            "Order numbers alone are enough to share line items (book titles), status, "
+            "and totals via get_order or calculate_pricing. Ask for email or phone only "
+            "before sharing shipping address, full email, or card details."
         )
         return "\n".join(lines)
 
@@ -398,6 +424,13 @@ class LLMToolRuntime:
         from .isbn_short_circuit import prepare_isbn_turn_context
 
         prepare_isbn_turn_context(session, caller_text, turn_mode=turn_mode)
+
+        if llm_only:
+            from .commerce_flow_state import advance_commerce_state_silent
+            from .order_flow_state import prepare_order_turn_context
+
+            advance_commerce_state_silent(session, caller_text)
+            prepare_order_turn_context(session, caller_text, turn_mode=turn_mode)
 
         payment_hint = process_payment_turn(session, caller_text, turn_mode=turn_mode)
         if not llm_only:
@@ -609,6 +642,16 @@ class LLMToolRuntime:
                 sid,
                 turn_mode or "normal",
             )
+
+        from .turn_prefetch import run_turn_prefetch
+
+        max_prefetch = int(getattr(self._settings, "VOICE_PREFETCH_MAX_WAIT_MS", 400) or 400)
+        await run_turn_prefetch(
+            session,
+            caller_text,
+            turn_mode=turn_mode,
+            max_wait_ms=max_prefetch,
+        )
 
         messages = self.build_messages(session, caller_text, turn_mode=turn_mode)
         # Persist the user turn immediately so history stays consistent.

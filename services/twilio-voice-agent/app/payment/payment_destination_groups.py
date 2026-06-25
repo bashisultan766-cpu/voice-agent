@@ -1,8 +1,9 @@
 """
-Per-email payment groups for the live CartLedger path (v4.27).
+Per-email payment groups for the live CartLedger path (v4.42).
 
 Supports multiple emails in one call, e.g.:
   "send 2 books to bashi at gmail dot com and the other 3 to orders at company dot com"
+  "send 2 copies to a at gmail and 3 copies to b at yahoo" (same title, qty split)
 """
 from __future__ import annotations
 
@@ -30,6 +31,14 @@ _MULTI_ASSIGN_PAT = re.compile(
     r"(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?"
     r"(?:(?:books?|items?|copies?)\s+)?"
     r"(?:to|at|on)\s+(.+?)\s*$",
+    re.I,
+)
+_QTY_SPLIT_PAT = re.compile(
+    r"send\s+"
+    r"(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?"
+    r"(?:books?|items?|copies?)\s+to\s+(.+?)\s+and\s+"
+    r"(?:(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?"
+    r"(?:(?:the\s+)?other\s+)?(?:books?|items?|copies?)?\s*to\s+(.+?)\s*$",
     re.I,
 )
 
@@ -72,8 +81,9 @@ def _group_dict(
     variant_ids: list[str],
     titles: list[str],
     group_id: str | None = None,
+    line_quantities: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "group_id": group_id or str(uuid.uuid4())[:8],
         "variant_ids": variant_ids,
         "titles": titles,
@@ -84,6 +94,9 @@ def _group_dict(
         "checkout_url": "",
         "payment_link_sent": False,
     }
+    if line_quantities:
+        out["line_quantities"] = line_quantities
+    return out
 
 
 def init_single_group_from_cart(session: "SessionState") -> dict[str, Any]:
@@ -170,6 +183,75 @@ def ensure_payment_groups(session: "SessionState") -> list[dict[str, Any]]:
     return groups
 
 
+def try_parse_quantity_email_split(
+    text: str,
+    session: "SessionState",
+) -> list[dict[str, Any]] | None:
+    """Split one cart line's quantity across two payment emails."""
+    items = _ledger_confirmed(session)
+    if len(items) != 1:
+        return None
+    item = items[0]
+    total_qty = max(1, int(item.get("quantity") or 1))
+    if total_qty < 2:
+        return None
+
+    normalized = re.sub(r"\s+", " ", (text or "").strip())
+    match = _QTY_SPLIT_PAT.search(normalized)
+    if not match:
+        return None
+
+    n1 = _parse_count(match.group(1), total_qty)
+    email1 = _extract_email_fragment(match.group(2) or "")
+    n2 = _parse_count(match.group(3), max(0, total_qty - n1))
+    email2 = _extract_email_fragment(match.group(4) or "")
+    if not email1 or not email2:
+        return None
+    if n1 < 1 or n2 < 1 or n1 + n2 > total_qty:
+        if n1 + n2 != total_qty:
+            n2 = max(1, total_qty - n1)
+    if n1 < 1 or n2 < 1:
+        return None
+
+    vid = item["variant_id"]
+    title = item.get("title") or ""
+    price = item.get("price")
+
+    def _line(q: int) -> dict[str, Any]:
+        return {
+            "variant_id": vid,
+            "quantity": q,
+            "title": title,
+            "price": price,
+        }
+
+    groups = [
+        _group_dict(
+            variant_ids=[vid],
+            titles=[title] if title else [],
+            line_quantities=[_line(n1)],
+        ),
+        _group_dict(
+            variant_ids=[vid],
+            titles=[title] if title else [],
+            line_quantities=[_line(n2)],
+        ),
+    ]
+    groups[0]["pending_email"] = email1
+    groups[1]["pending_email"] = email2
+    session.payment_destination_groups = groups
+    session.active_payment_group_index = 0
+    session.multi_email_payment_active = True
+    logger.info(
+        "payment_qty_split_parsed sid=%s qty=%d+%d variant=%s",
+        (session.call_sid or "")[:6],
+        n1,
+        n2,
+        vid[:8],
+    )
+    return groups
+
+
 def try_parse_multi_email_assignment(
     text: str,
     session: "SessionState",
@@ -179,6 +261,10 @@ def try_parse_multi_email_assignment(
 
     Example: "send 2 books to a at gmail dot com and the other 3 to b at yahoo dot com"
     """
+    qty_groups = try_parse_quantity_email_split(text, session)
+    if qty_groups:
+        return qty_groups
+
     items = _ledger_confirmed(session)
     if len(items) < 2:
         return None
@@ -297,6 +383,19 @@ def group_checkout_items(session: "SessionState", group: dict[str, Any] | None =
 
     if not group:
         return ledger_items
+
+    line_q = group.get("line_quantities")
+    if line_q and isinstance(line_q, list):
+        return [
+            {
+                "variant_id": row.get("variant_id") or "",
+                "quantity": max(1, int(row.get("quantity") or 1)),
+                "title": row.get("title") or "",
+                "price": row.get("price"),
+            }
+            for row in line_q
+            if row.get("variant_id")
+        ]
 
     wanted = set(group.get("variant_ids") or [])
     if not wanted:

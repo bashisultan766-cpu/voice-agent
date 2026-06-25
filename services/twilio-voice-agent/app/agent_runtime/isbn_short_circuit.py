@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.40"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.41"
 
 _META_BOOK_PHRASE_PAT = re.compile(
     r"\b(another\s+(?:book|one|\d)|need another|i need another|yeah|yep|sure|"
@@ -32,6 +32,18 @@ _ANOTHER_BOOK_INTENT_PAT = re.compile(
 )
 _TITLE_NOT_ISBN_PAT = re.compile(
     r"\b(title|newspaper|magazine|subscription|delivery|citizen|monday|sunday|weeks?|times)\b",
+    re.I,
+)
+_ORDER_SPEECH_CONTEXT = re.compile(
+    r"\b(order\s*(?:number|no\.?|#)?|order\s+status|the\s+order|this\s+order|"
+    r"shipping|shipped|fulfilled|unfulfilled|tracking|"
+    r"which\s+book|what.?s?\s+the\s+title|book\s+in\s+(?:the|this)\s+order|"
+    r"total\s+price|how\s+much)\b",
+    re.I,
+)
+_QUANTITY_COPY_PAT = re.compile(
+    r"\b(?:need\s+)?(?:\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"cop(?:y|ies)\b",
     re.I,
 )
 
@@ -127,6 +139,51 @@ def _isbn_collection_active(session: "SessionState", turn_mode: str = "") -> boo
     return bool(getattr(session, "pending_isbn_buffer", ""))
 
 
+def should_skip_isbn_digit_collection(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> bool:
+    """Do not treat order numbers or copy counts as ISBN digit streams."""
+    if (turn_mode or "").strip().lower() == "isbn":
+        return False
+    if payment_email_context_active(session, turn_mode):
+        return True
+
+    text = (caller_text or "").strip()
+    if not text:
+        return True
+    if _ORDER_SPEECH_CONTEXT.search(text):
+        return True
+    if _QUANTITY_COPY_PAT.search(text):
+        return True
+
+    try:
+        from .order_flow_state import order_intent_detected
+
+        if order_intent_detected(text):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    order_flow = getattr(session, "order_flow_status", "idle") or "idle"
+    if order_flow not in ("idle", ""):
+        return True
+
+    status = getattr(session, "commerce_flow_status", "idle") or "idle"
+    if status in (
+        "awaiting_quantity",
+        "awaiting_add_confirm",
+        "awaiting_another_book",
+        "awaiting_email_collection",
+    ):
+        if not re.search(r"\bisbn\b", text, re.I):
+            return True
+
+    return False
+
+
 def prepare_isbn_turn_context(
     session: "SessionState",
     caller_text: str,
@@ -140,6 +197,13 @@ def prepare_isbn_turn_context(
     composes the customer-facing reply from tool results.
     """
     from ..conversation.call_memory import record_isbn
+
+    if should_skip_isbn_digit_collection(session, caller_text, turn_mode=turn_mode):
+        buf = getattr(session, "pending_isbn_buffer", "") or ""
+        if buf and len(buf) < 10 and turn_mode != "isbn":
+            session.pending_isbn_buffer = ""
+        session.last_resolved_isbn_for_turn = ""
+        return None
 
     isbn, buf = resolve_spoken_isbn(
         caller_text,

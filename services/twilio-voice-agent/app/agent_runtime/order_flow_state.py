@@ -15,7 +15,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.32"
+ORDER_FLOW_VERSION = "v4.41"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_ORDER_NUMBER = "awaiting_order_number"
@@ -142,6 +142,35 @@ def order_verification_prompt(order_number: str) -> str:
         f"Thanks. For order {order_number}, please confirm the email address "
         "or phone number on the order so I can pull up the full details."
     )
+
+
+def prepare_order_turn_context(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> None:
+    """LLM-only: track order collection without bypassing the LLM for speech."""
+    text = (caller_text or "").strip()
+    if not text:
+        return
+
+    if order_intent_detected(text) and not getattr(session, "last_order_number", ""):
+        session.order_flow_status = STATUS_AWAITING_ORDER_NUMBER
+
+    if re.search(r"\border\b", text, re.I):
+        session.pending_isbn_buffer = ""
+
+    order_num = extract_order_number(text, session, turn_mode=turn_mode)
+    if not order_num and re.search(r"\border\b", text, re.I):
+        spoken_digits = "".join(c for c in text if c.isdigit())
+        if 4 <= len(spoken_digits) <= 8:
+            order_num = spoken_digits.lstrip("0") or spoken_digits
+    if order_num:
+        session.order_flow_status = STATUS_AWAITING_ORDER_VERIFICATION
+        session.pending_order_number = order_num
+        session.last_order_number = order_num
+        session.pending_isbn_buffer = ""
 
 
 def process_order_turn(session: "SessionState", caller_text: str, *, turn_mode: str = "") -> OrderTurnHint:

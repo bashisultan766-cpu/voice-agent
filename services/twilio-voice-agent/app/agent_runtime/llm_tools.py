@@ -467,12 +467,56 @@ async def _normalize_voice_intent(args: NormalizeVoiceIntentArgs, session) -> st
 
 
 async def _get_order(args: GetOrderArgs, session) -> str:
-    return await _st.GetOrder(
+    order_num = (args.order_number or "").lstrip("#").strip()
+    cache = getattr(session, "turn_prefetch_cache", None) or {} if session else {}
+    order_wrap = cache.get("order")
+    if isinstance(order_wrap, dict) and order_num:
+        cached_num = str(
+            order_wrap.get("order_number")
+            or (order_wrap.get("order") or {}).get("order_number")
+            or ""
+        ).lstrip("#")
+        if cached_num and cached_num == order_num:
+            order = order_wrap.get("order") or {}
+            if order.get("found"):
+                logger.info(
+                    "get_order_prefetch_hit sid=%s order=%s",
+                    (getattr(session, "call_sid", "") or "")[:6],
+                    order_num,
+                )
+                if session is not None:
+                    session.order_context = (
+                        order.get("suggested_response")
+                        or order_wrap.get("suggested_response")
+                        or ""
+                    )
+                return json.dumps(order)
+
+    raw = await _st.GetOrder(
         order_number=args.order_number or None,
         email=args.email or None,
         phone=args.phone or None,
         session=session,
     )
+    if session is not None:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+        if isinstance(payload, dict) and payload.get("found"):
+            parts = [
+                f"Order {payload.get('order_number')}: "
+                f"{payload.get('status')}, {payload.get('fulfillment_status')}",
+            ]
+            items = payload.get("items") or []
+            if items:
+                parts.append("Items: " + "; ".join(items))
+            if payload.get("total"):
+                parts.append(f"Total: {payload['total']}")
+            elif payload.get("subtotal"):
+                parts.append(f"Subtotal: {payload['subtotal']}")
+            session.order_context = " ".join(parts)
+    return raw
 
 
 async def _catalog_search(args: CatalogSearchArgs, session) -> str:
@@ -487,6 +531,22 @@ async def _catalog_search(args: CatalogSearchArgs, session) -> str:
             (args.query or "")[:40],
             resolved_isbn,
         )
+
+    cache = getattr(session, "turn_prefetch_cache", None) or {} if session else {}
+    cached = cache.get("catalog")
+    if isinstance(cached, dict) and cached.get("results"):
+        cache_q = (resolved_isbn or query or "").strip()
+        if cache_q and len(cache_q) >= 10:
+            logger.info(
+                "catalog_search_prefetch_hit sid=%s query=%s",
+                (getattr(session, "call_sid", "") or "")[:6],
+                cache_q[:13],
+            )
+            from .commerce_flow_state import maybe_stage_from_search_payload
+
+            maybe_stage_from_search_payload(session, cached)
+            return json.dumps(cached)
+
     raw = await _st.SureShotCatalogSearch(query=query, limit=args.limit)
     try:
         payload = json.loads(raw)

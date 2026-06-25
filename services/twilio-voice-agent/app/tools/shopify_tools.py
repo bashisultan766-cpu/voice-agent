@@ -356,8 +356,10 @@ async def lookup_order(
     if session:
         if not email and session.verified_email and session.caller_email:
             email = session.caller_email
-        if not phone and session.verified_phone:
-            phone = session.from_number
+        inbound = (getattr(session, "from_number", "") or "").strip()
+        if not phone and inbound:
+            if getattr(session, "verified_phone", False) or order_number:
+                phone = inbound
 
     try:
         parts = []
@@ -403,22 +405,39 @@ async def lookup_order(
             "fulfillment_status": node["displayFulfillmentStatus"],
         }
 
-        if verified:
+        line_edges = node.get("lineItems", {}).get("edges", [])
+        if line_edges:
             result["items"] = [
                 f"{e['node']['quantity']}x {e['node']['title']}"
-                for e in node.get("lineItems", {}).get("edges", [])
+                for e in line_edges
             ]
+            result["book_titles"] = [e["node"]["title"] for e in line_edges]
+
+        subtotal = node.get("subtotalPriceSet", {}).get("shopMoney", {})
+        if subtotal.get("amount") is not None:
+            result["subtotal"] = (
+                f"{subtotal.get('amount', '?')} {subtotal.get('currencyCode', '')}"
+            )
+        shipping_money = node.get("totalShippingPriceSet", {}).get("shopMoney", {})
+        if shipping_money.get("amount") is not None:
+            result["shipping"] = (
+                f"{shipping_money.get('amount', '?')} {shipping_money.get('currencyCode', '')}"
+            )
+        total_money = node.get("totalPriceSet", {}).get("shopMoney", {})
+        if total_money.get("amount") is not None:
+            result["total"] = (
+                f"{total_money.get('amount', '?')} {total_money.get('currencyCode', '')}"
+            )
+
+        if verified:
             result["note"] = node.get("note") or ""
             result["tags"] = node.get("tags") or []
             result["custom_attributes"] = {
                 a.get("key", ""): a.get("value", "")
                 for a in (node.get("customAttributes") or [])
             }
-            subtotal = node.get("subtotalPriceSet", {}).get("shopMoney", {})
-            result["subtotal"] = f"{subtotal.get('amount', '?')} {subtotal.get('currencyCode', '')}"
-            shipping = node.get("totalShippingPriceSet", {}).get("shopMoney", {})
-            result["shipping"] = f"{shipping.get('amount', '?')} {shipping.get('currencyCode', '')}"
-            result["subtotal_before_shipping"] = result["subtotal"]
+            if result.get("subtotal"):
+                result["subtotal_before_shipping"] = result["subtotal"]
             tracking = (node.get("fulfillments") or [{}])[0]
             tracking_info = (tracking.get("trackingInfo") or [{}])[0] if tracking else {}
             result["tracking_number"] = tracking_info.get("number")
@@ -452,11 +471,15 @@ async def lookup_order(
                 f"Order {node['name']} is {node['displayFinancialStatus']} "
                 f"with fulfillment status {node['displayFulfillmentStatus']}."
             ]
+            if result.get("items"):
+                parts.append("Line items: " + ", ".join(result["items"]) + ".")
             if result.get("subtotal"):
                 parts.append(
                     f"Subtotal before shipping is {result['subtotal']}. "
-                    f"Shipping was {result['shipping']}."
+                    f"Shipping was {result.get('shipping', 'unknown')}."
                 )
+            if result.get("total"):
+                parts.append(f"Order total is {result['total']}.")
             if result.get("tracking_number"):
                 parts.append(f"Tracking number is {result['tracking_number']}.")
             if card_last4:
@@ -467,6 +490,18 @@ async def lookup_order(
             if session:
                 session.verified_email = bool(email)
                 session.verified_phone = bool(phone)
+        else:
+            parts = [
+                f"Order {node['name']} is {node['displayFinancialStatus']} "
+                f"with fulfillment status {node['displayFulfillmentStatus']}."
+            ]
+            if result.get("items"):
+                parts.append("Line items: " + ", ".join(result["items"]) + ".")
+            if result.get("total"):
+                parts.append(f"Order total is {result['total']}.")
+            elif result.get("subtotal"):
+                parts.append(f"Subtotal before shipping is {result['subtotal']}.")
+            result["suggested_response"] = " ".join(parts)
 
         return json.dumps(result)
 
@@ -1560,6 +1595,8 @@ async def CalculatePricing(
         "order_number": result.get("order_number"),
         "subtotal": result.get("subtotal"),
         "shipping": result.get("shipping"),
+        "total": result.get("total"),
+        "items": result.get("items"),
         "note": "Subtotal is before shipping. Subtotal does not include shipping.",
     }
     return json.dumps(pricing)
