@@ -15,9 +15,10 @@ if [[ ! -d .git ]]; then
   exit 1
 fi
 
-echo "==> git fetch + pull --ff-only origin $BRANCH"
+echo "==> git fetch + checkout origin/$BRANCH"
 git fetch origin "$BRANCH"
-git pull --ff-only origin "$BRANCH"
+git checkout -B "$BRANCH" FETCH_HEAD
+git reset --hard FETCH_HEAD
 echo "    branch=$(git rev-parse --abbrev-ref HEAD) commit=$(git rev-parse --short HEAD)"
 git log -1 --oneline
 

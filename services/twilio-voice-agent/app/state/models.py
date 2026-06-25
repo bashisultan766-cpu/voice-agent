@@ -208,6 +208,7 @@ class SessionState:
     commerce_pending_candidate: dict[str, Any] = field(default_factory=dict)
     commerce_pending_quantity: int = 0
     commerce_allow_add: bool = False
+    commerce_last_catalog_results: list[dict[str, Any]] = field(default_factory=list)
     last_confirmed_product: dict[str, Any] = field(default_factory=dict)
     awaiting_product_confirmation: bool = False
     # v4.25 — tool progress + interrupt coordination

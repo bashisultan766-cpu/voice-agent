@@ -155,7 +155,7 @@ def validate_runtime_identity(identity: dict[str, Any]) -> list[str]:
         failures.append("tool_progress_disabled")
     if identity.get("llm_only_final_output") and identity.get("openai_model") != "gpt-4o":
         failures.append(f"openai_model_weak={identity.get('openai_model')}")
-    if identity.get("voice_sales_flow_version") != "v4.43":
+    if identity.get("voice_sales_flow_version") != "v4.44":
         failures.append(f"voice_sales_flow_version={identity.get('voice_sales_flow_version')}")
     if not identity.get("process_payment_turn_imported"):
         failures.append("process_payment_turn_missing")

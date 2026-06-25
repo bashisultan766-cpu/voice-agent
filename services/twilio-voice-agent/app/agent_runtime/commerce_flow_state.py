@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.43"
+COMMERCE_FLOW_VERSION = "v4.44"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -100,6 +100,10 @@ _QUANTITY_PAT = re.compile(
     r"\b(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten|"
     r"eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
     r"hundred|a hundred|one hundred)(?:\s+hundred)?\s*(?:cop(?:y|ies)|books?)?\b",
+    re.IGNORECASE,
+)
+_PRICE_SELECT_PAT = re.compile(
+    r"(?:\$|\b)(\d{1,4})(?:[.,]\d{2})?\s*(?:dollars?|bucks?|usd)?\b",
     re.IGNORECASE,
 )
 
@@ -189,6 +193,58 @@ def _parse_quantity(text: str) -> int | None:
     return parse_spoken_quantity(text)
 
 
+def _parse_price_amount(text: str) -> float | None:
+    """Parse a spoken dollar amount (e.g. '11 dollars', '$9.99')."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    m = _PRICE_SELECT_PAT.search(t)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _price_matches(product_price: str, amount: float) -> bool:
+    raw = (product_price or "").replace("$", "").replace(",", "").strip()
+    if not raw:
+        return False
+    try:
+        return abs(float(raw) - amount) < 0.02
+    except ValueError:
+        return False
+
+
+def _try_apply_variant_price_selection(session: "SessionState", text: str) -> bool:
+    """When catalog returned multiple prices, restage the variant the caller picked."""
+    results = list(getattr(session, "commerce_last_catalog_results", None) or [])
+    if len(results) < 2:
+        return False
+    amount = _parse_price_amount(text)
+    if amount is None:
+        return False
+    for hit in results:
+        if _price_matches(str(hit.get("price") or ""), amount):
+            stage_product_candidate(session, hit)
+            logger.info(
+                "commerce_variant_selected sid=%s price=%.2f title=%r",
+                (getattr(session, "call_sid", "") or "")[:6],
+                amount,
+                _title(hit),
+            )
+            return True
+    return False
+
+
+def _unlock_add_after_quantity(session: "SessionState", qty: int) -> None:
+    """LLM-only: spoken quantity is enough confirmation to call add_to_cart."""
+    session.commerce_pending_quantity = qty
+    session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
+    session.commerce_allow_add = True
+
+
 def another_book_after_add_prompt(title: str = "") -> str:
     return "Another book?"
 
@@ -245,20 +301,25 @@ def advance_commerce_state_silent(session: "SessionState", caller_text: str) -> 
         return
 
     if status == STATUS_AWAITING_QUANTITY:
-        qty = _parse_quantity(text)
-        if qty:
-            session.commerce_pending_quantity = qty
-            session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
-        if _confirms_pending_add(text):
-            if not session.commerce_pending_quantity:
-                session.commerce_pending_quantity = qty or _parse_quantity(text) or 1
-            session.commerce_allow_add = True
+        applied_price = _try_apply_variant_price_selection(session, text)
+        if not applied_price:
+            qty = _parse_quantity(text)
+            if qty:
+                _unlock_add_after_quantity(session, qty)
+            elif _confirms_pending_add(text):
+                session.commerce_pending_quantity = _parse_quantity(text) or 1
+                session.commerce_allow_add = True
 
     elif status == STATUS_AWAITING_ADD_CONFIRM:
-        if _confirms_pending_add(text):
-            if not session.commerce_pending_quantity:
-                session.commerce_pending_quantity = 1
-            session.commerce_allow_add = True
+        applied_price = _try_apply_variant_price_selection(session, text)
+        if not applied_price:
+            qty = _parse_quantity(text)
+            if qty:
+                _unlock_add_after_quantity(session, qty)
+            elif _confirms_pending_add(text):
+                if not session.commerce_pending_quantity:
+                    session.commerce_pending_quantity = 1
+                session.commerce_allow_add = True
 
     elif status == STATUS_AWAITING_BOOK_CONFIRM and _confirms_pending_add(text):
         session.commerce_flow_status = STATUS_AWAITING_QUANTITY
@@ -310,7 +371,15 @@ def maybe_stage_from_search_payload(session: "SessionState | None", payload: dic
     results = payload.get("results") or []
     if not results:
         return
-    top = normalize_catalog_hit(results[0] if isinstance(results[0], dict) else {})
+    normalized = [
+        normalize_catalog_hit(r)
+        for r in results
+        if isinstance(r, dict)
+    ]
+    hits = [h for h in normalized if h.get("variant_id")]
+    if hits:
+        session.commerce_last_catalog_results = hits
+    top = hits[0] if hits else {}
     if top.get("variant_id"):
         stage_product_candidate(session, top)
 
