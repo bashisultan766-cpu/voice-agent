@@ -54,35 +54,158 @@ def build_payment_email_subject(brand_name: str = "SureShot Books") -> str:
 def build_payment_email_plain(
     checkout_url: str,
     brand_name: str = "SureShot Books",
+    *,
+    company_name: str = "SureShot Books LLC",
+    order_lines: list[dict] | None = None,
+    subtotal_label: str = "",
+    shipping_note: str = "Shipping is calculated separately on the secure payment page.",
 ) -> str:
+    lines_block = _format_lines_plain(order_lines or [])
+    subtotal_line = f"\n{subtotal_label}\n" if subtotal_label else "\n"
     return (
         f"Hello,\n\n"
-        f"Here is your secure {brand_name} payment link for the books you selected:\n\n"
-        f"{checkout_url}\n\n"
-        f"If you did not request this, you can ignore this email.\n\n"
-        f"Thank you,\n"
-        f"{brand_name}"
+        f"Thank you for ordering from {company_name}.\n\n"
+        f"Your order:\n{lines_block}{subtotal_line}"
+        f"{shipping_note}\n\n"
+        f"Complete your secure payment here:\n{checkout_url}\n\n"
+        f"On the payment page you can enter inmate and facility details.\n\n"
+        f"Thank you,\n{brand_name}"
     )
+
+
+def _format_lines_plain(order_lines: list[dict]) -> str:
+    if not order_lines:
+        return "- Your selected books\n"
+    rows = []
+    for line in order_lines:
+        qty = int(line.get("quantity") or 1)
+        title = line.get("title") or "Book"
+        price = line.get("price") or ""
+        row = f"- {qty}x {title}"
+        if price:
+            row += f" — {price} each"
+        rows.append(row)
+    return "\n".join(rows) + "\n"
+
+
+def _money_subtotal(order_lines: list[dict]) -> str:
+    total = 0.0
+    for line in order_lines:
+        try:
+            unit = float(str(line.get("price") or "0").replace("$", "").strip())
+            total += unit * int(line.get("quantity") or 1)
+        except ValueError:
+            continue
+    return f"${total:.2f}" if total > 0 else ""
 
 
 def build_payment_email_html(
     checkout_url: str,
     brand_name: str = "SureShot Books",
+    *,
+    company_name: str = "SureShot Books LLC",
+    order_lines: list[dict] | None = None,
+    subtotal_label: str = "",
+    shipping_note: str = "Shipping is calculated separately at checkout.",
 ) -> str:
+    rows_html = ""
+    for line in order_lines or []:
+        qty = int(line.get("quantity") or 1)
+        title = line.get("title") or "Book"
+        price = line.get("price") or ""
+        unit = f"${price}" if price and not str(price).startswith("$") else (price or "")
+        line_total = ""
+        try:
+            line_total_val = float(str(price).replace("$", "").strip()) * qty
+            line_total = f"${line_total_val:.2f}"
+        except (ValueError, TypeError):
+            line_total = ""
+        rows_html += (
+            f"<tr>"
+            f"<td style='padding:8px;border-bottom:1px solid #eee'>{qty}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #eee'>{title}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #eee'>{unit}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #eee;text-align:right'>"
+            f"{line_total}</td></tr>"
+        )
+    if not rows_html:
+        rows_html = (
+            "<tr><td colspan='4' style='padding:8px'>Your selected books</td></tr>"
+        )
+    subtotal_html = (
+        f"<p style='margin:16px 0 8px;font-weight:bold'>Subtotal (before shipping): "
+        f"{subtotal_label}</p>"
+        if subtotal_label
+        else ""
+    )
     return f"""<!DOCTYPE html>
 <html>
-<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
-  <p>Hello,</p>
-  <p>Here is your secure {brand_name} payment link for the books you selected:</p>
-  <p><a href="{checkout_url}">{checkout_url}</a></p>
-  <p>If you did not request this, you can ignore this email.</p>
-  <p>Thank you,<br>{brand_name}</p>
+<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:24px;color:#222;background:#f9f9f9">
+  <div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e5e5e5">
+    <h1 style="margin:0 0 4px;font-size:22px;color:#1a3a5c">{company_name}</h1>
+    <p style="margin:0 0 20px;color:#666">Secure payment for your SureShot Books order</p>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:12px">
+      <thead>
+        <tr style="background:#f0f4f8">
+          <th style="padding:8px;text-align:left">Qty</th>
+          <th style="padding:8px;text-align:left">Item</th>
+          <th style="padding:8px;text-align:left">Price</th>
+          <th style="padding:8px;text-align:right">Line total</th>
+        </tr>
+      </thead>
+      <tbody>{rows_html}</tbody>
+    </table>
+    {subtotal_html}
+    <p style="margin:8px 0 16px;color:#555">{shipping_note}</p>
+    <p style="text-align:center;margin:28px 0">
+      <a href="{checkout_url}" style="background:#1a6b3c;color:#fff;text-decoration:none;
+        padding:14px 28px;border-radius:6px;font-size:16px;font-weight:bold;
+        display:inline-block">Complete Secure Payment</a>
+    </p>
+    <p style="font-size:12px;color:#888;text-align:center">
+      You will enter inmate and facility details on the payment page.
+    </p>
+    <p style="margin-top:24px">Thank you,<br><strong>{brand_name}</strong></p>
+  </div>
 </body>
 </html>"""
 
-
-def validate_payment_email_content(
+def build_payment_email_bodies(
+    checkout_url: str,
     *,
+    brand_name: str = "SureShot Books",
+    company_name: str = "SureShot Books LLC",
+    order_lines: list[dict] | None = None,
+) -> tuple[str, str, str]:
+    """Return (subject, plain, html) with line items and subtotal."""
+    lines = order_lines or []
+    subtotal = _money_subtotal(lines)
+    subtotal_label = subtotal or "see payment page"
+    shipping_note = (
+        "Shipping is calculated separately on the secure payment page — "
+        "it is not included in the subtotal above."
+    )
+    subject = build_payment_email_subject(brand_name)
+    plain = build_payment_email_plain(
+        checkout_url,
+        brand_name,
+        company_name=company_name,
+        order_lines=lines,
+        subtotal_label=f"Subtotal before shipping: {subtotal_label}",
+        shipping_note=shipping_note,
+    )
+    html = build_payment_email_html(
+        checkout_url,
+        brand_name,
+        company_name=company_name,
+        order_lines=lines,
+        subtotal_label=subtotal_label,
+        shipping_note=shipping_note,
+    )
+    return subject, plain, html
+
+
+def validate_payment_email_content(    *,
     subject: str,
     plain_body: str,
     html_body: str = "",

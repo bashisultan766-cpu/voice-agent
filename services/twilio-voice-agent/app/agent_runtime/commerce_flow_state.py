@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.29"
+COMMERCE_FLOW_VERSION = "v4.30"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -77,7 +77,9 @@ _ADD_INTENT_PAT = re.compile(
     re.IGNORECASE,
 )
 _QUANTITY_PAT = re.compile(
-    r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:cop(?:y|ies)|books?)?\b",
+    r"\b(\d{1,4}|one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+    r"hundred|a hundred|one hundred)(?:\s+hundred)?\s*(?:cop(?:y|ies)|books?)?\b",
     re.IGNORECASE,
 )
 
@@ -141,22 +143,11 @@ def add_confirm_prompt(product: dict[str, Any], quantity: int = 1) -> str:
 
 
 def _parse_quantity(text: str) -> int | None:
-    t = (text or "").strip().lower()
-    if _is_affirmative(t):
+    from ..cart.quantity import parse_spoken_quantity
+
+    if _is_affirmative((text or "").strip()):
         return 1
-    m = _QUANTITY_PAT.search(t)
-    if not m:
-        return None
-    token = m.group(1).lower()
-    words = {
-        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
-    }
-    if token in words:
-        return words[token]
-    if token.isdigit():
-        return max(1, int(token))
-    return None
+    return parse_spoken_quantity(text)
 
 
 def another_book_after_add_prompt(title: str) -> str:

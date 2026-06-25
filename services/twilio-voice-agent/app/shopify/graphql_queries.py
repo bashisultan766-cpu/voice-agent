@@ -87,13 +87,18 @@ query LookupOrders($query: String!, $first: Int!) {
         displayFulfillmentStatus
         email
         phone
+        customer {
+          firstName
+          lastName
+          email
+        }
         subtotalPriceSet {
           shopMoney { amount currencyCode }
         }
         totalShippingPriceSet {
           shopMoney { amount currencyCode }
         }
-        lineItems(first: 10) {
+        lineItems(first: 20) {
           edges {
             node {
               title
@@ -103,6 +108,16 @@ query LookupOrders($query: String!, $first: Int!) {
         }
         fulfillments(first: 1) {
           trackingInfo { number url }
+        }
+        transactions(first: 5) {
+          gateway
+          status
+          paymentDetails {
+            ... on CardPaymentDetails {
+              number
+              company
+            }
+          }
         }
         cancelledAt
         canMarkAsPaid
@@ -190,11 +205,27 @@ query GetOrderWithRefunds($id: ID!) {
     name
     displayFinancialStatus
     displayFulfillmentStatus
+    email
+    customer {
+      firstName
+      lastName
+      email
+    }
     cancelledAt
     note
     tags
     totalShippingPriceSet {
       shopMoney { amount currencyCode }
+    }
+    transactions(first: 5) {
+      gateway
+      status
+      paymentDetails {
+        ... on CardPaymentDetails {
+          number
+          company
+        }
+      }
     }
     refunds {
       id
@@ -222,6 +253,16 @@ query GetOrderWithRefunds($id: ID!) {
       orderAdjustments(first: 5) {
         kind
         amountSet { shopMoney { amount currencyCode } }
+      }
+      transactions(first: 3) {
+        gateway
+        status
+        paymentDetails {
+          ... on CardPaymentDetails {
+            number
+            company
+          }
+        }
       }
     }
   }

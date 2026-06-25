@@ -949,17 +949,9 @@ def _extract_phone(text: str) -> Optional[str]:
 
 
 def _extract_quantity(text: str) -> Optional[int]:
-    for pat in (_QTY_UNIT_PAT, _QTY_ACTION_PAT):
-        m = pat.search(text)
-        if m:
-            val = m.group(1).lower()
-            if val.isdigit():
-                n = int(val)
-                if 1 <= n <= 99:
-                    return n
-            elif val in _SPOKEN_NUMS:
-                return _SPOKEN_NUMS[val]
-    return None
+    from ..cart.quantity import parse_spoken_quantity
+
+    return parse_spoken_quantity(text)
 
 
 def _extract_facility(text: str) -> Optional[str]:

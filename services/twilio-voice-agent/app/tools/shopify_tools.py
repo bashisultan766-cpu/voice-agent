@@ -382,6 +382,20 @@ async def lookup_order(
         if session and order_number:
             session.last_order_number = node["name"]
 
+        from ..shopify.order_privacy import (
+            card_last4_from_transactions,
+            customer_display_name,
+            mask_email_for_voice,
+        )
+
+        order_email = (node.get("email") or "").strip()
+        customer = node.get("customer") or {}
+        if not order_email:
+            order_email = (customer.get("email") or "").strip()
+        customer_name = customer_display_name(customer)
+        transactions = node.get("transactions") or []
+        card_last4 = card_last4_from_transactions(transactions)
+
         result: dict = {
             "found": True,
             "order_number": node["name"],
@@ -398,10 +412,33 @@ async def lookup_order(
             result["subtotal"] = f"{subtotal.get('amount', '?')} {subtotal.get('currencyCode', '')}"
             shipping = node.get("totalShippingPriceSet", {}).get("shopMoney", {})
             result["shipping"] = f"{shipping.get('amount', '?')} {shipping.get('currencyCode', '')}"
+            result["subtotal_before_shipping"] = result["subtotal"]
             tracking = (node.get("fulfillments") or [{}])[0]
             tracking_info = (tracking.get("trackingInfo") or [{}])[0] if tracking else {}
             result["tracking_number"] = tracking_info.get("number")
             result["tracking_url"] = tracking_info.get("url")
+            if customer_name:
+                result["customer_name"] = customer_name
+            if order_email:
+                result["email_masked"] = mask_email_for_voice(order_email)
+            if card_last4:
+                result["payment_card_last4"] = card_last4
+            parts = [
+                f"Order {node['name']} is {node['displayFinancialStatus']} "
+                f"with fulfillment status {node['displayFulfillmentStatus']}."
+            ]
+            if result.get("subtotal"):
+                parts.append(
+                    f"Subtotal before shipping is {result['subtotal']}. "
+                    f"Shipping was {result['shipping']}."
+                )
+            if result.get("tracking_number"):
+                parts.append(f"Tracking number is {result['tracking_number']}.")
+            if card_last4:
+                parts.append(f"Payment card on file ends in {card_last4}.")
+            if order_email:
+                parts.append(f"Order email on file is {result['email_masked']}.")
+            result["suggested_response"] = " ".join(parts)
             if session:
                 session.verified_email = bool(email)
                 session.verified_phone = bool(phone)
@@ -466,6 +503,19 @@ async def get_refund_status(
         order = refund_data.get("data", {}).get("order", {})
         refunds = order.get("refunds") or []
 
+        from ..shopify.order_privacy import (
+            card_last4_from_transactions,
+            customer_display_name,
+            mask_email_for_voice,
+        )
+
+        order_email = (order.get("email") or "").strip()
+        customer = order.get("customer") or {}
+        if not order_email:
+            order_email = (customer.get("email") or "").strip()
+        customer_name = customer_display_name(customer)
+        card_last4 = card_last4_from_transactions(order.get("transactions") or [])
+
         if session:
             session.verified_email = bool(email)
             session.verified_phone = bool(phone)
@@ -490,18 +540,36 @@ async def get_refund_status(
                 for t in (r.get("transactions") or [])
                 if t.get("gateway")
             })
+            r_last4 = card_last4_from_transactions(r.get("transactions") or []) or card_last4
             refund_summaries.append({
                 "date": (r.get("createdAt") or "")[:10],
                 "amount": f"{total.get('amount', '?')} {total.get('currencyCode', '')}",
                 "items": items,
                 "refunded_via": gateways,
+                "payment_card_last4": r_last4 or "",
             })
+
+        latest = refund_summaries[-1]
+        email_masked = mask_email_for_voice(order_email) if order_email else ""
+        suggested = (
+            f"Your refund of {latest['amount']} was processed on {latest['date']}."
+        )
+        if latest.get("payment_card_last4"):
+            suggested += f" It was returned to the card ending in {latest['payment_card_last4']}."
+        if email_masked:
+            suggested += f" Confirmation was sent to {email_masked}."
+        if customer_name:
+            suggested = f"{customer_name}, {suggested}"
 
         return json.dumps({
             "found": True,
             "order_number": order_node["name"],
             "refund_count": len(refund_summaries),
             "refunds": refund_summaries,
+            "email_masked": email_masked,
+            "payment_card_last4": latest.get("payment_card_last4") or card_last4,
+            "customer_name": customer_name,
+            "suggested_response": suggested,
         })
 
     except Exception as exc:
@@ -645,6 +713,28 @@ async def create_checkout_link(
     except Exception as exc:
         logger.error("create_checkout_link failed: %s", exc)
         return json.dumps({"success": False, "error": "Could not create checkout link at this time."})
+
+
+def _checkout_lines_for_email(session: Optional["SessionState"]) -> list[dict]:
+    """Confirmed cart lines for branded payment email."""
+    if session is None:
+        return []
+    try:
+        from ..cart.session import get_ledger
+        from ..payment.payment_destination_groups import group_checkout_items, refresh_payment_groups_from_cart
+
+        refresh_payment_groups_from_cart(session)
+        items = group_checkout_items(session) or get_ledger(session).to_checkout_items()
+        return [
+            {
+                "title": i.get("title") or "Book",
+                "quantity": int(i.get("quantity") or 1),
+                "price": i.get("price") or "",
+            }
+            for i in items
+        ]
+    except Exception:  # noqa: BLE001
+        return []
 
 
 async def send_payment_link_email_tool(
@@ -794,6 +884,7 @@ async def send_payment_link_email_tool(
         product_summary=session.last_product_title or "your selected items",
         caller_name=session.caller_name or None,
         order_or_draft_id=session.pending_draft_order_id or None,
+        order_lines=_checkout_lines_for_email(session),
     )
 
     if result.get("success"):

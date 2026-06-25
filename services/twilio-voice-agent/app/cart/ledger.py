@@ -205,8 +205,33 @@ class CartLedger:
         confirmed = self.confirmed_items
         if not confirmed:
             return "No books confirmed in your cart yet."
-        titles = ", ".join(i.title for i in confirmed if i.title)
-        return f"{len(confirmed)} book{'s' if len(confirmed) != 1 else ''} in cart: {titles}."
+        total_copies = sum(max(1, int(i.quantity or 1)) for i in confirmed)
+        lines: list[str] = []
+        subtotal = 0.0
+        for i in confirmed:
+            qty = max(1, int(i.quantity or 1))
+            copy_word = "copy" if qty == 1 else "copies"
+            price_str = ""
+            if i.price:
+                try:
+                    unit = float(str(i.price).replace("$", "").strip())
+                    line_total = unit * qty
+                    subtotal += line_total
+                    price_str = f" at ${unit:.2f} each"
+                except ValueError:
+                    price_str = f" at {i.price} each"
+            lines.append(f"{qty} {copy_word} of {i.title}{price_str}")
+        detail = "; ".join(lines)
+        summary = (
+            f"{len(confirmed)} title{'s' if len(confirmed) != 1 else ''}, "
+            f"{total_copies} total cop{'y' if total_copies == 1 else 'ies'}: {detail}."
+        )
+        if subtotal > 0:
+            summary += (
+                f" Subtotal before shipping is ${subtotal:.2f}. "
+                "Shipping is calculated separately on the payment page."
+            )
+        return summary
 
     @classmethod
     def from_session(cls, cart_items: list, isbn_history: list | None = None,

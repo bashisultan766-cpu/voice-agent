@@ -592,6 +592,18 @@ def build_resume_snapshot(session: "SessionState") -> dict:
             i for i in (getattr(session, "cart_items", []) or [])
             if isinstance(i, dict) and i.get("confirmation_status") == "confirmed"
         ]),
+        "cart_items": [
+            {
+                "title": i.get("title", ""),
+                "isbn": i.get("isbn", ""),
+                "variant_id": i.get("variant_id", ""),
+                "quantity": int(i.get("quantity") or 1),
+                "price": i.get("price", ""),
+                "confirmation_status": i.get("confirmation_status", ""),
+            }
+            for i in (getattr(session, "cart_items", []) or [])
+            if isinstance(i, dict) and i.get("confirmation_status") == "confirmed"
+        ],
         "payment_flow_status": pfs,
         "has_checkout_url": bool(getattr(session, "pending_checkout_url", "")),
         "email_state": state.email_state,
@@ -675,6 +687,18 @@ def check_and_apply_resume(
 
     if snapshot.get("last_order_number"):
         new_session.last_order_number = snapshot["last_order_number"]
+
+    cart_restore = snapshot.get("cart_items") or []
+    if cart_restore:
+        new_session.cart_items = list(cart_restore)
+        from ..payment.payment_destination_groups import refresh_payment_groups_from_cart
+
+        refresh_payment_groups_from_cart(new_session)
+        logger.info(
+            "call_resume_cart_restored sid=%s lines=%d",
+            new_session.call_sid[:6],
+            len(cart_restore),
+        )
 
     new_session.is_resumed_call = True
     new_session.resume_greeting_pending = True

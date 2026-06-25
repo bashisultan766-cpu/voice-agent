@@ -14,9 +14,7 @@ import httpx
 
 from ..config import get_settings
 from ..email.deliverability import (
-    build_payment_email_html,
-    build_payment_email_plain,
-    build_payment_email_subject,
+    build_payment_email_bodies,
     validate_payment_email_content,
 )
 
@@ -44,6 +42,8 @@ async def send_payment_link_email(
     product_summary: str,
     caller_name: Optional[str] = None,
     order_or_draft_id: Optional[str] = None,
+    *,
+    order_lines: Optional[list[dict]] = None,
 ) -> dict:
     """
     Send a payment link email via Resend.
@@ -67,6 +67,7 @@ async def send_payment_link_email(
         }
 
     brand = str(getattr(settings, "RESEND_BRAND_NAME", None) or "SureShot Books")
+    company = str(getattr(settings, "RESEND_COMPANY_NAME", None) or "SureShot Books LLC")
     from_name = settings.RESEND_FROM_NAME or brand
     from_addr = (
         f"{from_name} <{settings.RESEND_FROM_EMAIL}>"
@@ -74,9 +75,12 @@ async def send_payment_link_email(
         else settings.RESEND_FROM_EMAIL
     )
 
-    subject = build_payment_email_subject(brand)
-    plain_body = build_payment_email_plain(checkout_url, brand)
-    html_body = build_payment_email_html(checkout_url, brand)
+    subject, plain_body, html_body = build_payment_email_bodies(
+        checkout_url,
+        brand_name=brand,
+        company_name=company,
+        order_lines=order_lines,
+    )
 
     report = validate_payment_email_content(
         subject=subject,
