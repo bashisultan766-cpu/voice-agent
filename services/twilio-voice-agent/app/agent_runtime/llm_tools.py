@@ -316,7 +316,7 @@ async def _add_to_cart(args: AddToCartArgs, session) -> str:
 
         titles = view.get("confirmed_titles") or []
         if titles:
-            payload["customer_message"] = another_book_after_add_prompt(titles[-1])
+            payload["customer_message"] = another_book_after_add_prompt()
     return json.dumps(payload)
 
 

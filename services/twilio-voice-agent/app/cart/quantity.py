@@ -8,7 +8,7 @@ from typing import Optional
 MAX_LINE_QUANTITY = 500
 
 _DIGIT_QTY = re.compile(
-    r"\b(\d{1,4})\s*(?:cop(?:y|ies)|books?|pcs?|pieces?)?\b",
+    r"\b(\d{1,4})\s*(?:cop(?:y|ies)|coffee|books?|pcs?|pieces?)?\b",
     re.I,
 )
 

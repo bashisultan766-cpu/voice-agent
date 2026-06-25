@@ -18,7 +18,49 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.31"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.37"
+
+_TITLE_NOT_ISBN_PAT = re.compile(
+    r"\b(title|newspaper|magazine|subscription|delivery|citizen|monday|sunday|weeks?)\b",
+    re.I,
+)
+
+
+def looks_like_book_title_request(text: str) -> bool:
+    """Heuristic: spoken title/periodical — not an ISBN digit stream."""
+    expanded = _expand_text(text or "")
+    lower = expanded.lower().strip()
+    if not lower:
+        return False
+    if re.search(r"\bisbn\b", lower):
+        return False
+    if re.search(r"\b(it'?s a title|the title is|another title|book title)\b", lower):
+        return True
+    letters = sum(1 for c in lower if c.isalpha())
+    digits = sum(1 for c in lower if c.isdigit())
+    words = [w for w in re.split(r"\s+", lower) if w]
+    if len(words) >= 4 and letters >= 12 and digits <= 2:
+        return True
+    if _TITLE_NOT_ISBN_PAT.search(lower) and letters > digits * 2:
+        return True
+    return False
+
+
+def should_skip_isbn_short_circuit(
+    session: "SessionState",
+    text: str,
+    *,
+    turn_mode: str = "",
+) -> bool:
+    if turn_mode == "isbn":
+        return False
+    status = getattr(session, "commerce_flow_status", "idle") or "idle"
+    if status == "awaiting_another_book" and looks_like_book_title_request(text):
+        session.pending_isbn_buffer = ""
+        return True
+    if looks_like_book_title_request(text) and not getattr(session, "pending_isbn_buffer", ""):
+        return True
+    return False
 
 
 @dataclass
@@ -149,6 +191,9 @@ async def try_isbn_short_circuit(
     """
     Run catalog search on a resolved ISBN and return a spoken reply, or None.
     """
+    if should_skip_isbn_short_circuit(session, caller_text, turn_mode=turn_mode):
+        return None
+
     from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
     from .llm_tools import CatalogSearchArgs, _catalog_search
     from ..conversation.call_memory import record_isbn
@@ -219,6 +264,56 @@ async def try_isbn_short_circuit(
             "Could you double-check the number, or give me the title or author instead?"
         ),
         isbn=isbn,
+        tool_results=tool_results,
+    )
+
+
+async def try_title_catalog_short_circuit(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[IsbnShortCircuitResult]:
+    """Catalog search when the caller speaks a title (not digits) for the next book."""
+    if turn_mode == "isbn":
+        return None
+    status = getattr(session, "commerce_flow_status", "idle") or "idle"
+    if status != "awaiting_another_book":
+        return None
+    if not looks_like_book_title_request(caller_text):
+        return None
+
+    from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
+    from .llm_tools import CatalogSearchArgs, _catalog_search
+
+    session.pending_isbn_buffer = ""
+    raw = await _catalog_search(
+        CatalogSearchArgs(query=caller_text.strip(), limit=5),
+        session,
+    )
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = {}
+
+    tool_results: list[tuple[str, dict]] = [
+        ("catalog_search", payload if isinstance(payload, dict) else {}),
+    ]
+    results = (payload.get("results") or []) if isinstance(payload, dict) else []
+    if results and isinstance(results[0], dict):
+        top = normalize_catalog_hit(results[0])
+        if top.get("variant_id"):
+            stage_product_candidate(session, top)
+            return IsbnShortCircuitResult(
+                force_reply=quantity_prompt(top),
+                tool_results=tool_results,
+            )
+
+    return IsbnShortCircuitResult(
+        force_reply=(
+            "I didn't find that title in our catalog yet. "
+            "Could you spell part of the title, or give me the ISBN?"
+        ),
         tool_results=tool_results,
     )
 

@@ -413,6 +413,7 @@ class LLMToolRuntime:
             conversational_ack_reply,
             is_conversational_ack,
             try_isbn_short_circuit,
+            try_title_catalog_short_circuit,
         )
 
         if is_conversational_ack(caller_text):
@@ -428,6 +429,10 @@ class LLMToolRuntime:
                 return _result(spoken)
 
         isbn_hint = await try_isbn_short_circuit(session, caller_text, turn_mode=turn_mode)
+        if not isbn_hint:
+            isbn_hint = await try_title_catalog_short_circuit(
+                session, caller_text, turn_mode=turn_mode,
+            )
         if isbn_hint:
             spoken = self._finalize(session, isbn_hint.force_reply)
             session.history.append({"role": "user", "content": caller_text})

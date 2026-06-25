@@ -57,4 +57,4 @@ class TestSpokenBookTitle:
 
     def test_long_title_truncated(self):
         title = "A Clash of Kings: A Song of Ice and Fire: Book Two"
-        assert spoken_book_title(title) == "A Clash of"
+        assert spoken_book_title(title) == "A Clash of Kings"

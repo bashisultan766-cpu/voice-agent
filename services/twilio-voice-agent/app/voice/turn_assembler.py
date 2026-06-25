@@ -26,8 +26,12 @@ _RESET_BUFFER = re.compile(
     re.IGNORECASE,
 )
 _KEEPALIVE_FRAGMENT = re.compile(
-    r"\b(hello\??|are you there|why are you not responding|why aren't you responding|"
-    r"what the hell|what the \*+\??)\b",
+    r"\b(hello\??|are you there|why are you not (?:asking|responding|continuing)|"
+    r"why aren't you (?:asking|responding)|what the hell|what the \*+\??)\b",
+    re.IGNORECASE,
+)
+_BARE_AFFIRM = re.compile(
+    r"^\s*(yes|yeah|yep|yup|sure|ok|okay|correct|right|go ahead)\s*[.!]*\s*$",
     re.IGNORECASE,
 )
 _ISBN_CONTINUATION = re.compile(
@@ -166,6 +170,8 @@ class TurnAssembler:
             return True, "complete_isbn"
         if mode == "order" and is_complete_order_number(text):
             return True, "complete_order"
+        if mode == "normal" and _BARE_AFFIRM.match(text.strip()):
+            return True, "complete_affirmative"
         return False, "incomplete"
 
     async def _emit_buffered(

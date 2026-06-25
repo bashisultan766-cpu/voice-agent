@@ -39,13 +39,36 @@ def yes_engagement_fallback(session: "SessionState") -> str:
     )
 
 
+def _complete_pending_add(session: "SessionState") -> Optional[str]:
+    from ..voice.title_speech import spoken_book_title
+    from .commerce_flow_state import (
+        STATUS_AWAITING_ADD_CONFIRM,
+        _resolve_pending_candidate,
+        _status,
+        add_staged_book_to_cart,
+        another_book_after_add_prompt,
+    )
+
+    if _status(session) != STATUS_AWAITING_ADD_CONFIRM:
+        return None
+    candidate = _resolve_pending_candidate(session)
+    if not candidate:
+        return None
+    qty = int(getattr(session, "commerce_pending_quantity", 0) or 1)
+    title = add_staged_book_to_cart(session, quantity=qty)
+    if not title:
+        return None
+    copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+    short = spoken_book_title(title)
+    return f"Got it — added {copy_phrase} of {short}. {another_book_after_add_prompt()}"
+
+
 def yes_engagement_reply(session: "SessionState") -> Optional[str]:
     """
     Return a deterministic continue-the-conversation reply for bare yes.
     Falls back to ``yes_engagement_fallback`` — never returns None for bare yes.
     """
     from .commerce_flow_state import (
-        STATUS_AWAITING_ADD_CONFIRM,
         STATUS_AWAITING_ANOTHER_BOOK,
         STATUS_AWAITING_BOOK_CONFIRM,
         STATUS_AWAITING_EMAIL_COLLECTION,
@@ -59,6 +82,10 @@ def yes_engagement_reply(session: "SessionState") -> Optional[str]:
         next_book_prompt,
         quantity_prompt,
     )
+
+    added = _complete_pending_add(session)
+    if added:
+        return added
 
     text_status = _status(session)
     candidate = _resolve_pending_candidate(session)
@@ -80,15 +107,11 @@ def yes_engagement_reply(session: "SessionState") -> Optional[str]:
     if text_status == STATUS_AWAITING_QUANTITY and candidate:
         return quantity_prompt(candidate)
 
-    if text_status == STATUS_AWAITING_ADD_CONFIRM and candidate:
-        return add_confirm_prompt(
-            candidate, int(getattr(session, "commerce_pending_quantity", 0) or 1),
-        )
-
     if text_status == STATUS_AWAITING_BOOK_CONFIRM and candidate:
         return quantity_prompt(candidate)
 
     if text_status == STATUS_AWAITING_ANOTHER_BOOK:
+        session.pending_isbn_buffer = ""
         return next_book_prompt()
 
     if text_status == STATUS_AWAITING_EMAIL_COLLECTION and not getattr(session, "pending_payment_email", ""):

@@ -147,7 +147,7 @@ def validate_runtime_identity(identity: dict[str, Any]) -> list[str]:
         failures.append("email_capture_short_circuit_disabled")
     if not identity.get("tool_progress_prompts_enabled"):
         failures.append("tool_progress_disabled")
-    if identity.get("voice_sales_flow_version") != "v4.36":
+    if identity.get("voice_sales_flow_version") != "v4.37":
         failures.append(f"voice_sales_flow_version={identity.get('voice_sales_flow_version')}")
     if not identity.get("process_payment_turn_imported"):
         failures.append("process_payment_turn_missing")
