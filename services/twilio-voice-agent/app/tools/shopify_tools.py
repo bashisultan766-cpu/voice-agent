@@ -634,7 +634,9 @@ async def create_checkout_link(
 
 
 async def send_payment_link_email_tool(
-    email: str,
+    email: str = "",
+    customer_email: str = "",
+    to_email: str = "",
     session: Optional["SessionState"] = None,
 ) -> str:
     """
@@ -645,15 +647,27 @@ async def send_payment_link_email_tool(
     Never sends to pending_email or unconfirmed addresses.
     """
     from ..payment.safety import validate_tool_email_arg, require_payment_send_ready
+    from ..agent_runtime.payment_flow_state import (
+        PAYMENT_FAILURE_MESSAGE,
+        PAYMENT_SUCCESS_MESSAGE,
+        build_payment_tool_result,
+        resolve_tool_email,
+    )
+
+    tool_email = resolve_tool_email(
+        {"email": email, "customer_email": customer_email, "to_email": to_email},
+        session,
+    ) if session else (email or customer_email or to_email or "").strip()
 
     if not session:
-        # No session — cannot enforce confirmed_email; refuse send
-        return json.dumps({
-            "success": False,
-            "error": "No session available. Cannot verify email address.",
-        })
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message="No session available. Cannot verify email address.",
+            error_code="no_session",
+            retryable=True,
+        ))
 
-    # Full payment send gate: confirmed_email + checkout_url
     ready_result = require_payment_send_ready(session)
     if not ready_result.allowed:
         logger.info(
@@ -661,27 +675,41 @@ async def send_payment_link_email_tool(
             "reason=%s missing=%s",
             ready_result.reason, ready_result.missing_fields,
         )
-        return json.dumps({"success": False, "error": ready_result.safe_message})
+        session.last_payment_attempt_status = "blocked"
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message=ready_result.safe_message,
+            error_code=ready_result.reason,
+            retryable=True,
+            escalation_recommended=ready_result.reason == "no_checkout_url",
+        ))
 
-    # Validate LLM-supplied email arg against confirmed_email
-    arg_result = validate_tool_email_arg(email or None, session)
+    arg_result = validate_tool_email_arg(tool_email or None, session)
     if not arg_result.allowed:
         logger.info(
             "payment_tool_result tool=send_payment_link_email allowed=false "
             "reason=%s",
             arg_result.reason,
         )
-        return json.dumps({"success": False, "error": arg_result.safe_message})
+        session.last_payment_attempt_status = "blocked"
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message=arg_result.safe_message,
+            error_code=arg_result.reason,
+            retryable=True,
+        ))
 
-    # Use confirmed_email from session — never the raw LLM arg
     confirmed_email = session.confirmed_email
 
     if confirmed_email in session.payment_email_sent_to:
-        return json.dumps({
-            "success": True,
-            "duplicate": True,
-            "message": "I already sent the payment link to your email during this call.",
-        })
+        return json.dumps(build_payment_tool_result(
+            success=True,
+            email_sent=True,
+            customer_message="I already sent the payment link to your email during this call.",
+            error_code="duplicate",
+        ))
 
     result = await send_payment_link_email(
         email=confirmed_email,
@@ -693,16 +721,29 @@ async def send_payment_link_email_tool(
 
     if result.get("success"):
         session.payment_email_sent_to.append(confirmed_email)
+        session.last_payment_attempt_status = "success"
         logger.info(
             "payment_tool_result tool=send_payment_link_email allowed=true "
             "email=%s",
             arg_result.confirmed_email_masked or "***",
         )
-        # Advance payment flow status
         if hasattr(session, "payment_flow_status"):
             session.payment_flow_status = "payment_sent"
+        return json.dumps(build_payment_tool_result(
+            success=True,
+            email_sent=True,
+            customer_message=PAYMENT_SUCCESS_MESSAGE,
+        ))
 
-    return json.dumps(result)
+    session.last_payment_attempt_status = "failed"
+    return json.dumps(build_payment_tool_result(
+        success=False,
+        email_sent=False,
+        customer_message=PAYMENT_FAILURE_MESSAGE,
+        error_code="email_send_failed",
+        retryable=True,
+        escalation_recommended=True,
+    ))
 
 
 async def escalate_to_human(
@@ -978,7 +1019,9 @@ async def SendFacilityPaymentLink(
 
 async def SendPaymentLink(
     items: list[dict],
-    email: str,
+    email: str = "",
+    customer_email: str = "",
+    to_email: str = "",
     customer_name: Optional[str] = None,
     session: Optional["SessionState"] = None,
 ) -> str:
@@ -987,54 +1030,79 @@ async def SendPaymentLink(
 
     Call ONLY after: book confirmed, quantity confirmed, email confirmed by the customer.
     """
-    if not email or "@" not in email:
-        return json.dumps({
-            "success": False,
-            "error": (
-                "I need a confirmed email address before I can create and send the payment link. "
+    from ..agent_runtime.payment_flow_state import (
+        PAYMENT_FAILURE_MESSAGE,
+        PAYMENT_SUCCESS_MESSAGE,
+        build_payment_tool_result,
+        gate_send_payment_link,
+        resolve_tool_email,
+    )
+
+    resolved = resolve_tool_email(
+        {"email": email, "customer_email": customer_email, "to_email": to_email},
+        session,
+    ) if session else (email or customer_email or to_email or "").strip()
+
+    if session:
+        gate = gate_send_payment_link(session, resolved)
+        if not gate.allowed:
+            return gate.tool_json
+
+    if not resolved or "@" not in resolved:
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message=(
+                "I need a confirmed email address before I can send the payment link. "
                 "What email would you like me to use?"
             ),
-        })
+            error_code="no_email",
+            retryable=True,
+        ))
 
-    # Step 1: create the checkout link
     checkout_json = await create_checkout_link(
         items=items,
-        email=email,
+        email=session.confirmed_email if session else resolved,
         customer_name=customer_name,
         session=session,
     )
     checkout = json.loads(checkout_json)
 
     if not checkout.get("success"):
-        return json.dumps(checkout)
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message=checkout.get("error") or PAYMENT_FAILURE_MESSAGE,
+            error_code="checkout_failed",
+            retryable=True,
+            escalation_recommended=True,
+        ))
 
-    # Step 2: email it
-    email_json = await send_payment_link_email_tool(email=email, session=session)
+    email_json = await send_payment_link_email_tool(
+        email=resolved,
+        session=session,
+    )
     email_result = json.loads(email_json)
 
-    if email_result.get("success"):
-        return json.dumps({
-            "success": True,
-            "order_name": checkout.get("order_name"),
-            "message": (
-                "I sent the payment link to your email. "
-                "On that link, you can enter the facility details, inmate details, "
-                "and complete your order. "
-                "Please check your inbox or spam folder."
-            ),
-        })
+    if email_result.get("success") and email_result.get("email_sent"):
+        return json.dumps(build_payment_tool_result(
+            success=True,
+            email_sent=True,
+            customer_message=email_result.get("customer_message") or PAYMENT_SUCCESS_MESSAGE,
+            error_code="",
+        ))
 
-    # Checkout created but email failed — still useful
-    return json.dumps({
-        "success": False,
-        "checkout_created": True,
-        "order_name": checkout.get("order_name"),
-        "checkout_url": checkout.get("checkout_url"),
-        "error": (
-            "I created your payment link but had trouble sending the email. "
-            "Please try again or let me forward this to customer service."
-        ),
-    })
+    session_status = "failed"
+    if session:
+        session.last_payment_attempt_status = session_status
+    return json.dumps(build_payment_tool_result(
+        success=False,
+        email_sent=False,
+        customer_message=email_result.get("customer_message") or PAYMENT_FAILURE_MESSAGE,
+        error_code=email_result.get("error_code") or "email_send_failed",
+        retryable=True,
+        escalation_recommended=True,
+    ))
 
 
 async def GetCallerInfo(

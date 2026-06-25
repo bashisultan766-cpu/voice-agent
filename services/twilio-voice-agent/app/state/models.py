@@ -120,6 +120,13 @@ class SessionState:
     payment_flow_status: str = "idle"
     payment_block_count: int = 0  # increments on each PaymentSafetyGuard block
 
+    # ── v4.19 LLM payment state machine (explicit flags for llm_tool_runtime) ─
+    pending_payment_email: str = ""
+    payment_email_confirmed: bool = False
+    awaiting_payment_email_confirmation: bool = False
+    payment_cart_confirmed: bool = False
+    last_payment_attempt_status: str = ""  # success | failed | blocked | pending_confirmation
+
     # ── Multi-book cart items ──────────────────────────────────────────────────
     # Each item: {title, isbn, variant_id, quantity, price, available, source}
     # Replaces the old flat cart_items list (backward-compatible: same field name)

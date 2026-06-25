@@ -104,10 +104,25 @@ def _redact_secrets(text: str, reasons: list[str]) -> str:
 
 
 def _strip_urls(text: str, reasons: list[str]) -> str:
-    if _URL_PATTERN.search(text):
-        text = _URL_PATTERN.sub("the secure link I emailed you", text)
-        reasons.append("url_blocked")
-    return text
+    if not _URL_PATTERN.search(text):
+        return text
+    reasons.append("url_blocked")
+    # Replace each sentence that contains a URL — avoid false "I emailed you" claims.
+    replacement = (
+        "For security, I can't read payment links aloud. "
+        "I can send it to your confirmed email."
+    )
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    kept: list[str] = []
+    for part in parts:
+        if _URL_PATTERN.search(part):
+            if replacement not in kept:
+                kept.append(replacement)
+        else:
+            kept.append(part)
+    if not kept:
+        return replacement
+    return " ".join(kept).strip()
 
 
 

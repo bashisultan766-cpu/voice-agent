@@ -73,7 +73,12 @@ class CreateCheckoutArgs(BaseModel):
 
 
 class SendPaymentLinkArgs(BaseModel):
-    email: str = Field(..., min_length=3, description="Confirmed customer email.")
+    email: str = Field("", description="Confirmed customer email.")
+    customer_email: str = Field("", description="Alias for email.")
+    to_email: str = Field("", description="Alias for email.")
+
+    def resolved_email(self) -> str:
+        return (self.email or self.customer_email or self.to_email).strip()
 
 
 class LookupOrderStatusArgs(BaseModel):
@@ -331,19 +336,40 @@ async def _create_checkout(args: CreateCheckoutArgs, session) -> str:
 async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
     if session is None:
         return _err("No active session.")
+    from .payment_flow_state import gate_send_payment_link, parse_tool_result, resolve_tool_email
+
+    tool_email = args.resolved_email() or resolve_tool_email({}, session)
+    gate = gate_send_payment_link(session, tool_email)
+    if not gate.allowed:
+        return gate.tool_json
+
     from ..cart.session import get_ledger
 
     items = get_ledger(session).to_checkout_items()
     if not items:
-        return _err("There are no confirmed books to pay for yet.")
-    # SendPaymentLink enforces the payment-safety guards (confirmed email, no
-    # duplicate sends) and never returns the raw URL for speaking.
-    return await _st.SendPaymentLink(
+        return json.dumps({
+            "success": False,
+            "email_sent": False,
+            "customer_message": "There are no confirmed books to pay for yet.",
+            "error_code": "no_items",
+            "retryable": True,
+            "escalation_recommended": False,
+        })
+
+    confirmed = getattr(session, "confirmed_email", "") or tool_email
+    raw = await _st.SendPaymentLink(
         items=items,
-        email=args.email,
+        email=confirmed,
         customer_name=getattr(session, "caller_name", "") or None,
         session=session,
     )
+    result = parse_tool_result(raw)
+    if result.get("success") and result.get("email_sent"):
+        session.last_payment_attempt_status = "success"
+        session.payment_flow_status = "payment_sent"
+    elif not result.get("success"):
+        session.last_payment_attempt_status = "failed"
+    return raw
 
 
 async def _lookup_order_status(args: LookupOrderStatusArgs, session) -> str:
@@ -604,8 +630,12 @@ _register(
 _register(
     "send_payment_link", SendPaymentLinkArgs, _send_payment_link,
     "Email the secure payment link for the confirmed cart. Only call AFTER the "
-    "email has been confirmed by the caller. Never read the link aloud.",
-    _obj({"email": {**_S, "description": "Confirmed customer email."}}, ["email"]),
+    "customer has confirmed the normalized email (yes/correct). Never read the link aloud.",
+    _obj({
+        "email": {**_S, "description": "Confirmed customer email (optional if session confirmed)."},
+        "customer_email": _S,
+        "to_email": _S,
+    }, []),
 )
 _register(
     "lookup_order_status", LookupOrderStatusArgs, _lookup_order_status,

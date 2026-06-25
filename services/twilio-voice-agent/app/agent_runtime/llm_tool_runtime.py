@@ -37,6 +37,7 @@ from . import llm_tools
 from . import openai_health
 from .master_prompt import MasterPromptError, get_master_prompt
 from .output_guardrails import apply_output_guardrails
+from .payment_flow_state import enforce_payment_response, parse_tool_result, process_payment_turn
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext, SessionState
@@ -128,6 +129,8 @@ class LLMToolRuntime:
         )
         last_order = getattr(session, "last_order_number", "") or ""
         pay_status = getattr(session, "payment_flow_status", "idle") or "idle"
+        awaiting_email = bool(getattr(session, "awaiting_payment_email_confirmation", False))
+        pending_pay_email = getattr(session, "pending_payment_email", "") or ""
 
         lines = [
             "LIVE CALL STATE (for your context — do not read aloud):",
@@ -138,9 +141,19 @@ class LLMToolRuntime:
             f"- Cart: {cart_line}",
             f"- Last order mentioned: {last_order or 'none'}",
             f"- Payment flow status: {pay_status}",
-            "If identity is not verified this call, you must ask for the email or "
-            "phone on the order before sharing any order or refund details.",
+            f"- Awaiting payment email confirmation: {'yes' if awaiting_email else 'no'}",
         ]
+        if pending_pay_email:
+            lines.append(
+                f"- Pending payment email (unconfirmed): {pending_pay_email} — "
+                "do NOT call send_payment_link until customer confirms yes."
+            )
+        if getattr(session, "payment_email_confirmed", False):
+            lines.append("- Payment email confirmed: yes — send_payment_link allowed.")
+        lines.append(
+            "If identity is not verified this call, you must ask for the email or "
+            "phone on the order before sharing any order or refund details."
+        )
         return "\n".join(lines)
 
     def _seed_history_from_memory(self, session: "SessionState") -> None:
@@ -238,20 +251,37 @@ class LLMToolRuntime:
         if not getattr(self._settings, "OPENAI_API_KEY", ""):
             return await self._fallback(session, caller_text, send, reason="missing_api_key")
 
+        payment_hint = process_payment_turn(session, caller_text)
+        if payment_hint.force_reply:
+            spoken = self._finalize(session, payment_hint.force_reply)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info(
+                "llm_tool_runtime_payment_confirm_prompt sid=%s",
+                session.call_sid[:6],
+            )
+            return _result(spoken)
+
         messages = self.build_messages(session, caller_text)
         # Persist the user turn immediately so history stays consistent.
         session.history.append({"role": "user", "content": caller_text})
 
         final_text = ""
         tools_used: list[str] = []
+        tool_results: list[tuple[str, dict]] = []
         try:
-            final_text, tools_used = await self._run_tool_loop(session, messages, sid)
+            final_text, tools_used, tool_results = await self._run_tool_loop(session, messages, sid)
         except Exception as exc:  # noqa: BLE001 — never break the call
             openai_health.log_error(session.call_sid, exc, purpose="llm_tool_runtime")
             return await self._fallback(session, caller_text, send, reason="openai_error")
 
         if not final_text:
             return await self._fallback(session, caller_text, send, reason="empty_response")
+
+        final_text = enforce_payment_response(session, final_text, tool_results)
 
         spoken = self._finalize(session, final_text)
         await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
@@ -270,9 +300,10 @@ class LLMToolRuntime:
 
     async def _run_tool_loop(
         self, session: "SessionState", messages: list[dict], sid: str
-    ) -> tuple[str, list[str]]:
-        """Run the OpenAI tool-calling loop. Returns (final_text, tools_used)."""
+    ) -> tuple[str, list[str], list[tuple[str, dict]]]:
+        """Run the OpenAI tool-calling loop. Returns (final_text, tools_used, parsed_results)."""
         tools_used: list[str] = []
+        tool_results: list[tuple[str, dict]] = []
 
         for round_idx in range(_MAX_TOOL_ROUNDS):
             started = openai_health.log_request_started(
@@ -288,7 +319,7 @@ class LLMToolRuntime:
             tool_calls = getattr(msg, "tool_calls", None)
 
             if not tool_calls:
-                return (msg.content or "").strip(), tools_used
+                return (msg.content or "").strip(), tools_used, tool_results
 
             # Record the assistant tool-call request, then execute tools.
             assistant_entry: dict[str, Any] = {
@@ -314,6 +345,7 @@ class LLMToolRuntime:
                 except json.JSONDecodeError:
                     args = {}
                 result_str = await llm_tools.dispatch(name, args, session)
+                tool_results.append((name, parse_tool_result(result_str)))
                 tool_entry = {
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -335,9 +367,9 @@ class LLMToolRuntime:
                 ),
                 timeout=self._settings.VOICE_OPENAI_TIMEOUT_MS / 1000,
             )
-            return (resp.choices[0].message.content or "").strip(), tools_used
+            return (resp.choices[0].message.content or "").strip(), tools_used, tool_results
         except Exception:  # noqa: BLE001
-            return "", tools_used
+            return "", tools_used, tool_results
 
     # ── Finalisation + safety ─────────────────────────────────────────────
     def _finalize(self, session: "SessionState", text: str) -> str:
