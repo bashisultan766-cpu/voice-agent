@@ -102,8 +102,17 @@ _CORRECTION_PATS = re.compile(
 )
 
 _CONFIRMATION_PATS = re.compile(
-    r"^\s*(yes|yeah|yep|correct|right|that.?s (right|correct)|"
-    r"sounds? (right|correct|good)|perfect|exactly|go ahead|confirmed?)\b",
+    r"^\s*(yes|yeah|yep)\b"
+    r"|^\s*(that\s*'?s\s+)?(right|correct)(\s+email)?\s*[.!]?\s*$"
+    r"|^\s*that\s*'?s\s+(the\s+)?(right|correct)\s+email"
+    r"|sounds?\s+(right|correct|good)"
+    r"|^\s*(perfect|exactly|go ahead|confirmed?)\b",
+    re.IGNORECASE,
+)
+
+_REPEAT_EMAIL_PAT = re.compile(
+    r"\b(repeat|spell|read\s+back|say\s+again|what\s+was|can\s+you)\b.*\b(email|address)\b"
+    r"|\b(email|address)\b.*\b(repeat|again|spell)\b",
     re.IGNORECASE,
 )
 
@@ -365,14 +374,66 @@ def email_confidence(email: Optional[str], raw_text: str) -> str:
 
 # ── Correction / confirmation helpers ─────────────────────────────────────────
 
+def parse_hyphen_spelled_email(text: str) -> Optional[str]:
+    """
+    Parse hyphen/letter-spelled emails from voice or assistant readback.
+
+    Example: b-a-s-h-i-s-u-l-t-a-n-7-6-6-@-g-m-a-i-l-dot-c-o-m
+    """
+    if not text:
+        return None
+    t = text.strip().lower()
+    if not (
+        re.search(r"[a-z0-9]-[a-z0-9]", t)
+        or "-at-" in t
+        or "@-" in t
+        or "-@" in t
+    ):
+        return None
+    t = re.sub(r"\s+", "", t)
+    t = t.replace("-at-", "@").replace("@-", "@").replace("-@", "@")
+    t = re.sub(r"-dot-", ".", t)
+    t = re.sub(r"g-m-a-i-l", "gmail", t)
+    t = re.sub(r"y-a-h-o-o", "yahoo", t)
+    t = re.sub(r"h-o-t-m-a-i-l", "hotmail", t)
+    t = re.sub(r"o-u-t-l-o-o-k", "outlook", t)
+    t = re.sub(r"i-c-l-o-u-d", "icloud", t)
+    t = re.sub(r"\.c-o-m$", ".com", t)
+    t = re.sub(r"\.o-r-g$", ".org", t)
+    t = re.sub(r"\.c-o$", ".co", t)
+    t = re.sub(r"-", "", t)
+    t = t.replace("dotcom", ".com")
+    if re.match(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$", t, re.I):
+        return t.lower()
+    return None
+
+
+def is_repeat_email_request(text: str) -> bool:
+    return bool(_REPEAT_EMAIL_PAT.search(text or ""))
+
+
 def is_email_correction(text: str) -> bool:
     """True if the caller is rejecting / correcting the last captured email."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if re.match(r"^\s*(yes|yeah|yep)\b", t, re.I) and not re.search(
+        r"\b(wrong|not correct|incorrect|no)\b", t, re.I
+    ):
+        return False
     return bool(_CORRECTION_PATS.search(text))
 
 
 def is_email_confirmation(text: str) -> bool:
     """True if the caller is confirming the pending email candidate."""
-    return bool(_CONFIRMATION_PATS.match(text.strip()))
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _CORRECTION_PATS.search(text):
+        return False
+    if re.match(r"^\s*no\b", t, re.I):
+        return False
+    return bool(_CONFIRMATION_PATS.search(t))
 
 
 # ── Email state dataclass (stored in SessionState) ────────────────────────────

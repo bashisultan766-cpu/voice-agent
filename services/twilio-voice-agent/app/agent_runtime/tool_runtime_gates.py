@@ -17,6 +17,7 @@ from .payment_flow_state import (
     confirmation_prompt,
     gate_send_payment_link,
 )
+from ..payment.email_state import get_pending_payment_email
 
 if TYPE_CHECKING:
     from ..state.models import SessionState
@@ -68,10 +69,7 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
 
     if name == "add_to_cart":
         if getattr(session, "awaiting_payment_email_confirmation", False):
-            pending = (
-                getattr(session, "pending_payment_email", "")
-                or getattr(session, "pending_email", "")
-            )
+            pending = get_pending_payment_email(session)
             msg = (
                 confirmation_prompt(pending)
                 if pending
@@ -105,10 +103,7 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
                 ),
             )
         if getattr(session, "awaiting_payment_email_confirmation", False):
-            pending = (
-                getattr(session, "pending_payment_email", "")
-                or getattr(session, "pending_email", "")
-            )
+            pending = get_pending_payment_email(session)
             msg = confirmation_prompt(pending) if pending else (
                 "I need to confirm your email address before creating the payment link. "
                 "What email should I use?"
@@ -130,10 +125,7 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
 
     if name == "send_facility_payment_link":
         if not getattr(session, "payment_email_confirmed", False):
-            pending = (
-                getattr(session, "pending_payment_email", "")
-                or getattr(session, "pending_email", "")
-            )
+            pending = get_pending_payment_email(session)
             msg = confirmation_prompt(pending) if pending else (
                 "I need a confirmed email address before I can send that link. "
                 "What email should I use?"

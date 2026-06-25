@@ -659,7 +659,11 @@ async def send_payment_link_email_tool(
     Never sends to pending_email or unconfirmed addresses.
     """
     from ..payment.safety import validate_tool_email_arg, require_payment_send_ready_with_checkout
-    from ..payment.email_state import get_canonical_confirmed_email, log_payment_flow_diagnostics
+    from ..payment.email_state import (
+        assert_ready_for_payment_send,
+        get_canonical_confirmed_email,
+        log_payment_flow_diagnostics,
+    )
     from ..agent_runtime.payment_flow_state import (
         PAYMENT_FAILURE_MESSAGE,
         PAYMENT_SUCCESS_MESSAGE,
@@ -684,6 +688,19 @@ async def send_payment_link_email_tool(
         ))
 
     log_payment_flow_diagnostics(session, stage="send_payment_link_email_tool")
+
+    if not assert_ready_for_payment_send(session, stage="send_payment_link_email_tool"):
+        session.last_payment_attempt_status = "blocked"
+        return json.dumps(build_payment_tool_result(
+            success=False,
+            email_sent=False,
+            customer_message=(
+                "I need a confirmed email address to send the payment link. "
+                "What email should I use?"
+            ),
+            error_code="email_unconfirmed",
+            retryable=True,
+        ))
 
     ready_result = require_payment_send_ready_with_checkout(session)
     if not ready_result.allowed:
@@ -721,6 +738,11 @@ async def send_payment_link_email_tool(
     confirmed_email = get_canonical_confirmed_email(session)
     if not confirmed_email:
         session.last_payment_attempt_status = "blocked"
+        logger.error(
+            "payment_send_impossible sid=%s stage=send_payment_link_email_tool "
+            "confirmed_missing_after_assert",
+            (session.call_sid or "")[:6],
+        )
         return json.dumps(build_payment_tool_result(
             success=False,
             email_sent=False,
@@ -728,7 +750,7 @@ async def send_payment_link_email_tool(
                 "I need a confirmed email address to send the payment link. "
                 "What email should I use?"
             ),
-            error_code="no_email",
+            error_code="email_unconfirmed",
             retryable=True,
         ))
 
@@ -1064,24 +1086,33 @@ async def SendPaymentLink(
         PAYMENT_SUCCESS_MESSAGE,
         build_payment_tool_result,
         gate_send_payment_link,
-        resolve_tool_email,
     )
-    from ..payment.email_state import get_canonical_confirmed_email, log_payment_flow_diagnostics
+    from ..payment.email_state import (
+        assert_ready_for_payment_send,
+        get_canonical_confirmed_email,
+        log_payment_flow_diagnostics,
+    )
 
     if session:
         log_payment_flow_diagnostics(session, stage="send_payment_link_start")
-
-    resolved = resolve_tool_email(
-        {"email": email, "customer_email": customer_email, "to_email": to_email},
-        session,
-    ) if session else (email or customer_email or to_email or "").strip().lower()
-
-    if session:
-        gate = gate_send_payment_link(session, resolved)
+        gate = gate_send_payment_link(session, "")
         if not gate.allowed:
             return gate.tool_json
+        if not assert_ready_for_payment_send(session, stage="send_payment_link_atomic"):
+            return json.dumps(build_payment_tool_result(
+                success=False,
+                email_sent=False,
+                customer_message=(
+                    "I need a confirmed email address before I can send the payment link. "
+                    "What email would you like me to use?"
+                ),
+                error_code="email_unconfirmed",
+                retryable=True,
+            ))
 
-    confirmed = get_canonical_confirmed_email(session) if session else resolved
+    confirmed = get_canonical_confirmed_email(session) if session else (
+        (email or customer_email or to_email or "").strip().lower()
+    )
     if not confirmed or "@" not in confirmed:
         return json.dumps(build_payment_tool_result(
             success=False,
@@ -1090,7 +1121,7 @@ async def SendPaymentLink(
                 "I need a confirmed email address before I can send the payment link. "
                 "What email would you like me to use?"
             ),
-            error_code="no_email",
+            error_code="email_unconfirmed",
             retryable=True,
         ))
 

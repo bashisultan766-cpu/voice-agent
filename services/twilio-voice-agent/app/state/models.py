@@ -122,6 +122,7 @@ class SessionState:
 
     # ── v4.19 LLM payment state machine (explicit flags for llm_tool_runtime) ─
     pending_payment_email: str = ""
+    last_offered_payment_email: str = ""  # survives repeat-email turns until confirm/replace
     payment_email_confirmed: bool = False
     awaiting_payment_email_confirmation: bool = False
     payment_cart_confirmed: bool = False

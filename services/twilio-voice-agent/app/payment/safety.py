@@ -229,20 +229,19 @@ def validate_tool_email_arg(
     """
     Validate an email argument passed by the LLM tool call.
 
-    Called before using the arg in any payment operation.
-
-    Rules (in priority order):
-    1. If arg is a rejected candidate → hard block (never reuse)
-    2. If no confirmed_email in session → block regardless of arg
-    3. If arg matches confirmed_email (case-insensitive) → allow
-    4. If arg differs from confirmed_email → block, require reconfirmation
-    5. If arg is empty/None and confirmed_email exists → allow (use confirmed_email)
+    Raw LLM email args never bypass confirmation — only session.confirmed_email is used.
     """
-    confirmed = getattr(session, "confirmed_email", "") or ""
-    rejected_candidates: list[str] = getattr(session, "rejected_email_candidates", None) or []
-    pending = getattr(session, "pending_email", "") or ""
+    from ..payment.email_state import (
+        get_canonical_confirmed_email,
+        get_pending_payment_email,
+        sync_payment_email_fields,
+    )
 
-    # Rule 1: rejected candidate — hard block
+    sync_payment_email_fields(session)
+    confirmed = get_canonical_confirmed_email(session)
+    rejected_candidates: list[str] = getattr(session, "rejected_email_candidates", None) or []
+    pending = get_pending_payment_email(session)
+
     if tool_email_arg and tool_email_arg.lower().strip() in [
         r.lower().strip() for r in rejected_candidates
     ]:
@@ -255,8 +254,7 @@ def validate_tool_email_arg(
             ),
         )
 
-    # Rule 2: no confirmed_email
-    if not confirmed:
+    if not confirmed or not getattr(session, "payment_email_confirmed", False):
         if pending:
             return PaymentSafetyResult(
                 allowed=False,
@@ -273,12 +271,11 @@ def validate_tool_email_arg(
                 "I need a confirmed email address to send the payment link. "
                 "Could you give me your email address?"
             ),
+            missing_fields=["email"],
         )
 
-    # Rule 3 & 4: confirmed_email exists
     if tool_email_arg and tool_email_arg.strip():
         if tool_email_arg.lower().strip() != confirmed.lower().strip():
-            # LLM hallucinated a different email — block, don't reveal confirmed_email
             return PaymentSafetyResult(
                 allowed=False,
                 reason="email_mismatch",
@@ -289,7 +286,6 @@ def validate_tool_email_arg(
                 confirmed_email_masked=_mask_email(confirmed),
             )
 
-    # Rule 5: empty arg or matching arg — both fine; use confirmed_email
     return PaymentSafetyResult(
         allowed=True,
         reason="email_ok",

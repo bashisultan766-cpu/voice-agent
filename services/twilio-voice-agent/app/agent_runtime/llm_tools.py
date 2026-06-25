@@ -342,11 +342,11 @@ async def _create_checkout(args: CreateCheckoutArgs, session) -> str:
 async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
     if session is None:
         return _err("No active session.")
-    from .payment_flow_state import gate_send_payment_link, parse_tool_result, resolve_tool_email
-    from ..payment.email_state import get_canonical_confirmed_email
+    from .payment_flow_state import gate_send_payment_link, parse_tool_result
+    from ..payment.email_state import assert_ready_for_payment_send, get_canonical_confirmed_email
 
-    tool_email = args.resolved_email() or resolve_tool_email({}, session)
-    gate = gate_send_payment_link(session, tool_email)
+    # Never trust LLM email args — gate uses session.confirmed_email only.
+    gate = gate_send_payment_link(session, "")
     if not gate.allowed:
         return gate.tool_json
 
@@ -363,8 +363,7 @@ async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
             "escalation_recommended": False,
         })
 
-    confirmed = get_canonical_confirmed_email(session)
-    if not confirmed:
+    if not assert_ready_for_payment_send(session, stage="send_payment_link_impl"):
         from .payment_flow_state import build_payment_tool_result
         return json.dumps(build_payment_tool_result(
             success=False,
@@ -373,9 +372,11 @@ async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
                 "I need a confirmed email address before I can send the payment link. "
                 "What email should I use?"
             ),
-            error_code="no_email",
+            error_code="email_unconfirmed",
             retryable=True,
         ))
+
+    confirmed = get_canonical_confirmed_email(session)
 
     raw = await _st.SendPaymentLink(
         items=items,
@@ -809,14 +810,19 @@ async def dispatch(name: str, args: dict, session: "SessionState | None") -> str
         logger.warning("llm_tool_unknown name=%s", name)
         return _err(f"Tool '{name}' is not available.")
 
+    safe_args = dict(args or {})
+    if name in ("send_payment_link", "create_checkout"):
+        for key in ("email", "customer_email", "to_email"):
+            safe_args.pop(key, None)
+
     try:
-        validated = tool.model(**(args or {}))
+        validated = tool.model(**safe_args)
     except ValidationError as exc:
         logger.info("llm_tool_invalid_args name=%s errors=%d", name, len(exc.errors()))
         return _err("Invalid tool arguments.")
 
     sid = getattr(session, "call_sid", "")[:6] if session else "none"
-    logger.info("llm_tool_call sid=%s name=%s arg_keys=%s", sid, name, sorted((args or {}).keys()))
+    logger.info("llm_tool_call sid=%s name=%s arg_keys=%s", sid, name, sorted(safe_args.keys()))
 
     from .tool_runtime_gates import gate_tool_call
 
