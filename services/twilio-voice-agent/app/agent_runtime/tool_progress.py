@@ -1,14 +1,13 @@
 """
-No-silence progress prompts during slow LLM tool calls (v4.24).
+No-silence progress prompts during slow LLM tool calls (v4.25).
 
-Races tool dispatch against VOICE_FILLER_AFTER_MS and speaks a short progress
-phrase if the backend has not returned yet — same pattern as pipeline/engine.py.
+Sends real ConversationRelay tokens when tool work exceeds the progress threshold.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import random
+import time
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 if TYPE_CHECKING:
@@ -17,6 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TOOL_PROGRESS_ENABLED = True
+TOOL_PROGRESS_AFTER_MS = 650
 
 _SLOW_TOOLS = frozenset({
     "search_products",
@@ -30,63 +30,52 @@ _SLOW_TOOLS = frozenset({
     "lookup_customer_by_email_or_phone",
     "check_facility_approval",
     "send_payment_link",
+    "add_to_cart",
 })
 
-_PROGRESS_PHRASES: dict[str, list[str]] = {
-    "search_products": [
-        "Let me search the catalog for that.",
-        "One moment while I look that up.",
-    ],
-    "catalog_search": [
-        "Let me search the catalog for that.",
-        "One moment while I check our inventory.",
-    ],
-    "get_product_details": [
-        "Let me pull up the details on that book.",
-        "One moment while I look that up.",
-    ],
-    "compare_products": [
-        "Let me compare those books for you.",
-        "One moment while I check both titles.",
-    ],
-    "lookup_order_status": [
-        "Sure, let me pull up that order.",
-        "One moment while I look up your order.",
-    ],
-    "lookup_refund_status": [
-        "Let me check on that refund for you.",
-        "One moment while I look into the refund status.",
-    ],
-    "get_order": [
-        "Let me pull up that order.",
-        "One moment while I look that up.",
-    ],
-    "calculate_pricing": [
-        "Let me calculate that for you.",
-        "One moment while I check the pricing.",
-    ],
-    "lookup_customer_by_email_or_phone": [
-        "Let me look up your account.",
-        "One moment while I check that.",
-    ],
-    "check_facility_approval": [
-        "Let me check facility approval for that.",
-        "One moment while I look that up.",
-    ],
-    "send_payment_link": [
-        "Let me send that payment link to your email.",
-        "One moment while I prepare your payment link.",
-    ],
+_PROGRESS_PHRASES: dict[str, str] = {
+    "search_products": "Let me check that in our catalog.",
+    "catalog_search": "Let me check that in our catalog.",
+    "get_product_details": "Let me pull up the details on that book.",
+    "compare_products": "Let me compare those books for you.",
+    "lookup_order_status": "One moment while I look up your order.",
+    "lookup_refund_status": "Let me check on that refund for you.",
+    "get_order": "One moment while I look up your order.",
+    "calculate_pricing": "Let me calculate that for you.",
+    "lookup_customer_by_email_or_phone": "I'm verifying that email now.",
+    "check_facility_approval": "Let me check facility approval for that.",
+    "send_payment_link": "I'm preparing the secure payment link now.",
+    "add_to_cart": "Sure, I'm adding that to your cart now.",
 }
 
 
 def progress_phrase_for_tool(name: str) -> Optional[str]:
-    phrases = _PROGRESS_PHRASES.get(name)
-    return random.choice(phrases) if phrases else None
+    return _PROGRESS_PHRASES.get(name)
 
 
 def is_slow_tool(name: str) -> bool:
     return name in _SLOW_TOOLS
+
+
+def _progress_delay_ms(settings) -> int:
+    env_ms = getattr(settings, "VOICE_TOOL_PROGRESS_AFTER_MS", None)
+    if env_ms is not None:
+        return max(0, int(env_ms))
+    filler = int(getattr(settings, "VOICE_FILLER_AFTER_MS", 250) or 250)
+    return max(TOOL_PROGRESS_AFTER_MS, filler)
+
+
+def _should_skip_progress(session: "SessionState | None", op_key: str) -> Optional[str]:
+    if session is None:
+        return None
+    if getattr(session, "voice_interrupted", False):
+        return "interrupted"
+    if getattr(session, "turn_taking_hold", False):
+        return "caller_speaking"
+    sent_for = getattr(session, "tool_progress_sent_for_op", "") or ""
+    if sent_for == op_key:
+        return "already_sent"
+    return None
 
 
 async def dispatch_with_progress(
@@ -98,29 +87,55 @@ async def dispatch_with_progress(
     settings,
     sid: str,
 ) -> str:
-    """Run tool dispatch; speak a progress phrase if the call exceeds the filler delay."""
+    """Run tool dispatch; speak one progress phrase if work exceeds threshold."""
     if not TOOL_PROGRESS_ENABLED or not is_slow_tool(name) or send is None:
         return await dispatch_fn(name, args, session)
 
-    delay_s = max(0.0, getattr(settings, "VOICE_FILLER_AFTER_MS", 250) / 1000)
+    op_key = f"{name}:{time.monotonic():.3f}"
+    skip = _should_skip_progress(session, op_key)
+    if skip:
+        logger.info(
+            "tool_progress_prompt_skipped sid=%s tool=%s reason=%s",
+            sid, name, skip,
+        )
+        return await dispatch_fn(name, args, session)
+
+    delay_s = _progress_delay_ms(settings) / 1000
+    started = time.monotonic()
     task = asyncio.create_task(dispatch_fn(name, args, session), name=f"tool-{name}")
+    progress_sent = False
 
-    if delay_s <= 0:
-        phrase = progress_phrase_for_tool(name)
-        if phrase:
-            await _send_progress(send, phrase)
-            logger.info("tool_progress_prompt sid=%s tool=%s immediate=true", sid, name)
-        return await task
+    while not task.done():
+        elapsed_ms = (time.monotonic() - started) * 1000
+        if elapsed_ms >= delay_s and not progress_sent:
+            phrase = progress_phrase_for_tool(name)
+            if phrase:
+                skip_now = _should_skip_progress(session, op_key)
+                if skip_now:
+                    logger.info(
+                        "tool_progress_prompt_skipped sid=%s tool=%s reason=%s",
+                        sid, name, skip_now,
+                    )
+                else:
+                    await _send_progress(send, phrase)
+                    progress_sent = True
+                    if session is not None:
+                        session.tool_progress_sent_for_op = op_key
+                    logger.info(
+                        "tool_progress_prompt_sent sid=%s tool=%s phrase=%r elapsed_ms=%.0f",
+                        sid, name, phrase, elapsed_ms,
+                    )
+            await asyncio.sleep(0.05)
+        else:
+            await asyncio.sleep(0.02)
 
-    done, _pending = await asyncio.wait({task}, timeout=delay_s)
-    if task in done:
-        return task.result()
-
-    phrase = progress_phrase_for_tool(name)
-    if phrase:
-        await _send_progress(send, phrase)
-        logger.info("tool_progress_prompt sid=%s tool=%s delay_ms=%d", sid, name, int(delay_s * 1000))
-    return await task
+    elapsed_total = (time.monotonic() - started) * 1000
+    if not progress_sent and elapsed_total >= delay_s:
+        logger.info(
+            "tool_progress_prompt_skipped sid=%s tool=%s reason=fast_tool elapsed_ms=%.0f",
+            sid, name, elapsed_total,
+        )
+    return task.result()
 
 
 async def _send_progress(send: Callable, phrase: str) -> None:

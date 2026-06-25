@@ -71,14 +71,14 @@ class TestSlowToolProgress:
     async def test_progress_phrase_after_delay(self):
         from app.config import Settings
 
-        settings = Settings(OPENAI_API_KEY="test", VOICE_FILLER_AFTER_MS=50)
+        settings = Settings(OPENAI_API_KEY="test", VOICE_TOOL_PROGRESS_AFTER_MS=100)
         sent: list[dict] = []
 
         async def send(msg):
             sent.append(msg)
 
         async def slow_dispatch(name, args, session):
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.35)
             return json.dumps({"results": [BOOK_A]})
 
         result = await dispatch_with_progress(
@@ -135,8 +135,9 @@ class TestMultiBookFlow:
         stage_product_candidate(session, BOOK_A)
         hint = process_commerce_turn(session, "yes")
         assert hint.force_reply
-        assert "another book" in hint.force_reply.lower()
         assert hint.book_added
+        assert "another book" in hint.force_reply.lower()
+        assert "Done, I added" in hint.force_reply
         assert get_ledger(session).confirmed_count() == 1
         assert session.commerce_flow_status == STATUS_AWAITING_ANOTHER_BOOK
 

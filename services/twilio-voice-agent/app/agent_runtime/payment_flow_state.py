@@ -32,7 +32,8 @@ PAYMENT_FAILURE_MESSAGE = (
 )
 
 _DIRECT_LINK_PHRASE = re.compile(
-    r"\b(use|using)\s+(the\s+)?(direct\s+)?(url|link)\b",
+    r"\b(use|using|provide|giving|give)\s+(you\s+)?(the\s+)?(direct\s+)?(url|link)\b"
+    r"|\bdirect\s+(url|link)\b",
     re.I,
 )
 _FALSE_SUCCESS_PAT = re.compile(
@@ -104,8 +105,18 @@ def in_payment_flow(session: "SessionState") -> bool:
     return _cart_has_confirmed_items(session)
 
 
-def email_capture_context_active(session: "SessionState") -> bool:
+def email_capture_context_active(session: "SessionState", turn_mode: str = "") -> bool:
     """True when cart/checkout/payment is active enough for deterministic email capture."""
+    if (turn_mode or "").strip().lower() == "email":
+        if in_payment_flow(session):
+            return True
+        if getattr(session, "payment_cart_confirmed", False):
+            return True
+        if _cart_has_confirmed_items(session):
+            return True
+        pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+        if pfs in ("awaiting_email", "awaiting_email_confirmation", "awaiting_send_confirmation"):
+            return True
     if in_payment_flow(session):
         return True
     if getattr(session, "payment_cart_confirmed", False):
@@ -147,8 +158,20 @@ def repeat_email_prompt(email: str) -> str:
     return f"{spelled}. {confirmation_prompt(email)}"
 
 
-def confirmation_prompt(email: str) -> str:
-    return f"Just to confirm, I heard {email}. Is that correct?"
+def confirmation_prompt(email: str, *, include_spelling: bool = True) -> str:
+    """
+    Payment email confirmation — FULL email required (never masked).
+
+    Caller must hear the complete address plus spelled readback for voice verification.
+    """
+    from ..pipeline.email_speller import spell_email_for_voice
+
+    base = f"Just to confirm, I heard {email}."
+    if include_spelling:
+        spelled = spell_email_for_voice(email)
+        if spelled:
+            return f"{base} {spelled}. Is that correct?"
+    return f"{base} Is that correct?"
 
 
 def _confirm_payment_email(session: "SessionState") -> None:
@@ -191,7 +214,7 @@ def process_payment_turn(
         return PaymentTurnHint()
 
     email_signal = _email_signal_present(text, turn_mode)
-    if not email_capture_context_active(session):
+    if not email_capture_context_active(session, turn_mode):
         if email_signal:
             sid = session.call_sid[:6] if session.call_sid else "?"
             logger.warning(
@@ -203,6 +226,14 @@ def process_payment_turn(
                 getattr(session, "payment_flow_status", "idle"),
             )
         return PaymentTurnHint()
+
+    from ..pipeline.email_capture import is_email_spell_request
+
+    if is_email_spell_request(text):
+        pending = get_pending_payment_email(session) or get_canonical_confirmed_email(session)
+        if pending:
+            log_payment_flow_diagnostics(session, stage="email_spell_request")
+            return PaymentTurnHint(force_reply=repeat_email_prompt(pending))
 
     if is_email_correction(text):
         _reject_pending_email(session)

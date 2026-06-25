@@ -103,6 +103,7 @@ _CORRECTION_PATS = re.compile(
 
 _CONFIRMATION_PATS = re.compile(
     r"^\s*(yes|yeah|yep)\b"
+    r"|^\s*(right|correct)\s*[.!]?\s*$"
     r"|^\s*(that\s*'?s\s+)?(right|correct)(\s+email)?\s*[.!]?\s*$"
     r"|^\s*that\s*'?s\s+(the\s+)?(right|correct)\s+email"
     r"|sounds?\s+(right|correct|good)"
@@ -112,7 +113,12 @@ _CONFIRMATION_PATS = re.compile(
 
 _REPEAT_EMAIL_PAT = re.compile(
     r"\b(repeat|spell|read\s+back|say\s+again|what\s+was|can\s+you)\b.*\b(email|address)\b"
-    r"|\b(email|address)\b.*\b(repeat|again|spell)\b",
+    r"|\b(email|address)\b.*\b(repeat|again|spell|letter\s+by\s+letter)\b",
+    re.IGNORECASE,
+)
+_SPELL_EMAIL_PAT = re.compile(
+    r"\b(spell|letter\s+by\s+letter|read\s+back)\b.*\b(email|address)\b"
+    r"|\b(email|address)\b.*\b(spell|letter\s+by\s+letter)\b",
     re.IGNORECASE,
 )
 
@@ -410,6 +416,10 @@ def parse_hyphen_spelled_email(text: str) -> Optional[str]:
 
 def is_repeat_email_request(text: str) -> bool:
     return bool(_REPEAT_EMAIL_PAT.search(text or ""))
+
+
+def is_email_spell_request(text: str) -> bool:
+    return bool(_SPELL_EMAIL_PAT.search(text or ""))
 
 
 def is_email_correction(text: str) -> bool:

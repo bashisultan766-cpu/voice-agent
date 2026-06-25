@@ -196,3 +196,7 @@ class SessionState:
     commerce_pending_candidate: dict[str, Any] = field(default_factory=dict)
     commerce_allow_add: bool = False
     last_confirmed_product: dict[str, Any] = field(default_factory=dict)
+    awaiting_product_confirmation: bool = False
+    # v4.25 — tool progress + interrupt coordination
+    voice_interrupted: bool = False
+    tool_progress_sent_for_op: str = ""

@@ -44,6 +44,7 @@ from .commerce_flow_state import (
     process_commerce_turn,
 )
 from .payment_flow_state import (
+    confirmation_prompt,
     enforce_payment_response,
     parse_tool_result,
     process_payment_turn,
@@ -341,11 +342,31 @@ class LLMToolRuntime:
             return _result(spoken)
 
         if EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED and turn_mode == "email":
-            logger.warning(
+            from .payment_flow_state import extract_email_from_text, email_capture_context_active
+            from ..payment.email_state import set_pending_payment_email
+
+            email_only = extract_email_from_text(caller_text)
+            if email_only and email_capture_context_active(session, turn_mode):
+                set_pending_payment_email(session, email_only)
+                spoken = self._finalize(
+                    session,
+                    confirmation_prompt(email_only),
+                )
+                session.history.append({"role": "user", "content": caller_text})
+                session.history.append({"role": "assistant", "content": spoken})
+                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+                await _await_send(send, {"type": "text", "token": "", "last": True})
+                self._record_turn(session, caller_text, spoken)
+                logger.info(
+                    "email_capture_short_circuit sid=%s stage=email_mode_fallback openai_skipped=true",
+                    sid,
+                )
+                return _result(spoken)
+            logger.error(
                 "email_capture_miss sid=%s turn_mode=email payment_context=%s "
-                "payment_email_state_version=%s",
+                "payment_email_state_version=%s — OpenAI WILL run",
                 sid,
-                bool(getattr(session, "payment_cart_confirmed", False)),
+                email_capture_context_active(session, turn_mode),
                 PAYMENT_EMAIL_STATE_VERSION,
             )
 

@@ -25,29 +25,51 @@ async def lifespan(app: FastAPI):
     log_startup_health(settings)
     from .agent_runtime import llm_tools
     from .agent_runtime.master_prompt import prompt_startup_diagnostic
-    from .payment.email_state import (
-        CREATE_CHECKOUT_CUSTOMER_FACING,
-        EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED,
-        PAYMENT_AUTO_SEND_ENABLED,
-        PAYMENT_EMAIL_STATE_VERSION,
-        SEND_PAYMENT_LINK_CUSTOMER_FACING,
-    )
-    from .agent_runtime.commerce_flow_state import COMMERCE_FLOW_VERSION
-    from .agent_runtime.tool_progress import TOOL_PROGRESS_ENABLED
+    from .agent_runtime.runtime_identity import collect_runtime_identity, validate_runtime_identity
 
-    def _git_commit_short() -> str:
-        import subprocess
-
-        try:
-            return subprocess.check_output(
-                ["git", "rev-parse", "--short", "HEAD"],
-                stderr=subprocess.DEVNULL,
-                text=True,
-            ).strip()
-        except Exception:  # noqa: BLE001
-            return "unknown"
+    identity = collect_runtime_identity()
+    identity_failures = validate_runtime_identity(identity)
 
     prompt_diag = prompt_startup_diagnostic()
+    _log.info(
+        "runtime_identity cwd=%s app_main=%s release_path=%s python=%s pm2_name=%s "
+        "git_commit=%s git_branch=%s git_status_clean=%s",
+        identity.get("process_cwd"),
+        identity.get("app_main_file"),
+        identity.get("active_release_path"),
+        identity.get("python_executable"),
+        identity.get("pm2_process_name"),
+        identity.get("git_commit"),
+        identity.get("git_branch"),
+        identity.get("git_status_clean"),
+    )
+    _log.info(
+        "master_prompt_path=%s master_prompt_chars=%d master_prompt_sections=%d",
+        identity.get("master_prompt_path"),
+        identity.get("master_prompt_chars"),
+        identity.get("master_prompt_sections"),
+    )
+    _log.info(
+        "voice_sales_flow_version=%s tool_progress_prompts_enabled=%s "
+        "payment_email_state_version=%s email_capture_short_circuit_enabled=%s "
+        "payment_auto_send_enabled=%s create_checkout_customer_facing=%s "
+        "send_payment_link_customer_facing=%s create_checkout_present_in_tool_specs=%s",
+        identity.get("voice_sales_flow_version"),
+        identity.get("tool_progress_prompts_enabled"),
+        identity.get("payment_email_state_version"),
+        identity.get("email_capture_short_circuit_enabled"),
+        identity.get("payment_auto_send_enabled"),
+        identity.get("create_checkout_customer_facing"),
+        identity.get("send_payment_link_customer_facing"),
+        identity.get("create_checkout_present_in_tool_specs"),
+    )
+    if identity_failures:
+        _log.error(
+            "runtime_identity_check_failed failures=%s — PM2 may be serving stale code",
+            ",".join(identity_failures),
+        )
+    else:
+        _log.info("runtime_identity_check_passed=true")
     _log.info(
         "master_prompt_diag version=%s hash=%s chars=%d sections=%d approx_tokens=%d file=%s",
         prompt_diag["version"],
@@ -65,20 +87,6 @@ async def lifespan(app: FastAPI):
         resolve_live_turn_handler(settings),
         len(llm_tools.tool_names()),
         len(llm_tools.customer_facing_tool_names()),
-    )
-    _log.info(
-        "payment_email_state_version=%s email_capture_short_circuit_enabled=%s "
-        "payment_auto_send_enabled=%s create_checkout_customer_facing=%s "
-        "send_payment_link_customer_facing=%s commerce_flow_version=%s "
-        "tool_progress_enabled=%s git_commit=%s",
-        PAYMENT_EMAIL_STATE_VERSION,
-        EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED,
-        PAYMENT_AUTO_SEND_ENABLED,
-        CREATE_CHECKOUT_CUSTOMER_FACING,
-        SEND_PAYMENT_LINK_CUSTOMER_FACING,
-        COMMERCE_FLOW_VERSION,
-        TOOL_PROGRESS_ENABLED,
-        _git_commit_short(),
     )
     if settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS:
         _log.info(

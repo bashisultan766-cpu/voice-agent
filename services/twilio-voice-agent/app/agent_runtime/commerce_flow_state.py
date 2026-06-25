@@ -49,12 +49,29 @@ def _is_affirmative(text: str) -> bool:
     t = (text or "").strip()
     if not t:
         return False
-    return bool(_AFFIRM_PAT.match(t) or _AFFIRM_LOOSE_PAT.match(t))
+    if _AFFIRM_PAT.match(t) or _AFFIRM_LOOSE_PAT.match(t):
+        return True
+    if re.match(r"^\s*(yeah\s+)?sure\b", t, re.IGNORECASE):
+        return True
+    return False
 
 
 _ANOTHER_PAT = re.compile(
     r"\b(another (?:one|book)|i need another|i want another|one more book|"
     r"next book|a different book|look up another|find another)\b",
+    re.IGNORECASE,
+)
+_NO_BUT_ANOTHER_PAT = re.compile(
+    r"\bno\b.*\b(another|more)\b.*\b(book|one)\b",
+    re.IGNORECASE,
+)
+_DONE_SHOPPING_PAT = re.compile(
+    r"\b(no,? that.?s all|that.?s all|checkout|send (?:the )?payment link|"
+    r"payment link|done shopping|ready to pay|i.?m done)\b",
+    re.IGNORECASE,
+)
+_ADD_INTENT_PAT = re.compile(
+    r"\b(add it|add this|i need this|i want this|take it|one copy|1 copy)\b",
     re.IGNORECASE,
 )
 
@@ -71,6 +88,20 @@ def _status(session: "SessionState") -> str:
 
 def _candidate(session: "SessionState") -> dict[str, Any]:
     return dict(getattr(session, "commerce_pending_candidate", None) or {})
+
+
+def _resolve_pending_candidate(session: "SessionState") -> dict[str, Any]:
+    c = _candidate(session)
+    if c.get("variant_id"):
+        return c
+    lpc = dict(getattr(session, "last_product_candidate", None) or {})
+    if lpc.get("variant_id"):
+        return lpc
+    return {}
+
+
+def _is_add_affirmative(text: str) -> bool:
+    return _is_affirmative(text) or bool(_ADD_INTENT_PAT.search(text or ""))
 
 
 def _title(product: dict[str, Any]) -> str:
@@ -93,7 +124,7 @@ def confirm_book_prompt(product: dict[str, Any]) -> str:
 
 
 def another_book_after_add_prompt(title: str) -> str:
-    return f"Got it — I've added {title} to your order. Would you like another book?"
+    return f"Done, I added {title} to your cart. Would you like another book?"
 
 
 def next_book_prompt() -> str:
@@ -124,6 +155,7 @@ def stage_product_candidate(session: "SessionState", product: dict[str, Any]) ->
     session.commerce_flow_status = STATUS_AWAITING_BOOK_CONFIRM
     session.commerce_allow_add = False
     session.last_product_candidate = dict(session.commerce_pending_candidate)
+    session.awaiting_product_confirmation = True
     logger.info(
         "commerce_candidate_staged sid=%s title=%r status=%s",
         (getattr(session, "call_sid", "") or "")[:6],
@@ -243,25 +275,45 @@ def process_commerce_turn(session: "SessionState", caller_text: str) -> Commerce
         return CommerceTurnHint()
 
     status = _status(session)
+    candidate = _resolve_pending_candidate(session)
+    awaiting_confirm = (
+        status == STATUS_AWAITING_BOOK_CONFIRM
+        or bool(getattr(session, "awaiting_product_confirmation", False))
+    )
+
+    if _NO_BUT_ANOTHER_PAT.search(text):
+        session.commerce_flow_status = STATUS_IDLE
+        session.awaiting_product_confirmation = False
+        return CommerceTurnHint(force_reply=next_book_prompt())
+
+    if _DONE_SHOPPING_PAT.search(text) and _cart_has_confirmed_items(session):
+        session.commerce_flow_status = STATUS_AWAITING_EMAIL_COLLECTION
+        session.payment_flow_status = "awaiting_email"
+        session.awaiting_product_confirmation = False
+        return CommerceTurnHint(force_reply=cart_summary_and_email_prompt(session))
+
+    if awaiting_confirm and candidate and _is_add_affirmative(text):
+        session.commerce_pending_candidate = candidate
+        title = add_staged_book_to_cart(session)
+        session.awaiting_product_confirmation = False
+        if title:
+            return CommerceTurnHint(
+                force_reply=another_book_after_add_prompt(title),
+                book_added=True,
+            )
 
     if status == STATUS_AWAITING_BOOK_CONFIRM:
-        if _is_affirmative(text):
-            title = add_staged_book_to_cart(session)
-            if title:
-                return CommerceTurnHint(
-                    force_reply=another_book_after_add_prompt(title),
-                    book_added=True,
-                )
         if _NEGATE_PAT.match(text):
             session.commerce_pending_candidate = {}
             session.commerce_flow_status = STATUS_IDLE
+            session.awaiting_product_confirmation = False
             return CommerceTurnHint(
                 force_reply="No problem. Would you like to look up a different book?",
             )
         return CommerceTurnHint()
 
     if status == STATUS_AWAITING_ANOTHER_BOOK:
-        if _NEGATE_PAT.match(text):
+        if _NEGATE_PAT.match(text) and not _NO_BUT_ANOTHER_PAT.search(text):
             session.commerce_flow_status = STATUS_AWAITING_EMAIL_COLLECTION
             session.payment_flow_status = "awaiting_email"
             return CommerceTurnHint(force_reply=cart_summary_and_email_prompt(session))

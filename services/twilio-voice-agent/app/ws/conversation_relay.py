@@ -275,6 +275,8 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
         if session is None:
             return
 
+        session.voice_interrupted = False
+        session.tool_progress_sent_for_op = ""
         session.turn_count += 1
         if outbound is not None:
             outbound.set_turn(session.turn_count)
@@ -457,6 +459,8 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         session.call_sid if session else "?",
                         msg.get("durationUntilInterruptMs", "?"),
                     )
+                    if session is not None:
+                        session.voice_interrupted = True
                     await _cancel_current()
 
                 case "dtmf":

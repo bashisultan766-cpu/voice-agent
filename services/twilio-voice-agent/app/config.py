@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     VOICE_OPENAI_TIMEOUT_MS: int = 8000
     # Emit a filler phrase only if tools have not responded after this many ms.
     VOICE_FILLER_AFTER_MS: int = 250
+    VOICE_TOOL_PROGRESS_AFTER_MS: int = 650
     # Soft limit on LLM reply length in words (for compact context prompt).
     VOICE_MAX_REPLY_WORDS: int = 50
 
