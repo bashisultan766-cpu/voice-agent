@@ -353,6 +353,15 @@ def process_payment_turn(
             return capture_payment_email(session, email, raw_text=text)
         return PaymentTurnHint()
 
+    awaiting_confirm = bool(getattr(session, "awaiting_payment_email_confirmation", False))
+    if awaiting_confirm and email_signal and not is_email_confirmation(text):
+        replacement = extract_email_from_text(text, session) or parse_hyphen_spelled_email(text)
+        if replacement:
+            reject_pending_payment_email(session)
+            if hasattr(session, "pending_email_fragments"):
+                session.pending_email_fragments = []
+            return capture_payment_email(session, replacement, raw_text=text)
+
     pending_offer = get_pending_payment_email(session)
 
     if is_repeat_email_request(text) and pending_offer:
@@ -374,6 +383,12 @@ def process_payment_turn(
     if email_signal and _looks_like_partial_email(text):
         fragments = getattr(session, "pending_email_fragments", None)
         if fragments is not None:
+            combined = " ".join([*fragments, text]).strip()
+            merged = extract_email_from_text(combined, session=None) or parse_hyphen_spelled_email(combined)
+            if merged:
+                if hasattr(session, "pending_email_fragments"):
+                    session.pending_email_fragments = []
+                return capture_payment_email(session, merged, raw_text=text)
             if text not in fragments:
                 session.pending_email_fragments = [*fragments, text]
             logger.info(

@@ -57,7 +57,46 @@ def _status(session: "SessionState") -> str:
     return getattr(session, "order_flow_status", STATUS_IDLE) or STATUS_IDLE
 
 
-def extract_order_number(text: str) -> Optional[str]:
+def _should_skip_order_lookup(
+    text: str,
+    session: "SessionState | None" = None,
+    turn_mode: str = "",
+) -> bool:
+    """Do not treat ISBN digit chunks as Shopify order numbers."""
+    if (turn_mode or "").strip().lower() in ("isbn", "email"):
+        return True
+    if session is not None:
+        if getattr(session, "pending_isbn_buffer", ""):
+            return True
+        try:
+            from .isbn_short_circuit import _isbn_collection_active
+
+            if _isbn_collection_active(session, turn_mode):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        commerce = getattr(session, "commerce_flow_status", "idle") or "idle"
+        if commerce not in ("idle", "") and not order_intent_detected(text):
+            return True
+    t = (text or "").strip()
+    if re.search(r"\b(isbn|book)\b", t, re.I):
+        return True
+    digits = "".join(c for c in t if c.isdigit())
+    if len(digits) >= 9:
+        return True
+    if digits.startswith(("978", "979")) and len(digits) >= 4:
+        return True
+    return False
+
+
+def extract_order_number(
+    text: str,
+    session: "SessionState | None" = None,
+    *,
+    turn_mode: str = "",
+) -> Optional[str]:
+    if _should_skip_order_lookup(text, session, turn_mode):
+        return None
     t = (text or "").strip()
     if not t:
         return None
@@ -115,7 +154,7 @@ def process_order_turn(session: "SessionState", caller_text: str, *, turn_mode: 
         return OrderTurnHint()
 
     status = _status(session)
-    order_num = extract_order_number(text)
+    order_num = extract_order_number(text, session, turn_mode=turn_mode)
 
     if order_num:
         session.order_flow_status = STATUS_AWAITING_ORDER_VERIFICATION
@@ -164,7 +203,7 @@ async def try_order_enrichment_short_circuit(
 
     text = (caller_text or "").strip()
     order_num = (
-        extract_order_number(text)
+        extract_order_number(text, session, turn_mode=turn_mode)
         or getattr(session, "pending_order_number", "")
         or getattr(session, "last_order_number", "")
     )

@@ -172,6 +172,7 @@ def cart_summary_and_email_prompt(session: "SessionState") -> str:
 
 def stage_product_candidate(session: "SessionState", product: dict[str, Any]) -> None:
     """Store a catalog hit as the pending book awaiting verbal confirmation."""
+    product = normalize_catalog_hit(product)
     if not product or not product.get("variant_id"):
         return
     session.commerce_pending_candidate = {
@@ -195,14 +196,28 @@ def stage_product_candidate(session: "SessionState", product: dict[str, Any]) ->
     )
 
 
+def normalize_catalog_hit(item: dict[str, Any]) -> dict[str, Any]:
+    """Ensure variant_id/price exist when Shopify returns variants[] only."""
+    if not item:
+        return {}
+    out = dict(item)
+    variants = out.get("variants") or []
+    if not out.get("variant_id") and variants and isinstance(variants[0], dict):
+        v0 = variants[0]
+        out["variant_id"] = v0.get("id") or v0.get("variant_id") or ""
+        if not out.get("price"):
+            out["price"] = v0.get("price") or ""
+    return out
+
+
 def maybe_stage_from_search_payload(session: "SessionState | None", payload: dict[str, Any]) -> None:
     if session is None or not isinstance(payload, dict):
         return
     results = payload.get("results") or []
     if not results:
         return
-    top = results[0]
-    if isinstance(top, dict) and top.get("variant_id"):
+    top = normalize_catalog_hit(results[0] if isinstance(results[0], dict) else {})
+    if top.get("variant_id"):
         stage_product_candidate(session, top)
 
 

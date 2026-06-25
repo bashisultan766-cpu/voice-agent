@@ -149,7 +149,7 @@ async def try_isbn_short_circuit(
     """
     Run catalog search on a resolved ISBN and return a spoken reply, or None.
     """
-    from .commerce_flow_state import quantity_prompt, stage_product_candidate
+    from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
     from .llm_tools import CatalogSearchArgs, _catalog_search
     from ..conversation.call_memory import record_isbn
 
@@ -186,7 +186,7 @@ async def try_isbn_short_circuit(
 
     results = (payload.get("results") or []) if isinstance(payload, dict) else []
     if results and isinstance(results[0], dict):
-        top = results[0]
+        top = normalize_catalog_hit(results[0])
         if top.get("variant_id"):
             stage_product_candidate(session, top)
             try:
@@ -199,6 +199,16 @@ async def try_isbn_short_circuit(
                 pass
             return IsbnShortCircuitResult(
                 force_reply=quantity_prompt(top),
+                isbn=isbn,
+                tool_results=tool_results,
+            )
+        title = (top.get("title") or "").strip()
+        if title:
+            session.last_product_candidate = top
+            return IsbnShortCircuitResult(
+                force_reply=(
+                    f"I found {title}. How many copies would you like?"
+                ),
                 isbn=isbn,
                 tool_results=tool_results,
             )

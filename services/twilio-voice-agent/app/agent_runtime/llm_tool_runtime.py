@@ -464,7 +464,7 @@ class LLMToolRuntime:
             )
             return _result(spoken)
 
-        if extract_order_number(caller_text) or turn_mode == "order":
+        if extract_order_number(caller_text, session, turn_mode=turn_mode) or turn_mode == "order":
             order_enriched = await try_order_enrichment_short_circuit(
                 session, caller_text, turn_mode=turn_mode,
             )

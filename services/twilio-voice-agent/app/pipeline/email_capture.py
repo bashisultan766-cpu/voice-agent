@@ -99,6 +99,11 @@ _DOMAIN_FIXES: dict[str, str] = {
     "hotmil": "hotmail",
     "iclod": "icloud",
     "iclould": "icloud",
+    "periodgmail": "gmail",
+    "therategmail": "gmail",
+    "thegmail": "gmail",
+    "atgmail": "gmail",
+    "rate gmail": "gmail",
 }
 
 # ── Correction / confirmation patterns ────────────────────────────────────────
