@@ -102,7 +102,8 @@ class TestElevenLabsToolRegistry:
             assert legacy in names
 
     def test_tool_specs_count(self):
-        assert len(llm_tools.tool_specs()) == len(llm_tools.tool_names())
+        assert len(llm_tools.tool_specs()) == len(llm_tools.customer_facing_tool_names())
+        assert "create_checkout" not in {s["function"]["name"] for s in llm_tools.tool_specs()}
 
 
 class TestNormalizeVoiceIntent:

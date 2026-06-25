@@ -32,8 +32,8 @@ class TestTurnTakingV411:
 
         emitted = []
 
-        async def on_emit(text):
-            emitted.append(text)
+        async def on_emit(turn):
+            emitted.append(turn.text)
 
         asm = TurnAssembler()
         await asm.ingest("bashi at gmail", on_emit, call_sid="CA1")

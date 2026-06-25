@@ -29,8 +29,8 @@ class TestTurnAssembler:
         asm = TurnAssembler(settings=_settings())
         emitted: list[str] = []
 
-        async def on_emit(text: str) -> None:
-            emitted.append(text)
+        async def on_emit(turn) -> None:
+            emitted.append(turn.text)
 
         await asm.ingest("9 7 9 8 9 9 8 6.", on_emit, call_sid="CA01")
         await asm.ingest("2 7 0 0 2.", on_emit, call_sid="CA01")
@@ -44,8 +44,8 @@ class TestTurnAssembler:
         asm = TurnAssembler(settings=_settings())
         emitted: list[str] = []
 
-        async def on_emit(text: str) -> None:
-            emitted.append(text)
+        async def on_emit(turn) -> None:
+            emitted.append(turn.text)
 
         await asm.ingest("Bashi Sultan", on_emit, call_sid="CA02")
         await asm.ingest("7 6 6 at gmail dot com", on_emit, call_sid="CA02")
@@ -58,8 +58,8 @@ class TestTurnAssembler:
         asm = TurnAssembler(settings=_settings())
         emitted: list[str] = []
 
-        async def on_emit(text: str) -> None:
-            emitted.append(text)
+        async def on_emit(turn) -> None:
+            emitted.append(turn.text)
 
         await asm.ingest("9 7 9 8", on_emit, call_sid="CA03")
         assert len(emitted) == 0
@@ -69,8 +69,8 @@ class TestTurnAssembler:
         asm = TurnAssembler(settings=_settings())
         emitted: list[str] = []
 
-        async def on_emit(text: str) -> None:
-            emitted.append(text)
+        async def on_emit(turn) -> None:
+            emitted.append(turn.text)
 
         await asm.ingest("Hello. How are you?", on_emit, call_sid="CA04")
         assert len(emitted) == 0
@@ -83,8 +83,8 @@ class TestTurnAssembler:
         asm = TurnAssembler(settings=_settings())
         emitted: list[str] = []
 
-        async def on_emit(text: str) -> None:
-            emitted.append(text)
+        async def on_emit(turn) -> None:
+            emitted.append(turn.text)
 
         await asm.ingest("9 7 9 8", on_emit, call_sid="CA05")
         await asm.ingest("wait wait", on_emit, call_sid="CA05")
@@ -96,8 +96,8 @@ class TestTurnAssembler:
         asm = TurnAssembler(settings=_settings())
         emitted: list[str] = []
 
-        async def on_emit(text: str) -> None:
-            emitted.append(text)
+        async def on_emit(turn) -> None:
+            emitted.append(turn.text)
 
         await asm.ingest("9 7 9 8 9 9 8 6", on_emit, call_sid="CA06")
         await asm.ingest("repeat again", on_emit, call_sid="CA06")
@@ -108,8 +108,8 @@ class TestTurnAssembler:
         asm = TurnAssembler(settings=_settings())
         emitted: list[str] = []
 
-        async def on_emit(text: str) -> None:
-            emitted.append(text)
+        async def on_emit(turn) -> None:
+            emitted.append(turn.text)
 
         isbn = "9 7 9 8 9 9 3 8 6 1 8 0 7"
         await asm.ingest(isbn, on_emit, call_sid="CA07")

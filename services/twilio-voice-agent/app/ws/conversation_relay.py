@@ -74,6 +74,8 @@ async def dispatch_assembled_turn(
     user_text: str,
     send,
     caller_context,
+    *,
+    assembled_turn_mode: str = "",
 ) -> None:
     """
     Route one assembled ConversationRelay turn to the single LLM-first runtime.
@@ -95,12 +97,16 @@ async def dispatch_assembled_turn(
         )
 
     t0 = time.monotonic()
-    logger.info("voice_turn_handler sid=%s handler=%s", sid, RUNTIME_MODE)
+    logger.info(
+        "voice_turn_handler sid=%s handler=%s turn_mode=%s",
+        sid, RUNTIME_MODE, assembled_turn_mode or "normal",
+    )
     result = await get_llm_tool_runtime(settings).handle_turn(
         session,
         user_text,
         send,
         caller_context=caller_context,
+        assembled_turn_mode=assembled_turn_mode,
     )
     chars = len(getattr(result, "response_text", "") or "")
     logger.info(
@@ -262,7 +268,7 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
             )
             session.caller_profile_loaded = True
 
-    async def _run_turn(user_text: str) -> None:
+    async def _run_turn(user_text: str, turn_mode: str = "normal") -> None:
         """Generate a response for one caller utterance via the pipeline engine."""
         nonlocal first_prompt_received
 
@@ -290,6 +296,7 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                 user_text,
                 send,
                 ctx,
+                assembled_turn_mode=turn_mode,
             )
         except asyncio.CancelledError:
             logger.info("Turn cancelled by interrupt")
@@ -419,17 +426,22 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
                     assembler = get_turn_assembler(session.call_sid, settings)
 
-                    async def _emit_assembled(assembled_text: str) -> None:
+                    async def _emit_assembled(turn) -> None:
                         nonlocal current_task
+                        from ..voice.turn_assembler import AssembledTurn
+
+                        if isinstance(turn, str):
+                            turn = AssembledTurn(text=turn, mode="normal")
                         cr_stats.assembled_turns += 1
                         logger.info(
-                            "conversationrelay_assembled_turn sid=%s assembled_count=%d",
+                            "conversationrelay_assembled_turn sid=%s assembled_count=%d mode=%s",
                             session.call_sid[:6],
                             cr_stats.assembled_turns,
+                            turn.mode,
                         )
                         await _cancel_current()
                         current_task = asyncio.create_task(
-                            _run_turn(assembled_text),
+                            _run_turn(turn.text, turn.mode),
                             name=f"turn-{session.turn_count + 1}",
                         )
 

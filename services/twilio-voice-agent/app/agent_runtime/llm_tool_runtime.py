@@ -37,12 +37,24 @@ from . import llm_tools
 from . import openai_health
 from .master_prompt import MasterPromptError, get_master_prompt
 from .output_guardrails import apply_output_guardrails
+from .commerce_flow_state import (
+    COMMERCE_FLOW_VERSION,
+    enforce_commerce_response,
+    post_tool_commerce_message,
+    process_commerce_turn,
+)
 from .payment_flow_state import (
     enforce_payment_response,
     parse_tool_result,
     process_payment_turn,
     spoken_email_confirmation,
 )
+from ..payment.email_state import (
+    EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED,
+    PAYMENT_AUTO_SEND_ENABLED,
+    PAYMENT_EMAIL_STATE_VERSION,
+)
+from .tool_progress import TOOL_PROGRESS_ENABLED, dispatch_with_progress
 from .tool_runtime_gates import replace_blocked_order_phrase
 
 if TYPE_CHECKING:
@@ -248,16 +260,24 @@ class LLMToolRuntime:
         send: Callable[[dict], Awaitable[None]],
         caller_context: Optional["SafeCallerContext"] = None,
         turn=None,
+        *,
+        assembled_turn_mode: str = "",
     ):
         sid = session.call_sid[:6]
         t0 = time.monotonic()
         openai_health.log_call_health(session.call_sid, self._settings)
-        logger.info("llm_tool_runtime_start sid=%s turn=%r", sid, caller_text[:60])
+        turn_mode = assembled_turn_mode or getattr(turn, "mode", "") or ""
+        logger.info(
+            "llm_tool_runtime_start sid=%s turn_mode=%s turn=%r",
+            sid,
+            turn_mode or "normal",
+            caller_text[:60],
+        )
 
         if not getattr(self._settings, "OPENAI_API_KEY", ""):
             return await self._fallback(session, caller_text, send, reason="missing_api_key")
 
-        payment_hint = process_payment_turn(session, caller_text)
+        payment_hint = process_payment_turn(session, caller_text, turn_mode=turn_mode)
         if payment_hint.force_reply:
             spoken = self._finalize(session, payment_hint.force_reply)
             session.history.append({"role": "user", "content": caller_text})
@@ -266,12 +286,21 @@ class LLMToolRuntime:
             await _await_send(send, {"type": "text", "token": "", "last": True})
             self._record_turn(session, caller_text, spoken)
             logger.info(
-                "llm_tool_runtime_payment_confirm_prompt sid=%s",
+                "email_capture_short_circuit sid=%s stage=confirm_prompt "
+                "payment_email_state_version=%s awaiting_confirmation=%s",
+                session.call_sid[:6],
+                PAYMENT_EMAIL_STATE_VERSION,
+                bool(getattr(session, "awaiting_payment_email_confirmation", False)),
+            )
+            logger.info(
+                "llm_tool_runtime_payment_confirm_prompt sid=%s openai_skipped=true",
                 session.call_sid[:6],
             )
             return _result(spoken)
 
         if payment_hint.email_confirmed:
+            if not PAYMENT_AUTO_SEND_ENABLED:
+                logger.error("payment_auto_send_disabled sid=%s", session.call_sid[:6])
             from ..payment.email_state import log_payment_flow_diagnostics
 
             log_payment_flow_diagnostics(session, stage="auto_send_after_confirm")
@@ -289,11 +318,36 @@ class LLMToolRuntime:
             await _await_send(send, {"type": "text", "token": "", "last": True})
             self._record_turn(session, caller_text, spoken)
             logger.info(
-                "llm_tool_runtime_payment_auto_send sid=%s success=%s",
+                "llm_tool_runtime_payment_auto_send sid=%s success=%s openai_skipped=true",
                 session.call_sid[:6],
                 bool(send_result.get("email_sent")),
             )
             return _result(spoken)
+
+        commerce_hint = process_commerce_turn(session, caller_text)
+        if commerce_hint.force_reply:
+            spoken = self._finalize(session, commerce_hint.force_reply)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info(
+                "commerce_flow_short_circuit sid=%s book_added=%s version=%s openai_skipped=true",
+                session.call_sid[:6],
+                commerce_hint.book_added,
+                COMMERCE_FLOW_VERSION,
+            )
+            return _result(spoken)
+
+        if EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED and turn_mode == "email":
+            logger.warning(
+                "email_capture_miss sid=%s turn_mode=email payment_context=%s "
+                "payment_email_state_version=%s",
+                sid,
+                bool(getattr(session, "payment_cart_confirmed", False)),
+                PAYMENT_EMAIL_STATE_VERSION,
+            )
 
         messages = self.build_messages(session, caller_text)
         # Persist the user turn immediately so history stays consistent.
@@ -303,7 +357,9 @@ class LLMToolRuntime:
         tools_used: list[str] = []
         tool_results: list[tuple[str, dict]] = []
         try:
-            final_text, tools_used, tool_results = await self._run_tool_loop(session, messages, sid)
+            final_text, tools_used, tool_results = await self._run_tool_loop(
+                session, messages, sid, send,
+            )
         except Exception as exc:  # noqa: BLE001 — never break the call
             openai_health.log_error(session.call_sid, exc, purpose="llm_tool_runtime")
             return await self._fallback(session, caller_text, send, reason="openai_error")
@@ -312,6 +368,10 @@ class LLMToolRuntime:
             return await self._fallback(session, caller_text, send, reason="empty_response")
 
         final_text = enforce_payment_response(session, final_text, tool_results)
+        final_text = enforce_commerce_response(session, final_text, tool_results)
+        commerce_followup = post_tool_commerce_message(session, tool_results)
+        if commerce_followup:
+            final_text = commerce_followup
 
         spoken = self._finalize(session, final_text)
         await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
@@ -329,7 +389,11 @@ class LLMToolRuntime:
         return _result(spoken)
 
     async def _run_tool_loop(
-        self, session: "SessionState", messages: list[dict], sid: str
+        self,
+        session: "SessionState",
+        messages: list[dict],
+        sid: str,
+        send: Optional[Callable] = None,
     ) -> tuple[str, list[str], list[tuple[str, dict]]]:
         """Run the OpenAI tool-calling loop. Returns (final_text, tools_used, parsed_results)."""
         tools_used: list[str] = []
@@ -374,7 +438,15 @@ class LLMToolRuntime:
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
-                result_str = await llm_tools.dispatch(name, args, session)
+                result_str = await dispatch_with_progress(
+                    llm_tools.dispatch,
+                    name,
+                    args,
+                    session,
+                    send if TOOL_PROGRESS_ENABLED else None,
+                    self._settings,
+                    sid,
+                )
                 tool_results.append((name, parse_tool_result(result_str)))
                 tool_entry = {
                     "role": "tool",

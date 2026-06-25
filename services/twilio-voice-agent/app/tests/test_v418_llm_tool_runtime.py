@@ -256,7 +256,7 @@ def test_dispatch_always_routes_to_llm_tool_runtime(monkeypatch):
     captured = {}
 
     class _Captured:
-        async def handle_turn(self, session, text, send, caller_context=None):
+        async def handle_turn(self, session, text, send, caller_context=None, **kwargs):
             captured["used"] = True
 
             class _R:

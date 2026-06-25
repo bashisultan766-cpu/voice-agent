@@ -16,6 +16,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+PAYMENT_EMAIL_STATE_VERSION = "v4.22"
+EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED = True
+PAYMENT_AUTO_SEND_ENABLED = True
+CREATE_CHECKOUT_CUSTOMER_FACING = False
+SEND_PAYMENT_LINK_CUSTOMER_FACING = True
+
 
 def _email_hash(email: str) -> str:
     if not email:

@@ -212,11 +212,23 @@ async def _search_products(args: SearchProductsArgs, session) -> str:
         return raw
     if isinstance(payload, dict) and payload.get("results"):
         payload["results"] = _rerank_by_fuzzy(args.query, payload["results"])
+        from .commerce_flow_state import maybe_stage_from_search_payload
+
+        maybe_stage_from_search_payload(session, payload)
     return json.dumps(payload)
 
 
 async def _get_product_details(args: GetProductDetailsArgs, session) -> str:
-    return await _st.get_product_details(product_id_or_handle=args.product_id_or_handle)
+    raw = await _st.get_product_details(product_id_or_handle=args.product_id_or_handle)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(payload, dict) and payload.get("variant_id") and session is not None:
+        from .commerce_flow_state import stage_product_candidate
+
+        stage_product_candidate(session, payload)
+    return raw if isinstance(raw, str) else json.dumps(payload)
 
 
 async def _compare_products(args: CompareProductsArgs, session) -> str:
@@ -290,7 +302,17 @@ async def _add_to_cart(args: AddToCartArgs, session) -> str:
         if pfs in ("idle", ""):
             session.payment_flow_status = "awaiting_email"
         session.payment_cart_confirmed = True
-    return json.dumps({"success": True, "cart": view})
+        from .commerce_flow_state import on_book_added_to_cart
+
+        on_book_added_to_cart(session, args.title or args.isbn or "Selected book")
+    payload = {"success": True, "cart": view}
+    if getattr(session, "commerce_flow_status", "") == "awaiting_another_book":
+        from .commerce_flow_state import another_book_after_add_prompt
+
+        titles = view.get("confirmed_titles") or []
+        if titles:
+            payload["customer_message"] = another_book_after_add_prompt(titles[-1])
+    return json.dumps(payload)
 
 
 async def _update_cart(args: UpdateCartArgs, session) -> str:
@@ -495,6 +517,9 @@ async def _catalog_search(args: CatalogSearchArgs, session) -> str:
         return raw
     if isinstance(payload, dict) and payload.get("results"):
         payload["results"] = _rerank_by_fuzzy(args.query, payload["results"])
+        from .commerce_flow_state import maybe_stage_from_search_payload
+
+        maybe_stage_from_search_payload(session, payload)
     return json.dumps(payload)
 
 
@@ -593,6 +618,10 @@ _I = {"type": "integer"}
 
 _TOOLS: dict[str, _Tool] = {}
 
+# Internal-only tools: callable via dispatch (e.g. send_payment_link) but never
+# exposed to the LLM — prevents create_checkout on the same turn as email capture.
+_INTERNAL_ONLY_TOOLS = frozenset({"create_checkout"})
+
 
 def _register(name, model, impl, description, schema):
     _TOOLS[name] = _Tool(name, model, impl, description, schema)
@@ -644,8 +673,7 @@ _register(
 )
 _register(
     "create_checkout", CreateCheckoutArgs, _create_checkout,
-    "Create a secure Shopify checkout/draft order for the confirmed cart. Does "
-    "not speak the link. Call after items are confirmed.",
+    "INTERNAL: create Shopify checkout for send_payment_link. Not for LLM use.",
     _obj({"email": {**_S, "description": "Confirmed email (optional)."}}, []),
 )
 _register(
@@ -785,8 +813,12 @@ def tool_names() -> list[str]:
     return list(_TOOLS.keys())
 
 
+def customer_facing_tool_names() -> list[str]:
+    return [name for name in _TOOLS if name not in _INTERNAL_ONLY_TOOLS]
+
+
 def tool_specs() -> list[dict]:
-    """Return OpenAI tool schemas for all canonical tools."""
+    """Return OpenAI tool schemas for customer-facing tools only."""
     return [
         {
             "type": "function",
@@ -797,6 +829,7 @@ def tool_specs() -> list[dict]:
             },
         }
         for t in _TOOLS.values()
+        if t.name not in _INTERNAL_ONLY_TOOLS
     ]
 
 

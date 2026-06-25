@@ -25,6 +25,27 @@ async def lifespan(app: FastAPI):
     log_startup_health(settings)
     from .agent_runtime import llm_tools
     from .agent_runtime.master_prompt import prompt_startup_diagnostic
+    from .payment.email_state import (
+        CREATE_CHECKOUT_CUSTOMER_FACING,
+        EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED,
+        PAYMENT_AUTO_SEND_ENABLED,
+        PAYMENT_EMAIL_STATE_VERSION,
+        SEND_PAYMENT_LINK_CUSTOMER_FACING,
+    )
+    from .agent_runtime.commerce_flow_state import COMMERCE_FLOW_VERSION
+    from .agent_runtime.tool_progress import TOOL_PROGRESS_ENABLED
+
+    def _git_commit_short() -> str:
+        import subprocess
+
+        try:
+            return subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except Exception:  # noqa: BLE001
+            return "unknown"
 
     prompt_diag = prompt_startup_diagnostic()
     _log.info(
@@ -38,11 +59,26 @@ async def lifespan(app: FastAPI):
     )
     _log.info(
         "voice_runtime=%s voice_agent_runtime_mode=%s active_turn_handler=%s "
-        "llm_tool_runtime_tools=%d",
+        "llm_tool_runtime_tools=%d customer_facing_tools=%d",
         settings.VOICE_RUNTIME,
         settings.VOICE_AGENT_RUNTIME_MODE,
         resolve_live_turn_handler(settings),
         len(llm_tools.tool_names()),
+        len(llm_tools.customer_facing_tool_names()),
+    )
+    _log.info(
+        "payment_email_state_version=%s email_capture_short_circuit_enabled=%s "
+        "payment_auto_send_enabled=%s create_checkout_customer_facing=%s "
+        "send_payment_link_customer_facing=%s commerce_flow_version=%s "
+        "tool_progress_enabled=%s git_commit=%s",
+        PAYMENT_EMAIL_STATE_VERSION,
+        EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED,
+        PAYMENT_AUTO_SEND_ENABLED,
+        CREATE_CHECKOUT_CUSTOMER_FACING,
+        SEND_PAYMENT_LINK_CUSTOMER_FACING,
+        COMMERCE_FLOW_VERSION,
+        TOOL_PROGRESS_ENABLED,
+        _git_commit_short(),
     )
     if settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS:
         _log.info(

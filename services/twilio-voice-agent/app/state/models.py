@@ -190,3 +190,9 @@ class SessionState:
     last_brain_decision: Any = None
     # v4.8 turn-taking hold flag (digit/email fragment in progress).
     turn_taking_hold: bool = False
+
+    # ── v4.24 multi-book commerce flow (CartLedger-backed) ─────────────────
+    commerce_flow_status: str = "idle"
+    commerce_pending_candidate: dict[str, Any] = field(default_factory=dict)
+    commerce_allow_add: bool = False
+    last_confirmed_product: dict[str, Any] = field(default_factory=dict)

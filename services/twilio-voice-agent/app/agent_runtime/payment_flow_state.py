@@ -104,6 +104,24 @@ def in_payment_flow(session: "SessionState") -> bool:
     return _cart_has_confirmed_items(session)
 
 
+def email_capture_context_active(session: "SessionState") -> bool:
+    """True when cart/checkout/payment is active enough for deterministic email capture."""
+    if in_payment_flow(session):
+        return True
+    if getattr(session, "payment_cart_confirmed", False):
+        return True
+    return _cart_has_confirmed_items(session)
+
+
+def _email_signal_present(caller_text: str, turn_mode: str = "") -> bool:
+    text = (caller_text or "").strip()
+    if not text:
+        return False
+    if (turn_mode or "").strip().lower() == "email":
+        return True
+    return bool(extract_email_from_text(text))
+
+
 def extract_email_from_text(text: str) -> Optional[str]:
     if not text:
         return None
@@ -146,31 +164,44 @@ def _reject_pending_email(session: "SessionState") -> None:
     reject_pending_payment_email(session)
 
 
-def process_payment_turn(session: "SessionState", caller_text: str) -> PaymentTurnHint:
+def process_payment_turn(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> PaymentTurnHint:
     """
     Update payment session state from caller text before the LLM runs.
 
     Returns a hint with ``force_reply`` when the runtime should speak a
     deterministic confirmation prompt instead of letting the LLM send payment.
     """
+    from ..pipeline.email_capture import (
+        is_email_confirmation,
+        is_email_correction,
+        is_repeat_email_request,
+        parse_hyphen_spelled_email,
+    )
+
     _sync_legacy_email_fields(session)
     session.payment_cart_confirmed = _cart_has_confirmed_items(session)
-
-    if not in_payment_flow(session):
-        return PaymentTurnHint()
 
     text = (caller_text or "").strip()
     if not text:
         return PaymentTurnHint()
 
-    try:
-        from ..pipeline.email_capture import (
-            is_email_confirmation,
-            is_email_correction,
-            is_repeat_email_request,
-            parse_hyphen_spelled_email,
-        )
-    except Exception:  # noqa: BLE001
+    email_signal = _email_signal_present(text, turn_mode)
+    if not email_capture_context_active(session):
+        if email_signal:
+            sid = session.call_sid[:6] if session.call_sid else "?"
+            logger.warning(
+                "email_capture_skipped sid=%s turn_mode=%s reason=no_payment_context "
+                "cart_confirmed=%s payment_flow_status=%s",
+                sid,
+                turn_mode or "normal",
+                _cart_has_confirmed_items(session),
+                getattr(session, "payment_flow_status", "idle"),
+            )
         return PaymentTurnHint()
 
     if is_email_correction(text):

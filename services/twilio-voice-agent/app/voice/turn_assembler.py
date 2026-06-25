@@ -63,6 +63,14 @@ class AssemblerState:
     pending_clarify: str = ""
 
 
+@dataclass
+class AssembledTurn:
+    """One debounced caller utterance passed to the LLM runtime."""
+
+    text: str
+    mode: str = "normal"
+
+
 class TurnAssembler:
     """
     Per-session turn assembler with debounce and fragment merging.
@@ -162,7 +170,7 @@ class TurnAssembler:
     async def _emit_buffered(
         self,
         sid: str,
-        on_emit: Callable[[str], Awaitable[None]],
+        on_emit: Callable[[AssembledTurn], Awaitable[None]],
         reason: str,
     ) -> bool:
         st = self._state
@@ -185,13 +193,13 @@ class TurnAssembler:
             "turn_assembler_emit sid=%s mode=%s reason=%s",
             sid, emit_mode, reason,
         )
-        await on_emit(assembled)
+        await on_emit(AssembledTurn(text=assembled, mode=emit_mode))
         return False
 
     async def ingest(
         self,
         fragment: str,
-        on_emit: Callable[[str], Awaitable[None]],
+        on_emit: Callable[[AssembledTurn], Awaitable[None]],
         *,
         call_sid: str = "",
     ) -> bool:
@@ -351,16 +359,17 @@ class TurnAssembler:
             if self._emit_callback:
                 await self._emit_buffered(sid, self._emit_callback, f"debounce_{emit_mode}")
 
-    async def flush(self, on_emit: Callable[[str], Awaitable[None]], *, call_sid: str = "") -> None:
+    async def flush(self, on_emit: Callable[[AssembledTurn], Awaitable[None]], *, call_sid: str = "") -> None:
         """Force-emit any buffered text (e.g. on disconnect)."""
         async with self._lock:
             if self._debounce_task and not self._debounce_task.done():
                 self._debounce_task.cancel()
             if self._state.buffer:
                 assembled = self._state.buffer
+                emit_mode = self._state.mode
                 self._state.buffer = ""
                 self._state.mode = "normal"
-                await on_emit(assembled)
+                await on_emit(AssembledTurn(text=assembled, mode=emit_mode))
 
 
 def _ISBN_DIGIT_HINT(text: str) -> bool:

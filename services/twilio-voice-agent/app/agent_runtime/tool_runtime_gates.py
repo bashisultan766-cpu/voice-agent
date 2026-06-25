@@ -17,6 +17,7 @@ from .payment_flow_state import (
     confirmation_prompt,
     gate_send_payment_link,
 )
+from .commerce_flow_state import gate_add_to_cart
 from ..payment.email_state import get_pending_payment_email
 
 if TYPE_CHECKING:
@@ -91,6 +92,9 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
                     "and I'll update your cart before sending the link."
                 ),
             )
+        commerce_gate = gate_add_to_cart(session)
+        if commerce_gate is not None:
+            return commerce_gate
         return None
 
     if name == "create_checkout":
