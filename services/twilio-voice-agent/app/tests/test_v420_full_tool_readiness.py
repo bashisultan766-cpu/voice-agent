@@ -30,6 +30,7 @@ from app.agent_runtime.tool_runtime_gates import (
     replace_blocked_order_phrase,
 )
 from app.cart.session import add_product_candidate, confirm_last_candidate, get_ledger
+from app.pipeline.email_capture import normalize_spoken_email
 from app.pipeline.email_speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
 from app.tools import voice_intent

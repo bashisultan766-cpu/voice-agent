@@ -20,6 +20,7 @@ from app.pipeline.compound_intent import detect
 from app.pipeline.engine import _apply_email_state
 from app.pipeline.router import IntentResult
 from app.pipeline.email_speller import build_email_readback, spell_email_for_voice, speak_email
+from app.payment.scope_audit import audit_payment_scope
 from app.safety.response_sanitizer import sanitize_customer_response
 from app.state.models import SessionState
 from app.workers.orchestrator import WorkerOrchestrator

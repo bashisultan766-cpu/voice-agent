@@ -475,6 +475,41 @@ async def lookup_order(
         return json.dumps({"error": "Order lookup temporarily unavailable."})
 
 
+def order_record_from_lookup(result: dict) -> dict | None:
+    """
+    Normalize lookup_order JSON for facility workers.
+
+    Supports legacy ``orders[]`` payloads and the flat verified lookup shape.
+    """
+    if not result or not result.get("found"):
+        return None
+    if result.get("orders"):
+        orders = result["orders"]
+        if orders and isinstance(orders[0], dict):
+            return orders[0]
+    if not any(
+        result.get(key) is not None
+        for key in ("order_number", "tags", "note", "custom_attributes", "customAttributes")
+    ):
+        return None
+
+    attrs = result.get("custom_attributes") or result.get("customAttributes") or {}
+    if isinstance(attrs, list):
+        custom_attributes = attrs
+    else:
+        custom_attributes = [{"key": k, "value": v} for k, v in attrs.items()]
+
+    tags = result.get("tags") or []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+    return {
+        "note": result.get("note") or "",
+        "tags": tags,
+        "customAttributes": custom_attributes,
+    }
+
+
 async def get_refund_status(
     order_number: str,
     email: Optional[str] = None,

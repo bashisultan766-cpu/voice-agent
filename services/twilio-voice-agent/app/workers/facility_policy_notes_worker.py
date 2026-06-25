@@ -49,7 +49,7 @@ class FacilityPolicyNotesWorker:
 
         if order_number:
             try:
-                from ..tools.shopify_tools import lookup_order
+                from ..tools.shopify_tools import lookup_order, order_record_from_lookup
                 result_json = await lookup_order(
                     order_number=order_number,
                     email=None,
@@ -57,8 +57,8 @@ class FacilityPolicyNotesWorker:
                     session=session,
                 )
                 result = json.loads(result_json)
-                if result.get("found") and result.get("orders"):
-                    order = result["orders"][0]
+                order = order_record_from_lookup(result)
+                if order:
                     note = (order.get("note") or "").strip()
                     if note and len(note) <= 300:
                         policy_notes.append(note)

@@ -97,7 +97,7 @@ class OrderFacilityReviewWorker:
             email = session.caller_email if session.verified_email else None
             phone = session.from_number if session.verified_phone else None
 
-            from ..tools.shopify_tools import lookup_order
+            from ..tools.shopify_tools import lookup_order, order_record_from_lookup
             result_json = await lookup_order(
                 order_number=order_number,
                 email=email,
@@ -106,7 +106,8 @@ class OrderFacilityReviewWorker:
             )
             result = json.loads(result_json)
 
-            if not result.get("found") or not result.get("orders"):
+            order = order_record_from_lookup(result)
+            if not order:
                 return WorkerResult(
                     worker_name=self.name,
                     success=True,
@@ -116,7 +117,6 @@ class OrderFacilityReviewWorker:
                     source="shopify",
                 )
 
-            order = result["orders"][0]
             issues = _check_facility_issues(order)
 
             if not issues:

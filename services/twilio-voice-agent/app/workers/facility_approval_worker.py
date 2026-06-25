@@ -111,7 +111,7 @@ class FacilityApprovalWorker:
 
         if order_number:
             try:
-                from ..tools.shopify_tools import lookup_order
+                from ..tools.shopify_tools import lookup_order, order_record_from_lookup
                 result_json = await lookup_order(
                     order_number=order_number,
                     email=None,
@@ -119,8 +119,8 @@ class FacilityApprovalWorker:
                     session=session,
                 )
                 result = json.loads(result_json)
-                if result.get("found") and result.get("orders"):
-                    order = result["orders"][0]
+                order = order_record_from_lookup(result)
+                if order:
                     approval_status, reason = _parse_approval_from_order(order)
             except Exception:
                 logger.warning(
