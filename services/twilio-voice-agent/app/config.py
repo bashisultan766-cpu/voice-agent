@@ -153,6 +153,11 @@ class Settings(BaseSettings):
     SHIPPING_PRIORITY_MAIL_PRICE: str = ""
     SHIPPING_REQUIRE_DESTINATION: bool = True
 
+    # Drop shipping fee (shown as "Drop Shipping Fee" on checkout + payment email)
+    DROP_SHIPPING_FEE_ENABLED: bool = True
+    DROP_SHIPPING_FEE_RATE: float = 0.03
+    DROP_SHIPPING_FEE_MIN: float = 0.0
+
     # Call resume/cutoff window
     CALL_RESUME_WINDOW_MINUTES: int = 30
 

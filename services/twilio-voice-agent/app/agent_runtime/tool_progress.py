@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TOOL_PROGRESS_ENABLED = True
-TOOL_PROGRESS_AFTER_MS = 650
+TOOL_PROGRESS_AFTER_MS = 400
 
 _SLOW_TOOLS = frozenset({
     "search_products",
@@ -29,23 +29,29 @@ _SLOW_TOOLS = frozenset({
     "calculate_pricing",
     "lookup_customer_by_email_or_phone",
     "check_facility_approval",
+    "check_order_facility_restrictions",
+    "reconcile_order_facility_books",
     "send_payment_link",
     "add_to_cart",
+    "create_checkout",
 })
 
 _PROGRESS_PHRASES: dict[str, str] = {
-    "search_products": "Let me check that in our catalog.",
-    "catalog_search": "Let me check that in our catalog.",
-    "get_product_details": "Let me pull up the details on that book.",
-    "compare_products": "Let me compare those books for you.",
-    "lookup_order_status": "One moment while I look up your order.",
-    "lookup_refund_status": "Let me check on that refund for you.",
-    "get_order": "One moment while I look up your order.",
-    "calculate_pricing": "Let me calculate that for you.",
-    "lookup_customer_by_email_or_phone": "I'm verifying that email now.",
-    "check_facility_approval": "Let me check facility approval for that.",
-    "send_payment_link": "I'm preparing the secure payment link now.",
-    "add_to_cart": "Sure, I'm adding that to your cart now.",
+    "search_products": "One moment — checking our catalog.",
+    "catalog_search": "One moment — checking our catalog.",
+    "get_product_details": "Pulling that up now.",
+    "compare_products": "Comparing those for you.",
+    "lookup_order_status": "One moment — looking up your order.",
+    "lookup_refund_status": "Checking on that refund.",
+    "get_order": "One moment — looking up your order.",
+    "calculate_pricing": "Working out the pricing.",
+    "lookup_customer_by_email_or_phone": "Verifying that email.",
+    "check_facility_approval": "Checking facility approval.",
+    "check_order_facility_restrictions": "Reviewing facility rules for that order.",
+    "reconcile_order_facility_books": "Matching your order against facility guidelines.",
+    "send_payment_link": "Preparing your secure payment link.",
+    "add_to_cart": "Adding that to your cart.",
+    "create_checkout": "Setting up your payment link.",
 }
 
 

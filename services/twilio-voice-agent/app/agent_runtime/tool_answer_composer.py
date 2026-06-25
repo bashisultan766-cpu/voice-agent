@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Optional
 
+from ..voice.title_speech import spoken_book_title
+
 if TYPE_CHECKING:
     from .fact_packet import FactPacket
     from ..workers.base import WorkerBundle
@@ -140,7 +142,7 @@ def _format_no_store_match(query: str) -> str:
 def _format_single_product(product: dict) -> str:
     if product.get("not_orderable") or product.get("can_add_to_cart") is False:
         return _format_non_orderable(product)
-    title = product["title"]
+    title = spoken_book_title(product["title"])
     kind = product.get("product_kind", "")
     label = _item_label(kind)
     if product.get("not_found"):
@@ -181,9 +183,9 @@ def _format_multiple_products(products: list[dict]) -> str:
     parts = []
     for p in products[:3]:
         if p.get("price"):
-            parts.append(f"{p['title']} for {p['price']}")
+            parts.append(f"{spoken_book_title(p['title'])} for {p['price']}")
         else:
-            parts.append(p["title"])
+            parts.append(spoken_book_title(p["title"]))
     if len(parts) == 1:
         joined = parts[0]
     elif len(parts) == 2:

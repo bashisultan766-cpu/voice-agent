@@ -71,7 +71,7 @@ def _session(**kwargs) -> SessionState:
 class TestRuntimeIdentity:
     def test_identity_reports_v424_flags(self):
         identity = collect_runtime_identity()
-        assert identity["voice_sales_flow_version"] == "v4.33"
+        assert identity["voice_sales_flow_version"] == "v4.36"
         assert identity["tool_progress_prompts_enabled"] is True
         assert identity["payment_email_state_version"] == "v4.33"
         assert identity["email_capture_short_circuit_enabled"] is True
@@ -101,7 +101,7 @@ class TestYesHandling:
         stage_product_candidate(session, BOOK_A)
         h1 = process_commerce_turn(session, "Yes")
         assert h1.force_reply
-        assert "Shall I add one copy" in h1.force_reply
+        assert "Add one copy" in h1.force_reply
         h2 = process_commerce_turn(session, "Yes")
         assert h2.book_added
         assert get_ledger(session).confirmed_count() == 1
@@ -124,7 +124,7 @@ class TestYesHandling:
         session.awaiting_product_confirmation = True
         session.commerce_pending_candidate = dict(BOOK_A)
         h1 = process_commerce_turn(session, "yeah sure")
-        assert "Shall I add one copy" in (h1.force_reply or "")
+        assert "Add one copy" in (h1.force_reply or "")
         h2 = process_commerce_turn(session, "yes")
         assert h2.book_added
         assert get_ledger(session).confirmed_count() == 1

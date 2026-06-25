@@ -737,6 +737,9 @@ async def create_checkout_link(
             {"variantId": item["variant_id"], "quantity": item.get("quantity", 1)}
             for item in clean_items
         ]
+        from ..payment.drop_shipping_fee import append_fee_to_draft_line_items
+
+        line_items = append_fee_to_draft_line_items(line_items, clean_items)
         draft_input: dict = {"lineItems": line_items}
         if email:
             draft_input["email"] = email
@@ -776,23 +779,17 @@ async def create_checkout_link(
 
 
 def _checkout_lines_for_email(session: Optional["SessionState"]) -> list[dict]:
-    """Confirmed cart lines for branded payment email."""
+    """Confirmed cart lines plus drop shipping fee for branded payment email."""
     if session is None:
         return []
     try:
         from ..cart.session import get_ledger
+        from ..payment.drop_shipping_fee import checkout_email_lines
         from ..payment.payment_destination_groups import group_checkout_items, refresh_payment_groups_from_cart
 
         refresh_payment_groups_from_cart(session)
         items = group_checkout_items(session) or get_ledger(session).to_checkout_items()
-        return [
-            {
-                "title": i.get("title") or "Book",
-                "quantity": int(i.get("quantity") or 1),
-                "price": i.get("price") or "",
-            }
-            for i in items
-        ]
+        return checkout_email_lines(items)
     except Exception:  # noqa: BLE001
         return []
 

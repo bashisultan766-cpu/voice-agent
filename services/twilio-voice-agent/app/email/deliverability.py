@@ -89,13 +89,9 @@ def _format_lines_plain(order_lines: list[dict]) -> str:
 
 
 def _money_subtotal(order_lines: list[dict]) -> str:
-    total = 0.0
-    for line in order_lines:
-        try:
-            unit = float(str(line.get("price") or "0").replace("$", "").strip())
-            total += unit * int(line.get("quantity") or 1)
-        except ValueError:
-            continue
+    from ..payment.drop_shipping_fee import order_subtotal_with_fee
+
+    total = order_subtotal_with_fee(order_lines)
     return f"${total:.2f}" if total > 0 else ""
 
 

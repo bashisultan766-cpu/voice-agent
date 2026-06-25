@@ -227,9 +227,16 @@ class CartLedger:
             f"{total_copies} total cop{'y' if total_copies == 1 else 'ies'}: {detail}."
         )
         if subtotal > 0:
+            from ..payment.drop_shipping_fee import compute_drop_shipping_fee, CUSTOMER_LABEL
+
+            fee = compute_drop_shipping_fee(
+                [{"title": i.title, "quantity": i.quantity, "price": i.price} for i in confirmed]
+            )
+            total_with_fee = subtotal + fee
             summary += (
-                f" Subtotal before shipping is ${subtotal:.2f}. "
-                "Shipping is calculated separately on the payment page."
+                f" Subtotal before shipping is ${total_with_fee:.2f}"
+                f" (includes {CUSTOMER_LABEL.lower()})."
+                " Postal shipping is calculated on the payment page."
             )
         return summary
 

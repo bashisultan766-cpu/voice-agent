@@ -15,13 +15,14 @@ from dataclasses import dataclass
 from typing import Any, Optional, TYPE_CHECKING
 
 from .payment_flow_state import PaymentGateResult, _cart_has_confirmed_items, build_payment_tool_result
+from ..voice.title_speech import spoken_book_title
 
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.33"
+COMMERCE_FLOW_VERSION = "v4.36"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -113,6 +114,11 @@ def _is_add_affirmative(text: str) -> bool:
 
 
 def _title(product: dict[str, Any]) -> str:
+    raw = (product.get("title") or product.get("name") or "that book").strip()
+    return spoken_book_title(raw)
+
+
+def _full_title(product: dict[str, Any]) -> str:
     return (product.get("title") or product.get("name") or "that book").strip()
 
 
@@ -131,15 +137,15 @@ def confirm_book_prompt(product: dict[str, Any]) -> str:
 def quantity_prompt(product: dict[str, Any]) -> str:
     title = _title(product)
     return (
-        f"I found {title}. {_price_phrase(product)} "
-        f"How many copies would you like — one or more?"
+        f"Found it — {title}. {_price_phrase(product)} "
+        f"How many copies?"
     )
 
 
 def add_confirm_prompt(product: dict[str, Any], quantity: int = 1) -> str:
     title = _title(product)
     copy_phrase = "one copy" if quantity == 1 else f"{quantity} copies"
-    return f"Shall I add {copy_phrase} of {title} to your order?"
+    return f"Add {copy_phrase} of {title}?"
 
 
 def _parse_quantity(text: str) -> int | None:
@@ -151,11 +157,12 @@ def _parse_quantity(text: str) -> int | None:
 
 
 def another_book_after_add_prompt(title: str) -> str:
-    return f"Done, I added {title} to your cart. Would you like another book?"
+    short = spoken_book_title(title)
+    return f"Added {short}. Another book?"
 
 
 def next_book_prompt() -> str:
-    return "Sure — what's the ISBN or title of the next book?"
+    return "What's the next ISBN or title?"
 
 
 def cart_summary_and_email_prompt(session: "SessionState") -> str:
@@ -228,7 +235,7 @@ def add_staged_book_to_cart(session: "SessionState", quantity: int = 1) -> Optio
         return None
     from ..cart.session import add_product_candidate, confirm_last_candidate, get_ledger
 
-    title = _title(candidate)
+    title = _full_title(candidate)
     qty = max(1, int(quantity or getattr(session, "commerce_pending_quantity", 0) or 1))
     add_product_candidate(
         session,
