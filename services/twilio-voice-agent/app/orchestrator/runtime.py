@@ -16,6 +16,7 @@ from .parallel_executor import execute_plan
 from .planner_agent import run_planner
 from .progress_ack import resolve_progress_message, should_send_progress_ack
 from .response_composer import compose_response, should_skip_composer_llm
+from .intent_router import classify_intent_heuristic, is_fast_path_supervisor_result
 from .supervisor_agent import run_supervisor
 from .types import OrchestratorTurnContext
 
@@ -150,14 +151,20 @@ class OrchestratorRuntime:
 
         t_sup = time.monotonic()
         with span("supervisor", call_sid=sid):
-            supervisor = await run_supervisor(
-                session,
-                caller_text,
-                memory_summary=ctx.memory_summary,
-                turn_mode=turn_mode,
-                settings=self._settings,
-                use_llm=bool(self._settings.OPENAI_API_KEY),
+            pre_heuristic = classify_intent_heuristic(
+                caller_text, session, turn_mode=turn_mode
             )
+            if is_fast_path_supervisor_result(pre_heuristic):
+                supervisor = pre_heuristic
+            else:
+                supervisor = await run_supervisor(
+                    session,
+                    caller_text,
+                    memory_summary=ctx.memory_summary,
+                    turn_mode=turn_mode,
+                    settings=self._settings,
+                    use_llm=bool(self._settings.OPENAI_API_KEY),
+                )
         latency.supervisor_ms = (time.monotonic() - t_sup) * 1000
         ctx.supervisor = supervisor
         schedule_workflow_event(

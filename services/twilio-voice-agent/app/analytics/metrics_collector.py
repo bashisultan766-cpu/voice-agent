@@ -204,7 +204,7 @@ async def _load_session_row(session_id: str) -> Optional[dict[str, Any]]:
 
 async def collect_session_metrics(session_id: str) -> Optional[CallMetrics]:
     """Collect metrics for one session from Postgres workflow/tool events."""
-    if not db.db_configured():
+    if not db.postgres_reads_enabled():
         return None
     session_row = await _load_session_row(session_id)
     timeline = await get_session_timeline(session_id)
@@ -271,7 +271,7 @@ async def collect_and_persist_session_metrics(session_id: str) -> Optional[CallM
 
 async def collect_aggregate_summary(*, days: int = 7) -> dict[str, Any]:
     """Platform-wide analytics summary — no raw PII."""
-    if not db.db_configured():
+    if not db.postgres_reads_enabled():
         return _empty_summary()
 
     since = datetime.now(timezone.utc) - timedelta(days=days)

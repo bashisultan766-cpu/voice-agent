@@ -5,7 +5,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from .intent_router import classify_intent_heuristic
+from .intent_router import classify_intent_heuristic, is_fast_path_supervisor_result
 from .model_router import select_model
 from .types import SupervisorResult, VALID_INTENTS
 
@@ -56,6 +56,16 @@ async def run_supervisor(
             (session.call_sid or "")[:6],
             heuristic.intent,
             heuristic.confidence,
+        )
+        return heuristic
+
+    if is_fast_path_supervisor_result(heuristic):
+        logger.info(
+            "supervisor_fast_path sid=%s intent=%s confidence=%.2f reason=%s",
+            (session.call_sid or "")[:6],
+            heuristic.intent,
+            heuristic.confidence,
+            heuristic.reason,
         )
         return heuristic
 

@@ -54,7 +54,7 @@ async def record_workflow_event(
     session: Any = None,
 ) -> None:
     """Persist one workflow event (masked). Ensures call_sessions row exists."""
-    if not db.db_configured():
+    if not db.postgres_writes_enabled():
         return
     if event_type not in WORKFLOW_EVENT_TYPES:
         logger.debug("workflow_event_unknown type=%s", event_type)

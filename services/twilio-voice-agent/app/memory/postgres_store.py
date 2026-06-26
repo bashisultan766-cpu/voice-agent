@@ -279,7 +279,7 @@ def persist_turn_if_configured(
     turn_id: str = "",
     latency_ms: float = 0.0,
 ) -> None:
-    if not db.db_configured():
+    if not db.postgres_writes_enabled():
         return
     _schedule(
         _persist_turn_async(
@@ -300,7 +300,7 @@ def persist_call_session_if_configured(
     summary: str = "",
     ended: bool = False,
 ) -> None:
-    if not db.db_configured():
+    if not db.postgres_writes_enabled():
         return
     _schedule(
         _persist_call_session_async(
@@ -319,7 +319,7 @@ def persist_payment_link_if_configured(
     checkout_url: str = "",
     draft_order_id: str = "",
 ) -> None:
-    if not db.db_configured():
+    if not db.postgres_writes_enabled():
         return
     _schedule(
         _persist_payment_link_async(
@@ -342,7 +342,7 @@ def persist_tool_event_if_configured(
     input_data: Optional[dict[str, Any]] = None,
     output_data: Optional[dict[str, Any]] = None,
 ) -> None:
-    if not db.db_configured():
+    if not db.postgres_writes_enabled():
         return
     _schedule(
         _persist_tool_event_async(
@@ -364,7 +364,7 @@ def persist_escalation_if_configured(
     escalation_type: str,
     payload: Optional[dict[str, Any]] = None,
 ) -> None:
-    if not db.db_configured():
+    if not db.postgres_writes_enabled():
         return
     _schedule(
         _persist_escalation_async(
@@ -377,7 +377,7 @@ def persist_escalation_if_configured(
 
 def load_call_resume_if_configured(call_sid: str) -> dict[str, Any] | None:
     """Load call resume snapshot from Postgres when configured (sync wrapper)."""
-    if not db.db_configured():
+    if not db.postgres_reads_enabled():
         return None
     try:
         loop = asyncio.get_running_loop()
@@ -396,6 +396,6 @@ async def persist_call_session_async(
     summary: str = "",
     ended: bool = False,
 ) -> None:
-    if not db.db_configured():
+    if not db.postgres_writes_enabled():
         return
     await _persist_call_session_async(session, status=status, summary=summary, ended=ended)

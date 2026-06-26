@@ -6,6 +6,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Optional
 
+from .intent_router import resolve_smalltalk_response
 from .model_router import select_model
 from .types import OrchestratorTurnContext, SupervisorResult, ToolExecutionResult
 
@@ -87,9 +88,9 @@ async def compose_response(
         return _phone_safe(deterministic)
 
     if supervisor.intent == "smalltalk":
-        return _phone_safe(
-            "Hi, thanks for calling SureShot Books. How can I help you today?"
-        )
+        if supervisor.clarifying_question and supervisor.reason == "yes_no_reply":
+            return _phone_safe(supervisor.clarifying_question)
+        return _phone_safe(resolve_smalltalk_response(ctx.user_text or ""))
 
     if not ctx.tool_results:
         return _phone_safe("How can I help you next?")
