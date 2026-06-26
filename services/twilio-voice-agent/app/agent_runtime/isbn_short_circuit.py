@@ -257,8 +257,8 @@ def isbn_context_for_state_block(
     if resolved:
         return (
             f"- Resolved ISBN from caller speech: {resolved}. "
-            f"Call catalog_search immediately with query=\"{resolved}\" — do NOT ask "
-            f"the caller to repeat the ISBN unless catalog_search returns no results."
+            f"Call search_product_by_isbn immediately with isbn=\"{resolved}\" — do NOT ask "
+            f"the caller to repeat the ISBN unless the tool returns not found."
         )
     buf = getattr(session, "pending_isbn_buffer", "") or ""
     if buf:
@@ -410,7 +410,7 @@ async def try_isbn_short_circuit(
         return None
 
     from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
-    from .llm_tools import CatalogSearchArgs, _catalog_search
+    from ..tools import shopify_tools as shopify_st
     from ..conversation.call_memory import record_isbn
 
     expanded = _expand_text(caller_text)
@@ -436,17 +436,35 @@ async def try_isbn_short_circuit(
     )
 
     record_isbn(session, isbn)
-    raw = await _catalog_search(CatalogSearchArgs(query=isbn, limit=5), session)
+    raw = await shopify_st.search_product_by_isbn(isbn)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         payload = {}
 
-    tool_results: list[tuple[str, dict]] = [("catalog_search", payload if isinstance(payload, dict) else {})]
+    tool_results: list[tuple[str, dict]] = [
+        ("search_product_by_isbn", payload if isinstance(payload, dict) else {}),
+    ]
 
-    results = (payload.get("results") or []) if isinstance(payload, dict) else []
-    if results and isinstance(results[0], dict):
-        top = normalize_catalog_hit(results[0])
+    if isinstance(payload, dict) and payload.get("needs_more_digits"):
+        return IsbnShortCircuitResult(
+            force_reply=payload.get("customer_message") or (
+                "I have part of it. Please continue with the remaining digits."
+            ),
+            isbn=isbn,
+            tool_results=tool_results,
+        )
+
+    if isinstance(payload, dict) and payload.get("found") and payload.get("product"):
+        product = payload["product"]
+        top = normalize_catalog_hit({
+            "id": product.get("product_id"),
+            "title": product.get("title"),
+            "price": product.get("price"),
+            "available": product.get("available"),
+            "author": product.get("author"),
+            "variants": [{"id": product.get("variant_id"), "price": product.get("price")}],
+        })
         if top.get("variant_id"):
             stage_product_candidate(session, top)
             try:
@@ -457,24 +475,29 @@ async def try_isbn_short_circuit(
                 cs.expected_next = "quantity"
             except Exception:  # noqa: BLE001
                 pass
+            spoken = payload.get("customer_message") or quantity_prompt(top)
             return IsbnShortCircuitResult(
-                force_reply=quantity_prompt(top),
+                force_reply=spoken,
                 isbn=isbn,
                 tool_results=tool_results,
             )
         title = (top.get("title") or "").strip()
         if title:
             session.last_product_candidate = top
+            spoken = payload.get("customer_message") or (
+                f"I found {title}. How many copies would you like?"
+            )
             return IsbnShortCircuitResult(
-                force_reply=(
-                    f"I found {title}. How many copies would you like?"
-                ),
+                force_reply=spoken,
                 isbn=isbn,
                 tool_results=tool_results,
             )
 
+    not_found_msg = ""
+    if isinstance(payload, dict):
+        not_found_msg = (payload.get("customer_message") or "").strip()
     return IsbnShortCircuitResult(
-        force_reply=(
+        force_reply=not_found_msg or (
             f"I looked up ISBN {isbn} but couldn't find a match in our catalog. "
             "Could you double-check the number, or give me the title or author instead?"
         ),

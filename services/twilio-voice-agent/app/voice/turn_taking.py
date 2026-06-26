@@ -42,12 +42,24 @@ _NON_ISBN_DIGIT_PAT = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_ISBN_PERMISSION_PAT = re.compile(
+    r"\bcan i (?:please )?give (?:you )?(?:the )?"
+    r"(?:isbn(?:\s+number)?(?:\s+of(?:\s+the)?\s+book)?|title|magazine|newspaper)s?\b",
+    re.IGNORECASE,
+)
+
+
+def is_isbn_permission_question(text: str) -> bool:
+    """Caller asking permission to read ISBN/title — not digit collection."""
+    return bool(_ISBN_PERMISSION_PAT.search((text or "").strip()))
 
 
 def should_collect_isbn(text: str, *, book_collection: bool = False) -> bool:
     """True only when transcript context indicates ISBN digit collection."""
     t = (text or "").strip()
     if not t:
+        return False
+    if is_isbn_permission_question(t):
         return False
     if _NON_ISBN_DIGIT_PAT.search(t):
         return False
@@ -184,12 +196,13 @@ def get_silence_threshold_ms(ctx: TurnTakingContext) -> int:
 
 
 def is_complete_isbn(text: str) -> bool:
-    """Return True if text contains a checksum-valid 10- or 13-digit ISBN."""
+    """Return True when text contains a checksum-valid ISBN-10/ISBN-13."""
+    from ..tools.isbn import extract_isbn_candidate
     from ..tools.isbn_validator import _sliding_window_isbn13, extract_digits
 
-    digits = extract_digits(text)
-    if len(digits) in (10, 13):
+    if extract_isbn_candidate(text):
         return True
+    digits = extract_digits(text)
     if len(digits) > 13:
         return _sliding_window_isbn13(digits) is not None
     return False

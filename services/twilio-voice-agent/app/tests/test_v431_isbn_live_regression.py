@@ -107,10 +107,22 @@ class TestIsbnShortCircuit:
             "variant_id": "gid://shopify/ProductVariant/1",
             "price": "12.99",
         }
-        payload = json.dumps({"results": [book]})
+        payload = json.dumps({
+            "found": True,
+            "normalized_isbn": GOOD_ISBN,
+            "product": {
+                "product_id": "gid://shopify/Product/1",
+                "variant_id": "gid://shopify/ProductVariant/1",
+                "title": "Test Book",
+                "price": "12.99",
+                "available": True,
+                "author": "",
+            },
+            "customer_message": "I found Test Book for $12.99. Would you like me to add it to your cart?",
+        })
 
         with patch(
-            "app.agent_runtime.llm_tools._catalog_search",
+            "app.tools.shopify_tools.search_product_by_isbn",
             new_callable=AsyncMock,
             return_value=payload,
         ):
@@ -119,7 +131,7 @@ class TestIsbnShortCircuit:
         assert result is not None
         assert result.isbn == GOOD_ISBN
         assert "Test Book" in result.force_reply
-        assert "copies" in result.force_reply.lower()
+        assert "add it to your cart" in result.force_reply.lower()
 
     @pytest.mark.asyncio
     async def test_runtime_short_circuits_isbn_turn(self):
@@ -145,9 +157,21 @@ class TestIsbnShortCircuit:
         runtime._complete = boom  # type: ignore[method-assign]
 
         with patch(
-            "app.agent_runtime.llm_tools._catalog_search",
+            "app.tools.shopify_tools.search_product_by_isbn",
             new_callable=AsyncMock,
-            return_value=json.dumps({"results": [book]}),
+            return_value=json.dumps({
+                "found": True,
+                "normalized_isbn": GOOD_ISBN,
+                "product": {
+                    "product_id": "gid://shopify/Product/9",
+                    "variant_id": "gid://shopify/ProductVariant/9",
+                    "title": "Live Book",
+                    "price": "9.99",
+                    "available": True,
+                    "author": "",
+                },
+                "customer_message": "I found Live Book for $9.99. Would you like me to add it to your cart?",
+            }),
         ):
             async def send(_msg):
                 pass

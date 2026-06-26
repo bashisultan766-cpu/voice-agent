@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
-from .turn_taking import is_complete_isbn, is_complete_order_number, should_collect_isbn
+from .turn_taking import is_complete_isbn, is_complete_order_number, is_isbn_permission_question, should_collect_isbn
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +186,8 @@ class TurnAssembler:
             from ..orchestrator.intent_router import is_smalltalk, is_vague_product_request
 
             stripped = text.strip()
+            if is_isbn_permission_question(stripped):
+                return True, "isbn_permission_question"
             if _BARE_AFFIRM.match(stripped):
                 return True, "complete_affirmative"
             if is_smalltalk(stripped):
@@ -247,6 +249,14 @@ class TurnAssembler:
                 return True
 
             st = self._state
+
+            # Permission to give ISBN/title — never hold; emit immediately for fast reply.
+            if is_isbn_permission_question(frag):
+                st.buffer = frag
+                st.mode = "normal"
+                st.isbn_partial_since = 0.0
+                return await self._emit_buffered(sid, on_emit, "isbn_permission_question")
+
 
             if _RESET_BUFFER.search(frag):
                 st.buffer = ""
@@ -413,8 +423,12 @@ class TurnAssembler:
                     )
                     await self._emit_buffered(sid, self._emit_callback, "sliding_window_isbn")
                     return
-            if emit_mode == "isbn" and len(digits) != 13:
+            if emit_mode == "isbn" and not is_complete_isbn(st.buffer):
                 import time
+                if len(digits) == 0:
+                    st.mode = "normal"
+                    await self._emit_buffered(sid, self._emit_callback, "isbn_zero_digits_escape")
+                    return
                 if st.isbn_partial_since <= 0:
                     st.isbn_partial_since = time.monotonic()
                 timeout_s = getattr(self._settings, "VOICE_ISBN_PARTIAL_TIMEOUT_MS", 5000) / 1000

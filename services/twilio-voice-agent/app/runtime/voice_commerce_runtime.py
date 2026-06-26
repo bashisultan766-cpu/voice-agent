@@ -64,7 +64,64 @@ class VoiceCommerceRuntime:
         turn_mode: str = "",
         caller_context: Optional["SafeCallerContext"] = None,
     ) -> str:
-        return self._brain._build_live_context(session, caller_text, turn_mode=turn_mode)
+        base = self._brain._build_live_context(session, caller_text, turn_mode=turn_mode)
+        try:
+            from ..agent_runtime.isbn_short_circuit import (
+                isbn_context_for_state_block,
+                prepare_isbn_turn_context,
+            )
+
+            prepare_isbn_turn_context(session, caller_text, turn_mode=turn_mode)
+            isbn_hint = isbn_context_for_state_block(session, caller_text, turn_mode=turn_mode)
+            if isbn_hint:
+                return f"{base}\n{isbn_hint}"
+        except Exception:  # noqa: BLE001
+            pass
+        return base
+
+    async def _try_isbn_product_hunt(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        send: Callable,
+        *,
+        turn_mode: str = "",
+        classification: ClassificationResult,
+    ) -> Optional[RuntimeTurnResult]:
+        """Run deterministic ISBN resolution + Shopify search without LLM latency."""
+        from ..agent_runtime.isbn_short_circuit import try_isbn_short_circuit
+        from ..tools.isbn import extract_isbn_candidate
+
+        is_isbn_turn = (
+            (turn_mode or "").lower() == "isbn"
+            or classification.is_product_search
+            or bool(extract_isbn_candidate(caller_text))
+        )
+        if not is_isbn_turn:
+            return None
+
+        sid = (session.call_sid or "")[:6]
+        try:
+            sc = await try_isbn_short_circuit(session, caller_text, turn_mode=turn_mode)
+        except Exception as exc:
+            logger.warning("isbn_product_hunt_failed sid=%s err=%s", sid, type(exc).__name__)
+            return None
+
+        if not sc or not sc.force_reply:
+            return None
+
+        spoken = enforce_commerce_response(
+            session,
+            self._brain.finalize_response(session, sc.force_reply, sc.tool_results or []),
+            sc.tool_results or [],
+        )
+        await self._speak(session, caller_text, spoken, send)
+        logger.info(
+            "isbn_product_hunt sid=%s isbn=%s ms=fast",
+            sid,
+            sc.isbn or "",
+        )
+        return _result(spoken)
 
     async def _handle_email_fsm(
         self,
@@ -204,6 +261,17 @@ class VoiceCommerceRuntime:
                 (time.monotonic() - t0) * 1000,
             )
             return _result(spoken)
+
+        # Deterministic ISBN product hunt — bypass LLM for speed and accuracy.
+        isbn_hunt = await self._try_isbn_product_hunt(
+            session,
+            normalized,
+            send,
+            turn_mode=turn_mode,
+            classification=classification,
+        )
+        if isbn_hunt is not None:
+            return isbn_hunt
 
         if classification.action == "ack_then_brain" and classification.ack_reply:
             await _await_send(

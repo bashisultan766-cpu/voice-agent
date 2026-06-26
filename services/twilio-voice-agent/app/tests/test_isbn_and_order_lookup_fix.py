@@ -117,7 +117,21 @@ def test_spoken_digits_normalize():
 
 
 @pytest.mark.asyncio
-async def test_complete_isbn_emits_immediately():
+async def test_isbn_permission_question_emits_immediately_no_hold():
+    assembler = TurnAssembler()
+    emitted: list[AssembledTurn] = []
+
+    async def on_emit(turn: AssembledTurn) -> None:
+        emitted.append(turn)
+
+    held = await assembler.ingest("Can I give you the ISBN number?", on_emit, call_sid="CA2")
+    assert held is False
+    assert len(emitted) == 1
+    assert "isbn" in emitted[0].text.lower()
+
+
+@pytest.mark.asyncio
+async def test_full_isbn_not_held_on_digit_count():
     assembler = TurnAssembler()
     emitted: list[AssembledTurn] = []
 
