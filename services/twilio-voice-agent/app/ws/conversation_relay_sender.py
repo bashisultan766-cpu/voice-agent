@@ -223,7 +223,7 @@ class ConversationRelayOutbound:
         preemptible: bool,
         lang: str | None,
     ) -> None:
-        from ..agent_runtime.runtime import resolve_live_turn_handler
+        from ..agent_runtime.live_runtime import resolve_live_turn_handler
 
         sid = self._call_sid[:6]
         runtime_mode = resolve_live_turn_handler(self._settings)
@@ -275,7 +275,7 @@ class ConversationRelayOutbound:
         preemptible: bool,
         lang: str | None,
     ) -> None:
-        from ..pipeline.response_guard import apply_response_guard
+        from ..safety.response_guard import apply_response_guard
 
         fallback = apply_response_guard("", "unknown", call_sid=self._call_sid) or (
             "How can I help you with SureShot Books?"

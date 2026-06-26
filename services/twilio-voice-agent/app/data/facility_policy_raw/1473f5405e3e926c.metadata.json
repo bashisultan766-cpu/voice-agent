@@ -1,0 +1,11 @@
+{
+  "url": "https://co.cass.il.us/elected-officials/sheriff",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T06:40:13.712072+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Cass County Sheriff"
+  ]
+}

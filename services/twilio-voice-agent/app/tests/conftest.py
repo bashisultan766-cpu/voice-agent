@@ -7,6 +7,9 @@ import pytest
 
 os.environ.setdefault("RESEND_API_KEY", "re_test_key")
 os.environ.setdefault("RESEND_FROM_EMAIL", "noreply@example.com")
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("WS_TOKEN_VALIDATION_ENABLED", "false")
+os.environ.setdefault("TWILIO_AUTH_TOKEN", "test_twilio_auth_token")
 
 
 @pytest.fixture(autouse=True)

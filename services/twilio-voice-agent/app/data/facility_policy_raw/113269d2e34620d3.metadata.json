@@ -1,0 +1,11 @@
+{
+  "url": "https://www.beavercountypa.gov/departments/sheriff-s-office",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T08:56:44.552590+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Beaver County Sheriff\u2019s Office"
+  ]
+}

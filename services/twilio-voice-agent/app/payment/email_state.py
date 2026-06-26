@@ -76,6 +76,7 @@ def sync_payment_email_fields(session: "SessionState") -> None:
     if confirmed:
         session.confirmed_email = confirmed
         session.payment_email_confirmed = True
+        session.email_verified = True
         session.awaiting_payment_email_confirmation = False
         session.awaiting_payment_email = False
         session.pending_payment_email = ""
@@ -84,6 +85,7 @@ def sync_payment_email_fields(session: "SessionState") -> None:
             session.caller_email = confirmed
     else:
         session.payment_email_confirmed = False
+        session.email_verified = False
         session.awaiting_payment_email_confirmation = bool(pending or offered)
 
     _sync_checkout_fields(session)
@@ -113,11 +115,15 @@ def set_pending_payment_email(session: "SessionState", email: str) -> None:
     normalized = (email or "").strip().lower()
     if not normalized:
         return
+    prior = (getattr(session, "confirmed_email", "") or "").strip().lower()
+    if prior and prior != normalized:
+        session.backup_confirmed_email = prior
     session.last_offered_payment_email = normalized
     session.pending_payment_email = normalized
     session.pending_email = normalized
     session.confirmed_email = ""
     session.payment_email_confirmed = False
+    session.email_verified = False
     session.awaiting_payment_email_confirmation = True
     session.awaiting_payment_email = False
     session.payment_flow_status = "awaiting_email_confirmation"
@@ -142,6 +148,7 @@ def confirm_payment_email(session: "SessionState") -> bool:
     session.pending_payment_email = ""
     session.pending_email = ""
     session.payment_email_confirmed = True
+    session.email_verified = True
     session.awaiting_payment_email_confirmation = False
     session.awaiting_payment_email = False
     session.email_confidence = "high"
@@ -153,10 +160,9 @@ def confirm_payment_email(session: "SessionState") -> bool:
 
 def reject_pending_payment_email(session: "SessionState") -> None:
     rejected = get_pending_payment_email(session)
+    backup = (getattr(session, "backup_confirmed_email", "") or "").strip().lower()
     session.pending_payment_email = ""
     session.pending_email = ""
-    session.confirmed_email = ""
-    session.payment_email_confirmed = False
     session.awaiting_payment_email_confirmation = False
     session.awaiting_payment_email = True
     session.last_offered_payment_email = ""
@@ -166,6 +172,15 @@ def reject_pending_payment_email(session: "SessionState") -> None:
         candidates = getattr(session, "rejected_email_candidates", None) or []
         if rejected.lower() not in [c.lower() for c in candidates]:
             session.rejected_email_candidates = [*candidates, rejected]
+    if backup:
+        session.confirmed_email = backup
+        session.payment_email_confirmed = True
+        session.email_verified = True
+        session.backup_confirmed_email = ""
+    else:
+        session.confirmed_email = ""
+        session.payment_email_confirmed = False
+        session.email_verified = False
     session.payment_flow_status = "awaiting_email"
     session.last_payment_attempt_status = "rejected"
     sync_payment_email_fields(session)

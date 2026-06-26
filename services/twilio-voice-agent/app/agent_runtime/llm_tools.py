@@ -109,6 +109,61 @@ class RefundPolicyArgs(BaseModel):
 class FacilityPolicyArgs(BaseModel):
     facility_name: str = Field(..., min_length=1)
     order_number: str = Field("", description="Optional order number to cross-reference.")
+    state: str = Field("", description="Facility state if known.")
+
+
+class SearchFacilityPolicyArgs(BaseModel):
+    facility_name: str = Field(..., min_length=1)
+    state: str = Field("", description="US state code if known.")
+
+
+class CheckFacilityContentAllowedArgs(BaseModel):
+    facility_name: str = Field(..., min_length=1)
+    content_type: str = Field(
+        ...,
+        description="book | magazine | newspaper | subscription",
+    )
+    state: str = Field("", description="US state code if known.")
+
+
+class ExplainFacilityRestrictionArgs(BaseModel):
+    facility_name: str = Field("", description="Correctional facility name.")
+    content_type: str = Field("", description="book | magazine | newspaper | subscription")
+    product_title: str = Field("", description="Book or product title if relevant.")
+    state: str = Field("", description="US state code if known.")
+    order_number: str = Field("", description="Order number for delivery questions.")
+    email: str = Field("", description="Email for order verification.")
+    phone: str = Field("", description="Phone for order verification.")
+
+
+class FetchFacilityPolicyAnalysisArgs(BaseModel):
+    facility_name: str = Field(..., min_length=1)
+    state: str = Field("", description="US state code if known.")
+
+
+class AnswerFacilityPolicyQuestionArgs(BaseModel):
+    facility_name: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1)
+    content_type: str = Field("", description="book | magazine | newspaper | subscription")
+    product_title: str = Field("", description="Product title if relevant.")
+    state: str = Field("", description="US state code if known.")
+
+
+class ExplainFacilityDeliveryRejectionArgs(BaseModel):
+    facility_name: str = Field("", description="Correctional facility name.")
+    product_title: str = Field("", description="Product title if relevant.")
+    content_type: str = Field("", description="book | magazine | newspaper | subscription")
+    state: str = Field("", description="US state code if known.")
+    order_number: str = Field("", description="Order number for delivery questions.")
+    email: str = Field("", description="Email for order verification.")
+    phone: str = Field("", description="Phone for order verification.")
+
+
+class ClassifyProductContentForFacilityArgs(BaseModel):
+    product_title: str = Field("", description="Product title.")
+    product_description: str = Field("", description="Product description if available.")
+    product_type: str = Field("", description="Shopify product type.")
+    product_tags: list[str] = Field(default_factory=list)
 
 
 class FaqLookupArgs(BaseModel):
@@ -118,6 +173,24 @@ class FaqLookupArgs(BaseModel):
 class EscalateArgs(BaseModel):
     reason: str = Field(..., min_length=1)
     summary: str = Field("", description="Short summary for the human agent.")
+
+
+class CreateProductNotFoundEscalationArgs(BaseModel):
+    session_id: str = Field("", description="Voice session id.")
+    call_sid: str = Field("", description="Twilio call SID.")
+    customer_phone: str = Field("", description="Caller phone.")
+    customer_name: str = Field("", description="Caller name if known.")
+    customer_email: str = Field("", description="Confirmed customer email.")
+    requested_type: str = Field(
+        "unknown",
+        description="isbn|title|author|newspaper|magazine|product|unknown",
+    )
+    requested_value: str = Field(..., min_length=1, description="ISBN, title, or product requested.")
+    quantity: Optional[int] = Field(None, ge=1, le=99)
+    facility_name: str = Field("", description="Facility name if relevant.")
+    conversation_summary: str = Field("", description="Short call context.")
+    last_search_results: dict[str, Any] = Field(default_factory=dict)
+    reason: str = Field("product_not_found", description="Escalation reason code.")
 
 
 class NormalizeVoiceIntentArgs(BaseModel):
@@ -435,11 +508,187 @@ async def _refund_policy(args: RefundPolicyArgs, session) -> str:
 
 
 async def _facility_policy(args: FacilityPolicyArgs, session) -> str:
-    return await _st.CheckFacilityApproval(
-        facility_name=args.facility_name,
-        order_number=args.order_number or None,
-        session=session,
+    """Backward-compatible alias — searches normalized facility policy records."""
+    return await _search_facility_policy(
+        SearchFacilityPolicyArgs(
+            facility_name=args.facility_name,
+            state=args.state or "",
+        ),
+        session,
     )
+
+
+async def _search_facility_policy(args: SearchFacilityPolicyArgs, session) -> str:
+    from ..facility.policy_service import search_facility_policy
+
+    result = search_facility_policy(args.facility_name, state=args.state or None)
+    if session and result.get("facility_name"):
+        session.last_facility_name = str(result["facility_name"])
+    return json.dumps(result)
+
+
+async def _check_facility_content_allowed(
+    args: CheckFacilityContentAllowedArgs, session,
+) -> str:
+    from ..facility.policy_service import check_content_allowed
+
+    result = check_content_allowed(
+        args.facility_name,
+        args.content_type,
+        state=args.state or None,
+    )
+    if session and result.get("facility_name"):
+        session.last_facility_name = str(result["facility_name"])
+    return json.dumps(result)
+
+
+async def _explain_facility_restriction(
+    args: ExplainFacilityRestrictionArgs, session,
+) -> str:
+    from ..facility.policy_service import explain_facility_restriction
+
+    order_items: list[str] = []
+    order_number = (args.order_number or "").strip()
+    facility_name = (args.facility_name or "").strip()
+
+    if order_number and session is not None:
+        raw = await _st.lookup_order(
+            order_number=order_number,
+            email=args.email or None,
+            phone=args.phone or None,
+            session=session,
+        )
+        try:
+            order_data = json.loads(raw)
+        except json.JSONDecodeError:
+            order_data = {}
+        if order_data.get("verification_required"):
+            return json.dumps({
+                "found": False,
+                "escalation_required": False,
+                "verification_required": True,
+                "message": order_data.get("message")
+                or "I need to verify your email or phone on the order first.",
+            })
+        if not order_data.get("found"):
+            return json.dumps({
+                "found": False,
+                "escalation_required": True,
+                "message": order_data.get("message") or "I could not find that order.",
+            })
+        order_items = list(order_data.get("items") or order_data.get("book_titles") or [])
+        if not facility_name:
+            facility_name = str(order_data.get("facility_hint") or "").strip()
+
+    if not facility_name and session is not None:
+        facility_name = (getattr(session, "last_facility_name", "") or "").strip()
+
+    result = explain_facility_restriction(
+        facility_name,
+        args.content_type or "",
+        product_title=args.product_title or None,
+        state=args.state or None,
+        order_number=order_number or None,
+        order_items=order_items or None,
+    )
+    if session and result.get("facility_name"):
+        session.last_facility_name = str(result["facility_name"])
+    return json.dumps(result)
+
+
+async def _fetch_facility_policy_analysis(
+    args: FetchFacilityPolicyAnalysisArgs, session,
+) -> str:
+    from ..facility.policy_service import get_facility_policy_analysis
+
+    result = get_facility_policy_analysis(args.facility_name, state=args.state or None)
+    if session and result.get("facility_name"):
+        session.last_facility_name = str(result["facility_name"])
+    return json.dumps(result)
+
+
+async def _answer_facility_policy_question(
+    args: AnswerFacilityPolicyQuestionArgs, session,
+) -> str:
+    from ..facility.policy_service import answer_facility_question
+
+    result = answer_facility_question(
+        args.facility_name,
+        args.question,
+        content_type=args.content_type or None,
+        product_title=args.product_title or None,
+        state=args.state or None,
+    )
+    if session and result.get("facility_name"):
+        session.last_facility_name = str(result["facility_name"])
+    return json.dumps(result)
+
+
+async def _explain_facility_delivery_rejection(
+    args: ExplainFacilityDeliveryRejectionArgs, session,
+) -> str:
+    from ..facility.policy_service import explain_delivery_rejection
+
+    order_items: list[str] = []
+    order_number = (args.order_number or "").strip()
+    facility_name = (args.facility_name or "").strip()
+
+    if order_number and session is not None:
+        raw = await _st.lookup_order(
+            order_number=order_number,
+            email=args.email or None,
+            phone=args.phone or None,
+            session=session,
+        )
+        try:
+            order_data = json.loads(raw)
+        except json.JSONDecodeError:
+            order_data = {}
+        if order_data.get("verification_required"):
+            return json.dumps({
+                "found": False,
+                "escalation_required": False,
+                "verification_required": True,
+                "message": order_data.get("message")
+                or "I need to verify your email or phone on the order first.",
+            })
+        if not order_data.get("found"):
+            return json.dumps({
+                "found": False,
+                "escalation_required": True,
+                "message": order_data.get("message") or "I could not find that order.",
+            })
+        order_items = list(order_data.get("items") or order_data.get("book_titles") or [])
+        if not facility_name:
+            facility_name = str(order_data.get("facility_hint") or "").strip()
+
+    if not facility_name and session is not None:
+        facility_name = (getattr(session, "last_facility_name", "") or "").strip()
+
+    result = explain_delivery_rejection(
+        facility_name,
+        product_title=args.product_title or None,
+        content_type=args.content_type or None,
+        order_context={"order_number": order_number, "order_items": order_items},
+        state=args.state or None,
+    )
+    if session and result.get("facility_name"):
+        session.last_facility_name = str(result["facility_name"])
+    return json.dumps(result)
+
+
+async def _classify_product_content_for_facility(
+    args: ClassifyProductContentForFacilityArgs, session,
+) -> str:
+    from ..facility.product_content_classifier import classify_product_content
+
+    result = classify_product_content(
+        product_title=args.product_title,
+        product_description=args.product_description,
+        product_tags=args.product_tags,
+        product_type=args.product_type,
+    )
+    return json.dumps(result.to_dict())
 
 
 async def _faq_lookup(args: FaqLookupArgs, session) -> str:
@@ -656,6 +905,29 @@ async def _escalate_to_customer_service(args: EscalateArgs, session) -> str:
     )
 
 
+async def _create_product_not_found_escalation(
+    args: CreateProductNotFoundEscalationArgs, session,
+) -> str:
+    from ..escalation.models import ProductNotFoundEscalationPayload
+    from ..escalation.product_not_found_escalation import create_product_not_found_escalation
+
+    payload = ProductNotFoundEscalationPayload(
+        session_id=args.session_id,
+        call_sid=args.call_sid,
+        customer_phone=args.customer_phone,
+        customer_name=args.customer_name,
+        customer_email=args.customer_email,
+        requested_type=args.requested_type,  # type: ignore[arg-type]
+        requested_value=args.requested_value,
+        quantity=args.quantity,
+        facility_name=args.facility_name,
+        conversation_summary=args.conversation_summary,
+        last_search_results=dict(args.last_search_results or {}),
+        reason=args.reason or "product_not_found",
+    )
+    return await create_product_not_found_escalation(payload, session=session)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Registry: name -> (Pydantic model, impl, description, json schema)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -779,9 +1051,84 @@ _register(
 )
 _register(
     "facility_policy_lookup", FacilityPolicyArgs, _facility_policy,
-    "Check whether SureShot Books is approved to ship to a correctional facility "
-    "and any known restrictions. Never guess facility rules.",
-    _obj({"facility_name": _S, "order_number": _S}, ["facility_name"]),
+    "Search facility policy records for books, magazines, newspapers, and restrictions. "
+    "Never guess facility rules.",
+    _obj({"facility_name": _S, "state": _S, "order_number": _S}, ["facility_name"]),
+)
+_register(
+    "search_facility_policy", SearchFacilityPolicyArgs, _search_facility_policy,
+    "Search normalized facility CSV policy data by facility name and optional state.",
+    _obj({"facility_name": _S, "state": _S}, ["facility_name"]),
+)
+_register(
+    "check_facility_content_allowed",
+    CheckFacilityContentAllowedArgs,
+    _check_facility_content_allowed,
+    "Check whether books, magazines, newspapers, or subscriptions are allowed at a facility.",
+    _obj({"facility_name": _S, "content_type": _S, "state": _S}, ["facility_name", "content_type"]),
+)
+_register(
+    "explain_facility_restriction",
+    ExplainFacilityRestrictionArgs,
+    _explain_facility_restriction,
+    "Explain why an item may not be delivered to a facility using policy data only. "
+    "Optionally cross-reference a verified order.",
+    _obj({
+        "facility_name": _S,
+        "content_type": _S,
+        "product_title": _S,
+        "state": _S,
+        "order_number": _S,
+        "email": _S,
+        "phone": _S,
+    }, []),
+)
+_register(
+    "fetch_facility_policy_analysis",
+    FetchFacilityPolicyAnalysisArgs,
+    _fetch_facility_policy_analysis,
+    "Load cached offline facility policy analysis (never fetches URLs live).",
+    _obj({"facility_name": _S, "state": _S}, ["facility_name"]),
+)
+_register(
+    "answer_facility_policy_question",
+    AnswerFacilityPolicyQuestionArgs,
+    _answer_facility_policy_question,
+    "Answer a facility mail policy question from cached analysis and CSV data only.",
+    _obj({
+        "facility_name": _S,
+        "question": _S,
+        "content_type": _S,
+        "product_title": _S,
+        "state": _S,
+    }, ["facility_name", "question"]),
+)
+_register(
+    "explain_facility_delivery_rejection",
+    ExplainFacilityDeliveryRejectionArgs,
+    _explain_facility_delivery_rejection,
+    "Explain why a facility may have rejected or returned an order item using cached policy.",
+    _obj({
+        "facility_name": _S,
+        "product_title": _S,
+        "content_type": _S,
+        "state": _S,
+        "order_number": _S,
+        "email": _S,
+        "phone": _S,
+    }, []),
+)
+_register(
+    "classify_product_content_for_facility",
+    ClassifyProductContentForFacilityArgs,
+    _classify_product_content_for_facility,
+    "Classify product content type and risk flags for facility policy matching.",
+    _obj({
+        "product_title": _S,
+        "product_description": _S,
+        "product_type": _S,
+        "product_tags": [],
+    }, []),
 )
 _register(
     "faq_lookup", FaqLookupArgs, _faq_lookup,
@@ -879,6 +1226,26 @@ _register(
     "Escalate to human customer service for unlisted books, unknown inventory, "
     "facility issues, or staff-needed actions.",
     _obj({"reason": _S, "summary": _S}, ["reason"]),
+)
+_register(
+    "create_product_not_found_escalation",
+    CreateProductNotFoundEscalationArgs,
+    _create_product_not_found_escalation,
+    "Email SureShot support when Shopify catalog search confirms a product is not "
+    "available. Requires confirmed customer email.",
+    _obj({
+        "requested_value": {**_S, "description": "ISBN, title, newspaper, or magazine requested."},
+        "customer_email": {**_S, "description": "Customer email for follow-up."},
+        "requested_type": {**_S, "description": "isbn|title|author|newspaper|magazine|product|unknown"},
+        "session_id": _S,
+        "call_sid": _S,
+        "customer_phone": _S,
+        "customer_name": _S,
+        "quantity": {**_I, "description": "Quantity if known."},
+        "facility_name": _S,
+        "conversation_summary": _S,
+        "reason": _S,
+    }, ["requested_value"]),
 )
 
 

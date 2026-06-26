@@ -1,0 +1,11 @@
+{
+  "url": "https://cumberlandsheriffnc.gov/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T06:46:52.553092+00:00",
+  "text_length": 0,
+  "error": "[WinError 10061] No connection could be made because the target machine actively refused it",
+  "source_facilities": [
+    "Cumberland County Jail"
+  ]
+}

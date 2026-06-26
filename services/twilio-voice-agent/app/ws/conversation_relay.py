@@ -46,14 +46,13 @@ from ..conversation.call_memory import (
     get_resume_greeting,
     store_resume_snapshot,
 )
-from ..ai.openai_agent import run_agent_turn
 from ..caller.repository import (
     get_caller_profile,
     upsert_caller_profile,
     build_safe_caller_context,
 )
-from ..agent_runtime.runtime import get_eric_runtime, resolve_live_turn_handler
-from ..pipeline.engine import get_engine
+from ..agent_runtime.live_runtime import resolve_live_turn_handler
+from ..sync.call_setup_prefetch import prefetch_on_call_setup
 from ..voice.turn_assembler import clear_turn_assembler, get_turn_assembler
 from .conversation_relay_sender import ConversationRelayOutbound, ConversationRelayStats
 
@@ -76,42 +75,39 @@ async def dispatch_assembled_turn(
     caller_context,
     *,
     assembled_turn_mode: str = "",
+    stt_to_turn_ms: float = 0.0,
 ) -> None:
     """
-    Route one assembled ConversationRelay turn to the single LLM-first runtime.
+    Route one assembled ConversationRelay turn through central dispatch.
 
-    v4.18: there is exactly one live runtime — LLM_TOOL_RUNTIME. Legacy modes
-    (main_llm_agent / eric_agent_runtime / legacy_v410 / llm_first) are
-    quarantined and never run in the customer path. Every assembled turn goes to
-    the new runtime so OpenAI always receives the caller question first and can
-    call tools.
+    Default path: orchestrator (supervisor → planner → tools → composer).
+    When VOICE_ORCHESTRATOR_ENABLED=false, falls back to llm_tool_runtime.
+    When orchestrator raises and VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED=true,
+    dispatch falls back to llm_tool_runtime for this release.
     """
-    from ..agent_runtime.llm_tool_runtime import get_llm_tool_runtime, RUNTIME_MODE
+    from ..agent_runtime.llm_tool_runtime import RUNTIME_MODE as LLM_MODE
+    from ..orchestrator.runtime import RUNTIME_MODE as ORCH_MODE, orchestrator_enabled
+    from .turn_dispatch import dispatch_turn
 
     sid = session.call_sid[:6]
     configured = settings.VOICE_AGENT_RUNTIME_MODE
-    if configured != RUNTIME_MODE:
+    use_orchestrator = orchestrator_enabled(settings)
+    handler = ORCH_MODE if use_orchestrator else LLM_MODE
+
+    if configured not in (LLM_MODE, ORCH_MODE) and configured != handler:
         logger.warning(
             "legacy_runtime_mode_ignored sid=%s configured=%s using=%s",
-            sid, configured, RUNTIME_MODE,
+            sid, configured, handler,
         )
 
-    t0 = time.monotonic()
-    logger.info(
-        "voice_turn_handler sid=%s handler=%s turn_mode=%s",
-        sid, RUNTIME_MODE, assembled_turn_mode or "normal",
-    )
-    result = await get_llm_tool_runtime(settings).handle_turn(
+    await dispatch_turn(
+        settings,
         session,
         user_text,
         send,
-        caller_context=caller_context,
+        caller_context,
         assembled_turn_mode=assembled_turn_mode,
-    )
-    chars = len(getattr(result, "response_text", "") or "")
-    logger.info(
-        "llm_tool_turn_completed sid=%s chars=%d total_ms=%d",
-        sid, chars, int((time.monotonic() - t0) * 1000),
+        stt_to_turn_ms=stt_to_turn_ms,
     )
 
 
@@ -141,12 +137,46 @@ async def await_caller_profile_ready(
 
 
 async def handle_conversation_relay(websocket: WebSocket) -> None:
-    await websocket.accept()
+    from ..observability.otel import span
+
     settings = get_settings()
+    with span("inbound_call"):
+        await _handle_conversation_relay_inner(websocket, settings)
+
+
+async def _handle_conversation_relay_inner(websocket: WebSocket, settings) -> None:
+    from ..observability.otel import span
+
+    if settings.WS_TOKEN_VALIDATION_ENABLED and settings.ws_token_secret:
+        from ..security.rate_limit import check_rate_limit
+        from ..security.ws_token import validate_ws_token
+
+        token = websocket.query_params.get("token", "")
+        payload = validate_ws_token(token)
+        if not payload:
+            await websocket.close(code=4401, reason="Invalid or expired WebSocket token")
+            return
+        call_key = str(payload.get("callSid", ""))[:16]
+        allowed = await check_rate_limit(
+            f"ws_setup:{call_key}",
+            limit=30,
+            window_sec=60,
+        )
+        if not allowed:
+            await websocket.close(code=4429, reason="Rate limit exceeded")
+            return
+
+    await websocket.accept()
+
+    with span("websocket_session"):
+        await _run_conversation_relay_session(websocket, settings)
+
+
+async def _run_conversation_relay_session(websocket: WebSocket, settings) -> None:
+    call_start = time.monotonic()
 
     session: Optional[SessionState] = None
     current_task: Optional[asyncio.Task] = None
-    call_start = time.monotonic()
 
     # ── Profile-loading coordination ───────────────────────────────────────────
     # profile_task: the background asyncio.Task started at setup time.
@@ -393,8 +423,17 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                     )
                     # Fire-and-forget: warm local caches from Redis for this caller.
                     asyncio.create_task(
-                        get_engine(settings).prefetch_on_call_setup(session),
+                        prefetch_on_call_setup(session),
                         name="setup-prefetch",
+                    )
+                    from ..memory.postgres_store import persist_call_session_if_configured
+                    from ..workflow.hooks import schedule_workflow_event
+
+                    persist_call_session_if_configured(session, status="active")
+                    schedule_workflow_event(
+                        session,
+                        "call_started",
+                        {"call_sid_tail": (session.call_sid or "")[-6:]},
                     )
 
                 case "prompt":
@@ -516,6 +555,23 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                     "call_resume_store_failed sid=%s",
                     session.call_sid[:6] if session else "?",
                 )
+            try:
+                from ..memory.postgres_store import persist_call_session_if_configured
+                from ..workflow.hooks import schedule_workflow_event
+
+                schedule_workflow_event(session, "call_ended", {})
+                persist_call_session_if_configured(session, status="ended", ended=True)
+            except Exception:
+                logger.debug("postgres_call_end_skipped")
+            try:
+                from ..analytics.post_call import finalize_call_analytics
+
+                asyncio.create_task(
+                    finalize_call_analytics(session),
+                    name="post-call-analytics",
+                )
+            except Exception:
+                logger.debug("post_call_analytics_schedule_skipped")
         await _save_caller_profile()
         if session is not None:
             clear_turn_assembler(session.call_sid)

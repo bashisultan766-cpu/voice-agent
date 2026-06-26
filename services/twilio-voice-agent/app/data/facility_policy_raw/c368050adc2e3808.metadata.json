@@ -1,0 +1,11 @@
+{
+  "url": "https://www.berkspa.gov/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T08:58:20.825869+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Berks County Prison"
+  ]
+}

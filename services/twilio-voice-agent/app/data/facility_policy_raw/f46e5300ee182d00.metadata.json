@@ -1,0 +1,11 @@
+{
+  "url": "https://dcr.hawaii.gov/about/divisions/corrections/occc/",
+  "status": "403",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:49:30.438144+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Oahu Community Correctional Center"
+  ]
+}

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     PORT: int = 8000
     DEBUG: bool = False
     LOG_LEVEL: str = "info"
+    # development | test | production — controls Redis fallback and API docs exposure.
+    APP_ENV: str = "development"
 
     # Public HTTPS base URL — must be https:// in production.
     # ConversationRelay WebSocket URL is derived from this.
@@ -34,6 +36,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     # Primary model for every caller turn — must be capable enough to own final speech.
     OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_FAST_MODEL: str = "gpt-4o-mini"
+    OPENAI_STRONG_MODEL: str = "gpt-4o"
+    OPENAI_FALLBACK_MODEL: str = "gpt-4o-mini"
     OPENAI_TIMEOUT_SECS: float = 30.0
 
     # ── Shopify ───────────────────────────────────────────────────────────────
@@ -48,6 +53,12 @@ class Settings(BaseSettings):
 
     # ── Database (optional call log integration) ──────────────────────────────
     DATABASE_URL: str = ""
+    # When true, Postgres write failures raise instead of being swallowed.
+    STRICT_POSTGRES: bool = False
+    # Dev/admin session timeline and replay endpoints (X-Admin-Key required).
+    ENABLE_ADMIN_DEBUG_ENDPOINTS: bool = False
+    # Optional LLM refinement for post-call evaluation (never on live path).
+    ENABLE_LLM_EVAL: bool = False
 
     # ── Resend (email for payment links) ──────────────────────────────────────
     RESEND_API_KEY: str = ""
@@ -55,7 +66,11 @@ class Settings(BaseSettings):
     RESEND_FROM_NAME: str = "Bookstore Support"
     RESEND_REPLY_TO_EMAIL: str = ""
     RESEND_BRAND_NAME: str = "SureShot Books"
-    SUPPORT_EMAIL: str = ""              # Optional reply-to / escalation email
+    SUPPORT_EMAIL: str = ""              # Support/Jessica escalation destination
+    # From address for product-not-found escalation emails (defaults to RESEND_FROM_*).
+    SUPPORT_ESCALATION_FROM_EMAIL: str = ""
+    # When true, product-not-found escalations email SUPPORT_EMAIL (required in production).
+    SUPPORT_ESCALATION_ENABLED: bool = True
 
     # ── Pipeline speed budgets ────────────────────────────────────────────────
     # How long the first prompt waits for the caller profile to load (ms).
@@ -77,6 +92,16 @@ class Settings(BaseSettings):
     SHOPIFY_WEBHOOK_SECRET: str = ""
     # Bearer key for the /admin/sync endpoint — keep server-side only.
     INTERNAL_ADMIN_KEY: str = ""
+    # HMAC secret for ConversationRelay WebSocket tokens (defaults to INTERNAL_ADMIN_KEY).
+    WS_TOKEN_SECRET: str = ""
+    # Enable FastAPI /docs and /openapi.json (disabled automatically in production).
+    ENABLE_API_DOCS: bool = True
+    # Validate signed token on ConversationRelay WebSocket connect.
+    WS_TOKEN_VALIDATION_ENABLED: bool = True
+
+    # ── Observability (optional OpenTelemetry) ────────────────────────────────
+    OTEL_ENABLED: bool = False
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = ""
 
     # ── v4.2: Legacy OpenAI agent tool-calling guard ─────────────────────────
     # When true (default), blocks the OLD run_agent_turn streaming path and the
@@ -95,6 +120,11 @@ class Settings(BaseSettings):
     # eric_agent_runtime, legacy_v410, llm_first) are quarantined and never run
     # in the customer path — dispatch always routes to llm_tool_runtime.
     VOICE_AGENT_RUNTIME_MODE: str = "llm_tool_runtime"
+    # When true, route turns through app/orchestrator (supervisor → planner → tools).
+    # Default true after Step 4 parity certification.
+    VOICE_ORCHESTRATOR_ENABLED: bool = True
+    # When true, orchestrator failures fall back to llm_tool_runtime for this release.
+    VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED: bool = True
     # Approximate token budget for the system prompt; above this the master
     # prompt is sent section-by-section (safety sections always included).
     VOICE_PROMPT_TOKEN_BUDGET: int = 4000
@@ -105,8 +135,9 @@ class Settings(BaseSettings):
     # When false (default with llm-only), do not override the model's final text
     # with canned commerce/payment templates after tool calls.
     VOICE_ENFORCE_DETERMINISTIC_TOOL_RESPONSE: bool = False
-    VOICE_SUPERVISOR_MODEL: str = "gpt-4o"
-    VOICE_FINAL_MODEL: str = "gpt-4o"
+    # Empty = use OPENAI_FAST_MODEL (Step 4 latency optimization).
+    VOICE_SUPERVISOR_MODEL: str = ""
+    VOICE_FINAL_MODEL: str = ""
     VOICE_MAIN_LLM_TIMEOUT_MS: int = 6000
     VOICE_SUPERVISOR_TIMEOUT_MS: int = 1800
     VOICE_FINAL_TIMEOUT_MS: int = 2500
@@ -131,27 +162,29 @@ class Settings(BaseSettings):
     VOICE_FINAL_LLM_FOR_OUT_OF_DOMAIN: bool = True
     VOICE_FINAL_LLM_FOR_CLARIFICATION: bool = True
 
-    # ── v4.13: Eric prompt file + conversation state machine ──────────────────
-    ERIC_SYSTEM_PROMPT_PATH: str = "app/data/eric_system_prompt.md"
-    ERIC_SYSTEM_PROMPT_VERSION: str = "v1"
-
-    # ── v4.15.1: Eric prompt pack (multi-file system prompt) ──────────────────
-    ERIC_PROMPT_PACK_DIR: str = "app/data/prompt_pack"
-    ERIC_PROMPT_PACK_ENABLED: bool = True
-    ERIC_PROMPT_PACK_REQUIRE_ALL: bool = True
+    # ── DEPRECATED (archived 2026-06-26) — ignored by live runtime ─────────
+    # Eric prompt pack / single-file prompts moved to archive_legacy/. Live path
+    # uses app/data/agent_master_system_prompt.md via master_prompt.py only.
+    ERIC_SYSTEM_PROMPT_PATH: str = "app/data/agent_master_system_prompt.md"
+    ERIC_SYSTEM_PROMPT_VERSION: str = "archived"
+    ERIC_PROMPT_PACK_DIR: str = "archive_legacy/data/prompt_pack"
+    ERIC_PROMPT_PACK_ENABLED: bool = False
+    ERIC_PROMPT_PACK_REQUIRE_ALL: bool = False
     ERIC_PROMPT_MAX_CHARS: int = 60000
     VOICE_ISBN_PARTIAL_TIMEOUT_MS: int = 5000
     VOICE_COLLECTION_MAX_HOLD_MS: int = 7000
     VOICE_COLLECTION_KEEPALIVE_ENABLED: bool = True
 
-    # ── v4.9: EricDialogueBrain ───────────────────────────────────────────────
-    VOICE_LLM_BRAIN_ENABLED: bool = True
+    # ── DEPRECATED (archived 2026-06-26) — brain/worker orchestrator unused ─
+    VOICE_LLM_BRAIN_ENABLED: bool = False
     VOICE_LLM_BRAIN_MODEL: str = "gpt-4o-mini"
     VOICE_LLM_BRAIN_TIMEOUT_MS: int = 1800
     VOICE_LLM_BRAIN_MAX_RETRIES: int = 1
 
-    # Turn assembler debounce (ms) for normal speech
-    VOICE_TURN_ASSEMBLER_DEBOUNCE_MS: int = 750
+    # Turn assembler debounce (ms) for normal speech — reduced safely in Step 4
+    VOICE_TURN_ASSEMBLER_DEBOUNCE_MS: int = 380
+    # Send progress token when tool execution exceeds this threshold (ms)
+    VOICE_ORCHESTRATOR_TOOL_PROGRESS_MS: int = 400
 
     # Shipping policy
     SHIPPING_DEFAULT_METHOD: str = "Media Mail"
@@ -202,9 +235,9 @@ class Settings(BaseSettings):
     VOICE_CATALOG_PARALLEL_SEARCH_LIMIT: int = 4
     VOICE_CATALOG_IDENTIFIER_TIMEOUT_MS: int = 5000
 
-    # ── v4.16.0: Single Brain + Speculative Prefetch ─────────────────────────
-    VOICE_BRAIN_ORCHESTRATOR_ENABLED: bool = True
-    VOICE_SPECULATIVE_PREFETCH_ENABLED: bool = True
+    # ── DEPRECATED (archived 2026-06-26) — speculative brain prefetch unused ─
+    VOICE_BRAIN_ORCHESTRATOR_ENABLED: bool = False
+    VOICE_SPECULATIVE_PREFETCH_ENABLED: bool = False
     VOICE_PREFETCH_MAX_WAIT_MS: int = 350
     VOICE_PREFETCH_SCOUT_TIMEOUT_MS: int = 1500
     VOICE_PREFETCH_CANCEL_ON_DIRECT_ANSWER: bool = True
@@ -261,11 +294,42 @@ class Settings(BaseSettings):
         if missing:
             raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
 
+        if self.is_production and not self.REDIS_URL:
+            raise RuntimeError("REDIS_URL is required when APP_ENV=production")
+
+        if self.is_production and self.SUPPORT_ESCALATION_ENABLED and not self.SUPPORT_EMAIL:
+            raise RuntimeError(
+                "SUPPORT_EMAIL is required when APP_ENV=production and "
+                "SUPPORT_ESCALATION_ENABLED=true"
+            )
+
         if self.ENABLE_ELEVENLABS or self.ENABLE_DEEPGRAM:
             raise RuntimeError(
                 "ENABLE_ELEVENLABS and ENABLE_DEEPGRAM must be false for the "
                 "twilio_conversation_relay runtime."
             )
+
+    @property
+    def is_production(self) -> bool:
+        return (self.APP_ENV or "").strip().lower() == "production"
+
+    @property
+    def is_test(self) -> bool:
+        return (self.APP_ENV or "").strip().lower() == "test"
+
+    @property
+    def allow_memory_store_fallback(self) -> bool:
+        return not self.is_production
+
+    @property
+    def ws_token_secret(self) -> str:
+        return (self.WS_TOKEN_SECRET or self.INTERNAL_ADMIN_KEY or self.TWILIO_AUTH_TOKEN or "").strip()
+
+    @property
+    def api_docs_enabled(self) -> bool:
+        if self.is_production:
+            return bool(self.ENABLE_API_DOCS) and self.DEBUG
+        return bool(self.ENABLE_API_DOCS)
 
 
 @lru_cache

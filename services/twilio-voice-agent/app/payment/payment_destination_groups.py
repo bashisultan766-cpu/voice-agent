@@ -506,7 +506,7 @@ def send_summary_for_active_group(session: "SessionState") -> str:
     group = get_active_group(session)
     if not group:
         return ""
-    from ..pipeline.email_speller import speak_email
+    from ..email.speller import speak_email
 
     titles = group_titles_phrase(group)
     email = (

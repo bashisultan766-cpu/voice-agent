@@ -185,7 +185,7 @@ def get_silence_threshold_ms(ctx: TurnTakingContext) -> int:
 
 def is_complete_isbn(text: str) -> bool:
     """Return True if text contains a checksum-valid 10- or 13-digit ISBN."""
-    from ..pipeline.isbn_validator import _sliding_window_isbn13, extract_digits
+    from ..tools.isbn_validator import _sliding_window_isbn13, extract_digits
 
     digits = extract_digits(text)
     if len(digits) in (10, 13):

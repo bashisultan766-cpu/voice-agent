@@ -1,0 +1,15 @@
+{
+  "url": "https://cor.mt.gov/FriendsandFamily/Mail",
+  "status": "200",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T06:43:38.187100+00:00",
+  "text_length": 3842,
+  "error": null,
+  "source_facilities": [
+    "Cascade County Regional Prison",
+    "Dawson County Correctional Facility",
+    "Montana State Prison",
+    "Montana Womens Prison",
+    "Riverside Youth Correctional Facility"
+  ]
+}

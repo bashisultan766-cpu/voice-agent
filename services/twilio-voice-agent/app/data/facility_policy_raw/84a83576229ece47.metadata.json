@@ -1,0 +1,11 @@
+{
+  "url": "https://lyoncountyso.com/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T07:37:12.359718+00:00",
+  "text_length": 0,
+  "error": "[WinError 10054] An existing connection was forcibly closed by the remote host",
+  "source_facilities": [
+    "Lyon County Sheriff's Office"
+  ]
+}

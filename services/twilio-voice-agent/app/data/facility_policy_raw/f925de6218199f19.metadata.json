@@ -1,0 +1,11 @@
+{
+  "url": "https://gloucesterva.gov/sheriff",
+  "status": "200",
+  "content_type": "text/html;charset=utf-8",
+  "fetched_at": "2026-06-26T07:07:11.950536+00:00",
+  "text_length": 14126,
+  "error": null,
+  "source_facilities": [
+    "Sheriff's Office"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "url": "ELBERT COUNTY\r\n215 Comanche Street, Kiowa\r\nKiowa CO, 80117",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T06:17:35.139537+00:00",
+  "text_length": 0,
+  "error": "Invalid non-printable ASCII character in URL, '\\r' at position 13.",
+  "source_facilities": [
+    "Elbert County Jail"
+  ]
+}

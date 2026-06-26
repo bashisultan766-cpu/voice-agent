@@ -1,0 +1,30 @@
+{
+  "url": "https://doc.wi.gov/Pages/OffenderInformation/AdultInstitutions/MoneyMailProperty.aspx",
+  "status": "200",
+  "content_type": "text/html; charset=utf-8",
+  "fetched_at": "2026-06-26T06:55:32.500704+00:00",
+  "text_length": 17615,
+  "error": null,
+  "source_facilities": [
+    "Chippewa Valley Correctional Treatment Facility",
+    "Columbia Correctional Institution",
+    "Dodge Correctional Institution",
+    "Fox Lake Correctional Institution",
+    "Green Bay Correctional Institution",
+    "Jackson Correctional Institution Wisconsin",
+    "Kettle Moraine Correctional Institution",
+    "Milwaukee Secure Detention Facility",
+    "New Lisbon Correctional Institution",
+    "Oakhill Correctional Institution",
+    "Oshkosh Correctional Institution",
+    "Praire du Chien Correctional Institution",
+    "Racine Correctional Institution",
+    "Racine Youthful Offender Correctional Facility",
+    "Redgranite Correctional Institution",
+    "Stanley Correctional Institution",
+    "Sturtevant Transitional Facility",
+    "Taycheedah Correctional Institution",
+    "Waupun Correctional Institution",
+    "Wisconsin Secure Program Facility"
+  ]
+}

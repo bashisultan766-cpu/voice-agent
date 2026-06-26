@@ -103,7 +103,7 @@ def extract_email_from_text(
     if typed:
         return typed.group(1).lower().strip()
     try:
-        from ..pipeline.email_capture import (
+        from ..email.capture import (
             assemble_email_from_fragments,
             is_domain_suffix_only,
             normalize_spoken_email,
@@ -139,7 +139,7 @@ def extract_email_from_text(
 
 def speak_confirmation_prompt(email: str) -> str:
     """Full unmasked confirmation — privacy exception for payment email."""
-    from ..pipeline.email_speller import speak_email, spell_email_for_voice
+    from ..email.speller import speak_email, spell_email_for_voice
 
     spoken = speak_email(email)
     spelled = spell_email_for_voice(email)
@@ -152,7 +152,7 @@ def speak_confirmation_prompt(email: str) -> str:
 def confirmation_prompt(email: str, *, include_spelling: bool = True) -> str:
     if include_spelling:
         return speak_confirmation_prompt(email)
-    from ..pipeline.email_speller import speak_email
+    from ..email.speller import speak_email
     return f"Just to confirm, I heard {speak_email(email)}. Is that correct?"
 
 
@@ -262,7 +262,7 @@ def _try_confirm_email_turn(
     text: str,
 ) -> PaymentTurnHint:
     """Confirm pending/last-offered email on yes/correct — highest priority."""
-    from ..pipeline.email_capture import is_email_confirmation
+    from ..email.capture import is_email_confirmation
     from ..agent_runtime.yes_engagement import is_bare_yes
 
     awaiting = bool(getattr(session, "awaiting_payment_email_confirmation", False))
@@ -293,7 +293,7 @@ def process_payment_turn(
     Returns a hint with ``force_reply`` when the runtime should speak a
     deterministic confirmation prompt instead of letting the LLM send payment.
     """
-    from ..pipeline.email_capture import (
+    from ..email.capture import (
         is_email_confirmation,
         is_email_correction,
         is_email_spell_request,

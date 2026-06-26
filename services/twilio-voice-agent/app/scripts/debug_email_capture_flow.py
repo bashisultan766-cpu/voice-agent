@@ -48,8 +48,8 @@ def run_case(name: str, utterance: str, expected: str) -> list[tuple[str, bool]]
         set_pending_payment_email,
         sync_payment_email_fields,
     )
-    from app.pipeline.email_capture import normalize_spoken_email
-    from app.pipeline.email_speller import speak_email, spell_email_for_voice
+    from app.email.capture import normalize_spoken_email
+    from app.email.speller import speak_email, spell_email_for_voice
     from app.state.models import SessionState
 
     results: list[tuple[str, bool]] = []

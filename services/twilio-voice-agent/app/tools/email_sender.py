@@ -111,36 +111,47 @@ async def send_payment_link_email(
         payload["reply_to"] = reply_to
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                _RESEND_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        max_attempts = 2
+        last_err_msg = ""
+        for attempt in range(max_attempts):
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    _RESEND_URL,
+                    headers={
+                        "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
 
-        if resp.status_code in (200, 201):
-            logger.info(
-                "Payment email sent to %s draft=%s",
-                _mask_email(email),
-                order_or_draft_id or "n/a",
-            )
-            return {
-                "success": True,
-                "message": f"Payment link sent to {email}.",
-            }
+            if resp.status_code in (200, 201):
+                logger.info(
+                    "Payment email sent to %s draft=%s",
+                    _mask_email(email),
+                    order_or_draft_id or "n/a",
+                )
+                return {
+                    "success": True,
+                    "message": f"Payment link sent to {email}.",
+                }
 
-        # Resend returns error details in the body.
-        try:
-            err_body = resp.json()
-            err_msg = err_body.get("message", resp.text[:120])
-        except Exception:
-            err_msg = resp.text[:120]
+            if resp.status_code in (408, 429, 500, 502, 503, 504) and attempt + 1 < max_attempts:
+                logger.warning(
+                    "Resend retryable status=%s attempt=%d email=%s",
+                    resp.status_code,
+                    attempt + 1,
+                    _mask_email(email),
+                )
+                continue
 
-        logger.error("Resend error %s: %s", resp.status_code, err_msg)
-        return {"success": False, "error": "Could not deliver the email. Please try again."}
+            try:
+                err_body = resp.json()
+                last_err_msg = err_body.get("message", resp.text[:120])
+            except Exception:
+                last_err_msg = resp.text[:120]
+
+            logger.error("Resend error %s: %s", resp.status_code, last_err_msg)
+            return {"success": False, "error": "Could not deliver the email. Please try again."}
 
     except httpx.TimeoutException:
         logger.warning("Resend request timed out for %s", _mask_email(email))

@@ -1,0 +1,12 @@
+{
+  "url": "https://epcsheriffsoffice.com/services/inmate-services/#inmate-mail",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:59:01.952843+00:00",
+  "text_length": 36272,
+  "error": null,
+  "source_facilities": [
+    "El Paso County Jail",
+    "El Paso County  Sheriff"
+  ]
+}

@@ -326,23 +326,12 @@ class LLMToolRuntime:
 
     # ── OpenAI call with retry ────────────────────────────────────────────
     async def _complete(self, messages: list[dict], sid: str):
-        from tenacity import (
-            retry,
-            retry_if_exception_type,
-            stop_after_attempt,
-            wait_exponential,
-        )
+        from ..reliability.openai_retry import call_with_retry
 
         settings = self._settings
         client = self._get_client()
         timeout = settings.VOICE_OPENAI_TIMEOUT_MS / 1000
 
-        @retry(
-            reraise=True,
-            stop=stop_after_attempt(2),
-            wait=wait_exponential(multiplier=0.3, max=1.5),
-            retry=retry_if_exception_type(Exception),
-        )
         async def _call():
             return await asyncio.wait_for(
                 client.chat.completions.create(
@@ -356,7 +345,7 @@ class LLMToolRuntime:
                 timeout=timeout,
             )
 
-        return await _call()
+        return await call_with_retry(_call, purpose="llm_tool_runtime", max_attempts=2)
 
     async def _execute_payment_auto_send(
         self,

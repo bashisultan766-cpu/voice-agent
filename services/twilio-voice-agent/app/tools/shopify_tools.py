@@ -200,6 +200,21 @@ def _enrich_catalog_payload(payload: dict) -> dict:
     return payload
 
 
+def _search_products_response(payload: dict) -> str:
+    """Normalize search payload and set not_found before JSON serialization."""
+    if not payload.get("needs_more_digits"):
+        results = payload.get("results") or []
+        count = payload.get("count")
+        if count is None:
+            count = len(results)
+            payload["count"] = count
+        if "not_found" not in payload:
+            payload["not_found"] = (
+                int(count or 0) == 0 and not results and not payload.get("error")
+            )
+    return json.dumps(payload)
+
+
 async def search_products(query: str, limit: int = 5) -> str:
     """
     Search Shopify catalog.
@@ -228,7 +243,6 @@ async def search_products(query: str, limit: int = 5) -> str:
                 "all 10 or 13 digits."
             ),
         })
-
     # ── 1-3. ProductCache lookups (Redis, sub-ms) ──────────────────────────────
     try:
         from ..sync.repositories import ProductCache
@@ -244,7 +258,7 @@ async def search_products(query: str, limit: int = 5) -> str:
                     "count": 1,
                     "source": "cache",
                 }
-                return json.dumps(payload)
+                return _search_products_response(payload)
 
         cached_product = await pc.get_by_title(query)
         if cached_product:
@@ -254,7 +268,7 @@ async def search_products(query: str, limit: int = 5) -> str:
                 "count": 1,
                 "source": "cache",
             }
-            return json.dumps(payload)
+            return _search_products_response(payload)
 
         handle = query.lower().strip().replace(" ", "-")
         cached_product = await pc.get_by_handle(handle)
@@ -265,7 +279,7 @@ async def search_products(query: str, limit: int = 5) -> str:
                 "count": 1,
                 "source": "cache",
             }
-            return json.dumps(payload)
+            return _search_products_response(payload)
     except Exception as exc:
         logger.debug("ProductCache lookup skipped: %s", exc)
 
@@ -274,11 +288,11 @@ async def search_products(query: str, limit: int = 5) -> str:
     cached = await shopify_cache_get(cache_key)
     if cached is not None:
         logger.debug("Shopify search cache hit: %s", query)
-        return json.dumps(cached)
+        return _search_products_response(dict(cached))
 
     client = get_shopify_client()
     if not client.configured:
-        return json.dumps({"error": "Shopify not configured", "results": []})
+        return _search_products_response({"error": "Shopify not configured", "results": []})
 
     # ── 5. Live Shopify API ────────────────────────────────────────────────────
     isbn = extract_isbn_candidate(query) or normalize_isbn(query)
@@ -286,7 +300,7 @@ async def search_products(query: str, limit: int = 5) -> str:
         isbn_result = await _search_by_isbn(isbn, limit)
         if isbn_result and isbn_result.get("count", 0) > 0:
             await shopify_cache_set(cache_key, isbn_result, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
-            return json.dumps(isbn_result)
+            return _search_products_response(isbn_result)
 
     try:
         data = await client.execute(
@@ -297,10 +311,13 @@ async def search_products(query: str, limit: int = 5) -> str:
         results = [_normalise_product(e["node"]) for e in edges]
         payload = {"results": results, "count": len(results)}
         await shopify_cache_set(cache_key, payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
-        return json.dumps(payload)
+        return _search_products_response(payload)
     except Exception as exc:
         logger.error("search_products failed: %s", exc)
-        return json.dumps({"error": "Shopify search temporarily unavailable.", "results": []})
+        return _search_products_response({
+            "error": "Shopify search temporarily unavailable.",
+            "results": [],
+        })
 
 
 async def get_product_details(product_id_or_handle: str) -> str:
@@ -405,6 +422,20 @@ async def lookup_order(
             "fulfillment_status": node["displayFulfillmentStatus"],
         }
 
+        if not verified:
+            result["verification_required"] = True
+            result["message"] = (
+                "For security, provide the email or phone number on this order "
+                "to view line items, tracking, or payment details."
+            )
+            result["suggested_response"] = (
+                f"I found order {node['name']}. The financial status is "
+                f"{node['displayFinancialStatus']} and fulfillment is "
+                f"{node['displayFulfillmentStatus']}. "
+                "To share more details, I'll need to verify your email or phone number."
+            )
+            return json.dumps(result)
+
         line_edges = node.get("lineItems", {}).get("edges", [])
         if line_edges:
             result["items"] = [
@@ -491,17 +522,8 @@ async def lookup_order(
                 session.verified_email = bool(email)
                 session.verified_phone = bool(phone)
         else:
-            parts = [
-                f"Order {node['name']} is {node['displayFinancialStatus']} "
-                f"with fulfillment status {node['displayFulfillmentStatus']}."
-            ]
-            if result.get("items"):
-                parts.append("Line items: " + ", ".join(result["items"]) + ".")
-            if result.get("total"):
-                parts.append(f"Order total is {result['total']}.")
-            elif result.get("subtotal"):
-                parts.append(f"Subtotal before shipping is {result['subtotal']}.")
-            result["suggested_response"] = " ".join(parts)
+            # Unreachable — verified branch returns above; kept for safety.
+            result["verification_required"] = True
 
         return json.dumps(result)
 
@@ -1021,6 +1043,23 @@ async def escalate_to_human(
         summary[:120],
     )
     await _notify_support_escalation(masked, reason, summary)
+    if session is not None:
+        try:
+            from ..memory.postgres_store import persist_escalation_if_configured
+            from ..workflow.hooks import schedule_workflow_event
+
+            persist_escalation_if_configured(
+                session,
+                escalation_type="human_escalation",
+                payload={"reason": reason, "summary": (summary or "")[:200]},
+            )
+            schedule_workflow_event(
+                session,
+                "escalation_created",
+                {"type": "human_escalation", "reason": reason[:120]},
+            )
+        except Exception:
+            pass
     return json.dumps({
         "escalated": True,
         "message": (
@@ -1051,7 +1090,7 @@ async def CheckFacilityApproval(
     session: Optional["SessionState"] = None,
 ) -> str:
     """Check whether SureShot Books is approved to ship to a facility."""
-    from ..workers.facility_approval_worker import FacilityApprovalWorker
+    from ..facility.approval_worker import FacilityApprovalWorker
     from ..config import get_settings
 
     worker = FacilityApprovalWorker()
@@ -1091,7 +1130,7 @@ async def CheckOrderFacilityRestrictions(
             facility_name or getattr(session, "last_facility_name", "") or "",
         )
 
-    from ..workers.facility_restriction_worker import FacilityRestrictionWorker
+    from ..facility.restriction_worker import FacilityRestrictionWorker
     from ..config import get_settings
 
     worker = FacilityRestrictionWorker()

@@ -1,0 +1,12 @@
+{
+  "url": "https://bouldercounty.gov/safety/sheriff/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:30:05.679822+00:00",
+  "text_length": 6897,
+  "error": null,
+  "source_facilities": [
+    "Boulder County Jail",
+    "Boulder County Sheriff"
+  ]
+}

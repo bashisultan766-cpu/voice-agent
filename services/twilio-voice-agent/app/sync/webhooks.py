@@ -25,9 +25,10 @@ import hmac
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..config import get_settings
+from ..security.rate_limit import rate_limit_dependency
 from ..sync.shopify_sync import sync_shopify_store
 
 logger = logging.getLogger(__name__)
@@ -313,7 +314,10 @@ async def _process_customer(payload: dict) -> None:
 
 # ── Admin sync trigger ─────────────────────────────────────────────────────────
 
-@admin_router.post("/admin/sync")
+@admin_router.post(
+    "/admin/sync",
+    dependencies=[Depends(rate_limit_dependency("admin_sync", limit=10, window_sec=60))],
+)
 async def trigger_sync(request: Request) -> dict:
     """
     Trigger a full Shopify sync in the background.

@@ -21,6 +21,7 @@ def sync_ledger_to_session(session: "SessionState", ledger: CartLedger) -> None:
     session.cart_items = ledger.to_session_format()
     session.isbn_history = ledger.isbn_provided
     session.isbn_not_found = ledger.isbn_not_found
+    session.payment_cart_confirmed = ledger.confirmed_count() > 0
 
 
 def confirm_last_candidate(session: "SessionState"):

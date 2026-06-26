@@ -84,6 +84,36 @@ _MARKDOWN_PATTERNS: tuple[re.Pattern, ...] = (
 )
 
 _DEFAULT_MAX_WORDS = 90  # hard cap; soft target is far lower per voice style
+_VOICE_STYLE_MAX_SENTENCES = 2
+_ROBOTIC_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"\bas an ai\b", re.I),
+    re.compile(r"\bi am a language model\b", re.I),
+    re.compile(r"\bsearch_products\b"),
+    re.compile(r"\blookup_order_status\b"),
+    re.compile(r"\{[^}]+\}"),  # JSON-ish
+)
+
+
+def apply_voice_style_guard(text: str, *, max_sentences: int = _VOICE_STYLE_MAX_SENTENCES) -> str:
+    """Trim to short natural phone speech — max sentences, no robotic phrasing."""
+    if not text:
+        return ""
+    cleaned = text.strip()
+    for pattern in _ROBOTIC_PATTERNS:
+        cleaned = pattern.sub(" ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    parts = re.split(r"(?<=[.!?])\s+", cleaned)
+    parts = [p.strip() for p in parts if p.strip()]
+    if len(parts) >= 2 and len(parts[0]) <= 8 and parts[0].endswith("!"):
+        parts[0] = f"{parts[0]} {parts[1]}".strip()
+        del parts[1]
+    if len(parts) <= max_sentences:
+        return cleaned
+    if len(parts) > max_sentences:
+        cleaned = " ".join(parts[:max_sentences])
+        if not cleaned.endswith((".", "!", "?")):
+            cleaned += "."
+    return cleaned.strip()
 
 
 @dataclass
@@ -162,6 +192,7 @@ def apply_output_guardrails(
     text = _strip_urls(text, reasons)
     text = _mask_cards(text, reasons)
     text = _strip_markdown(text, reasons)
+    text = apply_voice_style_guard(text)
     text = _enforce_length(text, max_words, reasons)
 
     modified = text != original

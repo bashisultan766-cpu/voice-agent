@@ -295,3 +295,66 @@ def validate_tool_email_arg(
         safe_message="",
         confirmed_email_masked=_mask_email(confirmed),
     )
+
+
+def require_cart_customer_confirmed(session: "SessionState") -> PaymentSafetyResult:
+    """Cart must be explicitly confirmed by the caller before checkout/payment."""
+    if not getattr(session, "payment_cart_confirmed", False):
+        return PaymentSafetyResult(
+            allowed=False,
+            reason="cart_unconfirmed",
+            safe_message=(
+                "Before I send a payment link, please confirm the books in your cart. "
+                "Would you like to proceed with this order?"
+            ),
+            missing_fields=["cart_confirmation"],
+        )
+    return PaymentSafetyResult(allowed=True, reason="cart_confirmed", safe_message="")
+
+
+def require_checkout_created(session: "SessionState") -> PaymentSafetyResult:
+    """Checkout/draft order must exist before sending payment link."""
+    checkout_url = (
+        (getattr(session, "pending_checkout_url", "") or "").strip()
+        or (getattr(session, "checkout_url", "") or "").strip()
+    )
+    if not checkout_url:
+        return PaymentSafetyResult(
+            allowed=False,
+            reason="no_checkout_url",
+            safe_message=(
+                "I still need to create your secure checkout link. "
+                "One moment while I prepare that."
+            ),
+            missing_fields=["checkout_url"],
+        )
+    return PaymentSafetyResult(allowed=True, reason="checkout_ready", safe_message="")
+
+
+def assert_payment_link_allowed(
+    session: "SessionState",
+    *,
+    tool_email_arg: Optional[str] = None,
+    checkout_items: list[dict] | None = None,
+) -> PaymentSafetyResult:
+    """
+    Full deterministic gate for payment link generation/send.
+
+  Enforces all Step-2 payment safety rules in code.
+    """
+    for check in (
+        require_confirmed_cart(session, checkout_items),
+        require_cart_customer_confirmed(session),
+        require_confirmed_email(session),
+        validate_tool_email_arg(tool_email_arg, session),
+        require_checkout_created(session),
+    ):
+        if not check.allowed:
+            return check
+    confirmed = get_confirmed_email(session) or ""
+    return PaymentSafetyResult(
+        allowed=True,
+        reason="payment_allowed",
+        safe_message="",
+        confirmed_email_masked=_mask_email(confirmed),
+    )

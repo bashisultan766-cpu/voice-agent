@@ -1,0 +1,21 @@
+{
+  "url": "https://www.cd.nm.gov/wp-content/uploads/2023/11/CD-151200.pdf",
+  "status": "200",
+  "content_type": "application/pdf",
+  "fetched_at": "2026-06-26T09:16:53.565136+00:00",
+  "text_length": 25323,
+  "error": null,
+  "source_facilities": [
+    "Central New Mexico Correctional Facility",
+    "Guadalupe County Correctional Facility",
+    "Lea County Correctional Facility",
+    "New Mexico Women's Correctional Facility",
+    "Northeast New Mexico Detention Facility",
+    "Otero County Prison Facility",
+    "Penitentiary of New Mexico",
+    "Roswell Correctional Center",
+    "Southern New Mexico Correctional Facility",
+    "Springer Correctional Center",
+    "Western New Mexico Correctional Facility"
+  ]
+}

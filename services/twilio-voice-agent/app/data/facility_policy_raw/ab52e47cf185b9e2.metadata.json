@@ -1,0 +1,13 @@
+{
+  "url": "https://eriecountypa.gov/departments/corrections/inmate-mail-and-packages/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:59:07.197476+00:00",
+  "text_length": 1249,
+  "error": null,
+  "source_facilities": [
+    "Erie County Prison",
+    "Fayette County Prison",
+    "Erie County Sheriff's Office"
+  ]
+}

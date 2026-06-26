@@ -54,6 +54,7 @@ _EMAIL_SPOKEN = re.compile(
     r"\b[a-z0-9._%+\-]+\s+(?:at|@)\s*[a-z0-9.\-]+(?:\s+(?:dot|\.)\s+(?:com|net|org))?\b",
     re.IGNORECASE,
 )
+_ORDER_HINT = re.compile(r"\b(order|order number|order #)\b", re.I)
 _DIGIT_FRAGMENT = re.compile(r"^[\d\s\.\-]+$")
 
 
@@ -109,6 +110,11 @@ class TurnAssembler:
         if pending_isbn_buffer or self._state.mode == "isbn":
             if _DIGIT_FRAGMENT.match(text.strip()) or should_collect_isbn(text, book_collection=True):
                 return "isbn"
+        if should_collect_isbn(text, book_collection=book_collection) or is_complete_isbn(text):
+            return "isbn"
+        if _ORDER_HINT.search(t) or self._state.mode == "order":
+            if is_complete_order_number(text) or _DIGIT_FRAGMENT.match(text.strip()):
+                return "order"
         if self._state.mode == "isbn" and should_collect_isbn(text, book_collection=book_collection):
             return "isbn"
         if not should_collect_isbn(text, book_collection=book_collection):
@@ -387,7 +393,7 @@ class TurnAssembler:
             emit_mode = st.mode
             digits = "".join(c for c in st.buffer if c.isdigit())
             if emit_mode == "isbn" and len(digits) > 13:
-                from ..pipeline.isbn_validator import _sliding_window_isbn13
+                from ..tools.isbn_validator import _sliding_window_isbn13
 
                 found = _sliding_window_isbn13(digits)
                 if found:

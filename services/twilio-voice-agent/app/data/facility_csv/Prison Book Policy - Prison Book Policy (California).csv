@@ -1,0 +1,593 @@
+Facility Name,Facility Type,State,City,ZIP Code,Physical Address,Inmate Mailing Address,Facility Phone Number,Website URL,Facility Mail Policy Link,Facility Contact Name / Phone,Security Level,Population Size,Vendor Required,Approved Vendors,Vendor Approval Status,Books Allowed,Paperback Allowed,Hardcover Allowed,Single Magazine Allowed,Magazines Allowed,Newspapers Allowed,MailCall Newspapers Allowed,Tattoo Books Allowed,Urban Content Allowed,Restrictions,Sexually Explicit Content Allowed,Adult Magazines Allowed,Other,Must Ship Direct from Publisher,Used Books Allowed,Max Books Per Package / Shipment,Max Size of Publications Restriction,Special Notes on Packaging,Common Rejection Reasons,Strict Facility,Other,Mailroom Contact Name,Mailroom Phone,Mailroom Email,Last Updated Date,Source (Website/Phone/Other),Confidence Level,Internal Notes
+"Avenal State Prison A
+",State,California ,Avenal,93204,"Avenal State Prison
+1 Kings Way
+Avenal, CA 93204","(ASP) Facility A
+P.O. Box 901
+Avenal, CA 93204",(559) 386-0587,https://www.cdcr.ca.gov/facility-locator/asp/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Avenal State Prison B,State,California ,Avenal,93204,"Avenal State Prison
+1 Kings Way
+Avenal, CA 93204","(ASP) Facility B
+P.O. Box 902
+Avenal, CA 93204",(559) 386-0587,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Avenal State Prison C,State,California ,Avenal,93204,"Avenal State Prison
+1 Kings Way
+Avenal, CA 93204","(ASP) Facility C
+P.O. Box 903
+Avenal, CA 93204",(559) 386-0587,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Avenal State Prison D,State,California ,Avenal,93204,"Avenal State Prison
+1 Kings Way
+Avenal, CA 93204","(ASP) Facility D
+P.O. Box 904
+Avenal, CA 93204",(559) 386-0587,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Avenal State Prison E,State,California ,Avenal,93204,"Avenal State Prison
+1 Kings Way
+Avenal, CA 93204","(ASP) Facility E
+P.O. Box 905
+Avenal, CA 93204",(559) 386-0587,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Avenal State Prison F,State,California ,Avenal,93204,"Avenal State Prison
+1 Kings Way
+Avenal, CA 93204","(ASP) Facility F
+P.O. Box 906
+Avenal, CA 93204",(559) 386-0587,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Correctional Institution (CCI,State,California ,Tehachapi,93561,"California Correctional Institution (CCI)
+24900 Highway 202
+Tehachapi, CA 93561","(CCI) Facility A
+P.O. Box 1902
+Tehachapi, CA 93581",661-822-4402,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Correctional Institution (CCI,State,California ,Tehachapi,93561,"California Correctional Institution (CCI)
+24900 Highway 202
+Tehachapi, CA 93561","(CCI) Facility B
+P.O. Box 1906
+Tehachapi, CA 93581",661-822-4402,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Correctional Institution (CCI,State,California ,Tehachapi,93561,"California Correctional Institution (CCI)
+24900 Highway 202
+Tehachapi, CA 93561","(CCI) Facility C
+P.O. Box 1905
+Tehachapi, CA 93581",661-822-4402,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Institution for Men,State,California ,Chino,91710,"California Institution for Men
+14901 Central Avenue
+Chino, CA 91710","(CIM) Facility A (West)
+P.O. Box 368
+Chino, CA 91708",909-597-1821,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Institution for Men,State,California ,Chino,91710,"California Institution for Men
+14901 Central Avenue
+Chino, CA 91710","(CIM) Facility B (Reception Center Central)
+P.O. Box 441
+Chino, CA 91708",909-597-1821,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Institution for Men,State,California ,Chino,91710,"California Institution for Men
+14901 Central Avenue
+Chino, CA 91710","(CIM) Facility C (EAST)
+P.O. Box 500
+Chino, CA 91708",909-597-1821,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Institution for Men,State,California ,Chino,91710,"California Institution for Men
+14901 Central Avenue
+Chino, CA 91710","(CIM) Facility D
+P.O. Box 600
+Chino, CA 91708",909-597-1821,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Institution for Women,State,California ,Corona,92880,"California Institution for Women
+16756 Chino-Corona Road
+Corona, CA 92880","California Institution for Women
+16756 Chino-Corona Road
+Corona, CA 92880",909-597-1772,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Medical Facility,State,California ,Vacaville,95687,"California Medical Facility
+1600 California Dr
+Vacaville, CA 95687","California Medical Facility
+P.O. Box 2000
+Vacaville, CA 95696-2000",707-448-6841,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Medical Facility,State,California ,Vacaville,95696-2500,"California Medical Facility
+1600 California Dr
+Vacaville, CA 95687","California Medical Facility
+P.O. Box 2500
+Vacaville, CA 95696-2500",707-448-6841,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Men's Colony,State,California ,San Luis Obispo,93409,"California Men's Colony
+Colony Dr
+San Luis Obispo, CA 93409","California Men's Colony
+P.O. Box 8103
+San Luis Obispo, CA 93409-8103",805-547-7900,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California Rehabilitation Center,State,California ,Norco,92860,"California Rehabilitation Center
+5th Street and Western
+Norco, CA 92860","California Rehabilitation Center
+P.O. Box 3535
+Norco, CA 92860",951-737-2683,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"California State Prison, Corcoran",State,California ,Corcoran,93212,"California State Prison, Corcoran
+4001 King Avenue
+Corcoran, CA 93212","California State Prison Corcoran
+P.O. Box 8800
+Corcoran, CA 93212-8309",559-992-8800,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"California State Prison, Los Angeles County",State,California ,Lancaster,93536-7620,"California State Prison, Los Angeles County
+44750 60th Street West
+Lancaster, CA 93536-7620","(CSP) Facility A & ASU
+P.O. Box 4430
+Lancaster, CA 93539-4430",661-729-2000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"California State Prison, Los Angeles County",State,California ,Lancaster,93536-7620,"California State Prison, Los Angeles County
+44750 60th Street West
+Lancaster, CA 93536-7620","(CSP) Facility B
+P.O. Box 4490
+Lancaster, CA 93539-4490",661-729-2000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"California State Prison, Los Angeles County",State,California ,Lancaster,93536-7620,"California State Prison, Los Angeles County
+44750 60th Street West
+Lancaster, CA 93536-7620","(CSP) Facility C
+P.O. Box 4610
+Lancaster, CA 93539-4610",661-729-2000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"California State Prison, Los Angeles County",State,California ,Lancaster,93536-7620,"California State Prison, Los Angeles County
+44750 60th Street West
+Lancaster, CA 93536-7620","(CSP) Facility D
+P.O. Box 4670
+Lancaster, CA 93539-4670",661-729-2000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"California State Prison, Los Angeles County",State,California ,Lancaster,93536-7620,"California State Prison, Los Angeles County
+44750 60th Street West
+Lancaster, CA 93536-7620","(CSP) Minimum Support Facility
+P.O. Box 4730
+Lancaster, CA 93539-4730",661-729-2000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California State Prison Sacramento,State,California ,Represa,18901,"California State Prison Sacramento
+100 Prison Road
+Represa, CA 18901","California State Prison Sacramento
+P.O. Box 290001
+Represa, CA 95671",916-985-8610,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+California State Prison Solano,State,California ,Vacaville,95687,"California State Prison Solano
+2100 Peabody Road
+Vacaville, CA 95687","California State Prison Solano
+P.O. Box 4000
+Vacaville, CA 95696-4000",707-451-0182,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility A
+P.O. Box 5248
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility B
+P.O. Box 5248
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility C
+P.O. Box 5246
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility D
+P.O. Box 5242
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility E
+P.O. Box 5242
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility F
+P.O. Box 5244
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility G
+P.O. Box 5244
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Calipatria State Prison,State,California ,Calipatria,92233,"Calipatria State Prison
+7018 Blair Road
+Calipatria, CA 92233","Facility A
+P.O. Box 5004
+Calipatria, CA 92233-5004",760-348-7000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Calipatria State Prison,State,California ,Calipatria,92233,"Calipatria State Prison
+7018 Blair Road
+Calipatria, CA 92233","Facility B
+P.O. Box 5005
+Calipatria, CA 92233-5005",760-348-7000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Calipatria State Prison,State,California ,Calipatria,92233,"Calipatria State Prison
+7018 Blair Road
+Calipatria, CA 92233","Facility C
+P.O. Box 5006
+Calipatria, CA 92233-5006",760-348-7000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Calipatria State Prison,State,California ,Calipatria,92233,"Calipatria State Prison
+7018 Blair Road
+Calipatria, CA 92233","Facility D
+P.O. Box 5007
+Calipatria, CA 92233-5007",760-348-7000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Calipatria State Prison,State,California ,Calipatria,92233,"Calipatria State Prison
+7018 Blair Road
+Calipatria, CA 92233","MSF/FH/ASU
+P.O. Box 5008
+Calipatria, CA 92233-5008",760-348-7000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Calipatria State Prison,State,California ,Calipatria,92233,"Calipatria State Prison
+7018 Blair Road
+Calipatria, CA 92233","Inmate Funds
+P.O. Box 5003
+Calipatria, CA 92233-5003",760-348-7000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Calipatria State Prison,State,California ,Calipatria,92233,"Calipatria State Prison
+7018 Blair Road
+Calipatria, CA 92233","Legal Mail
+P.O. Box 5002
+Calipatria, CA 92233-5002",760-348-7000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Centinela State Prison (CEN),State,California ,Imperial,92251,"Centinela State Prison (CEN)
+2302 Brown Road
+Imperial, CA 92251","(CEN) Facility A
+P.O. Box 901
+Imperial, CA 92251-0901",760-337-7900,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Centinela State Prison (CEN),State,California ,Imperial,92251,"Centinela State Prison (CEN)
+2302 Brown Road
+Imperial, CA 92251","(CEN) Facility B
+P.O. Box 911
+Imperial, CA 92251-0911",760-337-7900,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Centinela State Prison (CEN),State,California ,Imperial,92251,"Centinela State Prison (CEN)
+2302 Brown Road
+Imperial, CA 92251","(CEN) Facility C
+P.O. Box 921
+Imperial, CA 92251-0921",760-337-7900,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Centinela State Prison (CEN),State,California ,Imperial,92251,"Centinela State Prison (CEN)
+2302 Brown Road
+Imperial, CA 92251","(CEN) Facility D
+P.O. Box 931
+Imperial, CA 92251-0931",760-337-7900,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Centinela State Prison (CEN),State,California ,Imperial,92251,"Centinela State Prison (CEN)
+2302 Brown Road
+Imperial, CA 92251","(CEN) Facility E
+P.O. Box 931
+Imperial, CA 92251-0931",760-337-7900,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Central California Women's Facility,State,California ,Chowchilla,93610,"Central California Women's Facility
+23370 Road 22
+Chowchilla, CA 93610","Central California Women's Facility
+P.O. Box 1508
+Chowchilla, CA 93610",559-665-5531,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Correctional Training Facility,State,California ,Soledad,93960,"Correctional Training Facility
+Soledad Prison Road
+Soledad, CA 93960","(CFT) Facility A
+P.O. Box 705
+Soledad, CA 93960",831-678-3951,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Correctional Training Facility,State,California ,Soledad,93960,"Correctional Training Facility
+Soledad Prison Road
+Soledad, CA 93960","(CFT) Facility B
+P.O, Box 705
+Soledad, CA 93960",831-678-3951,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Correctional Training Facility,State,California ,Soledad,93960,"Correctional Training Facility
+Soledad Prison Road
+Soledad, CA 93960","(CFT) Facility C
+P.O. Box 689
+Soledad, CA 93960",831-678-3951,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Correctional Training Facility,State,California ,Soledad,93960,"Correctional Training Facility
+Soledad Prison Road
+Soledad, CA 93960","(CFT) Facility D
+P.O. Box 690
+Soledad, CA 93960",831-678-3951,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Folsom State Prison,State,California ,Represa,95671,"Folsom State Prison
+300 Prison Road
+Represa, CA 95671","Folsom State Prison
+P.O. Box 715071
+Represa, CA 95671",916-985-2561,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+High Desert State Prison,State,California ,Susanville,96127,"High Desert State Prison
+475-750 Rice Canyon Road
+Susanville, CA 96127","(HDSP) Inmate Mailing
+P.O. Box 3030
+Susanville, CA 96127-3030",530-251-5100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+High Desert State Prison,State,California ,Susanville,96127,"High Desert State Prison
+475-750 Rice Canyon Road
+Susanville, CA 96127","(HDSP) Inmate Trust
+P.O. Box 270-249
+Susanville, CA 96127",530-251-5100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Ironwood State Prison,State,California ,Blythe,92225,"Ironwood State Prison
+19005 Wiley's Well Road
+Blythe, CA 92225","Ironwood State Prison
+P.O. Box 2199
+Blythe, CA 92226",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Kern Valley State Prison,State,California ,Delano,93216-6000,"Kern Valley State Prison
+3000 West Cecil Avenue
+Delano, CA 93216-6000","(KVSP) Facility A
+P.O. Box 5101
+Delano, CA 93216",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Kern Valley State Prison,State,California ,Delano,93216-6000,"Kern Valley State Prison
+3000 West Cecil Avenue
+Delano, CA 93216-6000","(KVSP) Facility B
+P.O. Box 5102
+Delano, CA 93216",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Kern Valley State Prison,State,California ,Delano,93216-6000,"Kern Valley State Prison
+3000 West Cecil Avenue
+Delano, CA 93216-6000","(KVSP) Facility C
+P.O. Box 5103
+Delano, CA 93216",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Kern Valley State Prison,State,California ,Delano,93216-6000,"Kern Valley State Prison
+3000 West Cecil Avenue
+Delano, CA 93216-6000","(KVSP) Facility D
+P.O. Box 5104
+Delano, CA 93216",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Kern Valley State Prison,State,California ,Delano,93216-6000,"Kern Valley State Prison
+3000 West Cecil Avenue
+Delano, CA 93216-6000","(KVSP) Facility M
+P.O. Box 5105
+Delano, CA 93216",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Kern Valley State Prison,State,California ,Delano,93216-6000,"Kern Valley State Prison
+3000 West Cecil Avenue
+Delano, CA 93216-6000","(KVSP) ASU1
+P.O. Box 5107
+Delano, CA 93216",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Kern Valley State Prison,State,California ,Delano,93216-6000,"Kern Valley State Prison
+3000 West Cecil Avenue
+Delano, CA 93216-6000","(KVSP) ASU2
+P.O. Box 5106
+Delano, CA 93216",760-921-3000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mule Creek State Prison,State,California ,Ione,95640,"Mule Creek State Prison
+4001 Highway 104
+Ione, CA 95640","Mule Creek State Prison
+P.O. Box 409099
+Ione, CA 95640",209-274-4911,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mule Creek State Prison,State,California ,Delano,93215,"North Kern State Prison
+2737 West Cecil Avenue
+Delano, CA 93215","(NKSP) Facility A
+P.O. Box 5000
+Delano, CA 93216-0567",661-721-2345,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mule Creek State Prison,State,California ,Delano,93215,"North Kern State Prison
+2737 West Cecil Avenue
+Delano, CA 93215","(NKSP) Facility B
+P.O. Box 4999
+Delano, CA 93216-0567",661-721-2345,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mule Creek State Prison,State,California ,Delano,93215,"North Kern State Prison
+2737 West Cecil Avenue
+Delano, CA 93215","(NKSP) Facility C
+P.O. Box 5004
+Delano, CA 93216-0567",661-721-2345,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mule Creek State Prison,State,California ,Delano,93215,"North Kern State Prison
+2737 West Cecil Avenue
+Delano, CA 93215","(NKSP) Facility D
+P.O. Box 5005
+Delano, CA 93216-0567",661-721-2345,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mule Creek State Prison,State,California ,Delano,93215,"North Kern State Prison
+2737 West Cecil Avenue
+Delano, CA 93215","(NKSP) Facility M
+P.O. Box 5000
+Delano, CA 93216-0567",661-721-2345,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Pelican Bay State Prison,State,California ,Crescent City,95531,"Pelican Bay State Prison
+5905 Lake Earl Drive
+Crescent City, CA 95531","Pelican Bay State Prison
+P.O. Box 7500
+Crescent City, CA 95532",707-465-1000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Pleasant Valley State Prison,State,California ,Coalinga,93210,"Pleasant Valley State Prison
+24863 West Jayne Avenue
+Coalinga, CA 93210","Pleasant Valley State Prison
+P.O. Box 8500
+Coalinga, CA 93210",707-465-1000,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Richard J. Donovan Correctional Facility,State,California ,San Diego,92179,"Richard J. Donovan Correctional Facility
+480 Alta Road
+San Diego, CA 92179","Richard J. Donovan Correctional Facility
+480 Alta Road
+San Diego, CA 92179",619-661-6500,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Salinas Valley State Prison,State,California ,Soledad,93960,"Salinas Valley State Prison
+31625 Highway 101
+Soledad, CA 93960","Salinas Valley State Prison
+P.O. Box 1050
+Soledad, CA 93960-1050",831-678-5500,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+San Quentin Rehabilitation Center,State,California ,San Quentin,94964,"Inmate Name, CDCR#
+San Quentin Rehabilitation Center
+San Quentin, CA 94964","San Quentin Rehabilitation Center
+Main Street
+San Quentin, CA 94964",415-454-1460,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sierra Conservation Center,State,California ,Jamesown,95327,"Sierra Conservation Center
+5100 O'Byrnes Ferry Road
+Jamestown, CA 95327","Sierra Conservation Center
+5150 O'Byrnes Ferry Road
+Jamestown, CA 95327",209-984-5291,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility A
+P.O. Box 5248
+Corcorcan, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility B
+P.O. Box 5248
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility C
+P.O. Box 5246
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility D
+P.O. Box 5242
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility E
+P.O. Box 5242
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility F
+P.O. Box 5244
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Substance Abuse Treatment Facility and State Prison,State,California ,Corcoran,93212,"Substance Abuse Treatment Facility and State Prison
+900 Quebec Avenue
+Corcoran, CA 93212","Facility G
+P.O. Box 5244
+Corcoran, CA 93212",559-992-7100,https://www.cdcr.ca.gov/adult-operations/list-of-adult-institutions/,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Valley State Prison,State,California ,Chowchilla,93610,"Valley State Prison
+21633 Avenue 24
+Chowchilla, CA 93610","Valley State Prison
+P.O. Box 92
+Chowchilla, CA 93610-0092",559-665-6100,,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Wasco State Prison and Reception Center,State,California ,Wasco,93280,"Wasco State Prison and Reception Center
+701 Scofield Avenue
+Wasco, CA 93280","(WSP) Facility A
+P.O. Box 4400
+Wasco, CA 93280",661-758-8400,,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Wasco State Prison and Reception Center,State,California ,Wasco,93280,"Wasco State Prison and Reception Center
+701 Scofield Avenue
+Wasco, CA 93280","(WSP) Facility B
+P.O. Box 5500
+Wasco, CA 93280",661-758-8400,,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Wasco State Prison and Reception Center,State,California ,Wasco,93280,"Wasco State Prison and Reception Center
+701 Scofield Avenue
+Wasco, CA 93280","(WSP) Facility C
+P.O. Box 6600
+Wasco, CA 93280",661-758-8400,,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Wasco State Prison and Reception Center,State,California ,Wasco,93280,"Wasco State Prison and Reception Center
+701 Scofield Avenue
+Wasco, CA 93280","(WSP) Facility D
+P.O. Box 7700
+Wasco, CA 93280",661-758-8400,,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Wasco State Prison and Reception Center,State,California ,Wasco,93280,"Wasco State Prison and Reception Center
+701 Scofield Avenue
+Wasco, CA 93280","(WSP) Facility E
+P.O. Box 3300
+Wasco, CA 93280",661-758-8400,,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Wasco State Prison and Reception Center,State,California ,Wasco,93280,"Wasco State Prison and Reception Center
+701 Scofield Avenue
+Wasco, CA 93280","(WSP) Facility H
+P.O. Box 9900
+Wasco, CA 93280",661-758-8400,,https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Bear Valley Substation,State,California ,Bear Valley,95223,"Bear Valley Substation
+88 Bear Valley Road
+Bear Valley, CA 95223","Bear Valley Substation
+P.O. Box 5103
+Bear Valley, CA 95223
+",209-753-2321,https://www.alpinecountyca.gov/204/Sheriff,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Markleeville Department,State,California ,Markleevillie,96120,"Markleeville Department
+99 Water Street
+Markleeville, CA 96120","Markleeville Department
+P.O. Box 278
+Markleeville, CA 96120",530-694-2231,https://www.alpinecountyca.gov/204/Sheriff,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Beverly Hills Police Department,State,California ,Beverly Hills,90210,"Beverly Hills Police Department
+464 N Rexford Dr
+Beverly Hills, CA 90210","Beverly Hills Police Department
+464 N Rexford Dr
+Beverly Hills, CA 90210",(310) 550-4951,https://www.shouselaw.com/ca/defense/jails/beverly-hills-jail/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Chula Vista City Jail,State,California ,Chula Vista,91910,"Chula Vista City Jail
+315 4th Ave
+Chula Vista, CA 91910","Chula Vista City Jail
+315 4th Ave
+Chula Vista, CA 91910",(619) 691-5220,https://www.chulavistaca.gov/departments/police-department/cv-city-jail,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Corcoran City Police,State,California ,Corcoran,93212,"Corcoran City Police
+ 911 Hanna Ave
+Corcoran, CA 93212",,(559) 992-5151,https://cityofcorcoran.ca.gov/departments/police/administration.php,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Los Angeles City Jails,State,California ,Lancaster,93536-7620 ,"Los Angeles City Jails
+44750 60th Street West
+Lancaster, CA 93536-7620 ","Facility A & ASU, CSP
+P.O. Box 4430
+Lancaster, CA 93539-4430",(661) 729-2000,https://www.cdcr.ca.gov/facility-locator/lac/,https://www.cdcr.ca.gov/regulations/wp-content/uploads/sites/171/2024/12/MST-Adopted-Regulations-for-Incarcerated-Persons-Mail.pdf,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Los Angeles City Jails,State,California ,Lancaster,93536-7620 ,"Los Angeles City Jails
+44750 60th Street West
+Lancaster, CA 93536-7620 ","Facility B, CSP 
+P.O. Box 4490
+Lancaster, CA 93539-4490",(661) 729-2000,https://www.cdcr.ca.gov/facility-locator/lac/,https://www.cdcr.ca.gov/regulations/wp-content/uploads/sites/171/2024/12/MST-Adopted-Regulations-for-Incarcerated-Persons-Mail.pdf,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Los Angeles City Jails,State,California ,Lancaster,93536-7620 ,"Los Angeles City Jails
+44750 60th Street West
+Lancaster, CA 93536-7620 ","Facility C, CSP 
+P.O. Box 4610
+Lancaster, CA 93539-4610",(661) 729-2000,https://www.cdcr.ca.gov/facility-locator/lac/,https://www.cdcr.ca.gov/regulations/wp-content/uploads/sites/171/2024/12/MST-Adopted-Regulations-for-Incarcerated-Persons-Mail.pdf,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Los Angeles City Jails,State,California ,Lancaster,93536-7620 ,"Los Angeles City Jails
+44750 60th Street West
+Lancaster, CA 93536-7620 ","Facility D, CSP
+ P.O. Box 4670
+Lancaster, CA 93539-4670",(661) 729-2000,https://www.cdcr.ca.gov/facility-locator/lac/,https://www.cdcr.ca.gov/regulations/wp-content/uploads/sites/171/2024/12/MST-Adopted-Regulations-for-Incarcerated-Persons-Mail.pdf,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sacramento Police Department,State,California ,Sacramento,94822,"Sacramento Police Department
+5770 Freeport Blvd #200
+Sacramento, CA 95822","Sacramento Police Department
+5770 Freeport Blvd #200
+Sacramento, CA 95822","(916) 874-6752",https://www.cityofsacramento.gov/search?q=mail,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+San Joaquin County Jail,County Jail,California ,French Camp,95231,"San Joaquin County Jail
+7000 Michael Canlis Blvd.
+French Camp, CA 95231","San Joaquin County Jail
+7000 Michael Canlis Blvd.
+French Camp, CA 95231",(209) 468-4400,https://sjsheriff.org/custody,https://sjsheriff.org/inmate-rules,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+San Luis Obispo County Jail,County Jail,California ,San Luis Obispo,93405,"San Luis Obispo County Jail
+1585 Kansas Ave
+San Luis Obispo, CA 93405","San Luis Obispo County Jail
+1585 Kansas Ave
+San Luis Obispo, CA 93405",(805) 781-4600,https://www.slocounty.ca.gov/departments/sheriff-coroner/jail-information,https://www.slocounty.ca.gov/departments/sheriff-coroner/jail-information,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+San Mateo County Office Main Jail,County Jail,California ,Redwood City,94063,"San Mateo County Office Main Jail
+300 Bradford St
+Redwood City, CA 94063","San Mateo County Office Main Jail
+300 Bradford St
+Redwood City, CA 94063","(650) 363-4311",https://www.smcgov.org/,https://www.santa-ana.org/inmate-mail/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Santa Ana City Jail,State,California ,Santa Ana,92701,"Santa Ana City Jail
+62 Civic Center Plaza
+Santa Ana, CA 92701","Santa Ana City Jail
+P.O. Box 22003
+Santa Ana, CA 92701",(714) 245-8100,https://www.santa-ana.org/inmate-visitation/,https://www.santa-ana.org/inmate-mail/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Santa Barbara County Jail,County Jail,California ,Santa Barbara,93110,"Santa Barbara County Jail
+4436 Calle Real
+Santa Barbara, CA 93110","Santa Barbara County Jail
+4436 Calle Real
+Santa Barbara, CA 93110",(805) 681-4260,https://www.sbsheriff.org/home/who-is-in-custody/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+County of Santa Clara Main Jail,State,California ,San Jose,95110,"County of Santa Clara Main Jail
+150 W Hedding St
+San Jose, CA 95110","County of Santa Clara Main Jail
+150 W Hedding St
+San Jose, CA 95110",(408) 299-2306,https://www.santaclaracounty.gov/home,https://sheriff.santaclaracounty.gov/bureaus/custody-bureau/main-jail-complex,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Santa Cruz County Jail,County Jail,California ,Santa Cruz,95060,"Santa Cruz County Jail
+110 San Lorenzo Blvd
+Santa Cruz, CA 95060","Santa Cruz County Jail
+110 San Lorenzo Blvd
+Santa Cruz, CA 95060",(831) 454-7800,https://shf.santacruzcountyca.gov/SheriffHome/OurAgency/Corrections/SantaCruzMainJail.aspx,https://shf.santacruzcountyca.gov/SheriffHome/OurAgency/Corrections/SantaCruzMainJail.aspx,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Shasta County Jail,County Jail,California ,Redding,96001,"Shasta County Jail
+1655 West St
+Redding, CA 96001",,(530) 245-6100,https://www.shastacounty.gov/sheriff/page/shasta-county-jail,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sierra County Sheriff's Office,County Jail,California ,Downieville,95936,"Sierra County Sheriff's Office
+100 Courthouse Square # 200
+Downieville, CA 95936",,(530) 289-3700,https://www.sierracounty.ca.gov/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Solano County Detention Facility,State,California ,Fairfield,94533,"Solano County Detention Facility
+500 Union Ave
+Fairfield, CA 94533",,(707) 784-7100,https://www.solanocounty.gov/government/sheriff-coroner/custody-division/jail-visiting-information/justice-center-detention-facility,https://www.solanocounty.gov/government/sheriff-coroner/custody-division/jail-mail-information,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sonoma County Sheriff's Office - Main Office,,California ,Santa Rosa,95403,"Sonoma County Sheriff's Office - Main Office
+2796 Ventura Avenue
+Santa Rosa, CA 95403",,(707) 565-2511,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Main Adult Detention Facility,,California ,Santa Rosa,95403,"Main Adult Detention Facility
+2777 Ventura Ave
+Santa Rosa, CA 95403",,(707) 565-1400,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+North County Detention Facility,,California ,Santa Rosa,95403,"North County Detention Facility
+2254 Ordinance Road
+Santa Rosa, CA 95403",,(707) 565-1400,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+River Substation,,California ,Guerneville,95446,"River Substation
+1st & Church Streets
+Guerneville, CA 95446","River Substation
+PO BOX 485
+Guerneville, CA 95446",(707) 869-0202,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sonoma Valley Substation,State,California ,Sonoma,95476,"Sonoma Valley Substation
+810 B Grove St.
+Sonoma, CA 95476",,(707) 996-9495,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Coroner's Office,State,California ,Santa Rosa,95404,"Coroner's Office
+3336 Chanate Road
+Santa Rosa, CA  95404",,(707) 565-5070,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Lake Sonoma/Boating Safety Unit,State,California ,Geyserville,95446,"Lake Sonoma/Boating Safety Unit
+3333 Skaggs Springs Road
+Geyserville, CA 95446",,(707) 433-0728,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Windsor Police Department,State,California ,Windsor,95492,"Windsor Police Department
+9291 Old Redwood Highway, Building 300
+Windsor, CA 95492",,(707) 838-1234,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sonoma Police Department,State,California ,Sonoma,95476,"Sonoma Police Department
+175 First Street West
+Sonoma CA 95476",,(707) 996-3602,https://www.sonomasheriff.org/locations,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Stanislaus County Sheriff's Office ,County Jail,California ,Modesto,95358,"Stanislaus County Sheriff's Office 
+250 E. Hackett Rd.
+Modesto, CA 95358",,(209) 525-7216,https://www.scsdonline.com/administration/contact-information/sheriff-s-department-contacts,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Sutter County Jail,County Jail,California ,Yuba City,95993,"Sutter County Jail
+1077 Civic Center Blvd
+Yuba City, CA 95993","Sutter County Jail
+1077 Civic Center Blvd.
+Yuba City, CA 95993",(530) 822-7307,https://www.suttersheriff.gov/,https://www.suttersheriff.gov/divisions/jail-division/corrections-section/inmate-custody-services/mail-reading-materials,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Tehama County Jail,County Jail,California ,Red Bluff,96080,"Tehama County Jail
+502 Oak St
+Red Bluff, CA 96080","Tehama County Jail
+P.O. Box 490
+Red Bluff, CA 96080",(530) 529-7910,https://tehamaso.org/current-inmates/,https://tehamaso.org/current-inmates/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Trinity County Jail,County Jail,California ,Weaverville,96093,"Trinity County Jail
+Tom Bell Rd
+Weaverville, CA 96093",,(530) 623-1348,,https://www.trinitycounty.org/321/Sheriffs-Office,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Tulare County Detention Center,County Jail,California ,Visalia,93277,"Tulare County Detention Center
+833 S. Akers St.
+Visalia, California 93277","Tulare County Detention Center
+36714 Road 112
+Visalia, CA 93291",(559) 802-9400,https://tularecounty.ca.gov/,https://tehamaso.org/current-inmates/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"Tuolumne County Jail
+",County Jail,California ,Sonora,95370,"Tuolumne County Jail
+12915 Justice Ctr Dr
+Sonora, CA 95370",,(209) 533-7200,https://www.tuolumnecounty.ca.gov/348/Custody-Division,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Ventura County Sheriff’s Office,,California ,Ventura,93009,"Ventura County Sheriff’s Office
+800 S. Victoria Ave
+Ventura, CA 93009",,805-654-2380,https://sheriff.venturacounty.gov/detention-services/east-county-jail/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Yolo County Detention Center,,California ,Woodland,95776,"Yolo County Detention Center
+140A Tony Diaz Dr
+Woodland, CA 95776",,(530) 668-5245,https://yolocountysheriff.com/services/jail/centers/,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Yuba County Jail,,California ,Marysville,95901,"Yuba County Jail
+215 5th St
+Marysville, CA 95901",,(530) 749-7740,https://www.yuba.gov/departments/sheriff-coroner/jail.php,https://www.yuba.gov/departments/sheriff-coroner/inmate_mail.php,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

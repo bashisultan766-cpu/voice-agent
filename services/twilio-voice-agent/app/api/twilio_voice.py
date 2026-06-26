@@ -10,12 +10,14 @@ import logging
 import time
 from xml.etree.ElementTree import Element, SubElement, tostring
 
-from fastapi import APIRouter, Form, Request, Response
+from fastapi import APIRouter, Depends, Form, Request, Response
 
 from ..config import get_settings, Settings
 from ..caller.repository import get_caller_profile
 from ..dialogue.greeting import build_resume_twiml_greeting, build_twiml_greeting
+from ..security.rate_limit import rate_limit_dependency
 from ..security.twilio_signature import validate_twilio_signature
+from ..security.ws_token import append_ws_token_to_url
 from ..state.session_store import load_call_resume_by_phone
 
 logger = logging.getLogger(__name__)
@@ -134,7 +136,7 @@ async def _resolve_welcome_greeting(from_number: str, settings: Settings) -> tup
     return build_twiml_greeting(), True
 
 
-@router.post("/inbound")
+@router.post("/inbound", dependencies=[Depends(rate_limit_dependency("twilio_inbound", limit=120, window_sec=60))])
 async def inbound_call(
     request: Request,
     CallSid: str = Form(...),
@@ -163,8 +165,15 @@ async def inbound_call(
     store_domain = settings.SHOPIFY_SHOP_DOMAIN
     welcome, include_welcome = await _resolve_welcome_greeting(From, settings)
 
+    ws_base = settings.ws_url
+    try:
+        ws_url = append_ws_token_to_url(ws_base, call_sid=CallSid, from_number=From)
+    except Exception:
+        logger.error("ws_token_mint_failed sid=%s", CallSid[:8] if CallSid else "?")
+        ws_url = ws_base
+
     twiml = _conversation_relay_twiml(
-        ws_url=settings.ws_url,
+        ws_url=ws_url,
         call_sid=CallSid,
         from_number=From,
         to_number=To,

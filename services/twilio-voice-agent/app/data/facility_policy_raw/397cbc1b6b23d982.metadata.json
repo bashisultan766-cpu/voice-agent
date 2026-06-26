@@ -1,0 +1,11 @@
+{
+  "url": "https://allendale.scor.sled.sc.gov/Captcha.aspx",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T06:24:17.203507+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Allendale County Sheriff's Office"
+  ]
+}

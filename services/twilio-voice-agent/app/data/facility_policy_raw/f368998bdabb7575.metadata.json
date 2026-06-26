@@ -1,0 +1,11 @@
+{
+  "url": "https://essexdoc.com/inmate-info/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:59:09.766602+00:00",
+  "text_length": 1780,
+  "error": null,
+  "source_facilities": [
+    "Essex County Jail"
+  ]
+}

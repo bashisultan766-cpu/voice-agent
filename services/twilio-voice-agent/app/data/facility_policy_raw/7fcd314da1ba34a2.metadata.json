@@ -1,0 +1,11 @@
+{
+  "url": "hancocksheriff@co.hancock.oh.us",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T06:17:37.225090+00:00",
+  "text_length": 0,
+  "error": "Request URL is missing an 'http://' or 'https://' protocol.",
+  "source_facilities": [
+    "Hancock County Sheriff's Office"
+  ]
+}

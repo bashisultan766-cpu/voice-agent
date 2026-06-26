@@ -1,0 +1,30 @@
+{
+  "url": "https://www.cdcr.ca.gov/family-resources/sending-inmate-packages-from-approved-vendors/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T09:16:55.588181+00:00",
+  "text_length": 7592,
+  "error": null,
+  "source_facilities": [
+    "Avenal State Prison A",
+    "Avenal State Prison B",
+    "Avenal State Prison C",
+    "Avenal State Prison D",
+    "Avenal State Prison E",
+    "Avenal State Prison F",
+    "California Correctional Institution (CCI",
+    "California Institution for Men",
+    "California Institution for Women",
+    "California Medical Facility",
+    "California Men's Colony",
+    "California Rehabilitation Center",
+    "California State Prison, Corcoran",
+    "California State Prison, Los Angeles County",
+    "California State Prison Sacramento",
+    "California State Prison Solano",
+    "Substance Abuse Treatment Facility and State Prison",
+    "Calipatria State Prison",
+    "Centinela State Prison (CEN)",
+    "Central California Women's Facility"
+  ]
+}

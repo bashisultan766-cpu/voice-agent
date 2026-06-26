@@ -106,6 +106,13 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
                     "create a payment link. Which book would you like to order?"
                 ),
             )
+        if not getattr(session, "payment_cart_confirmed", False):
+            return _blocked(
+                error_code="cart_unconfirmed",
+                customer_message=(
+                    "Please confirm the books in your cart before I create the payment link."
+                ),
+            )
         if getattr(session, "awaiting_payment_email_confirmation", False):
             pending = get_pending_payment_email(session)
             msg = confirmation_prompt(pending) if pending else (
@@ -113,7 +120,7 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
                 "What email should I use?"
             )
             return _blocked(error_code="email_unconfirmed", customer_message=msg)
-        if not getattr(session, "payment_email_confirmed", False):
+        if not getattr(session, "payment_email_confirmed", False) or not getattr(session, "email_verified", False):
             return _blocked(
                 error_code="email_unconfirmed",
                 customer_message=(
@@ -124,6 +131,13 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
         return None
 
     if name == "send_payment_link":
+        from ..payment.safety import require_cart_customer_confirmed
+        from ..observability.tool_events import log_tool_blocked
+
+        cart_gate = require_cart_customer_confirmed(session)
+        if not cart_gate.allowed:
+            log_tool_blocked(session=session, tool_name=name, reason=cart_gate.reason)
+            return _blocked(error_code=cart_gate.reason, customer_message=cart_gate.safe_message)
         gate = gate_send_payment_link(session)
         return gate if not gate.allowed else None
 

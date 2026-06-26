@@ -39,8 +39,8 @@ from app.agent_runtime.tool_progress import dispatch_with_progress, progress_phr
 from app.agent_runtime.tool_runtime_gates import gate_tool_call
 from app.cart.session import add_product_candidate, confirm_last_candidate, get_ledger
 from app.payment.email_state import get_canonical_confirmed_email, get_pending_payment_email
-from app.pipeline.email_capture import is_email_confirmation, is_email_spell_request
-from app.pipeline.email_speller import speak_email, spell_email_for_voice
+from app.email.capture import is_email_confirmation, is_email_spell_request
+from app.email.speller import speak_email, spell_email_for_voice
 from app.state.models import SessionState
 
 

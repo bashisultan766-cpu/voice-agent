@@ -124,7 +124,9 @@ class SessionState:
     awaiting_payment_email: bool = False
     pending_payment_email: str = ""
     last_offered_payment_email: str = ""  # survives repeat-email turns until confirm/replace
+    backup_confirmed_email: str = ""  # restored when user rejects a replacement email
     payment_email_confirmed: bool = False
+    email_verified: bool = False
     awaiting_payment_email_confirmation: bool = False
     payment_send_in_progress: bool = False
     payment_link_sent: bool = False
@@ -154,6 +156,11 @@ class SessionState:
     isbn_buffer_turn: int = -1      # turn when buffer was last updated
     isbn_history: list[str] = field(default_factory=list)  # ISBNs given this call
     isbn_not_found: list[str] = field(default_factory=list)  # ISBNs with no match
+
+    # ── Product-not-found escalation (Step 5) ─────────────────────────────────
+    pending_not_found_escalation: dict[str, Any] = field(default_factory=dict)
+    awaiting_not_found_escalation_email: bool = False
+    not_found_escalation_sent_keys: list[str] = field(default_factory=list)
 
     # ── v4.5 product candidate persistence ────────────────────────────────────
     last_product_candidate: dict[str, Any] = field(default_factory=dict)
@@ -213,4 +220,5 @@ class SessionState:
     awaiting_product_confirmation: bool = False
     # v4.25 — tool progress + interrupt coordination
     voice_interrupted: bool = False
+    last_spoken_response: str = ""
     tool_progress_sent_for_op: str = ""

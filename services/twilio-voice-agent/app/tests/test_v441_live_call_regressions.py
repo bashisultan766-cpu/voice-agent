@@ -138,6 +138,7 @@ class TestLookupOrderLineItems:
             raw = await st.lookup_order(order_number="47905")
         payload = json.loads(raw)
         assert payload["found"] is True
-        assert payload["items"] == ["1x A Feast for Crows"]
-        assert payload["total"] == "15.98 USD"
-        assert "Line items" in payload["suggested_response"]
+        assert "items" not in payload
+        assert "total" not in payload
+        assert payload.get("verification_required") is True
+        assert "verify" in payload.get("suggested_response", "").lower()

@@ -8,6 +8,8 @@ from .logging_config import configure_logging
 from .api.health import router as health_router
 from .api.twilio_voice import router as twilio_router
 from .sync.webhooks import webhooks_router, admin_router
+from .api.admin_debug import admin_debug_router
+from .api.admin_analytics import admin_analytics_router
 from .ws.conversation_relay import handle_conversation_relay
 
 _log = logging.getLogger(__name__)
@@ -18,9 +20,15 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.LOG_LEVEL)
     settings.validate_production()
+    from .state.session_store import verify_redis_at_startup
+
+    await verify_redis_at_startup()
+    from .db.connection import verify_postgres_at_startup
+
+    await verify_postgres_at_startup()
     # Prove OpenAI configuration at startup (no secrets logged).
     from .agent_runtime.openai_health import log_startup_health
-    from .agent_runtime.runtime import resolve_live_turn_handler
+    from .agent_runtime.live_runtime import resolve_live_turn_handler
 
     log_startup_health(settings)
     from .agent_runtime import llm_tools
@@ -101,11 +109,16 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
+    docs_url = "/docs" if settings.api_docs_enabled else None
+    openapi_url = "/openapi.json" if settings.api_docs_enabled else None
+
     app = FastAPI(
         title="Twilio Voice Agent — ConversationRelay Runtime",
         version="1.0.0",
-        docs_url="/docs",
+        docs_url=docs_url,
         redoc_url=None,
+        openapi_url=openapi_url,
         lifespan=lifespan,
     )
 
@@ -113,6 +126,8 @@ def create_app() -> FastAPI:
     app.include_router(twilio_router)
     app.include_router(webhooks_router)
     app.include_router(admin_router)
+    app.include_router(admin_debug_router)
+    app.include_router(admin_analytics_router)
 
     @app.websocket("/voice/twilio/ws")
     async def conversation_relay_ws(websocket: WebSocket) -> None:

@@ -1,0 +1,11 @@
+{
+  "url": "https://oscodacountyjailmi.org/inmate-information/",
+  "status": "403",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T07:49:40.986107+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Oscoda Sheriff's Office"
+  ]
+}

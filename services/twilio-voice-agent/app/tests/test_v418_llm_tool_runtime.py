@@ -242,7 +242,7 @@ def test_required_libraries_declared():
 
 
 def test_legacy_runtimes_not_active():
-    from app.agent_runtime.runtime import resolve_live_turn_handler
+    from app.agent_runtime.live_runtime import resolve_live_turn_handler
 
     @dataclass
     class _S:
@@ -252,33 +252,51 @@ def test_legacy_runtimes_not_active():
     assert resolve_live_turn_handler(_S()) == RUNTIME_MODE
 
 
-def test_dispatch_always_routes_to_llm_tool_runtime(monkeypatch):
+def test_dispatch_routes_to_active_runtime(monkeypatch):
     import app.ws.conversation_relay as cr
+    from app.config import Settings
 
-    captured = {}
+    captured = {"handler": None}
 
-    class _Captured:
+    class _OrchCaptured:
         async def handle_turn(self, session, text, send, caller_context=None, **kwargs):
-            captured["used"] = True
+            captured["handler"] = "orchestrator"
+
+            class _R:
+                response_text = "ok"
+            return _R()
+
+    class _LegacyCaptured:
+        async def handle_turn(self, session, text, send, caller_context=None, **kwargs):
+            captured["handler"] = "legacy"
 
             class _R:
                 response_text = "ok"
             return _R()
 
     monkeypatch.setattr(
-        "app.agent_runtime.llm_tool_runtime.get_llm_tool_runtime",
-        lambda settings=None: _Captured(),
+        "app.orchestrator.runtime.get_orchestrator_runtime",
+        lambda settings=None: _OrchCaptured(),
     )
-
-    @dataclass
-    class _S:
-        VOICE_AGENT_RUNTIME_MODE: str = "legacy_v410"
+    monkeypatch.setattr(
+        "app.agent_runtime.llm_tool_runtime.get_llm_tool_runtime",
+        lambda settings=None: _LegacyCaptured(),
+    )
 
     async def send(msg):
         pass
 
-    asyncio.run(cr.dispatch_assembled_turn(_S(), _session(), "hi", send, None))
-    assert captured.get("used") is True
+    # Default: orchestrator enabled
+    asyncio.run(cr.dispatch_assembled_turn(Settings(), _session(), "hi", send, None))
+    assert captured["handler"] == "orchestrator"
+
+    captured["handler"] = None
+    asyncio.run(
+        cr.dispatch_assembled_turn(
+            Settings(VOICE_ORCHESTRATOR_ENABLED=False), _session(), "hi", send, None,
+        )
+    )
+    assert captured["handler"] == "legacy"
 
 
 def test_master_prompt_is_single_file_with_sections():

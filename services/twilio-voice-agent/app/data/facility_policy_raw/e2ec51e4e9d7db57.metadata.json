@@ -1,0 +1,12 @@
+{
+  "url": "https://mcso.countyofmonterey.gov/",
+  "status": "200",
+  "content_type": "text/html;charset=utf-8",
+  "fetched_at": "2026-06-26T07:40:06.579605+00:00",
+  "text_length": 8644,
+  "error": null,
+  "source_facilities": [
+    "Monterey County Sheriff's Office",
+    "Monterey County Sheriff's Department HQ"
+  ]
+}

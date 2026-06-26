@@ -235,6 +235,26 @@ async def send_confirmed_payment_link(
             sid,
         )
         logger.info("payment_auto_send_complete sid=%s success=true", sid)
+        try:
+            from ..memory.postgres_store import persist_payment_link_if_configured
+            from ..workflow.hooks import schedule_workflow_event
+
+            persist_payment_link_if_configured(
+                session,
+                email=confirmed_email,
+                checkout_url=checkout_after or "",
+                draft_order_id=getattr(session, "pending_draft_order_id", "") or "",
+            )
+            schedule_workflow_event(
+                session,
+                "payment_link_created",
+                {
+                    "draft_order_id": (getattr(session, "pending_draft_order_id", "") or "")[:16],
+                    "email_sent": True,
+                },
+            )
+        except Exception:
+            pass
         return build_payment_tool_result(
             success=True,
             email_sent=True,

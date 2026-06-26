@@ -284,7 +284,7 @@ def normalize_catalog_search_query(
 
     Returns (query_for_search, resolved_isbn_or_none).
     """
-    from ..pipeline.isbn_validator import _sliding_window_isbn13, extract_digits
+    from ..tools.isbn_validator import _sliding_window_isbn13, extract_digits
     from ..tools.isbn import extract_isbn_candidate
 
     raw = (query or "").strip()
@@ -321,7 +321,7 @@ def resolve_spoken_isbn(
     Uses checksum-valid extraction first, then accumulates partial digits
     across turns via ``session.pending_isbn_buffer``.
     """
-    from ..pipeline.isbn_validator import extract_digits, process_isbn_buffer
+    from ..tools.isbn_validator import extract_digits, process_isbn_buffer
     from ..tools.isbn import extract_isbn_candidate
 
     expanded = _expand_text(text)
@@ -331,7 +331,7 @@ def resolve_spoken_isbn(
             session.pending_isbn_buffer = ""
         return isbn, ""
 
-    from ..pipeline.isbn_validator import _sliding_window_isbn13, extract_digits
+    from ..tools.isbn_validator import _sliding_window_isbn13, extract_digits
 
     all_digits = extract_digits(expanded)
     if len(all_digits) >= 13:
@@ -370,7 +370,7 @@ def resolve_spoken_isbn(
 
 def isbn_partial_reply(session: "SessionState", text: str, turn_mode: str = "") -> Optional[str]:
     """Deterministic prompt while digits are still being collected."""
-    from ..pipeline.isbn_validator import process_isbn_buffer
+    from ..tools.isbn_validator import process_isbn_buffer
 
     if turn_mode != "isbn" and not _isbn_collection_active(session, turn_mode):
         return None

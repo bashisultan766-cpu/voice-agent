@@ -84,7 +84,10 @@ async def test_search_products_returns_cache_hit():
     with patch("app.tools.shopify_tools.shopify_cache_get", AsyncMock(return_value=cached)):
         from app.tools.shopify_tools import search_products
         result = await search_products("anything")
-    assert json.loads(result) == cached
+    data = json.loads(result)
+    assert data["results"] == cached["results"]
+    assert data["count"] == 1
+    assert data["not_found"] is False
 
 
 @pytest.mark.asyncio

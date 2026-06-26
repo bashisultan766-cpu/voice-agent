@@ -1,0 +1,11 @@
+{
+  "url": "https://sheridancounty.ne.gov/webpages/sheriff/sheriff.html",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T08:01:19.810674+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Sheridan County Sheriff's Office"
+  ]
+}

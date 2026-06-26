@@ -28,8 +28,8 @@ def run(email: str) -> int:
         sync_payment_email_fields,
     )
     from app.payment.payment_state_machine import capture_payment_email, process_payment_turn
-    from app.pipeline.email_capture import normalize_spoken_email
-    from app.pipeline.email_speller import speak_email, spell_email_for_voice
+    from app.email.capture import normalize_spoken_email
+    from app.email.speller import speak_email, spell_email_for_voice
     from app.state.models import SessionState
     from app.tools import email_sender
 
