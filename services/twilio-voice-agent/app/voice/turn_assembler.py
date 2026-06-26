@@ -182,8 +182,16 @@ class TurnAssembler:
             return True, "complete_isbn"
         if mode == "order" and is_complete_order_number(text):
             return True, "complete_order"
-        if mode == "normal" and _BARE_AFFIRM.match(text.strip()):
-            return True, "complete_affirmative"
+        if mode == "normal":
+            from ..orchestrator.intent_router import is_smalltalk, is_vague_product_request
+
+            stripped = text.strip()
+            if _BARE_AFFIRM.match(stripped):
+                return True, "complete_affirmative"
+            if is_smalltalk(stripped):
+                return True, "immediate_greeting"
+            if is_vague_product_request(stripped):
+                return True, "immediate_vague_product"
         return False, "incomplete"
 
     async def _emit_buffered(

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _SUPERVISOR_SYSTEM = """You are a voice-call supervisor for SureShot Books.
 Return ONLY valid JSON matching this schema:
 {
-  "intent": "product_search|cart_update|checkout_payment|order_status|refund_status|facility_question|shipping_question|faq|identity_email_collection|smalltalk|escalation|unknown",
+  "intent": "product_search|product_request_clarification|cart_update|checkout_payment|order_status|refund_status|facility_question|shipping_question|faq|identity_email_collection|smalltalk|escalation|unknown",
   "confidence": 0.0-1.0,
   "needs_tools": true/false,
   "needs_planner": true/false,

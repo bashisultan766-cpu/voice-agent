@@ -199,8 +199,18 @@ class ConversationRelayOutbound:
 
         sid = self._call_sid[:6]
 
+        play_immediately = bool(msg.get("play_immediately"))
+
         if token:
-            if is_last:
+            if play_immediately:
+                if self._buffer.strip():
+                    await self._deliver(
+                        self._buffer, interruptible, preemptible, lang,
+                    )
+                    self._buffer = ""
+                await self._deliver(token, interruptible, preemptible, lang)
+                self._streamed_any = True
+            elif is_last:
                 combined = self._buffer + token
                 self._buffer = ""
                 await self._deliver(combined, interruptible, preemptible, lang)

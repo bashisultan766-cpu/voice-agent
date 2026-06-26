@@ -31,6 +31,12 @@ def build_plan(
     """Deterministic planner — no LLM required for certification paths."""
     intent = supervisor.intent
 
+    if intent == "product_request_clarification":
+        return PlannerResult(
+            steps=[],
+            customer_message=supervisor.clarifying_question or "",
+        )
+
     if intent == "checkout_payment":
         return _plan_checkout_payment(session)
 
@@ -133,6 +139,14 @@ def _plan_checkout_payment(session: "SessionState") -> PlannerResult:
 
 
 def _plan_product_search(user_text: str, supervisor: SupervisorResult) -> PlannerResult:
+    from .intent_router import is_vague_product_request, resolve_product_request_clarification
+
+    if is_vague_product_request(user_text):
+        return PlannerResult(
+            steps=[],
+            customer_message=resolve_product_request_clarification(user_text),
+        )
+
     isbn_match = _ISBN.search(user_text)
     query = isbn_match.group(0) if isbn_match else user_text.strip()
 

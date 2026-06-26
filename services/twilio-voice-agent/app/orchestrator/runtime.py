@@ -117,9 +117,21 @@ class OrchestratorRuntime:
             latency.log(call_sid=session.call_sid or "", handler=RUNTIME_MODE)
             return _result(spoken)
 
-        from ..agent_runtime.commerce_flow_state import advance_commerce_state_silent
+        from ..agent_runtime.commerce_flow_state import (
+            advance_commerce_state_silent,
+            process_commerce_turn,
+        )
 
         advance_commerce_state_silent(session, caller_text)
+
+        commerce_hint = process_commerce_turn(session, caller_text)
+        if commerce_hint.force_reply:
+            spoken = self._finalize(session, commerce_hint.force_reply)
+            MemoryManager.record_turn(session, caller_text, spoken, source=RUNTIME_MODE)
+            await self._stream(send, spoken)
+            latency.total_turn_ms = (time.monotonic() - t0) * 1000
+            latency.log(call_sid=session.call_sid or "", handler=RUNTIME_MODE)
+            return _result(spoken)
 
         from ..agent_runtime.interruption_manager import try_interrupt_repair
 
@@ -232,6 +244,7 @@ class OrchestratorRuntime:
                             "token": progress_msg,
                             "last": False,
                             "interruptible": True,
+                            "play_immediately": True,
                         },
                     )
 
@@ -254,6 +267,7 @@ class OrchestratorRuntime:
                         "token": "Thanks for waiting — I'm still checking that.",
                         "last": False,
                         "interruptible": True,
+                        "play_immediately": True,
                     },
                 )
 
@@ -332,8 +346,16 @@ class OrchestratorRuntime:
         return apply_output_guardrails(cleaned).text
 
     async def _stream(self, send: Callable, spoken: str) -> None:
-        await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-        await _await_send(send, {"type": "text", "token": "", "last": True})
+        await _await_send(
+            send,
+            {
+                "type": "text",
+                "token": spoken,
+                "last": True,
+                "interruptible": True,
+                "play_immediately": True,
+            },
+        )
 
 
 _runtime: Optional[OrchestratorRuntime] = None

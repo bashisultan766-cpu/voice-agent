@@ -49,6 +49,8 @@ def should_skip_composer_llm(
         return True
     if supervisor.intent == "smalltalk":
         return True
+    if supervisor.intent == "product_request_clarification":
+        return True
     return False
 
 
@@ -90,7 +92,19 @@ async def compose_response(
     if supervisor.intent == "smalltalk":
         if supervisor.clarifying_question and supervisor.reason == "yes_no_reply":
             return _phone_safe(supervisor.clarifying_question)
-        return _phone_safe(resolve_smalltalk_response(ctx.user_text or ""))
+        twiml_greeted = bool(
+            getattr(session, "twiml_greeting_spoken", False)
+            or getattr(session, "voice_welcome_greeting_spoken", False)
+        )
+        return _phone_safe(
+            resolve_smalltalk_response(
+                ctx.user_text or "",
+                twiml_greeting_already=twiml_greeted,
+            )
+        )
+
+    if supervisor.intent == "product_request_clarification":
+        return _phone_safe(supervisor.clarifying_question or "How can I help you next?")
 
     if not ctx.tool_results:
         return _phone_safe("How can I help you next?")

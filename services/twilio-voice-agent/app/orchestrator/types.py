@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 VALID_INTENTS = frozenset({
     "product_search",
+    "product_request_clarification",
     "cart_update",
     "checkout_payment",
     "order_status",

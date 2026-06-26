@@ -182,7 +182,7 @@ class Settings(BaseSettings):
     VOICE_LLM_BRAIN_MAX_RETRIES: int = 1
 
     # Turn assembler debounce (ms) for normal speech — reduced safely in Step 4
-    VOICE_TURN_ASSEMBLER_DEBOUNCE_MS: int = 380
+    VOICE_TURN_ASSEMBLER_DEBOUNCE_MS: int = 250
     # Send progress token when tool execution exceeds this threshold (ms)
     VOICE_ORCHESTRATOR_TOOL_PROGRESS_MS: int = 400
 

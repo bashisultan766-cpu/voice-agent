@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from .types import SupervisorResult
 
@@ -43,6 +43,7 @@ _NO = re.compile(r"^(?:no|nope|nah|not really)\s*[.!]?\s*$", re.I)
 # Intents that must never invoke the supervisor LLM.
 FAST_PATH_INTENTS = frozenset({
     "smalltalk",
+    "product_request_clarification",
     "identity_email_collection",
     "checkout_payment",
     "product_search",
@@ -67,8 +68,33 @@ _INTENT_CATEGORIES: dict[str, list[str]] = {
     "identity_email_collection": ["identity"],
     "escalation": ["escalate"],
     "smalltalk": [],
+    "product_request_clarification": [],
     "unknown": [],
 }
+
+
+# Vague product requests — clarify before any Shopify search or supervisor LLM.
+_VAGUE_PRODUCT_UTTERANCES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^i need a book(?:\s+from you)?\.?$", re.I), "book"),
+    (re.compile(r"^i want a book\.?$", re.I), "book"),
+    (re.compile(r"^can i have a book\.?$", re.I), "book"),
+    (re.compile(r"^i want to buy a book\.?$", re.I), "book"),
+    (re.compile(r"^i need a magazine\.?$", re.I), "magazine"),
+    (re.compile(r"^i need a newspaper\.?$", re.I), "newspaper"),
+    (re.compile(r"^i want to place an order\.?$", re.I), "generic"),
+    (re.compile(r"^(?:something to read|i need something to read)\.?$", re.I), "book"),
+    (re.compile(r"^(?:a book|book|books|a magazine|magazine|a newspaper|newspaper)\.?$", re.I), "category"),
+]
+
+_CLARIFY_BOOK = "Sure — what title, author, or ISBN are you looking for?"
+_CLARIFY_MAGAZINE = "Sure — what magazine name are you looking for?"
+_CLARIFY_NEWSPAPER = "Sure — what newspaper are you looking for?"
+_CLARIFY_GENERIC = "Sure — what item are you looking for?"
+
+_VAGUE_CATEGORY_TAILS = frozenset({
+    "book", "a book", "books", "magazine", "a magazine", "magazines",
+    "newspaper", "a newspaper", "newspapers", "something to read",
+})
 
 
 def _normalize_smalltalk(text: str) -> str:
@@ -109,11 +135,22 @@ def is_incomplete_utterance(utterance: str) -> bool:
     return False
 
 
-def resolve_smalltalk_response(utterance: str) -> str:
+def resolve_smalltalk_response(
+    utterance: str,
+    *,
+    twiml_greeting_already: bool = False,
+) -> str:
     """Deterministic spoken reply for greeting/smalltalk — no LLM."""
     norm = _normalize_smalltalk(utterance)
     has_greeting = bool(re.search(r"\b(hi|hello|hey|good (morning|afternoon|evening))\b", norm))
     has_how_are_you = bool(re.search(r"\bhow are you\b", norm))
+
+    if twiml_greeting_already:
+        if has_how_are_you:
+            return "I'm doing well. What can I help you find today?"
+        if has_greeting:
+            return "What can I help you find today?"
+        return "What can I help you with today?"
 
     if has_greeting and has_how_are_you:
         return "I'm doing well, thank you. What can I help you find today?"
@@ -132,6 +169,10 @@ def is_fast_path_supervisor_result(result: SupervisorResult) -> bool:
     """True when the heuristic result should bypass the supervisor LLM entirely."""
     if result.intent == "smalltalk":
         return True
+    if result.intent == "product_request_clarification":
+        return True
+    if result.reason == "active_workflow_yes_no":
+        return True
     if result.clarifying_question and result.reason in (
         "incomplete_utterance",
         "empty_utterance",
@@ -139,12 +180,138 @@ def is_fast_path_supervisor_result(result: SupervisorResult) -> bool:
         "low_confidence",
         "order_detail_unverified",
         "refund_unverified",
+        "vague_product_request",
+        "active_workflow_yes_no",
     ):
         return True
     if result.intent in FAST_PATH_INTENTS and result.confidence >= 0.92:
         return True
     if result.intent == "shipping_question" and result.confidence >= 0.84:
         return True
+    return False
+
+
+def resolve_product_request_clarification(utterance: str) -> str:
+    """Spoken clarification for vague book/magazine/newspaper/order requests."""
+    text = (utterance or "").strip()
+    lower = text.lower()
+    for pattern, kind in _VAGUE_PRODUCT_UTTERANCES:
+        if pattern.match(text):
+            if kind == "book":
+                return _CLARIFY_BOOK
+            if kind == "magazine":
+                return _CLARIFY_MAGAZINE
+            if kind == "newspaper":
+                return _CLARIFY_NEWSPAPER
+            return _CLARIFY_GENERIC
+    if re.search(r"\bmagazine\b", lower) and not re.search(r"\bnewspaper\b", lower):
+        if not _has_specific_product_detail(text):
+            return _CLARIFY_MAGAZINE
+    if re.search(r"\bnewspaper\b", lower):
+        if not _has_specific_product_detail(text):
+            return _CLARIFY_NEWSPAPER
+    if re.search(r"\bbook\b", lower) and not _has_specific_product_detail(text):
+        return _CLARIFY_BOOK
+    return _CLARIFY_GENERIC
+
+
+def _has_specific_product_detail(text: str) -> bool:
+    """True when utterance includes a title, author, ISBN, or named periodical."""
+    if _ISBN.search(text):
+        return True
+    for pattern in (
+        r"(?:looking for|search for|do you have|find)\s+(.+)",
+        r"(?:i need|i want|can i have)\s+(.+)",
+    ):
+        m = re.search(pattern, text, re.I)
+        if not m:
+            continue
+        tail = re.sub(r"[^\w\s]", "", m.group(1).strip().lower())
+        tail = re.sub(r"\s+", " ", tail).strip()
+        if tail in _VAGUE_CATEGORY_TAILS:
+            continue
+        if tail.endswith(" from you"):
+            tail = tail[: -len(" from you")].strip()
+            if tail in _VAGUE_CATEGORY_TAILS:
+                continue
+        words = tail.split()
+        if len(words) >= 2:
+            return True
+        if len(words) == 1 and words[0] not in (
+            "book", "books", "magazine", "magazines", "newspaper", "newspapers",
+        ):
+            return True
+    return False
+
+
+def is_vague_product_request(utterance: str) -> bool:
+    """True when the caller named a category but not a searchable product."""
+    text = (utterance or "").strip()
+    if not text or _ISBN.search(text):
+        return False
+    for pattern, _kind in _VAGUE_PRODUCT_UTTERANCES:
+        if pattern.match(text):
+            return True
+    lower = re.sub(r"[^\w\s]", "", text.lower()).strip()
+    if lower in _VAGUE_CATEGORY_TAILS:
+        return True
+    if re.match(
+        r"^(?:i need|i want|can i have|looking for)\s+(?:a\s+)?(?:book|books)\s*$",
+        text,
+        re.I,
+    ):
+        return True
+    if _has_specific_product_detail(text):
+        return False
+    return False
+
+
+def classify_vague_product_request(utterance: str) -> Optional[SupervisorResult]:
+    """Fast-path vague product requests — no OpenAI, no Shopify."""
+    if not is_vague_product_request(utterance):
+        return None
+    question = resolve_product_request_clarification(utterance)
+    return SupervisorResult(
+        intent="product_request_clarification",
+        confidence=0.99,
+        needs_tools=False,
+        needs_planner=False,
+        risk_level="low",
+        clarifying_question=question,
+        reason="vague_product_request",
+    )
+
+
+def _yes_no_active_workflow(session: "SessionState | None", utterance: str) -> bool:
+    """True when yes/no should continue payment/commerce/not-found — not smalltalk."""
+    if session is None:
+        return False
+    text = (utterance or "").strip()
+    if not (_YES.match(text) or _NO.match(text)):
+        return False
+
+    if getattr(session, "awaiting_payment_email_confirmation", False):
+        return True
+    if getattr(session, "awaiting_payment_email", False):
+        return True
+    if getattr(session, "payment_flow_status", "") in (
+        "awaiting_email_confirmation",
+        "awaiting_send_confirmation",
+        "awaiting_email",
+    ):
+        return True
+
+    commerce_status = getattr(session, "commerce_flow_status", "") or "idle"
+    if commerce_status not in ("idle", ""):
+        return True
+    if getattr(session, "awaiting_product_confirmation", False):
+        return True
+    if getattr(session, "commerce_pending_candidate", None):
+        return True
+
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        return True
+
     return False
 
 
@@ -185,6 +352,16 @@ def classify_intent_heuristic(
             reason="greeting",
         )
 
+    if _yes_no_active_workflow(session, utterance):
+        return SupervisorResult(
+            intent="unknown",
+            confidence=0.99,
+            needs_tools=False,
+            needs_planner=False,
+            risk_level="low",
+            reason="active_workflow_yes_no",
+        )
+
     if _YES.match(utterance) or _NO.match(utterance):
         return SupervisorResult(
             intent="smalltalk",
@@ -193,6 +370,21 @@ def classify_intent_heuristic(
             risk_level="low",
             clarifying_question=resolve_yes_no_response(utterance),
             reason="yes_no_reply",
+        )
+
+    vague = classify_vague_product_request(utterance)
+    if vague is not None:
+        return vague
+
+    if _ISBN.search(utterance):
+        return SupervisorResult(
+            intent="product_search",
+            confidence=0.96,
+            needs_tools=True,
+            needs_planner=True,
+            risk_level="low",
+            allowed_tool_categories=_INTENT_CATEGORIES["product_search"],
+            reason="isbn_query",
         )
 
     if (turn_mode or "").lower() == "email" or _EMAIL.search(utterance):
@@ -240,19 +432,11 @@ def classify_intent_heuristic(
             reason="payment_intent",
         )
 
-    if _ISBN.search(utterance):
-        return SupervisorResult(
-            intent="product_search",
-            confidence=0.96,
-            needs_tools=True,
-            needs_planner=True,
-            risk_level="low",
-            allowed_tool_categories=_INTENT_CATEGORIES["product_search"],
-            reason="isbn_query",
-        )
-
     if _PRODUCT.search(utterance) and not _ORDER_NUM.search(utterance):
-        # Obvious title/search phrasing — skip supervisor LLM.
+        if is_vague_product_request(utterance):
+            vague2 = classify_vague_product_request(utterance)
+            if vague2 is not None:
+                return vague2
         title_hint = re.search(
             r"(?:looking for|search for|do you have|find)\s+(.+)",
             utterance,
