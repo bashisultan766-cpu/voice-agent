@@ -121,8 +121,10 @@ class Settings(BaseSettings):
     # in the customer path — dispatch always routes to llm_tool_runtime.
     VOICE_AGENT_RUNTIME_MODE: str = "llm_tool_runtime"
     # When true, route turns through app/orchestrator (supervisor → planner → tools).
-    # Default true after Step 4 parity certification.
-    VOICE_ORCHESTRATOR_ENABLED: bool = True
+    # Disabled by default — replaced by voice_commerce_runtime (single-brain).
+    VOICE_ORCHESTRATOR_ENABLED: bool = False
+    # Single-brain commerce runtime (fast classifier → Main LLM Brain → tool router).
+    VOICE_COMMERCE_RUNTIME_ENABLED: bool = True
     # When true, orchestrator failures fall back to llm_tool_runtime for this release.
     VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED: bool = True
     # Approximate token budget for the system prompt; above this the master

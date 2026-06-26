@@ -16,6 +16,7 @@ from app.agent_runtime.llm_tool_runtime import RUNTIME_MODE as LLM_MODE
 from app.config import Settings, get_settings
 from app.memory.memory_manager import MemoryManager
 from app.orchestrator.runtime import RUNTIME_MODE as ORCH_MODE, get_orchestrator_runtime
+from app.runtime.voice_commerce_runtime import RUNTIME_MODE as COMMERCE_MODE
 from app.payment.safety import assert_payment_link_allowed
 from app.reliability.shopify_circuit_breaker import circuit_open_error, is_circuit_open, reset_circuit_for_tests
 from app.security.ws_token import mint_ws_token, validate_ws_token
@@ -33,18 +34,18 @@ def _session(**kwargs) -> SessionState:
     return SessionState(**base)
 
 
-class TestOrchestratorDefaultEnabled:
-    def test_orchestrator_default_enabled(self):
+class TestCommerceRuntimeDefaultEnabled:
+    def test_commerce_runtime_default_enabled(self):
         s = Settings()
-        assert s.VOICE_ORCHESTRATOR_ENABLED is True
-        assert resolve_live_turn_handler(s) == ORCH_MODE
+        assert s.VOICE_COMMERCE_RUNTIME_ENABLED is True
+        assert resolve_live_turn_handler(s) == COMMERCE_MODE
 
-    def test_health_reports_orchestrator_enabled(self):
+    def test_health_reports_commerce_runtime_enabled(self):
         from app.main import create_app
 
         client = TestClient(create_app())
         data = client.get("/health").json()
-        assert data.get("orchestrator_enabled") is True
+        assert data.get("voice_commerce_runtime_enabled") is True
 
 
 class TestLegacyFallback:
@@ -53,15 +54,15 @@ class TestLegacyFallback:
         from app.ws.turn_dispatch import dispatch_turn
 
         settings = Settings(
-            VOICE_ORCHESTRATOR_ENABLED=True,
+            VOICE_COMMERCE_RUNTIME_ENABLED=True,
             VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED=True,
         )
         session = _session()
         fallback_used = {"value": False}
 
-        class _FailingOrch:
+        class _FailingCommerce:
             async def handle_turn(self, *a, **kw):
-                raise RuntimeError("orchestrator crash")
+                raise RuntimeError("commerce runtime crash")
 
         class _Legacy:
             async def handle_turn(self, *a, **kw):
@@ -71,7 +72,7 @@ class TestLegacyFallback:
                     response_text = "legacy ok"
                 return _R()
 
-        with patch("app.orchestrator.runtime.get_orchestrator_runtime", return_value=_FailingOrch()):
+        with patch("app.runtime.voice_commerce_runtime.get_voice_commerce_runtime", return_value=_FailingCommerce()):
             with patch("app.agent_runtime.llm_tool_runtime.get_llm_tool_runtime", return_value=_Legacy()):
                 await dispatch_turn(settings, session, "hi", AsyncMock(), None)
         assert fallback_used["value"] is True
@@ -81,20 +82,20 @@ class TestLegacyFallback:
         from app.ws.turn_dispatch import dispatch_turn
 
         settings = Settings(
-            VOICE_ORCHESTRATOR_ENABLED=True,
+            VOICE_COMMERCE_RUNTIME_ENABLED=True,
             VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED=False,
         )
 
-        class _FailingOrch:
+        class _FailingCommerce:
             async def handle_turn(self, *a, **kw):
-                raise RuntimeError("orchestrator crash")
+                raise RuntimeError("commerce runtime crash")
 
-        with patch("app.orchestrator.runtime.get_orchestrator_runtime", return_value=_FailingOrch()):
-            with pytest.raises(RuntimeError, match="orchestrator crash"):
+        with patch("app.runtime.voice_commerce_runtime.get_voice_commerce_runtime", return_value=_FailingCommerce()):
+            with pytest.raises(RuntimeError, match="commerce runtime crash"):
                 await dispatch_turn(settings, _session(), "hi", AsyncMock(), None)
 
-    def test_legacy_mode_when_orchestrator_disabled(self):
-        s = Settings(VOICE_ORCHESTRATOR_ENABLED=False)
+    def test_legacy_mode_when_commerce_and_orchestrator_disabled(self):
+        s = Settings(VOICE_COMMERCE_RUNTIME_ENABLED=False, VOICE_ORCHESTRATOR_ENABLED=False)
         assert resolve_live_turn_handler(s) == LLM_MODE
 
 

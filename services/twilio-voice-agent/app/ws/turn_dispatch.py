@@ -1,4 +1,4 @@
-"""Central turn dispatch — orchestrator with optional legacy fallback."""
+"""Central turn dispatch — voice commerce runtime with legacy fallbacks."""
 from __future__ import annotations
 
 import logging
@@ -21,8 +21,8 @@ async def dispatch_turn(
     """
     Route an assembled turn to the active runtime.
 
-    When orchestrator is enabled, uses orchestrator with optional fallback to
-    llm_tool_runtime when VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED is true.
+    Default: voice_commerce_runtime (single-brain).
+    Fallback: orchestrator or llm_tool_runtime when configured.
     """
     from ..agent_runtime.llm_tool_runtime import get_llm_tool_runtime, RUNTIME_MODE as LLM_MODE
     from ..observability.otel import span
@@ -31,10 +31,21 @@ async def dispatch_turn(
         get_orchestrator_runtime,
         orchestrator_enabled,
     )
+    from ..runtime.voice_commerce_runtime import (
+        RUNTIME_MODE as COMMERCE_MODE,
+        get_voice_commerce_runtime,
+        voice_commerce_enabled,
+    )
 
     sid = (session.call_sid or "")[:6]
-    use_orchestrator = orchestrator_enabled(settings)
-    handler = ORCH_MODE if use_orchestrator else LLM_MODE
+    use_commerce = voice_commerce_enabled(settings)
+    use_orchestrator = orchestrator_enabled(settings) and not use_commerce
+    if use_commerce:
+        handler = COMMERCE_MODE
+    elif use_orchestrator:
+        handler = ORCH_MODE
+    else:
+        handler = LLM_MODE
     t0 = time.monotonic()
 
     logger.info(
@@ -45,7 +56,36 @@ async def dispatch_turn(
     )
 
     with span("turn_processing", call_sid=sid, handler=handler):
-        if use_orchestrator:
+        if use_commerce:
+            try:
+                with span("voice_commerce_runtime"):
+                    result = await get_voice_commerce_runtime(settings).handle_turn(
+                        session,
+                        user_text,
+                        send,
+                        caller_context=caller_context,
+                        assembled_turn_mode=assembled_turn_mode,
+                        stt_to_turn_ms=stt_to_turn_ms,
+                    )
+            except Exception as exc:
+                if getattr(settings, "VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED", False):
+                    logger.error(
+                        "commerce_runtime_fallback sid=%s err=%s — using llm_tool_runtime",
+                        sid,
+                        type(exc).__name__,
+                    )
+                    with span("legacy_fallback"):
+                        result = await get_llm_tool_runtime(settings).handle_turn(
+                            session,
+                            user_text,
+                            send,
+                            caller_context=caller_context,
+                            assembled_turn_mode=assembled_turn_mode,
+                        )
+                    handler = f"{COMMERCE_MODE}_fallback_{LLM_MODE}"
+                else:
+                    raise
+        elif use_orchestrator:
             try:
                 with span("orchestrator"):
                     result = await get_orchestrator_runtime(settings).handle_turn(

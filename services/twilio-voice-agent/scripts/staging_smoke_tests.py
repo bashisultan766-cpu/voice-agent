@@ -135,8 +135,10 @@ def smoke_product_search_mock() -> SmokeResult:
 
 
 def smoke_order_privacy_unverified() -> SmokeResult:
+    """Order privacy is enforced in shopify lookup (limited status until verified)."""
     from app.state.models import SessionState
-    from app.agent_runtime.tool_runtime_gates import gate_tool_call
+    from app.agent_runtime import llm_tools
+    import asyncio
 
     session = SessionState(
         session_id="smoke",
@@ -144,10 +146,32 @@ def smoke_order_privacy_unverified() -> SmokeResult:
         from_number="+15550001111",
         to_number="+15550002222",
     )
-    gate = gate_tool_call("lookup_order_status", session)
-    if gate is None or gate.allowed:
-        return SmokeResult("order privacy unverified", False, "order lookup should be gated")
-    return SmokeResult("order privacy unverified", True, gate.reason[:60])
+
+    async def _fake_lookup(*_args, **_kwargs):
+        return json.dumps(
+            {
+                "found": True,
+                "order_number": "#12345",
+                "status": "PAID",
+                "fulfillment_status": "UNFULFILLED",
+                "verification_required": True,
+                "message": (
+                    "For security, provide the email or phone number on this order "
+                    "to view line items, tracking, or payment details."
+                ),
+            }
+        )
+
+    with patch.object(llm_tools._st, "lookup_order", new=AsyncMock(side_effect=_fake_lookup)):
+        raw = asyncio.run(
+            llm_tools.dispatch("lookup_order_status", {"order_number": "12345"}, session)
+        )
+    data = json.loads(raw)
+    if not data.get("verification_required"):
+        return SmokeResult("order privacy unverified", False, "verification_required missing")
+    if data.get("items") or data.get("book_titles"):
+        return SmokeResult("order privacy unverified", False, "line items exposed")
+    return SmokeResult("order privacy unverified", True, "verification_required")
 
 
 def smoke_payment_safety_blocked() -> SmokeResult:
@@ -198,6 +222,7 @@ def smoke_not_found_escalation_dry_run() -> SmokeResult:
     from app.escalation.models import ProductNotFoundEscalationPayload
 
     payload = ProductNotFoundEscalationPayload(
+        session_id="smoke",
         call_sid="CA_smoke",
         requested_type="isbn",
         requested_value="9780000000000",

@@ -18,6 +18,7 @@ from app.orchestrator.parallel_executor import execute_plan
 from app.orchestrator.planner_agent import build_plan
 from app.orchestrator.response_composer import _phone_safe, compose_response
 from app.orchestrator.runtime import RUNTIME_MODE as ORCH_MODE, get_orchestrator_runtime
+from app.runtime.voice_commerce_runtime import RUNTIME_MODE as COMMERCE_MODE
 from app.orchestrator.tool_router import execute_step, is_read_only_tool
 from app.orchestrator.types import OrchestratorTurnContext, PlanStep, PlannerResult, SupervisorResult
 from app.state.models import SessionState
@@ -153,12 +154,16 @@ class TestModelRouter:
 
 class TestFeatureFlag:
     def test_flag_off_keeps_llm_tool_runtime(self):
-        s = Settings(VOICE_ORCHESTRATOR_ENABLED=False)
+        s = Settings(VOICE_COMMERCE_RUNTIME_ENABLED=False, VOICE_ORCHESTRATOR_ENABLED=False)
         assert resolve_live_turn_handler(s) == LLM_MODE
 
     def test_flag_on_uses_orchestrator(self):
-        s = Settings(VOICE_ORCHESTRATOR_ENABLED=True)
+        s = Settings(VOICE_COMMERCE_RUNTIME_ENABLED=False, VOICE_ORCHESTRATOR_ENABLED=True)
         assert resolve_live_turn_handler(s) == ORCH_MODE
+
+    def test_commerce_runtime_is_default(self):
+        s = Settings()
+        assert resolve_live_turn_handler(s) == COMMERCE_MODE
 
     @pytest.mark.asyncio
     async def test_orchestrator_handle_turn_smalltalk(self):

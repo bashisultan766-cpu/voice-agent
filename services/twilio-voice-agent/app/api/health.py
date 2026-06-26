@@ -56,4 +56,5 @@ async def health() -> dict:
         "ws_token_validation_enabled": s.WS_TOKEN_VALIDATION_ENABLED,
         "api_docs_enabled": s.api_docs_enabled,
         "orchestrator_enabled": bool(getattr(s, "VOICE_ORCHESTRATOR_ENABLED", False)),
+        "voice_commerce_runtime_enabled": bool(getattr(s, "VOICE_COMMERCE_RUNTIME_ENABLED", True)),
     }

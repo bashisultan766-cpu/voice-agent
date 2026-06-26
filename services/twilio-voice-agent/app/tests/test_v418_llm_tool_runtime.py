@@ -243,13 +243,15 @@ def test_required_libraries_declared():
 
 def test_legacy_runtimes_not_active():
     from app.agent_runtime.live_runtime import resolve_live_turn_handler
+    from app.runtime.voice_commerce_runtime import RUNTIME_MODE as COMMERCE_MODE
 
     @dataclass
     class _S:
         VOICE_AGENT_RUNTIME_MODE: str = "main_llm_agent"  # legacy value
+        VOICE_COMMERCE_RUNTIME_ENABLED: bool = True
 
-    # Even with a legacy mode configured, the active handler is the new runtime.
-    assert resolve_live_turn_handler(_S()) == RUNTIME_MODE
+    # Even with a legacy mode configured, the active handler is voice commerce runtime.
+    assert resolve_live_turn_handler(_S()) == COMMERCE_MODE
 
 
 def test_dispatch_routes_to_active_runtime(monkeypatch):
@@ -258,9 +260,9 @@ def test_dispatch_routes_to_active_runtime(monkeypatch):
 
     captured = {"handler": None}
 
-    class _OrchCaptured:
+    class _CommerceCaptured:
         async def handle_turn(self, session, text, send, caller_context=None, **kwargs):
-            captured["handler"] = "orchestrator"
+            captured["handler"] = "commerce"
 
             class _R:
                 response_text = "ok"
@@ -275,8 +277,8 @@ def test_dispatch_routes_to_active_runtime(monkeypatch):
             return _R()
 
     monkeypatch.setattr(
-        "app.orchestrator.runtime.get_orchestrator_runtime",
-        lambda settings=None: _OrchCaptured(),
+        "app.runtime.voice_commerce_runtime.get_voice_commerce_runtime",
+        lambda settings=None: _CommerceCaptured(),
     )
     monkeypatch.setattr(
         "app.agent_runtime.llm_tool_runtime.get_llm_tool_runtime",
@@ -286,14 +288,18 @@ def test_dispatch_routes_to_active_runtime(monkeypatch):
     async def send(msg):
         pass
 
-    # Default: orchestrator enabled
+    # Default: voice commerce runtime enabled
     asyncio.run(cr.dispatch_assembled_turn(Settings(), _session(), "hi", send, None))
-    assert captured["handler"] == "orchestrator"
+    assert captured["handler"] == "commerce"
 
     captured["handler"] = None
     asyncio.run(
         cr.dispatch_assembled_turn(
-            Settings(VOICE_ORCHESTRATOR_ENABLED=False), _session(), "hi", send, None,
+            Settings(VOICE_COMMERCE_RUNTIME_ENABLED=False, VOICE_ORCHESTRATOR_ENABLED=False),
+            _session(),
+            "hi",
+            send,
+            None,
         )
     )
     assert captured["handler"] == "legacy"
