@@ -57,9 +57,15 @@ def _found_search_result(title: str = "Test Book") -> dict:
 
 @pytest.fixture(autouse=True)
 def _clear_escalation_store():
+    from app.escalation import product_not_found_escalation as pne
+
     _STORE.clear()
-    yield
+    pne._SYNC_REDIS = None
+    # VPS production .env has live Redis — stale idempotency keys skip httpx.post.
+    with patch.object(pne, "_get_sync_redis", return_value=None):
+        yield
     _STORE.clear()
+    pne._SYNC_REDIS = None
 
 
 class TestInferRequestedType:
@@ -132,7 +138,7 @@ class TestCreateProductNotFoundEscalation:
         mock_resp.status_code = 200
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
-            with patch("httpx.AsyncClient") as mock_client_cls:
+            with patch("app.escalation.product_not_found_escalation.httpx.AsyncClient") as mock_client_cls:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_resp)
                 mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -173,7 +179,7 @@ class TestCreateProductNotFoundEscalation:
         mock_resp.status_code = 200
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
-            with patch("httpx.AsyncClient") as mock_client_cls:
+            with patch("app.escalation.product_not_found_escalation.httpx.AsyncClient") as mock_client_cls:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_resp)
                 mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -300,7 +306,7 @@ class TestOrchestratorNotFoundFlow:
         mock_resp.status_code = 200
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
-            with patch("httpx.AsyncClient") as mock_client_cls:
+            with patch("app.escalation.product_not_found_escalation.httpx.AsyncClient") as mock_client_cls:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_resp)
                 mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -334,7 +340,7 @@ class TestOrchestratorNotFoundFlow:
         mock_resp.status_code = 200
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
-            with patch("httpx.AsyncClient") as mock_client_cls:
+            with patch("app.escalation.product_not_found_escalation.httpx.AsyncClient") as mock_client_cls:
                 mock_client = AsyncMock()
                 mock_client.post = AsyncMock(return_value=mock_resp)
                 mock_client.__aenter__ = AsyncMock(return_value=mock_client)
