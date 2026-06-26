@@ -15,10 +15,14 @@ if [[ ! -d .git ]]; then
   exit 1
 fi
 
-echo "==> git fetch + checkout origin/$BRANCH"
+echo "==> git fetch + hard reset to origin/$BRANCH"
 git fetch origin "$BRANCH"
-git checkout -B "$BRANCH" FETCH_HEAD
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "    WARNING: discarding local VPS changes before deploy"
+  git status --short | head -20
+fi
 git reset --hard FETCH_HEAD
+git checkout -B "$BRANCH"
 echo "    branch=$(git rev-parse --abbrev-ref HEAD) commit=$(git rev-parse --short HEAD)"
 git log -1 --oneline
 
