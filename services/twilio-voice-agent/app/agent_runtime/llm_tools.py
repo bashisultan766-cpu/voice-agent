@@ -1127,7 +1127,7 @@ _register(
         "product_title": _S,
         "product_description": _S,
         "product_type": _S,
-        "product_tags": [],
+        "product_tags": {"type": "array", "items": _S},
     }, []),
 )
 _register(

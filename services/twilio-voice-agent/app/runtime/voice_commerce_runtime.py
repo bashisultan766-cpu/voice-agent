@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 RUNTIME_MODE = "voice_commerce_runtime"
 
 _OPENAI_FALLBACK = (
-    "I'm sorry, I'm having trouble right now. "
-    "Could you say that again?"
+    "I'm having trouble checking that right now. "
+    "Could you say the title or ISBN again?"
 )
 
 _runtime: Optional["VoiceCommerceRuntime"] = None

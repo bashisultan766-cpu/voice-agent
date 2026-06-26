@@ -38,6 +38,7 @@ _CLARIFY_BOOK = "Sure — what title, author, or ISBN are you looking for?"
 _CLARIFY_MAGAZINE = "Sure — what magazine name are you looking for?"
 _CLARIFY_NEWSPAPER = "Sure — what newspaper are you looking for?"
 _CLARIFY_GENERIC = "Sure — what item are you looking for?"
+_ISBN_PROMPT_REPLY = "Yes, please go ahead and say the ISBN number."
 
 _VAGUE_CATEGORY_TAILS = frozenset({
     "book", "a book", "books", "magazine", "a magazine", "magazines",
@@ -202,8 +203,20 @@ def _yes_no_active_workflow(session: "SessionState | None", utterance: str) -> b
     return False
 
 
-def _is_product_search_request(text: str) -> bool:
+def _is_isbn_digit_utterance(text: str) -> bool:
+    """True when caller is dictating ISBN digits (full or partial)."""
     if _ISBN.search(text):
+        return True
+    stripped = re.sub(r"[\s.\-]", "", text)
+    if len(stripped) >= 8 and stripped.isdigit() and stripped.startswith(("978", "979")):
+        return True
+    if re.search(r"\b97[89][\d\s.\-]{4,}\b", text):
+        return True
+    return False
+
+
+def _is_product_search_request(text: str) -> bool:
+    if _is_isbn_digit_utterance(text):
         return True
     if _has_specific_product_detail(text):
         return True
@@ -307,7 +320,21 @@ def classify(
                 skip_tools=True,
             )
 
-    # B. Vague product — clarify, no Shopify
+    # B. ISBN offer prompt — deterministic, no LLM
+    if re.search(
+        r"\bcan i give (?:you )?(?:the )?isbn(?:\s+number)?(?:\s+of(?:\s+the)?\s+book)?\b",
+        text,
+        re.I,
+    ):
+        return ClassificationResult(
+            action="instant",
+            instant_reply=_ISBN_PROMPT_REPLY,
+            reason="isbn_offer_prompt",
+            skip_llm=True,
+            skip_tools=True,
+        )
+
+    # C. Vague product — clarify, no Shopify
     if is_vague_product_request(text):
         return ClassificationResult(
             action="instant",
@@ -325,7 +352,7 @@ def classify(
             is_payment_flow=True,
         )
 
-    # C/D. Real search / order / refund — ack then brain
+    # D/E. Real search / order / refund — ack then brain
     if _is_product_search_request(text) and not is_vague_product_request(text):
         return ClassificationResult(
             action="ack_then_brain",

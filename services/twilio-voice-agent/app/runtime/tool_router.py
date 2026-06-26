@@ -204,6 +204,6 @@ async def execute_batch(
 
 def tool_specs_for_brain() -> list[dict]:
     """OpenAI tool schemas exposed to Main Commerce Brain."""
-    from ..agent_runtime import llm_tools
+    from ..agents.openai_tool_schema_adapter import get_main_brain_tool_specs
 
-    return llm_tools.tool_specs()
+    return get_main_brain_tool_specs()
