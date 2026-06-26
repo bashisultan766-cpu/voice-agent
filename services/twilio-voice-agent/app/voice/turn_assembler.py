@@ -165,7 +165,7 @@ class TurnAssembler:
             return s.VOICE_EMAIL_COLLECTION_SILENCE_MS
         if mode == "order":
             return s.VOICE_ORDER_COLLECTION_SILENCE_MS
-        return getattr(s, "VOICE_TURN_ASSEMBLER_DEBOUNCE_MS", 750)
+        return s.VOICE_TURN_ASSEMBLER_DEBOUNCE_MS
 
     def _should_emit_isbn_immediately(self, text: str) -> bool:
         """Only emit ISBN immediately when 13 digits (not partial 10-digit chunks)."""

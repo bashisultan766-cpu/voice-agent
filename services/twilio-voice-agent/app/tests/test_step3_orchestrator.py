@@ -136,7 +136,12 @@ class TestResponseComposer:
 
 class TestModelRouter:
     def test_fast_model_for_smalltalk(self):
-        s = Settings(OPENAI_FAST_MODEL="fast-mini", OPENAI_STRONG_MODEL="strong", OPENAI_MODEL="default")
+        s = Settings.model_construct(
+            OPENAI_FAST_MODEL="fast-mini",
+            OPENAI_STRONG_MODEL="strong",
+            OPENAI_MODEL="default",
+            VOICE_FINAL_MODEL="",
+        )
         model = select_model("composer", SupervisorResult(intent="smalltalk"), settings=s)
         assert model == "fast-mini"
 

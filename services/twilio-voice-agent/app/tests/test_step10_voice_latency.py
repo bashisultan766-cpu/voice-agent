@@ -149,7 +149,9 @@ class TestSupervisorAndPlannerLLMSkip:
 
 class TestDebounceOptimization:
     def test_normal_debounce_reduced(self):
-        asm = TurnAssembler(settings=Settings())
+        # model_construct ignores production .env (VPS may set 750ms there).
+        s = Settings.model_construct(VOICE_TURN_ASSEMBLER_DEBOUNCE_MS=380)
+        asm = TurnAssembler(settings=s)
         assert asm._debounce_ms("normal") == 380
 
     @pytest.mark.asyncio
