@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Optional, TYPE_CHECKING
 
 import httpx
@@ -78,11 +79,14 @@ async def _search_by_isbn(isbn: str, limit: int) -> Optional[dict]:
         for e in edges:
             v = e["node"]
             prod = v.get("product", {})
-            metafields = {
-                f"{m['namespace']}.{m['key']}": m["value"]
-                for m in (prod.get("metafields") or [])
-                if m
-            }
+            metafields = {}
+            for mf in (prod.get("metafields") or {}).get("edges", []):
+                node = mf.get("node") or {}
+                if node:
+                    metafields[f"{node.get('namespace', '')}.{node.get('key', '')}"] = node.get("value", "")
+            for m in prod.get("metafields") or []:
+                if isinstance(m, dict) and m.get("key"):
+                    metafields[f"{m.get('namespace', '')}.{m.get('key', '')}"] = m.get("value", "")
             results.append({
                 "id": prod.get("id", ""),
                 "title": prod.get("title", ""),
@@ -110,6 +114,354 @@ async def _search_by_isbn(isbn: str, limit: int) -> Optional[dict]:
     except Exception as exc:
         logger.error("ISBN barcode search failed: %s", exc)
         return None
+
+
+async def _search_variant_by_query(query: str, isbn: str, limit: int = 3) -> Optional[dict]:
+    """Search productVariants by Shopify search query (barcode: or sku:)."""
+    client = get_shopify_client()
+    if not client.configured:
+        return None
+    try:
+        data = await client.execute(
+            SEARCH_VARIANTS_BY_BARCODE,
+            variables={"barcode": query, "first": limit},
+        )
+        edges = data.get("data", {}).get("productVariants", {}).get("edges", [])
+        if not edges:
+            return None
+        return edges[0]["node"]
+    except Exception as exc:
+        logger.debug("Variant query search failed query=%s err=%s", query, exc)
+        return None
+
+
+def _metafields_from_product(prod: dict) -> dict[str, str]:
+    metafields: dict[str, str] = {}
+    for mf in (prod.get("metafields") or {}).get("edges", []):
+        node = mf.get("node") or {}
+        if node:
+            metafields[f"{node.get('namespace', '')}.{node.get('key', '')}"] = node.get("value", "")
+    for m in prod.get("metafields") or []:
+        if isinstance(m, dict) and m.get("key"):
+            metafields[f"{m.get('namespace', '')}.{m.get('key', '')}"] = m.get("value", "")
+    return metafields
+
+
+def _product_image_url(prod: dict) -> str:
+    feat = prod.get("featuredImage") or {}
+    return str(feat.get("url") or "")
+
+
+def _variant_node_to_product_payload(
+    variant: dict,
+    isbn: str,
+    *,
+    match_type: str,
+    confidence: float,
+) -> dict:
+    prod = variant.get("product") or {}
+    metafields = _metafields_from_product(prod)
+    price = variant.get("price", "N/A")
+    currency = "USD"
+    title = prod.get("title", "")
+    author = metafields.get("book.author") or metafields.get("custom.author") or ""
+    available = bool(variant.get("availableForSale", False))
+    inv = variant.get("inventoryQuantity")
+    msg = f"I found {title} for ${price}. Would you like me to add it to your cart?"
+    return {
+        "found": True,
+        "isbn": isbn,
+        "normalized_isbn": isbn,
+        "match_type": match_type,
+        "confidence": confidence,
+        "product": {
+            "product_id": prod.get("id", ""),
+            "variant_id": variant.get("id", ""),
+            "title": title,
+            "author": author,
+            "price": str(price),
+            "currency": currency,
+            "available": available,
+            "inventory_quantity": inv,
+            "product_type": prod.get("productType") or "",
+            "handle": prod.get("handle") or "",
+            "image": _product_image_url(prod),
+        },
+        "customer_message": msg,
+    }
+
+
+async def _search_products_by_metafield_isbn(isbn: str, limit: int = 3) -> Optional[dict]:
+    """Search products whose metafields store the ISBN."""
+    client = get_shopify_client()
+    if not client.configured:
+        return None
+    queries = (
+        f"metafields.book.isbn:{isbn}",
+        f"metafields.custom.isbn:{isbn}",
+        f"metafields.isbn:{isbn}",
+    )
+    for q in queries:
+        try:
+            data = await client.execute(
+                SEARCH_PRODUCTS,
+                variables={"query": q, "first": limit},
+            )
+            edges = data.get("data", {}).get("products", {}).get("edges", [])
+            if not edges:
+                continue
+            node = edges[0]["node"]
+            variants = node.get("variants", {}).get("edges", [])
+            if not variants:
+                continue
+            variant = variants[0]["node"]
+            variant["product"] = node
+            return _variant_node_to_product_payload(
+                variant, isbn, match_type="metafield", confidence=0.95,
+            )
+        except Exception as exc:
+            logger.debug("Metafield ISBN search failed q=%s err=%s", q, exc)
+    return None
+
+
+async def search_product_by_isbn(isbn: str) -> str:
+    """
+    Canonical ISBN product lookup — barcode, SKU, metafield, then cautious title fallback.
+
+    Returns structured JSON with found/match_type/confidence/product/customer_message.
+    """
+    from .isbn import (
+        extract_isbn_candidate,
+        is_strict_valid_isbn,
+        looks_like_isbn_fragment,
+        normalize_isbn,
+    )
+
+    raw = (isbn or "").strip()
+    settings = get_settings()
+    normalized = extract_isbn_candidate(raw)
+    candidate = normalize_isbn(raw)
+    digit_count = len(re.sub(r"\D", "", raw))
+
+    if not normalized and candidate and digit_count in (10, 13) and not is_strict_valid_isbn(candidate.upper()):
+        return json.dumps({
+            "found": False,
+            "isbn": raw,
+            "normalized_isbn": candidate,
+            "match_type": "none",
+            "confidence": 0.0,
+            "product": None,
+            "customer_message": (
+                "That doesn't look like a valid ISBN. Could you read the full ISBN again?"
+            ),
+        })
+
+    if looks_like_isbn_fragment(raw) and not extract_isbn_candidate(raw):
+        return json.dumps({
+            "found": False,
+            "isbn": raw,
+            "normalized_isbn": "",
+            "match_type": "none",
+            "confidence": 0.0,
+            "product": None,
+            "needs_more_digits": True,
+            "customer_message": (
+                "I have part of it. Please continue with the remaining digits."
+            ),
+        })
+
+    if not normalized:
+        if candidate and not is_strict_valid_isbn(candidate):
+            return json.dumps({
+                "found": False,
+                "isbn": raw,
+                "normalized_isbn": candidate,
+                "match_type": "none",
+                "confidence": 0.0,
+                "product": None,
+                "customer_message": (
+                    "That doesn't look like a valid ISBN. Could you read the full ISBN again?"
+                ),
+            })
+        return json.dumps({
+            "found": False,
+            "isbn": raw,
+            "normalized_isbn": "",
+            "match_type": "none",
+            "confidence": 0.0,
+            "product": None,
+            "customer_message": (
+                "That doesn't look like a complete ISBN. Could you read the full ISBN again?"
+            ),
+        })
+
+    cache_key = f"isbn_search:{normalized}"
+    cached = await shopify_cache_get(cache_key)
+    if cached is not None:
+        return json.dumps(cached)
+
+    client = get_shopify_client()
+    if not client.configured:
+        return json.dumps({
+            "found": False,
+            "isbn": raw,
+            "normalized_isbn": normalized,
+            "match_type": "none",
+            "confidence": 0.0,
+            "product": None,
+            "error": "Shopify not configured",
+            "customer_message": (
+                "I'm having trouble checking that ISBN right now. Please try again shortly."
+            ),
+        })
+
+    # ProductCache ISBN index
+    try:
+        from ..sync.repositories import ProductCache
+        cached_product = await ProductCache().get_by_isbn(normalized)
+        if cached_product:
+            payload = {
+                "found": True,
+                "isbn": raw,
+                "normalized_isbn": normalized,
+                "match_type": "barcode",
+                "confidence": 1.0,
+                "product": {
+                    "product_id": cached_product.product_id,
+                    "variant_id": cached_product.variant_id,
+                    "title": cached_product.title,
+                    "author": cached_product.author or "",
+                    "price": cached_product.price or "N/A",
+                    "currency": "USD",
+                    "available": cached_product.available,
+                    "inventory_quantity": None,
+                    "product_type": "",
+                    "handle": cached_product.handle or "",
+                    "image": "",
+                },
+                "customer_message": (
+                    f"I found {cached_product.title} for ${cached_product.price or 'N/A'}. "
+                    "Would you like me to add it to your cart?"
+                ),
+            }
+            await shopify_cache_set(cache_key, payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
+            return json.dumps(payload)
+    except Exception as exc:
+        logger.debug("ProductCache ISBN lookup skipped: %s", exc)
+
+    # 1. Barcode exact match
+    barcode_variant = await _search_variant_by_query(f"barcode:{normalized}", normalized)
+    if barcode_variant and str(barcode_variant.get("barcode") or "").replace("-", "") == normalized:
+        payload = _variant_node_to_product_payload(
+            barcode_variant, normalized, match_type="barcode", confidence=1.0,
+        )
+        await shopify_cache_set(cache_key, payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
+        return json.dumps(payload)
+
+    # 2. SKU exact match
+    sku_variant = await _search_variant_by_query(f"sku:{normalized}", normalized)
+    if sku_variant and str(sku_variant.get("sku") or "").replace("-", "") == normalized:
+        payload = _variant_node_to_product_payload(
+            sku_variant, normalized, match_type="sku", confidence=0.98,
+        )
+        await shopify_cache_set(cache_key, payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
+        return json.dumps(payload)
+
+    # 3. Metafield match
+    metafield_payload = await _search_products_by_metafield_isbn(normalized)
+    if metafield_payload:
+        await shopify_cache_set(cache_key, metafield_payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
+        return json.dumps(metafield_payload)
+
+    # 4. Barcode search without strict barcode equality (Shopify index)
+    isbn_result = await _search_by_isbn(normalized, limit=3)
+    if isbn_result and isbn_result.get("count", 0) > 0:
+        first = isbn_result["results"][0]
+        variants = first.get("variants") or [{}]
+        v0 = variants[0] if variants else {}
+        payload = {
+            "found": True,
+            "isbn": raw,
+            "normalized_isbn": normalized,
+            "match_type": "barcode",
+            "confidence": 0.99,
+            "product": {
+                "product_id": first.get("id", ""),
+                "variant_id": v0.get("id", ""),
+                "title": first.get("title", ""),
+                "author": first.get("author", ""),
+                "price": str(first.get("price", "N/A")),
+                "currency": "USD",
+                "available": bool(first.get("available")),
+                "inventory_quantity": v0.get("inventory"),
+                "product_type": "",
+                "handle": first.get("handle", ""),
+                "image": "",
+            },
+            "customer_message": (
+                f"I found {first.get('title', 'that item')} for ${first.get('price', 'N/A')}. "
+                "Would you like me to add it to your cart?"
+            ),
+        }
+        await shopify_cache_set(cache_key, payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
+        return json.dumps(payload)
+
+    # 5. Title fallback — uncertain, requires confirmation
+    try:
+        data = await client.execute(
+            SEARCH_PRODUCTS,
+            variables={"query": normalized, "first": 3},
+        )
+        edges = data.get("data", {}).get("products", {}).get("edges", [])
+        if edges:
+            node = edges[0]["node"]
+            variants = node.get("variants", {}).get("edges", [])
+            variant = variants[0]["node"] if variants else {}
+            title = node.get("title", "")
+            price = variant.get("price", "N/A")
+            payload = {
+                "found": True,
+                "isbn": raw,
+                "normalized_isbn": normalized,
+                "match_type": "title_fallback",
+                "confidence": 0.55,
+                "needs_confirmation": True,
+                "product": {
+                    "product_id": node.get("id", ""),
+                    "variant_id": variant.get("id", ""),
+                    "title": title,
+                    "author": "",
+                    "price": str(price),
+                    "currency": "USD",
+                    "available": bool(variant.get("availableForSale")),
+                    "inventory_quantity": variant.get("inventoryQuantity"),
+                    "product_type": "",
+                    "handle": node.get("handle", ""),
+                    "image": "",
+                },
+                "customer_message": (
+                    f"I found a possible match, {title}, for ${price}. "
+                    "Is that the book you meant?"
+                ),
+            }
+            return json.dumps(payload)
+    except Exception as exc:
+        logger.debug("ISBN title fallback failed: %s", exc)
+
+    not_found = {
+        "found": False,
+        "isbn": raw,
+        "normalized_isbn": normalized,
+        "match_type": "none",
+        "confidence": 0.0,
+        "product": None,
+        "customer_message": (
+            "That ISBN is not showing as available right now. "
+            "I can forward it to our team to check manually."
+        ),
+    }
+    await shopify_cache_set(cache_key, not_found, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
+    return json.dumps(not_found)
 
 
 async def _notify_support_escalation(
@@ -530,6 +882,278 @@ async def lookup_order(
     except Exception as exc:
         logger.error("lookup_order failed: %s", exc)
         return json.dumps({"error": "Order lookup temporarily unavailable."})
+
+
+def _money_amount_currency(money_set: dict | None) -> tuple[str, str]:
+    if not money_set:
+        return "", "USD"
+    shop = money_set.get("shopMoney") or {}
+    return str(shop.get("amount") or ""), str(shop.get("currencyCode") or "USD")
+
+
+def _parse_email_or_phone(value: str | None) -> tuple[str | None, str | None]:
+    """Split combined verification field into email and/or phone."""
+    if not value or not str(value).strip():
+        return None, None
+    raw = str(value).strip()
+    if "@" in raw or re.search(r"\bat\b", raw, re.I):
+        try:
+            from ..pipeline.email_capture import normalize_spoken_email
+            normalized = normalize_spoken_email(raw) or raw
+        except Exception:
+            normalized = raw
+        return normalized, None
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) >= 7:
+        return None, raw
+    return raw, None
+
+
+def _fulfillment_shipping_status(node: dict) -> str:
+    fulfillments = node.get("fulfillments") or []
+    if not fulfillments:
+        return node.get("displayFulfillmentStatus") or "UNFULFILLED"
+    statuses = [f.get("status") for f in fulfillments if f.get("status")]
+    return statuses[0] if statuses else (node.get("displayFulfillmentStatus") or "")
+
+
+def _tracking_from_node(node: dict) -> dict:
+    carrier = ""
+    number = ""
+    url = ""
+    for fulfillment in node.get("fulfillments") or []:
+        for info in fulfillment.get("trackingInfo") or []:
+            if info.get("number"):
+                number = str(info.get("number") or "")
+                carrier = str(info.get("company") or carrier)
+                url = str(info.get("url") or url)
+                break
+        if number:
+            break
+    return {
+        "carrier": carrier,
+        "tracking_number": number,
+        "tracking_url_present": bool(url),
+    }
+
+
+def _line_items_from_node(node: dict) -> list[dict]:
+    items: list[dict] = []
+    for edge in (node.get("lineItems") or {}).get("edges", []):
+        li = edge.get("node") or {}
+        variant = li.get("variant") or {}
+        price_amt, price_cur = _money_amount_currency(li.get("originalUnitPriceSet"))
+        isbn = str(variant.get("barcode") or "")
+        items.append({
+            "title": li.get("title") or "",
+            "quantity": int(li.get("quantity") or 0),
+            "price": f"{price_amt} {price_cur}".strip() if price_amt else "",
+            "sku": li.get("sku") or variant.get("sku") or "",
+            "isbn": isbn,
+        })
+    return items
+
+
+def _refunds_from_node(node: dict, *, order_email: str) -> list[dict]:
+    from ..shopify.order_privacy import card_last4_from_transactions, mask_email_for_voice
+
+    refunds_out: list[dict] = []
+    for refund in node.get("refunds") or []:
+        amount, currency = _money_amount_currency(refund.get("totalRefundedSet"))
+        items = [
+            (li_edge.get("node") or {}).get("lineItem", {}).get("title", "")
+            for li_edge in (refund.get("refundLineItems") or {}).get("edges", [])
+        ]
+        items = [t for t in items if t]
+        card_last4 = card_last4_from_transactions(refund.get("transactions") or [])
+        refunds_out.append({
+            "amount": f"{amount} {currency}".strip() if amount else "",
+            "created_at": (refund.get("createdAt") or "")[:10],
+            "items": items,
+            "destination_email": mask_email_for_voice(order_email) if order_email else "",
+            "card_last4": card_last4,
+        })
+    return refunds_out
+
+
+async def lookup_shopify_order_details(
+    order_number: str,
+    email_or_phone: str | None = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """
+    Canonical order lookup with privacy tiers and structured pricing/tracking/refunds.
+
+    order_number only → limited status; email_or_phone → full verified details.
+    """
+    if not (order_number or "").strip():
+        return json.dumps({
+            "found": False,
+            "verification_required": False,
+            "order": None,
+            "customer_message": "What is your order number?",
+        })
+
+    email, phone = _parse_email_or_phone(email_or_phone)
+    settings = get_settings()
+    cache_key = f"order_lookup:{order_number.lstrip('#')}:{email or ''}:{phone or ''}"
+    cached = await shopify_cache_get(cache_key)
+    if cached is not None:
+        return json.dumps(cached)
+
+    client = get_shopify_client()
+    if not client.configured:
+        return json.dumps({
+            "found": False,
+            "verification_required": False,
+            "order": None,
+            "error": "Shopify not configured",
+            "customer_message": (
+                "I'm having trouble looking up that order right now. Please try again shortly."
+            ),
+        })
+
+    if session:
+        if not email and session.verified_email and session.caller_email:
+            email = session.caller_email
+        inbound = (getattr(session, "from_number", "") or "").strip()
+        if not phone and inbound and (getattr(session, "verified_phone", False) or order_number):
+            phone = inbound
+
+    try:
+        parts = [f"name:#{order_number.lstrip('#')}"]
+        if email:
+            parts.append(f"email:{email}")
+        if phone:
+            parts.append(f"phone:{phone}")
+
+        data = await client.execute(
+            LOOKUP_ORDERS,
+            variables={"query": " AND ".join(parts), "first": 3},
+        )
+        edges = data.get("data", {}).get("orders", {}).get("edges", [])
+        if not edges:
+            payload = {
+                "found": False,
+                "verification_required": False,
+                "order": None,
+                "customer_message": (
+                    "I couldn't find an order with that number. "
+                    "Could you double-check the order number?"
+                ),
+            }
+            return json.dumps(payload)
+
+        node = edges[0]["node"]
+        verified = bool(email or phone)
+
+        if session:
+            session.last_order_number = node.get("name") or order_number
+
+        from ..shopify.order_privacy import mask_email_for_voice
+
+        order_email = (node.get("email") or "").strip()
+        customer = node.get("customer") or {}
+        if not order_email:
+            order_email = (customer.get("email") or "").strip()
+
+        if not verified:
+            limited = {
+                "order_id": node.get("id", ""),
+                "order_number": node.get("name", ""),
+                "created_at": (node.get("createdAt") or "")[:10],
+                "financial_status": node.get("displayFinancialStatus", ""),
+                "fulfillment_status": node.get("displayFulfillmentStatus", ""),
+                "shipping_status": _fulfillment_shipping_status(node),
+            }
+            payload = {
+                "found": True,
+                "verification_required": True,
+                "order": limited,
+                "customer_message": (
+                    "I can check the basic status. For full details, please confirm "
+                    "the email or phone number on the order."
+                ),
+            }
+            await shopify_cache_set(cache_key, payload, ttl=min(60, settings.SHOPIFY_CACHE_TTL_SECS))
+            return json.dumps(payload)
+
+        subtotal_amt, subtotal_cur = _money_amount_currency(node.get("subtotalPriceSet"))
+        shipping_amt, shipping_cur = _money_amount_currency(node.get("totalShippingPriceSet"))
+        tax_amt, tax_cur = _money_amount_currency(node.get("totalTaxSet"))
+        discount_amt, discount_cur = _money_amount_currency(node.get("totalDiscountsSet"))
+        total_amt, total_cur = _money_amount_currency(node.get("totalPriceSet"))
+        items = _line_items_from_node(node)
+        tracking = _tracking_from_node(node)
+        refunds = _refunds_from_node(node, order_email=order_email)
+
+        order_obj = {
+            "order_id": node.get("id", ""),
+            "order_number": node.get("name", ""),
+            "created_at": (node.get("createdAt") or "")[:10],
+            "financial_status": node.get("displayFinancialStatus", ""),
+            "fulfillment_status": node.get("displayFulfillmentStatus", ""),
+            "shipping_status": _fulfillment_shipping_status(node),
+            "tracking": tracking,
+            "items": items,
+            "pricing": {
+                "subtotal": f"{subtotal_amt} {subtotal_cur}".strip(),
+                "shipping": f"{shipping_amt} {shipping_cur}".strip(),
+                "tax": f"{tax_amt} {tax_cur}".strip(),
+                "discount": f"{discount_amt} {discount_cur}".strip(),
+                "total": f"{total_amt} {total_cur}".strip(),
+                "currency": total_cur or subtotal_cur or "USD",
+            },
+            "refunds": refunds,
+        }
+
+        item_count = sum(i.get("quantity", 0) for i in items)
+        status = order_obj["fulfillment_status"] or order_obj["financial_status"]
+        msg_parts = [
+            f"Your order has {item_count} item{'s' if item_count != 1 else ''}.",
+            f"The subtotal was ${subtotal_amt}, shipping was ${shipping_amt}, "
+            f"and the total was ${total_amt}.",
+            f"It is currently {status}.",
+        ]
+        if tracking.get("tracking_number"):
+            carrier = tracking.get("carrier") or "the carrier"
+            msg_parts.append(
+                f"Tracking is available with {carrier}. "
+                "I can send or spell the tracking number if you want."
+            )
+        if refunds:
+            latest = refunds[-1]
+            msg_parts.append(
+                f"Your refund was processed on {latest.get('created_at', '')} "
+                f"for {latest.get('amount', '')}. "
+                "Please check the email associated with the order."
+            )
+        if order_email:
+            msg_parts.append(f"Order email on file is {mask_email_for_voice(order_email)}.")
+
+        payload = {
+            "found": True,
+            "verification_required": False,
+            "order": order_obj,
+            "customer_message": " ".join(msg_parts),
+        }
+        if session:
+            session.verified_email = bool(email)
+            session.verified_phone = bool(phone)
+        await shopify_cache_set(cache_key, payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
+        return json.dumps(payload)
+
+    except Exception as exc:
+        logger.error("lookup_shopify_order_details failed: %s", exc)
+        return json.dumps({
+            "found": False,
+            "verification_required": False,
+            "order": None,
+            "error": "Order lookup temporarily unavailable.",
+            "customer_message": (
+                "I'm having trouble looking up that order right now. Please try again shortly."
+            ),
+        })
 
 
 def order_record_from_lookup(result: dict) -> dict | None:

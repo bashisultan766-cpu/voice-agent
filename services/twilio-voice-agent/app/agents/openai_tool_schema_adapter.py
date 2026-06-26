@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 # create_checkout and other internal-only tools are intentionally excluded.
 MAIN_BRAIN_TOOL_NAMES: tuple[str, ...] = (
     "search_products",
+    "search_product_by_isbn",
     "catalog_search",
     "get_product_details",
     "add_to_cart",
@@ -26,6 +27,7 @@ MAIN_BRAIN_TOOL_NAMES: tuple[str, ...] = (
     "get_cart",
     "send_payment_link",
     "lookup_order_status",
+    "lookup_shopify_order_details",
     "lookup_refund_status",
     "facility_policy_lookup",
     "search_facility_policy",

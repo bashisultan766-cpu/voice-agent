@@ -58,19 +58,28 @@ class TestCatalogSearchTool:
         session = _session()
         captured: dict = {}
 
-        async def fake_search(query: str, limit: int = 5):
-            captured["query"] = query
+        async def fake_isbn_search(isbn: str):
+            captured["isbn"] = isbn
             return json.dumps({
-                "results": [{"title": "A Thug's Heartbeat", "price": "8.99", "variant_id": "v1"}],
+                "found": True,
+                "normalized_isbn": isbn,
+                "product": {
+                    "product_id": "p1",
+                    "variant_id": "v1",
+                    "title": "A Thug's Heartbeat",
+                    "price": "8.99",
+                    "available": True,
+                    "author": "",
+                },
                 "count": 1,
             })
 
-        monkeypatch.setattr("app.tools.shopify_tools.SureShotCatalogSearch", fake_search)
+        monkeypatch.setattr("app.tools.shopify_tools.search_product_by_isbn", fake_isbn_search)
 
         raw = await _catalog_search(
             CatalogSearchArgs(query="9 7 8 1 6 4 5 5 6 3 2 4 2", limit=5),
             session,
         )
         payload = json.loads(raw)
-        assert captured["query"] == "9781645563242"
-        assert payload["count"] == 1
+        assert captured["isbn"] == "9781645563242"
+        assert payload["found"] is True

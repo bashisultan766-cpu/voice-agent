@@ -20,11 +20,13 @@ logger = logging.getLogger(__name__)
 
 _READ_ONLY_TOOLS = frozenset({
     "search_products",
+    "search_product_by_isbn",
     "catalog_search",
     "get_product_details",
     "compare_products",
     "get_cart",
     "lookup_order_status",
+    "lookup_shopify_order_details",
     "lookup_refund_status",
     "get_order",
     "calculate_pricing",

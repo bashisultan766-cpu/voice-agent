@@ -83,6 +83,7 @@ query LookupOrders($query: String!, $first: Int!) {
       node {
         id
         name
+        createdAt
         displayFinancialStatus
         displayFulfillmentStatus
         email
@@ -98,16 +99,63 @@ query LookupOrders($query: String!, $first: Int!) {
         totalShippingPriceSet {
           shopMoney { amount currencyCode }
         }
+        totalTaxSet {
+          shopMoney { amount currencyCode }
+        }
+        totalDiscountsSet {
+          shopMoney { amount currencyCode }
+        }
+        totalPriceSet {
+          shopMoney { amount currencyCode }
+        }
         lineItems(first: 20) {
           edges {
             node {
               title
               quantity
+              sku
+              originalUnitPriceSet {
+                shopMoney { amount currencyCode }
+              }
+              variant {
+                barcode
+                sku
+              }
             }
           }
         }
-        fulfillments(first: 1) {
-          trackingInfo { number url }
+        fulfillments(first: 3) {
+          status
+          trackingInfo {
+            company
+            number
+            url
+          }
+        }
+        refunds(first: 5) {
+          id
+          createdAt
+          totalRefundedSet {
+            shopMoney { amount currencyCode }
+          }
+          refundLineItems(first: 10) {
+            edges {
+              node {
+                quantity
+                lineItem { title }
+              }
+            }
+          }
+          transactions(first: 3) {
+            gateway
+            status
+            paymentDetails {
+              ... on CardPaymentDetails {
+                number
+                company
+              }
+            }
+          }
         }
         transactions(first: 5) {
           gateway
@@ -187,8 +235,21 @@ query SearchVariantsByBarcode($barcode: String!, $first: Int!) {
           id
           title
           handle
+          productType
           onlineStoreUrl
           tags
+          featuredImage {
+            url
+          }
+          metafields(first: 10) {
+            edges {
+              node {
+                namespace
+                key
+                value
+              }
+            }
+          }
         }
       }
     }

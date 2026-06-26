@@ -42,8 +42,7 @@ _ISBN_CONTINUATION = re.compile(
     re.IGNORECASE,
 )
 _PARTIAL_ISBN_CLARIFY = (
-    "I only have twelve digits. Please give me the last digit, "
-    "or say repeat to start over."
+    "I have part of it. Please continue with the remaining digits."
 )
 _KEEPALIVE_RESPONSE = "No problem, I'm here. Go ahead when you're ready."
 _EMAIL_COMPLETE = re.compile(
@@ -120,6 +119,8 @@ class TurnAssembler:
         if not should_collect_isbn(text, book_collection=book_collection):
             return "normal"
         digits = "".join(c for c in text if c.isdigit())
+        if len(digits) == 0:
+            return "normal"
         if len(digits) >= 10:
             return "isbn"
         if _ISBN_DIGIT_HINT(text):
@@ -168,9 +169,8 @@ class TurnAssembler:
         return s.VOICE_TURN_ASSEMBLER_DEBOUNCE_MS
 
     def _should_emit_isbn_immediately(self, text: str) -> bool:
-        """Only emit ISBN immediately when 13 digits (not partial 10-digit chunks)."""
-        digits = "".join(c for c in text if c.isdigit())
-        return len(digits) == 13
+        """Emit as soon as a checksum-valid complete ISBN is present."""
+        return is_complete_isbn(text)
 
     def _can_emit_immediately(self, text: str, mode: str) -> tuple[bool, str]:
         if mode == "email":

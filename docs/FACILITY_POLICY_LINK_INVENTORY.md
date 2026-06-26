@@ -21,29 +21,29 @@
 
 - `gdc.georgia.gov` — 45
 - `www.in.gov` — 19
-- `doc.arkansas.gov` — 17
 - `(empty)` — 17
+- `doc.arkansas.gov` — 17
 - `portal.ct.gov` — 11
 - `www.jailexchange.com` — 10
 - `doc.iowa.gov` — 9
 - `www.doc.ks.gov` — 9
-- `www.idoc.idaho.gov` — 8
-- `www.southdakotasheriffs.org` — 8
-- `doc.la.gov` — 8
 - `www.prisonpro.com` — 8
+- `www.idoc.idaho.gov` — 8
+- `doc.la.gov` — 8
+- `www.southdakotasheriffs.org` — 8
 - `www.maine.gov` — 7
 - `doc.delaware.gov` — 5
 - `www.spokanecounty.gov` — 4
-- `www.pennco.org` — 3
+- `www.montgomerycountypa.gov` — 3
+- `www.woodcountywi.gov` — 3
 - `www.co.clarion.pa.us` — 3
 - `www.dentoncounty.gov` — 3
-- `www.tellercounty.gov` — 3
-- `bonnevillesheriff.com` — 3
-- `www.woodcountywi.gov` — 3
-- `arsheriffs.org` — 3
-- `wilkescounty.net` — 3
+- `kingcounty.gov` — 3
+- `www.pennco.org` — 3
 - `www.cachecounty.gov` — 3
-- `www.yuba.gov` — 3
+- `www.somersetcountynj.gov` — 3
+- `arsheriffs.org` — 3
+- `www.solanocounty.gov` — 3
 
 ## Duplicate URL examples (top 10)
 

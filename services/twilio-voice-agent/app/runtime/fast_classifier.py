@@ -38,7 +38,9 @@ _CLARIFY_BOOK = "Sure — what title, author, or ISBN are you looking for?"
 _CLARIFY_MAGAZINE = "Sure — what magazine name are you looking for?"
 _CLARIFY_NEWSPAPER = "Sure — what newspaper are you looking for?"
 _CLARIFY_GENERIC = "Sure — what item are you looking for?"
-_ISBN_PROMPT_REPLY = "Yes, please go ahead and say the ISBN number."
+_ISBN_PROMPT_REPLY = (
+    "Yes, please go ahead and say the ISBN number or title magazine or newspaper."
+)
 
 _VAGUE_CATEGORY_TAILS = frozenset({
     "book", "a book", "books", "magazine", "a magazine", "magazines",
@@ -320,9 +322,10 @@ def classify(
                 skip_tools=True,
             )
 
-    # B. ISBN offer prompt — deterministic, no LLM
+    # B. ISBN/title offer prompt — deterministic, no LLM
     if re.search(
-        r"\bcan i give (?:you )?(?:the )?isbn(?:\s+number)?(?:\s+of(?:\s+the)?\s+book)?\b",
+        r"\bcan i give (?:you )?(?:the )?"
+        r"(?:isbn(?:\s+number)?(?:\s+of(?:\s+the)?\s+book)?|title|magazine|newspaper)s?\b",
         text,
         re.I,
     ):

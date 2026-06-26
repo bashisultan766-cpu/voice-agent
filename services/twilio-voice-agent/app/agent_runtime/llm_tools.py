@@ -87,6 +87,18 @@ class LookupOrderStatusArgs(BaseModel):
     phone: str = Field("", description="Phone for verification.")
 
 
+class SearchProductByIsbnArgs(BaseModel):
+    isbn: str = Field(..., min_length=1, description="ISBN-10 or ISBN-13 (spoken or typed).")
+
+
+class LookupShopifyOrderDetailsArgs(BaseModel):
+    order_number: str = Field(..., min_length=1, description="Shopify order number.")
+    email_or_phone: str = Field(
+        "",
+        description="Email or phone on the order for full verified details.",
+    )
+
+
 class LookupRefundStatusArgs(BaseModel):
     order_number: str = Field(..., min_length=1)
     email: str = Field("", description="Email for verification.")
@@ -457,10 +469,49 @@ async def _send_payment_link(args: SendPaymentLinkArgs, session) -> str:
 async def _lookup_order_status(args: LookupOrderStatusArgs, session) -> str:
     if not (args.order_number or args.email or args.phone):
         return _err("Provide an order number, email, or phone to look up an order.")
+    if args.order_number:
+        email_or_phone = (args.email or args.phone or "").strip() or None
+        return await _st.lookup_shopify_order_details(
+            order_number=args.order_number,
+            email_or_phone=email_or_phone,
+            session=session,
+        )
     return await _st.lookup_order(
         order_number=args.order_number or None,
         email=args.email or None,
         phone=args.phone or None,
+        session=session,
+    )
+
+
+async def _search_product_by_isbn(args: SearchProductByIsbnArgs, session) -> str:
+    raw = await _st.search_product_by_isbn(args.isbn)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(payload, dict) and payload.get("found") and payload.get("product"):
+        from .commerce_flow_state import maybe_stage_from_search_payload
+
+        product = payload["product"]
+        maybe_stage_from_search_payload(session, {
+            "results": [{
+                "id": product.get("product_id"),
+                "title": product.get("title"),
+                "price": product.get("price"),
+                "available": product.get("available"),
+                "author": product.get("author"),
+                "variants": [{"id": product.get("variant_id"), "price": product.get("price")}],
+            }],
+            "count": 1,
+        })
+    return raw
+
+
+async def _lookup_shopify_order_details(args: LookupShopifyOrderDetailsArgs, session) -> str:
+    return await _st.lookup_shopify_order_details(
+        order_number=args.order_number,
+        email_or_phone=(args.email_or_phone or "").strip() or None,
         session=session,
     )
 
@@ -796,12 +847,30 @@ async def _catalog_search(args: CatalogSearchArgs, session) -> str:
             maybe_stage_from_search_payload(session, cached)
             return json.dumps(cached)
 
-    raw = await _st.SureShotCatalogSearch(query=query, limit=args.limit)
+    if resolved_isbn:
+        raw = await _st.search_product_by_isbn(resolved_isbn)
+    else:
+        raw = await _st.SureShotCatalogSearch(query=query, limit=args.limit)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return raw
-    if isinstance(payload, dict) and payload.get("results"):
+    if isinstance(payload, dict) and payload.get("found") and payload.get("product"):
+        product = payload["product"]
+        from .commerce_flow_state import maybe_stage_from_search_payload
+
+        maybe_stage_from_search_payload(session, {
+            "results": [{
+                "id": product.get("product_id"),
+                "title": product.get("title"),
+                "price": product.get("price"),
+                "available": product.get("available"),
+                "author": product.get("author"),
+                "variants": [{"id": product.get("variant_id"), "price": product.get("price")}],
+            }],
+            "count": 1,
+        })
+    elif isinstance(payload, dict) and payload.get("results"):
         payload["results"] = _rerank_by_fuzzy(args.query, payload["results"])
         from .commerce_flow_state import maybe_stage_from_search_payload
 
@@ -1025,6 +1094,21 @@ _register(
     "Look up order status, fulfillment, tracking, and shipping. Full details "
     "require order number plus a matching email or phone (verification).",
     _obj({"order_number": _S, "email": _S, "phone": _S}, []),
+)
+_register(
+    "search_product_by_isbn", SearchProductByIsbnArgs, _search_product_by_isbn,
+    "Look up a book or product by ISBN-10 or ISBN-13. Always use this for ISBN "
+    "lookups — searches barcode, SKU, and metafields in Shopify. Never invent product data.",
+    _obj({"isbn": {**_S, "description": "Complete ISBN-10 or ISBN-13."}}, ["isbn"]),
+)
+_register(
+    "lookup_shopify_order_details", LookupShopifyOrderDetailsArgs, _lookup_shopify_order_details,
+    "Fetch real Shopify order details including items, pricing, tracking, and refunds. "
+    "Order number only returns limited status; provide email_or_phone for full details.",
+    _obj({
+        "order_number": {**_S, "description": "Order number with or without #."},
+        "email_or_phone": {**_S, "description": "Email or phone on the order for verification."},
+    }, ["order_number"]),
 )
 _register(
     "lookup_refund_status", LookupRefundStatusArgs, _lookup_refund_status,
