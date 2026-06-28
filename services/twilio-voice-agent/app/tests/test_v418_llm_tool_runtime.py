@@ -181,33 +181,68 @@ def test_product_question_triggers_search_products(monkeypatch):
     assert len(runtime._client.chat.completions.calls) == 2
 
 
-def test_refund_lookup_requires_verification():
-    session = _session()  # not verified
-    out = asyncio.run(
-        llm_tools.dispatch("lookup_refund_status", {"order_number": "1234"}, session)
-    )
+def test_refund_lookup_by_order_number():
+    session = _session()
+    lookup_resp = {"data": {"orders": {"edges": [{"node": {"id": "gid://shopify/Order/1", "name": "#1234"}}]}}}
+    refund_resp = {
+        "data": {
+            "order": {
+                "refunds": [{
+                    "createdAt": "2026-06-15",
+                    "totalRefundedSet": {"shopMoney": {"amount": "19.99", "currencyCode": "USD"}},
+                    "refundLineItems": {"edges": [{"node": {"quantity": 1, "lineItem": {"title": "Book"}}}]},
+                    "transactions": [{"paymentDetails": {"number": "****1234"}}],
+                }],
+                "email": "a@example.com",
+                "customer": {"firstName": "A", "lastName": "B"},
+                "transactions": [],
+            }
+        }
+    }
+
+    async def fake_refund(order_number="", email=None, phone=None, session=None):
+        return json.dumps({
+            "found": True,
+            "order_number": "#1234",
+            "refund_count": 1,
+            "refunds": [{"amount": "19.99 USD", "date": "2026-06-15", "items": ["1x Book"]}],
+            "suggested_response": "Your refund of 19.99 USD was processed on 2026-06-15.",
+        })
+
+    import app.agent_runtime.llm_tools as llm_tools
+    import asyncio
+    orig = llm_tools._st.get_refund_status
+    llm_tools._st.get_refund_status = fake_refund
+    try:
+        out = asyncio.run(
+            llm_tools.dispatch("lookup_refund_status", {"order_number": "1234"}, session)
+        )
+    finally:
+        llm_tools._st.get_refund_status = orig
     data = json.loads(out)
-    assert data.get("verified") is False
-    # No refund detail leaks before verification.
-    assert "refunds" not in data
+    assert data.get("found") is True
+    assert data.get("refund_count") == 1
 
 
-def test_order_lookup_status_only_without_verification(monkeypatch):
-    # With order number but no email/phone, full financial fields must be absent.
-    async def fake_lookup(order_number=None, email=None, phone=None, session=None):
-        verified = bool(order_number and (email or phone))
-        result = {"found": True, "order_number": "#1234", "status": "PAID",
-                  "fulfillment_status": "UNFULFILLED"}
-        if verified:
-            result["subtotal"] = "20.00 USD"
-        return json.dumps(result)
+def test_order_lookup_includes_financials_with_order_number_only(monkeypatch):
+    async def fake_lookup(order_number=None, email_or_phone=None, session=None, **kwargs):
+        return json.dumps({
+            "found": True,
+            "order_number": "#1234",
+            "status": "PAID",
+            "fulfillment_status": "FULFILLED",
+            "subtotal": "20.00 USD",
+            "total": "24.99 USD",
+            "customer_message": "Order total including shipping is 24.99 USD.",
+        })
 
-    monkeypatch.setattr(llm_tools._st, "lookup_order", fake_lookup)
+    monkeypatch.setattr(llm_tools._st, "lookup_shopify_order_details", fake_lookup)
     out = asyncio.run(
         llm_tools.dispatch("lookup_order_status", {"order_number": "1234"}, _session())
     )
     data = json.loads(out)
-    assert "subtotal" not in data, "unverified order must not expose financials"
+    assert data.get("found") is True
+    assert "customer_message" in data or "subtotal" in data
 
 
 def test_payment_link_url_is_never_spoken():

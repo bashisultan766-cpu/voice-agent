@@ -154,24 +154,22 @@ def smoke_order_privacy_unverified() -> SmokeResult:
                 "order_number": "#12345",
                 "status": "PAID",
                 "fulfillment_status": "UNFULFILLED",
-                "verification_required": True,
-                "message": (
-                    "For security, provide the email or phone number on this order "
-                    "to view line items, tracking, or payment details."
-                ),
+                "verification_required": False,
+                "items": ["1x Test Book"],
+                "customer_message": "Order #12345 is paid. Subtotal before shipping is 10.00 USD.",
             }
         )
 
-    with patch.object(llm_tools._st, "lookup_order", new=AsyncMock(side_effect=_fake_lookup)):
+    with patch.object(llm_tools._st, "lookup_shopify_order_details", new=AsyncMock(side_effect=_fake_lookup)):
         raw = asyncio.run(
             llm_tools.dispatch("lookup_order_status", {"order_number": "12345"}, session)
         )
     data = json.loads(raw)
-    if not data.get("verification_required"):
-        return SmokeResult("order privacy unverified", False, "verification_required missing")
-    if data.get("items") or data.get("book_titles"):
-        return SmokeResult("order privacy unverified", False, "line items exposed")
-    return SmokeResult("order privacy unverified", True, "verification_required")
+    if data.get("verification_required"):
+        return SmokeResult("order lookup by number", False, "unexpected verification gate")
+    if not (data.get("items") or data.get("customer_message")):
+        return SmokeResult("order lookup by number", False, "missing order details")
+    return SmokeResult("order lookup by number", True, "full details without email")
 
 
 def smoke_payment_safety_blocked() -> SmokeResult:

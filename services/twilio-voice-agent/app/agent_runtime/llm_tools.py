@@ -95,7 +95,7 @@ class LookupShopifyOrderDetailsArgs(BaseModel):
     order_number: str = Field(..., min_length=1, description="Shopify order number.")
     email_or_phone: str = Field(
         "",
-        description="Email or phone on the order for full verified details.",
+        description="Optional email or phone filter — order number alone returns full details.",
     )
 
 
@@ -1091,8 +1091,8 @@ _register(
 )
 _register(
     "lookup_order_status", LookupOrderStatusArgs, _lookup_order_status,
-    "Look up order status, fulfillment, tracking, and shipping. Full details "
-    "require order number plus a matching email or phone (verification).",
+    "Look up order status, fulfillment, tracking, shipping, refunds, and line items. "
+    "Order number alone returns full Shopify details.",
     _obj({"order_number": _S, "email": _S, "phone": _S}, []),
 )
 _register(
@@ -1104,7 +1104,7 @@ _register(
 _register(
     "lookup_shopify_order_details", LookupShopifyOrderDetailsArgs, _lookup_shopify_order_details,
     "Fetch real Shopify order details including items, pricing, tracking, and refunds. "
-    "Order number only returns limited status; provide email_or_phone for full details.",
+    "Order number alone returns full details; optional email_or_phone narrows search.",
     _obj({
         "order_number": {**_S, "description": "Order number with or without #."},
         "email_or_phone": {**_S, "description": "Email or phone on the order for verification."},

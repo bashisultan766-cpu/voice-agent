@@ -313,6 +313,32 @@ class VoiceCommerceRuntime:
         if isbn_hunt is not None:
             return isbn_hunt
 
+        from ..agent_runtime.order_flow_state import (
+            extract_order_number,
+            order_intent_detected,
+            try_order_enrichment_short_circuit,
+        )
+
+        is_order_turn = (
+            (turn_mode or "").lower() == "order"
+            or bool(extract_order_number(normalized, session, turn_mode=turn_mode))
+            or classification.is_order_lookup
+            or order_intent_detected(normalized)
+        )
+        if is_order_turn:
+            try:
+                order_hint = await try_order_enrichment_short_circuit(
+                    session, normalized, turn_mode=turn_mode,
+                )
+            except Exception as exc:
+                logger.warning("order_enrichment_failed sid=%s err=%s", sid, type(exc).__name__)
+                order_hint = None
+            if order_hint and order_hint.force_reply:
+                spoken = self._brain.finalize_response(session, order_hint.force_reply, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("order_enrichment_short_circuit sid=%s", sid)
+                return _result(spoken)
+
         commerce_hint = process_commerce_turn(session, normalized)
         if commerce_hint.force_reply:
             spoken = enforce_commerce_response(

@@ -709,10 +709,9 @@ async def lookup_order(
     session: Optional["SessionState"] = None,
 ) -> str:
     """
-    Look up a Shopify order.
+    Look up a Shopify order by order number (full details) or email/phone.
 
-    Verification: order_number + (email or phone) → full details.
-    order_number only → status only.
+    Order number alone returns complete status, items, pricing, tracking, and refunds.
     """
     client = get_shopify_client()
     if not client.configured:
@@ -721,23 +720,22 @@ async def lookup_order(
     if not any([order_number, email, phone]):
         return json.dumps({"error": "Provide order_number, email, or phone to look up an order."})
 
-    # Supplement with already-verified session context.
-    if session:
-        if not email and session.verified_email and session.caller_email:
-            email = session.caller_email
+    if session and not email and session.verified_email and session.caller_email:
+        email = session.caller_email
+    if session and not phone and getattr(session, "verified_phone", False):
         inbound = (getattr(session, "from_number", "") or "").strip()
-        if not phone and inbound:
-            if getattr(session, "verified_phone", False) or order_number:
-                phone = inbound
+        if inbound:
+            phone = inbound
 
     try:
-        parts = []
+        parts: list[str] = []
         if order_number:
-            parts.append(f"name:#{order_number.lstrip('#')}")
-        if email:
-            parts.append(f"email:{email}")
-        if phone:
-            parts.append(f"phone:{phone}")
+            parts.extend(_order_lookup_query_parts(order_number, email=email, phone=phone))
+        else:
+            if email:
+                parts.append(f"email:{email}")
+            if phone:
+                parts.append(f"phone:{phone}")
 
         data = await client.execute(
             LOOKUP_ORDERS,
@@ -748,140 +746,249 @@ async def lookup_order(
             return json.dumps({"found": False, "message": "No matching order found."})
 
         node = edges[0]["node"]
-        verified = bool(order_number and (email or phone))
 
         if session and order_number:
             session.last_order_number = node["name"]
-
-        from ..shopify.order_privacy import (
-            card_last4_from_transactions,
-            customer_display_name,
-            mask_email_for_voice,
-        )
 
         order_email = (node.get("email") or "").strip()
         customer = node.get("customer") or {}
         if not order_email:
             order_email = (customer.get("email") or "").strip()
-        customer_name = customer_display_name(customer)
-        transactions = node.get("transactions") or []
-        card_last4 = card_last4_from_transactions(transactions)
+
+        order_obj = _build_full_order_from_node(node, order_email=order_email)
+        customer_message = _format_order_customer_message(order_obj, order_email=order_email)
 
         result: dict = {
             "found": True,
-            "order_number": node["name"],
-            "status": node["displayFinancialStatus"],
-            "fulfillment_status": node["displayFulfillmentStatus"],
+            "verification_required": False,
+            "order_number": order_obj["order_number"],
+            "status": order_obj["financial_status"],
+            "fulfillment_status": order_obj["fulfillment_status"],
+            "items": [
+                f"{i['quantity']}x {i['title']}" for i in order_obj.get("items") or []
+            ],
+            "book_titles": [i["title"] for i in order_obj.get("items") or []],
+            "subtotal": order_obj["pricing"].get("subtotal"),
+            "subtotal_before_shipping": order_obj["pricing"].get("subtotal_before_shipping"),
+            "shipping": order_obj["pricing"].get("shipping"),
+            "total": order_obj["pricing"].get("total"),
+            "total_with_shipping": order_obj["pricing"].get("total_with_shipping"),
+            "tracking_number": (order_obj.get("tracking") or {}).get("tracking_number"),
+            "tracking_url": "",
+            "customer_name": order_obj.get("customer_name"),
+            "email_masked": order_obj.get("email_masked"),
+            "payment_card_last4": order_obj.get("payment_card_last4"),
+            "refunds": order_obj.get("refunds"),
+            "product_count": order_obj.get("product_count"),
+            "shipped": order_obj.get("shipped"),
+            "order": order_obj,
+            "suggested_response": customer_message,
+            "customer_message": customer_message,
         }
 
-        if not verified:
-            result["verification_required"] = True
-            result["message"] = (
-                "For security, provide the email or phone number on this order "
-                "to view line items, tracking, or payment details."
-            )
-            result["suggested_response"] = (
-                f"I found order {node['name']}. The financial status is "
-                f"{node['displayFinancialStatus']} and fulfillment is "
-                f"{node['displayFulfillmentStatus']}. "
-                "To share more details, I'll need to verify your email or phone number."
-            )
-            return json.dumps(result)
+        tracking = (order_obj.get("tracking") or {})
+        if tracking.get("tracking_url_present"):
+            for fulfillment in node.get("fulfillments") or []:
+                for info in fulfillment.get("trackingInfo") or []:
+                    if info.get("url"):
+                        result["tracking_url"] = info.get("url")
+                        break
 
-        line_edges = node.get("lineItems", {}).get("edges", [])
-        if line_edges:
-            result["items"] = [
-                f"{e['node']['quantity']}x {e['node']['title']}"
-                for e in line_edges
-            ]
-            result["book_titles"] = [e["node"]["title"] for e in line_edges]
-
-        subtotal = node.get("subtotalPriceSet", {}).get("shopMoney", {})
-        if subtotal.get("amount") is not None:
-            result["subtotal"] = (
-                f"{subtotal.get('amount', '?')} {subtotal.get('currencyCode', '')}"
-            )
-        shipping_money = node.get("totalShippingPriceSet", {}).get("shopMoney", {})
-        if shipping_money.get("amount") is not None:
-            result["shipping"] = (
-                f"{shipping_money.get('amount', '?')} {shipping_money.get('currencyCode', '')}"
-            )
-        total_money = node.get("totalPriceSet", {}).get("shopMoney", {})
-        if total_money.get("amount") is not None:
-            result["total"] = (
-                f"{total_money.get('amount', '?')} {total_money.get('currencyCode', '')}"
-            )
-
-        if verified:
-            result["note"] = node.get("note") or ""
-            result["tags"] = node.get("tags") or []
-            result["custom_attributes"] = {
-                a.get("key", ""): a.get("value", "")
-                for a in (node.get("customAttributes") or [])
+        ship = node.get("shippingAddress") or {}
+        if ship:
+            result["shipping_address"] = {
+                "name": ship.get("name") or "",
+                "company": ship.get("company") or "",
+                "address1": ship.get("address1") or "",
+                "address2": ship.get("address2") or "",
+                "city": ship.get("city") or "",
+                "state": ship.get("provinceCode") or "",
+                "zip": ship.get("zip") or "",
             }
-            if result.get("subtotal"):
-                result["subtotal_before_shipping"] = result["subtotal"]
-            tracking = (node.get("fulfillments") or [{}])[0]
-            tracking_info = (tracking.get("trackingInfo") or [{}])[0] if tracking else {}
-            result["tracking_number"] = tracking_info.get("number")
-            result["tracking_url"] = tracking_info.get("url")
-            ship = node.get("shippingAddress") or {}
-            if ship:
-                result["shipping_address"] = {
-                    "name": ship.get("name") or "",
-                    "company": ship.get("company") or "",
-                    "address1": ship.get("address1") or "",
-                    "address2": ship.get("address2") or "",
-                    "city": ship.get("city") or "",
-                    "state": ship.get("provinceCode") or "",
-                    "zip": ship.get("zip") or "",
-                }
-                try:
-                    from ..facility.facility_resolver import facility_from_order
+            try:
+                from ..facility.facility_resolver import facility_from_order
 
-                    hint = facility_from_order(result)
-                    if hint:
-                        result["facility_hint"] = hint
-                except Exception:  # noqa: BLE001
-                    pass
-            if customer_name:
-                result["customer_name"] = customer_name
-            if order_email:
-                result["email_masked"] = mask_email_for_voice(order_email)
-            if card_last4:
-                result["payment_card_last4"] = card_last4
-            parts = [
-                f"Order {node['name']} is {node['displayFinancialStatus']} "
-                f"with fulfillment status {node['displayFulfillmentStatus']}."
-            ]
-            if result.get("items"):
-                parts.append("Line items: " + ", ".join(result["items"]) + ".")
-            if result.get("subtotal"):
-                parts.append(
-                    f"Subtotal before shipping is {result['subtotal']}. "
-                    f"Shipping was {result.get('shipping', 'unknown')}."
-                )
-            if result.get("total"):
-                parts.append(f"Order total is {result['total']}.")
-            if result.get("tracking_number"):
-                parts.append(f"Tracking number is {result['tracking_number']}.")
-            if card_last4:
-                parts.append(f"Payment card on file ends in {card_last4}.")
-            if order_email:
-                parts.append(f"Order email on file is {result['email_masked']}.")
-            result["suggested_response"] = " ".join(parts)
-            if session:
-                session.verified_email = bool(email)
-                session.verified_phone = bool(phone)
-        else:
-            # Unreachable — verified branch returns above; kept for safety.
-            result["verification_required"] = True
+                hint = facility_from_order(result)
+                if hint:
+                    result["facility_hint"] = hint
+            except Exception:  # noqa: BLE001
+                pass
+
+        result["note"] = node.get("note") or ""
+        result["tags"] = node.get("tags") or []
+        result["custom_attributes"] = {
+            a.get("key", ""): a.get("value", "")
+            for a in (node.get("customAttributes") or [])
+        }
+
+        if session and (email or phone):
+            session.verified_email = bool(email)
+            session.verified_phone = bool(phone)
 
         return json.dumps(result)
 
     except Exception as exc:
         logger.error("lookup_order failed: %s", exc)
         return json.dumps({"error": "Order lookup temporarily unavailable."})
+
+
+def _order_lookup_query_parts(
+    order_number: str,
+    *,
+    email: str | None = None,
+    phone: str | None = None,
+) -> list[str]:
+    """Build Shopify order search — order number only unless caller gave email/phone."""
+    parts = [f"name:#{order_number.lstrip('#')}"]
+    if email:
+        parts.append(f"email:{email}")
+    if phone:
+        parts.append(f"phone:{phone}")
+    return parts
+
+
+def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
+    """Structured order payload for voice + LLM tools."""
+    from ..shopify.order_privacy import card_last4_from_transactions, customer_display_name, mask_email_for_voice
+
+    subtotal_amt, subtotal_cur = _money_amount_currency(node.get("subtotalPriceSet"))
+    shipping_amt, shipping_cur = _money_amount_currency(node.get("totalShippingPriceSet"))
+    tax_amt, tax_cur = _money_amount_currency(node.get("totalTaxSet"))
+    discount_amt, discount_cur = _money_amount_currency(node.get("totalDiscountsSet"))
+    total_amt, total_cur = _money_amount_currency(node.get("totalPriceSet"))
+    items = _line_items_from_node(node)
+    tracking = _tracking_from_node(node)
+    refunds = _refunds_from_node(node, order_email=order_email)
+    customer = node.get("customer") or {}
+    customer_name = customer_display_name(customer)
+    card_last4 = card_last4_from_transactions(node.get("transactions") or [])
+    item_count = sum(int(i.get("quantity") or 0) for i in items)
+
+    return {
+        "order_id": node.get("id", ""),
+        "order_number": node.get("name", ""),
+        "created_at": (node.get("createdAt") or "")[:10],
+        "financial_status": node.get("displayFinancialStatus", ""),
+        "fulfillment_status": node.get("displayFulfillmentStatus", ""),
+        "shipping_status": _fulfillment_shipping_status(node),
+        "shipped": bool(tracking.get("tracking_number"))
+        or str(node.get("displayFulfillmentStatus") or "").upper() in ("FULFILLED", "PARTIAL"),
+        "tracking": tracking,
+        "items": items,
+        "product_count": item_count,
+        "line_item_count": len(items),
+        "pricing": {
+            "subtotal": f"{subtotal_amt} {subtotal_cur}".strip(),
+            "subtotal_before_shipping": f"{subtotal_amt} {subtotal_cur}".strip(),
+            "shipping": f"{shipping_amt} {shipping_cur}".strip(),
+            "tax": f"{tax_amt} {tax_cur}".strip(),
+            "discount": f"{discount_amt} {discount_cur}".strip(),
+            "total": f"{total_amt} {total_cur}".strip(),
+            "total_with_shipping": f"{total_amt} {total_cur}".strip(),
+            "currency": total_cur or subtotal_cur or "USD",
+        },
+        "refunds": refunds,
+        "customer_name": customer_name,
+        "email_masked": mask_email_for_voice(order_email) if order_email else "",
+        "payment_card_last4": card_last4,
+        "cancelled_at": (node.get("cancelledAt") or "")[:10],
+    }
+
+
+def _format_order_customer_message(
+    order_obj: dict,
+    *,
+    order_email: str = "",
+) -> str:
+    """Rich phone-friendly order summary — card last-4 only, never full PAN."""
+    from ..shopify.order_privacy import mask_email_for_voice
+
+    parts: list[str] = []
+    num = order_obj.get("order_number") or ""
+    name = (order_obj.get("customer_name") or "").strip()
+    if name:
+        parts.append(f"This order is under the name {name}.")
+
+    items = order_obj.get("items") or []
+    if items:
+        titles = []
+        for row in items[:6]:
+            qty = int(row.get("quantity") or 1)
+            title = row.get("title") or "item"
+            copy_word = "copy" if qty == 1 else "copies"
+            price = (row.get("price") or "").strip()
+            bit = f"{qty} {copy_word} of {title}"
+            if price:
+                bit += f" at {price} each"
+            titles.append(bit)
+        product_count = int(order_obj.get("product_count") or sum(i.get("quantity", 0) for i in items))
+        parts.append(
+            f"Order {num} includes {product_count} product{'s' if product_count != 1 else ''}: "
+            + "; ".join(titles) + "."
+        )
+
+    pricing = order_obj.get("pricing") or {}
+    sub = pricing.get("subtotal_before_shipping") or pricing.get("subtotal") or ""
+    ship = pricing.get("shipping") or ""
+    total = pricing.get("total_with_shipping") or pricing.get("total") or ""
+    if sub:
+        parts.append(f"The subtotal before shipping is {sub}.")
+    if ship:
+        parts.append(f"Shipping was {ship}.")
+    if total:
+        parts.append(f"The total including shipping is {total}.")
+
+    fin = order_obj.get("financial_status") or "unknown"
+    fulfill = order_obj.get("fulfillment_status") or "unknown"
+    parts.append(f"Payment status is {fin.replace('_', ' ').lower()}.")
+    parts.append(f"Fulfillment status is {fulfill.replace('_', ' ').lower()}.")
+
+    tracking = order_obj.get("tracking") or {}
+    if order_obj.get("shipped") or tracking.get("tracking_number"):
+        carrier = tracking.get("carrier") or "the carrier"
+        if tracking.get("tracking_number"):
+            parts.append(
+                f"Yes — it has shipped. The tracking number is {tracking['tracking_number']} "
+                f"with {carrier}."
+            )
+        else:
+            parts.append("Yes — this order has shipped.")
+    else:
+        parts.append("It has not shipped yet.")
+
+    card_last4 = (order_obj.get("payment_card_last4") or "").strip()
+    if card_last4:
+        parts.append(f"Payment was made with a card ending in {card_last4}.")
+
+    refunds = order_obj.get("refunds") or []
+    if refunds:
+        for refund in refunds:
+            amt = refund.get("amount") or ""
+            dt = refund.get("created_at") or ""
+            refund_items = refund.get("items") or []
+            item_phrase = ""
+            if refund_items:
+                item_phrase = f" for {', '.join(refund_items[:3])}"
+            r_card = (refund.get("card_last4") or card_last4 or "").strip()
+            line = f"A refund of {amt} was processed on {dt}{item_phrase}."
+            if r_card:
+                line += f" It was returned to the card ending in {r_card}."
+            parts.append(line)
+        email_masked = mask_email_for_voice(order_email) if order_email else (
+            refunds[-1].get("destination_email") or ""
+        )
+        if email_masked:
+            parts.append(
+                f"Please check your refund confirmation in your inbox at {email_masked} — "
+                "that is the email Shopify has on this order."
+            )
+
+    if order_email:
+        masked = mask_email_for_voice(order_email)
+        if masked and not refunds:
+            parts.append(f"The email on this order is {masked}.")
+
+    return " ".join(parts)
 
 
 def _money_amount_currency(money_set: dict | None) -> tuple[str, str]:
@@ -982,9 +1089,9 @@ async def lookup_shopify_order_details(
     session: Optional["SessionState"] = None,
 ) -> str:
     """
-    Canonical order lookup with privacy tiers and structured pricing/tracking/refunds.
+    Canonical order lookup — order number alone returns full Shopify order details.
 
-    order_number only → limited status; email_or_phone → full verified details.
+    Email/phone are optional filters only when the caller explicitly provides them.
     """
     if not (order_number or "").strip():
         return json.dumps({
@@ -996,7 +1103,7 @@ async def lookup_shopify_order_details(
 
     email, phone = _parse_email_or_phone(email_or_phone)
     settings = get_settings()
-    cache_key = f"order_lookup:{order_number.lstrip('#')}:{email or ''}:{phone or ''}"
+    cache_key = f"order_lookup:{order_number.lstrip('#')}:full"
     cached = await shopify_cache_get(cache_key)
     if cached is not None:
         return json.dumps(cached)
@@ -1013,19 +1120,8 @@ async def lookup_shopify_order_details(
             ),
         })
 
-    if session:
-        if not email and session.verified_email and session.caller_email:
-            email = session.caller_email
-        inbound = (getattr(session, "from_number", "") or "").strip()
-        if not phone and inbound and (getattr(session, "verified_phone", False) or order_number):
-            phone = inbound
-
     try:
-        parts = [f"name:#{order_number.lstrip('#')}"]
-        if email:
-            parts.append(f"email:{email}")
-        if phone:
-            parts.append(f"phone:{phone}")
+        parts = _order_lookup_query_parts(order_number, email=email, phone=phone)
 
         data = await client.execute(
             LOOKUP_ORDERS,
@@ -1045,99 +1141,25 @@ async def lookup_shopify_order_details(
             return json.dumps(payload)
 
         node = edges[0]["node"]
-        verified = bool(email or phone)
 
         if session:
             session.last_order_number = node.get("name") or order_number
-
-        from ..shopify.order_privacy import mask_email_for_voice
 
         order_email = (node.get("email") or "").strip()
         customer = node.get("customer") or {}
         if not order_email:
             order_email = (customer.get("email") or "").strip()
 
-        if not verified:
-            limited = {
-                "order_id": node.get("id", ""),
-                "order_number": node.get("name", ""),
-                "created_at": (node.get("createdAt") or "")[:10],
-                "financial_status": node.get("displayFinancialStatus", ""),
-                "fulfillment_status": node.get("displayFulfillmentStatus", ""),
-                "shipping_status": _fulfillment_shipping_status(node),
-            }
-            payload = {
-                "found": True,
-                "verification_required": True,
-                "order": limited,
-                "customer_message": (
-                    "I can check the basic status. For full details, please confirm "
-                    "the email or phone number on the order."
-                ),
-            }
-            await shopify_cache_set(cache_key, payload, ttl=min(60, settings.SHOPIFY_CACHE_TTL_SECS))
-            return json.dumps(payload)
-
-        subtotal_amt, subtotal_cur = _money_amount_currency(node.get("subtotalPriceSet"))
-        shipping_amt, shipping_cur = _money_amount_currency(node.get("totalShippingPriceSet"))
-        tax_amt, tax_cur = _money_amount_currency(node.get("totalTaxSet"))
-        discount_amt, discount_cur = _money_amount_currency(node.get("totalDiscountsSet"))
-        total_amt, total_cur = _money_amount_currency(node.get("totalPriceSet"))
-        items = _line_items_from_node(node)
-        tracking = _tracking_from_node(node)
-        refunds = _refunds_from_node(node, order_email=order_email)
-
-        order_obj = {
-            "order_id": node.get("id", ""),
-            "order_number": node.get("name", ""),
-            "created_at": (node.get("createdAt") or "")[:10],
-            "financial_status": node.get("displayFinancialStatus", ""),
-            "fulfillment_status": node.get("displayFulfillmentStatus", ""),
-            "shipping_status": _fulfillment_shipping_status(node),
-            "tracking": tracking,
-            "items": items,
-            "pricing": {
-                "subtotal": f"{subtotal_amt} {subtotal_cur}".strip(),
-                "shipping": f"{shipping_amt} {shipping_cur}".strip(),
-                "tax": f"{tax_amt} {tax_cur}".strip(),
-                "discount": f"{discount_amt} {discount_cur}".strip(),
-                "total": f"{total_amt} {total_cur}".strip(),
-                "currency": total_cur or subtotal_cur or "USD",
-            },
-            "refunds": refunds,
-        }
-
-        item_count = sum(i.get("quantity", 0) for i in items)
-        status = order_obj["fulfillment_status"] or order_obj["financial_status"]
-        msg_parts = [
-            f"Your order has {item_count} item{'s' if item_count != 1 else ''}.",
-            f"The subtotal was ${subtotal_amt}, shipping was ${shipping_amt}, "
-            f"and the total was ${total_amt}.",
-            f"It is currently {status}.",
-        ]
-        if tracking.get("tracking_number"):
-            carrier = tracking.get("carrier") or "the carrier"
-            msg_parts.append(
-                f"Tracking is available with {carrier}. "
-                "I can send or spell the tracking number if you want."
-            )
-        if refunds:
-            latest = refunds[-1]
-            msg_parts.append(
-                f"Your refund was processed on {latest.get('created_at', '')} "
-                f"for {latest.get('amount', '')}. "
-                "Please check the email associated with the order."
-            )
-        if order_email:
-            msg_parts.append(f"Order email on file is {mask_email_for_voice(order_email)}.")
+        order_obj = _build_full_order_from_node(node, order_email=order_email)
+        customer_message = _format_order_customer_message(order_obj, order_email=order_email)
 
         payload = {
             "found": True,
             "verification_required": False,
             "order": order_obj,
-            "customer_message": " ".join(msg_parts),
+            "customer_message": customer_message,
         }
-        if session:
+        if session and (email or phone):
             session.verified_email = bool(email)
             session.verified_phone = bool(phone)
         await shopify_cache_set(cache_key, payload, ttl=settings.SHOPIFY_CACHE_TTL_SECS)
@@ -1198,34 +1220,25 @@ async def get_refund_status(
     session: Optional["SessionState"] = None,
 ) -> str:
     """
-    Fetch refund details. Requires order_number + email or phone verification.
+    Fetch refund details for an order number.
+
+    Order number alone is sufficient — email/phone are optional extra filters.
     Returns refund amounts, dates, and items — no raw transaction IDs.
     """
     client = get_shopify_client()
     if not client.configured:
         return json.dumps({"error": "Shopify not configured"})
 
-    if session:
-        if not email and session.verified_email and session.caller_email:
-            email = session.caller_email
-        if not phone and session.verified_phone:
-            phone = session.from_number
+    if not (order_number or "").strip():
+        return json.dumps({"found": False, "message": "I need an order number to check refunds."})
 
-    if not (email or phone):
-        return json.dumps({
-            "verified": False,
-            "message": (
-                "To protect your account, I need your email address or phone number "
-                "to share refund details. What email is on your account?"
-            ),
-        })
+    if session and not email and session.verified_email and session.caller_email:
+        email = session.caller_email
+    if session and not phone and getattr(session, "verified_phone", False):
+        phone = session.from_number
 
     try:
-        parts = [f"name:#{order_number.lstrip('#')}"]
-        if email:
-            parts.append(f"email:{email}")
-        if phone:
-            parts.append(f"phone:{phone}")
+        parts = _order_lookup_query_parts(order_number, email=email, phone=phone)
 
         lookup_data = await client.execute(
             LOOKUP_ORDERS,

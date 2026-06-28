@@ -3,8 +3,7 @@ Order / refund / delivery flow for live voice (v4.32).
 
 Deterministic steps before the LLM:
   1. Customer asks about order → ask for order number
-  2. Order number received → parallel Shopify enrichment
-  3. If unverified → ask for email/phone on the order
+  2. Order number received → Shopify enrichment (full details, no email gate)
 """
 from __future__ import annotations
 
@@ -167,9 +166,9 @@ def prepare_order_turn_context(
         if 4 <= len(spoken_digits) <= 8:
             order_num = spoken_digits.lstrip("0") or spoken_digits
     if order_num:
-        session.order_flow_status = STATUS_AWAITING_ORDER_VERIFICATION
         session.pending_order_number = order_num
         session.last_order_number = order_num
+        session.order_flow_status = STATUS_IDLE
         session.pending_isbn_buffer = ""
 
 
@@ -186,9 +185,9 @@ def process_order_turn(session: "SessionState", caller_text: str, *, turn_mode: 
     order_num = extract_order_number(text, session, turn_mode=turn_mode)
 
     if order_num:
-        session.order_flow_status = STATUS_AWAITING_ORDER_VERIFICATION
         session.pending_order_number = order_num
         session.last_order_number = order_num
+        session.order_flow_status = STATUS_IDLE
 
     if status == STATUS_AWAITING_ORDER_VERIFICATION and not order_num:
         if extract_email_from_turn(text):
@@ -247,13 +246,6 @@ async def try_order_enrichment_short_circuit(
     email = extract_email_from_turn(text)
     if email:
         session.caller_email = email
-        session.verified_email = True
-
-    phone = None
-    if getattr(session, "from_number", "") and getattr(session, "verified_phone", False):
-        phone = session.from_number
-    elif not email and getattr(session, "from_number", ""):
-        phone = session.from_number
 
     facility_name = (getattr(session, "last_facility_name", "") or "").strip()
     check_facility = facility_issue_detected(text) or bool(facility_name)
@@ -262,16 +254,15 @@ async def try_order_enrichment_short_circuit(
         session,
         order_num,
         email=email,
-        phone=phone,
+        phone=None,
         facility_name=facility_name,
         check_facility=check_facility,
     )
 
-    if not result.order.get("found") and not result.order.get("status"):
+    if not result.order.get("found"):
         return OrderTurnHint(
             force_reply=(
-                f"I couldn't find order {order_num}. Could you double-check the number, "
-                "or give me the email on the order?"
+                f"I couldn't find order {order_num}. Could you double-check the number?"
             ),
             openai_skipped=True,
             enrichment_done=True,

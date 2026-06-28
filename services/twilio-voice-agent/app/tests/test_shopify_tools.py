@@ -170,7 +170,7 @@ async def test_lookup_order_unverified_omits_items():
 
     data = json.loads(result)
     assert data["found"] is True
-    assert "items" not in data  # restricted — unverified lookup
+    assert data.get("items")  # full details with order number only
 
 
 @pytest.mark.asyncio
