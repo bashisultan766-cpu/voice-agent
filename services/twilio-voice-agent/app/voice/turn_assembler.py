@@ -432,12 +432,13 @@ class TurnAssembler:
                 if st.isbn_partial_since <= 0:
                     st.isbn_partial_since = time.monotonic()
                 timeout_s = getattr(self._settings, "VOICE_ISBN_PARTIAL_TIMEOUT_MS", 5000) / 1000
-                if 10 <= len(digits) <= 12 and time.monotonic() - st.isbn_partial_since >= timeout_s:
-                    st.buffer = _PARTIAL_ISBN_CLARIFY
-                    st.mode = "normal"
+                if (
+                    1 <= len(digits) <= 12
+                    and time.monotonic() - st.isbn_partial_since >= timeout_s
+                ):
                     st.isbn_partial_since = 0.0
                     logger.info(
-                        "turn_assembler_emit sid=%s mode=normal reason=partial_isbn_timeout digits=%d",
+                        "turn_assembler_emit sid=%s mode=isbn reason=partial_isbn_timeout digits=%d",
                         sid, len(digits),
                     )
                     await self._emit_buffered(sid, self._emit_callback, "partial_isbn_timeout")

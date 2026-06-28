@@ -190,3 +190,39 @@ class TestIsbnShortCircuit:
         isbn, buf = resolve_spoken_isbn("9 7 8 0 8 7 7 7 9 2 9", session=session, turn_mode="isbn")
         assert isbn is None
         assert len(buf) == 11
+
+    @pytest.mark.asyncio
+    async def test_partial_isbn_on_another_book_turn_speaks(self):
+        session = _session(commerce_flow_status="awaiting_another_book")
+        result = await try_isbn_short_circuit(
+            session,
+            "9 7 8 0 8 7 7 7 9 2 9",
+            turn_mode="isbn",
+        )
+        assert result is not None
+        assert result.force_reply
+        assert "digit" in result.force_reply.lower()
+
+    @pytest.mark.asyncio
+    async def test_voice_runtime_never_silent_on_isbn_turn(self):
+        from app.runtime.voice_commerce_runtime import VoiceCommerceRuntime
+
+        session = _session(commerce_flow_status="awaiting_another_book")
+        runtime = VoiceCommerceRuntime()
+        sent: list[dict] = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        with patch("app.config.get_settings") as mock_settings:
+            mock_settings.return_value.OPENAI_API_KEY = "sk-test"
+            with patch.object(runtime._brain, "finalize_response", side_effect=lambda s, t, tr: t):
+                result = await runtime.handle_turn(
+                    session,
+                    "9 7 8 0 8 7 7 7 9 2 9",
+                    send,
+                    assembled_turn_mode="isbn",
+                )
+
+        assert result.response_text
+        assert any(m.get("token") for m in sent if m.get("type") == "text")

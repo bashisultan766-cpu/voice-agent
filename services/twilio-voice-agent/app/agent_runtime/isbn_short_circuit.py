@@ -121,6 +121,26 @@ def _expand_text(text: str) -> str:
     return expand_spoken_repeaters(text or "")
 
 
+def arm_isbn_digit_collection(session: "SessionState") -> None:
+    """Caller was invited to read an ISBN — keep digit collection active."""
+    session.pending_isbn_buffer = getattr(session, "pending_isbn_buffer", "") or ""
+    try:
+        from .conversation_state_machine import get_conversation_state
+
+        cs = get_conversation_state(session.call_sid)
+        cs.mode = "isbn_collection"
+        cs.expected_next = "isbn"
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _looks_like_isbn_digit_stream(text: str) -> bool:
+    from ..tools.isbn_validator import extract_digits
+
+    digits = extract_digits(text or "")
+    return len(digits) >= 10 and digits.startswith(("978", "979"))
+
+
 def _isbn_collection_active(session: "SessionState", turn_mode: str = "") -> bool:
     if turn_mode == "isbn":
         return True
@@ -133,6 +153,8 @@ def _isbn_collection_active(session: "SessionState", turn_mode: str = "") -> boo
     except Exception:  # noqa: BLE001
         pass
     status = getattr(session, "commerce_flow_status", "idle") or "idle"
+    if status == "awaiting_another_book":
+        return True
     if status in ("awaiting_book_confirm", "awaiting_quantity", "idle"):
         if getattr(session, "commerce_pending_candidate", None):
             return False
@@ -178,8 +200,11 @@ def should_skip_isbn_digit_collection(
         "awaiting_another_book",
         "awaiting_email_collection",
     ):
-        if not re.search(r"\bisbn\b", text, re.I):
-            return True
+        if re.search(r"\bisbn\b", text, re.I):
+            return False
+        if _looks_like_isbn_digit_stream(text):
+            return False
+        return True
 
     return False
 
@@ -350,7 +375,9 @@ def resolve_spoken_isbn(
     )
     if not collecting and not re.search(r"\b(isbn|digit)\b", expanded, re.I):
         digits_only = extract_digits(expanded)
-        if len(digits_only) not in (10, 13):
+        if len(digits_only) < 10:
+            return None, buf
+        if not digits_only.startswith(("978", "979")):
             return None, buf
 
     result = process_isbn_buffer(expanded, buf)
@@ -424,6 +451,22 @@ async def try_isbn_short_circuit(
         partial = isbn_partial_reply(session, caller_text, turn_mode=turn_mode)
         if partial and (turn_mode == "isbn" or _isbn_collection_active(session, turn_mode)):
             return IsbnShortCircuitResult(force_reply=partial)
+        if turn_mode == "isbn" or _looks_like_isbn_digit_stream(caller_text):
+            buf = getattr(session, "pending_isbn_buffer", "") or ""
+            if buf:
+                need = max(0, 13 - len(buf))
+                return IsbnShortCircuitResult(
+                    force_reply=(
+                        f"I have {len(buf)} digits so far. "
+                        f"Please give me the next {need} digit{'s' if need != 1 else ''}."
+                    ),
+                )
+            return IsbnShortCircuitResult(
+                force_reply=(
+                    "Go ahead with the full 13-digit ISBN when you're ready — "
+                    "I'll look it up as soon as I have the complete number."
+                ),
+            )
         return None
 
     sid = (session.call_sid or "")[:6]

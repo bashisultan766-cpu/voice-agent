@@ -94,13 +94,28 @@ class VoiceCommerceRuntime:
         classification: ClassificationResult,
     ) -> Optional[RuntimeTurnResult]:
         """Run deterministic ISBN resolution + Shopify search without LLM latency."""
-        from ..agent_runtime.isbn_short_circuit import try_isbn_short_circuit
+        from ..agent_runtime.isbn_short_circuit import (
+            _looks_like_isbn_digit_stream,
+            arm_isbn_digit_collection,
+            conversational_ack_reply,
+            is_conversational_ack,
+            try_isbn_short_circuit,
+        )
         from ..tools.isbn import extract_isbn_candidate
+
+        if is_conversational_ack(caller_text):
+            ack = conversational_ack_reply(session, turn_mode=turn_mode)
+            if ack:
+                spoken = self._brain.finalize_response(session, ack, [])
+                await self._speak(session, caller_text, spoken, send)
+                return _result(spoken)
 
         is_isbn_turn = (
             (turn_mode or "").lower() == "isbn"
             or classification.is_product_search
             or bool(extract_isbn_candidate(caller_text))
+            or _looks_like_isbn_digit_stream(caller_text)
+            or bool(getattr(session, "pending_isbn_buffer", ""))
         )
         if not is_isbn_turn:
             return None
@@ -110,7 +125,9 @@ class VoiceCommerceRuntime:
             sc = await try_isbn_short_circuit(session, caller_text, turn_mode=turn_mode)
         except Exception as exc:
             logger.warning("isbn_product_hunt_failed sid=%s err=%s", sid, type(exc).__name__)
-            return None
+            spoken = self._brain.finalize_response(session, _OPENAI_FALLBACK, [])
+            await self._speak(session, caller_text, spoken, send)
+            return _result(spoken)
 
         if not sc or not sc.force_reply:
             return None
@@ -271,6 +288,10 @@ class VoiceCommerceRuntime:
             return email_result
 
         if classification.action == "instant" and classification.instant_reply:
+            if classification.reason == "isbn_offer_prompt":
+                from ..agent_runtime.isbn_short_circuit import arm_isbn_digit_collection
+
+                arm_isbn_digit_collection(session)
             spoken = self._brain.finalize_response(session, classification.instant_reply, [])
             await self._speak(session, normalized, spoken, send)
             logger.info(
