@@ -255,8 +255,6 @@ async def test_get_customer_order_history():
     }}
 
     async def fake_execute(query, variables=None):
-        if "LookupOrders" in query or "orders(first" in query:
-            return {"data": {"orders": {"edges": [{"node": order_node}]}}}
         if "GetCustomerOrderHistory" in query:
             return {
                 "data": {
@@ -281,6 +279,8 @@ async def test_get_customer_order_history():
                     }
                 }
             }
+        if "LookupOrders" in query:
+            return {"data": {"orders": {"edges": [{"node": order_node}]}}}
         return {"data": {}}
 
     client = AsyncMock()
@@ -297,6 +297,7 @@ async def test_get_customer_order_history():
 
 
 @pytest.mark.asyncio
+async def test_main_brain_uses_order_lookup_customer_message():
     from app.agents.main_commerce_brain import MainCommerceBrain
     from app.agent_runtime import llm_tools
     from app.tests.test_isbn_and_order_lookup_fix import (
