@@ -147,12 +147,16 @@ query LookupOrders($query: String!, $first: Int!) {
             }
           }
           transactions(first: 3) {
-            gateway
-            status
-            paymentDetails {
-              ... on CardPaymentDetails {
-                number
-                company
+            edges {
+              node {
+                gateway
+                status
+                paymentDetails {
+                  ... on CardPaymentDetails {
+                    number
+                    company
+                  }
+                }
               }
             }
           }
@@ -332,12 +336,16 @@ query GetOrderWithRefunds($id: ID!) {
         amountSet { shopMoney { amount currencyCode } }
       }
       transactions(first: 3) {
-        gateway
-        status
-        paymentDetails {
-          ... on CardPaymentDetails {
-            number
-            company
+        edges {
+          node {
+            gateway
+            status
+            paymentDetails {
+              ... on CardPaymentDetails {
+                number
+                company
+              }
+            }
           }
         }
       }

@@ -58,6 +58,16 @@ def circuit_open_error() -> dict[str, Any]:
     }
 
 
+def _has_usable_shopify_data(result: dict[str, Any]) -> bool:
+    data = result.get("data") or {}
+    orders = data.get("orders") or {}
+    if orders.get("edges"):
+        return True
+    if data.get("order"):
+        return True
+    return False
+
+
 async def guarded_execute(
     fn: Callable[[], Awaitable[dict[str, Any]]],
     *,
@@ -67,7 +77,7 @@ async def guarded_execute(
         return circuit_open_error()
     try:
         result = await fn()
-        if result.get("errors"):
+        if result.get("errors") and not _has_usable_shopify_data(result):
             _record_failure()
         else:
             _record_success()

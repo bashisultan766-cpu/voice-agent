@@ -69,6 +69,14 @@ class TestOrderPrivacy:
         txns = [{"paymentDetails": {"number": "•••• •••• •••• 4242"}}]
         assert card_last4_from_transactions(txns) == "4242"
 
+    def test_card_last4_from_refund_transaction_connection(self):
+        txns = {
+            "edges": [
+                {"node": {"paymentDetails": {"number": "•••• 9999"}}},
+            ],
+        }
+        assert card_last4_from_transactions(txns) == "9999"
+
 
 class TestCartResume:
     def test_resume_restores_cart_items(self):

@@ -1166,7 +1166,7 @@ def _refunds_from_node(node: dict, *, order_email: str) -> list[dict]:
             for li_edge in (refund.get("refundLineItems") or {}).get("edges", [])
         ]
         items = [t for t in items if t]
-        card_last4 = card_last4_from_transactions(refund.get("transactions") or [])
+        card_last4 = card_last4_from_transactions(refund.get("transactions"))
         refunds_out.append({
             "amount": f"{amount} {currency}".strip() if amount else "",
             "created_at": (refund.get("createdAt") or "")[:10],
@@ -1350,6 +1350,7 @@ async def get_refund_status(
             card_last4_from_transactions,
             customer_display_name,
             mask_email_for_voice,
+            transactions_list_from_graphql,
         )
 
         order_email = (order.get("email") or "").strip()
@@ -1378,12 +1379,13 @@ async def get_refund_status(
                 f"{li['node']['quantity']}x {li['node']['lineItem']['title']}"
                 for li in r.get("refundLineItems", {}).get("edges", [])
             ]
+            refund_txns = transactions_list_from_graphql(r.get("transactions"))
             gateways = list({
                 t.get("gateway", "")
-                for t in (r.get("transactions") or [])
+                for t in refund_txns
                 if t.get("gateway")
             })
-            r_last4 = card_last4_from_transactions(r.get("transactions") or []) or card_last4
+            r_last4 = card_last4_from_transactions(refund_txns) or card_last4
             refund_summaries.append({
                 "date": (r.get("createdAt") or "")[:10],
                 "amount": f"{total.get('amount', '?')} {total.get('currencyCode', '')}",
