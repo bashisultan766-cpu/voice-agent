@@ -53,7 +53,7 @@ def resolve_support_email(settings=None) -> str:
         val = (getattr(s, attr, "") or "").strip()
         if val:
             return val
-    return ""
+    return "jessica@sureshotbooks.com"
 
 
 def resolve_escalation_from_email(settings=None) -> str:
@@ -202,171 +202,16 @@ async def create_product_not_found_escalation(
             "success": False,
             "error_code": "missing_customer_email",
             "customer_message": (
-                "That item is not showing as available right now. "
-                "I can forward this to our team to check manually. "
-                "What email should they use to contact you?"
+                "I couldn't find that in our system right now. "
+                "I can forward your full request to our backend team so they can help manually. "
+                "What email should they use to reach you?"
             ),
         })
 
-    if not getattr(settings, "SUPPORT_ESCALATION_ENABLED", True):
-        return json.dumps({
-            "success": False,
-            "error_code": "escalation_disabled",
-            "customer_message": (
-                "That item is not showing as available right now. "
-                "Please contact SureShot Books customer service by email."
-            ),
-        })
-
-    support_to = resolve_support_email(settings)
-    if not support_to:
-        logger.error(
-            "product_not_found_escalation_blocked call_sid=%s reason=support_email_not_configured",
-            (model.call_sid or "")[:8],
-        )
-        return json.dumps({
-            "success": False,
-            "error_code": "support_email_not_configured",
-            "customer_message": (
-                "That item is not showing as available right now. "
-                "Our team could not be notified automatically — "
-                "please email SureShot Books customer service directly."
-            ),
-        })
-
-    if not settings.RESEND_API_KEY:
-        logger.error(
-            "product_not_found_escalation_blocked call_sid=%s reason=resend_not_configured",
-            (model.call_sid or "")[:8],
-        )
-        return json.dumps({
-            "success": False,
-            "error_code": "resend_not_configured",
-            "customer_message": (
-                "That item is not showing as available right now. "
-                "I could not reach our team by email right now. Please try again shortly."
-            ),
-        })
-
-    idem_key = model.idempotency_key()
-    existing = _get_existing_record(idem_key)
-    if existing and existing.get("success"):
-        logger.info(
-            "product_not_found_escalation_idempotent call_sid=%s type=%s",
-            (model.call_sid or "")[:8],
-            model.requested_type,
-        )
-        return json.dumps({
-            "success": True,
-            "escalation_id": existing.get("escalation_id", ""),
-            "idempotent": True,
-            "customer_message": _CUSTOMER_MESSAGE_SUCCESS,
-        })
-
-    escalation_id = str(uuid.uuid4())
-    from_addr = resolve_escalation_from_email(settings)
-    subject = (
-        f"[Voice Agent] Product not found — {model.requested_type}: "
-        f"{model.requested_value[:60]}"
-    )
-    body = _build_email_body(model)
-
-    logger.info(
-        "product_not_found_escalation_send call_sid=%s type=%s value_len=%d "
-        "email=%s phone=%s",
-        (model.call_sid or "")[:8],
-        model.requested_type,
-        len(model.requested_value),
-        _mask_email(model.customer_email),
-        _mask_phone(model.customer_phone),
+    from .customer_query_escalation import (
+        create_customer_query_escalation,
+        product_payload_to_customer_query,
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": from_addr,
-                    "to": [support_to],
-                    "subject": subject,
-                    "text": body,
-                    "reply_to": model.customer_email,
-                },
-            )
-        if resp.status_code not in (200, 201):
-            logger.error(
-                "product_not_found_escalation_failed call_sid=%s status=%s",
-                (model.call_sid or "")[:8],
-                resp.status_code,
-            )
-            return json.dumps({
-                "success": False,
-                "error_code": "email_send_failed",
-                "customer_message": (
-                    "That item is not showing as available right now. "
-                    "I had trouble notifying our team — please try again in a moment."
-                ),
-            })
-    except Exception as exc:
-        logger.error(
-            "product_not_found_escalation_error call_sid=%s err=%s",
-            (model.call_sid or "")[:8],
-            type(exc).__name__,
-        )
-        return json.dumps({
-            "success": False,
-            "error_code": "email_send_error",
-            "customer_message": (
-                "That item is not showing as available right now. "
-                "I had trouble notifying our team — please try again in a moment."
-            ),
-        })
-
-    record = {
-        "success": True,
-        "escalation_id": escalation_id,
-        "created_at": time.time(),
-        "call_sid": model.call_sid,
-        "requested_type": model.requested_type,
-        "requested_value": model.requested_value,
-    }
-    _save_record(idem_key, record)
-
-    if session is not None:
-        sent = list(getattr(session, "not_found_escalation_sent_keys", None) or [])
-        if idem_key not in sent:
-            sent.append(idem_key)
-        session.not_found_escalation_sent_keys = sent
-        try:
-            from ..memory.postgres_store import persist_escalation_if_configured
-            from ..workflow.hooks import schedule_workflow_event
-
-            persist_escalation_if_configured(
-                session,
-                escalation_type="product_not_found",
-                payload={
-                    "requested_type": model.requested_type,
-                    "requested_value": model.requested_value[:120],
-                    "escalation_id": escalation_id,
-                },
-            )
-            schedule_workflow_event(
-                session,
-                "escalation_created",
-                {
-                    "type": "product_not_found",
-                    "requested_type": model.requested_type,
-                },
-            )
-        except Exception:
-            pass
-
-    return json.dumps({
-        "success": True,
-        "escalation_id": escalation_id,
-        "customer_message": _CUSTOMER_MESSAGE_SUCCESS,
-    })
+    cq = product_payload_to_customer_query(model, session=session)
+    return await create_customer_query_escalation(cq, session=session)

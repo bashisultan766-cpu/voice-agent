@@ -436,6 +436,21 @@ class LLMToolRuntime:
 
         prepare_isbn_turn_context(session, caller_text, turn_mode=turn_mode)
 
+        from .customer_query_escalation_flow import process_customer_query_escalation_turn
+
+        esc_hint = await process_customer_query_escalation_turn(
+            session, caller_text, turn_mode=turn_mode,
+        )
+        if esc_hint.force_reply:
+            spoken = self._finalize(session, esc_hint.force_reply)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
+            logger.info("customer_query_escalation_email_capture sid=%s openai_skipped=true", sid)
+            return _result(spoken)
+
         if llm_only:
             from .commerce_flow_state import advance_commerce_state_silent
             from .order_flow_state import prepare_order_turn_context

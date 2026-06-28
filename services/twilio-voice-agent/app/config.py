@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     RESEND_FROM_NAME: str = "Bookstore Support"
     RESEND_REPLY_TO_EMAIL: str = ""
     RESEND_BRAND_NAME: str = "SureShot Books"
-    SUPPORT_EMAIL: str = ""              # Support/Jessica escalation destination
+    SUPPORT_EMAIL: str = "jessica@sureshotbooks.com"  # Backend / Jessica escalation destination
     # From address for product-not-found escalation emails (defaults to RESEND_FROM_*).
     SUPPORT_ESCALATION_FROM_EMAIL: str = ""
     # When true, product-not-found escalations email SUPPORT_EMAIL (required in production).

@@ -293,8 +293,27 @@ async def try_order_enrichment_short_circuit(
     )
 
     if not result.order.get("found"):
+        from .customer_query_escalation_flow import try_escalate_unresolved_query
+
+        esc = await try_escalate_unresolved_query(
+            session,
+            caller_text=text,
+            query_type="order",
+            issue_title=f"Order {order_num} not found in Shopify",
+            issue_detail=(
+                f"Customer asked about order {order_num}. "
+                "Shopify lookup returned no matching order. "
+                "Do not invent order data — manual lookup required."
+            ),
+            api_context={
+                "order_number": order_num,
+                "shopify_found": False,
+                "enrichment": result.order,
+            },
+            reason="order_not_found",
+        )
         return OrderTurnHint(
-            force_reply=(
+            force_reply=esc.force_reply or (
                 f"I couldn't find order {order_num}. Could you double-check the number?"
             ),
             openai_skipped=True,

@@ -5,15 +5,17 @@ Separate from payment email FSM; does not mutate payment_flow_status.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Optional, TYPE_CHECKING
 
 from ..escalation.models import ProductNotFoundEscalationPayload
-from ..escalation.product_not_found_escalation import create_product_not_found_escalation
-from ..payment.payment_state_machine import extract_email_from_text
+from .customer_query_escalation_flow import (
+    clear_pending_escalation,
+    maybe_execute_escalation as execute_customer_query_escalation,
+    process_customer_query_escalation_turn,
+)
 from ..tools.isbn import extract_isbn_candidate
 
 if TYPE_CHECKING:
@@ -24,14 +26,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MSG_ASK_EMAIL = (
-    "That item is not showing as available right now. "
-    "I can forward this to our team to check manually. "
-    "What email should they use to contact you?"
+    "I couldn't find that in our system right now. "
+    "I can forward your full request to our backend team so they can help manually. "
+    "What email should they use to reach you?"
 )
 
 _MSG_SUCCESS = (
-    "That item is not showing as available right now. "
-    "I'll forward this to our team. If we can source it, they'll contact you by email."
+    "I've sent your request to our backend team. "
+    "They'll review everything we discussed and contact you by email."
 )
 
 _ISBN = re.compile(r"\b(?:97[89]\d{10}|\d{9}[\dXx]|\d{13})\b")
@@ -110,6 +112,7 @@ def build_escalation_payload(
     search_result: dict[str, Any],
     customer_email: str = "",
 ) -> ProductNotFoundEscalationPayload:
+    """Legacy builder — stored as product payload, converted at send time."""
     email = (customer_email or _resolved_customer_email(session)).strip().lower()
     return ProductNotFoundEscalationPayload(
         session_id=getattr(session, "session_id", "") or getattr(session, "call_sid", ""),
@@ -131,25 +134,20 @@ def build_escalation_payload(
     )
 
 
-def _tool_execution_result(tool: str, parsed: dict[str, Any], *, raw: str = "") -> "ToolExecutionResult":
-    from ..orchestrator.types import ToolExecutionResult
-
-    success = bool(parsed.get("success"))
-    return ToolExecutionResult(
-        tool=tool,
-        success=success,
-        result=parsed,
-        raw_json=raw or json.dumps(parsed),
-    )
-
-
 async def maybe_execute_escalation(
     session: "SessionState",
     payload: ProductNotFoundEscalationPayload,
+    *,
+    caller_text: str = "",
 ) -> "ToolExecutionResult":
-    raw = await create_product_not_found_escalation(payload, session=session)
-    parsed = json.loads(raw)
-    return _tool_execution_result("create_product_not_found_escalation", parsed, raw=raw)
+    from ..escalation.customer_query_escalation import product_payload_to_customer_query
+
+    cq = product_payload_to_customer_query(payload, session=session, caller_text=caller_text)
+    return await execute_customer_query_escalation(
+        session,
+        cq,
+        caller_text=caller_text,
+    )
 
 
 def stage_pending_escalation(
@@ -160,11 +158,6 @@ def stage_pending_escalation(
     session.awaiting_not_found_escalation_email = True
 
 
-def clear_pending_escalation(session: "SessionState") -> None:
-    session.pending_not_found_escalation = {}
-    session.awaiting_not_found_escalation_email = False
-
-
 async def process_not_found_escalation_turn(
     session: "SessionState",
     caller_text: str,
@@ -172,38 +165,13 @@ async def process_not_found_escalation_turn(
     turn_mode: str = "",
 ) -> NotFoundEscalationTurnHint:
     """Handle email capture for a staged not-found escalation."""
-    if not getattr(session, "awaiting_not_found_escalation_email", False):
-        return NotFoundEscalationTurnHint()
-
-    pending = dict(getattr(session, "pending_not_found_escalation", None) or {})
-    if not pending:
-        session.awaiting_not_found_escalation_email = False
-        return NotFoundEscalationTurnHint()
-
-    email = _resolved_customer_email(session)
-    if not email:
-        email = (extract_email_from_text(caller_text, session) or "").strip().lower()
-
-    if not email or "@" not in email:
-        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL)
-
-    pending["customer_email"] = email
-    payload = ProductNotFoundEscalationPayload.from_dict(pending)
-    result = await maybe_execute_escalation(session, payload)
-    clear_pending_escalation(session)
-
-    if result.success:
-        return NotFoundEscalationTurnHint(
-            force_reply=result.result.get("customer_message") or _MSG_SUCCESS,
-            extra_tool_result=result,
-        )
-
+    hint = await process_customer_query_escalation_turn(
+        session, caller_text, turn_mode=turn_mode,
+    )
     return NotFoundEscalationTurnHint(
-        force_reply=str(
-            result.result.get("customer_message")
-            or "I had trouble forwarding that to our team. Please try again."
-        ),
-        extra_tool_result=result,
+        force_reply=hint.force_reply,
+        skip_compose=hint.skip_compose,
+        extra_tool_result=hint.extra_tool_result,
     )
 
 
@@ -265,7 +233,7 @@ async def handle_search_not_found_results(
         stage_pending_escalation(session, payload)
         return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL)
 
-    result = await maybe_execute_escalation(session, payload)
+    result = await maybe_execute_escalation(session, payload, caller_text=ctx.user_text or "")
     if result.success:
         return NotFoundEscalationTurnHint(
             force_reply=result.result.get("customer_message") or _MSG_SUCCESS,
