@@ -35,7 +35,7 @@ _FACILITY_ISSUE_INTENT = re.compile(
     re.IGNORECASE,
 )
 _ORDER_NUMBER_IN_TEXT = re.compile(
-    r"(?:order\s*(?:number|no\.?|#)?\s*)?#?\s*(\d{4,8})\b",
+    r"(?:order\s*(?:number|no\.?|#)?\s*)?#?\s*(\d{4,10})\b",
     re.IGNORECASE,
 )
 _DIGITS_ONLY = re.compile(r"^[\d\s\.\-]+$")
@@ -75,17 +75,61 @@ def _should_skip_order_lookup(
         except Exception:  # noqa: BLE001
             pass
         commerce = getattr(session, "commerce_flow_status", "idle") or "idle"
-        if commerce not in ("idle", "") and not order_intent_detected(text):
+        t = (text or "").strip()
+        digits = "".join(c for c in t if c.isdigit())
+        digit_only_order = (
+            4 <= len(digits) <= 10
+            and _DIGITS_ONLY.match(t)
+            and not digits.startswith(("978", "979"))
+        )
+        if commerce not in ("idle", "") and not order_intent_detected(text) and not digit_only_order:
             return True
     t = (text or "").strip()
     if re.search(r"\b(isbn|book)\b", t, re.I):
         return True
     digits = "".join(c for c in t if c.isdigit())
+    # Short digit-only utterances are order numbers, not ISBNs.
+    if (
+        4 <= len(digits) <= 10
+        and _DIGITS_ONLY.match(t)
+        and not digits.startswith(("978", "979"))
+    ):
+        return False
     if len(digits) >= 9:
         return True
     if digits.startswith(("978", "979")) and len(digits) >= 4:
         return True
     return False
+
+
+def normalize_order_number_from_speech(text: str) -> Optional[str]:
+    """Extract an order number from spoken or typed caller text."""
+    from ..tools.isbn import _spoken_digits_to_string, expand_spoken_repeaters
+
+    t = (text or "").strip()
+    if not t:
+        return None
+
+    m = _ORDER_NUMBER_IN_TEXT.search(t)
+    if m:
+        num = m.group(1)
+        return num.lstrip("0") or num
+
+    if _DIGITS_ONLY.match(t):
+        digits = "".join(c for c in t if c.isdigit())
+        if 4 <= len(digits) <= 10 and not digits.startswith(("978", "979")):
+            return digits.lstrip("0") or digits
+
+    expanded = expand_spoken_repeaters(t)
+    spoken = _spoken_digits_to_string(expanded)
+    if 4 <= len(spoken) <= 10 and not spoken.startswith(("978", "979")):
+        return spoken.lstrip("0") or spoken
+
+    digits = "".join(c for c in expanded if c.isdigit())
+    if 4 <= len(digits) <= 10 and not digits.startswith(("978", "979")):
+        return digits.lstrip("0") or digits
+
+    return None
 
 
 def extract_order_number(
@@ -96,16 +140,9 @@ def extract_order_number(
 ) -> Optional[str]:
     if _should_skip_order_lookup(text, session, turn_mode):
         return None
-    t = (text or "").strip()
-    if not t:
-        return None
-    if _DIGITS_ONLY.match(t):
-        digits = "".join(c for c in t if c.isdigit())
-        if 4 <= len(digits) <= 8:
-            return digits.lstrip("0") or digits
-    m = _ORDER_NUMBER_IN_TEXT.search(t)
-    if m:
-        return m.group(1)
+    order_num = normalize_order_number_from_speech(text)
+    if order_num:
+        return order_num
     return None
 
 
@@ -162,9 +199,7 @@ def prepare_order_turn_context(
 
     order_num = extract_order_number(text, session, turn_mode=turn_mode)
     if not order_num and re.search(r"\border\b", text, re.I):
-        spoken_digits = "".join(c for c in text if c.isdigit())
-        if 4 <= len(spoken_digits) <= 8:
-            order_num = spoken_digits.lstrip("0") or spoken_digits
+        order_num = normalize_order_number_from_speech(text)
     if order_num:
         session.pending_order_number = order_num
         session.last_order_number = order_num
@@ -236,9 +271,7 @@ async def try_order_enrichment_short_circuit(
         or getattr(session, "last_order_number", "")
     )
     if turn_mode == "order" and not order_num:
-        digits = "".join(c for c in text if c.isdigit())
-        if 4 <= len(digits) <= 8:
-            order_num = digits
+        order_num = normalize_order_number_from_speech(text)
 
     if not order_num:
         return None

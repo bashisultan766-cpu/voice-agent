@@ -111,9 +111,18 @@ class TurnAssembler:
                 return "isbn"
         if should_collect_isbn(text, book_collection=book_collection) or is_complete_isbn(text):
             return "isbn"
+        from ..agent_runtime.order_flow_state import normalize_order_number_from_speech
+
+        digits = "".join(c for c in text if c.isdigit())
         if _ORDER_HINT.search(t) or self._state.mode == "order":
-            if is_complete_order_number(text) or _DIGIT_FRAGMENT.match(text.strip()):
+            if normalize_order_number_from_speech(text) or _DIGIT_FRAGMENT.match(text.strip()):
                 return "order"
+        if (
+            _DIGIT_FRAGMENT.match(text.strip())
+            and 4 <= len(digits) <= 10
+            and not digits.startswith(("978", "979"))
+        ):
+            return "order"
         if self._state.mode == "isbn" and should_collect_isbn(text, book_collection=book_collection):
             return "isbn"
         if not should_collect_isbn(text, book_collection=book_collection):

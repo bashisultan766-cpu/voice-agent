@@ -720,28 +720,35 @@ async def lookup_order(
     if not any([order_number, email, phone]):
         return json.dumps({"error": "Provide order_number, email, or phone to look up an order."})
 
-    if session and not email and session.verified_email and session.caller_email:
-        email = session.caller_email
-    if session and not phone and getattr(session, "verified_phone", False):
-        inbound = (getattr(session, "from_number", "") or "").strip()
-        if inbound:
-            phone = inbound
+    if not order_number:
+        if session and not email and session.verified_email and session.caller_email:
+            email = session.caller_email
+        if session and not phone and getattr(session, "verified_phone", False):
+            inbound = (getattr(session, "from_number", "") or "").strip()
+            if inbound:
+                phone = inbound
 
     try:
-        parts: list[str] = []
         if order_number:
-            parts.extend(_order_lookup_query_parts(order_number, email=email, phone=phone))
+            edges = await _lookup_order_edges(
+                client,
+                order_number,
+                email=email,
+                phone=phone,
+                first=3,
+            )
         else:
+            parts: list[str] = []
             if email:
                 parts.append(f"email:{email}")
             if phone:
                 parts.append(f"phone:{phone}")
+            data = await client.execute(
+                LOOKUP_ORDERS,
+                variables={"query": " AND ".join(parts), "first": 3},
+            )
+            edges = data.get("data", {}).get("orders", {}).get("edges", [])
 
-        data = await client.execute(
-            LOOKUP_ORDERS,
-            variables={"query": " AND ".join(parts), "first": 3},
-        )
-        edges = data.get("data", {}).get("orders", {}).get("edges", [])
         if not edges:
             return json.dumps({"found": False, "message": "No matching order found."})
 
@@ -838,13 +845,100 @@ def _order_lookup_query_parts(
     email: str | None = None,
     phone: str | None = None,
 ) -> list[str]:
-    """Build Shopify order search — order number only unless caller gave email/phone."""
-    parts = [f"name:#{order_number.lstrip('#')}"]
+    """Build primary Shopify order search (backward-compatible helper)."""
+    variants = _order_lookup_query_variants(order_number, email=email, phone=phone)
+    if not variants:
+        return []
+    first = variants[0]
+    return first.split(" AND ") if " AND " in first else [first]
+
+
+def _order_lookup_query_variants(
+    order_number: str,
+    *,
+    email: str | None = None,
+    phone: str | None = None,
+) -> list[str]:
+    """
+    Build Shopify order search queries to try in order.
+
+    Stores vary in order-name formatting (#1234 vs 1234). We try both, with and
+    without quotes, before giving up.
+    """
+    raw = (order_number or "").strip().lstrip("#")
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        return []
+
+    name_tokens: list[str] = []
+    for token in (f"#{digits}", digits):
+        if token not in name_tokens:
+            name_tokens.append(token)
+    if raw and raw != digits:
+        for token in (f"#{raw}", raw):
+            if token not in name_tokens:
+                name_tokens.append(token)
+
+    filters: list[str] = []
     if email:
-        parts.append(f"email:{email}")
+        filters.append(f"email:{email}")
     if phone:
-        parts.append(f"phone:{phone}")
-    return parts
+        filters.append(f"phone:{phone}")
+
+    queries: list[str] = []
+    seen: set[str] = set()
+    for token in name_tokens:
+        for name_part in (f"name:{token}", f'name:"{token}"'):
+            query = " AND ".join([name_part, *filters])
+            if query not in seen:
+                seen.add(query)
+                queries.append(query)
+    return queries
+
+
+async def _lookup_order_edges(
+    client,
+    order_number: str,
+    *,
+    email: str | None = None,
+    phone: str | None = None,
+    first: int = 3,
+) -> list[dict]:
+    """Run Shopify order search with multiple query variants until one matches."""
+    queries = _order_lookup_query_variants(order_number, email=email, phone=phone)
+    if not queries:
+        return []
+
+    for query in queries:
+        data = await client.execute(
+            LOOKUP_ORDERS,
+            variables={"query": query, "first": first},
+        )
+        errors = data.get("errors") or []
+        if errors:
+            logger.warning(
+                "order_lookup_graphql_errors order=%s query=%r err=%s",
+                order_number,
+                query,
+                errors[0].get("message", errors[0]),
+            )
+        edges = (data.get("data") or {}).get("orders", {}).get("edges", [])
+        if edges:
+            logger.info(
+                "order_lookup_matched order=%s query=%r shopify_name=%s",
+                order_number,
+                query,
+                edges[0].get("node", {}).get("name"),
+            )
+            return edges
+
+    logger.warning(
+        "order_lookup_miss order=%s variants_tried=%d first_query=%r",
+        order_number,
+        len(queries),
+        queries[0],
+    )
+    return []
 
 
 def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
@@ -1121,13 +1215,13 @@ async def lookup_shopify_order_details(
         })
 
     try:
-        parts = _order_lookup_query_parts(order_number, email=email, phone=phone)
-
-        data = await client.execute(
-            LOOKUP_ORDERS,
-            variables={"query": " AND ".join(parts), "first": 3},
+        edges = await _lookup_order_edges(
+            client,
+            order_number,
+            email=email,
+            phone=phone,
+            first=3,
         )
-        edges = data.get("data", {}).get("orders", {}).get("edges", [])
         if not edges:
             payload = {
                 "found": False,
@@ -1232,19 +1326,14 @@ async def get_refund_status(
     if not (order_number or "").strip():
         return json.dumps({"found": False, "message": "I need an order number to check refunds."})
 
-    if session and not email and session.verified_email and session.caller_email:
-        email = session.caller_email
-    if session and not phone and getattr(session, "verified_phone", False):
-        phone = session.from_number
-
     try:
-        parts = _order_lookup_query_parts(order_number, email=email, phone=phone)
-
-        lookup_data = await client.execute(
-            LOOKUP_ORDERS,
-            variables={"query": " AND ".join(parts), "first": 1},
+        edges = await _lookup_order_edges(
+            client,
+            order_number,
+            email=email,
+            phone=phone,
+            first=1,
         )
-        edges = lookup_data.get("data", {}).get("orders", {}).get("edges", [])
         if not edges:
             return json.dumps({"found": False, "message": "No matching order found."})
 

@@ -456,6 +456,67 @@ async def test_order_number_only_query_does_not_add_caller_phone():
 
 
 @pytest.mark.asyncio
+async def test_order_lookup_falls_back_when_hash_query_misses():
+    client = AsyncMock()
+    client.configured = True
+    queries: list[str] = []
+
+    async def capture_execute(query, variables=None):
+        q = (variables or {}).get("query", "")
+        queries.append(q)
+        if q == "name:#1009":
+            return {"data": {"orders": {"edges": []}}}
+        if q in ("name:1009", 'name:"1009"'):
+            return {"data": {"orders": {"edges": [{"node": _MOCK_ORDER_NODE}]}}}
+        return {"data": {"orders": {"edges": []}}}
+
+    client.execute = AsyncMock(side_effect=capture_execute)
+
+    with patch("app.tools.shopify_tools.get_shopify_client", return_value=client):
+        with patch("app.tools.shopify_tools.shopify_cache_get", AsyncMock(return_value=None)):
+            with patch("app.tools.shopify_tools.shopify_cache_set", AsyncMock()):
+                from app.tools.shopify_tools import lookup_shopify_order_details
+                result = json.loads(await lookup_shopify_order_details("1009"))
+
+    assert result["found"] is True
+    assert queries[0] == "name:#1009"
+    assert any("name:1009" in q for q in queries)
+
+
+@pytest.mark.asyncio
+async def test_verified_phone_not_injected_for_order_number_lookup():
+    from app.state.models import SessionState
+
+    client = _order_mock_client()
+    queries: list[str] = []
+
+    async def capture_execute(query, variables=None):
+        queries.append((variables or {}).get("query", ""))
+        return {"data": {"orders": {"edges": [{"node": _MOCK_ORDER_NODE}]}}}
+
+    client.execute = AsyncMock(side_effect=capture_execute)
+
+    session = SessionState(
+        session_id="s1", call_sid="CA1", from_number="+19998887777",
+        to_number="+15559999999", verified_phone=True,
+    )
+    with patch("app.tools.shopify_tools.get_shopify_client", return_value=client):
+        with patch("app.tools.shopify_tools.shopify_cache_get", AsyncMock(return_value=None)):
+            with patch("app.tools.shopify_tools.shopify_cache_set", AsyncMock()):
+                from app.tools.shopify_tools import lookup_shopify_order_details
+                await lookup_shopify_order_details("1009", session=session)
+
+    assert queries
+    assert all("phone:" not in q for q in queries)
+
+
+def test_spoken_order_number_extracted():
+    from app.agent_runtime.order_flow_state import extract_order_number
+
+    assert extract_order_number("four seven nine zero five") == "47905"
+    assert extract_order_number("The order number is 4 7 9 0 5") == "47905"
+    assert extract_order_number("47905") == "47905"
+@pytest.mark.asyncio
 async def test_order_number_includes_all_fields_without_email():
     result = json.loads(await _lookup_with_mocks("1009", email_or_phone=None))
     order = result["order"]

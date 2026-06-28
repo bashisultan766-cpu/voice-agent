@@ -54,6 +54,8 @@ def compose_order_voice_reply(
             base += f" Tracking number is {order['tracking_number']}."
     elif order.get("message"):
         base = order["message"]
+    elif not order.get("found") and order.get("customer_message"):
+        base = str(order["customer_message"])
     else:
         base = "I couldn't find that order with the details provided."
 

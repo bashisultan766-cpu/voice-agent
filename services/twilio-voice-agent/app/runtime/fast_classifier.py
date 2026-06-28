@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..state.models import SessionState
 
 _ISBN = re.compile(r"\b(?:97[89]\d{10}|\d{9}[\dXx]|\d{13})\b")
-_ORDER_NUM = re.compile(r"\b(?:order\s*)?#?\s*(\d{4,8})\b", re.I)
+_ORDER_NUM = re.compile(r"\b(?:order\s*)?#?\s*(\d{4,10})\b", re.I)
 _YES = re.compile(
     r"^(?:yes|yeah|yep|yup|correct|that'?s right|that is right|affirmative|sure|ok(?:ay)?)\s*[.!]?\s*$",
     re.I,

@@ -21,7 +21,15 @@ def _mock_client(responses: list):
     """Return a mock ShopifyGraphQLClient that yields responses in order."""
     client = AsyncMock()
     client.configured = True
-    client.execute = AsyncMock(side_effect=responses)
+
+    async def _execute(query, variables=None):
+        if not responses:
+            return {}
+        if len(responses) == 1:
+            return responses[0]
+        return responses.pop(0)
+
+    client.execute = AsyncMock(side_effect=_execute)
     return client
 
 
