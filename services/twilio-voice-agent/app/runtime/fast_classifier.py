@@ -49,9 +49,9 @@ _VAGUE_CATEGORY_TAILS = frozenset({
 
 _INSTANT_SMALLTALK: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^(hi|hello|hey)( there| you)?[.!]?$", re.I),
-     "Hi, this is Eric at SureShot Books. How can I help you today?"),
+     "This is SureShot Books. How can I help you today?"),
     (re.compile(r"^good (morning|afternoon|evening)( there)?[.!]?$", re.I),
-     "Hi, this is Eric at SureShot Books. How can I help you today?"),
+     "This is SureShot Books. How can I help you today?"),
     (re.compile(r"^how are you( doing)?( today)?[.!]?$", re.I),
      "I'm doing well, thank you. What can I help you find today?"),
     (re.compile(r"^what(?:'s| is) your name[.!]?$", re.I),
@@ -62,8 +62,8 @@ _INSTANT_SMALLTALK: list[tuple[re.Pattern[str], str]] = [
      "Yes, I can hear you. What can I help you with?"),
 ]
 
-_SEARCH_ACK = "Let me check that."
-_ORDER_ACK = "One moment while I look that up."
+_SEARCH_ACK = ""
+_ORDER_ACK = ""
 
 
 @dataclass
@@ -355,11 +355,10 @@ def classify(
             is_payment_flow=True,
         )
 
-    # D/E. Real search / order / refund — ack then brain
+    # D/E. Real search / order / refund — route to brain without filler acks
     if _is_product_search_request(text) and not is_vague_product_request(text):
         return ClassificationResult(
-            action="ack_then_brain",
-            ack_reply=_SEARCH_ACK,
+            action="brain",
             reason="product_search",
             is_product_search=True,
             use_strong_model=_needs_strong_model(text, session),
@@ -367,8 +366,7 @@ def classify(
 
     if _is_order_lookup(text):
         return ClassificationResult(
-            action="ack_then_brain",
-            ack_reply=_ORDER_ACK,
+            action="brain",
             reason="order_lookup",
             is_order_lookup=True,
             use_strong_model=_needs_strong_model(text, session),
@@ -376,8 +374,7 @@ def classify(
 
     if _is_refund_lookup(text):
         return ClassificationResult(
-            action="ack_then_brain",
-            ack_reply=_ORDER_ACK,
+            action="brain",
             reason="refund_lookup",
             is_refund_lookup=True,
             use_strong_model=True,
@@ -385,8 +382,7 @@ def classify(
 
     if _is_facility_question(text):
         return ClassificationResult(
-            action="ack_then_brain",
-            ack_reply="Let me check our facility policy information.",
+            action="brain",
             reason="facility_question",
             is_facility=True,
             use_strong_model=True,

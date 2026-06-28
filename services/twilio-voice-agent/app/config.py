@@ -155,7 +155,7 @@ class Settings(BaseSettings):
     # ── v4.12: Welcome greeting + LLM-first final speaker ─────────────────────
     VOICE_WELCOME_GREETING_ENABLED: bool = True
     VOICE_WELCOME_GREETING: str = (
-        "Hello! Thank you for calling SureShot Books. How can I help you today?"
+        "This is SureShot Books. How can I help you today?"
     )
     VOICE_WELCOME_GREETING_INTERRUPTIBLE: str = "any"
     VOICE_FINAL_RESPONSE_MODE: str = "llm_first"  # llm_first | deterministic_legacy

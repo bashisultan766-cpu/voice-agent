@@ -110,4 +110,5 @@ class RuntimeTurnResult:
     skip_turn: bool = False
     skip_reason: str = ""
     source: str = "llm"
+    end_call: bool = False
     supervisor: Optional[SupervisorDecision] = None

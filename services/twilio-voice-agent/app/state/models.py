@@ -191,6 +191,7 @@ class SessionState:
 
     # Twilio TwiML welcomeGreeting was spoken at connect (v4.6).
     twiml_greeting_spoken: bool = False
+    awaiting_anything_else: bool = False
 
     # ── v4.8 call cutoff / resume ─────────────────────────────────────────────
     # Stores a safe, minimal session snapshot for reconnect-within-window.

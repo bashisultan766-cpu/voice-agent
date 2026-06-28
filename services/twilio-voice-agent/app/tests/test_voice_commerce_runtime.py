@@ -157,11 +157,11 @@ def test_vague_magazine_clarification():
     assert "magazine" in result.instant_reply.lower()
 
 
-def test_game_of_thrones_triggers_search_ack():
+def test_game_of_thrones_triggers_product_search_brain():
     result = classify("I need Game of Thrones")
-    assert result.action == "ack_then_brain"
+    assert result.action == "brain"
     assert result.is_product_search is True
-    assert result.skip_llm is False
+    assert not result.ack_reply
 
 
 def test_isbn_triggers_product_search():
@@ -209,7 +209,8 @@ def test_specific_product_search_calls_llm_and_tools():
     assert runtime._brain._client.chat.completions.calls
     assert "Game of Thrones" in result.response_text
     spoken = "".join(m.get("token", "") for m in sent)
-    assert "Let me check" in spoken or "Game of Thrones" in spoken
+    assert "Game of Thrones" in spoken
+    assert "Let me check" not in spoken
 
 
 def test_llm_final_answer_uses_tool_result():
@@ -308,10 +309,11 @@ def test_interrupt_does_not_lose_cart():
 
 # ── Order / facility classifier routing ───────────────────────────────────────
 
-def test_order_lookup_ack_then_brain():
+def test_order_lookup_routes_to_brain_without_ack():
     result = classify("order number 4521")
     assert result.is_order_lookup is True
-    assert result.action == "ack_then_brain"
+    assert result.action == "brain"
+    assert not result.ack_reply
 
 
 def test_facility_question_uses_strong_model_hint():

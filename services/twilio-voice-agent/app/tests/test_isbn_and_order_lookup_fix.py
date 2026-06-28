@@ -539,8 +539,7 @@ def test_no_silence_on_isbn_question():
 
 def test_no_silence_on_order_lookup():
     result = classify("Where is my order 1009?")
-    assert result.action == "ack_then_brain"
-    assert result.ack_reply
+    assert result.action == "brain"
     assert result.is_order_lookup is True
 
 

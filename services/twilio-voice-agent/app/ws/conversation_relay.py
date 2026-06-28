@@ -100,7 +100,7 @@ async def dispatch_assembled_turn(
             sid, configured, handler,
         )
 
-    await dispatch_turn(
+    result = await dispatch_turn(
         settings,
         session,
         user_text,
@@ -109,6 +109,8 @@ async def dispatch_assembled_turn(
         assembled_turn_mode=assembled_turn_mode,
         stt_to_turn_ms=stt_to_turn_ms,
     )
+    if getattr(result, "end_call", False):
+        await send({"type": "end", "handoffData": '{"reason":"caller_done"}'})
 
 
 async def await_caller_profile_ready(
@@ -265,7 +267,11 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                 # Populate session with safe profile fields.
                 session.is_returning_caller = True
                 if profile.display_name:
-                    session.caller_name = profile.display_name
+                    from ..dialogue.greeting import greeting_safe_name
+
+                    safe = greeting_safe_name(profile.display_name)
+                    if safe:
+                        session.caller_name = safe
                 if profile.preferred_email:
                     session.caller_email = profile.preferred_email
                 if profile.last_order_number:

@@ -1,17 +1,18 @@
 """SureShot Books greeting text — deterministic, no LLM (v4.6)."""
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-GREETING_NEW = "Hello! Thank you for calling SureShot Books. How can I help you today?"
-GREETING_RETURNING = "Hello, welcome back to SureShot Books. How can I help you today?"
+GREETING_NEW = "This is SureShot Books. How can I help you today?"
+GREETING_RETURNING = "Welcome back to SureShot Books. How can I help you today?"
 GREETING_RETURNING_NAMED = (
-    "Hello, welcome back to SureShot Books, {name}. How can I help you today?"
+    "Welcome back to SureShot Books, {name}. How can I help you today?"
 )
-GREETING_AFTER_TWIML = "Sure. What can I help you with today?"
+GREETING_AFTER_TWIML = "What can I help you with today?"
 
 _FORBIDDEN_GREETING_WORDS = (
     "ai",
@@ -21,6 +22,20 @@ _FORBIDDEN_GREETING_WORDS = (
 )
 
 
+def greeting_safe_name(name: str) -> str:
+    """Reject STT garbage or question fragments masquerading as a caller name."""
+    n = (name or "").strip()
+    if not n or len(n.split()) > 4:
+        return ""
+    if "?" in n or re.search(
+        r"\b(saying that|how are you|what can i|thank you for calling|sureshot)\b",
+        n,
+        re.I,
+    ):
+        return ""
+    return n
+
+
 def build_twiml_greeting(returning: bool = False, caller_name: str = "") -> str:
     """Greeting spoken by Twilio ConversationRelay before WebSocket setup."""
     from ..config import get_settings
@@ -28,13 +43,9 @@ def build_twiml_greeting(returning: bool = False, caller_name: str = "") -> str:
     s = get_settings()
     base = (s.VOICE_WELCOME_GREETING or GREETING_NEW).strip()
     if returning:
-        if caller_name:
-            name = caller_name.strip()
-            if name:
-                return (
-                    f"Hello! Welcome back to SureShot Books, {name}. "
-                    "How can I help you today?"
-                )
+        name = greeting_safe_name(caller_name)
+        if name:
+            return GREETING_RETURNING_NAMED.format(name=name)
         return GREETING_RETURNING
     return base
 
@@ -54,7 +65,7 @@ def build_first_response_greeting(session: "SessionState", greeted_already: bool
         return GREETING_AFTER_TWIML
 
     if session.is_returning_caller:
-        name = (session.caller_name or "").strip()
+        name = greeting_safe_name(getattr(session, "caller_name", "") or "")
         if name:
             return GREETING_RETURNING_NAMED.format(name=name)
         return GREETING_RETURNING

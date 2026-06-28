@@ -76,16 +76,40 @@ def build_payment_email_plain(
 def _format_lines_plain(order_lines: list[dict]) -> str:
     if not order_lines:
         return "- Your selected books\n"
+    from ..payment.drop_shipping_fee import CUSTOMER_LABEL, book_line_subtotal, compute_drop_shipping_fee
+
     rows = []
-    for line in order_lines:
+    book_lines = [line for line in order_lines if not line.get("is_fee")]
+    for line in book_lines:
         qty = int(line.get("quantity") or 1)
         title = line.get("title") or "Book"
         price = line.get("price") or ""
-        row = f"- {qty}x {title}"
-        if price:
-            row += f" — {price} each"
+        unit = f"${price}" if price and not str(price).startswith("$") else (price or "")
+        line_total = _line_total_amount(line)
+        row = f"- {qty} copy{'ies' if qty != 1 else ''} of {title}"
+        if unit:
+            row += f" @ {unit} each"
+        if line_total:
+            row += f" = {line_total}"
         rows.append(row)
+    books_subtotal = book_line_subtotal(book_lines)
+    if books_subtotal > 0:
+        rows.append(f"- Books subtotal: ${books_subtotal:.2f}")
+    fee = compute_drop_shipping_fee(book_lines)
+    if fee > 0:
+        rows.append(f"- {CUSTOMER_LABEL}: ${fee:.2f}")
+        rows.append(f"- Order total before shipping: ${books_subtotal + fee:.2f}")
     return "\n".join(rows) + "\n"
+
+
+def _line_total_amount(line: dict) -> str:
+    qty = int(line.get("quantity") or 1)
+    price = line.get("price") or ""
+    try:
+        unit = float(str(price).replace("$", "").strip())
+        return f"${unit * qty:.2f}"
+    except (ValueError, TypeError):
+        return ""
 
 
 def _money_subtotal(order_lines: list[dict]) -> str:
@@ -104,18 +128,16 @@ def build_payment_email_html(
     subtotal_label: str = "",
     shipping_note: str = "Shipping is calculated separately at checkout.",
 ) -> str:
+    from ..payment.drop_shipping_fee import CUSTOMER_LABEL, book_line_subtotal, compute_drop_shipping_fee
+
+    book_lines = [line for line in (order_lines or []) if not line.get("is_fee")]
     rows_html = ""
-    for line in order_lines or []:
+    for line in book_lines:
         qty = int(line.get("quantity") or 1)
         title = line.get("title") or "Book"
         price = line.get("price") or ""
         unit = f"${price}" if price and not str(price).startswith("$") else (price or "")
-        line_total = ""
-        try:
-            line_total_val = float(str(price).replace("$", "").strip()) * qty
-            line_total = f"${line_total_val:.2f}"
-        except (ValueError, TypeError):
-            line_total = ""
+        line_total = _line_total_amount(line)
         rows_html += (
             f"<tr>"
             f"<td style='padding:8px;border-bottom:1px solid #eee'>{qty}</td>"
@@ -128,11 +150,41 @@ def build_payment_email_html(
         rows_html = (
             "<tr><td colspan='4' style='padding:8px'>Your selected books</td></tr>"
         )
+
+    books_subtotal = book_line_subtotal(book_lines)
+    fee = compute_drop_shipping_fee(book_lines)
+    summary_rows = ""
+    if books_subtotal > 0:
+        summary_rows += (
+            f"<tr><td colspan='3' style='padding:8px;text-align:right;font-weight:bold'>"
+            f"Books subtotal</td>"
+            f"<td style='padding:8px;text-align:right;font-weight:bold'>"
+            f"${books_subtotal:.2f}</td></tr>"
+        )
+    if fee > 0:
+        summary_rows += (
+            f"<tr><td colspan='3' style='padding:8px;text-align:right'>"
+            f"{CUSTOMER_LABEL}</td>"
+            f"<td style='padding:8px;text-align:right'>${fee:.2f}</td></tr>"
+        )
+    order_total = round(books_subtotal + fee, 2)
+    if order_total > 0:
+        summary_rows += (
+            f"<tr style='background:#f0f4f8'>"
+            f"<td colspan='3' style='padding:10px;text-align:right;font-weight:bold'>"
+            f"Order total (before shipping)</td>"
+            f"<td style='padding:10px;text-align:right;font-weight:bold'>"
+            f"${order_total:.2f}</td></tr>"
+        )
     subtotal_html = (
-        f"<p style='margin:16px 0 8px;font-weight:bold'>Subtotal (before shipping): "
-        f"{subtotal_label}</p>"
-        if subtotal_label
-        else ""
+        f"<table style='width:100%;border-collapse:collapse;margin-top:4px'>{summary_rows}</table>"
+        if summary_rows
+        else (
+            f"<p style='margin:16px 0 8px;font-weight:bold'>Subtotal (before shipping): "
+            f"{subtotal_label}</p>"
+            if subtotal_label
+            else ""
+        )
     )
     return f"""<!DOCTYPE html>
 <html>

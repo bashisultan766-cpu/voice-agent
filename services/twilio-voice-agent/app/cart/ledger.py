@@ -59,16 +59,40 @@ class CartLedger:
 
     def add_candidate(self, item: CartItem) -> None:
         """Add a new book candidate (e.g. after ISBN/title search result)."""
-        if item.isbn:
-            for existing in self._items:
-                if existing.isbn == item.isbn and existing.confirmation_status != "rejected":
+        if item.variant_id:
+            for idx, existing in enumerate(self._items):
+                if (
+                    existing.variant_id == item.variant_id
+                    and existing.confirmation_status == "candidate"
+                ):
                     existing.title = item.title or existing.title
-                    existing.variant_id = item.variant_id or existing.variant_id
+                    existing.isbn = item.isbn or existing.isbn
                     existing.price = item.price or existing.price
                     if item.quantity > 0:
-                        existing.quantity = max(existing.quantity, item.quantity)
-                    self._last_candidate_idx = self._items.index(existing)
+                        existing.quantity = item.quantity
+                    self._last_candidate_idx = idx
                     return
+        if item.isbn:
+            for idx, existing in enumerate(self._items):
+                if existing.isbn != item.isbn or existing.confirmation_status == "rejected":
+                    continue
+                if (
+                    existing.confirmation_status == "confirmed"
+                    and item.variant_id
+                    and existing.variant_id
+                    and existing.variant_id != item.variant_id
+                ):
+                    continue
+                existing.title = item.title or existing.title
+                existing.variant_id = item.variant_id or existing.variant_id
+                existing.price = item.price or existing.price
+                if item.quantity > 0:
+                    if existing.confirmation_status == "confirmed":
+                        existing.quantity = max(existing.quantity, item.quantity)
+                    else:
+                        existing.quantity = max(existing.quantity, item.quantity)
+                self._last_candidate_idx = idx
+                return
         self._items.append(item)
         self._last_candidate_idx = len(self._items) - 1
 
@@ -108,9 +132,23 @@ class CartLedger:
             candidate.confirmation_status = "rejected"
         return candidate
 
-    def update_quantity(self, isbn_or_title: str, quantity: int) -> bool:
+    def update_quantity(self, isbn_or_title: str, quantity: int, *, variant_id: str = "") -> bool:
+        if variant_id:
+            for item in self._items:
+                if (
+                    item.variant_id == variant_id
+                    and item.confirmation_status != "rejected"
+                ):
+                    item.quantity = max(1, quantity)
+                    return True
+        needle = (isbn_or_title or "").strip().lower()
         for item in self._items:
-            if item.isbn == isbn_or_title or item.title.lower() == isbn_or_title.lower():
+            if item.confirmation_status == "rejected":
+                continue
+            if item.isbn == isbn_or_title:
+                item.quantity = max(1, quantity)
+                return True
+            if needle and item.title.lower() == needle:
                 item.quantity = max(1, quantity)
                 return True
         return False

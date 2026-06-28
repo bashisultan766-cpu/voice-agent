@@ -31,12 +31,9 @@ def is_fast_greeting_turn(text: str, *, turn_count: int = 0) -> bool:
 
 
 def _greeting_safe_name(name: str) -> str:
-    n = (name or "").strip()
-    if not n or len(n.split()) > 4:
-        return ""
-    if "?" in n or re.search(r"\b(saying that|how are you|what can i)\b", n, re.I):
-        return ""
-    return n
+    from ..dialogue.greeting import greeting_safe_name
+
+    return greeting_safe_name(name)
 
 
 def fast_greeting_reply(session: "SessionState", caller_text: str) -> Optional[str]:

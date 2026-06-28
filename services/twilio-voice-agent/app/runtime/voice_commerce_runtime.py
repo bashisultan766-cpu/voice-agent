@@ -12,7 +12,12 @@ import logging
 import time
 from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 
-from ..agent_runtime.commerce_flow_state import advance_commerce_state_silent, enforce_commerce_response
+from ..agent_runtime.commerce_flow_state import (
+    COMMERCE_FLOW_VERSION,
+    advance_commerce_state_silent,
+    enforce_commerce_response,
+    process_commerce_turn,
+)
 from ..agent_runtime.payment_flow_state import enforce_payment_response, process_payment_turn
 from ..agent_runtime.types import RuntimeTurnResult
 from ..agents.main_commerce_brain import MainCommerceBrain
@@ -43,8 +48,8 @@ async def _await_send(send: Callable, msg: dict) -> None:
         await out
 
 
-def _result(answer: str, source: str = RUNTIME_MODE) -> RuntimeTurnResult:
-    return RuntimeTurnResult(response_text=answer, source=source)
+def _result(answer: str, source: str = RUNTIME_MODE, *, end_call: bool = False) -> RuntimeTurnResult:
+    return RuntimeTurnResult(response_text=answer, source=source, end_call=end_call)
 
 
 class VoiceCommerceRuntime:
@@ -189,6 +194,12 @@ class VoiceCommerceRuntime:
             parsed.get("customer_message") or "I sent the payment link to your email. Please check your inbox.",
             [("send_payment_link", parsed)],
         )
+        from ..dialogue.call_closure import mark_awaiting_anything_else, offer_anything_else_suffix
+
+        if parsed.get("email_sent"):
+            mark_awaiting_anything_else(session)
+            if offer_anything_else_suffix().strip() not in spoken:
+                spoken = f"{spoken.rstrip('.')}.{offer_anything_else_suffix()}"
         await self._speak(session, caller_text, spoken, send)
         logger.info("payment_auto_send sid=%s success=%s", sid, bool(parsed.get("email_sent")))
         return _result(spoken)
@@ -237,7 +248,15 @@ class VoiceCommerceRuntime:
         session._current_turn_mode = turn_mode  # type: ignore[attr-defined]
         advance_commerce_state_silent(session, normalized)
 
-        twiml_greeting = bool(getattr(session, "twiml_greeting_played", False))
+        from ..dialogue.call_closure import process_call_closure_turn
+
+        closure = process_call_closure_turn(session, normalized)
+        if closure is not None:
+            spoken = self._brain.finalize_response(session, closure.reply, [])
+            await self._speak(session, normalized, spoken, send)
+            return _result(spoken, end_call=closure.end_call)
+
+        twiml_greeting = bool(getattr(session, "twiml_greeting_spoken", False))
         classification = classify(
             normalized,
             session,
@@ -272,6 +291,31 @@ class VoiceCommerceRuntime:
         )
         if isbn_hunt is not None:
             return isbn_hunt
+
+        commerce_hint = process_commerce_turn(session, normalized)
+        if commerce_hint.force_reply:
+            spoken = enforce_commerce_response(
+                session,
+                self._brain.finalize_response(session, commerce_hint.force_reply, []),
+                [],
+            )
+            await self._speak(session, normalized, spoken, send)
+            logger.info(
+                "commerce_flow_short_circuit sid=%s book_added=%s version=%s",
+                sid,
+                commerce_hint.book_added,
+                COMMERCE_FLOW_VERSION,
+            )
+            return _result(spoken)
+
+        from ..agent_runtime.yes_engagement import is_bare_yes, yes_engagement_reply
+
+        if is_bare_yes(normalized):
+            engage = yes_engagement_reply(session) or ""
+            spoken = self._brain.finalize_response(session, engage, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("yes_engagement_short_circuit sid=%s", sid)
+            return _result(spoken)
 
         if classification.action == "ack_then_brain" and classification.ack_reply:
             await _await_send(
