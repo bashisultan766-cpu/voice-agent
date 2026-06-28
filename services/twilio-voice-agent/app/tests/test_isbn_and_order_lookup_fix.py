@@ -24,6 +24,14 @@ _VALID_ISBN = "9780143127741"
 _VALID_ISBN_SPACED = "978 0 14 312774 1"
 
 
+@pytest.fixture(autouse=True)
+def _patch_order_timeline_fetch(monkeypatch):
+    async def _empty_timeline(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr("app.tools.shopify_tools._fetch_order_timeline", _empty_timeline)
+
+
 def _variant_node(*, barcode: str = "", sku: str = "", title: str = "Test Book", price: str = "14.99"):
     return {
         "id": "gid://shopify/ProductVariant/1",
@@ -516,6 +524,80 @@ def test_spoken_order_number_extracted():
     assert extract_order_number("four seven nine zero five") == "47905"
     assert extract_order_number("The order number is 4 7 9 0 5") == "47905"
     assert extract_order_number("47905") == "47905"
+
+
+def test_refunded_order_customer_message_covers_email_card_shipping_timeline():
+    from app.tools.shopify_tools import (
+        _build_full_order_from_node,
+        _format_order_customer_message,
+        _timeline_from_node,
+    )
+
+    node = {
+        **_MOCK_ORDER_NODE,
+        "name": "#22318",
+        "displayFinancialStatus": "REFUNDED",
+        "displayFulfillmentStatus": "FULFILLED",
+        "email": "jdos403@gmail.com",
+        "totalShippingPriceSet": {"shopMoney": {"amount": "0.00", "currencyCode": "USD"}},
+        "totalPriceSet": {"shopMoney": {"amount": "9.99", "currencyCode": "USD"}},
+        "subtotalPriceSet": {"shopMoney": {"amount": "9.99", "currencyCode": "USD"}},
+        "lineItems": {
+            "edges": [{
+                "node": {
+                    "title": "The Witching Hour",
+                    "quantity": 1,
+                    "sku": "0345384466",
+                    "originalUnitPriceSet": {"shopMoney": {"amount": "9.99", "currencyCode": "USD"}},
+                    "variant": {"barcode": "", "sku": "0345384466"},
+                }
+            }]
+        },
+        "fulfillments": [{"status": "SUCCESS", "trackingInfo": []}],
+        "customer": {
+            "firstName": "Jennifer",
+            "lastName": "Dosanjh",
+            "email": "jdos403@gmail.com",
+            "numberOfOrders": 6,
+        },
+        "billingAddress": {"city": "Calgary", "provinceCode": "AB", "countryCode": "CA"},
+        "refunds": [{
+            "createdAt": "2022-05-25T12:58:00Z",
+            "note": "DO NOT SHIP outside USA",
+            "totalRefundedSet": {"shopMoney": {"amount": "9.99", "currencyCode": "USD"}},
+            "refundLineItems": {
+                "edges": [{"node": {"quantity": 1, "lineItem": {"title": "The Witching Hour"}}}]
+            },
+            "transactions": {
+                "edges": [{"node": {"paymentDetails": {"number": "****0525", "company": "Visa"}}}]
+            },
+        }],
+        "transactions": [{"paymentDetails": {"number": "****0525", "company": "Visa"}}],
+    }
+    order_obj = _build_full_order_from_node(node, order_email="jdos403@gmail.com")
+    order_obj["timeline"] = _timeline_from_node({
+        "events": {
+            "edges": [{
+                "node": {
+                    "__typename": "BasicEvent",
+                    "createdAt": "2022-05-25T12:58:00Z",
+                    "message": "Jessica Glass refunded $9.99 USD using a Visa ending in 0525.",
+                }
+            }]
+        }
+    })
+    msg = _format_order_customer_message(order_obj, order_email="jdos403@gmail.com")
+    lower = msg.lower()
+    assert "refunded" in lower
+    assert "0525" in msg
+    assert "j***@gmail.com" in msg
+    assert "shipping" in lower
+    assert "6 order" in lower
+    assert "do not ship outside usa" in lower
+    assert "witching hour" in lower
+    assert "shopify order timeline" in lower
+
+
 @pytest.mark.asyncio
 async def test_order_number_includes_all_fields_without_email():
     result = json.loads(await _lookup_with_mocks("1009", email_or_phone=None))
@@ -531,8 +613,9 @@ async def _lookup_with_mocks(order_number: str, email_or_phone: str | None):
     with patch("app.tools.shopify_tools.get_shopify_client", return_value=_order_mock_client()):
         with patch("app.tools.shopify_tools.shopify_cache_get", AsyncMock(return_value=None)):
             with patch("app.tools.shopify_tools.shopify_cache_set", AsyncMock()):
-                from app.tools.shopify_tools import lookup_shopify_order_details
-                return await lookup_shopify_order_details(order_number, email_or_phone=email_or_phone)
+                with patch("app.tools.shopify_tools._fetch_order_timeline", AsyncMock(return_value=[])):
+                    from app.tools.shopify_tools import lookup_shopify_order_details
+                    return await lookup_shopify_order_details(order_number, email_or_phone=email_or_phone)
 
 
 @pytest.mark.asyncio

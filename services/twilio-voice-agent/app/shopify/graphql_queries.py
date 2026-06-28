@@ -92,6 +92,7 @@ query LookupOrders($query: String!, $first: Int!) {
           firstName
           lastName
           email
+          numberOfOrders
         }
         subtotalPriceSet {
           shopMoney { amount currencyCode }
@@ -135,6 +136,7 @@ query LookupOrders($query: String!, $first: Int!) {
         refunds(first: 5) {
           id
           createdAt
+          note
           totalRefundedSet {
             shopMoney { amount currencyCode }
           }
@@ -188,6 +190,41 @@ query LookupOrders($query: String!, $first: Int!) {
           provinceCode
           zip
           countryCode
+        }
+        billingAddress {
+          name
+          city
+          provinceCode
+          countryCode
+        }
+      }
+    }
+  }
+}
+"""
+
+GET_ORDER_TIMELINE = """
+query GetOrderTimeline($id: ID!) {
+  order(id: $id) {
+    id
+    hasTimelineComment
+    events(first: 15, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          __typename
+          createdAt
+          ... on BasicEvent {
+            message
+          }
+          ... on CommentEvent {
+            message
+            author {
+              __typename
+              ... on StaffMember {
+                name
+              }
+            }
+          }
         }
       }
     }
