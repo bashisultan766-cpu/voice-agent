@@ -50,6 +50,76 @@ def transactions_list_from_graphql(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
+def card_brand_from_transactions(transactions: list[dict[str, Any]]) -> str:
+    """Card network/brand from Shopify payment details (e.g. Visa, Mastercard)."""
+    for txn in transactions_list_from_graphql(transactions) or []:
+        details = txn.get("paymentDetails") or {}
+        if not isinstance(details, dict):
+            continue
+        company = str(details.get("company") or "").strip()
+        if company:
+            return company
+    return ""
+
+
+def is_order_disclosure_verified(
+    session: Any,
+    *,
+    order_number_provided: bool,
+    email_filter: str | None = None,
+    phone_filter: str | None = None,
+    order_email: str = "",
+) -> bool:
+    """
+    Whether PII (full email) may be spoken to the caller.
+
+    Order-number lookup is treated as verified for voice commerce.
+    Email/phone-only lookup requires a matching verified identifier.
+    """
+    if order_number_provided:
+        return True
+    order_email_norm = (order_email or "").strip().lower()
+    if email_filter and order_email_norm:
+        return email_filter.strip().lower() == order_email_norm
+    if session and order_email_norm:
+        if getattr(session, "verified_email", False):
+            for attr in ("caller_email", "confirmed_email"):
+                caller = (getattr(session, attr, "") or "").strip().lower()
+                if caller and caller == order_email_norm:
+                    return True
+    if phone_filter and session:
+        inbound = (getattr(session, "from_number", "") or "").strip()
+        if getattr(session, "verified_phone", False) and inbound and phone_filter:
+            return True
+    return False
+
+
+def sanitize_order_object(order_obj: dict[str, Any], *, verified: bool) -> dict[str, Any]:
+    """Strip or mask sensitive fields when disclosure is not verified."""
+    if verified or not order_obj:
+        return order_obj
+    out = dict(order_obj)
+    email = (out.get("customer_email") or "").strip()
+    if email:
+        out["customer_email"] = mask_email_for_voice(email)
+        out["email_masked"] = out["customer_email"]
+    out["payment_card_last4"] = ""
+    refunds = []
+    for refund in out.get("refunds") or []:
+        r = dict(refund)
+        if r.get("destination_email"):
+            r["destination_email"] = mask_email_for_voice(str(r["destination_email"]))
+        r["card_last4"] = ""
+        r["card_brand"] = ""
+        refunds.append(r)
+    out["refunds"] = refunds
+    if out.get("notes"):
+        out["notes"] = "[redacted — verify email or phone on the order]"
+    out["note_attributes"] = {}
+    out["timeline_comments"] = []
+    return out
+
+
 def customer_display_name(customer: dict[str, Any] | None) -> str:
     if not customer:
         return ""

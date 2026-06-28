@@ -765,11 +765,18 @@ async def lookup_order(
 
         order_obj = _build_full_order_from_node(node, order_email=order_email)
         order_obj["timeline"] = await _fetch_order_timeline(client, order_obj.get("order_id", ""))
-        customer_message = _format_order_customer_message(order_obj, order_email=order_email)
+        order_obj, customer_message, verified = _apply_order_disclosure(
+            order_obj,
+            order_email=order_email,
+            session=session,
+            order_number_provided=bool(order_number),
+            email_filter=email,
+            phone_filter=phone,
+        )
 
         result: dict = {
             "found": True,
-            "verification_required": False,
+            "verification_required": not verified,
             "order_number": order_obj["order_number"],
             "status": order_obj["financial_status"],
             "fulfillment_status": order_obj["fulfillment_status"],
@@ -943,9 +950,40 @@ async def _lookup_order_edges(
     return []
 
 
+def _note_attributes_from_node(node: dict) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for row in node.get("customAttributes") or []:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key") or "").strip()
+        if key:
+            attrs[key] = str(row.get("value") or "")
+    return attrs
+
+
+def _timeline_comments_from_timeline(timeline: list[dict]) -> list[dict]:
+    comments: list[dict] = []
+    for ev in timeline or []:
+        message = (ev.get("message") or "").strip()
+        if not message:
+            continue
+        comments.append({
+            "type": ev.get("type") or "",
+            "message": message,
+            "created_at": ev.get("created_at") or "",
+            "author": ev.get("author") or "",
+        })
+    return comments
+
+
 def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
-    """Structured order payload for voice + LLM tools."""
-    from ..shopify.order_privacy import card_last4_from_transactions, customer_display_name, mask_email_for_voice
+    """Structured canonical order payload for voice + LLM tools."""
+    from ..shopify.order_privacy import (
+        card_brand_from_transactions,
+        card_last4_from_transactions,
+        customer_display_name,
+        mask_email_for_voice,
+    )
 
     subtotal_amt, subtotal_cur = _money_amount_currency(node.get("subtotalPriceSet"))
     shipping_amt, shipping_cur = _money_amount_currency(node.get("totalShippingPriceSet"))
@@ -957,7 +995,9 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
     refunds = _refunds_from_node(node, order_email=order_email)
     customer = node.get("customer") or {}
     customer_name = customer_display_name(customer)
-    card_last4 = card_last4_from_transactions(node.get("transactions") or [])
+    order_txns = node.get("transactions") or []
+    card_last4 = card_last4_from_transactions(order_txns)
+    card_brand = card_brand_from_transactions(order_txns)
     item_count = sum(int(i.get("quantity") or 0) for i in items)
     billing = node.get("billingAddress") or {}
     billing_city = (billing.get("city") or "").strip()
@@ -965,16 +1005,17 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
     billing_country = (billing.get("countryCode") or "").strip()
     billing_bits = [b for b in (billing_city, billing_region, billing_country) if b]
     customer_order_count = int(customer.get("numberOfOrders") or 0)
+    note_attributes = _note_attributes_from_node(node)
+    order_note = (node.get("note") or "").strip()
 
-    return {
-        "order_id": node.get("id", ""),
+    canonical = {
         "order_number": node.get("name", ""),
+        "customer_name": customer_name,
+        "customer_email": order_email,
         "created_at": (node.get("createdAt") or "")[:10],
         "financial_status": node.get("displayFinancialStatus", ""),
         "fulfillment_status": node.get("displayFulfillmentStatus", ""),
         "shipping_status": _fulfillment_shipping_status(node),
-        "shipped": bool(tracking.get("tracking_number"))
-        or str(node.get("displayFulfillmentStatus") or "").upper() in ("FULFILLED", "PARTIAL"),
         "tracking": tracking,
         "items": items,
         "product_count": item_count,
@@ -990,14 +1031,25 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
             "currency": total_cur or subtotal_cur or "USD",
         },
         "refunds": refunds,
-        "customer_name": customer_name,
+        "notes": order_note,
+        "note_attributes": note_attributes,
+        "timeline_comments": [],
+    }
+
+    return {
+        **canonical,
+        "order_id": node.get("id", ""),
+        "shipped": bool(tracking.get("tracking_number"))
+        or str(node.get("displayFulfillmentStatus") or "").upper() in ("FULFILLED", "PARTIAL"),
         "customer_order_count": customer_order_count,
         "billing_location": ", ".join(billing_bits),
         "email_masked": mask_email_for_voice(order_email) if order_email else "",
         "payment_card_last4": card_last4,
+        "payment_card_brand": card_brand,
         "cancelled_at": (node.get("cancelledAt") or "")[:10],
-        "order_note": (node.get("note") or "").strip(),
+        "order_note": order_note,
         "timeline": [],
+        "phone": (node.get("phone") or customer.get("phone") or "").strip(),
     }
 
 
@@ -1005,28 +1057,32 @@ def _format_order_customer_message(
     order_obj: dict,
     *,
     order_email: str = "",
+    verified: bool = True,
 ) -> str:
-    """Rich phone-friendly order summary — card last-4 only, never full PAN or email digits."""
+    """Rich phone-friendly order summary — full email when verified; card last-4 only."""
     from ..shopify.order_privacy import mask_email_for_voice
 
     parts: list[str] = []
     num = order_obj.get("order_number") or ""
     name = (order_obj.get("customer_name") or "").strip()
-    email_masked = mask_email_for_voice(order_email) if order_email else (
-        order_obj.get("email_masked") or ""
+    raw_email = (order_email or order_obj.get("customer_email") or "").strip()
+    email_spoken = raw_email if verified and raw_email else (
+        mask_email_for_voice(raw_email) if raw_email else (order_obj.get("email_masked") or "")
     )
     refunds = order_obj.get("refunds") or []
     is_refunded = _is_refunded_order(order_obj)
     card_last4 = (order_obj.get("payment_card_last4") or "").strip()
+    card_brand = (order_obj.get("payment_card_brand") or "").strip()
     refund_card = ""
+    refund_brand = ""
     for refund in refunds:
         refund_card = (refund.get("card_last4") or "").strip() or refund_card
+        refund_brand = (refund.get("card_brand") or "").strip() or refund_brand
     refund_card = refund_card or card_last4
+    refund_brand = refund_brand or card_brand
 
-    if is_refunded:
-        parts.append(f"Order {num} has been refunded.")
-    elif name:
-        parts.append(f"This order is under the name {name}.")
+    if name:
+        parts.append(f"That order is under {name}.")
     elif num:
         parts.append(f"Here is what I found for order {num}.")
 
@@ -1045,25 +1101,34 @@ def _format_order_customer_message(
             title = row.get("title") or "item"
             copy_word = "copy" if qty == 1 else "copies"
             price = (row.get("price") or "").strip()
-            sku = (row.get("sku") or "").strip()
             bit = f"{qty} {copy_word} of {title}"
             if price:
                 bit += f" at {price} each"
-            if sku:
-                bit += f", SKU {sku}"
             titles.append(bit)
         product_count = int(order_obj.get("product_count") or sum(i.get("quantity", 0) for i in items))
         parts.append(
-            f"This order includes {product_count} product{'s' if product_count != 1 else ''}: "
-            + "; ".join(titles) + "."
+            f"This order has {product_count} item{'s' if product_count != 1 else ''}: "
+            + ", ".join(titles[:3])
+            + ("." if len(titles) <= 3 else "; and more.")
         )
 
     pricing = order_obj.get("pricing") or {}
     sub = pricing.get("subtotal_before_shipping") or pricing.get("subtotal") or ""
+    tax = (pricing.get("tax") or "").strip()
+    discount = (pricing.get("discount") or "").strip()
     total = pricing.get("total_with_shipping") or pricing.get("total") or ""
     if sub:
         parts.append(f"The subtotal before shipping is {sub}.")
     parts.append(_format_shipping_phrase(pricing))
+    if tax:
+        parts.append(f"Tax was {tax}.")
+    if discount:
+        try:
+            disc_val = float(discount.split()[0].replace(",", ""))
+            if disc_val > 0:
+                parts.append(f"A discount of {discount} was applied.")
+        except ValueError:
+            parts.append(f"Discount on file: {discount}.")
     if total:
         parts.append(f"The order total including shipping is {total}.")
 
@@ -1077,7 +1142,8 @@ def _format_order_customer_message(
     if tracking.get("tracking_number"):
         carrier = tracking.get("carrier") or "the carrier"
         parts.append(
-            f"It shipped with tracking number {tracking['tracking_number']} via {carrier}."
+            f"It shows as fulfilled with tracking from {carrier}, "
+            f"number {tracking['tracking_number']}."
         )
     elif fulfill_upper in ("FULFILLED", "PARTIAL"):
         parts.append("This order was fulfilled. Shipping was not required or no tracking was provided.")
@@ -1087,42 +1153,54 @@ def _format_order_customer_message(
         parts.append("It has not shipped yet.")
 
     if card_last4 and not is_refunded:
-        parts.append(f"Payment was made with a card ending in {card_last4}.")
+        brand_bit = f"{card_brand} " if card_brand else ""
+        parts.append(f"Payment was made with a {brand_bit}card ending in {card_last4}.")
 
     if is_refunded:
         for refund in refunds:
-            amt = refund.get("amount") or ""
-            dt = refund.get("created_at") or ""
-            refund_items = refund.get("items") or []
+            amt = refund.get("refund_amount") or refund.get("amount") or ""
+            dt = refund.get("refund_date") or refund.get("created_at") or ""
+            refund_items = refund.get("refunded_items") or refund.get("items") or []
             item_phrase = ""
             if refund_items:
                 item_phrase = f" for {', '.join(refund_items[:3])}"
-            line = f"A refund of {amt} was processed on {dt}{item_phrase}."
+            line = f"The refund was processed on {dt} for {amt}{item_phrase}."
             r_card = (refund.get("card_last4") or refund_card or "").strip()
+            r_brand = (refund.get("card_brand") or refund_brand or "").strip()
             if r_card:
-                line += f" It was returned to the card ending in {r_card}."
+                brand_bit = f"{r_brand} " if r_brand else ""
+                line += f" The refund appears to be linked to the {brand_bit}card ending in {r_card}."
             parts.append(line)
             reason = (refund.get("reason") or "").strip()
             if reason:
                 parts.append(f"The refund reason on file is: {reason}.")
-        if refund_card:
-            parts.append(f"The card refunded ends in {refund_card}.")
-        if email_masked:
-            parts.append(
-                f"Please check your refund confirmation email at {email_masked} — "
-                "that is where Shopify sent your refund notice."
-            )
-    elif email_masked:
-        parts.append(f"The email on this order is {email_masked}.")
+            dest = (refund.get("destination_email") or "").strip()
+            if verified and dest:
+                parts.append(
+                    f"Your refund was sent to {dest}. Please check that inbox."
+                )
+            elif dest:
+                parts.append(
+                    f"Please check your refund confirmation email at {dest}."
+                )
+        if not refunds:
+            parts.append("I do not see a refund processed on this order yet.")
+    else:
+        parts.append("I do not see a refund processed on this order yet.")
+        if email_spoken:
+            parts.append(f"The email on this order is {email_spoken}.")
 
     billing_loc = (order_obj.get("billing_location") or "").strip()
     if billing_loc:
         parts.append(f"The billing location on file is {billing_loc}.")
 
     timeline = order_obj.get("timeline") or []
-    if timeline:
+    timeline_comments = order_obj.get("timeline_comments") or []
+    if not timeline_comments and timeline:
+        timeline_comments = _timeline_comments_from_timeline(timeline)
+    if timeline_comments:
         highlights: list[str] = []
-        for ev in timeline[:4]:
+        for ev in timeline_comments[:4]:
             msg = (ev.get("message") or "").strip()
             if not msg:
                 continue
@@ -1136,11 +1214,48 @@ def _format_order_customer_message(
                 "From the Shopify order timeline: " + " ".join(highlights[:3]) + "."
             )
 
-    order_note = (order_obj.get("order_note") or "").strip()
+    order_note = (order_obj.get("notes") or order_obj.get("order_note") or "").strip()
     if order_note:
         parts.append(f"Order note: {order_note}.")
 
+    note_attrs = order_obj.get("note_attributes") or {}
+    if note_attrs:
+        attr_bits = [f"{k}: {v}" for k, v in list(note_attrs.items())[:3]]
+        if attr_bits:
+            parts.append("Order attributes: " + "; ".join(attr_bits) + ".")
+
     return " ".join(parts)
+
+
+def _apply_order_disclosure(
+    order_obj: dict,
+    *,
+    order_email: str,
+    session: Optional["SessionState"],
+    order_number_provided: bool,
+    email_filter: str | None,
+    phone_filter: str | None,
+) -> tuple[dict, str, bool]:
+    """Attach timeline, apply privacy rules, return (order_obj, customer_message, verified)."""
+    from ..shopify.order_privacy import is_order_disclosure_verified, sanitize_order_object
+
+    verified = is_order_disclosure_verified(
+        session,
+        order_number_provided=order_number_provided,
+        email_filter=email_filter,
+        phone_filter=phone_filter,
+        order_email=order_email,
+    )
+    timeline = order_obj.get("timeline") or []
+    order_obj["timeline_comments"] = _timeline_comments_from_timeline(timeline)
+    order_obj = sanitize_order_object(order_obj, verified=verified)
+    disclosed_email = (order_obj.get("customer_email") or order_email or "").strip()
+    customer_message = _format_order_customer_message(
+        order_obj,
+        order_email=disclosed_email,
+        verified=verified,
+    )
+    return order_obj, customer_message, verified
 
 
 def _money_amount_currency(money_set: dict | None) -> tuple[str, str]:
@@ -1214,25 +1329,37 @@ def _line_items_from_node(node: dict) -> list[dict]:
 
 
 def _refunds_from_node(node: dict, *, order_email: str) -> list[dict]:
-    from ..shopify.order_privacy import card_last4_from_transactions, mask_email_for_voice
+    from ..shopify.order_privacy import (
+        card_brand_from_transactions,
+        card_last4_from_transactions,
+    )
 
     refunds_out: list[dict] = []
     for refund in node.get("refunds") or []:
         amount, currency = _money_amount_currency(refund.get("totalRefundedSet"))
-        items = [
-            (li_edge.get("node") or {}).get("lineItem", {}).get("title", "")
-            for li_edge in (refund.get("refundLineItems") or {}).get("edges", [])
-        ]
-        items = [t for t in items if t]
+        refunded_items = []
+        for li_edge in (refund.get("refundLineItems") or {}).get("edges", []):
+            li_node = li_edge.get("node") or {}
+            title = (li_node.get("lineItem") or {}).get("title", "")
+            qty = int(li_node.get("quantity") or 0)
+            if title:
+                refunded_items.append(f"{qty}x {title}" if qty > 1 else title)
         card_last4 = card_last4_from_transactions(refund.get("transactions"))
+        card_brand = card_brand_from_transactions(refund.get("transactions"))
         reason = (refund.get("note") or "").strip()
+        refund_amt = f"{amount} {currency}".strip() if amount else ""
         refunds_out.append({
-            "amount": f"{amount} {currency}".strip() if amount else "",
-            "created_at": (refund.get("createdAt") or "")[:10],
-            "items": items,
-            "reason": reason,
-            "destination_email": mask_email_for_voice(order_email) if order_email else "",
+            "refund_date": (refund.get("createdAt") or "")[:10],
+            "refund_amount": refund_amt,
+            "refunded_items": refunded_items,
+            "destination_email": order_email,
+            "card_brand": card_brand,
             "card_last4": card_last4,
+            "reason": reason,
+            # Legacy aliases
+            "amount": refund_amt,
+            "created_at": (refund.get("createdAt") or "")[:10],
+            "items": [t.split("x ", 1)[-1] if "x " in t else t for t in refunded_items],
         })
     return refunds_out
 
@@ -1368,11 +1495,18 @@ async def lookup_shopify_order_details(
 
         order_obj = _build_full_order_from_node(node, order_email=order_email)
         order_obj["timeline"] = await _fetch_order_timeline(client, order_obj.get("order_id", ""))
-        customer_message = _format_order_customer_message(order_obj, order_email=order_email)
+        order_obj, customer_message, verified = _apply_order_disclosure(
+            order_obj,
+            order_email=order_email,
+            session=session,
+            order_number_provided=True,
+            email_filter=email,
+            phone_filter=phone,
+        )
 
         payload = {
             "found": True,
-            "verification_required": False,
+            "verification_required": not verified,
             "order": order_obj,
             "customer_message": customer_message,
         }
@@ -1470,8 +1604,10 @@ async def get_refund_status(
         refunds = order.get("refunds") or []
 
         from ..shopify.order_privacy import (
+            card_brand_from_transactions,
             card_last4_from_transactions,
             customer_display_name,
+            is_order_disclosure_verified,
             mask_email_for_voice,
             transactions_list_from_graphql,
         )
@@ -1482,6 +1618,14 @@ async def get_refund_status(
             order_email = (customer.get("email") or "").strip()
         customer_name = customer_display_name(customer)
         card_last4 = card_last4_from_transactions(order.get("transactions") or [])
+        card_brand = card_brand_from_transactions(order.get("transactions") or [])
+        verified = is_order_disclosure_verified(
+            session,
+            order_number_provided=bool(order_number),
+            email_filter=email,
+            phone_filter=phone,
+            order_email=order_email,
+        )
 
         if session:
             session.verified_email = bool(email)
@@ -1493,6 +1637,10 @@ async def get_refund_status(
                 "order_number": order_node["name"],
                 "refund_count": 0,
                 "message": "No refunds have been issued for this order.",
+                "customer_message": (
+                    f"{customer_name + ', ' if customer_name else ''}"
+                    "I do not see a refund processed on this order yet."
+                ),
             })
 
         refund_summaries = []
@@ -1509,6 +1657,7 @@ async def get_refund_status(
                 if t.get("gateway")
             })
             r_last4 = card_last4_from_transactions(refund_txns) or card_last4
+            r_brand = card_brand_from_transactions(refund_txns) or card_brand
             refund_summaries.append({
                 "date": (r.get("createdAt") or "")[:10],
                 "amount": f"{total.get('amount', '?')} {total.get('currencyCode', '')}",
@@ -1516,33 +1665,43 @@ async def get_refund_status(
                 "reason": (r.get("note") or "").strip(),
                 "refunded_via": gateways,
                 "payment_card_last4": r_last4 or "",
+                "payment_card_brand": r_brand or "",
+                "destination_email": order_email if verified else mask_email_for_voice(order_email),
             })
 
         latest = refund_summaries[-1]
-        email_masked = mask_email_for_voice(order_email) if order_email else ""
+        email_spoken = order_email if verified else mask_email_for_voice(order_email)
         suggested = (
             f"Your refund of {latest['amount']} was processed on {latest['date']}."
         )
         if latest.get("payment_card_last4"):
-            suggested += f" It was returned to the card ending in {latest['payment_card_last4']}."
-        if email_masked:
-            suggested += (
-                f" Please check your refund confirmation email at {email_masked}."
-            )
+            brand = latest.get("payment_card_brand") or ""
+            brand_bit = f"{brand} " if brand else ""
+            suggested += f" It was returned to the {brand_bit}card ending in {latest['payment_card_last4']}."
+        if email_spoken:
+            if verified:
+                suggested += f" Your refund was sent to {email_spoken}. Please check that inbox."
+            else:
+                suggested += (
+                    f" Please check your refund confirmation email at {email_spoken}."
+                )
         if latest.get("reason"):
             suggested += f" Reason on file: {latest['reason']}."
         if customer_name:
-            suggested = f"{customer_name}, {suggested}"
+            suggested = f"That order is under {customer_name}. {suggested}"
 
         return json.dumps({
             "found": True,
             "order_number": order_node["name"],
             "refund_count": len(refund_summaries),
             "refunds": refund_summaries,
-            "email_masked": email_masked,
+            "email_masked": mask_email_for_voice(order_email) if order_email else "",
+            "customer_email": order_email if verified else mask_email_for_voice(order_email),
             "payment_card_last4": latest.get("payment_card_last4") or card_last4,
             "customer_name": customer_name,
             "suggested_response": suggested,
+            "customer_message": suggested,
+            "verification_required": not verified,
         })
 
     except Exception as exc:

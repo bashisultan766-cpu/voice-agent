@@ -144,6 +144,9 @@ query LookupOrders($query: String!, $first: Int!) {
             edges {
               node {
                 quantity
+                subtotalSet {
+                  shopMoney { amount currencyCode }
+                }
                 lineItem { title }
               }
             }
@@ -151,8 +154,12 @@ query LookupOrders($query: String!, $first: Int!) {
           transactions(first: 3) {
             edges {
               node {
-                gateway
+                kind
                 status
+                gateway
+                amountSet {
+                  shopMoney { amount currencyCode }
+                }
                 paymentDetails {
                   ... on CardPaymentDetails {
                     number
@@ -164,8 +171,12 @@ query LookupOrders($query: String!, $first: Int!) {
           }
         }
         transactions(first: 5) {
-          gateway
+          kind
           status
+          gateway
+          amountSet {
+            shopMoney { amount currencyCode }
+          }
           paymentDetails {
             ... on CardPaymentDetails {
               number

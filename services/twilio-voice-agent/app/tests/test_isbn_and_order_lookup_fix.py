@@ -590,7 +590,7 @@ def test_refunded_order_customer_message_covers_email_card_shipping_timeline():
     lower = msg.lower()
     assert "refunded" in lower
     assert "0525" in msg
-    assert "j***@gmail.com" in msg
+    assert "jdos403@gmail.com" in msg
     assert "shipping" in lower
     assert "6 order" in lower
     assert "do not ship outside usa" in lower

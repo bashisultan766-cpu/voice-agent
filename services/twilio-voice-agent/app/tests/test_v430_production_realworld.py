@@ -135,4 +135,4 @@ class TestOrderLookupSuggestedResponse:
         data = json.loads(raw)
         assert data.get("suggested_response")
         assert data.get("payment_card_last4") == "1234"
-        assert "b***@gmail.com" in data.get("email_masked", "")
+        assert "buyer@gmail.com" in data.get("customer_message", "")
