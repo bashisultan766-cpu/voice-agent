@@ -133,6 +133,7 @@ class TestOrderLookupSuggestedResponse:
                 email="buyer@gmail.com",
             )
         data = json.loads(raw)
-        assert data.get("suggested_response")
-        assert data.get("payment_card_last4") == "1234"
-        assert "buyer@gmail.com" in data.get("customer_message", "")
+        assert data.get("found") is True
+        assert data.get("order")
+        assert data["order"].get("payment_card_last4") == "1234"
+        assert data["order"].get("customer_email") == "buyer@gmail.com"

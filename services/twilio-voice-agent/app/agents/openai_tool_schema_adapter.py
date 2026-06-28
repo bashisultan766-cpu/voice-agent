@@ -28,6 +28,8 @@ MAIN_BRAIN_TOOL_NAMES: tuple[str, ...] = (
     "send_payment_link",
     "lookup_order_status",
     "lookup_shopify_order_details",
+    "get_order_details",
+    "get_customer_order_history",
     "lookup_refund_status",
     "facility_policy_lookup",
     "search_facility_policy",

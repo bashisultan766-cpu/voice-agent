@@ -61,7 +61,7 @@ _MOCK_ORDER_NODE = {
     "displayFulfillmentStatus": "FULFILLED",
     "email": "john.smith@gmail.com",
     "phone": "+15550001111",
-    "customer": {"firstName": "John", "lastName": "Smith", "email": "john.smith@gmail.com"},
+    "customer": {"id": "gid://shopify/Customer/1", "firstName": "John", "lastName": "Smith", "email": "john.smith@gmail.com"},
     "subtotalPriceSet": {"shopMoney": {"amount": "25.00", "currencyCode": "USD"}},
     "totalShippingPriceSet": {"shopMoney": {"amount": "4.99", "currencyCode": "USD"}},
     "totalTaxSet": {"shopMoney": {"amount": "2.00", "currencyCode": "USD"}},
@@ -432,9 +432,11 @@ async def test_order_number_only_returns_full_details():
     assert order["pricing"]["total"]
     assert order["refunds"]
     assert order["customer_name"] == "John Smith"
-    assert "subtotal before shipping" in result["customer_message"].lower()
-    assert "ending in" in result["customer_message"].lower()
-    assert "1234" in result["customer_message"] or "5678" in result["customer_message"]
+    assert order["customer_email"] == "john.smith@gmail.com"
+    assert order.get("customer", {}).get("email") == "john.smith@gmail.com"
+    assert order.get("shipping")
+    assert order.get("payment")
+    assert "customer_message" not in result or not result.get("customer_message")
 
 
 @pytest.mark.asyncio
@@ -592,7 +594,6 @@ def test_refunded_order_customer_message_covers_email_card_shipping_timeline():
     assert "0525" in msg
     assert "jdos403@gmail.com" in msg
     assert "shipping" in lower
-    assert "6 order" in lower
     assert "do not ship outside usa" in lower
     assert "witching hour" in lower
     assert "shopify order timeline" in lower
@@ -678,7 +679,7 @@ async def test_order_not_found_safe_message():
             result = json.loads(await lookup_shopify_order_details("9999"))
 
     assert result["found"] is False
-    assert result["customer_message"]
+    assert result.get("error_code") == "order_not_found"
 
 
 @pytest.mark.asyncio

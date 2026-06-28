@@ -2,6 +2,7 @@
 Parallel Shopify order enrichment for live voice calls (v4.32).
 
 When an order number is spoken, fetch full order details (+ optional facility review).
+Tool returns JSON only — short-circuit uses a minimal structured fallback if needed.
 """
 from __future__ import annotations
 
@@ -34,40 +35,37 @@ def _parse_json(raw: str) -> dict[str, Any]:
         return {}
 
 
+def _minimal_order_fallback(order_payload: dict[str, Any]) -> str:
+    """Thin fallback when brain is skipped — not a substitute for LLM formatting."""
+    if not order_payload.get("found"):
+        code = order_payload.get("error_code") or order_payload.get("error") or ""
+        if code == "order_not_found":
+            return "I couldn't find that order in Shopify."
+        return "I couldn't look up that order right now."
+
+    inner = order_payload.get("order") or {}
+    num = inner.get("order_number") or order_payload.get("order_number") or ""
+    name = inner.get("customer_name") or ""
+    parts = ["I found your order."]
+    if num:
+        parts.append(f"Order {num}.")
+    if name:
+        parts.append(f"It's under {name}.")
+    return " ".join(parts)
+
+
 def compose_order_voice_reply(
     order: dict[str, Any],
     refund: dict[str, Any],
     *,
     facility: dict[str, Any] | None = None,
 ) -> str:
-    """Build a phone-friendly summary from tool payloads."""
-    if order.get("customer_message"):
-        base = str(order["customer_message"])
-    elif order.get("suggested_response"):
-        base = str(order["suggested_response"])
-    elif order.get("found"):
-        base = (
-            f"Order {order.get('order_number', '')} is {order.get('status', 'unknown')} "
-            f"with fulfillment {order.get('fulfillment_status', 'unknown')}."
-        )
-        if order.get("tracking_number"):
-            base += f" Tracking number is {order['tracking_number']}."
-    elif order.get("message"):
-        base = order["message"]
-    elif not order.get("found") and order.get("customer_message"):
-        base = str(order["customer_message"])
-    else:
-        base = "I couldn't find that order with the details provided."
-
-    if refund.get("suggested_response") and refund.get("suggested_response") not in base:
-        base += " " + str(refund["suggested_response"])
-    elif refund.get("refund_count"):
-        base += f" There are {refund['refund_count']} refund(s) on this order."
+    """Minimal fallback reply from structured tool JSON (LLM should format when possible)."""
+    base = _minimal_order_fallback(order)
 
     if facility:
         msg = (
-            facility.get("customer_message")
-            or facility.get("message")
+            facility.get("message")
             or facility.get("safe_summary")
             or ""
         )
@@ -90,9 +88,9 @@ async def enrich_order_parallel(
     check_facility: bool = False,
 ) -> OrderEnrichmentResult:
     """
-    Fetch full order details by order number (optional email/phone filters).
+    Fetch full order details by order number (single Shopify tool call + optional facility).
     """
-    from ..tools.shopify_tools import get_refund_status, lookup_shopify_order_details
+    from ..tools.shopify_tools import lookup_shopify_order_details
 
     order_number = (order_number or "").lstrip("#").strip()
     if not order_number:
@@ -103,12 +101,6 @@ async def enrich_order_parallel(
     order_task = lookup_shopify_order_details(
         order_number,
         email_or_phone=email_or_phone,
-        session=session,
-    )
-    refund_task = get_refund_status(
-        order_number=order_number,
-        email=email,
-        phone=phone,
         session=session,
     )
 
@@ -125,31 +117,31 @@ async def enrich_order_parallel(
     import asyncio
 
     if facility_task:
-        raw_order, raw_refund, raw_facility = await asyncio.gather(
-            order_task, refund_task, facility_task, return_exceptions=True,
+        raw_order, raw_facility = await asyncio.gather(
+            order_task, facility_task, return_exceptions=True,
         )
     else:
-        raw_order, raw_refund = await asyncio.gather(
-            order_task, refund_task, return_exceptions=True,
-        )
+        raw_order = await order_task
         raw_facility = ""
 
     order = _parse_json(raw_order if not isinstance(raw_order, Exception) else "{}")
-    refund = _parse_json(raw_refund if not isinstance(raw_refund, Exception) else "{}")
+    refund: dict[str, Any] = {}
     facility = _parse_json(raw_facility if isinstance(raw_facility, str) else "{}")
 
     if isinstance(raw_order, Exception):
         logger.warning("order_enrich_order_failed sid=%s err=%s", session.call_sid[:6], raw_order)
-    if isinstance(raw_refund, Exception):
-        logger.warning("order_enrich_refund_failed sid=%s err=%s", session.call_sid[:6], raw_refund)
 
+    inner = order.get("order") or {}
     session.last_order_number = (
-        (order.get("order") or {}).get("order_number")
+        inner.get("order_number")
         or order.get("order_number")
         or order_number
     )
     if facility_name:
         session.last_facility_name = facility_name
+
+    if order.get("found") and inner:
+        session.order_context = json.dumps(inner)[:2000]
 
     try:
         from ..conversation.call_memory import extract_durable_facts
@@ -159,8 +151,6 @@ async def enrich_order_parallel(
         pass
 
     reply = compose_order_voice_reply(order, refund, facility=facility or None)
-    if not reply and order.get("found"):
-        reply = order.get("customer_message") or "I found your order."
 
     logger.info(
         "order_parallel_enrichment sid=%s order=%s found=%s facility=%s",

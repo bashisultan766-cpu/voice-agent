@@ -190,7 +190,7 @@ class TestUnverifiedPrivacy:
 
 class TestLookupToolIntegration:
     @pytest.mark.asyncio
-    async def test_lookup_returns_canonical_order_and_customer_message(self):
+    async def test_lookup_returns_canonical_order_json(self):
         with patch("app.tools.shopify_tools.get_shopify_client", return_value=_order_mock()):
             with patch("app.tools.shopify_tools.shopify_cache_get", AsyncMock(return_value=None)):
                 with patch("app.tools.shopify_tools.shopify_cache_set", AsyncMock()):
@@ -201,7 +201,9 @@ class TestLookupToolIntegration:
         order = data["order"]
         assert order["customer_email"] == "john.smith@gmail.com"
         assert order["customer_name"] == "John Smith"
-        assert "john.smith@gmail.com" in data["customer_message"]
+        assert order.get("products")
+        assert order.get("shipping")
+        assert "customer_message" not in data
 
     @pytest.mark.asyncio
     async def test_missing_fields_do_not_hallucinate(self):
@@ -216,8 +218,9 @@ class TestLookupToolIntegration:
                 with patch("app.tools.shopify_tools.shopify_cache_set", AsyncMock()):
                     raw = await lookup_shopify_order_details("22318")
         data = json.loads(raw)
-        assert "do not see a refund" in data["customer_message"].lower()
-        assert "4111111111111111" not in data["customer_message"]
+        assert data["found"] is True
+        assert data["order"]["refund_info"]["refunded"] is False
+        assert "4111111111111111" not in json.dumps(data)
 
 
 class TestCardPrivacyHelpers:
@@ -228,7 +231,72 @@ class TestCardPrivacyHelpers:
 
 
 @pytest.mark.asyncio
-async def test_main_brain_uses_order_lookup_customer_message():
+async def test_get_order_details_alias():
+    with patch("app.tools.shopify_tools.get_shopify_client", return_value=_order_mock()):
+        with patch("app.tools.shopify_tools.shopify_cache_get", AsyncMock(return_value=None)):
+            with patch("app.tools.shopify_tools.shopify_cache_set", AsyncMock()):
+                from app.tools.shopify_tools import get_order_details
+                raw = await get_order_details("22318")
+    data = json.loads(raw)
+    assert data["found"] is True
+    assert data["order"]["order_number"] == "#22318"
+
+
+@pytest.mark.asyncio
+async def test_get_customer_order_history():
+    from app.tools.shopify_tools import get_customer_order_history
+
+    order_node = {**_FULL_ORDER_NODE, "customer": {
+        "id": "gid://shopify/Customer/99",
+        "firstName": "John",
+        "lastName": "Smith",
+        "email": "john.smith@gmail.com",
+        "numberOfOrders": 5,
+    }}
+
+    async def fake_execute(query, variables=None):
+        if "LookupOrders" in query or "orders(first" in query:
+            return {"data": {"orders": {"edges": [{"node": order_node}]}}}
+        if "GetCustomerOrderHistory" in query:
+            return {
+                "data": {
+                    "customer": {
+                        "id": "gid://shopify/Customer/99",
+                        "firstName": "John",
+                        "lastName": "Smith",
+                        "email": "john.smith@gmail.com",
+                        "numberOfOrders": 5,
+                        "amountSpent": {"shopMoney": {"amount": "250.00", "currencyCode": "USD"}},
+                        "orders": {
+                            "edges": [{
+                                "node": {
+                                    "name": "#1001",
+                                    "createdAt": "2025-01-01",
+                                    "displayFinancialStatus": "PAID",
+                                    "displayFulfillmentStatus": "FULFILLED",
+                                    "totalPriceSet": {"shopMoney": {"amount": "50.00", "currencyCode": "USD"}},
+                                }
+                            }]
+                        },
+                    }
+                }
+            }
+        return {"data": {}}
+
+    client = AsyncMock()
+    client.configured = True
+    client.execute = AsyncMock(side_effect=fake_execute)
+
+    with patch("app.tools.shopify_tools.get_shopify_client", return_value=client):
+        raw = await get_customer_order_history(order_number="22318")
+    data = json.loads(raw)
+    assert data["found"] is True
+    assert data["total_orders"] == 5
+    assert "250.00" in data["lifetime_spend"]
+    assert data["recent_orders"]
+
+
+@pytest.mark.asyncio
     from app.agents.main_commerce_brain import MainCommerceBrain
     from app.agent_runtime import llm_tools
     from app.tests.test_isbn_and_order_lookup_fix import (

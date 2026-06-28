@@ -100,10 +100,24 @@ def sanitize_order_object(order_obj: dict[str, Any], *, verified: bool) -> dict[
         return order_obj
     out = dict(order_obj)
     email = (out.get("customer_email") or "").strip()
+    if not email:
+        cust = out.get("customer") or {}
+        if isinstance(cust, dict):
+            email = (cust.get("email") or "").strip()
     if email:
-        out["customer_email"] = mask_email_for_voice(email)
-        out["email_masked"] = out["customer_email"]
+        masked = mask_email_for_voice(email)
+        out["customer_email"] = masked
+        out["email_masked"] = masked
+        if isinstance(out.get("customer"), dict):
+            out["customer"] = {**out["customer"], "email": masked}
     out["payment_card_last4"] = ""
+    out["payment_card_brand"] = ""
+    if isinstance(out.get("payment"), dict):
+        out["payment"] = {
+            **out["payment"],
+            "card_last4": "",
+            "card_brand": "",
+        }
     refunds = []
     for refund in out.get("refunds") or []:
         r = dict(refund)
@@ -113,10 +127,22 @@ def sanitize_order_object(order_obj: dict[str, Any], *, verified: bool) -> dict[
         r["card_brand"] = ""
         refunds.append(r)
     out["refunds"] = refunds
+    if isinstance(out.get("refund_info"), dict):
+        out["refund_info"] = {**out["refund_info"], "refunds": refunds}
     if out.get("notes"):
         out["notes"] = "[redacted — verify email or phone on the order]"
+    if out.get("order_note"):
+        out["order_note"] = "[redacted — verify email or phone on the order]"
     out["note_attributes"] = {}
     out["timeline_comments"] = []
+    out["timeline_events"] = []
+    out["timeline"] = []
+    if isinstance(out.get("customer"), dict):
+        out["customer"] = {
+            **out["customer"],
+            "shipping_address": {},
+            "phone": "",
+        }
     return out
 
 

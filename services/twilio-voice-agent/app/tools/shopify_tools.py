@@ -16,11 +16,13 @@ import httpx
 from ..shopify.client import get_shopify_client
 from ..shopify.graphql_queries import (
     CREATE_DRAFT_ORDER,
+    GET_CUSTOMER_ORDER_HISTORY,
     GET_ORDER_TIMELINE,
     GET_ORDER_WITH_REFUNDS,
     GET_PRODUCT_BY_HANDLE,
     GET_PRODUCT_BY_ID,
     LOOKUP_ORDERS,
+    SEARCH_CUSTOMERS,
     SEARCH_PRODUCTS,
     SEARCH_VARIANTS_BY_BARCODE,
 )
@@ -765,7 +767,7 @@ async def lookup_order(
 
         order_obj = _build_full_order_from_node(node, order_email=order_email)
         order_obj["timeline"] = await _fetch_order_timeline(client, order_obj.get("order_id", ""))
-        order_obj, customer_message, verified = _apply_order_disclosure(
+        order_obj, verified = _apply_order_disclosure(
             order_obj,
             order_email=order_email,
             session=session,
@@ -777,6 +779,7 @@ async def lookup_order(
         result: dict = {
             "found": True,
             "verification_required": not verified,
+            "verified": verified,
             "order_number": order_obj["order_number"],
             "status": order_obj["financial_status"],
             "fulfillment_status": order_obj["fulfillment_status"],
@@ -790,7 +793,7 @@ async def lookup_order(
             "total": order_obj["pricing"].get("total"),
             "total_with_shipping": order_obj["pricing"].get("total_with_shipping"),
             "tracking_number": (order_obj.get("tracking") or {}).get("tracking_number"),
-            "tracking_url": "",
+            "tracking_url": (order_obj.get("shipping") or {}).get("tracking_url") or "",
             "customer_name": order_obj.get("customer_name"),
             "email_masked": order_obj.get("email_masked"),
             "payment_card_last4": order_obj.get("payment_card_last4"),
@@ -798,8 +801,6 @@ async def lookup_order(
             "product_count": order_obj.get("product_count"),
             "shipped": order_obj.get("shipped"),
             "order": order_obj,
-            "suggested_response": customer_message,
-            "customer_message": customer_message,
         }
 
         tracking = (order_obj.get("tracking") or {})
@@ -950,6 +951,89 @@ async def _lookup_order_edges(
     return []
 
 
+def _shipping_address_from_node(node: dict) -> dict:
+    ship = node.get("shippingAddress") or {}
+    return {
+        "name": (ship.get("name") or "").strip(),
+        "company": (ship.get("company") or "").strip(),
+        "address1": (ship.get("address1") or "").strip(),
+        "address2": (ship.get("address2") or "").strip(),
+        "city": (ship.get("city") or "").strip(),
+        "province": (ship.get("provinceCode") or "").strip(),
+        "zip": (ship.get("zip") or "").strip(),
+        "country": (ship.get("countryCode") or "").strip(),
+    }
+
+
+def _tags_from_node(node: dict) -> list[str]:
+    raw = node.get("tags") or []
+    if isinstance(raw, list):
+        return [str(t).strip() for t in raw if str(t).strip()]
+    if isinstance(raw, str):
+        return [t.strip() for t in raw.split(",") if t.strip()]
+    return []
+
+
+def _payment_from_transactions(transactions: list | dict) -> dict:
+    from ..shopify.order_privacy import (
+        card_brand_from_transactions,
+        card_last4_from_transactions,
+        transactions_list_from_graphql,
+    )
+
+    txns = transactions_list_from_graphql(transactions)
+    gateway = ""
+    status = ""
+    for txn in txns:
+        kind = str(txn.get("kind") or "").upper()
+        if kind in ("SALE", "CAPTURE", "AUTHORIZATION") or not gateway:
+            gateway = str(txn.get("gateway") or gateway)
+            status = str(txn.get("status") or status)
+    return {
+        "gateway": gateway,
+        "status": status,
+        "card_brand": card_brand_from_transactions(txns),
+        "card_last4": card_last4_from_transactions(txns),
+    }
+
+
+def _shipping_detail_from_node(node: dict, *, shipping_fee: str) -> dict:
+    tracking = _tracking_from_node(node)
+    tracking_url = tracking.get("tracking_url") or ""
+    method = ""
+    shipping_line = node.get("shippingLine") or {}
+    if isinstance(shipping_line, dict):
+        method = (shipping_line.get("title") or shipping_line.get("code") or "").strip()
+
+    delivered_date = ""
+    estimated_delivery = ""
+    current_status = ""
+    for fulfillment in node.get("fulfillments") or []:
+        if fulfillment.get("deliveredAt"):
+            delivered_date = str(fulfillment.get("deliveredAt") or "")[:10]
+        if fulfillment.get("estimatedDeliveryAt"):
+            estimated_delivery = str(fulfillment.get("estimatedDeliveryAt") or "")[:10]
+        if fulfillment.get("displayStatus"):
+            current_status = str(fulfillment.get("displayStatus") or "")
+        elif fulfillment.get("status"):
+            current_status = str(fulfillment.get("status") or "")
+
+    if not current_status:
+        current_status = str(node.get("displayFulfillmentStatus") or "")
+
+    return {
+        "method": method,
+        "fee": shipping_fee,
+        "carrier": tracking.get("carrier") or "",
+        "tracking_number": tracking.get("tracking_number") or "",
+        "tracking_url": tracking_url,
+        "tracking_url_present": bool(tracking_url),
+        "estimated_delivery": estimated_delivery,
+        "delivered_date": delivered_date,
+        "current_status": current_status,
+    }
+
+
 def _note_attributes_from_node(node: dict) -> dict[str, str]:
     attrs: dict[str, str] = {}
     for row in node.get("customAttributes") or []:
@@ -977,10 +1061,8 @@ def _timeline_comments_from_timeline(timeline: list[dict]) -> list[dict]:
 
 
 def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
-    """Structured canonical order payload for voice + LLM tools."""
+    """Structured canonical order payload — JSON only; LLM formats speech."""
     from ..shopify.order_privacy import (
-        card_brand_from_transactions,
-        card_last4_from_transactions,
         customer_display_name,
         mask_email_for_voice,
     )
@@ -990,66 +1072,93 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
     tax_amt, tax_cur = _money_amount_currency(node.get("totalTaxSet"))
     discount_amt, discount_cur = _money_amount_currency(node.get("totalDiscountsSet"))
     total_amt, total_cur = _money_amount_currency(node.get("totalPriceSet"))
+    outstanding_amt, outstanding_cur = _money_amount_currency(node.get("totalOutstandingSet"))
+    current_amt, current_cur = _money_amount_currency(node.get("currentTotalPriceSet"))
+
     items = _line_items_from_node(node)
     tracking = _tracking_from_node(node)
     refunds = _refunds_from_node(node, order_email=order_email)
     customer = node.get("customer") or {}
     customer_name = customer_display_name(customer)
-    order_txns = node.get("transactions") or []
-    card_last4 = card_last4_from_transactions(order_txns)
-    card_brand = card_brand_from_transactions(order_txns)
+    payment = _payment_from_transactions(node.get("transactions") or [])
     item_count = sum(int(i.get("quantity") or 0) for i in items)
-    billing = node.get("billingAddress") or {}
-    billing_city = (billing.get("city") or "").strip()
-    billing_region = (billing.get("provinceCode") or "").strip()
-    billing_country = (billing.get("countryCode") or "").strip()
-    billing_bits = [b for b in (billing_city, billing_region, billing_country) if b]
-    customer_order_count = int(customer.get("numberOfOrders") or 0)
     note_attributes = _note_attributes_from_node(node)
     order_note = (node.get("note") or "").strip()
-
-    canonical = {
-        "order_number": node.get("name", ""),
-        "customer_name": customer_name,
-        "customer_email": order_email,
-        "created_at": (node.get("createdAt") or "")[:10],
+    tags = _tags_from_node(node)
+    shipping_address = _shipping_address_from_node(node)
+    shipping_fee = f"{shipping_amt} {shipping_cur}".strip()
+    shipping_detail = _shipping_detail_from_node(node, shipping_fee=shipping_fee)
+    phone = (node.get("phone") or customer.get("phone") or "").strip()
+    is_refunded = _is_refunded_order({
         "financial_status": node.get("displayFinancialStatus", ""),
-        "fulfillment_status": node.get("displayFulfillmentStatus", ""),
-        "shipping_status": _fulfillment_shipping_status(node),
-        "tracking": tracking,
-        "items": items,
-        "product_count": item_count,
-        "line_item_count": len(items),
-        "pricing": {
-            "subtotal": f"{subtotal_amt} {subtotal_cur}".strip(),
-            "subtotal_before_shipping": f"{subtotal_amt} {subtotal_cur}".strip(),
-            "shipping": f"{shipping_amt} {shipping_cur}".strip(),
-            "tax": f"{tax_amt} {tax_cur}".strip(),
-            "discount": f"{discount_amt} {discount_cur}".strip(),
-            "total": f"{total_amt} {total_cur}".strip(),
-            "total_with_shipping": f"{total_amt} {total_cur}".strip(),
-            "currency": total_cur or subtotal_cur or "USD",
-        },
         "refunds": refunds,
-        "notes": order_note,
-        "note_attributes": note_attributes,
-        "timeline_comments": [],
+    })
+
+    pricing = {
+        "subtotal": f"{subtotal_amt} {subtotal_cur}".strip(),
+        "subtotal_before_shipping": f"{subtotal_amt} {subtotal_cur}".strip(),
+        "shipping": shipping_fee,
+        "tax": f"{tax_amt} {tax_cur}".strip(),
+        "discount": f"{discount_amt} {discount_cur}".strip(),
+        "total": f"{total_amt} {total_cur}".strip(),
+        "total_with_shipping": f"{total_amt} {total_cur}".strip(),
+        "currency": total_cur or subtotal_cur or "USD",
+        "outstanding_balance": f"{outstanding_amt} {outstanding_cur}".strip() if outstanding_amt else "0.00 USD",
+        "current_total": f"{current_amt} {current_cur}".strip() if current_amt else "",
+    }
+
+    customer_block = {
+        "name": customer_name,
+        "email": order_email,
+        "phone": phone,
+        "shipping_address": shipping_address,
+    }
+
+    refund_info = {
+        "refunded": is_refunded,
+        "refunds": refunds,
     }
 
     return {
-        **canonical,
         "order_id": node.get("id", ""),
+        "order_number": node.get("name", ""),
+        "order_date": (node.get("createdAt") or "")[:10],
+        "created_at": (node.get("createdAt") or "")[:10],
+        "financial_status": node.get("displayFinancialStatus", ""),
+        "fulfillment_status": node.get("displayFulfillmentStatus", ""),
+        "order_status": node.get("displayFinancialStatus", ""),
+        "shipping_status": _fulfillment_shipping_status(node),
+        "tags": tags,
+        "notes": order_note,
+        "note_attributes": note_attributes,
+        "customer": customer_block,
+        "products": items,
+        "items": items,
+        "product_count": item_count,
+        "line_item_count": len(items),
+        "pricing": pricing,
+        "refund_info": refund_info,
+        "refunds": refunds,
+        "payment": {
+            "status": node.get("displayFinancialStatus", ""),
+            **payment,
+        },
+        "shipping": shipping_detail,
+        "tracking": tracking,
+        "timeline_events": [],
+        "timeline_comments": [],
+        "timeline": [],
+        # Legacy flat aliases (tests / workers)
+        "customer_name": customer_name,
+        "customer_email": order_email,
+        "email_masked": mask_email_for_voice(order_email) if order_email else "",
+        "payment_card_last4": payment.get("card_last4") or "",
+        "payment_card_brand": payment.get("card_brand") or "",
         "shipped": bool(tracking.get("tracking_number"))
         or str(node.get("displayFulfillmentStatus") or "").upper() in ("FULFILLED", "PARTIAL"),
-        "customer_order_count": customer_order_count,
-        "billing_location": ", ".join(billing_bits),
-        "email_masked": mask_email_for_voice(order_email) if order_email else "",
-        "payment_card_last4": card_last4,
-        "payment_card_brand": card_brand,
         "cancelled_at": (node.get("cancelledAt") or "")[:10],
         "order_note": order_note,
-        "timeline": [],
-        "phone": (node.get("phone") or customer.get("phone") or "").strip(),
+        "phone": phone,
     }
 
 
@@ -1087,7 +1196,7 @@ def _format_order_customer_message(
         parts.append(f"Here is what I found for order {num}.")
 
     customer_orders = int(order_obj.get("customer_order_count") or 0)
-    if customer_orders > 0 and name:
+    if customer_orders > 0 and name and order_obj.get("include_customer_history"):
         parts.append(
             f"{name} has placed {customer_orders} order{'s' if customer_orders != 1 else ''} "
             "with SureShot Books."
@@ -1235,8 +1344,8 @@ def _apply_order_disclosure(
     order_number_provided: bool,
     email_filter: str | None,
     phone_filter: str | None,
-) -> tuple[dict, str, bool]:
-    """Attach timeline, apply privacy rules, return (order_obj, customer_message, verified)."""
+) -> tuple[dict, bool]:
+    """Apply privacy rules to structured order JSON. Returns (order_obj, verified)."""
     from ..shopify.order_privacy import is_order_disclosure_verified, sanitize_order_object
 
     verified = is_order_disclosure_verified(
@@ -1247,15 +1356,11 @@ def _apply_order_disclosure(
         order_email=order_email,
     )
     timeline = order_obj.get("timeline") or []
-    order_obj["timeline_comments"] = _timeline_comments_from_timeline(timeline)
+    comments = _timeline_comments_from_timeline(timeline)
+    order_obj["timeline_comments"] = comments
+    order_obj["timeline_events"] = comments
     order_obj = sanitize_order_object(order_obj, verified=verified)
-    disclosed_email = (order_obj.get("customer_email") or order_email or "").strip()
-    customer_message = _format_order_customer_message(
-        order_obj,
-        order_email=disclosed_email,
-        verified=verified,
-    )
-    return order_obj, customer_message, verified
+    return order_obj, verified
 
 
 def _money_amount_currency(money_set: dict | None) -> tuple[str, str]:
@@ -1307,6 +1412,7 @@ def _tracking_from_node(node: dict) -> dict:
     return {
         "carrier": carrier,
         "tracking_number": number,
+        "tracking_url": url,
         "tracking_url_present": bool(url),
     }
 
@@ -1317,11 +1423,18 @@ def _line_items_from_node(node: dict) -> list[dict]:
         li = edge.get("node") or {}
         variant = li.get("variant") or {}
         price_amt, price_cur = _money_amount_currency(li.get("originalUnitPriceSet"))
+        line_amt, line_cur = _money_amount_currency(
+            li.get("discountedTotalSet") or li.get("originalTotalSet"),
+        )
         isbn = str(variant.get("barcode") or "")
+        unit_price = f"{price_amt} {price_cur}".strip() if price_amt else ""
+        line_total = f"{line_amt} {line_cur}".strip() if line_amt else ""
         items.append({
             "title": li.get("title") or "",
             "quantity": int(li.get("quantity") or 0),
-            "price": f"{price_amt} {price_cur}".strip() if price_amt else "",
+            "unit_price": unit_price,
+            "line_total": line_total,
+            "price": unit_price,
             "sku": li.get("sku") or variant.get("sku") or "",
             "isbn": isbn,
         })
@@ -1441,7 +1554,8 @@ async def lookup_shopify_order_details(
             "found": False,
             "verification_required": False,
             "order": None,
-            "customer_message": "What is your order number?",
+            "error_code": "missing_order_number",
+            "error": "missing_order_number",
         })
 
     email, phone = _parse_email_or_phone(email_or_phone)
@@ -1457,10 +1571,8 @@ async def lookup_shopify_order_details(
             "found": False,
             "verification_required": False,
             "order": None,
-            "error": "Shopify not configured",
-            "customer_message": (
-                "I'm having trouble looking up that order right now. Please try again shortly."
-            ),
+            "error": "shopify_not_configured",
+            "error_code": "shopify_not_configured",
         })
 
     try:
@@ -1476,10 +1588,8 @@ async def lookup_shopify_order_details(
                 "found": False,
                 "verification_required": False,
                 "order": None,
-                "customer_message": (
-                    "I couldn't find an order with that number. "
-                    "Could you double-check the order number?"
-                ),
+                "error": "order_not_found",
+                "error_code": "order_not_found",
             }
             return json.dumps(payload)
 
@@ -1494,8 +1604,10 @@ async def lookup_shopify_order_details(
             order_email = (customer.get("email") or "").strip()
 
         order_obj = _build_full_order_from_node(node, order_email=order_email)
-        order_obj["timeline"] = await _fetch_order_timeline(client, order_obj.get("order_id", ""))
-        order_obj, customer_message, verified = _apply_order_disclosure(
+        order_id = order_obj.get("order_id", "")
+        timeline = await _fetch_order_timeline(client, order_id)
+        order_obj["timeline"] = timeline
+        order_obj, verified = _apply_order_disclosure(
             order_obj,
             order_email=order_email,
             session=session,
@@ -1507,8 +1619,8 @@ async def lookup_shopify_order_details(
         payload = {
             "found": True,
             "verification_required": not verified,
+            "verified": verified,
             "order": order_obj,
-            "customer_message": customer_message,
         }
         if session and (email or phone):
             session.verified_email = bool(email)
@@ -1522,10 +1634,119 @@ async def lookup_shopify_order_details(
             "found": False,
             "verification_required": False,
             "order": None,
-            "error": "Order lookup temporarily unavailable.",
-            "customer_message": (
-                "I'm having trouble looking up that order right now. Please try again shortly."
-            ),
+            "error": "lookup_failed",
+            "error_code": "lookup_failed",
+        })
+
+
+async def get_order_details(
+    order_number: str,
+    email_or_phone: str | None = None,
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Alias for lookup_shopify_order_details (V4.30 order workflow)."""
+    return await lookup_shopify_order_details(
+        order_number,
+        email_or_phone=email_or_phone,
+        session=session,
+    )
+
+
+async def get_customer_order_history(
+    *,
+    order_number: str = "",
+    customer_email: str = "",
+    session: Optional["SessionState"] = None,
+    orders_limit: int = 10,
+) -> str:
+    """
+    Customer purchase history — call only when the caller asks about past orders.
+
+    Returns total orders, lifetime spend, recent orders, last order date.
+    """
+    client = get_shopify_client()
+    if not client.configured:
+        return json.dumps({
+            "found": False,
+            "error": "shopify_not_configured",
+            "error_code": "shopify_not_configured",
+        })
+
+    customer_id = ""
+    resolved_email = (customer_email or "").strip().lower()
+
+    if order_number:
+        edges = await _lookup_order_edges(client, order_number, first=1)
+        if edges:
+            node = edges[0]["node"]
+            customer = node.get("customer") or {}
+            customer_id = str(customer.get("id") or "")
+            if not resolved_email:
+                resolved_email = (
+                    (node.get("email") or customer.get("email") or "").strip().lower()
+                )
+
+    if not customer_id and resolved_email:
+        data = await client.execute(
+            SEARCH_CUSTOMERS,
+            variables={"query": f"email:{resolved_email}", "first": 1},
+        )
+        cust_edges = (data.get("data") or {}).get("customers", {}).get("edges", [])
+        if cust_edges:
+            customer_id = str(cust_edges[0].get("node", {}).get("id") or "")
+
+    if not customer_id:
+        return json.dumps({
+            "found": False,
+            "error": "customer_not_found",
+            "error_code": "customer_not_found",
+        })
+
+    try:
+        data = await client.execute(
+            GET_CUSTOMER_ORDER_HISTORY,
+            variables={"id": customer_id, "ordersFirst": min(orders_limit, 25)},
+        )
+        customer = (data.get("data") or {}).get("customer") or {}
+        if not customer:
+            return json.dumps({
+                "found": False,
+                "error": "customer_not_found",
+                "error_code": "customer_not_found",
+            })
+
+        spent = (customer.get("amountSpent") or {}).get("shopMoney") or {}
+        lifetime = f"{spent.get('amount', '')} {spent.get('currencyCode', '')}".strip()
+        recent = []
+        for edge in (customer.get("orders") or {}).get("edges", []):
+            on = edge.get("node") or {}
+            total = (on.get("totalPriceSet") or {}).get("shopMoney") or {}
+            recent.append({
+                "order_number": on.get("name") or "",
+                "created_at": (on.get("createdAt") or "")[:10],
+                "financial_status": on.get("displayFinancialStatus") or "",
+                "fulfillment_status": on.get("displayFulfillmentStatus") or "",
+                "total": f"{total.get('amount', '')} {total.get('currencyCode', '')}".strip(),
+            })
+
+        last_date = recent[0]["created_at"] if recent else ""
+        from ..shopify.order_privacy import customer_display_name
+
+        return json.dumps({
+            "found": True,
+            "customer_name": customer_display_name(customer),
+            "customer_email": (customer.get("email") or resolved_email or "").strip(),
+            "total_orders": int(customer.get("numberOfOrders") or len(recent) or 0),
+            "lifetime_spend": lifetime,
+            "last_order_date": last_date,
+            "recent_orders": recent,
+        })
+    except Exception as exc:
+        logger.error("get_customer_order_history failed: %s", exc)
+        return json.dumps({
+            "found": False,
+            "error": "history_lookup_failed",
+            "error_code": "history_lookup_failed",
         })
 
 

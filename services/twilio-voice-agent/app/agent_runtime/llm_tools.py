@@ -99,6 +99,15 @@ class LookupShopifyOrderDetailsArgs(BaseModel):
     )
 
 
+class GetOrderDetailsArgs(BaseModel):
+    order_number: str = Field(..., min_length=1, description="Shopify order number.")
+
+
+class GetCustomerOrderHistoryArgs(BaseModel):
+    order_number: str = Field("", description="Order number to resolve customer (optional).")
+    customer_email: str = Field("", description="Customer email (optional).")
+
+
 class LookupRefundStatusArgs(BaseModel):
     order_number: str = Field(..., min_length=1)
     email: str = Field("", description="Email for verification.")
@@ -529,6 +538,21 @@ async def _lookup_shopify_order_details(args: LookupShopifyOrderDetailsArgs, ses
     return await _st.lookup_shopify_order_details(
         order_number=args.order_number,
         email_or_phone=(args.email_or_phone or "").strip() or None,
+        session=session,
+    )
+
+
+async def _get_order_details(args: GetOrderDetailsArgs, session) -> str:
+    return await _st.get_order_details(
+        order_number=args.order_number,
+        session=session,
+    )
+
+
+async def _get_customer_order_history(args: GetCustomerOrderHistoryArgs, session) -> str:
+    return await _st.get_customer_order_history(
+        order_number=(args.order_number or "").strip(),
+        customer_email=(args.customer_email or "").strip(),
         session=session,
     )
 
@@ -1142,12 +1166,18 @@ _register(
 )
 _register(
     "lookup_shopify_order_details", LookupShopifyOrderDetailsArgs, _lookup_shopify_order_details,
-    "Fetch real Shopify order details including items, pricing, tracking, and refunds. "
-    "Order number alone returns full details; optional email_or_phone narrows search.",
-    _obj({
-        "order_number": {**_S, "description": "Order number with or without #."},
-        "email_or_phone": {**_S, "description": "Email or phone on the order for verification."},
-    }, ["order_number"]),
+    "Fetch full Shopify order JSON by order number. Returns structured data only — LLM speaks.",
+    _obj({"order_number": _S, "email_or_phone": _S}, ["order_number"]),
+)
+_register(
+    "get_order_details", GetOrderDetailsArgs, _get_order_details,
+    "Alias for lookup_shopify_order_details — full order JSON by order number.",
+    _obj({"order_number": _S}, ["order_number"]),
+)
+_register(
+    "get_customer_order_history", GetCustomerOrderHistoryArgs, _get_customer_order_history,
+    "Customer purchase history — only when caller asks how many times they ordered.",
+    _obj({"order_number": _S, "customer_email": _S}, []),
 )
 _register(
     "lookup_refund_status", LookupRefundStatusArgs, _lookup_refund_status,

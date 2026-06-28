@@ -89,10 +89,22 @@ query LookupOrders($query: String!, $first: Int!) {
         email
         phone
         customer {
+          id
           firstName
           lastName
           email
-          numberOfOrders
+          phone
+        }
+        currentTotalPriceSet {
+          shopMoney { amount currencyCode }
+        }
+        totalOutstandingSet {
+          shopMoney { amount currencyCode }
+        }
+        shippingLine {
+          title
+          code
+          carrierIdentifier
         }
         subtotalPriceSet {
           shopMoney { amount currencyCode }
@@ -118,6 +130,12 @@ query LookupOrders($query: String!, $first: Int!) {
               originalUnitPriceSet {
                 shopMoney { amount currencyCode }
               }
+              discountedTotalSet {
+                shopMoney { amount currencyCode }
+              }
+              originalTotalSet {
+                shopMoney { amount currencyCode }
+              }
               variant {
                 barcode
                 sku
@@ -125,8 +143,13 @@ query LookupOrders($query: String!, $first: Int!) {
             }
           }
         }
-        fulfillments(first: 3) {
+        fulfillments(first: 5) {
           status
+          displayStatus
+          createdAt
+          updatedAt
+          deliveredAt
+          estimatedDeliveryAt
           trackingInfo {
             company
             number
@@ -263,6 +286,36 @@ query SearchCustomers($query: String!, $first: Int!) {
               displayFulfillmentStatus
               createdAt
             }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+GET_CUSTOMER_ORDER_HISTORY = """
+query GetCustomerOrderHistory($id: ID!, $ordersFirst: Int!) {
+  customer(id: $id) {
+    id
+    firstName
+    lastName
+    email
+    phone
+    numberOfOrders
+    amountSpent {
+      shopMoney { amount currencyCode }
+    }
+    orders(first: $ordersFirst, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          id
+          name
+          createdAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          totalPriceSet {
+            shopMoney { amount currencyCode }
           }
         }
       }
