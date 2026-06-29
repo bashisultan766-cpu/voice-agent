@@ -1764,8 +1764,14 @@ async def lookup_shopify_order_details(
     settings = get_settings()
     cache_key = f"order_lookup:{order_number.lstrip('#')}:full"
     cached = await shopify_cache_get(cache_key)
-    if cached is not None:
-        return json.dumps(cached)
+    if cached is not None and isinstance(cached, dict):
+        if cached.get("found"):
+            inner = cached.get("order") or {}
+            shop_name = inner.get("order_number") or ""
+            if shop_name and not _order_digits_equal(order_number, shop_name):
+                cached = None
+        if cached is not None:
+            return json.dumps(cached)
 
     client = get_shopify_client()
     if not client.configured:

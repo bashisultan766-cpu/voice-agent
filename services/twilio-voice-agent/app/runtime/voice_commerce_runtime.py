@@ -639,6 +639,9 @@ class VoiceCommerceRuntime:
             return _result(spoken)
 
         final_text = enforce_commerce_response(session, final_text, tool_results)
+        from ..agent_runtime.order_parallel_enrichment import enforce_order_response
+
+        final_text = enforce_order_response(session, final_text, tool_results)
         spoken = self._brain.finalize_response(session, final_text, tool_results)
         await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
         await _await_send(send, {"type": "text", "token": "", "last": True})

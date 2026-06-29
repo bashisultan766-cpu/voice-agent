@@ -103,6 +103,43 @@ def compose_order_voice_reply(
     return base.strip()
 
 
+_ORDER_LOOKUP_TOOLS = frozenset({
+    "lookup_shopify_order_details",
+    "get_order_details",
+    "lookup_order",
+    "lookup_order_status",
+})
+
+
+def enforce_order_response(
+    session: "SessionState",
+    llm_text: str,
+    tool_results: list[tuple[str, dict]],
+) -> str:
+    """
+    When the brain called an order lookup tool, speak the Shopify template — not LLM prose.
+    """
+    for name, result in tool_results:
+        if name not in _ORDER_LOOKUP_TOOLS:
+            continue
+        if result.get("error_code") == "order_number_not_verified":
+            return (result.get("customer_message") or llm_text).strip()
+        if not result.get("found"):
+            msg = (result.get("customer_message") or "").strip()
+            return msg or _order_lookup_failure_message(result)
+        reply = compose_order_voice_reply(result, {})
+        if reply:
+            session.order_last_voice_reply = reply[:800]
+            inner = result.get("order") or {}
+            if inner:
+                session.order_context = json.dumps(inner)[:2000]
+                onum = inner.get("order_number") or ""
+                if onum:
+                    session.last_order_number = str(onum).lstrip("#")
+            return reply
+    return llm_text
+
+
 async def enrich_order_parallel(
     session: "SessionState",
     order_number: str,
