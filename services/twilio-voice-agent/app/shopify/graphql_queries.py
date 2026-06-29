@@ -432,10 +432,6 @@ query GetOrderWithRefunds($id: ID!) {
           }
         }
       }
-      orderAdjustments(first: 5) {
-        kind
-        amountSet { shopMoney { amount currencyCode } }
-      }
       transactions(first: 3) {
         edges {
           node {

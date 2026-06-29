@@ -214,23 +214,6 @@ class CreateProductNotFoundEscalationArgs(BaseModel):
     reason: str = Field("product_not_found", description="Escalation reason code.")
 
 
-class CreateCustomerQueryEscalationArgs(BaseModel):
-    session_id: str = Field("", description="Voice session id.")
-    call_sid: str = Field("", description="Twilio call SID.")
-    customer_phone: str = Field("", description="Caller phone.")
-    customer_name: str = Field("", description="Caller name if known.")
-    customer_email: str = Field("", description="Confirmed customer email.")
-    query_type: str = Field(
-        "general",
-        description="order|product|refund|facility|shipping|general|isbn|title|etc.",
-    )
-    issue_title: str = Field(..., min_length=1, description="Short title of the unresolved issue.")
-    issue_detail: str = Field("", description="What was looked up and what failed.")
-    conversation_summary: str = Field("", description="Optional; LLM generates if empty.")
-    api_context: dict[str, Any] = Field(default_factory=dict)
-    reason: str = Field("unresolved_customer_query", description="Escalation reason code.")
-
-
 class NormalizeVoiceIntentArgs(BaseModel):
     text: str = Field(..., min_length=1, description="Caller utterance to normalize.")
     context: str = Field("", description="Optional prior context from the call.")
@@ -1038,28 +1021,6 @@ async def _create_product_not_found_escalation(
     return await create_product_not_found_escalation(payload, session=session)
 
 
-async def _create_customer_query_escalation(
-    args: CreateCustomerQueryEscalationArgs, session,
-) -> str:
-    from ..escalation.customer_query_escalation import create_customer_query_escalation
-    from ..escalation.models import CustomerQueryEscalationPayload
-
-    payload = CustomerQueryEscalationPayload(
-        session_id=args.session_id,
-        call_sid=args.call_sid,
-        customer_phone=args.customer_phone,
-        customer_name=args.customer_name,
-        customer_email=args.customer_email,
-        query_type=args.query_type,
-        issue_title=args.issue_title,
-        issue_detail=args.issue_detail,
-        conversation_summary=args.conversation_summary,
-        api_context=dict(args.api_context or {}),
-        reason=args.reason or "unresolved_customer_query",
-    )
-    return await create_customer_query_escalation(payload, session=session)
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Registry: name -> (Pydantic model, impl, description, json schema)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1400,25 +1361,6 @@ _register(
         "reason": _S,
     }, ["requested_value"]),
 )
-_register(
-    "create_customer_query_escalation",
-    CreateCustomerQueryEscalationArgs,
-    _create_customer_query_escalation,
-    "Email backend team (Jessica) with LLM summary when order/product/info cannot "
-    "be found in Shopify. Requires customer name and email.",
-    _obj({
-        "issue_title": {**_S, "description": "Short unresolved issue title."},
-        "issue_detail": {**_S, "description": "Lookup details and failure context."},
-        "customer_email": {**_S, "description": "Customer email for follow-up."},
-        "customer_name": _S,
-        "query_type": {**_S, "description": "order|product|refund|general|etc."},
-        "session_id": _S,
-        "call_sid": _S,
-        "customer_phone": _S,
-        "conversation_summary": _S,
-        "reason": _S,
-    }, ["issue_title"]),
-)
 
 
 def tool_names() -> list[str]:
@@ -1481,7 +1423,12 @@ async def dispatch(name: str, args: dict, session: "SessionState | None") -> str
 
     try:
         result = await tool.impl(validated, session)
-        return result if isinstance(result, str) else json.dumps(result)
+        out = result if isinstance(result, str) else json.dumps(result)
+        if name in ("lookup_shopify_order_details", "get_order_details", "lookup_order"):
+            from ..tools.shopify_tools import customer_facing_order_tool_json
+
+            out = customer_facing_order_tool_json(out)
+        return out
     except Exception:  # noqa: BLE001 — tools must never break the call
         logger.exception("llm_tool_error name=%s", name)
         return _err("That tool is temporarily unavailable.")

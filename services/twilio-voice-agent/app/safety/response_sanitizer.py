@@ -19,25 +19,33 @@ _LEAK_PHRASES: tuple[str, ...] = (
     "hidden fields",
     "system instructions",
     "developer message",
-    "normalizevoiceintent",
-    "getorder",
-    "sureshotcatalogsearch",
-    "sendpaymentlink",
-    "paymentsafetyguard",
-    "mainllmcomposer",
-    "openai",
     "role=tool",
     "# voice style",
     "# opening greeting",
     "# domain context",
     "do not expose",
     "never mention that you are an ai",
-    "mainllmcomposer",
-    "llm",
     # v4.8: client business rules — never say these to a customer
     "processing fee",
     "service fee",
     "internal fee",
+)
+
+_TOOL_NAME_LEAKS: tuple[str, ...] = (
+    "normalizevoiceintent",
+    "getorder",
+    "lookup_shopify_order_details",
+    "get_order_details",
+    "sureshotcatalogsearch",
+    "sendpaymentlink",
+    "paymentsafetyguard",
+    "mainllmcomposer",
+    "create_product_not_found_escalation",
+)
+
+_INTERNAL_LEAK_RE = re.compile(
+    r"\b(" + "|".join(re.escape(p) for p in _TOOL_NAME_LEAKS) + r")\b",
+    re.I,
 )
 
 _HEADING_LEAK = re.compile(r"^#\s+[A-Z]", re.MULTILINE)
@@ -73,6 +81,8 @@ def _detect_leak(text: str) -> Optional[str]:
     for phrase in _LEAK_PHRASES:
         if phrase in lower:
             return "system_prompt_leak"
+    if _INTERNAL_LEAK_RE.search(text):
+        return "system_prompt_leak"
     if _HEADING_LEAK.search(text) and (
         "voice style" in lower
         or "opening greeting" in lower

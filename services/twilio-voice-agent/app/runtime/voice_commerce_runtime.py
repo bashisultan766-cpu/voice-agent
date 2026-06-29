@@ -287,17 +287,17 @@ class VoiceCommerceRuntime:
         if email_result is not None:
             return email_result
 
-        from ..agent_runtime.customer_query_escalation_flow import (
-            process_customer_query_escalation_turn,
+        from ..agent_runtime.not_found_escalation_flow import (
+            process_not_found_escalation_turn,
         )
 
-        esc_hint = await process_customer_query_escalation_turn(
+        esc_hint = await process_not_found_escalation_turn(
             session, normalized, turn_mode=turn_mode,
         )
         if esc_hint.force_reply:
             spoken = self._brain.finalize_response(session, esc_hint.force_reply, [])
             await self._speak(session, normalized, spoken, send)
-            logger.info("customer_query_escalation_email_capture sid=%s", sid)
+            logger.info("support_handoff_email_capture sid=%s", sid)
             return _result(spoken)
 
         if classification.action == "instant" and classification.instant_reply:

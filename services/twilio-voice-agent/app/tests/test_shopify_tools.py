@@ -257,15 +257,45 @@ async def test_create_checkout_link_empty_items():
 
 @pytest.mark.asyncio
 async def test_escalate_to_human_returns_safe_message():
+    from app.state.models import SessionState
     from app.tools.shopify_tools import escalate_to_human
+
+    session = SessionState(
+        session_id="sess_esc",
+        call_sid="CA_ESC",
+        from_number="+15550001111",
+        to_number="+15559999999",
+        caller_email="caller@example.com",
+    )
+    with patch("app.escalation.support_handoff.send_support_handoff", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = json.dumps({
+            "success": True,
+            "customer_message": "I've forwarded your request to our support team.",
+        })
+        result = await escalate_to_human(
+            reason="caller requested human",
+            caller_phone="+15550001111",
+            summary="Caller asked about order #1234",
+            session=session,
+        )
+    data = json.loads(result)
+    assert data["escalated"] is True
+    assert "message" in data
+
+
+@pytest.mark.asyncio
+async def test_escalate_to_human_without_email_asks_contact():
+    from app.tools.shopify_tools import escalate_to_human
+
     result = await escalate_to_human(
         reason="caller requested human",
         caller_phone="+15550001111",
         summary="Caller asked about order #1234",
     )
     data = json.loads(result)
-    assert data["escalated"] is True
-    assert "message" in data
+    assert data["escalated"] is False
+    assert data.get("needs_contact_info") is True
+    assert "name and email" in data["message"].lower()
 
 
 @pytest.mark.asyncio

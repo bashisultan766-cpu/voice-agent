@@ -1,5 +1,5 @@
 """
-Customer query escalation — order not found, LLM summary, backend email.
+Support handoff — order not found, LLM summary, canonical email path.
 """
 from __future__ import annotations
 
@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent_runtime.customer_query_escalation_flow import (
-    process_customer_query_escalation_turn,
+from app.agent_runtime.not_found_escalation_flow import (
+    process_not_found_escalation_turn,
     try_escalate_unresolved_query,
 )
 from app.agent_runtime.order_flow_state import try_order_enrichment_short_circuit
 from app.config import Settings
-from app.escalation.customer_query_escalation import create_customer_query_escalation
 from app.escalation.models import CustomerQueryEscalationPayload
 from app.escalation.product_not_found_escalation import _STORE
+from app.escalation.support_handoff import send_support_handoff
 from app.state.models import SessionState
 
 
@@ -78,7 +78,6 @@ async def test_order_not_found_asks_for_email():
 
     assert hint and hint.force_reply
     assert "email" in hint.force_reply.lower()
-    assert "backend team" in hint.force_reply.lower()
     assert session.awaiting_not_found_escalation_email is True
     pending = session.pending_not_found_escalation
     assert pending.get("query_type") == "order"
@@ -98,19 +97,19 @@ async def test_order_not_found_sends_with_email():
             order={"found": False},
             suggested_response="",
         )
-        with patch("app.escalation.customer_query_escalation.get_settings", return_value=_settings()):
+        with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
             with patch(
-                "app.escalation.customer_query_escalation.httpx.AsyncClient",
+                "app.escalation.support_handoff.httpx.AsyncClient",
                 return_value=mock_client,
             ):
                 with patch(
-                    "app.escalation.customer_query_escalation.summarize_conversation_for_support",
+                    "app.escalation.support_handoff.summarize_conversation_for_support",
                     new_callable=AsyncMock,
                     return_value=("Customer needs order 22399 located manually.", "user: order 22399"),
                 ):
                     hint = await try_order_enrichment_short_circuit(session, "22399")
 
-    assert hint and "backend team" in hint.force_reply.lower()
+    assert hint and "support team" in hint.force_reply.lower()
     mock_client.post.assert_awaited_once()
     email_json = mock_client.post.call_args.kwargs["json"]
     assert email_json["to"] == ["jessica@sureshotbooks.com"]
@@ -123,7 +122,7 @@ async def test_order_not_found_sends_with_email():
 
 
 @pytest.mark.asyncio
-async def test_create_customer_query_escalation_includes_llm_summary():
+async def test_send_support_handoff_includes_llm_summary():
     session = _session(caller_email="test@example.com")
     session.history = [
         {"role": "user", "content": "Where is my order 55555?"},
@@ -141,17 +140,17 @@ async def test_create_customer_query_escalation_includes_llm_summary():
     )
     mock_client = _mock_resend()
 
-    with patch("app.escalation.customer_query_escalation.get_settings", return_value=_settings()):
+    with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
         with patch(
-            "app.escalation.customer_query_escalation.httpx.AsyncClient",
+            "app.escalation.support_handoff.httpx.AsyncClient",
             return_value=mock_client,
         ):
             with patch(
-                "app.escalation.customer_query_escalation.summarize_conversation_for_support",
+                "app.escalation.support_handoff.summarize_conversation_for_support",
                 new_callable=AsyncMock,
                 return_value=("LLM summary of the call.", "user: Where is my order"),
             ):
-                raw = await create_customer_query_escalation(payload, session=session)
+                raw = await send_support_handoff(payload, session=session)
 
     data = json.loads(raw)
     assert data["success"] is True
@@ -176,17 +175,17 @@ async def test_email_capture_on_followup_turn():
     }
     mock_client = _mock_resend()
 
-    with patch("app.escalation.customer_query_escalation.get_settings", return_value=_settings()):
+    with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
         with patch(
-            "app.escalation.customer_query_escalation.httpx.AsyncClient",
+            "app.escalation.support_handoff.httpx.AsyncClient",
             return_value=mock_client,
         ):
             with patch(
-                "app.escalation.customer_query_escalation.summarize_conversation_for_support",
+                "app.escalation.support_handoff.summarize_conversation_for_support",
                 new_callable=AsyncMock,
                 return_value=("Summary", "transcript"),
             ):
-                hint = await process_customer_query_escalation_turn(
+                hint = await process_not_found_escalation_turn(
                     session, "my email is maria@example.com"
                 )
 
@@ -206,5 +205,5 @@ async def test_try_escalate_unresolved_query_no_fake_data_message():
         issue_title="Product XYZ-999 not in catalog",
         issue_detail="Catalog search returned zero results.",
     )
-    assert "couldn't find" in hint.force_reply.lower() or "backend team" in hint.force_reply.lower()
+    assert "not seeing" in hint.force_reply.lower() or "support team" in hint.force_reply.lower()
     assert session.awaiting_not_found_escalation_email is True

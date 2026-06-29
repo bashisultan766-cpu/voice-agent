@@ -1,13 +1,14 @@
 """
-Customer query escalation — LLM summary + email to SureShot backend team.
+Canonical voice-agent support handoff — LLM summary + email to support team.
 
-Used when Shopify/API cannot resolve order, product, or other customer requests.
-Default destination: jessica@sureshotbooks.com (via SUPPORT_EMAIL).
+Single escalation path for missing product/order/refund/tracking/API data.
+Destination: SUPPORT_EMAIL, JESSICA_EMAIL, or CUSTOMER_SERVICE_EMAIL (env).
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Any, Optional, TYPE_CHECKING
@@ -31,25 +32,74 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_IDEM_PREFIX = "customer_query_escalation:"
-
 _CUSTOMER_MESSAGE_SUCCESS = (
-    "I've sent your request to our backend team. "
+    "I've forwarded your request to our support team. "
     "They'll review everything we discussed and contact you by email."
 )
 
-_CUSTOMER_MESSAGE_ASK_EMAIL = (
-    "I couldn't find that in our system right now. "
-    "I can forward your full request to our backend team so they can help manually. "
-    "What email should they use to reach you?"
+_CUSTOMER_MESSAGE_ASK_CONTACT = (
+    "I'm not seeing that information available right now. "
+    "I can have our support team follow up with you by email. "
+    "May I have your name and email?"
 )
 
+_SECRET_KEY_RE = re.compile(
+    r"(token|api[_-]?key|password|secret|authorization|cvv|cvc|card[_-]?number)",
+    re.I,
+)
+_CARD_FULL_RE = re.compile(r"\b\d{13,19}\b")
 
-def _idem_redis_key(key: str) -> str:
-    return f"{_IDEM_PREFIX}{key}"
+
+def _issue_type_label(query_type: str) -> str:
+    mapping = {
+        "order": "Order Not Found",
+        "product": "Product Not Found",
+        "refund": "Refund Unavailable",
+        "facility": "Facility Policy Unknown",
+        "shipping": "Tracking Unavailable",
+        "isbn": "ISBN Not Found",
+        "title": "Title Not Found",
+        "author": "Author Not Found",
+        "newspaper": "Newspaper Not Found",
+        "magazine": "Magazine Not Found",
+        "shopify_api_error": "Shopify API Error",
+        "tool_timeout": "Tool Timeout",
+        "general": "General Support",
+        "unknown": "General Support",
+    }
+    return mapping.get((query_type or "").strip().lower(), query_type or "General Support")
 
 
-def product_payload_to_customer_query(
+def _sanitize_api_context(ctx: dict[str, Any] | None) -> dict[str, Any]:
+    """Strip secrets and oversized raw payloads from support email context."""
+    if not ctx:
+        return {}
+    out: dict[str, Any] = {}
+    for key, val in ctx.items():
+        key_l = str(key).lower()
+        if _SECRET_KEY_RE.search(key_l):
+            out[key] = "[redacted]"
+            continue
+        if isinstance(val, str):
+            if _CARD_FULL_RE.search(val):
+                out[key] = "[redacted card]"
+            else:
+                out[key] = val[:800]
+        elif isinstance(val, (int, float, bool)) or val is None:
+            out[key] = val
+        elif isinstance(val, dict):
+            out[key] = _sanitize_api_context(val)
+        elif isinstance(val, list):
+            out[key] = [
+                _sanitize_api_context(v) if isinstance(v, dict) else str(v)[:200]
+                for v in val[:20]
+            ]
+        else:
+            out[key] = str(val)[:500]
+    return out
+
+
+def product_payload_to_support_handoff(
     payload: ProductNotFoundEscalationPayload,
     *,
     session: Optional["SessionState"] = None,
@@ -74,9 +124,14 @@ def product_payload_to_customer_query(
         query_type=query_type,
         issue_title=title,
         issue_detail=detail,
+        what_customer_asked=(caller_text or payload.conversation_summary or "")[:500],
+        what_agent_tried="Shopify catalog search (search_products / ISBN lookup)",
+        tool_api_result=_sanitize_api_context(payload.last_search_results),
+        reason_for_handoff=payload.reason or "product_not_found",
+        recommended_next_action="Source the requested item manually and email the customer.",
         conversation_summary=payload.conversation_summary,
         api_context={
-            "last_search_results": payload.last_search_results,
+            "last_search_results": _sanitize_api_context(payload.last_search_results),
             "requested_type": payload.requested_type,
             "requested_value": payload.requested_value,
         },
@@ -85,54 +140,49 @@ def product_payload_to_customer_query(
 
 
 def _build_email_body(payload: CustomerQueryEscalationPayload) -> str:
+    api_ctx = _sanitize_api_context(payload.api_context)
+    tool_result = payload.tool_api_result or api_ctx
+    if isinstance(tool_result, dict):
+        tool_result_text = json.dumps(tool_result, indent=2, default=str)[:2500]
+    else:
+        tool_result_text = str(tool_result)[:2500]
+
     lines = [
-        "SureShot Books — Customer Query Escalation (Voice Agent)",
+        "Voice Agent Support Handoff",
         "",
-        f"Escalation ID: {payload.session_id}",
-        f"Call SID: {payload.call_sid}",
-        f"Created: {payload.created_at}",
+        f"Customer name: {payload.customer_name or 'unknown'}",
+        f"Customer email: {payload.customer_email or 'unknown'}",
+        f"Customer phone: {payload.customer_phone or 'unknown'}",
+        f"Call SID: {payload.call_sid or 'unknown'}",
+        f"Session ID: {payload.session_id or 'unknown'}",
+        f"Issue type: {_issue_type_label(payload.query_type)}",
+        f"Requested item/order: {payload.issue_title or 'N/A'}",
+        f"What the customer asked: {payload.what_customer_asked or payload.issue_detail or 'N/A'}",
+        f"What the agent tried: {payload.what_agent_tried or 'Automated Shopify/catalog/order lookup'}",
+        f"Tool/API result: {tool_result_text or 'N/A'}",
+        f"Reason for handoff: {payload.reason_for_handoff or payload.reason or 'data_unavailable'}",
+        (
+            f"Recommended next action: "
+            f"{payload.recommended_next_action or 'Follow up with the customer by email.'}"
+        ),
         "",
-        "CUSTOMER (reach out to resolve)",
-        f"  Name: {payload.customer_name or 'unknown'}",
-        f"  Email: {payload.customer_email or 'unknown'}",
-        f"  Phone: {payload.customer_phone or 'unknown'}",
-        "",
-        "QUERY",
-        f"  Type: {payload.query_type}",
-        f"  Title: {payload.issue_title}",
-        f"  Detail: {payload.issue_detail}",
-        "",
-        "REASON",
-        f"  {payload.reason}",
-        "",
-        "CONVERSATION SUMMARY (LLM)",
+        "Conversation summary:",
         payload.conversation_summary or "N/A",
-        "",
-        "FULL TRANSCRIPT",
-        (payload.conversation_transcript or "N/A")[:4000],
-    ]
-    if payload.api_context:
-        lines.extend([
-            "",
-            "API / SYSTEM CONTEXT",
-            json.dumps(payload.api_context, indent=2, default=str)[:2500],
-        ])
-    lines.extend([
         "",
         "---",
         "Reply to the customer email above when you have an update.",
-    ])
+    ]
     return "\n".join(lines)
 
 
-async def create_customer_query_escalation(
+async def send_support_handoff(
     payload: CustomerQueryEscalationPayload | dict[str, Any],
     *,
     session: Optional["SessionState"] = None,
     caller_text: str = "",
 ) -> str:
     """
-    Summarize conversation (LLM), email backend team via Resend, return JSON string.
+    Summarize conversation (LLM), email support team via Resend, return JSON string.
     """
     settings = get_settings()
 
@@ -158,14 +208,14 @@ async def create_customer_query_escalation(
         return json.dumps({
             "success": False,
             "error_code": "missing_issue",
-            "customer_message": _CUSTOMER_MESSAGE_ASK_EMAIL,
+            "customer_message": _CUSTOMER_MESSAGE_ASK_CONTACT,
         })
 
     if not model.customer_email.strip() or "@" not in model.customer_email:
         return json.dumps({
             "success": False,
             "error_code": "missing_customer_email",
-            "customer_message": _CUSTOMER_MESSAGE_ASK_EMAIL,
+            "customer_message": _CUSTOMER_MESSAGE_ASK_CONTACT,
         })
 
     if not getattr(settings, "SUPPORT_ESCALATION_ENABLED", True):
@@ -181,7 +231,7 @@ async def create_customer_query_escalation(
     support_to = resolve_support_email(settings)
     if not support_to:
         logger.error(
-            "customer_query_escalation_blocked call_sid=%s reason=support_email_not_configured",
+            "support_handoff_blocked call_sid=%s reason=support_email_not_configured",
             (model.call_sid or "")[:8],
         )
         return json.dumps({
@@ -195,7 +245,7 @@ async def create_customer_query_escalation(
 
     if not settings.RESEND_API_KEY:
         logger.error(
-            "customer_query_escalation_blocked call_sid=%s reason=resend_not_configured",
+            "support_handoff_blocked call_sid=%s reason=resend_not_configured",
             (model.call_sid or "")[:8],
         )
         return json.dumps({
@@ -210,7 +260,7 @@ async def create_customer_query_escalation(
     existing = _get_existing_record(idem_key)
     if existing and existing.get("success"):
         logger.info(
-            "customer_query_escalation_idempotent call_sid=%s type=%s",
+            "support_handoff_idempotent call_sid=%s type=%s",
             (model.call_sid or "")[:8],
             model.query_type,
         )
@@ -226,27 +276,25 @@ async def create_customer_query_escalation(
         caller_text=caller_text,
         issue_title=model.issue_title,
         issue_detail=model.issue_detail,
-        api_context=model.api_context,
+        api_context=_sanitize_api_context(model.api_context),
     )
     if summary:
         model.conversation_summary = summary
-    if transcript:
-        model.conversation_transcript = transcript
+    if transcript and not model.what_customer_asked:
+        model.what_customer_asked = transcript[-500:]
 
     escalation_id = str(uuid.uuid4())
     from_addr = resolve_escalation_from_email(settings)
-    subject = (
-        f"[Voice Agent] Customer query — {model.query_type}: "
-        f"{(model.customer_name or 'Caller')} — "
-        f"{model.issue_title[:50]}"
-    )
+    customer_name = (model.customer_name or "Caller").strip()
+    issue_label = _issue_type_label(model.query_type)
+    subject = f"Voice Agent Support Handoff — {issue_label} — {customer_name}"
     body = _build_email_body(model)
 
     logger.info(
-        "customer_query_escalation_send call_sid=%s type=%s name=%s email=%s phone=%s",
+        "support_handoff_send call_sid=%s type=%s name=%s email=%s phone=%s",
         (model.call_sid or "")[:8],
         model.query_type,
-        (model.customer_name or "")[:20] or "unknown",
+        customer_name[:20] or "unknown",
         _mask_email(model.customer_email),
         _mask_phone(model.customer_phone),
     )
@@ -269,7 +317,7 @@ async def create_customer_query_escalation(
             )
         if resp.status_code not in (200, 201):
             logger.error(
-                "customer_query_escalation_failed call_sid=%s status=%s",
+                "support_handoff_failed call_sid=%s status=%s",
                 (model.call_sid or "")[:8],
                 resp.status_code,
             )
@@ -282,7 +330,7 @@ async def create_customer_query_escalation(
             })
     except Exception as exc:
         logger.error(
-            "customer_query_escalation_error call_sid=%s err=%s",
+            "support_handoff_error call_sid=%s err=%s",
             (model.call_sid or "")[:8],
             type(exc).__name__,
         )
@@ -315,7 +363,7 @@ async def create_customer_query_escalation(
 
             persist_escalation_if_configured(
                 session,
-                escalation_type="customer_query",
+                escalation_type="support_handoff",
                 payload={
                     "query_type": model.query_type,
                     "issue_title": model.issue_title[:120],
@@ -325,10 +373,7 @@ async def create_customer_query_escalation(
             schedule_workflow_event(
                 session,
                 "escalation_created",
-                {
-                    "type": "customer_query",
-                    "query_type": model.query_type,
-                },
+                {"type": "support_handoff", "query_type": model.query_type},
             )
         except Exception:
             pass

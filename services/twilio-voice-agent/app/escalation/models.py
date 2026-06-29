@@ -62,7 +62,7 @@ QueryType = Literal[
 
 @dataclass
 class CustomerQueryEscalationPayload:
-    """Escalate an unresolved voice query to the SureShot backend team."""
+    """Canonical support handoff payload for unresolved voice queries."""
 
     session_id: str
     call_sid: str
@@ -72,6 +72,11 @@ class CustomerQueryEscalationPayload:
     query_type: str = "general"
     issue_title: str = ""
     issue_detail: str = ""
+    what_customer_asked: str = ""
+    what_agent_tried: str = ""
+    tool_api_result: dict[str, Any] | str = field(default_factory=dict)
+    reason_for_handoff: str = ""
+    recommended_next_action: str = ""
     conversation_summary: str = ""
     conversation_transcript: str = ""
     api_context: dict[str, Any] = field(default_factory=dict)
@@ -94,6 +99,11 @@ class CustomerQueryEscalationPayload:
             query_type=str(data.get("query_type") or "general"),
             issue_title=str(data.get("issue_title") or ""),
             issue_detail=str(data.get("issue_detail") or ""),
+            what_customer_asked=str(data.get("what_customer_asked") or ""),
+            what_agent_tried=str(data.get("what_agent_tried") or ""),
+            tool_api_result=data.get("tool_api_result") or {},
+            reason_for_handoff=str(data.get("reason_for_handoff") or ""),
+            recommended_next_action=str(data.get("recommended_next_action") or ""),
             conversation_summary=str(data.get("conversation_summary") or ""),
             conversation_transcript=str(data.get("conversation_transcript") or ""),
             api_context=dict(data.get("api_context") or {}),

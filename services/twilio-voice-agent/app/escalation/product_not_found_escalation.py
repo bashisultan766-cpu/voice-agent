@@ -208,10 +208,7 @@ async def create_product_not_found_escalation(
             ),
         })
 
-    from .customer_query_escalation import (
-        create_customer_query_escalation,
-        product_payload_to_customer_query,
-    )
+    from .support_handoff import product_payload_to_support_handoff, send_support_handoff
 
-    cq = product_payload_to_customer_query(model, session=session)
-    return await create_customer_query_escalation(cq, session=session)
+    handoff = product_payload_to_support_handoff(model, session=session)
+    return await send_support_handoff(handoff, session=session)

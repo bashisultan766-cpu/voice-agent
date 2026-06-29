@@ -293,7 +293,7 @@ async def try_order_enrichment_short_circuit(
     )
 
     if not result.order.get("found"):
-        from .customer_query_escalation_flow import try_escalate_unresolved_query
+        from .not_found_escalation_flow import try_escalate_unresolved_query
 
         esc = await try_escalate_unresolved_query(
             session,
@@ -311,6 +311,8 @@ async def try_order_enrichment_short_circuit(
                 "enrichment": result.order,
             },
             reason="order_not_found",
+            what_agent_tried=f"Shopify order lookup for order {order_num}",
+            recommended_next_action="Locate the order manually and email the customer.",
         )
         return OrderTurnHint(
             force_reply=esc.force_reply or (

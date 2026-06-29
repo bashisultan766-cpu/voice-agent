@@ -37,7 +37,6 @@ MAIN_BRAIN_TOOL_NAMES: tuple[str, ...] = (
     "explain_facility_restriction",
     "escalate_to_customer_service",
     "create_product_not_found_escalation",
-    "create_customer_query_escalation",
 )
 
 _S = {"type": "string"}

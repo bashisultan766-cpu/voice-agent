@@ -470,39 +470,108 @@ async def search_product_by_isbn(isbn: str) -> str:
 async def _notify_support_escalation(
     caller_masked: str, reason: str, summary: str
 ) -> None:
-    """Fire-and-forget: plain text escalation notification via Resend."""
-    settings = get_settings()
-    if not settings.SUPPORT_EMAIL or not settings.RESEND_API_KEY:
-        return
-    from_addr = (
-        f"{settings.RESEND_FROM_NAME} <{settings.RESEND_FROM_EMAIL}>"
-        if settings.RESEND_FROM_NAME
-        else settings.RESEND_FROM_EMAIL
+    """Deprecated — use send_support_handoff via escalate_to_human."""
+    logger.debug(
+        "notify_support_escalation_legacy caller=%s reason=%r",
+        caller_masked,
+        reason[:60],
     )
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": from_addr,
-                    "to": [settings.SUPPORT_EMAIL],
-                    "subject": f"[Voice Agent] Escalation: {reason[:60]}",
-                    "text": (
-                        f"Caller: {caller_masked}\n\n"
-                        f"Reason: {reason}\n\n"
-                        f"Summary: {summary}"
-                    ),
-                },
-            )
-    except Exception:
-        logger.warning("Failed to send escalation support notification")
 
 
-# ── Tool functions ─────────────────────────────────────────────────────────────
+async def escalate_to_human(
+    reason: str,
+    caller_phone: str = "",
+    summary: str = "",
+    session: Optional["SessionState"] = None,
+) -> str:
+    """Record escalation and email support via canonical support handoff."""
+    from ..escalation.models import CustomerQueryEscalationPayload
+    from ..escalation.support_handoff import send_support_handoff
+
+    masked = _mask(caller_phone) if caller_phone else "unknown"
+    logger.info(
+        "Escalation | reason=%r caller=%s summary=%r",
+        reason,
+        masked,
+        summary[:120],
+    )
+
+    email = ""
+    name = ""
+    phone = caller_phone or ""
+    if session is not None:
+        phone = getattr(session, "from_number", "") or phone
+        name = getattr(session, "caller_name", "") or ""
+        for attr in ("confirmed_email", "caller_email"):
+            val = (getattr(session, attr, "") or "").strip().lower()
+            if val and "@" in val:
+                email = val
+                break
+
+    payload = CustomerQueryEscalationPayload(
+        session_id=(
+            getattr(session, "session_id", "") if session else ""
+        ) or (getattr(session, "call_sid", "") if session else ""),
+        call_sid=getattr(session, "call_sid", "") if session else "",
+        customer_phone=phone,
+        customer_name=name,
+        customer_email=email,
+        query_type="general",
+        issue_title=(reason or "Customer service escalation")[:120],
+        issue_detail=(summary or reason or "")[:500],
+        what_customer_asked=(summary or reason or "")[:500],
+        what_agent_tried="Voice agent tools and automated lookups",
+        reason_for_handoff=reason or "human_escalation",
+        recommended_next_action="Contact the customer and resolve the request manually.",
+        reason=reason or "human_escalation",
+    )
+
+    if not email:
+        return json.dumps({
+            "escalated": False,
+            "needs_contact_info": True,
+            "message": (
+                "I'm not seeing that information available right now. "
+                "I can have our support team follow up with you by email. "
+                "May I have your name and email?"
+            ),
+        })
+
+    raw = await send_support_handoff(payload, session=session, caller_text=summary)
+    parsed = json.loads(raw)
+    if parsed.get("success"):
+        if session is not None:
+            try:
+                from ..memory.postgres_store import persist_escalation_if_configured
+                from ..workflow.hooks import schedule_workflow_event
+
+                persist_escalation_if_configured(
+                    session,
+                    escalation_type="human_escalation",
+                    payload={"reason": reason, "summary": (summary or "")[:200]},
+                )
+                schedule_workflow_event(
+                    session,
+                    "escalation_created",
+                    {"type": "human_escalation", "reason": reason[:120]},
+                )
+            except Exception:
+                pass
+        return json.dumps({
+            "escalated": True,
+            "message": parsed.get("customer_message") or (
+                "I've forwarded your request to our support team. "
+                "They'll contact you by email."
+            ),
+        })
+
+    return json.dumps({
+        "escalated": False,
+        "error_code": parsed.get("error_code", "escalation_failed"),
+        "message": parsed.get("customer_message") or (
+            "I had trouble notifying our team — please try again in a moment."
+        ),
+    })
 
 
 def _cached_product_to_result(product) -> dict:
@@ -1336,6 +1405,92 @@ def _format_order_customer_message(
     return " ".join(parts)
 
 
+def _build_customer_safe_tool_response(
+    *,
+    found: bool,
+    verified: bool = False,
+    verification_required: bool = False,
+    order_obj: dict | None = None,
+    order_email: str = "",
+    error: str = "",
+    error_code: str = "",
+) -> dict:
+    """LLM-facing order tool fields — natural summary plus structured safe data."""
+    safe: dict = {
+        "found": found,
+        "verified": verified,
+        "verification_required": verification_required,
+    }
+    if error:
+        safe["error"] = error
+    if error_code:
+        safe["error_code"] = error_code
+    if found and order_obj:
+        safe["customer_safe_summary"] = _format_order_customer_message(
+            order_obj,
+            order_email=order_email,
+            verified=verified,
+        )
+        safe["order"] = {
+            key: order_obj.get(key)
+            for key in (
+                "order_number",
+                "order_date",
+                "financial_status",
+                "fulfillment_status",
+                "shipping_status",
+                "customer_name",
+                "customer_email",
+                "email_masked",
+                "customer",
+                "products",
+                "items",
+                "product_count",
+                "pricing",
+                "refunds",
+                "refund_info",
+                "payment",
+                "shipping",
+                "tracking",
+                "notes",
+                "note_attributes",
+                "payment_card_last4",
+                "payment_card_brand",
+                "shipped",
+            )
+            if order_obj.get(key) is not None
+        }
+    elif not found:
+        safe["customer_safe_summary"] = (
+            "I could not find that order in Shopify. Do not invent order, refund, "
+            "or tracking details. Offer support follow-up and collect name and email."
+        )
+    return safe
+
+
+def customer_facing_order_tool_json(result_str: str) -> str:
+    """Strip internal fields from order tool JSON before the LLM sees it."""
+    try:
+        parsed = json.loads(result_str)
+    except json.JSONDecodeError:
+        return result_str
+    if not isinstance(parsed, dict):
+        return result_str
+    order = parsed.get("order")
+    safe = _build_customer_safe_tool_response(
+        found=bool(parsed.get("found")),
+        verified=bool(parsed.get("verified")),
+        verification_required=bool(parsed.get("verification_required")),
+        order_obj=order if isinstance(order, dict) else None,
+        order_email=(order or {}).get("customer_email", "") if isinstance(order, dict) else "",
+        error=str(parsed.get("error") or ""),
+        error_code=str(parsed.get("error_code") or ""),
+    )
+    if parsed.get("customer_safe_summary") and not safe.get("customer_safe_summary"):
+        safe["customer_safe_summary"] = parsed["customer_safe_summary"]
+    return json.dumps(safe)
+
+
 def _apply_order_disclosure(
     order_obj: dict,
     *,
@@ -1590,6 +1745,11 @@ async def lookup_shopify_order_details(
                 "order": None,
                 "error": "order_not_found",
                 "error_code": "order_not_found",
+                **_build_customer_safe_tool_response(
+                    found=False,
+                    error="order_not_found",
+                    error_code="order_not_found",
+                ),
             }
             return json.dumps(payload)
 
@@ -1621,6 +1781,13 @@ async def lookup_shopify_order_details(
             "verification_required": not verified,
             "verified": verified,
             "order": order_obj,
+            **_build_customer_safe_tool_response(
+                found=True,
+                verified=verified,
+                verification_required=not verified,
+                order_obj=order_obj,
+                order_email=order_email,
+            ),
         }
         if session and (email or phone):
             session.verified_email = bool(email)
@@ -1817,12 +1984,31 @@ async def get_refund_status(
 
         order_node = edges[0]["node"]
 
-        refund_data = await client.execute(
-            GET_ORDER_WITH_REFUNDS,
-            variables={"id": order_node["id"]},
-        )
-        order = refund_data.get("data", {}).get("order", {})
-        refunds = order.get("refunds") or []
+        refund_data: dict = {}
+        refunds: list = []
+        order: dict = {}
+        try:
+            refund_data = await client.execute(
+                GET_ORDER_WITH_REFUNDS,
+                variables={"id": order_node["id"]},
+            )
+            errors = refund_data.get("errors") or []
+            if errors:
+                logger.warning(
+                    "get_refund_status_graphql_partial order=%s err=%s",
+                    order_number,
+                    errors[0].get("message", errors[0]),
+                )
+            order = refund_data.get("data", {}).get("order", {}) or {}
+            refunds = order.get("refunds") or []
+        except Exception as exc:
+            logger.warning(
+                "get_refund_status_refund_query_failed order=%s err=%s",
+                order_number,
+                type(exc).__name__,
+            )
+            refunds = order_node.get("refunds") or []
+            order = order_node
 
         from ..shopify.order_privacy import (
             card_brand_from_transactions,
@@ -2262,48 +2448,6 @@ async def send_payment_link_email_tool(
         retryable=True,
         escalation_recommended=True,
     ))
-
-
-async def escalate_to_human(
-    reason: str,
-    caller_phone: str = "",
-    summary: str = "",
-    session: Optional["SessionState"] = None,
-) -> str:
-    """Record escalation and optionally notify support via email."""
-    masked = _mask(caller_phone) if caller_phone else "unknown"
-    logger.info(
-        "Escalation | reason=%r caller=%s summary=%r",
-        reason,
-        masked,
-        summary[:120],
-    )
-    await _notify_support_escalation(masked, reason, summary)
-    if session is not None:
-        try:
-            from ..memory.postgres_store import persist_escalation_if_configured
-            from ..workflow.hooks import schedule_workflow_event
-
-            persist_escalation_if_configured(
-                session,
-                escalation_type="human_escalation",
-                payload={"reason": reason, "summary": (summary or "")[:200]},
-            )
-            schedule_workflow_event(
-                session,
-                "escalation_created",
-                {"type": "human_escalation", "reason": reason[:120]},
-            )
-        except Exception:
-            pass
-    return json.dumps({
-        "escalated": True,
-        "message": (
-            "I've flagged this for our team. "
-            "Someone will follow up with you shortly. "
-            "Is there anything else I can help you with in the meantime?"
-        ),
-    })
 
 
 # ── ElevenLabs-aligned tool wrappers (v4.2) ────────────────────────────────────
