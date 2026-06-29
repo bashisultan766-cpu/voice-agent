@@ -70,6 +70,9 @@ When Shopify, catalog, or order lookup cannot find the customer's item or order:
 - Support handoff requires collecting and confirming the customer's name and email on the call first.
 
 Rules:
+- Sound like a real person on a live phone call — warm, natural, unhurried. Use contractions (I'm, we'll, that's).
+- NEVER stay silent or give an empty reply. If unsure, ask ONE short clarifying question.
+- Acknowledge the caller before the next step: "Got it", "Sure", "No problem" — then continue.
 - Be warm, fast, and concise.
 - Ask one question at a time.
 - Use tools for all real data.
@@ -119,8 +122,10 @@ class MainCommerceBrain:
     def _select_model(self, *, use_strong: bool = False) -> str:
         if use_strong:
             return getattr(self._settings, "OPENAI_STRONG_MODEL", "gpt-4o")
-        fast = getattr(self._settings, "OPENAI_FAST_MODEL", "gpt-4o-mini")
-        return fast or getattr(self._settings, "OPENAI_MODEL", "gpt-4o")
+        brain = (getattr(self._settings, "VOICE_BRAIN_MODEL", "") or "").strip()
+        if brain:
+            return brain
+        return getattr(self._settings, "OPENAI_MODEL", "gpt-4o")
 
     def _system_message(
         self,
@@ -170,11 +175,18 @@ class MainCommerceBrain:
             lines.append("- Awaiting cart confirmation before checkout.")
         try:
             from ..conversation.call_memory import build_brain_context, sync_from_session
+            from ..dialogue.naturalness import NaturalnessController
 
             sync_from_session(session)
             memory_block = build_brain_context(session)
             if memory_block:
                 lines.append(memory_block)
+            style = NaturalnessController.style_hint(session)
+            if style:
+                lines.append(f"- Tone hint (do not read aloud): {style}")
+            avoid = NaturalnessController.avoid_repetition_note(session)
+            if avoid:
+                lines.append(f"- {avoid}")
         except Exception:  # noqa: BLE001
             pass
         if caller_text:
@@ -271,8 +283,8 @@ class MainCommerceBrain:
                     messages=messages,
                     tools=tools,
                     tool_choice="auto",
-                    temperature=0.5,
-                    max_tokens=400,
+                    temperature=0.62,
+                    max_tokens=450,
                 ),
                 timeout=timeout,
             )
@@ -306,8 +318,8 @@ class MainCommerceBrain:
                 client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    temperature=0.5,
-                    max_tokens=400,
+                    temperature=0.62,
+                    max_tokens=450,
                 ),
                 timeout=timeout,
             )
@@ -368,7 +380,7 @@ class MainCommerceBrain:
 
                 if not tool_calls:
                     final = (msg.content or "").strip()
-                    if not final and tool_results:
+                    if not final:
                         final = _STUCK_RECOVERY
                     return final, tools_used, tool_results
 
@@ -469,4 +481,7 @@ class MainCommerceBrain:
             max_words=max_words,
             call_sid=getattr(session, "call_sid", ""),
         )
-        return guarded.text.strip()
+        out = guarded.text.strip()
+        if not out:
+            out = _STUCK_RECOVERY
+        return out

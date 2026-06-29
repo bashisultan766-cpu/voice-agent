@@ -88,6 +88,7 @@ class _FakeSettings:
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_FAST_MODEL: str = "gpt-4o-mini"
     OPENAI_STRONG_MODEL: str = "gpt-4o"
+    VOICE_BRAIN_MODEL: str = "gpt-4o"
     VOICE_OPENAI_TIMEOUT_MS: int = 8000
     VOICE_MAX_REPLY_WORDS: int = 50
     VOICE_TOOL_TIMEOUT_MS: int = 2500

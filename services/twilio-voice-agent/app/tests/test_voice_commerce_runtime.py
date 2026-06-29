@@ -86,6 +86,7 @@ class _FakeSettings:
     OPENAI_MODEL: str = "gpt-4o"
     OPENAI_FAST_MODEL: str = "gpt-4o-mini"
     OPENAI_STRONG_MODEL: str = "gpt-4o"
+    VOICE_BRAIN_MODEL: str = "gpt-4o"
     VOICE_OPENAI_TIMEOUT_MS: int = 8000
     VOICE_MAX_REPLY_WORDS: int = 50
     VOICE_PROMPT_TOKEN_BUDGET: int = 4000
@@ -332,7 +333,7 @@ def test_live_handler_is_voice_commerce_runtime():
 
 def test_brain_uses_fast_model_by_default():
     brain = MainCommerceBrain(settings=_FakeSettings())
-    assert brain._select_model(use_strong=False) == "gpt-4o-mini"
+    assert brain._select_model(use_strong=False) == "gpt-4o"
 
 
 def test_brain_uses_strong_model_when_requested():

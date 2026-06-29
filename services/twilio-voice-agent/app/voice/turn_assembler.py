@@ -85,6 +85,7 @@ class AssembledTurn:
 
     text: str
     mode: str = "normal"
+    agent_reply: str = ""
 
 
 class TurnAssembler:
@@ -430,10 +431,20 @@ class TurnAssembler:
                 elif time.monotonic() - st.hold_started_at >= max_hold_s:
                     keepalive = getattr(self._settings, "VOICE_COLLECTION_KEEPALIVE_ENABLED", True)
                     if keepalive:
-                        st.buffer = _KEEPALIVE_RESPONSE
+                        held = st.buffer
+                        st.buffer = ""
                         st.mode = "normal"
                         st.hold_started_at = 0.0
-                        return await self._emit_buffered(sid, on_emit, "wait_hold_timeout")
+                        logger.info(
+                            "turn_assembler_keepalive sid=%s reason=wait_hold_timeout",
+                            sid,
+                        )
+                        await on_emit(AssembledTurn(
+                            text=held,
+                            mode="normal",
+                            agent_reply=_KEEPALIVE_RESPONSE,
+                        ))
+                        return False
                 st.buffer = self._merge_text(st.buffer, frag)
                 merged_mode = self._detect_mode(
                     st.buffer,

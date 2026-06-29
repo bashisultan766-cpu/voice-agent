@@ -210,10 +210,11 @@ class Settings(BaseSettings):
     # ── v4.6: ElevenLabs voice via Twilio ConversationRelay ───────────────────
     VOICE_TTS_PROVIDER: str = "ElevenLabs"
     VOICE_ID: str = ""
-    VOICE_MODEL: str = "flash_v2_5"
-    VOICE_SPEED: float = 1.0
-    VOICE_STABILITY: float = 0.55
-    VOICE_SIMILARITY: float = 0.80
+    # eleven_turbo_v2_5 — natural conversational pacing (Twilio ConversationRelay).
+    VOICE_MODEL: str = "eleven_turbo_v2_5"
+    VOICE_SPEED: float = 0.96
+    VOICE_STABILITY: float = 0.42
+    VOICE_SIMILARITY: float = 0.78
     VOICE_LANGUAGE: str = "en-US"
     # Optional — not used in live Twilio path yet; do not log.
     ELEVENLABS_API_KEY: str = ""
@@ -238,7 +239,7 @@ class Settings(BaseSettings):
     VOICE_PREFETCH_MAX_WAIT_MS: int = 350
     VOICE_PREFETCH_SCOUT_TIMEOUT_MS: int = 1500
     VOICE_PREFETCH_CANCEL_ON_DIRECT_ANSWER: bool = True
-    VOICE_BRAIN_MODEL: str = "gpt-4o-mini"
+    VOICE_BRAIN_MODEL: str = "gpt-4o"
     VOICE_BRAIN_TIMEOUT_MS: int = 2500
     VOICE_BRAIN_DETERMINISTIC_GREETING_FASTPATH: bool = True
     VOICE_BRAIN_DOMAIN_BOUNDARY_STRICT: bool = True

@@ -475,6 +475,24 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
 
                         if isinstance(turn, str):
                             turn = AssembledTurn(text=turn, mode="normal")
+                        if getattr(turn, "agent_reply", ""):
+                            reply = turn.agent_reply.strip()
+                            if reply:
+                                await _queue_send({
+                                    "type": "text",
+                                    "token": reply,
+                                    "last": False,
+                                    "interruptible": True,
+                                })
+                                await _queue_send({"type": "text", "token": "", "last": True})
+                                cr_stats.responses_sent += 1
+                                logger.info(
+                                    "conversationrelay_agent_keepalive sid=%s chars=%d",
+                                    session.call_sid[:6],
+                                    len(reply),
+                                )
+                            if not (turn.text or "").strip():
+                                return
                         cr_stats.assembled_turns += 1
                         logger.info(
                             "conversationrelay_assembled_turn sid=%s assembled_count=%d mode=%s",

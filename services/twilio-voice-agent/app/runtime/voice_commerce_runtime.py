@@ -312,6 +312,15 @@ class VoiceCommerceRuntime:
             await self._speak(session, normalized, spoken, send)
             return _result(spoken, end_call=closure.end_call)
 
+        from ..dialogue.anti_silence import anti_silence_reply
+
+        presence = anti_silence_reply(session, normalized)
+        if presence:
+            spoken = self._brain.finalize_response(session, presence, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("anti_silence_short_circuit sid=%s", sid)
+            return _result(spoken)
+
         from ..agent_runtime.workflow_isolation import order_context_on_call
         from ..agent_runtime.order_flow_state import (
             is_order_followup_question,

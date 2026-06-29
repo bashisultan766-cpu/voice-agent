@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.48"
+COMMERCE_FLOW_VERSION = "v4.49"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -103,8 +103,8 @@ _ADD_INTENT_PAT = re.compile(
     re.IGNORECASE,
 )
 _CONFIRM_FRUSTRATION_PAT = re.compile(
-    r"\b(why are you not|not asking|not continue|not talking|hello\.?\s*hello|"
-    r"are you there|talking with me)\b",
+    r"\b(why are you not|not asking|not continue|not talking|keep silence|keep quiet|"
+    r"hello\.?\s*hello|are you there|talking with me|why are you silent)\b",
     re.IGNORECASE,
 )
 _YES_IN_UTTERANCE = re.compile(r"\b(yes|yeah|yep|yup|sure)\b", re.IGNORECASE)
