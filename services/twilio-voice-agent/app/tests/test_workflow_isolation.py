@@ -8,7 +8,10 @@ from app.agent_runtime.commerce_flow_state import (
     commerce_blocks_open_commerce,
 )
 from app.agent_runtime.isbn_short_circuit import payment_email_context_active
-from app.agent_runtime.order_flow_state import STATUS_AWAITING_ORDER_NUMBER
+from app.agent_runtime.order_flow_state import (
+    STATUS_AWAITING_ORDER_NUMBER,
+    STATUS_IDLE,
+)
 from app.agent_runtime.workflow_isolation import (
     WORKFLOW_COMMERCE,
     WORKFLOW_IDLE,
@@ -121,6 +124,17 @@ class TestWorkflowBuffers:
         wf = isolate_workflow_buffers(session, "order", "63482")
         assert wf == WORKFLOW_ORDER
         assert session.pending_isbn_buffer == ""
+
+    def test_isbn_after_order_lookup_does_not_crash(self):
+        """Regression CA672f — STATUS_IDLE NameError silenced ISBN product hunt."""
+        session = _session(
+            last_order_number="47999",
+            order_last_voice_reply="I found your order.",
+            order_flow_status=STATUS_IDLE,
+        )
+        wf = isolate_workflow_buffers(session, "isbn", "9781544503547.")
+        assert wf == WORKFLOW_PRODUCT
+        assert session.order_flow_status == STATUS_IDLE
 
 
 class TestPaymentSupportSplit:

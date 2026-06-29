@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-WORKFLOW_ISOLATION_VERSION = "v1.0"
+WORKFLOW_ISOLATION_VERSION = "v1.1"
 
 WORKFLOW_IDLE = "idle"
 WORKFLOW_SUPPORT = "support_handoff"
@@ -288,9 +288,10 @@ def isolate_workflow_buffers(
         session.pending_isbn_buffer = ""
 
     if wf == WORKFLOW_PRODUCT:
-        from .order_flow_state import STATUS_AWAITING_ORDER_NUMBER
+        from .order_flow_state import STATUS_AWAITING_ORDER_NUMBER, STATUS_IDLE
 
-        if (getattr(session, "order_flow_status", "idle") or "idle") == STATUS_IDLE:
-            pass
+        ofs = getattr(session, "order_flow_status", "idle") or "idle"
+        if ofs == STATUS_AWAITING_ORDER_NUMBER:
+            session.order_flow_status = STATUS_IDLE
 
     return wf
