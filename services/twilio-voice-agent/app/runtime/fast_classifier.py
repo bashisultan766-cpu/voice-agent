@@ -273,7 +273,7 @@ def _needs_intent_clarification(text: str) -> bool:
     words = [w for w in cleaned.split() if w]
     if len(words) <= 1:
         fillers = frozenset({
-            "um", "uh", "hmm", "hm", "hello", "hi", "hey", "yes", "no",
+            "um", "uh", "hmm", "hm", "yes", "no",
             "okay", "ok", "help", "sorry", "well", "so", "like",
         })
         if words[0] in fillers:
@@ -284,7 +284,7 @@ def _needs_intent_clarification(text: str) -> bool:
 
 
 _CLARIFY_INTENT = (
-    "I want to make sure I help you the right way. "
+    "Sorry, I didn't quite catch that. "
     "Are you looking to buy a book or magazine, check an order, cancel an order, or something else?"
 )
 
@@ -356,9 +356,21 @@ def classify(
     if _needs_intent_clarification(text) and not getattr(
         session, "awaiting_not_found_escalation_email", False,
     ):
+        clarify = _CLARIFY_INTENT
+        if session is not None:
+            try:
+                from ..agent_runtime.commerce_flow_state import commerce_flow_active
+
+                if commerce_flow_active(session):
+                    clarify = (
+                        "Sorry, I didn't quite get that. "
+                        "Are we still on the book you were looking for, or would you like to do something else?"
+                    )
+            except Exception:  # noqa: BLE001
+                pass
         return ClassificationResult(
             action="instant",
-            instant_reply=_CLARIFY_INTENT,
+            instant_reply=clarify,
             reason="unclear_intent",
             skip_llm=True,
             skip_tools=True,

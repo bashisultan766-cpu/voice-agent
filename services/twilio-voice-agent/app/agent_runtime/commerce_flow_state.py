@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.45"
+COMMERCE_FLOW_VERSION = "v4.46"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -109,6 +109,10 @@ _QUANTITY_ADD_INTENT = re.compile(
 )
 _HOLD_OR_WAIT_PAT = re.compile(
     r"\b(hold|wait|one moment|second|hello|quiet|speak|not continue|isbn)\b",
+    re.IGNORECASE,
+)
+_OOS_UTTERANCE = re.compile(
+    r"\b(out of stock|not available|unavailable|can't order|cannot order)\b",
     re.IGNORECASE,
 )
 _ISBN_READY_PAT = re.compile(
@@ -225,7 +229,7 @@ def quantity_prompt(product: dict[str, Any]) -> str:
     title = _title(product)
     return (
         f"Found it — {title}. {_price_phrase(product)} "
-        f"How many copies?"
+        f"How many copies would you like?"
     )
 
 
@@ -487,7 +491,7 @@ def _unlock_add_after_quantity(session: "SessionState", qty: int) -> None:
 
 
 def another_book_after_add_prompt(title: str = "") -> str:
-    return "Another book?"
+    return "Would you like to add another book?"
 
 
 def next_book_prompt() -> str:
@@ -646,7 +650,9 @@ def add_staged_book_to_cart(session: "SessionState", quantity: int = 1) -> Optio
     )
     confirm_last_candidate(session)
     from ..payment.payment_destination_groups import refresh_payment_groups_from_cart
+    from ..conversation.call_memory import record_cart_confirmed
 
+    record_cart_confirmed(session, title=title, count=qty)
     refresh_payment_groups_from_cart(session)
     session.commerce_pending_candidate = {}
     session.commerce_pending_quantity = 0
@@ -786,6 +792,18 @@ def process_commerce_turn(
         return CommerceTurnHint(force_reply=cart_summary_and_email_prompt(session))
 
     if status == STATUS_AWAITING_QUANTITY and candidate:
+        if _OOS_UTTERANCE.search(text):
+            from .not_found_escalation_flow import begin_unavailable_product_handoff
+
+            query = (candidate.get("isbn") or candidate.get("title") or text).strip()
+            msg = begin_unavailable_product_handoff(
+                session,
+                user_text=caller_text,
+                query=query,
+                reason="product_out_of_stock",
+                product_title=(candidate.get("title") or "").strip(),
+            )
+            return CommerceTurnHint(force_reply=msg)
         if _ISBN_READY_PAT.search(text) and not _parse_quantity(text):
             session.commerce_pending_candidate = {}
             session.commerce_flow_status = STATUS_IDLE

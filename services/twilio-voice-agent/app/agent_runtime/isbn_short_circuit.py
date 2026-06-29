@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.43"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.44"
 
 _META_BOOK_PHRASE_PAT = re.compile(
     r"\b(another\s+(?:book|one|\d)|need another|i need another|yeah|yep|sure|"
@@ -94,6 +94,49 @@ def looks_like_book_title_request(text: str) -> bool:
     if _TITLE_NOT_ISBN_PAT.search(lower) and letters > digits * 2:
         return True
     return False
+
+
+def catalog_hit_is_orderable(hit: dict[str, Any]) -> bool:
+    """True when Shopify returned a variant that can be added to cart."""
+    if not hit or not hit.get("variant_id"):
+        return False
+    if hit.get("available") is False:
+        return False
+    inv = hit.get("inventory_quantity")
+    if inv is not None:
+        try:
+            if int(inv) <= 0:
+                return False
+        except (TypeError, ValueError):
+            pass
+    return True
+
+
+def catalog_title_search_allowed(
+    session: "SessionState",
+    turn_mode: str = "",
+) -> bool:
+    """Title/magazine/newspaper catalog search — not during order/payment/email capture."""
+    if payment_email_context_active(session, turn_mode):
+        return False
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        return False
+    from .order_flow_state import (
+        STATUS_AWAITING_ORDER_NUMBER,
+        STATUS_AWAITING_ORDER_VERIFICATION,
+    )
+
+    ofs = getattr(session, "order_flow_status", "idle") or "idle"
+    if ofs in (STATUS_AWAITING_ORDER_NUMBER, STATUS_AWAITING_ORDER_VERIFICATION):
+        return False
+    try:
+        from .workflow_isolation import payment_workflow_active
+
+        if payment_workflow_active(session):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    return True
 
 
 def should_skip_isbn_short_circuit(
@@ -524,8 +567,26 @@ async def try_isbn_short_circuit(
             "price": product.get("price"),
             "available": product.get("available"),
             "author": product.get("author"),
+            "inventory_quantity": product.get("inventory_quantity"),
             "variants": [{"id": product.get("variant_id"), "price": product.get("price")}],
         })
+        if not catalog_hit_is_orderable(top):
+            from .not_found_escalation_flow import begin_unavailable_product_handoff
+
+            title = (top.get("title") or product.get("title") or "").strip()
+            msg = begin_unavailable_product_handoff(
+                session,
+                user_text=caller_text,
+                query=isbn,
+                reason="product_out_of_stock",
+                search_result=payload if isinstance(payload, dict) else {},
+                product_title=title,
+            )
+            return IsbnShortCircuitResult(
+                force_reply=msg,
+                isbn=isbn,
+                tool_results=tool_results,
+            )
         if top.get("variant_id"):
             stage_product_candidate(session, top)
             try:
@@ -554,14 +615,17 @@ async def try_isbn_short_circuit(
                 tool_results=tool_results,
             )
 
-    not_found_msg = ""
-    if isinstance(payload, dict):
-        not_found_msg = (payload.get("customer_message") or "").strip()
+    from .not_found_escalation_flow import begin_unavailable_product_handoff
+
+    not_found_msg = begin_unavailable_product_handoff(
+        session,
+        user_text=caller_text,
+        query=isbn,
+        reason="product_not_found",
+        search_result=payload if isinstance(payload, dict) else {},
+    )
     return IsbnShortCircuitResult(
-        force_reply=not_found_msg or (
-            f"I looked up ISBN {isbn} but couldn't find a match in our catalog. "
-            "Could you double-check the number, or give me the title or author instead?"
-        ),
+        force_reply=not_found_msg,
         isbn=isbn,
         tool_results=tool_results,
     )
@@ -573,15 +637,33 @@ async def try_title_catalog_short_circuit(
     *,
     turn_mode: str = "",
 ) -> Optional[IsbnShortCircuitResult]:
-    """Catalog search when the caller speaks a title (not digits) for the next book."""
-    if payment_email_context_active(session, turn_mode):
+    """Catalog search when the caller speaks a title, magazine, or newspaper name."""
+    if not catalog_title_search_allowed(session, turn_mode):
         return None
     if turn_mode == "isbn":
         return None
+
+    from .commerce_flow_state import (
+        STATUS_AWAITING_ADD_CONFIRM,
+        STATUS_AWAITING_BOOK_CONFIRM,
+        STATUS_AWAITING_QUANTITY,
+        STATUS_AWAITING_ANOTHER_BOOK,
+        STATUS_IDLE,
+    )
+
     status = getattr(session, "commerce_flow_status", "idle") or "idle"
-    if status != "awaiting_another_book":
-        return None
     text = (caller_text or "").strip()
+
+    if status in (
+        STATUS_AWAITING_QUANTITY,
+        STATUS_AWAITING_BOOK_CONFIRM,
+        STATUS_AWAITING_ADD_CONFIRM,
+    ):
+        if not looks_like_book_title_request(text):
+            return None
+    elif status not in (STATUS_IDLE, STATUS_AWAITING_ANOTHER_BOOK, ""):
+        return None
+
     if _ANOTHER_BOOK_INTENT_PAT.search(text) and not looks_like_book_title_request(text):
         return IsbnShortCircuitResult(
             force_reply="Sure — what's the ISBN or title of the next book?",
@@ -591,10 +673,13 @@ async def try_title_catalog_short_circuit(
 
     from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
     from .llm_tools import CatalogSearchArgs, _catalog_search
+    from .not_found_escalation_flow import begin_unavailable_product_handoff
+    from ..conversation.call_memory import record_product_candidate
 
     session.pending_isbn_buffer = ""
+    query = caller_text.strip()
     raw = await _catalog_search(
-        CatalogSearchArgs(query=caller_text.strip(), limit=5),
+        CatalogSearchArgs(query=query, limit=5),
         session,
     )
     try:
@@ -608,6 +693,18 @@ async def try_title_catalog_short_circuit(
     results = (payload.get("results") or []) if isinstance(payload, dict) else []
     if results and isinstance(results[0], dict):
         top = normalize_catalog_hit(results[0])
+        record_product_candidate(session, title=top.get("title") or "", found=True)
+        if top.get("variant_id") and not catalog_hit_is_orderable(top):
+            title = (top.get("title") or "").strip()
+            msg = begin_unavailable_product_handoff(
+                session,
+                user_text=caller_text,
+                query=query,
+                reason="product_out_of_stock",
+                search_result={"results": results[:3], "count": len(results)},
+                product_title=title,
+            )
+            return IsbnShortCircuitResult(force_reply=msg, tool_results=tool_results)
         if top.get("variant_id"):
             stage_product_candidate(session, top)
             return IsbnShortCircuitResult(
@@ -615,11 +712,16 @@ async def try_title_catalog_short_circuit(
                 tool_results=tool_results,
             )
 
+    record_product_candidate(session, title=query[:80], found=False)
+    msg = begin_unavailable_product_handoff(
+        session,
+        user_text=caller_text,
+        query=query,
+        reason="product_not_found",
+        search_result={"results": [], "count": 0},
+    )
     return IsbnShortCircuitResult(
-        force_reply=(
-            "I didn't find that title in our catalog yet. "
-            "Could you spell part of the title, or give me the ISBN?"
-        ),
+        force_reply=msg,
         tool_results=tool_results,
     )
 

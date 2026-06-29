@@ -49,7 +49,7 @@ GOT_EXPENSIVE = {
 
 class TestV444:
     def test_version(self):
-        assert COMMERCE_FLOW_VERSION == "v4.45"
+        assert COMMERCE_FLOW_VERSION == "v4.46"
 
     def test_just_one_cup_unlocks_add_without_yes(self):
         """STT 'cup' for 'copy' — quantity alone must not gate add_to_cart."""

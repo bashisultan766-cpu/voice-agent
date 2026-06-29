@@ -39,6 +39,19 @@ _MSG_SUCCESS = (
     "you can hang up whenever you're ready."
 )
 
+_MSG_UNAVAILABLE_PRODUCT = (
+    "That item isn't available to order in our store right now. "
+    "I can forward your request to our support team — when we can source it, "
+    "they'll reach out to you by email. May I have your name and email address?"
+)
+
+_MSG_NOT_FOUND_PRODUCT = (
+    "I couldn't find that in our catalog right now. "
+    "Our support team can check our warehouse and partner suppliers. "
+    "When they locate it, they'll contact you by email. "
+    "May I have your name and email address?"
+)
+
 _EMAIL_CONFIRM_YES = re.compile(
     r"^\s*(yes|yeah|yep|yup|correct|that's right|that is right|right)\s*\.?\s*$",
     re.I,
@@ -179,6 +192,70 @@ def build_support_handoff_payload(
         api_context=dict(api_context or {}),
         reason=reason,
     )
+
+
+def _clear_commerce_for_product_handoff(session: "SessionState") -> None:
+    """Drop staged book state so support email capture does not fight commerce FSM."""
+    session.commerce_pending_candidate = {}
+    session.commerce_flow_status = "idle"
+    session.awaiting_product_confirmation = False
+    session.pending_isbn_buffer = ""
+    session.commerce_pending_quantity = 0
+    session.commerce_allow_add = False
+
+
+def begin_unavailable_product_handoff(
+    session: "SessionState",
+    *,
+    user_text: str,
+    query: str,
+    reason: str = "product_not_found",
+    search_result: dict[str, Any] | None = None,
+    product_title: str = "",
+) -> str:
+    """
+    Stage support handoff when a catalog item is missing or not orderable.
+
+    Returns the spoken prompt asking for name and email.
+    """
+    _clear_commerce_for_product_handoff(session)
+
+    summary_parts: list[str] = []
+    if product_title:
+        summary_parts.append(f"Customer wants: {product_title[:120]}")
+    if query and query.strip() != (product_title or "").strip():
+        summary_parts.append(f"Search: {query.strip()[:120]}")
+    if user_text:
+        summary_parts.append(user_text.strip()[:300])
+
+    merged_search = dict(search_result or {"count": 0, "not_found": reason == "product_not_found"})
+    if reason == "product_out_of_stock":
+        merged_search["out_of_stock"] = True
+        if product_title:
+            merged_search["title"] = product_title
+
+    payload = build_escalation_payload(
+        session,
+        user_text=user_text,
+        query=query or product_title,
+        search_result=merged_search,
+    )
+    payload.reason = reason
+    if summary_parts:
+        payload.conversation_summary = " | ".join(p for p in summary_parts if p)
+    payload.last_search_results = merged_search
+
+    stage_pending_escalation(session, payload)
+    logger.info(
+        "unavailable_product_handoff_staged sid=%s reason=%s query=%r",
+        (getattr(session, "call_sid", "") or "")[:6],
+        reason,
+        (query or product_title or "")[:40],
+    )
+
+    if reason == "product_out_of_stock":
+        return _MSG_UNAVAILABLE_PRODUCT
+    return _MSG_NOT_FOUND_PRODUCT
 
 
 def stage_pending_escalation(

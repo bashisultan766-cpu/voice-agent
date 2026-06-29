@@ -532,6 +532,40 @@ class VoiceCommerceRuntime:
         if isbn_hunt is not None:
             return isbn_hunt
 
+        title_hunt = None
+        if product_handling_allowed(session, turn_mode, normalized):
+            from ..agent_runtime.isbn_short_circuit import (
+                looks_like_book_title_request,
+                try_title_catalog_short_circuit,
+            )
+            from ..tools.isbn import extract_isbn_candidate
+
+            if looks_like_book_title_request(normalized) and not extract_isbn_candidate(
+                normalized,
+            ):
+                try:
+                    title_sc = await try_title_catalog_short_circuit(
+                        session, normalized, turn_mode=turn_mode,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "title_catalog_hunt_failed sid=%s err=%s",
+                        sid,
+                        type(exc).__name__,
+                    )
+                    title_sc = None
+                if title_sc and title_sc.force_reply:
+                    spoken = enforce_commerce_response(
+                        session,
+                        self._brain.finalize_response(
+                            session, title_sc.force_reply, title_sc.tool_results or [],
+                        ),
+                        title_sc.tool_results or [],
+                    )
+                    await self._speak(session, normalized, spoken, send)
+                    logger.info("title_catalog_hunt sid=%s ms=fast", sid)
+                    return _result(spoken)
+
         from ..agent_runtime.order_flow_state import (
             _should_skip_order_lookup,
             extract_order_number,

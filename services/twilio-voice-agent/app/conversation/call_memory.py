@@ -170,11 +170,13 @@ def record_product_candidate(session: "SessionState", title: str, found: bool) -
 
 def record_cart_confirmed(session: "SessionState", title: str, count: int) -> None:
     state = get_call_memory(session)
-    state.cart_facts.append(f"Confirmed: {title[:50]}")
-    _append_fact(state, f"Cart count: {count}")
+    qty = max(1, int(count or 1))
+    copy_word = "copy" if qty == 1 else "copies"
+    state.cart_facts.append(f"{title[:50]} × {qty} {copy_word}")
+    _append_fact(state, f"Cart line added: {qty} {copy_word}")
     logger.info(
         "memory_fact_saved sid=%s type=cart count=%d",
-        session.call_sid[:6], count,
+        session.call_sid[:6], qty,
     )
 
 
@@ -332,7 +334,7 @@ def build_brain_context(session: "SessionState") -> str:
         parts.append(f"ISBNs: {', '.join(state.isbns_provided[-10:])}")
 
     if state.cart_facts:
-        parts.append("Cart: " + "; ".join(state.cart_facts[-5:]))
+        parts.append("Cart: " + "; ".join(state.cart_facts[-20:]))
 
     if state.email_state != "none":
         parts.append(f"Email: {state.email_state}")
