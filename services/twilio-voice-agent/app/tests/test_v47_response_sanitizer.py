@@ -48,3 +48,19 @@ class TestResponseSanitizer:
         )
         assert r.blocked
         assert "payment link" in r.text.lower()
+
+    def test_order_disclosure_allows_processing_fee_in_shopify_quote(self):
+        order_text = (
+            "That order is under Jane Doe. This order has 1 item: 1 copy of Book A at 12.00 USD each. "
+            "The subtotal before shipping is 12.00 USD. Shipping was zero — no shipping charge on this order. "
+            "The order total including shipping is 12.00 USD. Payment status is paid. "
+            "Fulfillment status is fulfilled. Timeline note: processing fee waived for this shipment."
+        )
+        r = sanitize_customer_response(order_text, call_sid="CA")
+        assert not r.blocked
+        assert r.text == order_text
+
+    def test_agent_volunteered_processing_fee_still_blocked(self):
+        leak = "We add a processing fee to every checkout."
+        r = sanitize_customer_response(leak, call_sid="CA")
+        assert r.blocked

@@ -11,14 +11,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from ..safety.response_sanitizer import sanitize_customer_response
+from ..safety.response_sanitizer import is_order_disclosure_text, sanitize_customer_response
 
 logger = logging.getLogger(__name__)
 
 SendFn = Callable[[dict], Awaitable[None]]
 
 _LEAK_CHECK = re.compile(
-    r"(available tools|system prompt|you are eric|processing fee|role=tool)",
+    r"(available tools|system prompt|you are eric|role=tool|do not invent)",
     re.IGNORECASE,
 )
 
@@ -55,8 +55,13 @@ def mask_outbound_log_text(text: str, max_chars: int = 160) -> str:
 def _sanitize_outbound_text(text: str, *, call_sid: str = "") -> str:
     if not text or not text.strip():
         return ""
+    if is_order_disclosure_text(text):
+        return text.strip()
     if _LEAK_CHECK.search(text):
         result = sanitize_customer_response(text, call_sid=call_sid)
+        return result.text.strip()
+    result = sanitize_customer_response(text, call_sid=call_sid)
+    if result.blocked:
         return result.text.strip()
     return text.strip()
 

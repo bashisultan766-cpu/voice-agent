@@ -94,10 +94,17 @@ _ROBOTIC_PATTERNS: tuple[re.Pattern, ...] = (
 )
 
 
-def apply_voice_style_guard(text: str, *, max_sentences: int = _VOICE_STYLE_MAX_SENTENCES) -> str:
+def apply_voice_style_guard(
+    text: str,
+    *,
+    max_sentences: int = _VOICE_STYLE_MAX_SENTENCES,
+    allow_long_order_disclosure: bool = False,
+) -> str:
     """Trim to short natural phone speech — max sentences, no robotic phrasing."""
     if not text:
         return ""
+    if allow_long_order_disclosure:
+        max_sentences = max(max_sentences, 12)
     cleaned = text.strip()
     for pattern in _ROBOTIC_PATTERNS:
         cleaned = pattern.sub(" ", cleaned)
@@ -186,13 +193,19 @@ def apply_output_guardrails(
     if not text:
         return GuardResult(text="", modified=False)
 
+    from ..safety.response_sanitizer import is_order_disclosure_text
+
+    order_disclosure = is_order_disclosure_text(text)
     original = text
     reasons: list[str] = []
     text = _redact_secrets(text, reasons)
     text = _strip_urls(text, reasons)
     text = _mask_cards(text, reasons)
     text = _strip_markdown(text, reasons)
-    text = apply_voice_style_guard(text)
+    text = apply_voice_style_guard(
+        text,
+        allow_long_order_disclosure=order_disclosure,
+    )
     text = _enforce_length(text, max_words, reasons)
 
     modified = text != original

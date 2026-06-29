@@ -8,7 +8,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_LEAK_PHRASES: tuple[str, ...] = (
+_HARD_LEAK_PHRASES: tuple[str, ...] = (
     "you are eric",
     "professional ai voice support agent",
     "available tools",
@@ -25,10 +25,25 @@ _LEAK_PHRASES: tuple[str, ...] = (
     "# domain context",
     "do not expose",
     "never mention that you are an ai",
-    # v4.8: client business rules — never say these to a customer
+    "do not invent",
+)
+
+# Agent must not volunteer internal checkout fees — but Shopify order quotes may mention fees.
+_AGENT_FEE_LEAK_PHRASES: tuple[str, ...] = (
     "processing fee",
     "service fee",
     "internal fee",
+)
+
+_ORDER_DISCLOSURE_MARKERS: tuple[str, ...] = (
+    "payment status is",
+    "fulfillment status is",
+    "order has",
+    "subtotal",
+    "order total",
+    "i found your order",
+    "here is what i found for order",
+    "that order is under",
 )
 
 _TOOL_NAME_LEAKS: tuple[str, ...] = (
@@ -74,13 +89,27 @@ def _fallback_for_intent(intent: str, payment_sent: bool = False) -> str:
     return "I'm sorry about that. How can I help you next?"
 
 
+def is_order_disclosure_text(text: str) -> bool:
+    """True when text is a structured Shopify order summary (safe to quote fees/notes)."""
+    lower = (text or "").lower()
+    if not lower.strip():
+        return False
+    hits = sum(1 for marker in _ORDER_DISCLOSURE_MARKERS if marker in lower)
+    return hits >= 2
+
+
 def _detect_leak(text: str) -> Optional[str]:
     if not text or not text.strip():
         return None
     lower = text.lower()
-    for phrase in _LEAK_PHRASES:
+    order_disclosure = is_order_disclosure_text(text)
+    for phrase in _HARD_LEAK_PHRASES:
         if phrase in lower:
             return "system_prompt_leak"
+    if not order_disclosure:
+        for phrase in _AGENT_FEE_LEAK_PHRASES:
+            if phrase in lower:
+                return "system_prompt_leak"
     if _INTERNAL_LEAK_RE.search(text):
         return "system_prompt_leak"
     if _HEADING_LEAK.search(text) and (

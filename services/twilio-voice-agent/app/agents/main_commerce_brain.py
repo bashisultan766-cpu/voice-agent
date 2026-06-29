@@ -405,10 +405,22 @@ class MainCommerceBrain:
         session: "SessionState",
         text: str,
         tool_results: list[tuple[str, dict]],
+        *,
+        max_words: int | None = None,
     ) -> str:
         """Apply safety guardrails to brain output."""
+        from ..safety.response_sanitizer import is_order_disclosure_text
+
         enforced = enforce_payment_response(session, text, tool_results)
         enforced = replace_blocked_order_phrase(enforced)
-        max_words = getattr(self._settings, "VOICE_MAX_REPLY_WORDS", 50)
-        guarded = apply_output_guardrails(enforced, max_words=max_words)
+        if max_words is None:
+            if is_order_disclosure_text(enforced):
+                max_words = getattr(self._settings, "VOICE_ORDER_REPLY_MAX_WORDS", 120)
+            else:
+                max_words = getattr(self._settings, "VOICE_MAX_REPLY_WORDS", 50)
+        guarded = apply_output_guardrails(
+            enforced,
+            max_words=max_words,
+            call_sid=getattr(session, "call_sid", ""),
+        )
         return guarded.text.strip()
