@@ -261,11 +261,16 @@ _EMAIL_FRUSTRATION = re.compile(
 )
 
 
+def support_email_turn_priority(session: "SessionState", turn_mode: str = "") -> bool:
+    """Support handoff email capture — independent from payment email."""
+    return bool(getattr(session, "awaiting_not_found_escalation_email", False))
+
+
 def payment_email_turn_priority(session: "SessionState", turn_mode: str = "") -> bool:
     """True when payment email capture should run before order/LLM paths."""
+    if support_email_turn_priority(session, turn_mode):
+        return False
     if (turn_mode or "").strip().lower() == "email":
-        return True
-    if getattr(session, "awaiting_not_found_escalation_email", False):
         return True
     if getattr(session, "awaiting_payment_email", False):
         return True

@@ -595,7 +595,17 @@ def commerce_flow_active(session: "SessionState") -> bool:
 
 
 def commerce_blocks_open_commerce(session: "SessionState") -> bool:
-    """True when payment email capture should take priority over commerce."""
+    """True when another workflow should take priority over commerce."""
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        return True
+    from .order_flow_state import (
+        STATUS_AWAITING_ORDER_NUMBER,
+        STATUS_AWAITING_ORDER_VERIFICATION,
+    )
+
+    ofs = getattr(session, "order_flow_status", "idle") or "idle"
+    if ofs in (STATUS_AWAITING_ORDER_NUMBER, STATUS_AWAITING_ORDER_VERIFICATION):
+        return True
     if getattr(session, "awaiting_payment_email_confirmation", False):
         return True
     if getattr(session, "payment_email_confirmed", False):

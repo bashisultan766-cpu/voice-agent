@@ -79,6 +79,8 @@ class ClassificationResult:
     is_product_search: bool = False
     is_order_lookup: bool = False
     is_refund_lookup: bool = False
+    is_cancellation_request: bool = False
+    is_complaint: bool = False
     is_payment_flow: bool = False
     is_facility: bool = False
     use_strong_model: bool = False
@@ -233,7 +235,63 @@ def _is_product_search_request(text: str) -> bool:
     return False
 
 
+def _is_cancellation_request(text: str) -> bool:
+    """Order cancellation — routes to support handoff, not order status lookup."""
+    if not (text or "").strip():
+        return False
+    return bool(
+        re.search(
+            r"\b(cancel(?:lation|led|ing)?|canceled|void(?:\s+the)?\s+order|"
+            r"don'?t want (?:it|the order|this)|stop (?:the|my) order|"
+            r"need to cancel|want to cancel|take it back|never mind (?:the|my) order|"
+            r"call off (?:the|my) order)\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def _is_complaint(text: str) -> bool:
+    if not (text or "").strip():
+        return False
+    return bool(
+        re.search(
+            r"\b(complain|complaint|unhappy|frustrated|angry|upset|terrible|"
+            r"worst|unacceptable|ridiculous|not fair|speak to (?:a )?(?:human|manager)|"
+            r"customer service)\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def _needs_intent_clarification(text: str) -> bool:
+    """Very short or filler-only speech — ask what they need instead of guessing."""
+    cleaned = re.sub(r"[^\w\s]", "", (text or "").lower()).strip()
+    if not cleaned:
+        return True
+    words = [w for w in cleaned.split() if w]
+    if len(words) <= 1:
+        fillers = frozenset({
+            "um", "uh", "hmm", "hm", "hello", "hi", "hey", "yes", "no",
+            "okay", "ok", "help", "sorry", "well", "so", "like",
+        })
+        if words[0] in fillers:
+            return True
+    if len(words) == 2 and words[0] in ("i", "im", "i'm") and words[1] in ("need", "want", "have"):
+        return True
+    return False
+
+
+_CLARIFY_INTENT = (
+    "I want to make sure I help you the right way. "
+    "Are you looking to buy a book or magazine, check an order, cancel an order, or something else?"
+)
+
+
 def _is_order_lookup(text: str) -> bool:
+    if _is_cancellation_request(text):
+        return False
     from ..agent_runtime.order_flow_state import order_intent_detected
 
     if order_intent_detected(text):
@@ -293,6 +351,33 @@ def classify(
                 getattr(session, "awaiting_payment_email_confirmation", False)
                 or getattr(session, "payment_flow_status", "") not in ("idle", "", None)
             ),
+        )
+
+    if _needs_intent_clarification(text) and not getattr(
+        session, "awaiting_not_found_escalation_email", False,
+    ):
+        return ClassificationResult(
+            action="instant",
+            instant_reply=_CLARIFY_INTENT,
+            reason="unclear_intent",
+            skip_llm=True,
+            skip_tools=True,
+        )
+
+    if _is_cancellation_request(text):
+        return ClassificationResult(
+            action="brain",
+            reason="cancellation_request",
+            is_cancellation_request=True,
+            use_strong_model=True,
+        )
+
+    if _is_complaint(text):
+        return ClassificationResult(
+            action="brain",
+            reason="complaint",
+            is_complaint=True,
+            use_strong_model=True,
         )
 
     if _is_order_lookup(text):

@@ -30,8 +30,13 @@ _MAX_HISTORY_MESSAGES = 40
 _MAX_TOOL_ROUNDS = 3
 
 _OPENAI_FALLBACK = (
-    "I'm having trouble checking that right now. "
-    "Could you say the title or ISBN again?"
+    "I'm having a little trouble with that. "
+    "Could you say that again — are you looking to buy something, check an order, or cancel an order?"
+)
+
+_STUCK_RECOVERY = (
+    "Sorry, I didn't quite get that. "
+    "Tell me what you need — buying a book, order status, cancellation, or something else?"
 )
 
 _ERIC_SYSTEM_PROMPT = """You are Eric, a professional SureShot Books phone seller.
@@ -45,6 +50,18 @@ You help customers:
 - check refund status
 - answer facility policy questions
 - escalate when data is missing
+
+INTENT UNDERSTANDING (messy speech, accents, STT errors):
+- Infer what the caller wants: buy/search products, order status, refund, cancellation, complaint, payment link, or facility policy.
+- "ordinary" / "ordering" usually means ORDER — not a random word.
+- If intent is unclear, ask ONE short question — never stay silent.
+- Switch to the right tool/workflow for the intent; do not mix order lookup with product search or payment email.
+
+CANCELLATION & COMPLAINTS:
+- Order cancellation: collect name and spell-confirmed email, then forward to support with the cancellation request and order number if known.
+- Do not promise cancellation on the call — support will email the customer.
+- Complaints and requests for a human: same support handoff path with name + confirmed email.
+- Support emails include customer name, email, and request only — never mention call IDs to the customer.
 
 When Shopify, catalog, or order lookup cannot find the customer's item or order:
 - Never invent or guess product, order, refund, or tracking data.
@@ -160,6 +177,14 @@ class MainCommerceBrain:
                 lines.append(memory_block)
         except Exception:  # noqa: BLE001
             pass
+        if caller_text:
+            try:
+                from ..tools.voice_intent import normalize_voice_intent
+
+                intent_hint = normalize_voice_intent(caller_text)
+                lines.append(f"- Caller intent hint (do not read aloud): {intent_hint}")
+            except Exception:  # noqa: BLE001
+                pass
         return "\n".join(lines)
 
     @staticmethod
@@ -343,6 +368,8 @@ class MainCommerceBrain:
 
                 if not tool_calls:
                     final = (msg.content or "").strip()
+                    if not final and tool_results:
+                        final = _STUCK_RECOVERY
                     return final, tools_used, tool_results
 
                 assistant_entry: dict[str, Any] = {
@@ -411,6 +438,8 @@ class MainCommerceBrain:
                 session.call_sid, model, response=resp, started_at=started, purpose="main_commerce_brain_final",
             )
             final = (resp.choices[0].message.content or "").strip()
+            if not final:
+                final = _STUCK_RECOVERY
             return final, tools_used, tool_results
 
         except Exception as exc:

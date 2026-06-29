@@ -231,6 +231,39 @@ async def maybe_execute_escalation(
     return _tool_execution_result(tool_name, parsed, raw=raw)
 
 
+async def try_cancellation_support_handoff(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> NotFoundEscalationTurnHint:
+    """Stage support handoff for order cancellation — name + confirmed email required."""
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        return NotFoundEscalationTurnHint()
+
+    from .order_flow_state import extract_order_number
+
+    order_num = (
+        extract_order_number(caller_text, session, turn_mode=turn_mode)
+        or (getattr(session, "last_order_number", "") or "").strip()
+    )
+    title = "Order cancellation request"
+    if order_num:
+        title = f"Order cancellation request — order {order_num}"
+    detail = (caller_text or "").strip()[:500]
+
+    return await try_escalate_unresolved_query(
+        session,
+        caller_text=caller_text,
+        query_type="cancellation",
+        issue_title=title,
+        issue_detail=detail,
+        reason="order_cancellation_request",
+        what_agent_tried="Recorded cancellation request for support team",
+        recommended_next_action="Process order cancellation and confirm with customer by email.",
+    )
+
+
 async def try_escalate_unresolved_query(
     session: "SessionState",
     *,

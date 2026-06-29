@@ -510,7 +510,7 @@ async def escalate_to_human(
 
     payload = build_support_handoff_payload(
         session,  # type: ignore[arg-type]
-        query_type="general",
+        query_type="cancellation" if re.search(r"\bcancel", (reason or "").lower()) else "general",
         issue_title=(reason or "Customer service escalation")[:120],
         issue_detail=(summary or reason or "")[:500],
         customer_email=confirmed_email,
@@ -2606,8 +2606,10 @@ async def CancelOrderRequest(
             "fulfillment_status": fulfillment,
             "message": (
                 "This order has already shipped, so it cannot be cancelled directly. "
-                "I can forward this to customer service for the next steps."
+                "I can forward your cancellation request to our support team — "
+                "may I have your name and email so they can follow up?"
             ),
+            "needs_support_handoff": True,
         })
 
     if status in ("REFUNDED", "VOIDED"):
@@ -2625,8 +2627,10 @@ async def CancelOrderRequest(
         "fulfillment_status": fulfillment,
         "message": (
             "This order may be eligible for cancellation since it has not yet shipped. "
-            "Customer service can process the cancellation request."
+            "I'll forward your cancellation request to our support team — "
+            "may I have your name and email so they can process it?"
         ),
+        "needs_support_handoff": True,
     })
 
 

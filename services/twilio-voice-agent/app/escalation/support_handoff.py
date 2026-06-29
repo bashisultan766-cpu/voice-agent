@@ -62,6 +62,8 @@ def _issue_type_label(query_type: str) -> str:
         "magazine": "Magazine Not Found",
         "shopify_api_error": "Shopify API Error",
         "tool_timeout": "Tool Timeout",
+        "cancellation": "Order Cancellation",
+        "complaint": "Customer Complaint",
         "general": "General Support",
         "unknown": "General Support",
     }
@@ -202,35 +204,28 @@ def _build_email_body(
     *,
     conversation_summary: str = "",
 ) -> str:
+    """Support team email — customer name, email, and request only (no call/session IDs)."""
     issue = _short_issue_text(payload)
     summary = (conversation_summary or payload.conversation_summary or "").strip()
-    lines = [
-        "Voice Agent Support Handoff",
+    request_parts: list[str] = []
+    if issue:
+        request_parts.append(issue)
+    asked = (payload.what_customer_asked or "").strip()
+    if asked and asked not in issue:
+        request_parts.append(asked[:500])
+    if summary and summary not in " ".join(request_parts):
+        request_parts.append(summary[:600])
+    customer_request = " ".join(request_parts).strip() or "Customer requested support assistance."
+
+    return "\n".join([
+        "SureShot Books — Customer Support Request",
         "",
         f"Customer name: {payload.customer_name or 'Customer'}",
         f"Customer email: {payload.customer_email or 'unknown'}",
-        f"Customer phone: {payload.customer_phone or 'unknown'}",
-        f"Issue: {issue}",
+        f"Customer request: {customer_request[:900]}",
         "",
-    ]
-    if payload.what_customer_asked:
-        lines.append(f"What customer asked: {payload.what_customer_asked[:500]}")
-    if payload.what_agent_tried:
-        lines.append(f"Tools attempted: {payload.what_agent_tried[:500]}")
-    if payload.reason_for_handoff or payload.reason:
-        reason = (payload.reason_for_handoff or payload.reason or "").strip()
-        if reason:
-            lines.append(f"Reason lookup failed: {reason[:500]}")
-    if summary:
-        lines.extend(["", "Conversation summary:", summary])
-    lines.extend([
-        "",
-        f"Call SID: {payload.call_sid or 'unknown'}",
-        f"Session ID: {payload.session_id or 'unknown'}",
-        "",
-        "Reply to the customer email above when you have an update.",
+        "Please reply to the customer by email.",
     ])
-    return "\n".join(lines)
 
 
 async def send_support_handoff(

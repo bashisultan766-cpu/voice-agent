@@ -136,9 +136,10 @@ async def test_send_support_handoff_short_professional_body():
     body = mock_client.post.call_args.kwargs["json"]["text"]
     assert "Customer name: Maria Lopez" in body
     assert "Customer email: test@example.com" in body
-    assert "Issue:" in body
+    assert "Customer request:" in body
     assert "Shopify returned no match." in body
-    assert "Conversation summary:" in body
+    assert "Call SID:" not in body
+    assert "Session ID:" not in body
     assert "Dear Backend Team" not in body
 
 

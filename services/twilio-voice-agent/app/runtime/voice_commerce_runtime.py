@@ -36,8 +36,13 @@ logger = logging.getLogger(__name__)
 RUNTIME_MODE = "voice_commerce_runtime"
 
 _OPENAI_FALLBACK = (
-    "I'm having trouble checking that right now. "
-    "Could you say the title or ISBN again?"
+    "I'm having a little trouble with that. "
+    "Could you say that again — are you looking to buy something, check an order, or cancel an order?"
+)
+
+_STUCK_RECOVERY = (
+    "Sorry, I didn't quite get that. "
+    "Tell me what you need — buying a book, order status, cancellation, or something else?"
 )
 
 _runtime: Optional["VoiceCommerceRuntime"] = None
@@ -267,14 +272,36 @@ class VoiceCommerceRuntime:
             return _result(spoken)
 
         session._current_turn_mode = turn_mode  # type: ignore[attr-defined]
-        advance_commerce_state_silent(session, normalized)
+
+        from ..agent_runtime.workflow_isolation import (
+            WORKFLOW_ISOLATION_VERSION,
+            commerce_handling_allowed,
+            commerce_silent_advance_allowed,
+            isolate_workflow_buffers,
+            order_handling_allowed,
+            payment_handling_allowed,
+            product_handling_allowed,
+            support_handling_allowed,
+        )
+
+        active_workflow = isolate_workflow_buffers(session, turn_mode, normalized)
+        logger.info(
+            "workflow_isolation sid=%s workflow=%s version=%s",
+            sid,
+            active_workflow,
+            WORKFLOW_ISOLATION_VERSION,
+        )
+
+        if commerce_silent_advance_allowed(session, turn_mode, normalized):
+            advance_commerce_state_silent(session, normalized)
 
         from ..agent_runtime.isbn_short_circuit import resolve_spoken_isbn
 
-        if re.search(
-            r"\b(isbn|978|979|ouspl|iuspl|iouspl)\b", normalized, re.I,
-        ) or getattr(session, "pending_isbn_buffer", ""):
-            resolve_spoken_isbn(normalized, session=session, turn_mode=turn_mode)
+        if product_handling_allowed(session, turn_mode, normalized):
+            if re.search(
+                r"\b(isbn|978|979|ouspl|iuspl|iouspl)\b", normalized, re.I,
+            ) or getattr(session, "pending_isbn_buffer", ""):
+                resolve_spoken_isbn(normalized, session=session, turn_mode=turn_mode)
 
         from ..dialogue.call_closure import process_call_closure_turn
 
@@ -286,23 +313,23 @@ class VoiceCommerceRuntime:
 
         from ..payment.payment_state_machine import payment_email_turn_priority
 
-        if payment_email_turn_priority(session, turn_mode):
-            if getattr(session, "awaiting_not_found_escalation_email", False):
-                from ..agent_runtime.not_found_escalation_flow import (
-                    process_not_found_escalation_turn,
-                )
+        if support_handling_allowed(session, turn_mode, normalized):
+            from ..agent_runtime.not_found_escalation_flow import (
+                process_not_found_escalation_turn,
+            )
 
-                esc_early = await process_not_found_escalation_turn(
-                    session, normalized, turn_mode=turn_mode,
+            esc_early = await process_not_found_escalation_turn(
+                session, normalized, turn_mode=turn_mode,
+            )
+            if esc_early.force_reply:
+                spoken = self._brain.finalize_response(
+                    session, esc_early.force_reply, [],
                 )
-                if esc_early.force_reply:
-                    spoken = self._brain.finalize_response(
-                        session, esc_early.force_reply, [],
-                    )
-                    await self._speak(session, normalized, spoken, send)
-                    logger.info("support_handoff_email_early sid=%s", sid)
-                    return _result(spoken)
+                await self._speak(session, normalized, spoken, send)
+                logger.info("support_handoff_email_early sid=%s", sid)
+                return _result(spoken)
 
+        if payment_handling_allowed(session, turn_mode, normalized):
             email_early = await self._handle_email_fsm(
                 session, normalized, send, turn_mode=turn_mode,
             )
@@ -322,7 +349,9 @@ class VoiceCommerceRuntime:
         )
         from ..runtime.fast_classifier import ClassificationResult
 
-        if (turn_mode or "").lower() == "isbn":
+        if product_handling_allowed(session, turn_mode, normalized) and (
+            turn_mode or ""
+        ).lower() == "isbn":
             isbn_early = await self._try_isbn_product_hunt(
                 session,
                 normalized,
@@ -335,69 +364,70 @@ class VoiceCommerceRuntime:
             if isbn_early is not None:
                 return isbn_early
 
-        if (turn_mode or "").lower() == "order":
-            if not payment_email_turn_priority(session, turn_mode):
-                if not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode):
-                    try:
-                        order_hint = await try_order_enrichment_short_circuit(
-                            session, normalized, turn_mode=turn_mode,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "order_enrichment_failed sid=%s err=%s", sid, type(exc).__name__,
-                        )
-                        order_hint = None
-                    if order_hint and order_hint.force_reply:
-                        spoken = self._brain.finalize_response(
-                            session, order_hint.force_reply, [],
-                        )
-                        await self._speak(session, normalized, spoken, send)
-                        logger.info("order_enrichment_short_circuit sid=%s", sid)
-                        return _result(spoken)
+        if order_handling_allowed(session, turn_mode, normalized):
+            if (turn_mode or "").lower() == "order":
+                if not payment_email_turn_priority(session, turn_mode):
+                    if not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode):
+                        try:
+                            order_hint = await try_order_enrichment_short_circuit(
+                                session, normalized, turn_mode=turn_mode,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "order_enrichment_failed sid=%s err=%s", sid, type(exc).__name__,
+                            )
+                            order_hint = None
+                        if order_hint and order_hint.force_reply:
+                            spoken = self._brain.finalize_response(
+                                session, order_hint.force_reply, [],
+                            )
+                            await self._speak(session, normalized, spoken, send)
+                            logger.info("order_enrichment_short_circuit sid=%s", sid)
+                            return _result(spoken)
 
-        followup_reply = try_order_followup_reply(session, normalized)
-        if followup_reply:
-            spoken = self._brain.finalize_response(session, followup_reply, [])
-            await self._speak(session, normalized, spoken, send)
-            logger.info("order_followup_short_circuit sid=%s", sid)
-            return _result(spoken)
+            followup_reply = try_order_followup_reply(session, normalized)
+            if followup_reply:
+                spoken = self._brain.finalize_response(session, followup_reply, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("order_followup_short_circuit sid=%s", sid)
+                return _result(spoken)
 
-        repeat_reply = try_order_repeat_reply(session, normalized)
-        spoken_num = extract_order_number(normalized, session, turn_mode=turn_mode)
-        if repeat_reply and not (spoken_num and is_actionable_order_number(spoken_num)):
-            spoken = self._brain.finalize_response(session, repeat_reply, [])
-            await self._speak(session, normalized, spoken, send)
-            logger.info("order_repeat_short_circuit sid=%s", sid)
-            return _result(spoken)
+            repeat_reply = try_order_repeat_reply(session, normalized)
+            spoken_num = extract_order_number(normalized, session, turn_mode=turn_mode)
+            if repeat_reply and not (spoken_num and is_actionable_order_number(spoken_num)):
+                spoken = self._brain.finalize_response(session, repeat_reply, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("order_repeat_short_circuit sid=%s", sid)
+                return _result(spoken)
 
-        hold_reply = try_order_hold_reply(session, normalized)
-        if hold_reply:
-            spoken = self._brain.finalize_response(session, hold_reply, [])
-            await self._speak(session, normalized, spoken, send)
-            logger.info("order_hold_short_circuit sid=%s", sid)
-            return _result(spoken)
+            hold_reply = try_order_hold_reply(session, normalized)
+            if hold_reply:
+                spoken = self._brain.finalize_response(session, hold_reply, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("order_hold_short_circuit sid=%s", sid)
+                return _result(spoken)
 
-        another_hint = try_another_order_short_circuit(
-            session, normalized, turn_mode=turn_mode,
-        )
-        if another_hint and another_hint.force_reply:
-            spoken = self._brain.finalize_response(
-                session, another_hint.force_reply, [],
+            another_hint = try_another_order_short_circuit(
+                session, normalized, turn_mode=turn_mode,
             )
-            await self._speak(session, normalized, spoken, send)
-            logger.info("another_order_short_circuit sid=%s", sid)
-            return _result(spoken)
+            if another_hint and another_hint.force_reply:
+                spoken = self._brain.finalize_response(
+                    session, another_hint.force_reply, [],
+                )
+                await self._speak(session, normalized, spoken, send)
+                logger.info("another_order_short_circuit sid=%s", sid)
+                return _result(spoken)
 
-        collection_hint = try_order_collection_short_circuit(
-            session, normalized, turn_mode=turn_mode,
-        )
-        if collection_hint and collection_hint.force_reply:
-            spoken = self._brain.finalize_response(
-                session, collection_hint.force_reply, [],
+            collection_hint = try_order_collection_short_circuit(
+                session, normalized, turn_mode=turn_mode,
             )
-            await self._speak(session, normalized, spoken, send)
-            logger.info("order_collection_short_circuit sid=%s", sid)
-            return _result(spoken)
+            if collection_hint and collection_hint.force_reply:
+                spoken = self._brain.finalize_response(
+                    session, collection_hint.force_reply, [],
+                )
+                await self._speak(session, normalized, spoken, send)
+                logger.info("order_collection_short_circuit sid=%s", sid)
+                return _result(spoken)
 
         twiml_greeting = bool(getattr(session, "twiml_greeting_spoken", False))
         classification = classify(
@@ -407,24 +437,27 @@ class VoiceCommerceRuntime:
             twiml_greeting_already=twiml_greeting,
         )
 
-        email_result = await self._handle_email_fsm(
-            session, normalized, send, turn_mode=turn_mode,
-        )
+        email_result = None
+        if payment_handling_allowed(session, turn_mode, normalized):
+            email_result = await self._handle_email_fsm(
+                session, normalized, send, turn_mode=turn_mode,
+            )
         if email_result is not None:
             return email_result
 
-        from ..agent_runtime.not_found_escalation_flow import (
-            process_not_found_escalation_turn,
-        )
+        if support_handling_allowed(session, turn_mode, normalized):
+            from ..agent_runtime.not_found_escalation_flow import (
+                process_not_found_escalation_turn,
+            )
 
-        esc_hint = await process_not_found_escalation_turn(
-            session, normalized, turn_mode=turn_mode,
-        )
-        if esc_hint.force_reply:
-            spoken = self._brain.finalize_response(session, esc_hint.force_reply, [])
-            await self._speak(session, normalized, spoken, send)
-            logger.info("support_handoff_email_capture sid=%s", sid)
-            return _result(spoken)
+            esc_hint = await process_not_found_escalation_turn(
+                session, normalized, turn_mode=turn_mode,
+            )
+            if esc_hint.force_reply:
+                spoken = self._brain.finalize_response(session, esc_hint.force_reply, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("support_handoff_email_capture sid=%s", sid)
+                return _result(spoken)
 
         if classification.action == "instant" and classification.instant_reply:
             if classification.reason == "isbn_offer_prompt":
@@ -441,14 +474,32 @@ class VoiceCommerceRuntime:
             )
             return _result(spoken)
 
+        if classification.is_cancellation_request and not support_handling_allowed(
+            session, turn_mode, normalized,
+        ):
+            from ..agent_runtime.not_found_escalation_flow import (
+                try_cancellation_support_handoff,
+            )
+
+            cancel_hint = await try_cancellation_support_handoff(
+                session, normalized, turn_mode=turn_mode,
+            )
+            if cancel_hint.force_reply:
+                spoken = self._brain.finalize_response(session, cancel_hint.force_reply, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("cancellation_support_handoff sid=%s", sid)
+                return _result(spoken)
+
         # Deterministic ISBN product hunt — bypass LLM for speed and accuracy.
-        isbn_hunt = await self._try_isbn_product_hunt(
-            session,
-            normalized,
-            send,
-            turn_mode=turn_mode,
-            classification=classification,
-        )
+        isbn_hunt = None
+        if product_handling_allowed(session, turn_mode, normalized):
+            isbn_hunt = await self._try_isbn_product_hunt(
+                session,
+                normalized,
+                send,
+                turn_mode=turn_mode,
+                classification=classification,
+            )
         if isbn_hunt is not None:
             return isbn_hunt
 
@@ -460,7 +511,8 @@ class VoiceCommerceRuntime:
         )
 
         is_order_turn = (
-            not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode)
+            order_handling_allowed(session, turn_mode, normalized)
+            and not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode)
             and (turn_mode or "").lower() not in ("isbn", "email")
             and (
                 (turn_mode or "").lower() == "order"
@@ -485,34 +537,37 @@ class VoiceCommerceRuntime:
 
         from ..agent_runtime.commerce_flow_state import try_cart_inquiry_reply
 
-        cart_reply = try_cart_inquiry_reply(session, normalized)
-        if cart_reply:
-            spoken = self._brain.finalize_response(session, cart_reply, [])
-            await self._speak(session, normalized, spoken, send)
-            logger.info("cart_inquiry_short_circuit sid=%s", sid)
-            return _result(spoken)
+        if commerce_handling_allowed(session, turn_mode, normalized):
+            cart_reply = try_cart_inquiry_reply(session, normalized)
+            if cart_reply:
+                spoken = self._brain.finalize_response(session, cart_reply, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("cart_inquiry_short_circuit sid=%s", sid)
+                return _result(spoken)
 
-        commerce_hint = process_commerce_turn(
-            session, normalized, turn_mode=turn_mode,
-        )
-        if commerce_hint.force_reply:
-            spoken = enforce_commerce_response(
-                session,
-                self._brain.finalize_response(session, commerce_hint.force_reply, []),
-                [],
+            commerce_hint = process_commerce_turn(
+                session, normalized, turn_mode=turn_mode,
             )
-            await self._speak(session, normalized, spoken, send)
-            logger.info(
-                "commerce_flow_short_circuit sid=%s book_added=%s version=%s",
-                sid,
-                commerce_hint.book_added,
-                COMMERCE_FLOW_VERSION,
-            )
-            return _result(spoken)
+            if commerce_hint.force_reply:
+                spoken = enforce_commerce_response(
+                    session,
+                    self._brain.finalize_response(session, commerce_hint.force_reply, []),
+                    [],
+                )
+                await self._speak(session, normalized, spoken, send)
+                logger.info(
+                    "commerce_flow_short_circuit sid=%s book_added=%s version=%s",
+                    sid,
+                    commerce_hint.book_added,
+                    COMMERCE_FLOW_VERSION,
+                )
+                return _result(spoken)
 
         from ..agent_runtime.yes_engagement import is_bare_yes, yes_engagement_reply
 
-        if is_bare_yes(normalized):
+        if is_bare_yes(normalized) and commerce_handling_allowed(
+            session, turn_mode, normalized,
+        ):
             engage = yes_engagement_reply(session) or ""
             spoken = self._brain.finalize_response(session, engage, [])
             await self._speak(session, normalized, spoken, send)
@@ -527,7 +582,9 @@ class VoiceCommerceRuntime:
 
         from ..agent_runtime.order_flow_state import try_order_brain_gate
 
-        order_brain_gate = try_order_brain_gate(session, normalized, turn_mode=turn_mode)
+        order_brain_gate = ""
+        if order_handling_allowed(session, turn_mode, normalized):
+            order_brain_gate = try_order_brain_gate(session, normalized, turn_mode=turn_mode) or ""
         if order_brain_gate:
             spoken = self._brain.finalize_response(session, order_brain_gate, [])
             await self._speak(session, normalized, spoken, send)
@@ -555,7 +612,7 @@ class VoiceCommerceRuntime:
             return _result(spoken)
 
         if not final_text:
-            spoken = _OPENAI_FALLBACK
+            spoken = _STUCK_RECOVERY
             await self._speak(session, normalized, spoken, send)
             return _result(spoken)
 

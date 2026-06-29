@@ -179,8 +179,9 @@ async def test_support_handoff_collects_name_and_email():
     body = mock_client.post.call_args.kwargs["json"]["text"]
     assert "Customer name: Maria Lopez" in body
     assert "Customer email: maria@example.com" in body
-    assert "Issue:" in body
-    assert "Conversation summary:" in body
+    assert "Customer request:" in body
+    assert "Call SID:" not in body
+    assert "Session ID:" not in body
 
 
 @pytest.mark.asyncio

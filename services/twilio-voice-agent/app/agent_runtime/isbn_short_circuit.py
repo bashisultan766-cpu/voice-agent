@@ -49,7 +49,9 @@ _QUANTITY_COPY_PAT = re.compile(
 
 
 def payment_email_context_active(session: "SessionState", turn_mode: str = "") -> bool:
-    """True when caller is in payment email capture — never treat speech as ISBN."""
+    """True when caller is in email/order capture — never treat speech as ISBN."""
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        return True
     if (turn_mode or "").strip().lower() == "email":
         return True
     pfs = getattr(session, "payment_flow_status", "idle") or "idle"
@@ -58,6 +60,14 @@ def payment_email_context_active(session: "SessionState", turn_mode: str = "") -
     if getattr(session, "awaiting_payment_email", False):
         return True
     if getattr(session, "awaiting_payment_email_confirmation", False):
+        return True
+    from .order_flow_state import (
+        STATUS_AWAITING_ORDER_NUMBER,
+        STATUS_AWAITING_ORDER_VERIFICATION,
+    )
+
+    ofs = getattr(session, "order_flow_status", "idle") or "idle"
+    if ofs in (STATUS_AWAITING_ORDER_NUMBER, STATUS_AWAITING_ORDER_VERIFICATION):
         return True
     return False
 
