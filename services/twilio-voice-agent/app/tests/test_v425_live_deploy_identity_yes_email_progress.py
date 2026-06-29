@@ -78,7 +78,7 @@ def _session(**kwargs) -> SessionState:
 class TestRuntimeIdentity:
     def test_identity_reports_v424_flags(self):
         identity = collect_runtime_identity()
-        assert identity["voice_sales_flow_version"] == "v4.55"
+        assert identity["voice_sales_flow_version"] == "v4.56"
         assert identity["tool_progress_prompts_enabled"] is True
         assert identity["payment_email_state_version"] == "v4.33"
         assert identity["llm_only_final_output"] is True

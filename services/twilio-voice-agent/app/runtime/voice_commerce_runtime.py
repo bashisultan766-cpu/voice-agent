@@ -297,10 +297,20 @@ class VoiceCommerceRuntime:
         caller_text: str,
         spoken: str,
         send: Callable,
+        *,
+        interruptible: bool = True,
     ) -> None:
         session.history.append({"role": "user", "content": caller_text})
         session.history.append({"role": "assistant", "content": spoken})
-        await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+        await _await_send(
+            send,
+            {
+                "type": "text",
+                "token": spoken,
+                "last": False,
+                "interruptible": interruptible,
+            },
+        )
         await _await_send(send, {"type": "text", "token": "", "last": True})
         self._record_turn(session, caller_text, spoken)
 
@@ -412,6 +422,14 @@ class VoiceCommerceRuntime:
                 return email_early
 
         from ..dialogue.anti_silence import anti_silence_reply
+        from ..dialogue.side_speech import side_speech_reply
+
+        side = side_speech_reply(normalized)
+        if side:
+            spoken = self._brain.finalize_response(session, side, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("side_speech_short_circuit sid=%s", sid)
+            return _result(spoken)
 
         presence = anti_silence_reply(session, normalized)
         if presence:
@@ -430,7 +448,7 @@ class VoiceCommerceRuntime:
             followup_early = try_order_followup_reply(session, normalized)
             if followup_early:
                 spoken = self._brain.finalize_response(session, followup_early, [])
-                await self._speak(session, normalized, spoken, send)
+                await self._speak(session, normalized, spoken, send, interruptible=False)
                 logger.info("order_followup_early sid=%s", sid)
                 return _result(spoken)
 
@@ -493,14 +511,16 @@ class VoiceCommerceRuntime:
                             suffix = offer_anything_else_suffix()
                             if suffix.strip() not in spoken:
                                 spoken = f"{spoken.rstrip('.')}.{suffix}"
-                            await self._speak(session, normalized, spoken, send)
+                            await self._speak(
+                                session, normalized, spoken, send, interruptible=False,
+                            )
                             logger.info("order_enrichment_short_circuit sid=%s", sid)
                             return _result(spoken)
 
             followup_reply = try_order_followup_reply(session, normalized)
             if followup_reply:
                 spoken = self._brain.finalize_response(session, followup_reply, [])
-                await self._speak(session, normalized, spoken, send)
+                await self._speak(session, normalized, spoken, send, interruptible=False)
                 logger.info("order_followup_short_circuit sid=%s", sid)
                 return _result(spoken)
 
@@ -508,14 +528,14 @@ class VoiceCommerceRuntime:
             spoken_num = extract_order_number(normalized, session, turn_mode=turn_mode)
             if repeat_reply and not (spoken_num and is_actionable_order_number(spoken_num)):
                 spoken = self._brain.finalize_response(session, repeat_reply, [])
-                await self._speak(session, normalized, spoken, send)
+                await self._speak(session, normalized, spoken, send, interruptible=False)
                 logger.info("order_repeat_short_circuit sid=%s", sid)
                 return _result(spoken)
 
             hold_reply = try_order_hold_reply(session, normalized)
             if hold_reply:
                 spoken = self._brain.finalize_response(session, hold_reply, [])
-                await self._speak(session, normalized, spoken, send)
+                await self._speak(session, normalized, spoken, send, interruptible=False)
                 logger.info("order_hold_short_circuit sid=%s", sid)
                 return _result(spoken)
 
@@ -690,7 +710,7 @@ class VoiceCommerceRuntime:
                 order_hint = None
             if order_hint and order_hint.force_reply:
                 spoken = self._brain.finalize_response(session, order_hint.force_reply, [])
-                await self._speak(session, normalized, spoken, send)
+                await self._speak(session, normalized, spoken, send, interruptible=False)
                 logger.info("order_enrichment_short_circuit sid=%s", sid)
                 return _result(spoken)
 
@@ -778,7 +798,7 @@ class VoiceCommerceRuntime:
             order_brain_gate = try_order_brain_gate(session, normalized, turn_mode=turn_mode) or ""
         if order_brain_gate:
             spoken = self._brain.finalize_response(session, order_brain_gate, [])
-            await self._speak(session, normalized, spoken, send)
+            await self._speak(session, normalized, spoken, send, interruptible=False)
             logger.info("order_brain_gate sid=%s", sid)
             return _result(spoken)
 

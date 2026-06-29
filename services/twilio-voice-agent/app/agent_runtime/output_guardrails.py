@@ -104,7 +104,7 @@ def apply_voice_style_guard(
     if not text:
         return ""
     if allow_long_order_disclosure:
-        max_sentences = max(max_sentences, 12)
+        max_sentences = max(max_sentences, 16)
     cleaned = text.strip()
     for pattern in _ROBOTIC_PATTERNS:
         cleaned = pattern.sub(" ", cleaned)
@@ -206,7 +206,11 @@ def apply_output_guardrails(
         text,
         allow_long_order_disclosure=order_disclosure,
     )
-    text = _enforce_length(text, max_words, reasons)
+    if order_disclosure:
+        disclosure_cap = max(max_words, 220)
+        text = _enforce_length(text, disclosure_cap, reasons)
+    else:
+        text = _enforce_length(text, max_words, reasons)
 
     modified = text != original
     if modified:

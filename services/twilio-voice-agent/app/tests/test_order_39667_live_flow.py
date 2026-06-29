@@ -186,7 +186,8 @@ def test_order_info_intent_not_product_search():
     assert order_intent_detected(text)
     result = classify(text, _Session())
     assert result.is_order_lookup
-    assert result.reason == "order_lookup"
+    assert result.action == "instant"
+    assert result.reason == "order_collection_prompt"
     assert not result.is_product_search
 
 
@@ -363,7 +364,7 @@ def test_order_brain_gate_blocks_dispute_reformat():
 
 
 def test_order_flow_version():
-    assert ORDER_FLOW_VERSION == "v4.54"
+    assert ORDER_FLOW_VERSION == "v4.56"
 
 
 def test_repeated_okay_after_order_gets_wrap_up_prompt():

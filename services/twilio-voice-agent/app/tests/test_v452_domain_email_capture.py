@@ -1,4 +1,4 @@
-"""All domain email types: capture, slow readback, fine/correct confirm (v4.54)."""
+"""All domain email types: capture, slow readback, fine/correct confirm (v4.56)."""
 from __future__ import annotations
 
 import pytest

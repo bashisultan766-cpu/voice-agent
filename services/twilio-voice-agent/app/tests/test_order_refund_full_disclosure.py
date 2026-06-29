@@ -1,5 +1,5 @@
 """
-Order lookup full disclosure — email, refunds, pricing, notes, privacy (v4.52).
+Order lookup full disclosure — email, refunds, pricing, notes, privacy (v4.56).
 """
 from __future__ import annotations
 

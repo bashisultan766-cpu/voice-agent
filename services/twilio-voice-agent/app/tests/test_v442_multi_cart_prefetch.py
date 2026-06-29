@@ -37,7 +37,7 @@ def _session(**kwargs) -> SessionState:
 
 class TestVersions:
     def test_versions(self):
-        assert COMMERCE_FLOW_VERSION == "v4.55"
+        assert COMMERCE_FLOW_VERSION == "v4.56"
         assert TURN_PREFETCH_VERSION == "v4.43"
 
 

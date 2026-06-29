@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.55"
+ORDER_FLOW_VERSION = "v4.56"
 
 
 def is_order_followup_question(text: str) -> bool:
@@ -50,11 +50,12 @@ _ORDER_STATUS_INTENT = re.compile(
 _ORDER_INFO_INTENT = re.compile(
     r"\b("
     r"information about (?:an? |the )?order|about (?:my|the|an?) order|"
-    r"order information|check (?:this|my|the) order|"
+    r"order information|check (?:an? |on )?(?:this|my|the) order|"
+    r"(?:i(?:'d| would)|i) (?:like|want) to check (?:an? |on )?(?:the )?order|"
     r"need (?:info|information|details?) about (?:an? |the )?order|"
     r"tell me about (?:my|the) order|look up (?:my|the) order|"
     r"looking for (?:my |the |an )?order|"
-    r"status of (?:my|the) order|can you check (?:this|my|the) order|"
+    r"status of (?:my|the) order|can you check (?:an? |on )?(?:this|my|the) order|"
     r"i need (?:info|information|details?) about (?:an? |the )?order"
     r")\b",
     re.IGNORECASE,
@@ -288,6 +289,21 @@ def normalize_order_number_from_speech(text: str) -> Optional[str]:
     t = (text or "").strip()
     if not t:
         return None
+
+    preamble_tail = re.search(
+        r"\border\s*(?:number|no\.?|#)\s*(?:is\s*)?(.+)$",
+        t,
+        re.I,
+    )
+    if preamble_tail:
+        tail = expand_spoken_repeaters(preamble_tail.group(1).strip())
+        spoken_tail = _spoken_digits_to_string(tail)
+        tail_digits = spoken_tail or "".join(c for c in tail if c.isdigit())
+        if (
+            4 <= len(tail_digits) <= 10
+            and not tail_digits.startswith(("978", "979"))
+        ):
+            return tail_digits.lstrip("0") or tail_digits
 
     m = _ORDER_NUMBER_IN_TEXT.search(t)
     if m:

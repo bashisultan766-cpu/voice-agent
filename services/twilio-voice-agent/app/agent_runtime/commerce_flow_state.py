@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.55"
+COMMERCE_FLOW_VERSION = "v4.56"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"

@@ -48,7 +48,7 @@ _VAGUE_CATEGORY_TAILS = frozenset({
 })
 
 _INSTANT_SMALLTALK: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"^(hi|hello|hey)( there| you)?[.!]?$", re.I),
+    (re.compile(r"^(hi|hello|hey)( there| you)?[.!?]?\s*$", re.I),
      "This is SureShot Books. How can I help you today?"),
     (re.compile(r"^good (morning|afternoon|evening)( there)?[.!]?$", re.I),
      "This is SureShot Books. How can I help you today?"),
@@ -438,6 +438,23 @@ def classify(
         )
 
     if _is_order_lookup(text):
+        if session is not None:
+            from ..agent_runtime.order_flow_state import (
+                STATUS_AWAITING_ORDER_NUMBER,
+                extract_order_number,
+                order_collection_prompt,
+            )
+
+            if not extract_order_number(text, session):
+                session.order_flow_status = STATUS_AWAITING_ORDER_NUMBER
+                return ClassificationResult(
+                    action="instant",
+                    instant_reply=order_collection_prompt(),
+                    reason="order_collection_prompt",
+                    is_order_lookup=True,
+                    skip_llm=True,
+                    skip_tools=True,
+                )
         return ClassificationResult(
             action="brain",
             reason="order_lookup",
@@ -513,15 +530,7 @@ def classify(
             is_payment_flow=True,
         )
 
-    # D/E. Order / refund before product search — "information about the order" is not a catalog query.
-    if _is_order_lookup(text):
-        return ClassificationResult(
-            action="brain",
-            reason="order_lookup",
-            is_order_lookup=True,
-            use_strong_model=_needs_strong_model(text, session),
-        )
-
+    # D/E. Order follow-up with order already on call — handled by runtime short-circuit.
     from ..agent_runtime.workflow_isolation import order_context_on_call
 
     if session and order_context_on_call(session):

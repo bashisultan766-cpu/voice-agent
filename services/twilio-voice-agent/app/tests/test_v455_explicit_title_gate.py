@@ -1,4 +1,4 @@
-"""v4.55 — no catalog search without explicit title or ISBN."""
+"""v4.56 — no catalog search without explicit title or ISBN."""
 from __future__ import annotations
 
 import json

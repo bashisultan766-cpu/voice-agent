@@ -1,4 +1,4 @@
-"""v4.55 — paced email TTS delivery + explicit-title catalog search."""
+"""v4.56 — paced email TTS delivery + explicit-title catalog search."""
 from __future__ import annotations
 
 import json
