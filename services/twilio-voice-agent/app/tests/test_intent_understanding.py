@@ -88,6 +88,8 @@ class TestSupportEmailFormat:
         assert "Email: jane@example.com" in body
         assert "Request:" in body
         assert "cancel" in body.lower()
+        assert "Conversation:" in body
+        assert "Caller asked to cancel" in body
         assert "Call SID" not in body
         assert "Session ID" not in body
         assert "+1555" not in body

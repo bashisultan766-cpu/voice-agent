@@ -146,6 +146,7 @@ async def test_send_support_handoff_short_professional_body():
     assert "Email: test@example.com" in body
     assert "Request:" in body
     assert "Order 55555 not found" in body
+    assert "Conversation:" in body
     assert "Call SID:" not in body
     assert "Session ID:" not in body
     assert "Dear Backend Team" not in body

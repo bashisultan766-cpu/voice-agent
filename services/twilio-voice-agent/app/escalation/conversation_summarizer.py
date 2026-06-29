@@ -11,14 +11,15 @@ logger = logging.getLogger(__name__)
 
 _SUMMARY_PROMPT = """You write internal support handoff notes for SureShot Books phone support.
 
-Given the caller issue and conversation transcript, write a clear email body section for the backend team:
+Given the caller issue and conversation transcript, write 3-5 short bullet points for the backend team:
 - What the customer wants (order lookup, product, refund, etc.)
 - Key facts mentioned (order numbers, ISBNs, titles, facility names)
 - What the automated agent already tried and what failed
 - What the backend team should do next
 
 Rules:
-- 4-8 sentences, professional tone
+- One line per bullet, start each line with "- "
+- Professional tone, to the point — no greeting or sign-off
 - Include customer name if known
 - Do NOT invent order numbers, emails, or products not in the transcript
 - Do NOT include full credit card numbers

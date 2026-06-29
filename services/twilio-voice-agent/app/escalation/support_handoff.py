@@ -279,28 +279,74 @@ def _compose_customer_request(payload: CustomerQueryEscalationPayload) -> str:
     return core[:280]
 
 
+def _summary_to_bullet_lines(summary: str, *, max_bullets: int = 5) -> list[str]:
+    """Turn LLM summary into short bullet lines for the support email."""
+    if not summary:
+        return []
+
+    def _clean_line(text: str) -> str:
+        return re.sub(r"^(?:subject:\s*)", "", text.strip(), flags=re.I).strip()
+
+    def _is_noise(text: str) -> bool:
+        return bool(re.match(r"^dear\s+(?:team|backend)\b", text, re.I))
+
+    def _add_candidate(text: str) -> None:
+        line = _clean_line(text)
+        if not line or _is_noise(line) or len(line) < 8:
+            return
+        if re.search(r"\bdear\s+(?:team|backend)\b", line, re.I):
+            for part in re.split(r"[.!?]\s+", line):
+                part = _clean_line(part)
+                if part and not _is_noise(part) and len(part) >= 12:
+                    bullets.append(part[:220])
+                if len(bullets) >= max_bullets:
+                    return
+            return
+        bullets.append(line[:220])
+
+    bullets: list[str] = []
+    for raw in re.split(r"[\n\r]+", summary.strip()):
+        line = raw.strip().lstrip("-•*").strip()
+        if line.startswith("- "):
+            line = line[2:].strip()
+        _add_candidate(line)
+        if len(bullets) >= max_bullets:
+            return bullets
+
+    if bullets:
+        return bullets
+
+    for part in re.split(r"[.!?]\s+", summary.strip()):
+        _add_candidate(part)
+        if len(bullets) >= max_bullets:
+            break
+    return bullets
+
+
 def _build_email_body(
     payload: CustomerQueryEscalationPayload,
     *,
     conversation_summary: str = "",
 ) -> str:
-    """Support team email — name, email, and one concise request line only."""
-    del conversation_summary  # LLM summary is stored on payload, not pasted into email.
-
+    """Support team email — name, email, request line, and conversation bullets."""
     name = (payload.customer_name or "Customer").strip()
     email = (payload.customer_email or "unknown").strip()
     request = _compose_customer_request(payload)
+    bullets = _summary_to_bullet_lines(conversation_summary or payload.conversation_summary or "")
 
-    return "\n".join([
+    lines = [
         "SureShot Books — Support Request",
         "",
         f"Name: {name}",
         f"Email: {email}",
         "",
         f"Request: {request}",
-        "",
-        "Reply to the customer by email.",
-    ])
+    ]
+    if bullets:
+        lines.extend(["", "Conversation:"])
+        lines.extend(f"• {b}" for b in bullets)
+    lines.extend(["", "Reply to the customer by email."])
+    return "\n".join(lines)
 
 
 async def send_support_handoff(
@@ -431,7 +477,7 @@ async def send_support_handoff(
     )
     model.conversation_summary = llm_summary or model.conversation_summary
     model.conversation_transcript = transcript
-    body = _build_email_body(model)
+    body = _build_email_body(model, conversation_summary=llm_summary)
 
     logger.info(
         "support_handoff_send call_sid=%s type=%s name=%s email=%s phone=%s",

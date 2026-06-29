@@ -107,9 +107,28 @@ def test_spell_email_letter_by_letter_includes_domain():
     from app.email.speller import spell_email_letter_by_letter
 
     spelled = spell_email_letter_by_letter("jessica@sureshotbooks.com")
-    assert "J-E-S-S-I-C-A" in spelled
-    assert "S-U-R-E-S-H-O-T-B-O-O-K-S" in spelled
-    assert "C-O-M" in spelled
+    assert "J, E, S, S, I, C, A" in spelled
+    assert "S, U, R, E, S, H, O, T, B, O, O, K, S" in spelled
+    assert "C, O, M" in spelled
+    assert "-" not in spelled
+
+
+def test_spell_email_mubashirbusiness3_exact_readback():
+    from app.email.capture import normalize_spoken_email
+    from app.email.resolver import resolve_spoken_email_address
+    from app.email.speller import spell_email_letter_by_letter
+
+    spoken = "M U B A S H I R B u s i n e s s three at gmail dot com"
+    email = normalize_spoken_email(spoken)
+    assert email == "mubashirbusiness3@gmail.com"
+    assert resolve_spoken_email_address(spoken).email == email
+
+    spelled = spell_email_letter_by_letter(email)
+    assert "M, U, B, A, S, H, I, R" in spelled
+    assert "three" in spelled
+    assert "G, M, A, I, L" in spelled
+    assert "C, O, M" in spelled
+    assert "-" not in spelled
 
 
 def test_refunded_order_via_refunds_array_only():

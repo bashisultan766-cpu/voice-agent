@@ -129,7 +129,7 @@ _CONFIRMATION_PATS = re.compile(
     r"|^\s*(right|correct)\s*[.!]?\s*$"
     r"|^\s*(that\s*'?s\s+)?(right|correct)(\s+email)?\s*[.!]?\s*$"
     r"|^\s*that\s*'?s\s+(the\s+)?(right|correct)\s+email"
-    r"|\b(theek hai|thik hai|sahi hai|that is correct|that's correct|you got it|exactly right)\b"
+    r"|\b(theek hai|thik hai|sahi hai|that is correct|that's correct|that's true|that is true|you got it|exactly right)\b"
     r"|sounds?\s+(right|correct|good)"
     r"|^\s*(perfect|exactly|go ahead|confirmed?)\b",
     re.IGNORECASE,

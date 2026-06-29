@@ -25,7 +25,7 @@ def _session(**kwargs) -> SessionState:
 
 class TestVersions:
     def test_commerce_flow_version(self):
-        assert COMMERCE_FLOW_VERSION == "v4.49"
+        assert COMMERCE_FLOW_VERSION == "v4.50"
 
 
 class TestAntiSilence:

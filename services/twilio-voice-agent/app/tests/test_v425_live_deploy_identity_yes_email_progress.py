@@ -78,7 +78,7 @@ def _session(**kwargs) -> SessionState:
 class TestRuntimeIdentity:
     def test_identity_reports_v424_flags(self):
         identity = collect_runtime_identity()
-        assert identity["voice_sales_flow_version"] == "v4.49"
+        assert identity["voice_sales_flow_version"] == "v4.50"
         assert identity["tool_progress_prompts_enabled"] is True
         assert identity["payment_email_state_version"] == "v4.33"
         assert identity["llm_only_final_output"] is True
@@ -193,6 +193,7 @@ class TestEmailConfirmation:
     def test_right_confirms_email(self):
         assert is_email_confirmation("Right")
         assert is_email_confirmation("Yes, that's correct")
+        assert is_email_confirmation("That's true")
 
     @pytest.mark.asyncio
     async def test_auto_send_uses_session_email_not_arg(self, monkeypatch):

@@ -1,4 +1,4 @@
-"""Deterministic email speak/spell helpers for voice (v4.26)."""
+"""Deterministic email speak/spell helpers for voice (v4.50)."""
 from __future__ import annotations
 
 import re
@@ -14,6 +14,13 @@ _DIGIT_WORDS = {
     "7": "seven",
     "8": "eight",
     "9": "nine",
+}
+
+_SPECIAL_CHAR_WORDS = {
+    "-": "dash",
+    "_": "underscore",
+    "+": "plus",
+    ".": "dot",
 }
 
 _COMMON_DOMAINS = {
@@ -59,6 +66,21 @@ def _domain_voice_part(domain: str) -> str:
     return lower
 
 
+def _char_to_voice_token(ch: str) -> str:
+    """Map one stored email character to a TTS-friendly spoken token."""
+    if ch.isalpha():
+        return ch.upper()
+    if ch.isdigit():
+        return _DIGIT_WORDS[ch]
+    return _SPECIAL_CHAR_WORDS.get(ch, ch)
+
+
+def _spell_segment_chars(segment: str) -> str:
+    """Comma-separated letter/digit readback — avoids TTS reading hyphens as 'dash'."""
+    tokens = [_char_to_voice_token(ch) for ch in segment if ch]
+    return ", ".join(tokens)
+
+
 def speak_email(email: str) -> str:
     """
     Speak a normalized email for voice — uses ``at`` and ``dot``, never raw ``@`` or ``.``.
@@ -74,57 +96,28 @@ def speak_email(email: str) -> str:
 
 def spell_email_letter_by_letter(email: str) -> str:
     """
-    Spell the entire email letter-by-letter, including the domain.
+    Spell the entire stored email character-by-character for TTS readback.
 
-    Example: jessica@sureshotbooks.com →
-    ``J-E-S-S-I-C-A at S-U-R-E-S-H-O-T-B-O-O-K-S dot C-O-M``
+    Uses comma-separated tokens and digit words so ElevenLabs reads exactly what
+    is in the backend string — never hyphen chains that sound like other letters.
+
+    Example: mubashirbusiness3@gmail.com →
+    ``M, U, B, A, S, H, I, R, B, U, S, I, N, E, S, S, three, at, G, M, A, I, L, dot, C, O, M``
     """
     normalized = normalize_email_for_customer_readback(email)
     if not normalized or "@" not in normalized:
         return ""
 
     local, domain = normalized.split("@", 1)
-
-    def _spell_segment(segment: str) -> str:
-        chars: list[str] = []
-        for ch in segment:
-            if ch.isalpha():
-                chars.append(ch.upper())
-            elif ch.isdigit():
-                chars.append(ch)
-            elif ch in "-_+.":
-                chars.append(ch)
-        return "-".join(chars)
-
-    domain_parts = domain.lower().split(".")
-    domain_spelled = " dot ".join(_spell_segment(part) for part in domain_parts if part)
-    return f"{_spell_segment(local)} at {domain_spelled}"
+    local_spelled = _spell_segment_chars(local)
+    domain_parts = [part for part in domain.lower().split(".") if part]
+    domain_spelled = " dot ".join(_spell_segment_chars(part) for part in domain_parts)
+    return f"{local_spelled}, at, {domain_spelled}"
 
 
 def spell_email_for_voice(email: str) -> str:
-    """
-    Spell the local part letter-by-letter (uppercase) and digits one-by-one.
-
-    Example: bashisultan766@gmail.com →
-    ``B-A-S-H-I-S-U-L-T-A-N-7-6-6 at gmail dot com``
-    """
-    normalized = normalize_email_for_customer_readback(email)
-    if not normalized or "@" not in normalized:
-        return ""
-
-    local, domain = normalized.split("@", 1)
-    spelled_local: list[str] = []
-    for ch in local:
-        if ch.isalpha():
-            spelled_local.append(ch.upper())
-        elif ch.isdigit():
-            spelled_local.append(ch)
-        elif ch in "-_+.":
-            spelled_local.append(ch)
-
-    local_spelled = "-".join(spelled_local)
-    domain_part = _domain_voice_part(domain)
-    return f"{local_spelled} at {domain_part}"
+    """Alias — full letter-by-letter readback from the stored email string."""
+    return spell_email_letter_by_letter(email)
 
 
 def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
@@ -165,5 +158,5 @@ def build_email_spell_only(email: str, raw_text: str = "") -> str:
     if not normalized or email_confidence_is_low(normalized, raw_text):
         return "I do not have a complete email yet. Please spell it slowly."
     spoken = speak_email(normalized)
-    spelled = spell_email_for_voice(normalized)
+    spelled = spell_email_letter_by_letter(normalized)
     return f"I have {spoken}. That is {spelled}."
