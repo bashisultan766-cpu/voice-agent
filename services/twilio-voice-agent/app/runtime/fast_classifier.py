@@ -228,8 +228,6 @@ def _is_product_search_request(text: str) -> bool:
         return True
     if _has_specific_product_detail(text):
         return True
-    if re.search(r"\b(game of thrones|atomic habits)\b", text, re.I):
-        return True
     if re.search(r"\b(author|by)\s+\w+", text, re.I) and re.search(r"\bbook\b", text, re.I):
         return True
     return False

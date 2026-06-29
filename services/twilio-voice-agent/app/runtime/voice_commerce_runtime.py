@@ -626,13 +626,18 @@ class VoiceCommerceRuntime:
         title_hunt = None
         if product_handling_allowed(session, turn_mode, normalized):
             from ..agent_runtime.isbn_short_circuit import (
-                looks_like_book_title_request,
+                is_explicit_title_catalog_query,
                 try_title_catalog_short_circuit,
             )
+            from ..agent_runtime.commerce_flow_state import _status as commerce_status
             from ..tools.isbn import extract_isbn_candidate
 
-            if looks_like_book_title_request(normalized) and not extract_isbn_candidate(
-                normalized,
+            if (
+                is_explicit_title_catalog_query(
+                    normalized,
+                    commerce_status=commerce_status(session),
+                )
+                and not extract_isbn_candidate(normalized)
             ):
                 try:
                     title_sc = await try_title_catalog_short_circuit(

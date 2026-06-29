@@ -1,4 +1,4 @@
-"""v4.54 — paced email TTS delivery + idle title catalog search."""
+"""v4.55 — paced email TTS delivery + explicit-title catalog search."""
 from __future__ import annotations
 
 import json
@@ -27,9 +27,9 @@ def test_readback_micro_chunks_for_long_local():
     assert all(len(p) < 80 for p in parts)
 
 
-def test_short_title_detected():
-    assert looks_like_book_title_request("Gurdwara") is True
-    assert looks_like_book_title_request("Red River Vengeance") is True
+def test_short_title_requires_explicit_preamble():
+    assert looks_like_book_title_request("Gurdwara") is False
+    assert looks_like_book_title_request("Red River Vengeance") is False
     assert looks_like_book_title_request("Do you have Game of Thrones") is True
     assert looks_like_book_title_request("Yes.") is False
 
@@ -39,14 +39,17 @@ def test_extract_title_query_strips_preamble():
     assert extract_title_catalog_query("The book title is Gurdwara") == "Gurdwara"
 
 
-def test_product_handling_allowed_for_title_on_idle():
+def test_product_handling_requires_explicit_title():
     session = SessionState(
         session_id="s",
         call_sid="CA_TITLE",
         from_number="+1",
         to_number="+2",
     )
-    assert product_handling_allowed(session, "", "Red River Vengeance")
+    assert not product_handling_allowed(session, "", "Red River Vengeance")
+    assert product_handling_allowed(
+        session, "", "Do you have Red River Vengeance",
+    )
 
 
 @pytest.mark.asyncio
@@ -73,7 +76,9 @@ async def test_title_catalog_search_idle():
         new_callable=AsyncMock,
         return_value=json.dumps(payload),
     ):
-        result = await try_title_catalog_short_circuit(session, "Red River Vengeance")
+        result = await try_title_catalog_short_circuit(
+            session, "Do you have Red River Vengeance",
+        )
 
     assert result is not None
     assert result.force_reply
@@ -105,7 +110,9 @@ async def test_title_catalog_similar_offer():
         new_callable=AsyncMock,
         return_value=json.dumps(payload),
     ):
-        result = await try_title_catalog_short_circuit(session, "Gurdwara")
+        result = await try_title_catalog_short_circuit(
+            session, "I'm looking for Gurdwara",
+        )
 
     assert result is not None
     assert "did not find an exact match" in result.force_reply.lower()

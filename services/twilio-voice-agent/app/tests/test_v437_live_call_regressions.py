@@ -72,5 +72,5 @@ class TestTitleNotIsbn:
         assert should_skip_isbn_short_circuit(session, t) is True
         assert session.pending_isbn_buffer == ""
 
-    def test_its_a_title_not_isbn(self):
-        assert looks_like_book_title_request("It's a title.") is True
+    def test_its_a_title_without_name_is_not_catalog_query(self):
+        assert looks_like_book_title_request("It's a title.") is False

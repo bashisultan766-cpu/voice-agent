@@ -174,12 +174,16 @@ def resolve_primary_workflow(
     try:
         from .isbn_short_circuit import (
             catalog_title_search_allowed,
-            looks_like_book_title_request,
+            is_explicit_title_catalog_query,
         )
+        from .commerce_flow_state import _status as commerce_status
 
         if (
             catalog_title_search_allowed(session, turn_mode)
-            and looks_like_book_title_request(text or "")
+            and is_explicit_title_catalog_query(
+                text or "",
+                commerce_status=commerce_status(session),
+            )
             and not extract_isbn_candidate(text or "")
         ):
             return WORKFLOW_PRODUCT
@@ -266,8 +270,9 @@ def product_handling_allowed(
         return False
     from .isbn_short_circuit import (
         catalog_title_search_allowed,
-        looks_like_book_title_request,
+        is_explicit_title_catalog_query,
     )
+    from .commerce_flow_state import _status as commerce_status
     from ..tools.isbn import extract_isbn_candidate
 
     mode = (turn_mode or "").strip().lower()
@@ -275,7 +280,10 @@ def product_handling_allowed(
         return True
     if (
         catalog_title_search_allowed(session, turn_mode)
-        and looks_like_book_title_request(text or "")
+        and is_explicit_title_catalog_query(
+            text or "",
+            commerce_status=commerce_status(session),
+        )
         and not extract_isbn_candidate(text or "")
     ):
         return True

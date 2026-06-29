@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.54"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.55"
 
 _EXACT_TITLE_SCORE = 88
 _SIMILAR_TITLE_SCORE = 52
@@ -28,6 +28,17 @@ _ORDER_FOLLOWUP_BLOCK_PAT = re.compile(
     r"card used|my order|this order|order status)\b",
     re.I,
 )
+_EXPLICIT_TITLE_MARKER_PAT = re.compile(
+    r"\b(?:title is|book title|book called|book named|the book is|"
+    r"it'?s called|it is called)\b",
+    re.I,
+)
+_VAGUE_TITLE_TAILS = frozenset({
+    "book", "a book", "books", "the book", "magazine", "a magazine", "magazines",
+    "newspaper", "a newspaper", "newspapers", "something", "something to read",
+    "one", "another", "another one", "another book", "this", "that", "it",
+    "from you", "to read",
+})
 _BOOK_SEARCH_INTENT_PAT = re.compile(
     r"\b(?:do you have|looking for|search(?:ing)? for|find (?:me )?(?:a )?book|"
     r"i (?:want|need)(?: the)?(?: book)?|got (?:any )?|carry|sell|"
@@ -116,22 +127,51 @@ def extract_title_catalog_query(text: str) -> str:
     return t or (text or "").strip()
 
 
-def looks_like_book_title_request(text: str) -> bool:
-    """Heuristic: spoken title/periodical — not an ISBN digit stream."""
-    expanded = _expand_text(text or "")
-    lower = expanded.lower().strip()
-    if not lower:
+def _catalog_query_is_actionable(query: str) -> bool:
+    """True when stripped text is a real title/name — not a generic category."""
+    q = re.sub(r"[^\w\s]", "", (query or "").lower()).strip()
+    q = re.sub(r"\s+", " ", q)
+    if not q or q in _VAGUE_TITLE_TAILS:
+        return False
+    if q.endswith(" from you"):
+        q = q[: -len(" from you")].strip()
+        if not q or q in _VAGUE_TITLE_TAILS:
+            return False
+    if sum(c.isalpha() for c in q) < 4:
+        return False
+    words = q.split()
+    if len(words) == 1 and words[0] in _NON_TITLE_SINGLE_WORDS:
+        return False
+    return True
+
+
+def is_explicit_title_catalog_query(
+    text: str,
+    *,
+    commerce_status: str = "idle",
+) -> bool:
+    """
+    True only when the caller gave an explicit title or publication name.
+
+    Never true for bare conversation, greetings, or vague 'I need a book'.
+    """
+    from ..runtime.fast_classifier import _has_specific_product_detail, is_vague_product_request
+    from .commerce_flow_state import STATUS_AWAITING_ANOTHER_BOOK
+
+    if not (text or "").strip():
         return False
     if (text or "").strip() == _ASSEMBLER_KEEPALIVE:
         return False
-    if lower.startswith("no problem, i'm here"):
+    if (text or "").lower().startswith("no problem, i'm here"):
         return False
-    if re.search(r"\bisbn\b", lower):
+    if is_vague_product_request(text):
         return False
     from ..tools.isbn import extract_isbn_candidate
 
-    if extract_isbn_candidate(text or ""):
+    if extract_isbn_candidate(text):
         return False
+
+    lower = (text or "").lower()
     if _ORDER_FOLLOWUP_BLOCK_PAT.search(lower):
         return False
     if _QUANTITY_COPY_PAT.search(lower):
@@ -142,27 +182,41 @@ def looks_like_book_title_request(text: str) -> bool:
         return False
     if _META_BOOK_PHRASE_PAT.search(lower) and not _TITLE_NOT_ISBN_PAT.search(lower):
         return False
-    if re.search(r"\b(it'?s a title|the title is|another title|book title)\b", lower):
-        return True
-    if _BOOK_SEARCH_INTENT_PAT.search(lower):
-        query = extract_title_catalog_query(text)
-        if sum(c.isalpha() for c in query) >= 3:
-            return True
+
     letters = sum(1 for c in lower if c.isalpha())
     digits = sum(1 for c in lower if c.isdigit())
     words = [w for w in re.split(r"\s+", lower) if w]
-    if len(words) >= 6 and letters >= 12 and digits <= 2:
-        return True
-    if len(words) >= 3 and letters >= 8 and digits <= 2:
-        return True
-    if len(words) == 2 and letters >= 8 and digits == 0:
-        return True
-    if len(words) == 1 and letters >= 5 and digits == 0:
-        if words[0] not in _NON_TITLE_SINGLE_WORDS:
+
+    # Long publication / subscription descriptions (newspaper, magazine).
+    if _TITLE_NOT_ISBN_PAT.search(lower):
+        if len(words) >= 6 and letters >= 12 and digits <= 2:
             return True
-    if _TITLE_NOT_ISBN_PAT.search(lower) and letters > digits * 2:
-        return True
+
+    query = extract_title_catalog_query(text)
+
+    if _EXPLICIT_TITLE_MARKER_PAT.search(text):
+        return _catalog_query_is_actionable(query)
+
+    if _has_specific_product_detail(text):
+        return _catalog_query_is_actionable(query)
+
+    if _BOOK_SEARCH_INTENT_PAT.search(lower):
+        return _catalog_query_is_actionable(query)
+
+    if commerce_status == STATUS_AWAITING_ANOTHER_BOOK:
+        if len(words) >= 2 and _catalog_query_is_actionable(query):
+            return True
+
     return False
+
+
+def looks_like_book_title_request(
+    text: str,
+    *,
+    commerce_status: str = "idle",
+) -> bool:
+    """Alias — catalog/title routing requires an explicit title, not casual speech."""
+    return is_explicit_title_catalog_query(text, commerce_status=commerce_status)
 
 
 def catalog_hit_is_orderable(hit: dict[str, Any]) -> bool:
@@ -738,20 +792,24 @@ async def try_title_catalog_short_circuit(
         STATUS_AWAITING_BOOK_CONFIRM,
         STATUS_AWAITING_ADD_CONFIRM,
     ):
-        if not looks_like_book_title_request(text):
+        if not is_explicit_title_catalog_query(text, commerce_status=status):
             return None
     elif status not in (STATUS_IDLE, STATUS_AWAITING_ANOTHER_BOOK, ""):
         return None
 
-    if _ANOTHER_BOOK_INTENT_PAT.search(text) and not looks_like_book_title_request(text):
+    if _ANOTHER_BOOK_INTENT_PAT.search(text) and not is_explicit_title_catalog_query(
+        text, commerce_status=status,
+    ):
         return IsbnShortCircuitResult(
             force_reply="Sure — what's the ISBN or title of the next book?",
         )
-    if not looks_like_book_title_request(caller_text):
+    if not is_explicit_title_catalog_query(caller_text, commerce_status=status):
         return None
 
     session.pending_isbn_buffer = ""
     query = extract_title_catalog_query(caller_text)
+    if not _catalog_query_is_actionable(query):
+        return None
     raw = await _catalog_search(
         CatalogSearchArgs(query=query, limit=5),
         session,

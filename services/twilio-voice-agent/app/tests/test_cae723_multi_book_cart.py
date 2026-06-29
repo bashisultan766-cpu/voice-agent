@@ -46,7 +46,7 @@ def _stage_healthy_adult(session: SessionState) -> None:
 
 class TestVersions:
     def test_commerce_flow_version(self):
-        assert COMMERCE_FLOW_VERSION == "v4.54"
+        assert COMMERCE_FLOW_VERSION == "v4.55"
 
 
 class TestPaymentDoesNotHijackCartBuilding:
