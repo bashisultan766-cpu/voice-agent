@@ -60,7 +60,8 @@ _EMAIL_CONFIRM_YES = re.compile(
 )
 _EMAIL_CONFIRM_LOOSE = re.compile(
     r"\b("
-    r"that'?s?\s+correct|that\s+is\s+correct|correct\s+email|correct\s+name|"
+    r"that'?s?\s+correct|that\s+is\s+correct|that'?s?\s+true|that\s+is\s+true|"
+    r"correct\s+email|correct\s+name|"
     r"you\s+may|sounds?\s+right|that'?s?\s+right|that'?s?\s+good|"
     r"email\s+is\s+correct|name\s+is\s+correct|absolutely"
     r")\b",
@@ -146,13 +147,21 @@ def _extract_name_from_text(text: str) -> str:
 
 
 def _is_email_confirmation(text: str) -> bool:
-    """Accept bare yes and natural confirmations like 'that's correct email'."""
+    """Accept bare yes and natural confirmations — not 'yes my name is …'."""
+    from ..agent_runtime.yes_engagement import is_bare_yes
+
     cleaned = (text or "").strip()
     if not cleaned:
         return False
     if _EMAIL_CONFIRM_YES.match(cleaned):
         return True
     if _EMAIL_CONFIRM_LOOSE.search(cleaned):
+        return True
+    if is_bare_yes(cleaned):
+        return True
+    if re.match(r"^\s*(yes|yeah|yep|yup)\b", cleaned, re.I):
+        if re.search(r"\b(name|email|isbn|book|order|my\s+name)\b", cleaned, re.I):
+            return False
         return True
     return False
 
@@ -579,6 +588,7 @@ async def process_not_found_escalation_turn(
                     force_reply=fragment_capture_prompt(len(fragments)),
                 )
             if name and not _HANDOFF_ACK_ONLY.match(caller_text or ""):
+                stage_pending_escalation(session, pending)
                 return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_ONLY)
             if _HANDOFF_ACK_ONLY.match(caller_text or ""):
                 return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)

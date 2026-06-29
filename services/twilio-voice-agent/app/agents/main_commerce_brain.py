@@ -467,7 +467,17 @@ class MainCommerceBrain:
         max_words: int | None = None,
     ) -> str:
         """Apply safety guardrails to brain output."""
+        from ..email.speller import is_preserved_email_readback
         from ..safety.response_sanitizer import is_order_disclosure_text
+
+        if is_preserved_email_readback(text):
+            guarded = apply_output_guardrails(
+                text,
+                max_words=500,
+                call_sid=getattr(session, "call_sid", ""),
+            )
+            out = guarded.text.strip()
+            return out or text.strip()
 
         enforced = enforce_payment_response(session, text, tool_results)
         enforced = replace_blocked_order_phrase(enforced)

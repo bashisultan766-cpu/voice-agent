@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.50"
+ORDER_FLOW_VERSION = "v4.51"
 
 
 def is_order_followup_question(text: str) -> bool:

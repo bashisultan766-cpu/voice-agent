@@ -169,7 +169,8 @@ class VoiceCommerceRuntime:
             result = email_cap.process_confirmation_turn(sanitized)
             if result.action == "confirmed":
                 if PAYMENT_AUTO_SEND_ENABLED:
-                    return None
+                    auto = await self._auto_send_payment(session, caller_text, send)
+                    return auto
                 spoken = "Got it. I'll send the payment link to your email."
                 await self._speak(session, caller_text, spoken, send)
                 return _result(spoken)
@@ -351,8 +352,13 @@ class VoiceCommerceRuntime:
                     session, normalized, turn_mode=turn_mode,
                 )
                 if esc_early.force_reply:
-                    spoken = self._brain.finalize_response(
-                        session, esc_early.force_reply, [],
+                    from ..email.speller import is_preserved_email_readback
+
+                    reply = esc_early.force_reply
+                    spoken = (
+                        reply
+                        if is_preserved_email_readback(reply)
+                        else self._brain.finalize_response(session, reply, [])
                     )
                     await self._speak(session, normalized, spoken, send)
                     logger.info("support_handoff_email_early sid=%s", sid)
@@ -497,7 +503,14 @@ class VoiceCommerceRuntime:
                 session, normalized, turn_mode=turn_mode,
             )
             if esc_hint.force_reply:
-                spoken = self._brain.finalize_response(session, esc_hint.force_reply, [])
+                from ..email.speller import is_preserved_email_readback
+
+                reply = esc_hint.force_reply
+                spoken = (
+                    reply
+                    if is_preserved_email_readback(reply)
+                    else self._brain.finalize_response(session, reply, [])
+                )
                 await self._speak(session, normalized, spoken, send)
                 logger.info("support_handoff_email_capture sid=%s", sid)
                 return _result(spoken)

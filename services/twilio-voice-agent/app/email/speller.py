@@ -136,6 +136,14 @@ def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
     return False
 
 
+_EMAIL_READBACK_MARKER = re.compile(r"letter\s+by\s+letter", re.I)
+
+
+def is_preserved_email_readback(text: str) -> bool:
+    """True when text is a deterministic email spell-back that must reach TTS intact."""
+    return bool(_EMAIL_READBACK_MARKER.search(text or ""))
+
+
 def build_email_readback(email: str, raw_text: str = "") -> str:
     """Pending email: heard + spelled + confirmation."""
     normalized = normalize_email_for_customer_readback(email)
