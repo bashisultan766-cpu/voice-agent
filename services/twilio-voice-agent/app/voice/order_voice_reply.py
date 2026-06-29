@@ -98,6 +98,31 @@ def _product_lines(inner: dict[str, Any]) -> list[str]:
             lines.append(f"{speak_int(qty)} copies of {title}")
         else:
             lines.append(title)
+    if lines:
+        return lines
+
+    seen: set[str] = set()
+    for refund in inner.get("refunds") or []:
+        for raw_title in refund.get("refunded_items") or refund.get("items") or []:
+            title = str(raw_title or "").strip()
+            if not title:
+                continue
+            qty = 1
+            if "x " in title:
+                head, tail = title.split("x ", 1)
+                if head.strip().isdigit():
+                    qty = int(head.strip())
+                    title = tail.strip()
+            if _is_processing_fee_item({"title": title}):
+                continue
+            key = title.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            if qty > 1:
+                lines.append(f"{speak_int(qty)} copies of {title}")
+            else:
+                lines.append(title)
     return lines
 
 
@@ -232,6 +257,42 @@ def _refund_reason_phrase(inner: dict[str, Any]) -> str:
     return ""
 
 
+def _refund_amount_phrase(inner: dict[str, Any]) -> str:
+    pricing = inner.get("pricing") or {}
+    refund_raw = (pricing.get("refund_total") or "").strip()
+    if refund_raw and _should_speak_money(refund_raw):
+        return f"A total refund of {speak_money_field(refund_raw)} was issued."
+
+    total = 0.0
+    currency = "USD"
+    for refund in inner.get("refunds") or []:
+        raw = (refund.get("refund_amount") or refund.get("amount") or "").strip()
+        if not raw:
+            continue
+        amount, cur = parse_money_field(raw)
+        total += amount
+        if cur:
+            currency = cur
+    if total <= 0:
+        return ""
+    spoken = speak_money_field(f"{total:.2f} {currency}")
+    return f"A total refund of {spoken} was issued."
+
+
+def _refunded_pricing_phrase(inner: dict[str, Any]) -> str:
+    pricing = inner.get("pricing") or {}
+    original_raw = (pricing.get("original_total") or "").strip()
+    refund_line = _refund_amount_phrase(inner)
+    if refund_line:
+        if original_raw and _should_speak_money(original_raw):
+            return (
+                f"The original order total was {speak_money_field(original_raw)}. "
+                f"{refund_line}"
+            )
+        return refund_line
+    return _pricing_natural_phrase(inner)
+
+
 def _pricing_natural_phrase(inner: dict[str, Any]) -> str:
     subtotal_raw, shipping_raw, total_raw = _pricing_fields(inner)
     parts: list[str] = []
@@ -290,7 +351,7 @@ def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
     product_line = _products_natural_phrase(inner)
     if product_line:
         parts.append(product_line)
-    pricing_line = _pricing_natural_phrase(inner)
+    pricing_line = _refunded_pricing_phrase(inner)
     if pricing_line:
         parts.append(pricing_line)
     if refund_reason:

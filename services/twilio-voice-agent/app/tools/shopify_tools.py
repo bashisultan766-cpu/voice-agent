@@ -1187,9 +1187,16 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
     items = _line_items_from_node(node)
     tracking = _tracking_from_node(node)
     refunds = _refunds_from_node(node, order_email=order_email)
+    if not items:
+        items = _items_from_refund_records(refunds)
     customer = node.get("customer") or {}
     customer_name = customer_display_name(customer)
     payment = _payment_from_transactions(node.get("transactions") or [])
+    for refund in refunds:
+        if not payment.get("card_last4"):
+            payment["card_last4"] = refund.get("card_last4") or ""
+        if not payment.get("card_brand"):
+            payment["card_brand"] = refund.get("card_brand") or ""
     item_count = sum(int(i.get("quantity") or 0) for i in items)
     note_attributes = _note_attributes_from_node(node)
     order_note = (node.get("note") or "").strip()
@@ -1198,10 +1205,30 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
     shipping_fee = f"{shipping_amt} {shipping_cur}".strip()
     shipping_detail = _shipping_detail_from_node(node, shipping_fee=shipping_fee)
     phone = (node.get("phone") or customer.get("phone") or "").strip()
+    refund_total_amt, refund_total_cur = _refund_total_amount(refunds)
+    original_total = f"{total_amt} {total_cur}".strip()
+    current_total = f"{current_amt} {current_cur}".strip() if current_amt else ""
+    fin_status = str(node.get("displayFinancialStatus", "") or "")
+    pricing_for_refund_check = {
+        "original_total": original_total,
+        "current_total": current_total,
+        "total": original_total,
+    }
     is_refunded = _is_refunded_order({
-        "financial_status": node.get("displayFinancialStatus", ""),
+        "financial_status": fin_status,
         "refunds": refunds,
+        "refund_info": {"refunded": False, "refunds": refunds},
+        "pricing": pricing_for_refund_check,
     })
+    if is_refunded and fin_status.upper() == "PAID":
+        fin_status = "REFUNDED"
+
+    spoken_total = current_total if is_refunded and current_total else original_total
+    refund_total_spoken = (
+        f"{refund_total_amt:.2f} {refund_total_cur}".strip()
+        if refund_total_amt > 0
+        else ""
+    )
 
     pricing = {
         "subtotal": f"{subtotal_amt} {subtotal_cur}".strip(),
@@ -1209,11 +1236,13 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
         "shipping": shipping_fee,
         "tax": f"{tax_amt} {tax_cur}".strip(),
         "discount": f"{discount_amt} {discount_cur}".strip(),
-        "total": f"{total_amt} {total_cur}".strip(),
-        "total_with_shipping": f"{total_amt} {total_cur}".strip(),
+        "total": spoken_total,
+        "total_with_shipping": spoken_total,
+        "original_total": original_total,
+        "refund_total": refund_total_spoken,
         "currency": total_cur or subtotal_cur or "USD",
         "outstanding_balance": f"{outstanding_amt} {outstanding_cur}".strip() if outstanding_amt else "0.00 USD",
-        "current_total": f"{current_amt} {current_cur}".strip() if current_amt else "",
+        "current_total": current_total,
     }
 
     customer_block = {
@@ -1233,9 +1262,9 @@ def _build_full_order_from_node(node: dict, *, order_email: str) -> dict:
         "order_number": node.get("name", ""),
         "order_date": (node.get("createdAt") or "")[:10],
         "created_at": (node.get("createdAt") or "")[:10],
-        "financial_status": node.get("displayFinancialStatus", ""),
+        "financial_status": fin_status,
         "fulfillment_status": node.get("displayFulfillmentStatus", ""),
-        "order_status": node.get("displayFinancialStatus", ""),
+        "order_status": fin_status,
         "shipping_status": _fulfillment_shipping_status(node),
         "tags": tags,
         "notes": order_note,
@@ -1619,10 +1648,74 @@ def _tracking_from_node(node: dict) -> dict:
     }
 
 
+def _parse_money_amount(value: str) -> float:
+    if not (value or "").strip():
+        return 0.0
+    try:
+        return float(str(value).split()[0].replace(",", ""))
+    except ValueError:
+        return 0.0
+
+
+def _refund_total_amount(refunds: list[dict]) -> tuple[float, str]:
+    total = 0.0
+    currency = "USD"
+    for refund in refunds or []:
+        raw = (
+            refund.get("refund_amount")
+            or refund.get("amount")
+            or ""
+        )
+        if not raw:
+            continue
+        parts = str(raw).split()
+        total += _parse_money_amount(parts[0])
+        if len(parts) > 1:
+            currency = parts[1]
+    return total, currency
+
+
+def _items_from_refund_records(refunds: list[dict]) -> list[dict]:
+    """Rebuild product lines from refund records when Shopify line items were removed."""
+    seen: set[str] = set()
+    items: list[dict] = []
+    for refund in refunds or []:
+        for raw_title in refund.get("refunded_items") or refund.get("items") or []:
+            title = str(raw_title or "").strip()
+            if not title:
+                continue
+            qty = 1
+            if "x " in title:
+                head, tail = title.split("x ", 1)
+                if head.strip().isdigit():
+                    qty = int(head.strip())
+                    title = tail.strip()
+            key = title.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            if "processing fee" in key:
+                continue
+            items.append({
+                "title": title,
+                "quantity": qty,
+                "unit_price": "",
+                "line_total": "",
+                "price": "",
+                "sku": "",
+                "isbn": "",
+            })
+    return items
+
+
 def _line_items_from_node(node: dict) -> list[dict]:
     items: list[dict] = []
     for edge in (node.get("lineItems") or {}).get("edges", []):
         li = edge.get("node") or {}
+        title = (li.get("title") or "").strip()
+        qty = int(li.get("currentQuantity") or li.get("quantity") or 0)
+        if not title:
+            continue
         variant = li.get("variant") or {}
         price_amt, price_cur = _money_amount_currency(li.get("originalUnitPriceSet"))
         line_amt, line_cur = _money_amount_currency(
@@ -1632,8 +1725,8 @@ def _line_items_from_node(node: dict) -> list[dict]:
         unit_price = f"{price_amt} {price_cur}".strip() if price_amt else ""
         line_total = f"{line_amt} {line_cur}".strip() if line_amt else ""
         items.append({
-            "title": li.get("title") or "",
-            "quantity": int(li.get("quantity") or 0),
+            "title": title,
+            "quantity": qty if qty > 0 else int(li.get("quantity") or 0) or 1,
             "unit_price": unit_price,
             "line_total": line_total,
             "price": unit_price,
@@ -1736,9 +1829,30 @@ def _format_shipping_phrase(pricing: dict) -> str:
 
 def _is_refunded_order(order_obj: dict) -> bool:
     fin = str(order_obj.get("financial_status") or "").upper()
-    if "REFUND" in fin:
+    if "REFUND" in fin or "VOID" in fin:
         return True
-    return bool(order_obj.get("refunds"))
+    refund_info = order_obj.get("refund_info") or {}
+    if refund_info.get("refunded"):
+        return True
+    refunds = order_obj.get("refunds") or refund_info.get("refunds") or []
+    if not refunds:
+        return False
+    pricing = order_obj.get("pricing") or {}
+    original_raw = (
+        pricing.get("original_total")
+        or pricing.get("total_with_shipping")
+        or pricing.get("total")
+        or ""
+    )
+    current_raw = pricing.get("current_total") or ""
+    refund_total, _ = _refund_total_amount(refunds)
+    original_amt = _parse_money_amount(str(original_raw).split()[0] if original_raw else "")
+    current_amt = _parse_money_amount(str(current_raw).split()[0] if current_raw else "")
+    if refund_total > 0 and original_amt > 0 and refund_total >= original_amt * 0.99:
+        return True
+    if refund_total > 0 and current_amt == 0:
+        return True
+    return bool(refunds)
 
 
 async def lookup_shopify_order_details(

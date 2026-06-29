@@ -28,6 +28,8 @@ ORDER_39667_PAYLOAD = {
     "order": {
         "order_number": "39667",
         "financial_status": "REFUNDED",
+        "customer_name": "George Kraemer",
+        "order_date": "2025-07-29",
         "product_count": 0,
         "customer_email": "georgekraemer53@gmail.com",
         "payment": {
@@ -38,10 +40,78 @@ ORDER_39667_PAYLOAD = {
             "subtotal_before_shipping": "0.00 USD",
             "shipping": "0.00 USD",
             "total": "0.00 USD",
+            "original_total": "67.83 USD",
+            "refund_total": "67.83 USD",
         },
         "refund_info": {"refunded": True},
-        "refunds": [{"amount": "67.83 USD"}],
+        "refunds": [{
+            "amount": "67.83 USD",
+            "refunded_items": [
+                "Home News Tribune Fri, Sat & Sun 3 Day Delivery For 12 Weeks",
+            ],
+        }],
     },
+}
+
+ORDER_39667_SHOPIFY_NODE = {
+    "id": "gid://shopify/Order/39667",
+    "name": "39667",
+    "createdAt": "2025-07-29T18:51:00Z",
+    "displayFinancialStatus": "REFUNDED",
+    "displayFulfillmentStatus": "FULFILLED",
+    "email": "georgekraemer53@gmail.com",
+    "customer": {
+        "firstName": "George",
+        "lastName": "Kraemer",
+        "email": "georgekraemer53@gmail.com",
+    },
+    "subtotalPriceSet": {"shopMoney": {"amount": "0.00", "currencyCode": "USD"}},
+    "totalShippingPriceSet": {"shopMoney": {"amount": "0.00", "currencyCode": "USD"}},
+    "totalTaxSet": {"shopMoney": {"amount": "0.00", "currencyCode": "USD"}},
+    "totalDiscountsSet": {"shopMoney": {"amount": "0.00", "currencyCode": "USD"}},
+    "totalPriceSet": {"shopMoney": {"amount": "67.83", "currencyCode": "USD"}},
+    "currentTotalPriceSet": {"shopMoney": {"amount": "0.00", "currencyCode": "USD"}},
+    "totalOutstandingSet": {"shopMoney": {"amount": "0.00", "currencyCode": "USD"}},
+    "lineItems": {"edges": []},
+    "fulfillments": [],
+    "refunds": [{
+        "createdAt": "2025-09-04T17:48:00Z",
+        "note": "",
+        "totalRefundedSet": {"shopMoney": {"amount": "67.83", "currencyCode": "USD"}},
+        "refundLineItems": {
+            "edges": [
+                {
+                    "node": {
+                        "quantity": 1,
+                        "lineItem": {
+                            "title": "Home News Tribune Fri, Sat & Sun 3 Day Delivery For 12 Weeks",
+                        },
+                    },
+                },
+                {
+                    "node": {
+                        "quantity": 1,
+                        "lineItem": {"title": "Processing Fee"},
+                    },
+                },
+            ],
+        },
+        "transactions": {
+            "edges": [{
+                "node": {
+                    "paymentDetails": {
+                        "number": "****4004",
+                        "company": "American Express",
+                    },
+                },
+            }],
+        },
+    }],
+    "transactions": [{
+        "kind": "SALE",
+        "status": "SUCCESS",
+        "paymentDetails": {"number": "****4004", "company": "American Express"},
+    }],
 }
 
 
@@ -58,12 +128,35 @@ class _Session:
 def test_order_39667_refunded_brief_reply():
     reply = compose_brief_order_voice_reply(ORDER_39667_PAYLOAD)
     assert "refunded" in reply.lower()
+    assert "George Kraemer" in reply
+    assert "Home News Tribune" in reply
+    assert "sixty seven dollars and eighty three cents" in reply
     assert "georgekraemer53 at gmail dot com" in reply
     assert "four, zero, zero, four" in reply
     assert "American Express" in reply
-    assert len(reply) < 400
     assert "address" not in reply.lower()
-    assert "Home News Tribune" not in reply
+    assert "paid" not in reply.lower()
+
+
+def test_order_39667_removed_line_items_from_shopify_node():
+    from app.tools.shopify_tools import _build_full_order_from_node
+
+    order = _build_full_order_from_node(
+        ORDER_39667_SHOPIFY_NODE,
+        order_email="georgekraemer53@gmail.com",
+    )
+    assert order["financial_status"] == "REFUNDED"
+    assert order["customer_name"] == "George Kraemer"
+    assert order["product_count"] >= 1
+    assert "Home News Tribune" in order["items"][0]["title"]
+    assert order["pricing"]["refund_total"] == "67.83 USD"
+    assert order["pricing"]["original_total"] == "67.83 USD"
+
+    reply = compose_brief_order_voice_reply({"found": True, "order": order})
+    assert "refunded" in reply.lower()
+    assert "Home News Tribune" in reply
+    assert "sixty seven dollars and eighty three cents" in reply
+    assert "paid" not in reply.lower()
 
 
 def test_looking_for_order_intent():
@@ -267,7 +360,7 @@ def test_order_brain_gate_blocks_dispute_reformat():
 
 
 def test_order_flow_version():
-    assert ORDER_FLOW_VERSION == "v4.45"
+    assert ORDER_FLOW_VERSION == "v4.46"
 
 
 def test_buy_book_does_not_replay_order_summary():

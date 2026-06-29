@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.45"
+ORDER_FLOW_VERSION = "v4.46"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_ORDER_NUMBER = "awaiting_order_number"
@@ -645,7 +645,7 @@ async def try_order_enrichment_short_circuit(
         session.order_context = ""
         session.last_order_number = ""
         session.pending_order_number = req
-    elif req == last and cached:
+    elif req == last and cached and not re.search(r"\d", text):
         session.order_flow_status = STATUS_IDLE
         session.pending_order_number = ""
         return OrderTurnHint(
@@ -679,7 +679,6 @@ async def try_order_enrichment_short_circuit(
 
     session.order_flow_status = STATUS_IDLE
     session.pending_order_number = ""
-    session.order_context = result.suggested_response[:500]
 
     return OrderTurnHint(
         force_reply=result.suggested_response,
