@@ -316,6 +316,7 @@ class VoiceCommerceRuntime:
             try_another_order_short_circuit,
             try_order_collection_short_circuit,
             try_order_enrichment_short_circuit,
+            try_order_followup_reply,
             try_order_hold_reply,
             try_order_repeat_reply,
         )
@@ -353,6 +354,13 @@ class VoiceCommerceRuntime:
                         await self._speak(session, normalized, spoken, send)
                         logger.info("order_enrichment_short_circuit sid=%s", sid)
                         return _result(spoken)
+
+        followup_reply = try_order_followup_reply(session, normalized)
+        if followup_reply:
+            spoken = self._brain.finalize_response(session, followup_reply, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("order_followup_short_circuit sid=%s", sid)
+            return _result(spoken)
 
         repeat_reply = try_order_repeat_reply(session, normalized)
         spoken_num = extract_order_number(normalized, session, turn_mode=turn_mode)

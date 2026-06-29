@@ -12,6 +12,7 @@ from app.agent_runtime.order_flow_state import (
     order_intent_detected,
     try_another_order_short_circuit,
     try_order_collection_short_circuit,
+    try_order_followup_reply,
     try_order_hold_reply,
     try_order_repeat_reply,
     try_order_brain_gate,
@@ -47,6 +48,7 @@ ORDER_39667_PAYLOAD = {
 class _Session:
     last_order_number = ""
     order_last_voice_reply = ""
+    order_context = ""
     pending_order_number = ""
     pending_isbn_buffer = ""
     commerce_flow_status = "idle"
@@ -57,7 +59,7 @@ def test_order_39667_refunded_brief_reply():
     reply = compose_brief_order_voice_reply(ORDER_39667_PAYLOAD)
     assert "refunded" in reply.lower()
     assert "georgekraemer53 at gmail dot com" in reply
-    assert "4004" in reply
+    assert "four, zero, zero, four" in reply
     assert "American Express" in reply
     assert len(reply) < 400
     assert "address" not in reply.lower()
@@ -266,3 +268,36 @@ def test_order_brain_gate_blocks_dispute_reformat():
 
 def test_order_flow_version():
     assert ORDER_FLOW_VERSION == "v4.43"
+
+
+def test_buy_book_does_not_replay_order_summary():
+    session = _Session()
+    session.order_last_voice_reply = "I found your order 39787."
+    session.last_order_number = "39787"
+    assert try_order_repeat_reply(
+        session,
+        "What's the process to buy a book from your shop?",
+    ) is None
+    assert try_order_brain_gate(
+        session,
+        "Now I want to buy a books from you. What's the process?",
+    ) is None
+
+
+def test_card_followup_uses_cached_order():
+    session = _Session()
+    session.last_order_number = "39787"
+    session.order_context = (
+        '{"payment": {"card_brand": "Visa", "card_last4": "1234"}, '
+        '"financial_status": "PAID"}'
+    )
+    reply = try_order_followup_reply(session, "The credit card last 4 digits?")
+    assert reply is not None
+    assert "one, two, three, four" in reply
+
+
+def test_hold_just_second():
+    session = _Session()
+    session.order_flow_status = "awaiting_order_number"
+    reply = try_order_hold_reply(session, "Just second.")
+    assert reply is not None

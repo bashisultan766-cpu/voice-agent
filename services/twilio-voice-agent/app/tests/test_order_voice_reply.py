@@ -4,7 +4,10 @@ from __future__ import annotations
 from app.voice.money_speech import speak_money_field, speak_usd_amount
 from app.voice.order_voice_reply import (
     compose_brief_order_voice_reply,
+    compose_card_last4_reply,
+    compose_order_followup_reply,
     compose_refunded_order_voice_reply,
+    speak_card_last4_slow,
 )
 
 
@@ -25,6 +28,10 @@ def test_brief_order_found_reply():
             "financial_status": "PAID",
             "order_date": "2026-03-10",
             "product_count": 2,
+            "products": [
+                {"title": "Atomic Habits", "quantity": 1},
+                {"title": "Deep Work", "quantity": 1},
+            ],
             "payment": {"card_brand": "Visa", "card_last4": "4242"},
             "pricing": {
                 "subtotal_before_shipping": "45.00 USD",
@@ -37,13 +44,28 @@ def test_brief_order_found_reply():
     assert reply.startswith("I found your order.")
     assert "paid" in reply.lower()
     assert "March 10" in reply
-    assert "two products" in reply
+    assert "You ordered" in reply
     assert "forty five dollars" in reply
     assert "five dollars and ninety nine cents" in reply
     assert "fifty dollars and ninety nine cents" in reply
-    assert "4242" in reply
+    assert "four, two, four, two" in reply
     assert "Visa" in reply
     assert "address" not in reply.lower()
+
+
+def test_speak_card_last4_slow():
+    assert speak_card_last4_slow("4242") == "four, two, four, two"
+
+
+def test_card_followup_from_cached_order():
+    inner = {
+        "payment": {"card_brand": "Visa", "card_last4": "4242"},
+        "financial_status": "PAID",
+    }
+    reply = compose_order_followup_reply(inner, "What are the last four digits on the card?")
+    assert reply is not None
+    assert "four, two, four, two" in reply
+    assert compose_card_last4_reply(inner) == reply
 
 
 def test_refunded_order_brief_reply():
@@ -53,6 +75,10 @@ def test_refunded_order_brief_reply():
         "product_count": 2,
         "customer_name": "Maria Lopez",
         "customer_email": "test@example.com",
+        "products": [
+            {"title": "Book One", "quantity": 1},
+            {"title": "Book Two", "quantity": 1},
+        ],
         "payment": {"card_brand": "Visa", "card_last4": "4242"},
         "pricing": {
             "subtotal_before_shipping": "45.00 USD",
@@ -65,15 +91,15 @@ def test_refunded_order_brief_reply():
     reply = compose_refunded_order_voice_reply(inner)
     assert "refunded" in reply.lower()
     assert "Maria Lopez" in reply
-    assert "refund reason" in reply.lower()
+    assert "refund reason on file" in reply.lower()
     assert "cancellation before shipment" in reply
     assert "January 15" in reply
-    assert "two products" in reply
+    assert "You ordered" in reply
     assert "forty five dollars" in reply
     assert "test at example dot com" in reply
-    assert "4242" in reply
+    assert "four, two, four, two" in reply
     assert "Visa" in reply
-    assert "refund was issued" in reply.lower()
+    assert "refund was sent back" in reply.lower()
     assert "processing fee" not in reply.lower()
 
 

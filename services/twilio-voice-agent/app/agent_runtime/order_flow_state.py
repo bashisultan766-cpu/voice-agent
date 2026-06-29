@@ -59,8 +59,16 @@ _REPEAT_ORDER_SUMMARY_PAT = re.compile(
 )
 _ORDER_CONFUSION_PAT = re.compile(
     r"\b("
-    r"what\??|what'?s up|wrong|not correct|not giving|incorrect|"
-    r"that(?:'s| is) not|not the right"
+    r"what'?s up|wrong|not correct|not giving|incorrect|"
+    r"that(?:'s| is) not|not the right|not matching"
+    r")\b",
+    re.I,
+)
+_COMMERCE_BUY_INTENT = re.compile(
+    r"\b(?:"
+    r"buy|purchase|want to (?:buy|order)|how (?:do|can) i (?:buy|order)|"
+    r"process to buy|from your shop|payment link|add to cart|"
+    r"shop(?:ping)?|looking for a book|need a book"
     r")\b",
     re.I,
 )
@@ -77,7 +85,7 @@ _OTHER_ORDER_PAT = re.compile(
     re.I,
 )
 _HOLD_PAT = re.compile(
-    r"\b(?:hold(?:\s+on)?|wait|just\s+(?:hold|wait)(?:\s+a\s+(?:second|moment))?|"
+    r"\b(?:hold(?:\s+on)?|wait|just\s+(?:hold|wait|second|moment)(?:\s+a\s+(?:second|moment))?|"
     r"one\s+(?:second|moment)|give\s+me\s+a\s+(?:second|moment))\b",
     re.I,
 )
@@ -260,10 +268,40 @@ def order_intent_detected(text: str) -> bool:
     )
 
 
+def _commerce_buy_without_order_context(text: str) -> bool:
+    """Shopping / buy-process questions are not order-status replays."""
+    if not _COMMERCE_BUY_INTENT.search(text or ""):
+        return False
+    if _OTHER_ORDER_PAT.search(text or ""):
+        return False
+    if extract_order_number(text):
+        return False
+    return True
+
+
+def try_order_followup_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Focused answers from cached Shopify order data (card, email, products, etc.)."""
+    if not (getattr(session, "last_order_number", "") or "").strip():
+        return None
+    if _commerce_buy_without_order_context(caller_text):
+        return None
+    from ..voice.order_voice_reply import (
+        compose_order_followup_reply,
+        load_order_inner_from_session,
+    )
+
+    inner = load_order_inner_from_session(session)
+    if not inner:
+        return None
+    return compose_order_followup_reply(inner, caller_text)
+
+
 def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optional[str]:
     """Replay last order number or last spoken order summary from this call."""
     text = (caller_text or "").strip()
     if not text:
+        return None
+    if _commerce_buy_without_order_context(text):
         return None
     if _WRONG_ORDER_PAT.search(text):
         session.last_order_number = ""
@@ -299,6 +337,8 @@ def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optiona
                 "What would you like to know about it?"
             )
     if _ORDER_CONFIRM_PAT.search(text) and last:
+        return last
+    if re.match(r"^\s*what\??\s*$", text, re.I) and last:
         return last
     if _ORDER_CONFUSION_PAT.search(text) and last:
         return last
@@ -350,6 +390,12 @@ def try_order_brain_gate(
     last_reply = (getattr(session, "order_last_voice_reply", "") or "").strip()
     if not last_reply:
         return None
+    if _commerce_buy_without_order_context(caller_text):
+        return None
+
+    followup = try_order_followup_reply(session, caller_text)
+    if followup:
+        return followup
 
     replay = try_order_repeat_reply(session, caller_text)
     if replay:
