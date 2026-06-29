@@ -973,6 +973,39 @@ def _order_lookup_query_variants(
     return queries
 
 
+def _shopify_order_name_digits(name: str) -> str:
+    """Digit sequence from a Shopify order name (e.g. ``#63482`` → ``63482``)."""
+    raw = (name or "").strip().lstrip("#")
+    if not raw:
+        return ""
+    tail = re.search(r"(\d{4,10})\s*$", raw)
+    if tail:
+        return tail.group(1)
+    digits = re.sub(r"\D", "", raw)
+    if 4 <= len(digits) <= 10:
+        return digits
+    return ""
+
+
+def _order_digits_equal(requested: str, shopify_name: str) -> bool:
+    """True only when Shopify order name is the same order number the caller gave."""
+    req = re.sub(r"\D", "", requested or "")
+    got = _shopify_order_name_digits(shopify_name)
+    if not req or not got:
+        return False
+    return req == got or req.lstrip("0") == got.lstrip("0")
+
+
+def _filter_order_edges(edges: list[dict], order_number: str) -> list[dict]:
+    """Keep edges whose Shopify ``name`` exactly matches the requested order number."""
+    matched: list[dict] = []
+    for edge in edges or []:
+        node = edge.get("node") or {}
+        if _order_digits_equal(order_number, node.get("name") or ""):
+            matched.append(edge)
+    return matched
+
+
 async def _lookup_order_edges(
     client,
     order_number: str,
@@ -1000,14 +1033,23 @@ async def _lookup_order_edges(
                 errors[0].get("message", errors[0]),
             )
         edges = (data.get("data") or {}).get("orders", {}).get("edges", [])
-        if edges:
+        matched = _filter_order_edges(edges, order_number)
+        if matched:
             logger.info(
                 "order_lookup_matched order=%s query=%r shopify_name=%s",
                 order_number,
                 query,
-                edges[0].get("node", {}).get("name"),
+                matched[0].get("node", {}).get("name"),
             )
-            return edges
+            return matched
+
+        if edges:
+            logger.warning(
+                "order_lookup_fuzzy_rejected order=%s query=%r returned=%s",
+                order_number,
+                query,
+                [((e.get("node") or {}).get("name")) for e in edges[:3]],
+            )
 
     logger.warning(
         "order_lookup_miss order=%s variants_tried=%d first_query=%r",

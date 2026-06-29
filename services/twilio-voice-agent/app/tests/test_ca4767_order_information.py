@@ -85,7 +85,11 @@ class TestCA4767OrderInformation:
 
     def test_verified_when_caller_spoke_number(self):
         session = _session()
-        session.history = [
-            {"role": "user", "content": "My order number is 3 9 7 8 7."},
-        ]
+        session._current_caller_text = "My order number is 3 9 7 8 7."
         assert caller_verified_order_number(session, "39787")
+
+    def test_verified_from_current_turn_text_before_history(self):
+        session = _session()
+        assert caller_verified_order_number(
+            session, "39787", current_text="My order number is 3 9 7 8 7.",
+        )

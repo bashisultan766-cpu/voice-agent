@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.43"
+ORDER_FLOW_VERSION = "v4.45"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_ORDER_NUMBER = "awaiting_order_number"
@@ -147,6 +147,8 @@ def _order_digits(num: str) -> str:
 def caller_verified_order_number(
     session: "SessionState",
     order_number: str,
+    *,
+    current_text: str = "",
 ) -> bool:
     """
     True only when the order number was spoken by the caller on this call.
@@ -161,10 +163,18 @@ def caller_verified_order_number(
     if last == req and (getattr(session, "order_last_voice_reply", "") or "").strip():
         return True
 
+    utterances: list[str] = []
+    turn_text = (current_text or getattr(session, "_current_caller_text", "") or "").strip()
+    if turn_text:
+        utterances.append(turn_text)
     for msg in getattr(session, "history", None) or []:
         if msg.get("role") != "user":
             continue
-        content = str(msg.get("content") or "")
+        content = str(msg.get("content") or "").strip()
+        if content and content not in utterances:
+            utterances.append(content)
+
+    for content in utterances:
         found = extract_order_number(content, session)
         if found and _order_digits(found) == req:
             return True
@@ -439,8 +449,10 @@ def try_order_brain_gate(
         return last_reply
 
     spoken_num = extract_order_number(caller_text, session, turn_mode=turn_mode) or ""
-    last_num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
-    if spoken_num and last_num and spoken_num == last_num:
+    last_num = _order_digits(getattr(session, "last_order_number", "") or "")
+    if spoken_num and last_num and _order_digits(spoken_num) != last_num:
+        return None
+    if spoken_num and last_num and _order_digits(spoken_num) == last_num:
         return last_reply
 
     if last_num and not spoken_num:
@@ -625,9 +637,15 @@ async def try_order_enrichment_short_circuit(
             openai_skipped=True,
         )
 
-    last = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
+    last = _order_digits(getattr(session, "last_order_number", "") or "")
+    req = _order_digits(order_num)
     cached = (getattr(session, "order_last_voice_reply", "") or "").strip()
-    if order_num == last and cached:
+    if req and last and req != last:
+        session.order_last_voice_reply = ""
+        session.order_context = ""
+        session.last_order_number = ""
+        session.pending_order_number = req
+    elif req == last and cached:
         session.order_flow_status = STATUS_IDLE
         session.pending_order_number = ""
         return OrderTurnHint(

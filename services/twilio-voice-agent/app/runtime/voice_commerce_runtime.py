@@ -272,6 +272,7 @@ class VoiceCommerceRuntime:
             return _result(spoken)
 
         session._current_turn_mode = turn_mode  # type: ignore[attr-defined]
+        session._current_caller_text = normalized  # type: ignore[attr-defined]
 
         from ..agent_runtime.workflow_isolation import (
             WORKFLOW_ISOLATION_VERSION,
@@ -365,16 +366,21 @@ class VoiceCommerceRuntime:
                 return isbn_early
 
         if order_handling_allowed(session, turn_mode, normalized):
-            if (turn_mode or "").lower() == "order":
-                if not payment_email_turn_priority(session, turn_mode):
-                    if not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode):
+            if not payment_email_turn_priority(session, turn_mode):
+                if not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode):
+                    spoken_order_num = extract_order_number(
+                        normalized, session, turn_mode=turn_mode,
+                    )
+                    if spoken_order_num and is_actionable_order_number(spoken_order_num):
                         try:
                             order_hint = await try_order_enrichment_short_circuit(
                                 session, normalized, turn_mode=turn_mode,
                             )
                         except Exception as exc:
                             logger.warning(
-                                "order_enrichment_failed sid=%s err=%s", sid, type(exc).__name__,
+                                "order_enrichment_failed sid=%s err=%s",
+                                sid,
+                                type(exc).__name__,
                             )
                             order_hint = None
                         if order_hint and order_hint.force_reply:
@@ -534,6 +540,22 @@ class VoiceCommerceRuntime:
                 await self._speak(session, normalized, spoken, send)
                 logger.info("order_enrichment_short_circuit sid=%s", sid)
                 return _result(spoken)
+
+            if order_intent_detected(normalized) and not extract_order_number(
+                normalized, session, turn_mode=turn_mode,
+            ):
+                from ..agent_runtime.order_flow_state import try_order_collection_short_circuit
+
+                collection_hint = try_order_collection_short_circuit(
+                    session, normalized, turn_mode=turn_mode,
+                )
+                if collection_hint and collection_hint.force_reply:
+                    spoken = self._brain.finalize_response(
+                        session, collection_hint.force_reply, [],
+                    )
+                    await self._speak(session, normalized, spoken, send)
+                    logger.info("order_collection_before_brain sid=%s", sid)
+                    return _result(spoken)
 
         from ..agent_runtime.commerce_flow_state import try_cart_inquiry_reply
 

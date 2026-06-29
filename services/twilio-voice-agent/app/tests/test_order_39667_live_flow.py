@@ -267,7 +267,7 @@ def test_order_brain_gate_blocks_dispute_reformat():
 
 
 def test_order_flow_version():
-    assert ORDER_FLOW_VERSION == "v4.43"
+    assert ORDER_FLOW_VERSION == "v4.45"
 
 
 def test_buy_book_does_not_replay_order_summary():
