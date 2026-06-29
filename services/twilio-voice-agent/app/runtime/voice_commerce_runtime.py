@@ -155,10 +155,13 @@ class VoiceCommerceRuntime:
         turn_mode: str = "",
     ) -> Optional[RuntimeTurnResult]:
         """Deterministic email capture and confirmation — no LLM."""
+        from ..email.capture import extract_best_email_phrase
+
         email_cap = VoiceEmailCapture(session)
+        sanitized = extract_best_email_phrase(caller_text) or caller_text
 
         if getattr(session, "awaiting_payment_email_confirmation", False):
-            result = email_cap.process_confirmation_turn(caller_text)
+            result = email_cap.process_confirmation_turn(sanitized)
             if result.action == "confirmed":
                 if PAYMENT_AUTO_SEND_ENABLED:
                     return None
@@ -183,8 +186,8 @@ class VoiceCommerceRuntime:
             return await self._auto_send_payment(session, caller_text, send)
 
         if (turn_mode or "").lower() == "email" or getattr(session, "awaiting_payment_email", False):
-            captured = email_cap.capture_from_speech(caller_text)
-            if captured.readback:
+            captured = email_cap.capture_from_speech(sanitized)
+            if captured.readback and "do not have a complete email" not in captured.readback.lower():
                 await self._speak(session, caller_text, captured.readback, send)
                 return _result(captured.readback)
 
@@ -281,6 +284,31 @@ class VoiceCommerceRuntime:
             await self._speak(session, normalized, spoken, send)
             return _result(spoken, end_call=closure.end_call)
 
+        from ..payment.payment_state_machine import payment_email_turn_priority
+
+        if payment_email_turn_priority(session, turn_mode):
+            if getattr(session, "awaiting_not_found_escalation_email", False):
+                from ..agent_runtime.not_found_escalation_flow import (
+                    process_not_found_escalation_turn,
+                )
+
+                esc_early = await process_not_found_escalation_turn(
+                    session, normalized, turn_mode=turn_mode,
+                )
+                if esc_early.force_reply:
+                    spoken = self._brain.finalize_response(
+                        session, esc_early.force_reply, [],
+                    )
+                    await self._speak(session, normalized, spoken, send)
+                    logger.info("support_handoff_email_early sid=%s", sid)
+                    return _result(spoken)
+
+            email_early = await self._handle_email_fsm(
+                session, normalized, send, turn_mode=turn_mode,
+            )
+            if email_early is not None:
+                return email_early
+
         from ..agent_runtime.order_flow_state import (
             _should_skip_order_lookup,
             extract_order_number,
@@ -304,23 +332,24 @@ class VoiceCommerceRuntime:
                 return isbn_early
 
         if (turn_mode or "").lower() == "order":
-            if not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode):
-                try:
-                    order_hint = await try_order_enrichment_short_circuit(
-                        session, normalized, turn_mode=turn_mode,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "order_enrichment_failed sid=%s err=%s", sid, type(exc).__name__,
-                    )
-                    order_hint = None
-                if order_hint and order_hint.force_reply:
-                    spoken = self._brain.finalize_response(
-                        session, order_hint.force_reply, [],
-                    )
-                    await self._speak(session, normalized, spoken, send)
-                    logger.info("order_enrichment_short_circuit sid=%s", sid)
-                    return _result(spoken)
+            if not payment_email_turn_priority(session, turn_mode):
+                if not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode):
+                    try:
+                        order_hint = await try_order_enrichment_short_circuit(
+                            session, normalized, turn_mode=turn_mode,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "order_enrichment_failed sid=%s err=%s", sid, type(exc).__name__,
+                        )
+                        order_hint = None
+                    if order_hint and order_hint.force_reply:
+                        spoken = self._brain.finalize_response(
+                            session, order_hint.force_reply, [],
+                        )
+                        await self._speak(session, normalized, spoken, send)
+                        logger.info("order_enrichment_short_circuit sid=%s", sid)
+                        return _result(spoken)
 
         repeat_reply = try_order_repeat_reply(session, normalized)
         if repeat_reply and not extract_order_number(

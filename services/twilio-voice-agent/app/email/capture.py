@@ -174,8 +174,11 @@ def normalize_spoken_email(text: str) -> Optional[str]:
 
     # Strip filler lead-in phrases
     t = re.sub(
-        r"^(my email (?:address )?is|send (?:it )?to|email (?:address )?is|it.?s)\s+",
-        "", t, flags=re.IGNORECASE,
+        r"^(?:(?:the\s+)?(?:my\s+)?email(?:\s+address)?\s+is|send\s+(?:it\s+)?to|"
+        r"it.?s)\s+",
+        "",
+        t,
+        flags=re.IGNORECASE,
     )
 
     # ── AT-word normalization (before the generic "at" → "@" substitution) ────
@@ -212,8 +215,8 @@ def normalize_spoken_email(text: str) -> Optional[str]:
 
     local_raw, domain_raw = t.split("@", 1)
 
-    # Remove spaces from both parts
-    local_part  = local_raw.replace(" ", "")
+    # Remove spaces and spoken punctuation from local part
+    local_part = re.sub(r"[,\s]+", "", local_raw)
     domain_part = re.sub(r"\s+", "", domain_raw)
 
     local_part, _activate_stripped = _clean_activate_in_local(local_part, text)
@@ -225,14 +228,16 @@ def normalize_spoken_email(text: str) -> Optional[str]:
             break
 
     # Expand domain aliases (e.g. "gmail" → "gmail.com")
+    domain_part = domain_part.rstrip(".")
     domain_clean = domain_part.rstrip(".")
     if domain_clean in _DOMAIN_ALIASES and "." not in domain_clean:
         domain_part = _DOMAIN_ALIASES[domain_clean]
 
-    email = local_part + "@" + domain_part
+    email = local_part + "@" + domain_part.rstrip(".")
 
     # Strip residual non-email characters (commas, quotes, spaces escaped earlier)
     email = re.sub(r"[^a-z0-9._%+\-@]", "", email, flags=re.IGNORECASE)
+    email = email.rstrip(".")
 
     # Validate minimal shape: something@something.tld
     if not re.match(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$", email, re.IGNORECASE):
@@ -340,6 +345,46 @@ def assemble_email_from_fragments(fragments: list[str]) -> Optional[str]:
         return None
     combined = " ".join(fragments)
     return normalize_spoken_email(combined)
+
+
+_EMAIL_CLAUSE_HINT = re.compile(
+    r"\b(?:at|@|activate|gmail|yahoo|outlook|hotmail|icloud)\b",
+    re.IGNORECASE,
+)
+_EMAIL_ADDRESS_IS = re.compile(
+    r"\b(?:my\s+)?email(?:\s+address)?\s+is\b",
+    re.IGNORECASE,
+)
+
+
+def extract_best_email_phrase(text: str) -> str:
+    """
+    Pull the most likely email-bearing clause from a polluted STT merge.
+
+    Turn assembler can merge hello/keepalive fragments into an email buffer;
+    this prefers the last sentence that looks like an email dictation.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+
+    clauses = [c.strip() for c in re.split(r"[.?!]+", raw) if c.strip()]
+    if not clauses:
+        clauses = [raw]
+
+    for clause in reversed(clauses):
+        if not _EMAIL_CLAUSE_HINT.search(clause):
+            continue
+        if normalize_spoken_email(clause):
+            return clause
+
+    for clause in reversed(clauses):
+        if _EMAIL_ADDRESS_IS.search(clause):
+            return clause
+
+    if _EMAIL_CLAUSE_HINT.search(raw):
+        return raw
+    return raw
 
 
 # ── Confidence scorer ─────────────────────────────────────────────────────────

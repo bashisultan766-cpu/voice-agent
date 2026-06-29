@@ -103,6 +103,10 @@ _CONFIRM_FRUSTRATION_PAT = re.compile(
     re.IGNORECASE,
 )
 _YES_IN_UTTERANCE = re.compile(r"\b(yes|yeah|yep|yup|sure)\b", re.IGNORECASE)
+_QUANTITY_ADD_INTENT = re.compile(
+    r"\b(?:need|want|like|get|order)\b.*\b(?:copies?|copy)\b",
+    re.IGNORECASE,
+)
 _HOLD_OR_WAIT_PAT = re.compile(
     r"\b(hold|wait|one moment|second|hello|quiet|speak|not continue|isbn)\b",
     re.IGNORECASE,
@@ -660,12 +664,18 @@ def process_commerce_turn(
     if commerce_blocks_open_commerce(session):
         return CommerceTurnHint()
 
-    prev_book = _try_add_previous_book(session, text)
-    if prev_book is not None:
-        return prev_book
-
     status = _status(session)
     candidate = _resolve_pending_candidate(session)
+    active_quantity_step = status in (
+        STATUS_AWAITING_QUANTITY,
+        STATUS_AWAITING_ADD_CONFIRM,
+    ) and bool(candidate.get("variant_id"))
+    if not active_quantity_step:
+        prev_book = _try_add_previous_book(session, text)
+        if prev_book is not None:
+            return prev_book
+        status = _status(session)
+        candidate = _resolve_pending_candidate(session)
 
     if _NO_BUT_ANOTHER_PAT.search(text):
         session.commerce_flow_status = STATUS_IDLE
@@ -692,6 +702,23 @@ def process_commerce_turn(
             )
         qty = _parse_quantity(text)
         if qty:
+            if _QUANTITY_ADD_INTENT.search(text) or (
+                _YES_IN_UTTERANCE.search(text) and qty > 1
+            ):
+                session.commerce_pending_quantity = qty
+                session.commerce_pending_candidate = candidate
+                title = add_staged_book_to_cart(session, quantity=qty)
+                session.awaiting_product_confirmation = False
+                if title:
+                    copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+                    short = spoken_book_title(title)
+                    return CommerceTurnHint(
+                        force_reply=(
+                            f"Got it — added {copy_phrase} of {short}. "
+                            f"{another_book_after_add_prompt()}"
+                        ),
+                        book_added=True,
+                    )
             session.commerce_pending_quantity = qty
             session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
             return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty))

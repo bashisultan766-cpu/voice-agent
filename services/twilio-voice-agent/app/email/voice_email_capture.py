@@ -14,7 +14,7 @@ from ..email.capture import (
     normalize_spoken_email,
     parse_hyphen_spelled_email,
 )
-from ..email.speller import build_email_readback, speak_email, spell_email_for_voice
+from ..email.speller import build_email_readback, speak_email, spell_email_letter_by_letter
 from ..payment.email_state import (
     confirm_payment_email,
     get_canonical_confirmed_email,
@@ -123,5 +123,5 @@ class VoiceEmailCapture:
         if not addr:
             return "What email should I send the payment link to?"
         spoken = speak_email(addr)
-        spelled = spell_email_for_voice(addr)
-        return f"I heard {spoken}. That's {spelled}. Is that correct?"
+        spelled = spell_email_letter_by_letter(addr)
+        return f"I heard {spoken}. Letter by letter, that is {spelled}. Is that correct?"

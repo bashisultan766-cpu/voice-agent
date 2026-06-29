@@ -97,44 +97,10 @@ def extract_email_from_text(
     text: str,
     session: Optional["SessionState"] = None,
 ) -> Optional[str]:
-    if not text:
-        return None
-    typed = _EMAIL_TYPED.search(text)
-    if typed:
-        return typed.group(1).lower().strip()
-    try:
-        from ..email.capture import (
-            assemble_email_from_fragments,
-            is_domain_suffix_only,
-            normalize_spoken_email,
-            parse_hyphen_spelled_email,
-        )
+    from ..email.resolver import resolve_spoken_email_address
 
-        spelled = parse_hyphen_spelled_email(text)
-        if spelled:
-            return spelled
-
-        normalized = normalize_spoken_email(text)
-        if normalized:
-            return normalized
-
-        if session is not None:
-            fragments = list(getattr(session, "pending_email_fragments", None) or [])
-            if text.strip():
-                if is_domain_suffix_only(text) and fragments:
-                    assembled = assemble_email_from_fragments(fragments + [text])
-                    if assembled:
-                        return assembled
-                assembled = assemble_email_from_fragments(fragments + [text])
-                if assembled:
-                    return assembled
-                if fragments:
-                    assembled = assemble_email_from_fragments(fragments)
-                    if assembled:
-                        return assembled
-    except Exception:  # noqa: BLE001
-        return None
-    return None
+    resolved = resolve_spoken_email_address(text, session=session)
+    return resolved.email or None
 
 
 def speak_confirmation_prompt(email: str) -> str:
@@ -288,6 +254,26 @@ _CONFIRM_MARKERS = re.compile(
     re.I,
 )
 
+_EMAIL_FRUSTRATION = re.compile(
+    r"\b(?:told you|said (?:it|my email)|already (?:gave|said|told)|"
+    r"(?:five|5)\s+times?|not opened|asking for a spelling)\b",
+    re.I,
+)
+
+
+def payment_email_turn_priority(session: "SessionState", turn_mode: str = "") -> bool:
+    """True when payment email capture should run before order/LLM paths."""
+    if (turn_mode or "").strip().lower() == "email":
+        return True
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        return True
+    if getattr(session, "awaiting_payment_email", False):
+        return True
+    if getattr(session, "awaiting_payment_email_confirmation", False):
+        return True
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+    return pfs in ("awaiting_email", "awaiting_email_confirmation", "awaiting_send_confirmation")
+
 
 def sync_llm_offered_email_from_history(session: "SessionState") -> bool:
     """
@@ -363,14 +349,17 @@ def process_payment_turn(
     sync_payment_email_fields(session)
     session.payment_cart_confirmed = _cart_has_confirmed_items(session)
 
+    from ..email.capture import extract_best_email_phrase
+
     text = (caller_text or "").strip()
+    capture_text = extract_best_email_phrase(text) or text
     if not text:
         return PaymentTurnHint()
 
     if _cart_has_confirmed_items(session):
         sync_llm_offered_email_from_history(session)
 
-    confirm_hint = _try_confirm_email_turn(session, text)
+    confirm_hint = _try_confirm_email_turn(session, capture_text)
     if confirm_hint.email_confirmed or confirm_hint.force_reply:
         return confirm_hint
 
@@ -403,7 +392,10 @@ def process_payment_turn(
     if is_email_correction(text) and (email_ctx or awaiting_email_confirm):
         reject_pending_payment_email(session)
         session.pending_isbn_buffer = ""
-        email = extract_email_from_text(text, session) or parse_hyphen_spelled_email(text)
+        email = (
+            extract_email_from_text(capture_text, session)
+            or parse_hyphen_spelled_email(capture_text)
+        )
         if email:
             return capture_payment_email(session, email, raw_text=text)
         return PaymentTurnHint(
@@ -411,7 +403,7 @@ def process_payment_turn(
             skip_openai=True,
         )
 
-    email_signal = _email_signal_present(text, turn_mode)
+    email_signal = _email_signal_present(text, turn_mode) or _email_signal_present(capture_text, turn_mode)
     if not email_ctx:
         if email_signal:
             sid = (session.call_sid or "")[:6]
@@ -432,8 +424,27 @@ def process_payment_turn(
             return PaymentTurnHint(force_reply=repeat_email_prompt(pending), skip_openai=True)
 
     awaiting_confirm = bool(getattr(session, "awaiting_payment_email_confirmation", False))
+    awaiting_email = bool(getattr(session, "awaiting_payment_email", False))
+
+    if (
+        email_ctx
+        and (
+            is_email_spell_request(text)
+            or is_repeat_email_request(text)
+            or _EMAIL_FRUSTRATION.search(text)
+            or (awaiting_confirm and re.search(r"\bemail\b", text, re.I))
+        )
+    ):
+        pending = get_pending_payment_email(session) or get_canonical_confirmed_email(session)
+        if pending:
+            log_payment_flow_diagnostics(session, stage="email_frustration_repeat")
+            return PaymentTurnHint(force_reply=repeat_email_prompt(pending), skip_openai=True)
+
     if awaiting_confirm and email_signal and not is_email_confirmation(text):
-        replacement = extract_email_from_text(text, session) or parse_hyphen_spelled_email(text)
+        replacement = (
+            extract_email_from_text(capture_text, session)
+            or parse_hyphen_spelled_email(capture_text)
+        )
         if replacement:
             reject_pending_payment_email(session)
             if hasattr(session, "pending_email_fragments"):
@@ -450,7 +461,7 @@ def process_payment_turn(
         log_payment_flow_diagnostics(session, stage="email_repeat")
         return PaymentTurnHint(force_reply=repeat_email_prompt(pending_offer), skip_openai=True)
 
-    email = extract_email_from_text(text, session)
+    email = extract_email_from_text(capture_text, session)
     if email:
         hint = capture_payment_email(session, email, raw_text=text)
         save_session_email_to_active_group(session)
@@ -461,24 +472,29 @@ def process_payment_turn(
     if email_signal and _looks_like_partial_email(text):
         fragments = getattr(session, "pending_email_fragments", None)
         if fragments is not None:
-            combined = " ".join([*fragments, text]).strip()
-            merged = extract_email_from_text(combined, session=None) or parse_hyphen_spelled_email(combined)
-            if merged:
+            from ..email.resolver import fragment_capture_prompt, resolve_spoken_email_address
+
+            solo = resolve_spoken_email_address(capture_text, session=None)
+            if solo.email:
                 if hasattr(session, "pending_email_fragments"):
                     session.pending_email_fragments = []
-                return capture_payment_email(session, merged, raw_text=text)
-            if text not in fragments:
-                session.pending_email_fragments = [*fragments, text]
+                return capture_payment_email(session, solo.email, raw_text=text)
+            combined = " ".join([*fragments, capture_text]).strip()
+            merged = resolve_spoken_email_address(combined, session=None)
+            if merged.email:
+                if hasattr(session, "pending_email_fragments"):
+                    session.pending_email_fragments = []
+                return capture_payment_email(session, merged.email, raw_text=text)
+            if capture_text not in fragments:
+                session.pending_email_fragments = [*fragments, capture_text]
+            count = len(session.pending_email_fragments)
             logger.info(
                 "payment_email_fragment_stored sid=%s count=%d",
                 (session.call_sid or "")[:6],
-                len(session.pending_email_fragments),
+                count,
             )
             return PaymentTurnHint(
-                force_reply=(
-                    "Got it — please continue with the rest of your email address, "
-                    "or say the full email again."
-                ),
+                force_reply=fragment_capture_prompt(count),
                 skip_openai=True,
             )
 

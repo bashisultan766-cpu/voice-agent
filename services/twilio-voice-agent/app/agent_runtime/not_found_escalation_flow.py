@@ -13,7 +13,9 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from ..escalation.models import CustomerQueryEscalationPayload, ProductNotFoundEscalationPayload
 from ..escalation.support_handoff import send_support_handoff
-from ..payment.payment_state_machine import extract_email_from_text
+from ..payment.payment_state_machine import extract_email_from_text, speak_confirmation_prompt
+from ..email.capture import is_email_spell_request, is_repeat_email_request
+from ..email.resolver import fragment_capture_prompt, resolve_spoken_email_address
 from ..tools.isbn import extract_isbn_candidate
 
 if TYPE_CHECKING:
@@ -28,7 +30,9 @@ _MSG_ASK_CONTACT = (
     "May I have your name and email address?"
 )
 
-_MSG_CONFIRM_EMAIL = "I have {email}. Is that correct?"
+_MSG_ASK_EMAIL_RETRY = (
+    "Please say your full email in one sentence — for example, john smith at gmail dot com."
+)
 
 _MSG_SUCCESS = (
     "I've forwarded your message to our support team. They'll contact you by email — "
@@ -301,26 +305,41 @@ async def process_not_found_escalation_turn(
                 pending["customer_name"] = name
             stage_pending_escalation(session, pending)
         else:
-            corrected = (extract_email_from_text(caller_text, session) or "").strip().lower()
+            if is_email_spell_request(caller_text) or is_repeat_email_request(caller_text):
+                if staged_email:
+                    return NotFoundEscalationTurnHint(
+                        force_reply=speak_confirmation_prompt(staged_email),
+                    )
+            corrected = resolve_spoken_email_address(caller_text, session=session).email
             if corrected and corrected != staged_email:
                 pending["staging_email"] = corrected
                 stage_pending_escalation(session, pending)
                 return NotFoundEscalationTurnHint(
-                    force_reply=_MSG_CONFIRM_EMAIL.format(email=corrected),
+                    force_reply=speak_confirmation_prompt(corrected),
                 )
-            return NotFoundEscalationTurnHint(
-                force_reply=_MSG_CONFIRM_EMAIL.format(email=staged_email or "that email"),
-            )
+            if staged_email:
+                return NotFoundEscalationTurnHint(
+                    force_reply=speak_confirmation_prompt(staged_email),
+                )
+            return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_RETRY)
 
     if not pending.get("email_confirmed"):
-        email = (extract_email_from_text(caller_text, session) or "").strip().lower()
+        resolved = resolve_spoken_email_address(caller_text, session=session)
+        email = (resolved.email or "").strip().lower()
         if not email or "@" not in email:
+            fragments = list(getattr(session, "pending_email_fragments", None) or [])
+            if fragments:
+                return NotFoundEscalationTurnHint(
+                    force_reply=fragment_capture_prompt(len(fragments)),
+                )
             return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
 
+        if hasattr(session, "pending_email_fragments"):
+            session.pending_email_fragments = []
         pending["staging_email"] = email
         pending["awaiting_email_confirmation"] = True
         stage_pending_escalation(session, pending)
-        return NotFoundEscalationTurnHint(force_reply=_MSG_CONFIRM_EMAIL.format(email=email))
+        return NotFoundEscalationTurnHint(force_reply=speak_confirmation_prompt(email))
 
     if pending.get("requested_value") and not pending.get("issue_title"):
         payload = ProductNotFoundEscalationPayload.from_dict(pending)

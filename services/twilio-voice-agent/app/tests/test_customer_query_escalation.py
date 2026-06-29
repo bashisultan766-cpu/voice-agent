@@ -165,7 +165,8 @@ async def test_email_capture_on_followup_turn():
             hint1 = await process_not_found_escalation_turn(
                 session, "my email is maria@example.com"
             )
-            assert "maria@example.com" in hint1.force_reply
+            assert "maria at example dot com" in hint1.force_reply
+            assert "Letter by letter" in hint1.force_reply
             hint2 = await process_not_found_escalation_turn(session, "yes")
 
     assert hint2.force_reply

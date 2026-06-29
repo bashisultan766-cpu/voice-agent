@@ -138,6 +138,31 @@ def _order_customer_name(inner: dict[str, Any]) -> str:
     return greeting_safe_name(name) or ""
 
 
+def _payment_card_fields(inner: dict[str, Any]) -> tuple[str, str]:
+    payment = inner.get("payment") or {}
+    card_last4 = (
+        payment.get("card_last4")
+        or inner.get("payment_card_last4")
+        or ""
+    ).strip()
+    card_brand = (
+        payment.get("card_brand")
+        or inner.get("payment_card_brand")
+        or "card"
+    ).strip()
+    return card_last4, card_brand
+
+
+def _payment_card_phrase(inner: dict[str, Any], *, refunded: bool = False) -> str:
+    card_last4, card_brand = _payment_card_fields(inner)
+    if not card_last4:
+        return ""
+    brand = card_brand if card_brand.lower() != "card" else "card"
+    if refunded:
+        return f"The refund was issued to the {brand} card ending in {card_last4}."
+    return f"Payment was made using the {brand} card ending in {card_last4}."
+
+
 def _refund_reason_phrase(inner: dict[str, Any]) -> str:
     refunds = inner.get("refunds") or (inner.get("refund_info") or {}).get("refunds") or []
     for refund in refunds:
@@ -157,17 +182,6 @@ def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
         or (inner.get("customer") or {}).get("email")
         or ""
     )
-    payment = inner.get("payment") or {}
-    card_last4 = (
-        payment.get("card_last4")
-        or inner.get("payment_card_last4")
-        or ""
-    )
-    card_brand = (
-        payment.get("card_brand")
-        or inner.get("payment_card_brand")
-        or "card"
-    ).strip()
 
     count = _product_count(inner)
     subtotal_raw, shipping_raw, total_raw = _pricing_fields(inner)
@@ -194,11 +208,9 @@ def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
         parts.append(
             f"The refund notification was sent to {speak_email(email)}."
         )
-    if card_last4:
-        brand = card_brand if card_brand.lower() != "card" else "card"
-        parts.append(
-            f"Payment was made using the {brand} card ending in {card_last4}."
-        )
+    card_phrase = _payment_card_phrase(inner, refunded=True)
+    if card_phrase:
+        parts.append(card_phrase)
     return " ".join(parts)
 
 
@@ -234,4 +246,7 @@ def compose_brief_order_voice_reply(order_payload: dict[str, Any]) -> str:
         parts.append(f"Shipping is {speak_money_field(shipping_raw)}.")
     if total_raw and _should_speak_money(total_raw):
         parts.append(f"The total is {speak_money_field(total_raw)}.")
+    card_phrase = _payment_card_phrase(inner, refunded=False)
+    if card_phrase:
+        parts.append(card_phrase)
     return " ".join(parts)

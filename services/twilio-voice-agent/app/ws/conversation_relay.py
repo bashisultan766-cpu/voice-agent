@@ -54,6 +54,7 @@ from ..caller.repository import (
 from ..agent_runtime.live_runtime import resolve_live_turn_handler
 from ..sync.call_setup_prefetch import prefetch_on_call_setup
 from ..voice.turn_assembler import clear_turn_assembler, get_turn_assembler
+from ..payment.payment_state_machine import payment_email_turn_priority
 from .conversation_relay_sender import ConversationRelayOutbound, ConversationRelayStats
 
 logger = logging.getLogger(__name__)
@@ -504,6 +505,7 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                         _emit_assembled,
                         call_sid=session.call_sid,
                         pending_isbn_buffer=getattr(session, "pending_isbn_buffer", "") or "",
+                        payment_awaiting_email=payment_email_turn_priority(session, ""),
                     )
 
                 case "interrupt":

@@ -25,6 +25,7 @@ def test_brief_order_found_reply():
             "financial_status": "PAID",
             "order_date": "2026-03-10",
             "product_count": 2,
+            "payment": {"card_brand": "Visa", "card_last4": "4242"},
             "pricing": {
                 "subtotal_before_shipping": "45.00 USD",
                 "shipping": "5.99 USD",
@@ -40,6 +41,8 @@ def test_brief_order_found_reply():
     assert "forty five dollars" in reply
     assert "five dollars and ninety nine cents" in reply
     assert "fifty dollars and ninety nine cents" in reply
+    assert "4242" in reply
+    assert "Visa" in reply
     assert "address" not in reply.lower()
 
 
@@ -70,6 +73,7 @@ def test_refunded_order_brief_reply():
     assert "test at example dot com" in reply
     assert "4242" in reply
     assert "Visa" in reply
+    assert "refund was issued" in reply.lower()
     assert "processing fee" not in reply.lower()
 
 

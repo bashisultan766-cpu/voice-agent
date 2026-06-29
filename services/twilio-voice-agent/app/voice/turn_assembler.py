@@ -98,12 +98,29 @@ class TurnAssembler:
         self._emit_callback: Optional[Callable[[str], Awaitable[None]]] = None
         self._lock = asyncio.Lock()
         self._call_sid = ""
+        self._payment_awaiting_email = False
 
     def _new_group_id(self) -> str:
         return str(uuid.uuid4())[:12]
 
-    def _detect_mode(self, text: str, *, call_sid: str = "", pending_isbn_buffer: str = "") -> str:
+    def _detect_mode(
+        self,
+        text: str,
+        *,
+        call_sid: str = "",
+        pending_isbn_buffer: str = "",
+        payment_awaiting_email: bool = False,
+    ) -> str:
         t = text.lower().strip()
+        if payment_awaiting_email or self._state.mode == "email":
+            if (
+                _EMAIL_COMPLETE.search(text)
+                or _EMAIL_SPOKEN.search(t)
+                or " at " in t
+                or "@" in t
+                or re.search(r"\b(?:gmail|yahoo|outlook|hotmail|dot com)\b", t)
+            ):
+                return "email"
         if _EMAIL_COMPLETE.search(text) or _EMAIL_SPOKEN.search(t) or " at " in t or "@" in t:
             return "email"
         book_collection = False
@@ -140,6 +157,8 @@ class TurnAssembler:
             and 4 <= len(digits) <= 8
             and not digits.startswith(("978", "979"))
         ):
+            if payment_awaiting_email or self._state.mode == "email":
+                return "email"
             return "order"
         if self._state.mode == "isbn" and should_collect_isbn(text, book_collection=book_collection):
             return "isbn"
@@ -247,6 +266,12 @@ class TurnAssembler:
             return True
         st.emitted_ids.add(emit_id)
         emit_mode = st.mode
+        if emit_mode == "email":
+            from ..email.capture import extract_best_email_phrase
+
+            cleaned = extract_best_email_phrase(assembled)
+            if cleaned:
+                assembled = cleaned
         if emit_mode == "order":
             import time
 
@@ -270,6 +295,7 @@ class TurnAssembler:
         *,
         call_sid: str = "",
         pending_isbn_buffer: str = "",
+        payment_awaiting_email: bool = False,
     ) -> bool:
         """
         Accept a transcript fragment.
@@ -282,6 +308,7 @@ class TurnAssembler:
             if call_sid:
                 self._call_sid = call_sid
             self._pending_isbn_buffer = pending_isbn_buffer or ""
+            self._payment_awaiting_email = bool(payment_awaiting_email)
             frag = (fragment or "").strip()
             if not frag:
                 return True
@@ -341,6 +368,25 @@ class TurnAssembler:
                 )
                 return True
 
+            # Email escape: keepalive/hello should not pollute the email buffer.
+            if st.mode == "email" and _KEEPALIVE_FRAGMENT.search(frag):
+                st.buffer = frag
+                st.mode = "normal"
+                logger.info(
+                    "turn_assembler_emit sid=%s mode=normal reason=email_escape_keepalive",
+                    sid,
+                )
+                return await self._emit_buffered(sid, on_emit, "email_escape_keepalive")
+
+            if st.mode == "email" and _BARE_AFFIRM.match(frag):
+                st.buffer = frag
+                st.mode = "normal"
+                logger.info(
+                    "turn_assembler_emit sid=%s mode=normal reason=email_escape_affirm",
+                    sid,
+                )
+                return await self._emit_buffered(sid, on_emit, "email_escape_affirm")
+
             # ISBN escape: keepalive/frustration should not merge into ISBN buffer
             if st.mode == "isbn" and _KEEPALIVE_FRAGMENT.search(frag):
                 digits = "".join(c for c in st.buffer if c.isdigit())
@@ -388,6 +434,7 @@ class TurnAssembler:
                     st.buffer,
                     call_sid=call_sid,
                     pending_isbn_buffer=self._pending_isbn_buffer,
+                    payment_awaiting_email=payment_awaiting_email,
                 )
                 if merged_mode != "normal":
                     st.mode = merged_mode
@@ -405,6 +452,7 @@ class TurnAssembler:
                 frag,
                 call_sid=call_sid,
                 pending_isbn_buffer=self._pending_isbn_buffer,
+                payment_awaiting_email=payment_awaiting_email,
             )
             if st.buffer and st.mode != "normal":
                 mode = st.mode
@@ -420,6 +468,7 @@ class TurnAssembler:
                     st.buffer,
                     call_sid=call_sid,
                     pending_isbn_buffer=self._pending_isbn_buffer,
+                    payment_awaiting_email=payment_awaiting_email,
                 )
                 if redetected != "normal":
                     st.mode = redetected
@@ -475,6 +524,7 @@ class TurnAssembler:
                     st.buffer,
                     call_sid=self._call_sid,
                     pending_isbn_buffer=getattr(self, "_pending_isbn_buffer", ""),
+                    payment_awaiting_email=getattr(self, "_payment_awaiting_email", False),
                 )
                 if redetected != "normal":
                     st.mode = redetected

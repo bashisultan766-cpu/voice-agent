@@ -40,7 +40,7 @@ from app.agent_runtime.tool_runtime_gates import gate_tool_call
 from app.cart.session import add_product_candidate, confirm_last_candidate, get_ledger
 from app.payment.email_state import get_canonical_confirmed_email, get_pending_payment_email
 from app.email.capture import is_email_confirmation, is_email_spell_request
-from app.email.speller import speak_email, spell_email_for_voice
+from app.email.speller import speak_email, spell_email_letter_by_letter
 from app.state.models import SessionState
 
 
@@ -176,13 +176,13 @@ class TestEmailConfirmation:
             session, f"My email is {EMAIL}", send, assembled_turn_mode="email",
         ))
         assert speak_email(EMAIL) in result.response_text
-        assert spell_email_for_voice(EMAIL) in result.response_text
+        assert spell_email_letter_by_letter(EMAIL) in result.response_text
         assert "***" not in result.response_text
 
     def test_confirmation_includes_full_and_spelled_email(self):
         prompt = confirmation_prompt(EMAIL)
         assert speak_email(EMAIL) in prompt
-        assert spell_email_for_voice(EMAIL) in prompt
+        assert spell_email_letter_by_letter(EMAIL) in prompt
         assert "***" not in prompt
         assert "gmail" in prompt.lower()
         assert "correct" in prompt.lower()
