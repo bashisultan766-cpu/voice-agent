@@ -133,6 +133,16 @@ def resolve_primary_workflow(
         return WORKFLOW_SUPPORT
     if payment_workflow_active(session, turn_mode):
         return WORKFLOW_PAYMENT
+    from .order_flow_state import (
+        extract_order_number,
+        is_actionable_order_number,
+        order_intent_detected,
+    )
+
+    if order_intent_detected(text or ""):
+        num = extract_order_number(text, session, turn_mode=turn_mode) or ""
+        if not num or not is_actionable_order_number(num):
+            return WORKFLOW_ORDER
     if order_workflow_active(session, turn_mode):
         return WORKFLOW_ORDER
     if commerce_workflow_active(session):
@@ -163,13 +173,6 @@ def order_handling_allowed(
     turn_mode: str = "",
     text: str = "",
 ) -> bool:
-    wf = resolve_primary_workflow(session, turn_mode, text)
-    if wf == WORKFLOW_ORDER:
-        return True
-    if wf != WORKFLOW_IDLE:
-        return False
-    if not order_context_on_call(session):
-        return False
     from ..runtime.fast_classifier import _is_cancellation_request
     from .order_flow_state import (
         _COMMERCE_BUY_INTENT,
@@ -179,6 +182,20 @@ def order_handling_allowed(
     )
 
     if _is_cancellation_request(text or ""):
+        return False
+
+    if order_intent_detected(text or ""):
+        wf = resolve_primary_workflow(session, turn_mode, text)
+        if wf in (WORKFLOW_SUPPORT, WORKFLOW_PAYMENT):
+            return False
+        return True
+
+    wf = resolve_primary_workflow(session, turn_mode, text)
+    if wf == WORKFLOW_ORDER:
+        return True
+    if wf != WORKFLOW_IDLE:
+        return False
+    if not order_context_on_call(session):
         return False
 
     if _COMMERCE_BUY_INTENT.search(text or "") and not order_intent_detected(text or ""):

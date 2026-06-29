@@ -1428,6 +1428,23 @@ async def dispatch(name: str, args: dict, session: "SessionState | None") -> str
         )
         return gate.tool_json
 
+    if name in (
+        "lookup_shopify_order_details",
+        "get_order_details",
+        "lookup_order",
+        "lookup_order_status",
+    ):
+        from .tool_runtime_gates import gate_order_lookup_tool
+
+        onum = str(getattr(validated, "order_number", "") or "")
+        order_gate = gate_order_lookup_tool(name, session, onum)
+        if order_gate is not None and not order_gate.allowed:
+            logger.info(
+                "llm_tool_gated sid=%s name=%s reason=%s",
+                sid, name, order_gate.reason,
+            )
+            return order_gate.tool_json
+
     try:
         result = await tool.impl(validated, session)
         out = result if isinstance(result, str) else json.dumps(result)

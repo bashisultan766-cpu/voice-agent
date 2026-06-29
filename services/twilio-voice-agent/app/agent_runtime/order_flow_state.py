@@ -140,6 +140,40 @@ def is_actionable_order_number(num: str) -> bool:
     )
 
 
+def _order_digits(num: str) -> str:
+    return re.sub(r"\D", "", num or "")
+
+
+def caller_verified_order_number(
+    session: "SessionState",
+    order_number: str,
+) -> bool:
+    """
+    True only when the order number was spoken by the caller on this call.
+
+    Blocks LLM-hallucinated order numbers (e.g. inventing 39787 with no digits given).
+    """
+    req = _order_digits(order_number)
+    if not req or not is_actionable_order_number(req):
+        return False
+
+    last = _order_digits(getattr(session, "last_order_number", "") or "")
+    if last == req and (getattr(session, "order_last_voice_reply", "") or "").strip():
+        return True
+
+    for msg in getattr(session, "history", None) or []:
+        if msg.get("role") != "user":
+            continue
+        content = str(msg.get("content") or "")
+        found = extract_order_number(content, session)
+        if found and _order_digits(found) == req:
+            return True
+        norm = normalize_order_number_from_speech(content)
+        if norm and _order_digits(norm) == req:
+            return True
+    return False
+
+
 def _has_order_number_preamble(text: str) -> bool:
     return bool(
         _ORDER_PREAMBLE_PAT.search(text or "")

@@ -31,6 +31,33 @@ _GOOD_ORDER_PHRASE = (
     "I can help build your cart and send a secure payment link to your email."
 )
 
+_ORDER_LOOKUP_TOOLS = frozenset({
+    "lookup_shopify_order_details",
+    "get_order_details",
+    "lookup_order",
+    "lookup_order_status",
+})
+
+
+def gate_order_lookup_tool(
+    name: str,
+    session: "SessionState | None",
+    order_number: str,
+) -> Optional[PaymentGateResult]:
+    """Block order lookups unless the caller spoke that order number on this call."""
+    if session is None or name not in _ORDER_LOOKUP_TOOLS:
+        return None
+
+    from .order_flow_state import caller_verified_order_number, order_collection_prompt
+
+    onum = (order_number or "").strip()
+    if not onum or not caller_verified_order_number(session, onum):
+        return _blocked(
+            error_code="order_number_not_verified",
+            customer_message=order_collection_prompt(),
+        )
+    return None
+
 
 def replace_blocked_order_phrase(text: str) -> str:
     """Swap the forbidden 'can't place orders' phrase with the approved wording."""
