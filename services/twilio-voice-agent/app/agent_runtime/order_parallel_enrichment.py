@@ -132,7 +132,9 @@ def enforce_order_response(
             session.order_last_voice_reply = reply[:800]
             inner = result.get("order") or {}
             if inner:
-                session.order_context = json.dumps(inner)[:2000]
+                from ..voice.order_voice_reply import store_order_inner_on_session
+
+                store_order_inner_on_session(session, inner)
                 onum = inner.get("order_number") or ""
                 if onum:
                     session.last_order_number = str(onum).lstrip("#")
@@ -203,7 +205,9 @@ async def enrich_order_parallel(
             or order.get("order_number")
             or order_number
         )
-        session.order_context = json.dumps(inner)[:2000]
+        from ..voice.order_voice_reply import store_order_inner_on_session
+
+        store_order_inner_on_session(session, inner)
     elif facility_name:
         session.last_facility_name = facility_name
 

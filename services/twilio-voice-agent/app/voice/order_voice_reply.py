@@ -56,6 +56,38 @@ def load_order_inner_from_session(session: Any) -> dict[str, Any]:
         return {}
 
 
+def compact_order_snapshot(inner: dict[str, Any]) -> dict[str, Any]:
+    """Small order payload for session cache — survives JSON truncation on long orders."""
+    if not inner:
+        return {}
+    items = inner.get("products") or inner.get("items") or []
+    return {
+        "order_number": inner.get("order_number") or "",
+        "financial_status": inner.get("financial_status") or inner.get("order_status") or "",
+        "customer_name": inner.get("customer_name") or (inner.get("customer") or {}).get("name") or "",
+        "customer_email": inner.get("customer_email") or (inner.get("customer") or {}).get("email") or "",
+        "order_date": inner.get("order_date") or inner.get("created_at") or "",
+        "product_count": inner.get("product_count") or inner.get("line_item_count") or 0,
+        "products": items,
+        "items": items,
+        "pricing": inner.get("pricing") or {},
+        "refunds": inner.get("refunds") or [],
+        "refund_info": inner.get("refund_info") or {},
+        "payment": inner.get("payment") or {},
+        "payment_card_last4": inner.get("payment_card_last4") or "",
+        "payment_card_brand": inner.get("payment_card_brand") or "",
+        "shipping": inner.get("shipping") or {},
+        "fulfillment_status": inner.get("fulfillment_status") or "",
+        "tracking": inner.get("tracking") or {},
+    }
+
+
+def store_order_inner_on_session(session: Any, inner: dict[str, Any]) -> None:
+    if not inner:
+        return
+    session.order_context = json.dumps(compact_order_snapshot(inner))
+
+
 def _order_is_refunded(order_payload: dict[str, Any], inner: dict[str, Any]) -> bool:
     fin = str(
         inner.get("financial_status")
@@ -438,6 +470,77 @@ def compose_card_last4_reply(inner: dict[str, Any]) -> str:
     )
 
 
+def _shipping_fee_phrase(inner: dict[str, Any]) -> str:
+    pricing = inner.get("pricing") or {}
+    shipping_block = inner.get("shipping") or {}
+    ship_raw = (pricing.get("shipping") or shipping_block.get("fee") or "").strip()
+    method = (shipping_block.get("method") or "").strip()
+    if ship_raw:
+        amount, _ = parse_money_field(ship_raw)
+        if amount == 0:
+            return "Shipping on this order was free — no shipping charge."
+        spoken = speak_money_field(ship_raw)
+        if method:
+            return f"Shipping was {spoken} via {method}."
+        return f"Shipping on this order was {spoken}."
+    if method:
+        return f"The shipping method on this order is {method}, with no shipping charge."
+    return "I don't have shipping details on this order."
+
+
+def _line_item_pricing_phrase(inner: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for raw in inner.get("products") or inner.get("items") or []:
+        if _is_processing_fee_item(raw):
+            continue
+        name = (raw.get("title") or raw.get("name") or "").strip()
+        if not name:
+            continue
+        unit = (raw.get("unit_price") or raw.get("price") or raw.get("line_total") or "").strip()
+        if unit and _should_speak_money(unit):
+            lines.append(f"{name} is {speak_money_field(unit)}")
+        else:
+            lines.append(name)
+    if not lines:
+        return ""
+    if len(lines) == 1:
+        return f"On this order, {lines[0]}."
+    return f"On this order, {', '.join(lines[:-1])}, and {lines[-1]}."
+
+
+def _product_count_phrase(inner: dict[str, Any]) -> str:
+    items = [
+        i for i in (inner.get("products") or inner.get("items") or [])
+        if not _is_processing_fee_item(i)
+    ]
+    if not items:
+        for refund in inner.get("refunds") or []:
+            items.extend(refund.get("refunded_items") or refund.get("items") or [])
+    count = int(inner.get("product_count") or 0)
+    if not count:
+        count = len(items)
+    if count <= 0:
+        return "I don't see any products listed on this order."
+    if count == 1:
+        product_line = _products_natural_phrase(inner)
+        if product_line:
+            return f"There is one product on this order. {product_line}"
+        return "There is one product on this order."
+    product_line = _products_natural_phrase(inner)
+    if product_line:
+        return f"There are {speak_int(count)} products on this order. {product_line}"
+    return f"There are {speak_int(count)} products on this order."
+
+
+def _refund_reason_followup(inner: dict[str, Any]) -> str:
+    if not _order_is_refunded({"found": True}, inner):
+        return "This order does not show as refunded in Shopify."
+    reason = _refund_reason_phrase(inner)
+    if reason:
+        return f"The refund reason on file is: {reason}."
+    return "There is no refund reason recorded on this order."
+
+
 def compose_order_followup_reply(inner: dict[str, Any], caller_text: str) -> Optional[str]:
     """Answer a focused follow-up about the order already on file this call."""
     import re
@@ -448,38 +551,83 @@ def compose_order_followup_reply(inner: dict[str, Any], caller_text: str) -> Opt
 
     if re.search(r"\b(?:last\s*(?:four|4)|card|credit\s*card|ending\s*in|digits?)\b", text):
         return compose_card_last4_reply(inner)
+
+    if re.search(r"\b(?:reason|why)\b", text) and (
+        "refund" in text or _order_is_refunded({"found": True}, inner)
+    ):
+        return _refund_reason_followup(inner)
+
     if re.search(r"\b(?:refund(?:ed)?|money\s+back)\b", text):
         if _order_is_refunded({"found": True}, inner):
-            reason = _refund_reason_phrase(inner)
-            email = _order_email(inner)
             parts = ["This order has been refunded."]
+            reason = _refund_reason_phrase(inner)
             if reason:
                 parts.append(f"The refund reason is {reason}.")
-            if email:
-                parts.append(
-                    f"The refund email was sent to {speak_email(email)}."
-                )
+            email_line = _refund_email_phrase(inner)
+            if email_line:
+                parts.append(email_line)
             card = _payment_card_phrase(inner, refunded=True)
             if card:
                 parts.append(card)
+            refund_amt = _refund_amount_phrase(inner)
+            if refund_amt:
+                parts.append(refund_amt)
             return " ".join(parts)
         return "This order does not show as refunded in Shopify."
+
     if re.search(r"\b(?:customer\s*name|who(?:'s| is) (?:this|the) order for)\b", text):
         name = _order_customer_name(inner)
         if name:
             return f"This order is under {name}."
         return "I don't have a customer name on this order."
+
     if re.search(r"\b(?:email|e-mail)\b", text):
         email = _order_email(inner)
         if email:
+            if _order_is_refunded({"found": True}, inner):
+                return _refund_email_phrase(inner)
             return f"The email on this order is {speak_email(email)}."
         return "I don't see an email address on this order."
-    if re.search(r"\b(?:product|book|item|what did (?:i|they|we) order)\b", text):
+
+    if re.search(r"\bhow many (?:product|item|book)s?\b", text):
+        return _product_count_phrase(inner)
+
+    if re.search(r"\bshipping(?:\s+fee|\s+charge|\s+cost|\s+price)?\b", text):
+        return _shipping_fee_phrase(inner)
+
+    if re.search(r"\b(?:price|cost)\b", text):
+        items = [
+            i for i in (inner.get("products") or inner.get("items") or [])
+            if not _is_processing_fee_item(i)
+        ]
+        if re.search(r"\b(?:book|product|item)\b", text) or len(items) == 1:
+            line = _line_item_pricing_phrase(inner)
+            if line:
+                return line
+        if _order_is_refunded({"found": True}, inner):
+            line = _refunded_pricing_phrase(inner)
+        else:
+            line = _pricing_natural_phrase(inner)
+        return line or "I don't have pricing details on this order."
+
+    if re.search(r"\b(?:product|book|item|what did (?:i|they|we) order|which book)\b", text):
         line = _products_natural_phrase(inner)
         return line or "I don't have product names on this order."
-    if re.search(r"\b(?:total|subtotal|shipping|amount|how much|price)\b", text):
-        line = _pricing_natural_phrase(inner)
+
+    if re.search(r"\b(?:total|subtotal|amount|how much)\b", text):
+        if _order_is_refunded({"found": True}, inner):
+            line = _refunded_pricing_phrase(inner)
+        else:
+            line = _pricing_natural_phrase(inner)
         return line or "I don't have pricing details on this order."
+
     if re.search(r"\b(?:repeat|what did you (?:say|find)|order details|summary)\b", text):
         return compose_brief_order_voice_reply({"found": True, "order": inner})
+
+    if re.search(
+        r"\b(?:all about|information about|tell me about).*(?:this|the|my) order\b",
+        text,
+    ):
+        return compose_brief_order_voice_reply({"found": True, "order": inner})
+
     return None

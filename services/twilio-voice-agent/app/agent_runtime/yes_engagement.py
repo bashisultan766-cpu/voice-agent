@@ -83,6 +83,10 @@ def order_post_disclosure_ack(session: "SessionState") -> Optional[str]:
         return None
     if not (getattr(session, "order_last_voice_reply", "") or "").strip():
         return None
+    from .order_flow_state import STATUS_AWAITING_ORDER_NUMBER, _status
+
+    if _status(session) == STATUS_AWAITING_ORDER_NUMBER:
+        return None
     from .commerce_flow_state import commerce_flow_active
 
     if commerce_flow_active(session):

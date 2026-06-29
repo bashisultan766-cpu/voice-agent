@@ -312,6 +312,20 @@ class VoiceCommerceRuntime:
             await self._speak(session, normalized, spoken, send)
             return _result(spoken, end_call=closure.end_call)
 
+        from ..agent_runtime.workflow_isolation import order_context_on_call
+        from ..agent_runtime.order_flow_state import (
+            is_order_followup_question,
+            try_order_followup_reply,
+        )
+
+        if order_context_on_call(session) and is_order_followup_question(normalized):
+            followup_early = try_order_followup_reply(session, normalized)
+            if followup_early:
+                spoken = self._brain.finalize_response(session, followup_early, [])
+                await self._speak(session, normalized, spoken, send)
+                logger.info("order_followup_early sid=%s", sid)
+                return _result(spoken)
+
         from ..payment.payment_state_machine import payment_email_turn_priority
 
         if support_handling_allowed(session, turn_mode, normalized):

@@ -178,6 +178,7 @@ def order_handling_allowed(
         _COMMERCE_BUY_INTENT,
         extract_order_number,
         is_actionable_order_number,
+        is_order_followup_question,
         order_intent_detected,
     )
 
@@ -206,9 +207,7 @@ def order_handling_allowed(
         return True
     if _ORDER_PASSIVE_PAT.search(text or ""):
         return True
-    from .yes_engagement import is_bare_yes
-
-    if is_bare_yes(text or ""):
+    if is_order_followup_question(text or ""):
         return True
     return False
 

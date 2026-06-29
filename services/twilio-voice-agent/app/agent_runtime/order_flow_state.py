@@ -14,7 +14,23 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.47"
+ORDER_FLOW_VERSION = "v4.48"
+
+
+def is_order_followup_question(text: str) -> bool:
+    """Caller is asking about the order already looked up on this call."""
+    from .yes_engagement import is_bare_yes
+
+    t = (text or "").strip()
+    if not t:
+        return False
+    if is_bare_yes(t):
+        return False
+    if extract_order_number(t):
+        return False
+    if order_intent_detected(t) and not _ORDER_FOLLOWUP_PAT.search(t):
+        return False
+    return bool(_ORDER_FOLLOWUP_PAT.search(t))
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_ORDER_NUMBER = "awaiting_order_number"
@@ -104,6 +120,21 @@ _FACILITY_ISSUE_INTENT = re.compile(
     r"\b(returned|rejected|not delivered|didn.?t receive|facility rejected|sent back|"
     r"books? (?:were|was) not (?:delivered|accepted))\b",
     re.IGNORECASE,
+)
+_ORDER_FOLLOWUP_PAT = re.compile(
+    r"\b("
+    r"reason|why(?:\s+was|\s+is|\s+did)?\s+(?:the\s+)?order\s+refund|refund(?:ed)?\s+reason|"
+    r"shipping(?:\s+fee)?|shipping\s+(?:cost|charge|price)|"
+    r"(?:how much|what(?:'s| is))\s+(?:the\s+)?(?:price|cost|total|subtotal|amount)|"
+    r"price of (?:the |this )?(?:book|product|item)|"
+    r"(?:which|what)\s+book|(?:which|what)\s+product|"
+    r"how many (?:product|item|book)|"
+    r"what did (?:i|they|we) order|in (?:this|the|my) order|on (?:this|the|my) order|"
+    r"about (?:this|the|my) order|all about (?:this|the) order|"
+    r"last\s*(?:four|4)|card|credit\s*card|email|e-mail|tracking|"
+    r"customer\s*name|repeat|what did you (?:say|find)"
+    r")\b",
+    re.I,
 )
 _ORDER_NUMBER_IN_TEXT = re.compile(
     r"(?:order\s*(?:number|no\.?|#)?\s*)?#?\s*(\d{4,10})\b",
@@ -329,6 +360,12 @@ def try_order_followup_reply(session: "SessionState", caller_text: str) -> Optio
         return None
     if _commerce_buy_without_order_context(caller_text):
         return None
+    if not is_order_followup_question(caller_text) and not re.search(
+        r"\b(?:refund|shipping|price|book|product|reason|email|card|total)\b",
+        caller_text or "",
+        re.I,
+    ):
+        return None
     from ..voice.order_voice_reply import (
         compose_order_followup_reply,
         load_order_inner_from_session,
@@ -454,19 +491,8 @@ def try_order_brain_gate(
 
     spoken_num = extract_order_number(caller_text, session, turn_mode=turn_mode) or ""
     last_num = _order_digits(getattr(session, "last_order_number", "") or "")
-    if spoken_num and last_num and _order_digits(spoken_num) != last_num:
-        return None
     if spoken_num and last_num and _order_digits(spoken_num) == last_num:
         return last_reply
-
-    if last_num and not spoken_num:
-        if order_intent_detected(caller_text) or re.search(
-            r"\b(order|refund|shipping|tracking|status|that order|my order|"
-            r"wrong|incorrect|not correct|not matching)\b",
-            caller_text or "",
-            re.I,
-        ):
-            return last_reply
     return None
 
 

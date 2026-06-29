@@ -82,6 +82,9 @@ def process_call_closure_turn(
         if caller_wants_to_end(text):
             session.awaiting_anything_else = False
             return CallClosureResult(reply=_GOODBYE_REPLY, end_call=True)
+        if re.match(r"^\s*no(?:[\s,.!]*no)*\s*[.!]*\s*$", text, re.I):
+            session.awaiting_anything_else = False
+            return CallClosureResult(reply=_GOODBYE_REPLY, end_call=True)
         from ..agent_runtime.yes_engagement import is_bare_yes
 
         if is_bare_yes(text):

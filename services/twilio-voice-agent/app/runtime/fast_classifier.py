@@ -465,6 +465,18 @@ def classify(
             use_strong_model=_needs_strong_model(text, session),
         )
 
+    from ..agent_runtime.workflow_isolation import order_context_on_call
+
+    if session and order_context_on_call(session):
+        from ..agent_runtime.order_flow_state import is_order_followup_question
+
+        if is_order_followup_question(text):
+            return ClassificationResult(
+                action="brain",
+                reason="order_followup",
+                is_order_lookup=True,
+            )
+
     if _is_product_search_request(text) and not is_vague_product_request(text):
         return ClassificationResult(
             action="brain",
