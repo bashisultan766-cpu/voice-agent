@@ -374,6 +374,22 @@ def classify(
     if _needs_intent_clarification(text) and not getattr(
         session, "awaiting_not_found_escalation_email", False,
     ):
+        try:
+            from ..agent_runtime.commerce_flow_state import (
+                STATUS_AWAITING_QUANTITY,
+                STATUS_AWAITING_ADD_CONFIRM,
+                _candidate as commerce_candidate,
+            )
+
+            cfs = getattr(session, "commerce_flow_status", "") or ""
+            if cfs in (STATUS_AWAITING_QUANTITY, STATUS_AWAITING_ADD_CONFIRM):
+                if commerce_candidate(session).get("variant_id"):
+                    return ClassificationResult(
+                        action="brain",
+                        reason="commerce_quantity_in_progress",
+                    )
+        except Exception:  # noqa: BLE001
+            pass
         clarify = _CLARIFY_INTENT
         if session is not None:
             try:

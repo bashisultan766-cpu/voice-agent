@@ -151,6 +151,15 @@ def resolve_primary_workflow(
             return WORKFLOW_ORDER
     if order_workflow_active(session, turn_mode):
         return WORKFLOW_ORDER
+    from ..tools.isbn import extract_isbn_candidate
+
+    mode = (turn_mode or "").strip().lower()
+    if (
+        mode == "isbn"
+        or extract_isbn_candidate(text or "")
+        or getattr(session, "pending_isbn_buffer", "")
+    ):
+        return WORKFLOW_PRODUCT
     if commerce_workflow_active(session):
         return WORKFLOW_COMMERCE
     if product_workflow_active(session, turn_mode, text):
@@ -234,7 +243,8 @@ def product_handling_allowed(
         return False
     from ..tools.isbn import extract_isbn_candidate
 
-    if extract_isbn_candidate(text or ""):
+    mode = (turn_mode or "").strip().lower()
+    if mode == "isbn" or extract_isbn_candidate(text or ""):
         return True
     return False
 

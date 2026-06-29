@@ -107,25 +107,18 @@ def product_payload_to_support_handoff(
 ) -> CustomerQueryEscalationPayload:
     query_type = payload.requested_type if payload.requested_type != "unknown" else "product"
     reason = (payload.reason or "product_not_found").strip()
+    value = (payload.requested_value or "").strip()[:120]
+    title_from_search = ""
+    if isinstance(payload.last_search_results, dict):
+        title_from_search = str(payload.last_search_results.get("title") or "").strip()
+
     if reason == "product_out_of_stock":
-        title = f"Out of stock — {payload.requested_type}: {payload.requested_value[:80]}"
-        detail = (
-            f"Customer wants {payload.requested_type} '{payload.requested_value}'. "
-            "It is not available to order in the Shopify storefront. "
-            "Please check warehouse/backend inventory or partner suppliers, "
-            "source the item, and email the customer when available."
-        )
+        issue_title = f"Out of stock — {value or title_from_search or query_type}"
+        issue_detail = "Not available to order online."
     else:
-        title = f"Product not found — {payload.requested_type}: {payload.requested_value[:80]}"
-        detail = (
-            f"Customer searched for {payload.requested_type} "
-            f"'{payload.requested_value}'. Catalog returned no match. "
-            "Please locate the item and contact the customer by email."
-        )
-    if payload.quantity:
-        detail += f" Requested quantity: {payload.quantity}."
-    if payload.facility_name:
-        detail += f" Facility: {payload.facility_name}."
+        issue_title = f"Not found — {value or query_type}"
+        issue_detail = "No catalog match."
+
     return CustomerQueryEscalationPayload(
         session_id=payload.session_id,
         call_sid=payload.call_sid,
@@ -133,22 +126,25 @@ def product_payload_to_support_handoff(
         customer_name=payload.customer_name,
         customer_email=payload.customer_email,
         query_type=query_type,
-        issue_title=title,
-        issue_detail=detail,
+        issue_title=issue_title,
+        issue_detail=issue_detail,
         what_customer_asked=(caller_text or payload.conversation_summary or "")[:500],
-        what_agent_tried="Shopify catalog search (search_products / ISBN lookup)",
+        what_agent_tried="Shopify catalog / ISBN search",
         tool_api_result=_sanitize_api_context(payload.last_search_results),
         reason_for_handoff=payload.reason or "product_not_found",
         recommended_next_action=(
-            "Source the requested item from warehouse or partners and email the customer."
+            "Source from warehouse or partners and email the customer."
             if reason == "product_out_of_stock"
-            else "Source the requested item manually and email the customer."
+            else "Locate the item manually and email the customer."
         ),
         conversation_summary=payload.conversation_summary,
         api_context={
             "last_search_results": _sanitize_api_context(payload.last_search_results),
             "requested_type": payload.requested_type,
             "requested_value": payload.requested_value,
+            "product_title": title_from_search,
+            "quantity": payload.quantity,
+            "facility_name": payload.facility_name,
         },
         reason=payload.reason or "product_not_found",
     )
@@ -200,18 +196,87 @@ def resolve_escalation_customer_fields(
     return name, email, phone
 
 
-def _short_issue_text(payload: CustomerQueryEscalationPayload) -> str:
-    for candidate in (
-        payload.issue_detail,
-        payload.reason_for_handoff,
-        payload.issue_title,
-        payload.what_customer_asked,
-        payload.reason,
+_HANDOFF_NOISE_PAT = re.compile(
+    r"^(yeah\.?|yes\.?|that'?s correct\.?|correct\.?|sure\.?|okay\.?|ok\.?)\s*",
+    re.I,
+)
+_LLM_EMAIL_NOISE_PAT = re.compile(
+    r"\b(subject:\s*.+|dear team\b.*|thank you for your attention\b.*|"
+    r"please reply to the customer\b.*)",
+    re.I | re.S,
+)
+_ISBN_IN_TEXT = re.compile(r"\b(?:97[89]\d{10}|\d{9}[\dXx]|\d{13})\b")
+
+
+def _sanitize_spoken_request(text: str) -> str:
+    """Drop email-confirm filler and LLM letter boilerplate from caller text."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    t = _LLM_EMAIL_NOISE_PAT.sub("", t).strip()
+    for _ in range(4):
+        if not _HANDOFF_NOISE_PAT.match(t):
+            break
+        t = _HANDOFF_NOISE_PAT.sub("", t, count=1).strip()
+    return t
+
+
+def _first_sentence(text: str, *, max_len: int = 160) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    parts = re.split(r"[.!?]\s+", t, maxsplit=1)
+    return parts[0][:max_len].strip()
+
+
+def _compose_customer_request(payload: CustomerQueryEscalationPayload) -> str:
+    """One short line for the support team — no LLM dump."""
+    reason = (payload.reason_for_handoff or payload.reason or "").strip().lower()
+    api = dict(payload.api_context or {})
+    req_type = str(api.get("requested_type") or payload.query_type or "").lower()
+    req_value = str(api.get("requested_value") or "").strip()
+    title = str(api.get("product_title") or "").strip()
+    lr = api.get("last_search_results") or {}
+    if isinstance(lr, dict) and not title:
+        title = str(lr.get("title") or "").strip()
+    qty = api.get("quantity")
+    facility = str(api.get("facility_name") or "").strip()
+
+    if reason == "product_out_of_stock" or (
+        isinstance(lr, dict) and lr.get("out_of_stock")
     ):
-        text = (candidate or "").strip()
-        if text:
-            return text[:280]
-    return "Customer requested support assistance."
+        label_parts: list[str] = []
+        isbn = _ISBN_IN_TEXT.search(req_value)
+        if isbn:
+            label_parts.append(f"ISBN {isbn.group(0)}")
+        elif req_value:
+            label_parts.append(req_value[:80])
+        if title and title.lower() not in " ".join(label_parts).lower():
+            label_parts.append(f'"{title[:80]}"')
+        item = " — ".join(label_parts) if label_parts else "Requested item"
+        line = f"{item} — not available online. Source from warehouse/partners and email customer."
+        if qty:
+            line += f" Qty: {qty}."
+        if facility:
+            line += f" Facility: {facility[:60]}."
+        return line[:280]
+
+    if reason == "product_not_found":
+        label = req_value[:80] or title[:80] or req_type or "item"
+        return (
+            f"Customer wants {req_type or 'product'}: {label}. "
+            "Not in catalog — locate manually and email customer."
+        )[:280]
+
+    if payload.issue_title and len(payload.issue_title) <= 100:
+        core = payload.issue_title.strip()
+    else:
+        core = _first_sentence(payload.issue_detail) or "Support assistance needed"
+
+    action = (payload.recommended_next_action or "").strip()
+    if action and len(core) < 100:
+        return f"{core}. {action}"[:280]
+    return core[:280]
 
 
 def _build_email_body(
@@ -219,27 +284,22 @@ def _build_email_body(
     *,
     conversation_summary: str = "",
 ) -> str:
-    """Support team email — customer name, email, and request only (no call/session IDs)."""
-    issue = _short_issue_text(payload)
-    summary = (conversation_summary or payload.conversation_summary or "").strip()
-    request_parts: list[str] = []
-    if issue:
-        request_parts.append(issue)
-    asked = (payload.what_customer_asked or "").strip()
-    if asked and asked not in issue:
-        request_parts.append(asked[:500])
-    if summary and summary not in " ".join(request_parts):
-        request_parts.append(summary[:600])
-    customer_request = " ".join(request_parts).strip() or "Customer requested support assistance."
+    """Support team email — name, email, and one concise request line only."""
+    del conversation_summary  # LLM summary is stored on payload, not pasted into email.
+
+    name = (payload.customer_name or "Customer").strip()
+    email = (payload.customer_email or "unknown").strip()
+    request = _compose_customer_request(payload)
 
     return "\n".join([
-        "SureShot Books — Customer Support Request",
+        "SureShot Books — Support Request",
         "",
-        f"Customer name: {payload.customer_name or 'Customer'}",
-        f"Customer email: {payload.customer_email or 'unknown'}",
-        f"Customer request: {customer_request[:900]}",
+        f"Name: {name}",
+        f"Email: {email}",
         "",
-        "Please reply to the customer by email.",
+        f"Request: {request}",
+        "",
+        "Reply to the customer by email.",
     ])
 
 
@@ -362,15 +422,16 @@ async def send_support_handoff(
     issue_label = _issue_type_label(model.query_type)
     subject = f"Voice Agent Support — {customer_name} — {issue_label}"
 
-    llm_summary, _transcript = await summarize_conversation_for_support(
+    llm_summary, transcript = await summarize_conversation_for_support(
         session,
-        caller_text=caller_text,
+        caller_text=_sanitize_spoken_request(caller_text),
         issue_title=model.issue_title,
         issue_detail=model.issue_detail,
         api_context=model.api_context,
     )
     model.conversation_summary = llm_summary or model.conversation_summary
-    body = _build_email_body(model, conversation_summary=llm_summary)
+    model.conversation_transcript = transcript
+    body = _build_email_body(model)
 
     logger.info(
         "support_handoff_send call_sid=%s type=%s name=%s email=%s phone=%s",

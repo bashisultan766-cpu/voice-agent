@@ -129,18 +129,28 @@ async def test_send_support_handoff_short_professional_body():
             "app.escalation.support_handoff.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            raw = await send_support_handoff(payload, session=session)
+            with patch(
+                "app.escalation.conversation_summarizer.summarize_conversation_for_support",
+                new_callable=AsyncMock,
+                return_value=(
+                    "Subject: Long LLM letter. Dear Team, please handle this request...",
+                    "",
+                ),
+            ):
+                raw = await send_support_handoff(payload, session=session)
 
     data = json.loads(raw)
     assert data["success"] is True
     body = mock_client.post.call_args.kwargs["json"]["text"]
-    assert "Customer name: Maria Lopez" in body
-    assert "Customer email: test@example.com" in body
-    assert "Customer request:" in body
-    assert "Shopify returned no match." in body
+    assert "Name: Maria Lopez" in body
+    assert "Email: test@example.com" in body
+    assert "Request:" in body
+    assert "Order 55555 not found" in body
     assert "Call SID:" not in body
     assert "Session ID:" not in body
     assert "Dear Backend Team" not in body
+    assert "Dear Team" not in body
+    assert "Subject:" not in body
 
 
 @pytest.mark.asyncio

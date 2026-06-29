@@ -156,9 +156,9 @@ class TestCreateProductNotFoundEscalation:
         assert email_json["to"] == ["jessica@sureshotbooks.com"]
         body = email_json["text"]
         assert "9781234567890" in body
-        assert "Customer name:" in body
-        assert "Customer email:" in body
-        assert "Customer request:" in body
+        assert "Name:" in body
+        assert "Email:" in body
+        assert "Request:" in body
         assert "jane@example.com" in body
         assert "CA_NF001" not in body
         assert "sess_nf_001" not in body

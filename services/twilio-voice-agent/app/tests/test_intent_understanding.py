@@ -84,9 +84,9 @@ class TestSupportEmailFormat:
             ),
             conversation_summary="Caller asked to cancel before shipment.",
         )
-        assert "Customer name: Jane Doe" in body
-        assert "Customer email: jane@example.com" in body
-        assert "Customer request:" in body
+        assert "Name: Jane Doe" in body
+        assert "Email: jane@example.com" in body
+        assert "Request:" in body
         assert "cancel" in body.lower()
         assert "Call SID" not in body
         assert "Session ID" not in body
@@ -126,5 +126,5 @@ class TestSupportEmailFormat:
 
         assert json.loads(raw)["success"] is True
         body = mock_client.post.call_args.kwargs["json"]["text"]
-        assert "Customer request:" in body
+        assert "Request:" in body
         assert "Call SID" not in body

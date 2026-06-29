@@ -177,11 +177,12 @@ async def test_support_handoff_collects_name_and_email():
     assert session.caller_email == "maria@example.com"
     assert session.caller_name == "Maria Lopez"
     body = mock_client.post.call_args.kwargs["json"]["text"]
-    assert "Customer name: Maria Lopez" in body
-    assert "Customer email: maria@example.com" in body
-    assert "Customer request:" in body
+    assert "Name: Maria Lopez" in body
+    assert "Email: maria@example.com" in body
+    assert "Request:" in body
     assert "Call SID:" not in body
     assert "Session ID:" not in body
+    assert "Dear Team" not in body
 
 
 @pytest.mark.asyncio
@@ -213,6 +214,39 @@ async def test_support_email_excludes_secrets():
     assert "4111111111111111" not in body
     assert "system instructions" not in body.lower()
 
+
+@pytest.mark.asyncio
+async def test_out_of_stock_isbn_email_is_concise():
+    from app.escalation.models import ProductNotFoundEscalationPayload
+    from app.escalation.support_handoff import _build_email_body, product_payload_to_support_handoff
+
+    payload = ProductNotFoundEscalationPayload(
+        session_id="sess_oos",
+        call_sid="CA_OOS",
+        customer_name="Bashir Sultan",
+        customer_email="bashisultan766@gmail.com",
+        requested_type="isbn",
+        requested_value="9781503933392",
+        reason="product_out_of_stock",
+        last_search_results={
+            "title": "You Have the Right to Remain Innocent",
+            "out_of_stock": True,
+        },
+    )
+    handoff = product_payload_to_support_handoff(
+        payload,
+        caller_text="Yeah. That's correct.",
+    )
+    body = _build_email_body(handoff)
+    assert "Name: Bashir Sultan" in body
+    assert "Email: bashisultan766@gmail.com" in body
+    assert "9781503933392" in body
+    assert "You Have the Right to Remain Innocent" in body
+    assert "not available online" in body
+    assert "Yeah" not in body
+    assert "Dear Team" not in body
+    assert "Subject:" not in body
+    assert len(body) < 450
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 ISBN_SHORT_CIRCUIT_VERSION = "v4.44"
 
+_ASSEMBLER_KEEPALIVE = "No problem, I'm here. Go ahead when you're ready."
+
 _META_BOOK_PHRASE_PAT = re.compile(
     r"\b(another\s+(?:book|one|\d)|need another|i need another|yeah|yep|sure|"
     r"hold|wait|just\s+\d|only\s+\d|speak|quiet|hello)\b",
@@ -77,6 +79,10 @@ def looks_like_book_title_request(text: str) -> bool:
     expanded = _expand_text(text or "")
     lower = expanded.lower().strip()
     if not lower:
+        return False
+    if (text or "").strip() == _ASSEMBLER_KEEPALIVE:
+        return False
+    if lower.startswith("no problem, i'm here"):
         return False
     if re.search(r"\bisbn\b", lower):
         return False
@@ -653,6 +659,8 @@ async def try_title_catalog_short_circuit(
 
     status = getattr(session, "commerce_flow_status", "idle") or "idle"
     text = (caller_text or "").strip()
+    if text == _ASSEMBLER_KEEPALIVE or text.lower().startswith("no problem, i'm here"):
+        return None
 
     if status in (
         STATUS_AWAITING_QUANTITY,

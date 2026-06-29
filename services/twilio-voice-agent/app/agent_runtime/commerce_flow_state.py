@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.47"
+COMMERCE_FLOW_VERSION = "v4.48"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -83,6 +83,11 @@ _NTH_BOOK_PAT = re.compile(
     r"\b(?P<ord>first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\s+book\b",
     re.IGNORECASE,
 )
+_CART_PURCHASE_INTENT_PAT = re.compile(
+    r"\b(need|want|buy|order|get|give|isbn|add|look(?:ing)?\s+up)\b",
+    re.IGNORECASE,
+)
+_REPEATED_NO_PAT = re.compile(r"(?:\bno\b[.!,\s]*){2,}", re.IGNORECASE)
 _PREVIOUS_BOOK_QTY_PAT = re.compile(
     r"\b(?:and\s+)?(?P<qty>one|a|\d+)\s+(?:copy|copies)\s+of\s+(?:the\s+)?previous\s+book\b",
     re.IGNORECASE,
@@ -292,13 +297,27 @@ def _spoken_cart_line(item, *, index: int | None = None) -> str:
     return f"{copy_phrase} of {title}"
 
 
-def try_cart_inquiry_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+def try_cart_inquiry_reply(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[str]:
     """Deterministic cart summary for 'how many books' / 'third book' questions."""
     from ..cart.session import get_ledger
+    from ..tools.isbn import extract_isbn_candidate
 
     text = (caller_text or "").strip()
     if not text:
         return None
+    if (turn_mode or "").strip().lower() == "isbn" or extract_isbn_candidate(text):
+        return None
+    if _NTH_BOOK_PAT.search(text) and _CART_PURCHASE_INTENT_PAT.search(text):
+        if not (
+            _CART_INQUIRY_PAT.search(text)
+            or re.search(r"\bin my cart\b", text, re.I)
+        ):
+            return None
     if not _cart_has_confirmed_items(session):
         if _CART_INQUIRY_PAT.search(text) or _NTH_BOOK_PAT.search(text):
             return "Your cart is empty right now."
@@ -436,7 +455,7 @@ def _try_add_this_that_book(session: "SessionState", text: str) -> Optional[Comm
     session.commerce_pending_quantity = qty
     if _QUANTITY_ADD_INTENT.search(text) or (
         _YES_IN_UTTERANCE.search(text) and qty > 0
-    ):
+    ) or qty > 1:
         title = add_staged_book_to_cart(session, quantity=qty)
         if title:
             copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
@@ -774,6 +793,10 @@ def process_commerce_turn(
         return CommerceTurnHint()
 
     candidate = _resolve_pending_candidate(session)
+    this_that = _try_add_this_that_book(session, text)
+    if this_that is not None:
+        return this_that
+
     active_quantity_step = status in (
         STATUS_AWAITING_QUANTITY,
         STATUS_AWAITING_ADD_CONFIRM,
@@ -787,6 +810,13 @@ def process_commerce_turn(
             return prev_book
         status = _status(session)
         candidate = _resolve_pending_candidate(session)
+
+    if _REPEATED_NO_PAT.search(text) and _cart_has_confirmed_items(session):
+        if status in (STATUS_AWAITING_ANOTHER_BOOK, STATUS_AWAITING_QUANTITY, STATUS_AWAITING_ADD_CONFIRM):
+            session.commerce_flow_status = STATUS_AWAITING_EMAIL_COLLECTION
+            session.payment_flow_status = "awaiting_email"
+            session.awaiting_product_confirmation = False
+            return CommerceTurnHint(force_reply=cart_summary_and_email_prompt(session))
 
     if _NO_BUT_ANOTHER_PAT.search(text):
         session.commerce_flow_status = STATUS_IDLE
@@ -827,7 +857,7 @@ def process_commerce_turn(
         if qty:
             if _QUANTITY_ADD_INTENT.search(text) or (
                 _YES_IN_UTTERANCE.search(text) and qty > 1
-            ):
+            ) or qty > 1:
                 session.commerce_pending_quantity = qty
                 session.commerce_pending_candidate = candidate
                 title = add_staged_book_to_cart(session, quantity=qty)
@@ -855,6 +885,24 @@ def process_commerce_turn(
         return CommerceTurnHint(force_reply=quantity_prompt(candidate))
 
     if status == STATUS_AWAITING_ADD_CONFIRM and candidate:
+        qty_override = _parse_quantity(text)
+        if qty_override and not _confirms_pending_add(text):
+            session.commerce_pending_quantity = qty_override
+            if _QUANTITY_ADD_INTENT.search(text) or qty_override > 1:
+                session.commerce_pending_candidate = candidate
+                title = add_staged_book_to_cart(session, quantity=qty_override)
+                session.awaiting_product_confirmation = False
+                if title:
+                    copy_phrase = "one copy" if qty_override == 1 else f"{qty_override} copies"
+                    short = spoken_book_title(title)
+                    return CommerceTurnHint(
+                        force_reply=(
+                            f"Got it — added {copy_phrase} of {short}. "
+                            f"{another_book_after_add_prompt()}"
+                        ),
+                        book_added=True,
+                    )
+            return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty_override))
         if _confirms_pending_add(text):
             qty = _parse_quantity(text) or int(
                 getattr(session, "commerce_pending_quantity", 0) or 1

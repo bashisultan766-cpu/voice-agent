@@ -41,7 +41,7 @@ def _session(**kwargs) -> SessionState:
 class TestVersions:
     def test_versions(self):
         assert ISBN_SHORT_CIRCUIT_VERSION == "v4.44"
-        assert COMMERCE_FLOW_VERSION == "v4.47"
+        assert COMMERCE_FLOW_VERSION == "v4.48"
         assert ORDER_FLOW_VERSION == "v4.49"
 
 

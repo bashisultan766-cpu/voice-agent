@@ -331,18 +331,23 @@ class VoiceCommerceRuntime:
         if support_handling_allowed(session, turn_mode, normalized):
             from ..agent_runtime.not_found_escalation_flow import (
                 process_not_found_escalation_turn,
+                should_clear_handoff_for_shopping,
+                clear_pending_escalation,
             )
 
-            esc_early = await process_not_found_escalation_turn(
-                session, normalized, turn_mode=turn_mode,
-            )
-            if esc_early.force_reply:
-                spoken = self._brain.finalize_response(
-                    session, esc_early.force_reply, [],
+            if should_clear_handoff_for_shopping(session, normalized, turn_mode=turn_mode):
+                clear_pending_escalation(session)
+            else:
+                esc_early = await process_not_found_escalation_turn(
+                    session, normalized, turn_mode=turn_mode,
                 )
-                await self._speak(session, normalized, spoken, send)
-                logger.info("support_handoff_email_early sid=%s", sid)
-                return _result(spoken)
+                if esc_early.force_reply:
+                    spoken = self._brain.finalize_response(
+                        session, esc_early.force_reply, [],
+                    )
+                    await self._speak(session, normalized, spoken, send)
+                    logger.info("support_handoff_email_early sid=%s", sid)
+                    return _result(spoken)
 
         if payment_handling_allowed(session, turn_mode, normalized):
             email_early = await self._handle_email_fsm(
@@ -615,9 +620,23 @@ class VoiceCommerceRuntime:
                     return _result(spoken)
 
         from ..agent_runtime.commerce_flow_state import try_cart_inquiry_reply
+        from ..tools.isbn import extract_isbn_candidate
 
         if commerce_handling_allowed(session, turn_mode, normalized):
-            cart_reply = try_cart_inquiry_reply(session, normalized)
+            if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(normalized):
+                isbn_in_cart = await self._try_isbn_product_hunt(
+                    session,
+                    normalized,
+                    send,
+                    turn_mode=turn_mode,
+                    classification=classification,
+                )
+                if isbn_in_cart is not None:
+                    return isbn_in_cart
+
+            cart_reply = try_cart_inquiry_reply(
+                session, normalized, turn_mode=turn_mode,
+            )
             if cart_reply:
                 spoken = self._brain.finalize_response(session, cart_reply, [])
                 await self._speak(session, normalized, spoken, send)

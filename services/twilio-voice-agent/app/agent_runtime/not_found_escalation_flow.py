@@ -201,8 +201,12 @@ async def _finalize_handoff_send(
         payload = ProductNotFoundEscalationPayload.from_dict(pending)
         if name:
             payload.customer_name = name
+        elif (pending.get("customer_name") or "").strip():
+            payload.customer_name = str(pending.get("customer_name") or "").strip()
     else:
         payload = CustomerQueryEscalationPayload.from_dict(pending)
+        if name:
+            payload.customer_name = name
 
     result = await maybe_execute_escalation(session, payload, caller_text=caller_text)
     clear_pending_escalation(session)
@@ -365,6 +369,31 @@ def clear_pending_escalation(session: "SessionState") -> None:
     session.awaiting_not_found_escalation_email = False
 
 
+def should_clear_handoff_for_shopping(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> bool:
+    """Caller is continuing to shop — drop a wrongly staged support handoff."""
+    from ..tools.isbn import extract_isbn_candidate
+    from .commerce_flow_state import _cart_has_confirmed_items
+
+    text = (caller_text or "").strip()
+    if not text:
+        return False
+    if (turn_mode or "").strip().lower() == "isbn" or extract_isbn_candidate(text):
+        return True
+    if re.search(
+        r"\b(another book|next book|fifth book|third book|fourth book|"
+        r"need (?:a |another )?book|want (?:a |another )?book|buy|order|isbn)\b",
+        text,
+        re.I,
+    ):
+        return _cart_has_confirmed_items(session) or bool(extract_isbn_candidate(text))
+    return False
+
+
 def _tool_execution_result(tool: str, parsed: dict[str, Any], *, raw: str = "") -> "ToolExecutionResult":
     from .types import ToolExecutionResult
 
@@ -476,6 +505,10 @@ async def process_not_found_escalation_turn(
 ) -> NotFoundEscalationTurnHint:
     """Handle name/email capture and confirmation for a staged support handoff."""
     if not getattr(session, "awaiting_not_found_escalation_email", False):
+        return NotFoundEscalationTurnHint()
+
+    if should_clear_handoff_for_shopping(session, caller_text, turn_mode=turn_mode):
+        clear_pending_escalation(session)
         return NotFoundEscalationTurnHint()
 
     pending = dict(getattr(session, "pending_not_found_escalation", None) or {})
