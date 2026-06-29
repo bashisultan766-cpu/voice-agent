@@ -33,14 +33,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CUSTOMER_MESSAGE_SUCCESS = (
-    "I've forwarded your request to our support team. "
-    "They'll review everything we discussed and contact you by email."
+    "I've forwarded your message to our support team. They'll contact you by email — "
+    "you can hang up whenever you're ready."
 )
 
 _CUSTOMER_MESSAGE_ASK_CONTACT = (
-    "I'm not seeing that information available right now. "
-    "I can have our support team follow up with you by email. "
-    "May I have your name and email?"
+    "I can forward your message to our customer support team, and they'll follow up with you by email. "
+    "May I have your name and email address?"
 )
 
 _SECRET_KEY_RE = re.compile(

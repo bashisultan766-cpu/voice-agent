@@ -244,6 +244,9 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                     previous_response=prev_response,
                 )
                 record_sm_interrupt(session.call_sid)
+                from ..agents.openai_request_utils import rollback_interrupted_turn
+
+                session.history = rollback_interrupted_turn(list(session.history or []))
             current_task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(current_task), timeout=1.0)

@@ -20,6 +20,7 @@ from ..config import get_settings
 logger = logging.getLogger(__name__)
 
 _RETRY_ON = {429, 500, 502, 503, 504}
+_NO_RETRY_ON = {401, 403}
 
 
 class ShopifyGraphQLClient:
@@ -90,6 +91,9 @@ class ShopifyGraphQLClient:
                         headers=self._headers(),
                         json=payload,
                     )
+
+                if resp.status_code in _NO_RETRY_ON:
+                    resp.raise_for_status()
 
                 if resp.status_code in _RETRY_ON:
                     wait = 2 ** attempt

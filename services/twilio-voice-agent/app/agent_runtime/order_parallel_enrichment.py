@@ -35,13 +35,33 @@ def _parse_json(raw: str) -> dict[str, Any]:
         return {}
 
 
+def _order_lookup_failure_message(order_payload: dict[str, Any]) -> str:
+    """Caller-facing message when Shopify order lookup fails."""
+    code = (order_payload.get("error_code") or order_payload.get("error") or "").strip()
+    order_num = (
+        order_payload.get("order_number")
+        or (order_payload.get("order") or {}).get("order_number")
+        or ""
+    )
+    if code in ("shopify_api_error", "shopify_api_unauthorized", "lookup_failed", "shopify_not_configured"):
+        return (
+            "I'm having trouble reaching our order system right now. "
+            "Please give me a moment and try your order number again."
+        )
+    if code == "order_not_found":
+        if order_num:
+            return (
+                f"I couldn't find order {order_num} in our system. "
+                "Could you double-check the order number?"
+            )
+        return "I couldn't find that order in our system. Could you double-check the order number?"
+    return "I couldn't look up that order right now."
+
+
 def _minimal_order_fallback(order_payload: dict[str, Any]) -> str:
     """Thin fallback when brain is skipped — not a substitute for LLM formatting."""
     if not order_payload.get("found"):
-        code = order_payload.get("error_code") or order_payload.get("error") or ""
-        if code == "order_not_found":
-            return "I couldn't find that order in Shopify."
-        return "I couldn't look up that order right now."
+        return _order_lookup_failure_message(order_payload)
 
     inner = order_payload.get("order") or {}
     num = inner.get("order_number") or order_payload.get("order_number") or ""
@@ -60,8 +80,22 @@ def compose_order_voice_reply(
     *,
     facility: dict[str, Any] | None = None,
 ) -> str:
-    """Minimal fallback reply from structured tool JSON (LLM should format when possible)."""
-    base = _minimal_order_fallback(order)
+    """Voice reply from structured order tool JSON — full details when found."""
+    if order.get("found"):
+        summary = (order.get("customer_safe_summary") or "").strip()
+        if not summary:
+            inner = order.get("order") or {}
+            if inner:
+                from ..tools.shopify_tools import _format_order_customer_message
+
+                summary = _format_order_customer_message(
+                    inner,
+                    order_email=(inner.get("customer_email") or inner.get("email") or ""),
+                    verified=bool(order.get("verified", True)),
+                )
+        base = summary or _minimal_order_fallback(order)
+    else:
+        base = _order_lookup_failure_message(order)
 
     if facility:
         msg = (
@@ -130,6 +164,9 @@ async def enrich_order_parallel(
 
     if isinstance(raw_order, Exception):
         logger.warning("order_enrich_order_failed sid=%s err=%s", session.call_sid[:6], raw_order)
+
+    if not order.get("found"):
+        order["order_number"] = order_number
 
     inner = order.get("order") or {}
     session.last_order_number = (

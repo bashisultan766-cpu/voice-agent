@@ -24,14 +24,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MSG_ASK_CONTACT = (
-    "I'm not seeing that information available right now. "
-    "I can have our support team follow up with you by email. "
-    "May I have your name and email?"
+    "I can forward your message to our customer support team, and they'll follow up with you by email. "
+    "May I have your name and email address?"
 )
 
+_MSG_CONFIRM_EMAIL = "I have {email}. Is that correct?"
+
 _MSG_SUCCESS = (
-    "I've forwarded your request to our support team. "
-    "They'll review everything we discussed and contact you by email."
+    "I've forwarded your message to our support team. They'll contact you by email — "
+    "you can hang up whenever you're ready."
+)
+
+_EMAIL_CONFIRM_YES = re.compile(
+    r"^\s*(yes|yeah|yep|yup|correct|that's right|that is right|right)\s*\.?\s*$",
+    re.I,
 )
 
 _ISBN = re.compile(r"\b(?:97[89]\d{10}|\d{9}[\dXx]|\d{13})\b")
@@ -92,14 +98,12 @@ def _extract_quantity(user_text: str) -> Optional[int]:
 
 
 def _resolved_customer_email(session: "SessionState") -> str:
-    for attr in ("confirmed_email", "caller_email"):
-        val = (getattr(session, attr, "") or "").strip().lower()
-        if val and "@" in val:
-            return val
-    if getattr(session, "payment_email_confirmed", False):
-        pending = (getattr(session, "pending_payment_email", "") or "").strip().lower()
-        if pending and "@" in pending:
-            return pending
+    """Email confirmed during support handoff capture — never profile email alone."""
+    pending = dict(getattr(session, "pending_not_found_escalation", None) or {})
+    if pending.get("email_confirmed"):
+        email = (pending.get("customer_email") or "").strip().lower()
+        if email and "@" in email:
+            return email
     return ""
 
 
@@ -175,9 +179,12 @@ def build_support_handoff_payload(
 
 def stage_pending_escalation(
     session: "SessionState",
-    payload: CustomerQueryEscalationPayload | ProductNotFoundEscalationPayload,
+    payload: CustomerQueryEscalationPayload | ProductNotFoundEscalationPayload | dict[str, Any],
 ) -> None:
-    session.pending_not_found_escalation = payload.to_dict()
+    if isinstance(payload, dict):
+        session.pending_not_found_escalation = dict(payload)
+    else:
+        session.pending_not_found_escalation = payload.to_dict()
     session.awaiting_not_found_escalation_email = True
 
 
@@ -252,30 +259,8 @@ async def try_escalate_unresolved_query(
     if idem_key in list(getattr(session, "not_found_escalation_sent_keys", None) or []):
         return NotFoundEscalationTurnHint(force_reply=_MSG_SUCCESS)
 
-    if not email:
-        stage_pending_escalation(session, payload)
-        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
-
-    result = await maybe_execute_escalation(session, payload, caller_text=caller_text)
-    if result.success:
-        clear_pending_escalation(session)
-        return NotFoundEscalationTurnHint(
-            force_reply=result.result.get("customer_message") or _MSG_SUCCESS,
-            extra_tool_result=result,
-        )
-
-    err = str(result.result.get("error_code") or "")
-    if err == "missing_customer_email":
-        stage_pending_escalation(session, payload)
-        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
-
-    return NotFoundEscalationTurnHint(
-        force_reply=str(
-            result.result.get("customer_message")
-            or "I had trouble forwarding that to our team. Please try again."
-        ),
-        extra_tool_result=result,
-    )
+    stage_pending_escalation(session, payload)
+    return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
 
 
 async def process_not_found_escalation_turn(
@@ -284,7 +269,7 @@ async def process_not_found_escalation_turn(
     *,
     turn_mode: str = "",
 ) -> NotFoundEscalationTurnHint:
-    """Handle name/email capture for a staged support handoff."""
+    """Handle name/email capture and confirmation for a staged support handoff."""
     if not getattr(session, "awaiting_not_found_escalation_email", False):
         return NotFoundEscalationTurnHint()
 
@@ -299,21 +284,46 @@ async def process_not_found_escalation_turn(
         if name:
             session.caller_name = name
 
-    email = _resolved_customer_email(session)
-    if not email:
+    if pending.get("awaiting_email_confirmation"):
+        staged_email = (pending.get("staging_email") or "").strip().lower()
+        if _EMAIL_CONFIRM_YES.match(caller_text or ""):
+            if not staged_email or "@" not in staged_email:
+                pending.pop("awaiting_email_confirmation", None)
+                pending.pop("staging_email", None)
+                stage_pending_escalation(session, pending)
+                return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
+            pending["customer_email"] = staged_email
+            pending["email_confirmed"] = True
+            pending.pop("awaiting_email_confirmation", None)
+            pending.pop("staging_email", None)
+            session.caller_email = staged_email
+            if name:
+                pending["customer_name"] = name
+            stage_pending_escalation(session, pending)
+        else:
+            corrected = (extract_email_from_text(caller_text, session) or "").strip().lower()
+            if corrected and corrected != staged_email:
+                pending["staging_email"] = corrected
+                stage_pending_escalation(session, pending)
+                return NotFoundEscalationTurnHint(
+                    force_reply=_MSG_CONFIRM_EMAIL.format(email=corrected),
+                )
+            return NotFoundEscalationTurnHint(
+                force_reply=_MSG_CONFIRM_EMAIL.format(email=staged_email or "that email"),
+            )
+
+    if not pending.get("email_confirmed"):
         email = (extract_email_from_text(caller_text, session) or "").strip().lower()
+        if not email or "@" not in email:
+            return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
 
-    if not email or "@" not in email:
-        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
-
-    session.caller_email = email
-    pending["customer_email"] = email
-    if name:
-        pending["customer_name"] = name
+        pending["staging_email"] = email
+        pending["awaiting_email_confirmation"] = True
+        stage_pending_escalation(session, pending)
+        return NotFoundEscalationTurnHint(force_reply=_MSG_CONFIRM_EMAIL.format(email=email))
 
     if pending.get("requested_value") and not pending.get("issue_title"):
         payload = ProductNotFoundEscalationPayload.from_dict(pending)
-        payload.customer_email = email
         if name:
             payload.customer_name = name
     else:
@@ -390,18 +400,5 @@ async def handle_search_not_found_results(
     if idem_key in list(getattr(session, "not_found_escalation_sent_keys", None) or []):
         return NotFoundEscalationTurnHint(force_reply=_MSG_SUCCESS)
 
-    if not email:
-        stage_pending_escalation(session, payload)
-        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
-
-    result = await maybe_execute_escalation(session, payload, caller_text=ctx.user_text or "")
-    if result.success:
-        return NotFoundEscalationTurnHint(
-            force_reply=result.result.get("customer_message") or _MSG_SUCCESS,
-            extra_tool_result=result,
-        )
-
-    return NotFoundEscalationTurnHint(
-        force_reply=str(result.result.get("customer_message") or _MSG_ASK_CONTACT),
-        extra_tool_result=result,
-    )
+    stage_pending_escalation(session, payload)
+    return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)

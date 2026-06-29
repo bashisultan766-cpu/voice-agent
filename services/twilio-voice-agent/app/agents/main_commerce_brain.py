@@ -48,9 +48,9 @@ You help customers:
 
 When Shopify, catalog, or order lookup cannot find the customer's item or order:
 - Never invent or guess product, order, refund, or tracking data.
-- Say you are not seeing that information and offer support follow-up by email.
-- Collect the customer's name and email, then use create_product_not_found_escalation (products) or escalate_to_customer_service (orders/refunds/API errors).
-- Support handoff emails include a full LLM conversation summary for the team.
+- For order lookups, retry or ask the caller to verify the order number — do NOT escalate to support automatically.
+- Use create_product_not_found_escalation (products) or escalate_to_customer_service (orders/refunds) ONLY when the customer explicitly asks for human support or follow-up by email.
+- Support handoff requires collecting and confirming the customer's name and email on the call first.
 
 Rules:
 - Be warm, fast, and concise.
@@ -147,7 +147,9 @@ class MainCommerceBrain:
 
     @staticmethod
     def _safe_trim(history: list[dict]) -> list[dict]:
-        trimmed = history[-_MAX_HISTORY_MESSAGES:]
+        from .openai_request_utils import repair_incomplete_tool_turns
+
+        trimmed = repair_incomplete_tool_turns(history[-_MAX_HISTORY_MESSAGES:])
         while trimmed:
             head = trimmed[0]
             if head.get("role") == "tool":
@@ -162,6 +164,9 @@ class MainCommerceBrain:
     @staticmethod
     def _sanitize_messages(messages: list[dict]) -> list[dict]:
         """Drop malformed history entries that would cause OpenAI BadRequest."""
+        from .openai_request_utils import repair_incomplete_tool_turns
+
+        messages = repair_incomplete_tool_turns(messages)
         valid_roles = frozenset({"system", "user", "assistant", "tool"})
         clean: list[dict] = []
         for msg in messages:

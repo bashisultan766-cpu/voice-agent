@@ -90,54 +90,62 @@ async def test_product_not_found_support_handoff_asks_contact():
         issue_title="Product XYZ-999 not in catalog",
         issue_detail="Catalog search returned zero results.",
     )
-    assert "not seeing that information" in hint.force_reply.lower()
+    assert "forward your message" in hint.force_reply.lower()
     assert "name and email" in hint.force_reply.lower()
     assert session.awaiting_not_found_escalation_email is True
 
 
 @pytest.mark.asyncio
-async def test_order_not_found_support_handoff():
-    session = _session()
+async def test_order_not_found_does_not_auto_escalate():
+    session = _session(caller_email="maria@example.com")
     with patch(
         "app.agent_runtime.order_parallel_enrichment.enrich_order_parallel",
         new_callable=AsyncMock,
     ) as mock_enrich:
         mock_enrich.return_value = MagicMock(
-            order={"found": False},
-            suggested_response="",
+            order={"found": False, "error_code": "order_not_found", "order_number": "22399"},
+            suggested_response="I couldn't find order 22399 in our system. Could you double-check the order number?",
         )
         hint = await try_order_enrichment_short_circuit(session, "order 22399")
 
     assert hint and hint.force_reply
-    assert session.awaiting_not_found_escalation_email is True
-    pending = session.pending_not_found_escalation
-    assert pending.get("query_type") == "order"
-    assert "22399" in pending.get("issue_title", "")
+    assert "22399" in hint.force_reply
+    assert session.awaiting_not_found_escalation_email is False
+    assert not session.pending_not_found_escalation
 
 
 @pytest.mark.asyncio
-async def test_shopify_api_error_support_handoff():
+async def test_shopify_api_error_does_not_auto_escalate():
+    session = _session(confirmed_email="maria@example.com", caller_email="maria@example.com")
+    with patch(
+        "app.agent_runtime.order_parallel_enrichment.enrich_order_parallel",
+        new_callable=AsyncMock,
+    ) as mock_enrich:
+        mock_enrich.return_value = MagicMock(
+            order={"found": False, "error_code": "shopify_api_error"},
+            suggested_response="I'm having trouble reaching our order system right now.",
+        )
+        hint = await try_order_enrichment_short_circuit(session, "order 1001")
+
+    assert hint and hint.force_reply
+    assert "order system" in hint.force_reply.lower()
+    assert session.awaiting_not_found_escalation_email is False
+
+
+@pytest.mark.asyncio
+async def test_shopify_api_error_support_handoff_stages_contact():
     session = _session(confirmed_email="maria@example.com")
-    mock_client = _mock_resend()
-    with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
-        with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):
-            with patch(
-                "app.escalation.support_handoff.summarize_conversation_for_support",
-                new_callable=AsyncMock,
-                return_value=("API timeout during order lookup.", "user: order 1001"),
-            ):
-                hint = await try_escalate_unresolved_query(
-                    session,
-                    query_type="shopify_api_error",
-                    issue_title="Shopify API error",
-                    issue_detail="GraphQL timeout",
-                    api_context={"error": "timeout"},
-                    reason="shopify_api_error",
-                )
+    hint = await try_escalate_unresolved_query(
+        session,
+        query_type="shopify_api_error",
+        issue_title="Shopify API error",
+        issue_detail="GraphQL timeout",
+        api_context={"error": "timeout"},
+        reason="shopify_api_error",
+    )
     assert hint.force_reply
-    mock_client.post.assert_awaited_once()
-    subject = mock_client.post.call_args.kwargs["json"]["subject"]
-    assert subject.startswith("Voice Agent Support Handoff")
+    assert "name and email" in hint.force_reply.lower()
+    assert session.awaiting_not_found_escalation_email is True
 
 
 @pytest.mark.asyncio
@@ -161,11 +169,15 @@ async def test_support_handoff_collects_name_and_email():
                 new_callable=AsyncMock,
                 return_value=("Summary for support.", "transcript"),
             ):
-                hint = await process_not_found_escalation_turn(
+                hint1 = await process_not_found_escalation_turn(
                     session, "my name is Maria Lopez and my email is maria@example.com"
                 )
+                assert "maria@example.com" in hint1.force_reply
+                assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is True
 
-    assert hint.force_reply
+                hint2 = await process_not_found_escalation_turn(session, "yes")
+
+    assert hint2.force_reply
     assert session.caller_email == "maria@example.com"
     assert session.caller_name == "Maria Lopez"
     body = mock_client.post.call_args.kwargs["json"]["text"]
@@ -315,6 +327,7 @@ def test_customer_history_not_in_safe_summary_by_default():
 def test_missing_order_never_fakes_data():
     safe = _build_customer_safe_tool_response(found=False, error="order_not_found")
     assert "Do not invent" in safe["customer_safe_summary"]
+    assert "verify the order number" in safe["customer_safe_summary"]
 
 
 def test_sanitizer_allows_valid_order_summary():

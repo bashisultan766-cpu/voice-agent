@@ -64,29 +64,26 @@ def _mock_resend():
 
 
 @pytest.mark.asyncio
-async def test_order_not_found_asks_for_email():
+async def test_order_not_found_does_not_auto_escalate():
     session = _session()
     with patch(
         "app.agent_runtime.order_parallel_enrichment.enrich_order_parallel",
         new_callable=AsyncMock,
     ) as mock_enrich:
         mock_enrich.return_value = MagicMock(
-            order={"found": False, "message": "No matching order found."},
-            suggested_response="",
+            order={"found": False, "error_code": "order_not_found", "order_number": "22399"},
+            suggested_response="I couldn't find order 22399 in our system. Could you double-check the order number?",
         )
         hint = await try_order_enrichment_short_circuit(session, "order 22399")
 
     assert hint and hint.force_reply
-    assert "email" in hint.force_reply.lower()
-    assert session.awaiting_not_found_escalation_email is True
-    pending = session.pending_not_found_escalation
-    assert pending.get("query_type") == "order"
-    assert "22399" in pending.get("issue_title", "")
+    assert "22399" in hint.force_reply
+    assert session.awaiting_not_found_escalation_email is False
 
 
 @pytest.mark.asyncio
-async def test_order_not_found_sends_with_email():
-    session = _session(confirmed_email="maria@example.com")
+async def test_order_not_found_does_not_send_with_profile_email():
+    session = _session(confirmed_email="maria@example.com", caller_email="maria@example.com")
     mock_client = _mock_resend()
 
     with patch(
@@ -94,31 +91,18 @@ async def test_order_not_found_sends_with_email():
         new_callable=AsyncMock,
     ) as mock_enrich:
         mock_enrich.return_value = MagicMock(
-            order={"found": False},
-            suggested_response="",
+            order={"found": False, "error_code": "order_not_found"},
+            suggested_response="I couldn't find that order in our system.",
         )
         with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
             with patch(
                 "app.escalation.support_handoff.httpx.AsyncClient",
                 return_value=mock_client,
             ):
-                with patch(
-                    "app.escalation.support_handoff.summarize_conversation_for_support",
-                    new_callable=AsyncMock,
-                    return_value=("Customer needs order 22399 located manually.", "user: order 22399"),
-                ):
-                    hint = await try_order_enrichment_short_circuit(session, "22399")
+                hint = await try_order_enrichment_short_circuit(session, "22399")
 
-    assert hint and "support team" in hint.force_reply.lower()
-    mock_client.post.assert_awaited_once()
-    email_json = mock_client.post.call_args.kwargs["json"]
-    assert email_json["to"] == ["jessica@sureshotbooks.com"]
-    assert email_json["reply_to"] == "maria@example.com"
-    body = email_json["text"]
-    assert "Maria Lopez" in body
-    assert "maria@example.com" in body
-    assert "22399" in body
-    assert "Customer needs order 22399" in body
+    assert hint and hint.force_reply
+    mock_client.post.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -185,13 +169,15 @@ async def test_email_capture_on_followup_turn():
                 new_callable=AsyncMock,
                 return_value=("Summary", "transcript"),
             ):
-                hint = await process_not_found_escalation_turn(
+                hint1 = await process_not_found_escalation_turn(
                     session, "my email is maria@example.com"
                 )
+                assert "maria@example.com" in hint1.force_reply
+                hint2 = await process_not_found_escalation_turn(session, "yes")
 
-    assert hint.force_reply
+    assert hint2.force_reply
     assert session.awaiting_not_found_escalation_email is False
-    assert hint.extra_tool_result and hint.extra_tool_result.success
+    assert hint2.extra_tool_result and hint2.extra_tool_result.success
     assert mock_client.post.await_count == 1
 
 
@@ -205,5 +191,5 @@ async def test_try_escalate_unresolved_query_no_fake_data_message():
         issue_title="Product XYZ-999 not in catalog",
         issue_detail="Catalog search returned zero results.",
     )
-    assert "not seeing" in hint.force_reply.lower() or "support team" in hint.force_reply.lower()
+    assert "support team" in hint.force_reply.lower() or "forward" in hint.force_reply.lower()
     assert session.awaiting_not_found_escalation_email is True

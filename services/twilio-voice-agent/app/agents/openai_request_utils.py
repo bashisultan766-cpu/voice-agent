@@ -152,3 +152,46 @@ def log_openai_bad_request(
             detail["invalid_tool_schema"][:5],
         )
     return detail
+
+
+def repair_incomplete_tool_turns(messages: list[dict]) -> list[dict]:
+    """
+    Drop assistant tool_calls that lack matching tool responses.
+
+    OpenAI rejects histories where an assistant message has tool_calls not
+    followed by a tool message for every call id.
+    """
+    result: list[dict] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            tool_ids = {
+                tc.get("id")
+                for tc in msg["tool_calls"]
+                if isinstance(tc, dict) and tc.get("id")
+            }
+            j = i + 1
+            found_ids: set[str] = set()
+            while j < len(messages) and messages[j].get("role") == "tool":
+                tid = messages[j].get("tool_call_id")
+                if tid:
+                    found_ids.add(tid)
+                j += 1
+            if tool_ids and tool_ids <= found_ids:
+                result.extend(messages[i:j])
+                i = j
+            else:
+                i = j if j > i + 1 else i + 1
+        else:
+            result.append(msg)
+            i += 1
+    return result
+
+
+def rollback_interrupted_turn(messages: list[dict]) -> list[dict]:
+    """Remove incomplete tool turns and the user prompt from a cancelled voice turn."""
+    repaired = repair_incomplete_tool_turns(messages)
+    while repaired and repaired[-1].get("role") == "user":
+        repaired.pop()
+    return repaired

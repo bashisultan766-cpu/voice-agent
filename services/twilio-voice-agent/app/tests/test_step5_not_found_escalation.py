@@ -291,7 +291,7 @@ class TestOrchestratorNotFoundFlow:
         assert hint.force_reply
 
     @pytest.mark.asyncio
-    async def test_confirmed_email_sends_escalation(self):
+    async def test_confirmed_email_stages_escalation(self):
         session = _session(confirmed_email="buyer@example.com")
         ctx = OrchestratorTurnContext(
             user_text="9789999999999",
@@ -317,23 +317,17 @@ class TestOrchestratorNotFoundFlow:
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
             with patch("app.escalation.support_handoff.httpx.AsyncClient") as mock_client_cls:
-                with patch(
-                    "app.escalation.support_handoff.summarize_conversation_for_support",
-                    new_callable=AsyncMock,
-                    return_value=("Summary", "transcript"),
-                ):
-                    mock_client = AsyncMock()
-                    mock_client.post = AsyncMock(return_value=mock_resp)
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=False)
-                    mock_client_cls.return_value = mock_client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_resp)
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=False)
+                mock_client_cls.return_value = mock_client
 
-                    hint = await handle_search_not_found_results(session, ctx, settings=settings)
+                hint = await handle_search_not_found_results(session, ctx, settings=settings)
 
-        assert hint.extra_tool_result is not None
-        assert hint.extra_tool_result.success is True
-        assert "support team" in hint.force_reply.lower()
-        mock_client.post.assert_awaited_once()
+        assert hint.force_reply
+        assert session.awaiting_not_found_escalation_email is True
+        mock_client.post.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_email_on_followup_turn_sends_escalation(self):
@@ -367,12 +361,14 @@ class TestOrchestratorNotFoundFlow:
                     mock_client.__aexit__ = AsyncMock(return_value=False)
                     mock_client_cls.return_value = mock_client
 
-                    hint = await process_not_found_escalation_turn(
+                    hint1 = await process_not_found_escalation_turn(
                         session, "my email is buyer@example.com"
                     )
+                    assert "buyer@example.com" in hint1.force_reply
+                    hint2 = await process_not_found_escalation_turn(session, "yes")
 
-        assert hint.force_reply
-        assert hint.extra_tool_result and hint.extra_tool_result.success
+        assert hint2.force_reply
+        assert hint2.extra_tool_result and hint2.extra_tool_result.success
         assert session.awaiting_not_found_escalation_email is False
 
     def test_product_found_does_not_trigger_escalation_message(self):

@@ -1461,10 +1461,17 @@ def _build_customer_safe_tool_response(
             if order_obj.get(key) is not None
         }
     elif not found:
-        safe["customer_safe_summary"] = (
-            "I could not find that order in Shopify. Do not invent order, refund, "
-            "or tracking details. Offer support follow-up and collect name and email."
-        )
+        code = error_code or error or ""
+        if code in ("shopify_api_error", "shopify_api_unauthorized", "lookup_failed", "shopify_not_configured"):
+            safe["customer_safe_summary"] = (
+                "Shopify order lookup failed due to a system error. "
+                "Do not invent order data. Apologize and ask the caller to try again."
+            )
+        else:
+            safe["customer_safe_summary"] = (
+                "I could not find that order in Shopify. Do not invent order, refund, "
+                "or tracking details. Ask the caller to verify the order number."
+            )
     return safe
 
 
@@ -1797,12 +1804,24 @@ async def lookup_shopify_order_details(
 
     except Exception as exc:
         logger.error("lookup_shopify_order_details failed: %s", exc)
+        err_text = str(exc).lower()
+        if "401" in err_text or "403" in err_text or "unauthorized" in err_text:
+            error_code = "shopify_api_error"
+            error = "shopify_api_unauthorized"
+        else:
+            error_code = "lookup_failed"
+            error = "lookup_failed"
         return json.dumps({
             "found": False,
             "verification_required": False,
             "order": None,
-            "error": "lookup_failed",
-            "error_code": "lookup_failed",
+            "error": error,
+            "error_code": error_code,
+            **_build_customer_safe_tool_response(
+                found=False,
+                error=error,
+                error_code=error_code,
+            ),
         })
 
 
