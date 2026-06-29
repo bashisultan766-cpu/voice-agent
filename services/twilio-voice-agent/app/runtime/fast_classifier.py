@@ -295,6 +295,14 @@ def classify(
             ),
         )
 
+    if _is_order_lookup(text):
+        return ClassificationResult(
+            action="brain",
+            reason="order_lookup",
+            is_order_lookup=True,
+            use_strong_model=_needs_strong_model(text, session),
+        )
+
     # A. Instant smalltalk — no LLM, no tools
     norm = _normalize_smalltalk(text)
     for pattern, reply in _INSTANT_SMALLTALK:

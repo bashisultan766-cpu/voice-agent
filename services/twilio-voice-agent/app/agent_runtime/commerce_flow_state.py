@@ -642,11 +642,22 @@ def process_commerce_turn(
 
     Handles book confirm, another-book, and done-shopping → email collection.
     """
-    if commerce_blocks_open_commerce(session):
+    mode = (turn_mode or "").strip().lower()
+    if mode in ("isbn", "order", "email"):
         return CommerceTurnHint()
 
     text = (caller_text or "").strip()
     if not text:
+        return CommerceTurnHint()
+
+    from ..tools.isbn import extract_isbn_candidate
+
+    if extract_isbn_candidate(text) or re.search(
+        r"\b(isbn|iouspl|ouspl|iuspl)\b", text, re.I,
+    ):
+        return CommerceTurnHint()
+
+    if commerce_blocks_open_commerce(session):
         return CommerceTurnHint()
 
     prev_book = _try_add_previous_book(session, text)

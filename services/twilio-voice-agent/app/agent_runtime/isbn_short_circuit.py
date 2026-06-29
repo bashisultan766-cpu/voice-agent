@@ -370,10 +370,12 @@ def resolve_spoken_isbn(
     if session is not None:
         buf = getattr(session, "pending_isbn_buffer", "") or ""
 
-    collecting = turn_mode == "isbn" or (
+    collecting = bool(buf) or turn_mode == "isbn" or (
         session is not None and _isbn_collection_active(session, turn_mode)
     )
-    if not collecting and not re.search(r"\b(isbn|digit)\b", expanded, re.I):
+    if not collecting and not re.search(
+        r"\b(isbn|iouspl|ouspl|iuspl|digit)\b", expanded, re.I,
+    ):
         digits_only = extract_digits(expanded)
         if len(digits_only) < 10:
             return None, buf
@@ -435,6 +437,12 @@ async def try_isbn_short_circuit(
     """
     if should_skip_isbn_short_circuit(session, caller_text, turn_mode=turn_mode):
         return None
+
+    if (turn_mode or "").lower() == "isbn":
+        pass
+    elif re.search(r"\b(it'?s|this is)\s+(?:an?\s+)?isbn\b", caller_text or "", re.I):
+        session.pending_isbn_buffer = getattr(session, "pending_isbn_buffer", "") or ""
+        arm_isbn_digit_collection(session)
 
     from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
     from ..tools import shopify_tools as shopify_st

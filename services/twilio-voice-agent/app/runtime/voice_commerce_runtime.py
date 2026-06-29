@@ -265,6 +265,13 @@ class VoiceCommerceRuntime:
         session._current_turn_mode = turn_mode  # type: ignore[attr-defined]
         advance_commerce_state_silent(session, normalized)
 
+        from ..agent_runtime.isbn_short_circuit import resolve_spoken_isbn
+
+        if re.search(
+            r"\b(isbn|978|979|ouspl|iuspl|iouspl)\b", normalized, re.I,
+        ) or getattr(session, "pending_isbn_buffer", ""):
+            resolve_spoken_isbn(normalized, session=session, turn_mode=turn_mode)
+
         from ..dialogue.call_closure import process_call_closure_turn
 
         closure = process_call_closure_turn(session, normalized)
@@ -272,6 +279,67 @@ class VoiceCommerceRuntime:
             spoken = self._brain.finalize_response(session, closure.reply, [])
             await self._speak(session, normalized, spoken, send)
             return _result(spoken, end_call=closure.end_call)
+
+        from ..agent_runtime.order_flow_state import (
+            _should_skip_order_lookup,
+            extract_order_number,
+            try_order_collection_short_circuit,
+            try_order_enrichment_short_circuit,
+            try_order_repeat_reply,
+        )
+        from ..runtime.fast_classifier import ClassificationResult
+
+        if (turn_mode or "").lower() == "isbn":
+            isbn_early = await self._try_isbn_product_hunt(
+                session,
+                normalized,
+                send,
+                turn_mode=turn_mode,
+                classification=ClassificationResult(
+                    action="brain", reason="isbn_turn", is_product_search=True,
+                ),
+            )
+            if isbn_early is not None:
+                return isbn_early
+
+        if (turn_mode or "").lower() == "order":
+            if not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode):
+                try:
+                    order_hint = await try_order_enrichment_short_circuit(
+                        session, normalized, turn_mode=turn_mode,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "order_enrichment_failed sid=%s err=%s", sid, type(exc).__name__,
+                    )
+                    order_hint = None
+                if order_hint and order_hint.force_reply:
+                    spoken = self._brain.finalize_response(
+                        session, order_hint.force_reply, [],
+                    )
+                    await self._speak(session, normalized, spoken, send)
+                    logger.info("order_enrichment_short_circuit sid=%s", sid)
+                    return _result(spoken)
+
+        repeat_reply = try_order_repeat_reply(session, normalized)
+        if repeat_reply and not extract_order_number(
+            normalized, session, turn_mode=turn_mode,
+        ):
+            spoken = self._brain.finalize_response(session, repeat_reply, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("order_repeat_short_circuit sid=%s", sid)
+            return _result(spoken)
+
+        collection_hint = try_order_collection_short_circuit(
+            session, normalized, turn_mode=turn_mode,
+        )
+        if collection_hint and collection_hint.force_reply:
+            spoken = self._brain.finalize_response(
+                session, collection_hint.force_reply, [],
+            )
+            await self._speak(session, normalized, spoken, send)
+            logger.info("order_collection_short_circuit sid=%s", sid)
+            return _result(spoken)
 
         twiml_greeting = bool(getattr(session, "twiml_greeting_spoken", False))
         classification = classify(
@@ -330,30 +398,8 @@ class VoiceCommerceRuntime:
             _should_skip_order_lookup,
             extract_order_number,
             order_intent_detected,
-            try_order_collection_short_circuit,
             try_order_enrichment_short_circuit,
-            try_order_repeat_reply,
         )
-
-        repeat_reply = try_order_repeat_reply(session, normalized)
-        if repeat_reply and not extract_order_number(
-            normalized, session, turn_mode=turn_mode,
-        ):
-            spoken = self._brain.finalize_response(session, repeat_reply, [])
-            await self._speak(session, normalized, spoken, send)
-            logger.info("order_repeat_short_circuit sid=%s", sid)
-            return _result(spoken)
-
-        collection_hint = try_order_collection_short_circuit(
-            session, normalized, turn_mode=turn_mode,
-        )
-        if collection_hint and collection_hint.force_reply:
-            spoken = self._brain.finalize_response(
-                session, collection_hint.force_reply, [],
-            )
-            await self._speak(session, normalized, spoken, send)
-            logger.info("order_collection_short_circuit sid=%s", sid)
-            return _result(spoken)
 
         is_order_turn = (
             not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode)

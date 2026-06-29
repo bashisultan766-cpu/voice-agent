@@ -119,12 +119,25 @@ class TurnAssembler:
         from ..agent_runtime.order_flow_state import normalize_order_number_from_speech
 
         digits = "".join(c for c in text if c.isdigit())
+        pending_isbn = pending_isbn_buffer or ""
+        if pending_isbn and (
+            _DIGIT_FRAGMENT.match(text.strip())
+            or should_collect_isbn(text, book_collection=True)
+        ):
+            return "isbn"
+        if (
+            _DIGIT_FRAGMENT.match(text.strip())
+            and digits.startswith(("978", "979"))
+        ):
+            return "isbn"
+        if _DIGIT_FRAGMENT.match(text.strip()) and len(digits) >= 9:
+            return "isbn"
         if _ORDER_HINT.search(t) or self._state.mode == "order":
             if normalize_order_number_from_speech(text) or _DIGIT_FRAGMENT.match(text.strip()):
                 return "order"
         if (
             _DIGIT_FRAGMENT.match(text.strip())
-            and 4 <= len(digits) <= 10
+            and 4 <= len(digits) <= 8
             and not digits.startswith(("978", "979"))
         ):
             return "order"
@@ -200,11 +213,14 @@ class TurnAssembler:
                 return False, "incomplete"
             return False, "incomplete"
         if mode == "normal":
+            from ..agent_runtime.order_flow_state import order_intent_detected
             from ..orchestrator.intent_router import is_smalltalk, is_vague_product_request
 
             stripped = text.strip()
             if is_isbn_permission_question(stripped):
                 return True, "isbn_permission_question"
+            if order_intent_detected(stripped) or should_collect_isbn(stripped):
+                return False, "incomplete"
             if _BARE_AFFIRM.match(stripped):
                 return True, "complete_affirmative"
             if is_smalltalk(stripped):
@@ -481,6 +497,10 @@ class TurnAssembler:
             if emit_mode == "isbn" and not is_complete_isbn(st.buffer):
                 import time
                 if len(digits) == 0:
+                    if is_isbn_permission_question(st.buffer):
+                        st.mode = "normal"
+                        await self._emit_buffered(sid, self._emit_callback, "isbn_permission_question")
+                        return
                     st.mode = "normal"
                     await self._emit_buffered(sid, self._emit_callback, "isbn_zero_digits_escape")
                     return

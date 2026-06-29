@@ -32,7 +32,7 @@ _WAIT_PHRASE = re.compile(
 )
 
 _ISBN_CONTEXT_PAT = re.compile(
-    r"\b(isbn|i\s+s\s+b\s+n|book number|barcode number|the number is)\b",
+    r"\b(isbn|i\s+s\s+b\s+n|iouspl|ouspl|iuspl|ibsn|book number|barcode number|the number is)\b",
     re.IGNORECASE,
 )
 _NON_ISBN_DIGIT_PAT = re.compile(
@@ -43,8 +43,8 @@ _NON_ISBN_DIGIT_PAT = re.compile(
     re.IGNORECASE,
 )
 _ISBN_PERMISSION_PAT = re.compile(
-    r"\bcan i (?:please )?give (?:you )?(?:the )?"
-    r"(?:isbn(?:\s+number)?(?:\s+of(?:\s+the)?\s+book)?|title|magazine|newspaper)s?\b",
+    r"\b(?:can i|i will|i'll|let me|going to)\s+(?:please\s+)?(?:give|read|tell|provide)\s+(?:you\s+)?(?:the\s+)?"
+    r"(?:isbn|i\s*s\s*b\s*n|iouspl|ouspl|iuspl)(?:\s+number)?(?:\s+of(?:\s+the)?\s+book)?\b",
     re.IGNORECASE,
 )
 

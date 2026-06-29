@@ -6,6 +6,7 @@ import asyncio
 import pytest
 
 from app.agent_runtime.order_flow_state import (
+    _should_skip_order_lookup,
     extract_order_number,
     order_intent_detected,
     try_order_collection_short_circuit,
@@ -58,6 +59,25 @@ def test_order_39667_refunded_brief_reply():
     assert "Home News Tribune" not in reply
 
 
+def test_looking_for_order_intent():
+    assert order_intent_detected("I'm looking for order.")
+    result = classify("I'm looking for order.", _Session())
+    assert result.is_order_lookup
+    assert not result.is_product_search
+
+
+def test_nine_digit_isbn_chunk_skips_order_lookup():
+    session = _Session()
+    session.pending_isbn_buffer = "9780"
+    assert _should_skip_order_lookup("552579901.", session, turn_mode="order")
+
+
+def test_isbn_permission_phrase():
+    from app.voice.turn_taking import is_isbn_permission_question
+
+    assert is_isbn_permission_question("I will give you the ISBN number.")
+
+
 def test_order_info_intent_not_product_search():
     text = "I need information about the order."
     assert order_intent_detected(text)
@@ -65,6 +85,16 @@ def test_order_info_intent_not_product_search():
     assert result.is_order_lookup
     assert result.reason == "order_lookup"
     assert not result.is_product_search
+
+
+def test_hello_plus_order_info_collection():
+    session = _Session()
+    hint = try_order_collection_short_circuit(
+        session,
+        "Hello. I need information about order.",
+    )
+    assert hint is not None
+    assert "order number" in hint.force_reply.lower()
 
 
 def test_order_collection_short_circuit():

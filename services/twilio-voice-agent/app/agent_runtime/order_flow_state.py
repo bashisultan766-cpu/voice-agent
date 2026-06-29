@@ -31,11 +31,13 @@ _ORDER_STATUS_INTENT = re.compile(
 )
 _ORDER_INFO_INTENT = re.compile(
     r"\b("
-    r"information about (?:the\s+)?order|about (?:my|the) order|"
+    r"information about (?:an? |the )?order|about (?:my|the|an?) order|"
     r"order information|check (?:this|my|the) order|"
-    r"need (?:info|information|details?) about (?:the\s+)?order|"
+    r"need (?:info|information|details?) about (?:an? |the )?order|"
     r"tell me about (?:my|the) order|look up (?:my|the) order|"
-    r"status of (?:my|the) order|can you check (?:this|my|the) order"
+    r"looking for (?:my |the |an )?order|"
+    r"status of (?:my|the) order|can you check (?:this|my|the) order|"
+    r"i need (?:info|information|details?) about (?:an? |the )?order"
     r")\b",
     re.IGNORECASE,
 )
@@ -88,6 +90,9 @@ def _should_skip_order_lookup(
     """Do not treat ISBN digit chunks as Shopify order numbers."""
     if (turn_mode or "").strip().lower() in ("isbn", "email"):
         return True
+    t = (text or "").strip()
+    digits = "".join(c for c in t if c.isdigit())
+
     if session is not None:
         if getattr(session, "pending_isbn_buffer", ""):
             return True
@@ -98,32 +103,42 @@ def _should_skip_order_lookup(
                 return True
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from .isbn_short_circuit import resolve_spoken_isbn
+
+            merged_isbn, buf = resolve_spoken_isbn(
+                text, session=session, turn_mode=turn_mode,
+            )
+            if merged_isbn:
+                return True
+            if buf and len(buf) >= 4:
+                return True
+        except Exception:  # noqa: BLE001
+            pass
         commerce = getattr(session, "commerce_flow_status", "idle") or "idle"
-        t = (text or "").strip()
-        digits = "".join(c for c in t if c.isdigit())
         digit_only_order = (
-            4 <= len(digits) <= 10
+            4 <= len(digits) <= 8
             and _DIGITS_ONLY.match(t)
             and not digits.startswith(("978", "979"))
         )
         if commerce not in ("idle", "") and not order_intent_detected(text) and not digit_only_order:
             return True
-    t = (text or "").strip()
-    if re.search(r"\b(isbn|book)\b", t, re.I):
-        return True
-    digits = "".join(c for c in t if c.isdigit())
-    # Short digit-only utterances are order numbers, not ISBNs.
-    if (
-        4 <= len(digits) <= 10
-        and _DIGITS_ONLY.match(t)
-        and not digits.startswith(("978", "979"))
+
+    if re.search(r"\b(isbn|book)\b", t, re.I) and not re.search(
+        r"\border\s*(?:number|no\.?|#)\b", t, re.I,
     ):
-        return False
+        return True
     if len(digits) >= 9:
         return True
     if digits.startswith(("978", "979")) and len(digits) >= 4:
         return True
-    return False
+    if (
+        4 <= len(digits) <= 8
+        and _DIGITS_ONLY.match(t)
+        and not digits.startswith(("978", "979"))
+    ):
+        return False
+    return len(digits) >= 9
 
 
 def normalize_order_number_from_speech(text: str) -> Optional[str]:
