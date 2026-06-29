@@ -123,6 +123,7 @@ class _Session:
     pending_isbn_buffer = ""
     commerce_flow_status = "idle"
     order_flow_status = "idle"
+    awaiting_anything_else = False
 
 
 def test_order_39667_refunded_brief_reply():
@@ -136,6 +137,12 @@ def test_order_39667_refunded_brief_reply():
     assert "American Express" in reply
     assert "address" not in reply.lower()
     assert "paid" not in reply.lower()
+    email_pos = reply.lower().find("georgekraemer53")
+    card_pos = reply.lower().find("american express")
+    product_pos = reply.lower().find("home news tribune")
+    assert email_pos >= 0 and card_pos >= 0
+    assert email_pos < product_pos
+    assert card_pos < product_pos
 
 
 def test_order_39667_removed_line_items_from_shopify_node():
@@ -360,7 +367,29 @@ def test_order_brain_gate_blocks_dispute_reformat():
 
 
 def test_order_flow_version():
-    assert ORDER_FLOW_VERSION == "v4.46"
+    assert ORDER_FLOW_VERSION == "v4.47"
+
+
+def test_repeated_okay_after_order_gets_wrap_up_prompt():
+    from app.agent_runtime.yes_engagement import is_bare_yes, order_post_disclosure_ack
+
+    assert is_bare_yes("Okay. Okay. Okay.")
+    session = _Session()
+    session.last_order_number = "39667"
+    session.order_last_voice_reply = "I found your order. This order has been refunded."
+    reply = order_post_disclosure_ack(session)
+    assert reply is not None
+    assert "anything else" in reply.lower()
+    assert session.awaiting_anything_else is True
+
+
+def test_try_order_repeat_reply_on_okay():
+    session = _Session()
+    session.last_order_number = "39667"
+    session.order_last_voice_reply = "I found your order 39667."
+    reply = try_order_repeat_reply(session, "Okay. Okay. Okay.")
+    assert reply is not None
+    assert "anything else" in reply.lower()
 
 
 def test_buy_book_does_not_replay_order_summary():

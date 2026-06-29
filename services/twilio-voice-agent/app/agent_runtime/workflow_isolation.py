@@ -206,6 +206,10 @@ def order_handling_allowed(
         return True
     if _ORDER_PASSIVE_PAT.search(text or ""):
         return True
+    from .yes_engagement import is_bare_yes
+
+    if is_bare_yes(text or ""):
+        return True
     return False
 
 

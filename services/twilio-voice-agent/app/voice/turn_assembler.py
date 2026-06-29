@@ -33,10 +33,10 @@ _KEEPALIVE_FRAGMENT = re.compile(
     r"not (?:responding|talking|proceeding))\b",
     re.IGNORECASE,
 )
-_BARE_AFFIRM = re.compile(
-    r"^\s*(yes|yeah|yep|yup|sure|ok|okay|correct|right|go ahead)\s*[.!]*\s*$",
-    re.IGNORECASE,
-)
+def _is_bare_affirm(text: str) -> bool:
+    from ..agent_runtime.yes_engagement import is_bare_yes
+
+    return is_bare_yes(text)
 _ISBN_CONTINUATION = re.compile(
     r"\b(isbn|digit|number|here it is|i will give you|wait)\b",
     re.IGNORECASE,
@@ -244,7 +244,7 @@ class TurnAssembler:
                 return True, "isbn_permission_question"
             if order_intent_detected(stripped) or should_collect_isbn(stripped):
                 return False, "incomplete"
-            if _BARE_AFFIRM.match(stripped):
+            if _is_bare_affirm(stripped):
                 return True, "complete_affirmative"
             if is_smalltalk(stripped):
                 return True, "immediate_greeting"
@@ -383,7 +383,7 @@ class TurnAssembler:
                 )
                 return await self._emit_buffered(sid, on_emit, "email_escape_keepalive")
 
-            if st.mode == "email" and _BARE_AFFIRM.match(frag):
+            if st.mode == "email" and _is_bare_affirm(frag):
                 st.buffer = frag
                 st.mode = "normal"
                 logger.info(
@@ -521,7 +521,7 @@ class TurnAssembler:
             if not st.buffer:
                 return
 
-            if _BARE_AFFIRM.match(st.buffer.strip()):
+            if _is_bare_affirm(st.buffer.strip()):
                 await self._emit_buffered(sid, self._emit_callback, "debounce_affirmative")
                 return
 

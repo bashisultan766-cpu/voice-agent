@@ -384,9 +384,18 @@ class VoiceCommerceRuntime:
                             )
                             order_hint = None
                         if order_hint and order_hint.force_reply:
+                            from ..dialogue.call_closure import (
+                                mark_awaiting_anything_else,
+                                offer_anything_else_suffix,
+                            )
+
                             spoken = self._brain.finalize_response(
                                 session, order_hint.force_reply, [],
                             )
+                            mark_awaiting_anything_else(session)
+                            suffix = offer_anything_else_suffix()
+                            if suffix.strip() not in spoken:
+                                spoken = f"{spoken.rstrip('.')}.{suffix}"
                             await self._speak(session, normalized, spoken, send)
                             logger.info("order_enrichment_short_circuit sid=%s", sid)
                             return _result(spoken)
@@ -586,9 +595,11 @@ class VoiceCommerceRuntime:
                 return _result(spoken)
 
         from ..agent_runtime.yes_engagement import is_bare_yes, yes_engagement_reply
+        from ..agent_runtime.workflow_isolation import order_context_on_call
 
-        if is_bare_yes(normalized) and commerce_handling_allowed(
-            session, turn_mode, normalized,
+        if is_bare_yes(normalized) and (
+            commerce_handling_allowed(session, turn_mode, normalized)
+            or order_context_on_call(session)
         ):
             engage = yes_engagement_reply(session) or ""
             spoken = self._brain.finalize_response(session, engage, [])

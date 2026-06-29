@@ -9,14 +9,25 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
+_BARE_ACK_WORD = (
+    r"yes|yeah|yep|yup|sure|ok|okay|right|correct|absolutely|go ahead|"
+    r"thanks|thank you|got it|alright"
+)
 _BARE_YES_PAT = re.compile(
-    r"^\s*(yes|yeah|yep|yup|sure|ok|okay|right|correct|absolutely|go ahead)\s*[.!]*\s*$",
+    rf"^\s*({_BARE_ACK_WORD})\s*[.!]*\s*$",
+    re.I,
+)
+_REPEATED_ACK_PAT = re.compile(
+    rf"^\s*((?:{_BARE_ACK_WORD})[\s,.!?]*){{1,8}}\s*$",
     re.I,
 )
 
 
 def is_bare_yes(text: str) -> bool:
-    return bool(_BARE_YES_PAT.match((text or "").strip()))
+    t = (text or "").strip()
+    if not t:
+        return False
+    return bool(_BARE_YES_PAT.match(t) or _REPEATED_ACK_PAT.match(t))
 
 
 def yes_engagement_fallback(session: "SessionState") -> str:
@@ -63,11 +74,36 @@ def _complete_pending_add(session: "SessionState") -> Optional[str]:
     return f"Got it — added {copy_phrase} of {short}. {another_book_after_add_prompt()}"
 
 
+def order_post_disclosure_ack(session: "SessionState") -> Optional[str]:
+    """After order details were spoken, acknowledge bare okay/thanks and offer wrap-up."""
+    from ..dialogue.call_closure import mark_awaiting_anything_else, offer_anything_else_suffix
+    from .workflow_isolation import order_context_on_call
+
+    if not order_context_on_call(session):
+        return None
+    if not (getattr(session, "order_last_voice_reply", "") or "").strip():
+        return None
+    from .commerce_flow_state import commerce_flow_active
+
+    if commerce_flow_active(session):
+        return None
+    from .workflow_isolation import payment_workflow_active
+
+    if payment_workflow_active(session):
+        return None
+    mark_awaiting_anything_else(session)
+    return f"Got it.{offer_anything_else_suffix()}"
+
+
 def yes_engagement_reply(session: "SessionState") -> Optional[str]:
     """
     Return a deterministic continue-the-conversation reply for bare yes.
     Falls back to ``yes_engagement_fallback`` — never returns None for bare yes.
     """
+    order_ack = order_post_disclosure_ack(session)
+    if order_ack:
+        return order_ack
+
     from .commerce_flow_state import (
         STATUS_AWAITING_ANOTHER_BOOK,
         STATUS_AWAITING_BOOK_CONFIRM,

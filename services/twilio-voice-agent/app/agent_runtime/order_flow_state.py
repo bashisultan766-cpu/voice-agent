@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.46"
+ORDER_FLOW_VERSION = "v4.47"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_ORDER_NUMBER = "awaiting_order_number"
@@ -386,6 +386,10 @@ def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optiona
         return last
     if _ORDER_CONFUSION_PAT.search(text) and last:
         return last
+    from .yes_engagement import is_bare_yes, order_post_disclosure_ack
+
+    if is_bare_yes(text) and last:
+        return order_post_disclosure_ack(session)
     return None
 
 

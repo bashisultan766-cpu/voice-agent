@@ -223,9 +223,26 @@ def _payment_card_fields(inner: dict[str, Any]) -> tuple[str, str]:
     card_brand = (
         payment.get("card_brand")
         or inner.get("payment_card_brand")
-        or "card"
+        or ""
     ).strip()
+    for refund in inner.get("refunds") or []:
+        if not card_last4:
+            card_last4 = (refund.get("card_last4") or "").strip()
+        if not card_brand:
+            card_brand = (refund.get("card_brand") or "").strip()
+    if not card_brand:
+        card_brand = "card"
     return card_last4, card_brand
+
+
+def _refund_email_phrase(inner: dict[str, Any]) -> str:
+    email = _order_email(inner)
+    if not email:
+        return ""
+    spoken = speak_email(email)
+    if _order_is_refunded({"found": True}, inner):
+        return f"The refund confirmation email was sent to {spoken}."
+    return f"The verified email on this order is {spoken}."
 
 
 def _payment_card_phrase(inner: dict[str, Any], *, refunded: bool = False) -> str:
@@ -336,8 +353,7 @@ def _tracking_phrase(inner: dict[str, Any]) -> str:
 
 
 def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
-    """Refunded orders — customer name, products, totals, reason, refund email, card."""
-    email = _order_email(inner)
+    """Refunded orders — refund email and card first so they are never cut off on long calls."""
     customer_name = _order_customer_name(inner)
     order_date = _speak_order_date(inner)
     refund_reason = _refund_reason_phrase(inner)
@@ -346,6 +362,12 @@ def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
     if customer_name:
         parts.append(f"This order is under {customer_name}.")
     parts.append("This order has been refunded.")
+    email_line = _refund_email_phrase(inner)
+    if email_line:
+        parts.append(email_line)
+    card_phrase = _payment_card_phrase(inner, refunded=True)
+    if card_phrase:
+        parts.append(card_phrase)
     if order_date:
         parts.append(f"It was originally placed on {order_date}.")
     product_line = _products_natural_phrase(inner)
@@ -356,13 +378,6 @@ def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
         parts.append(pricing_line)
     if refund_reason:
         parts.append(f"The refund reason on file is: {refund_reason}.")
-    if email:
-        parts.append(
-            f"The refund confirmation email was sent to {speak_email(email)}."
-        )
-    card_phrase = _payment_card_phrase(inner, refunded=True)
-    if card_phrase:
-        parts.append(card_phrase)
     return " ".join(parts)
 
 
