@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-WORKFLOW_ISOLATION_VERSION = "v1.1"
+WORKFLOW_ISOLATION_VERSION = "v1.2"
 
 WORKFLOW_IDLE = "idle"
 WORKFLOW_SUPPORT = "support_handoff"
@@ -35,8 +35,16 @@ def support_handoff_active(session: "SessionState") -> bool:
 
 
 def payment_workflow_active(session: "SessionState", turn_mode: str = "") -> bool:
-    """Payment / multi-email capture — never overlaps support handoff."""
+    """Payment / multi-email capture — never overlaps support handoff or cart building."""
     if support_handoff_active(session):
+        return False
+    from .commerce_flow_state import (
+        STATUS_AWAITING_EMAIL_COLLECTION,
+        commerce_cart_building_active,
+        _status as commerce_status,
+    )
+
+    if commerce_cart_building_active(session):
         return False
     mode = (turn_mode or "").strip().lower()
     if mode == "email":
@@ -53,9 +61,7 @@ def payment_workflow_active(session: "SessionState", turn_mode: str = "") -> boo
         "payment_sent",
     ):
         return True
-    from ..agent_runtime.commerce_flow_state import STATUS_AWAITING_EMAIL_COLLECTION
-
-    if (getattr(session, "commerce_flow_status", "idle") or "idle") == STATUS_AWAITING_EMAIL_COLLECTION:
+    if commerce_status(session) == STATUS_AWAITING_EMAIL_COLLECTION:
         return True
     return False
 

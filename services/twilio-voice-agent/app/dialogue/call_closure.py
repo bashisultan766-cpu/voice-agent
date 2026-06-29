@@ -78,6 +78,14 @@ def process_call_closure_turn(
     if not text:
         return None
 
+    if caller_wants_to_end(text):
+        from ..agent_runtime.not_found_escalation_flow import clear_pending_escalation
+
+        if getattr(session, "awaiting_not_found_escalation_email", False):
+            clear_pending_escalation(session)
+            session.awaiting_anything_else = False
+            return CallClosureResult(reply=_GOODBYE_REPLY, end_call=True)
+
     if getattr(session, "awaiting_anything_else", False):
         if caller_wants_to_end(text):
             session.awaiting_anything_else = False

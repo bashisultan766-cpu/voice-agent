@@ -31,7 +31,7 @@ def _session(**kwargs) -> SessionState:
 class TestV443:
     def test_versions(self):
         assert ISBN_SHORT_CIRCUIT_VERSION == "v4.43"
-        assert COMMERCE_FLOW_VERSION == "v4.44"
+        assert COMMERCE_FLOW_VERSION == "v4.45"
 
     def test_underscore_stripped_from_isbn(self):
         text = "The ISBN number is 9 7 8 underscore 9083434964."

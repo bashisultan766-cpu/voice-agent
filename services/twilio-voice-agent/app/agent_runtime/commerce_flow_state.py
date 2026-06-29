@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.44"
+COMMERCE_FLOW_VERSION = "v4.45"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -139,6 +139,33 @@ class CommerceTurnHint:
 
 def _status(session: "SessionState") -> str:
     return getattr(session, "commerce_flow_status", STATUS_IDLE) or STATUS_IDLE
+
+
+_CART_BUILDING_STATUSES = frozenset({
+    STATUS_AWAITING_BOOK_CONFIRM,
+    STATUS_AWAITING_QUANTITY,
+    STATUS_AWAITING_ADD_CONFIRM,
+    STATUS_AWAITING_ANOTHER_BOOK,
+})
+
+
+def commerce_cart_building_active(session: "SessionState") -> bool:
+    """True while the caller is still adding books — payment must not take over."""
+    status = _status(session)
+    if status in _CART_BUILDING_STATUSES:
+        return True
+    if status == STATUS_IDLE and _candidate(session).get("variant_id"):
+        return True
+    return False
+
+
+def reset_payment_preflight(session: "SessionState") -> None:
+    """Caller is still shopping — do not collect payment email yet."""
+    if _status(session) == STATUS_AWAITING_EMAIL_COLLECTION:
+        return
+    session.payment_flow_status = "idle"
+    session.awaiting_payment_email = False
+    session.awaiting_payment_email_confirmation = False
 
 
 def _candidate(session: "SessionState") -> dict[str, Any]:
@@ -299,6 +326,52 @@ def try_cart_inquiry_reply(session: "SessionState", caller_text: str) -> Optiona
     return "In your cart: " + ". ".join(lines) + "."
 
 
+def _try_add_nth_book(session: "SessionState", text: str) -> Optional[CommerceTurnHint]:
+    """Add copies of a cart line by ordinal — e.g. '10 copies of the third book'."""
+    m = _NTH_BOOK_PAT.search(text or "")
+    if not m:
+        return None
+    from ..cart.session import get_ledger
+
+    confirmed = get_ledger(session).confirmed_items
+    idx = _ordinal_index(m.group("ord"))
+    if not idx or idx > len(confirmed):
+        return CommerceTurnHint(
+            force_reply=(
+                "I don't have that many books in your cart yet. "
+                "Tell me the ISBN or title you want to add."
+            ),
+        )
+    target = confirmed[idx - 1]
+    qty = _parse_quantity(text) or 1
+    candidate = {
+        "title": target.title,
+        "isbn": target.isbn or "",
+        "variant_id": target.variant_id or "",
+        "price": target.price or "",
+        "available": bool(target.available),
+        "product_id": target.product_id or "",
+    }
+    session.commerce_pending_candidate = candidate
+    session.commerce_pending_quantity = qty
+    if _QUANTITY_ADD_INTENT.search(text) or (
+        _YES_IN_UTTERANCE.search(text) and qty > 0
+    ):
+        title = add_staged_book_to_cart(session, quantity=qty)
+        if title:
+            copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+            short = spoken_book_title(title)
+            return CommerceTurnHint(
+                force_reply=(
+                    f"Got it — added {copy_phrase} of {short}. "
+                    f"{another_book_after_add_prompt()}"
+                ),
+                book_added=True,
+            )
+    session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
+    return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty))
+
+
 def _try_add_previous_book(session: "SessionState", text: str) -> Optional[CommerceTurnHint]:
     """Add another copy of the book mentioned just before the current one."""
     m = _PREVIOUS_BOOK_QTY_PAT.search(text or "")
@@ -357,6 +430,20 @@ def _try_add_this_that_book(session: "SessionState", text: str) -> Optional[Comm
         )
     session.commerce_pending_candidate = candidate
     session.commerce_pending_quantity = qty
+    if _QUANTITY_ADD_INTENT.search(text) or (
+        _YES_IN_UTTERANCE.search(text) and qty > 0
+    ):
+        title = add_staged_book_to_cart(session, quantity=qty)
+        if title:
+            copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+            short = spoken_book_title(title)
+            return CommerceTurnHint(
+                force_reply=(
+                    f"Got it — added {copy_phrase} of {short}. "
+                    f"{another_book_after_add_prompt()}"
+                ),
+                book_added=True,
+            )
     session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
     return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty))
 
@@ -448,6 +535,7 @@ def advance_commerce_state_silent(session: "SessionState", caller_text: str) -> 
             session.commerce_flow_status = STATUS_IDLE
             session.commerce_pending_candidate = {}
             session.awaiting_product_confirmation = False
+            reset_payment_preflight(session)
         return
 
     candidate = _resolve_pending_candidate(session)
@@ -566,10 +654,6 @@ def add_staged_book_to_cart(session: "SessionState", quantity: int = 1) -> Optio
     session.commerce_flow_status = STATUS_AWAITING_ANOTHER_BOOK
     session.pending_isbn_buffer = ""
     session.payment_cart_confirmed = get_ledger(session).confirmed_count() > 0
-    if session.payment_cart_confirmed:
-        pfs = getattr(session, "payment_flow_status", "idle") or "idle"
-        if pfs in ("idle", ""):
-            session.payment_flow_status = "awaiting_email"
     session.last_confirmed_product = {"title": title, **candidate}
     logger.info(
         "commerce_book_added sid=%s title=%r cart_count=%d",
@@ -681,6 +765,9 @@ def process_commerce_turn(
         STATUS_AWAITING_ADD_CONFIRM,
     ) and bool(candidate.get("variant_id"))
     if not active_quantity_step:
+        nth_book = _try_add_nth_book(session, text)
+        if nth_book is not None:
+            return nth_book
         prev_book = _try_add_previous_book(session, text)
         if prev_book is not None:
             return prev_book
@@ -814,6 +901,7 @@ def process_commerce_turn(
             session.payment_flow_status = "awaiting_email"
             return CommerceTurnHint(force_reply=cart_summary_and_email_prompt(session))
         if _is_affirmative(text) or _ANOTHER_PAT.search(text) or _ANOTHER_BOOK_INTENT_PAT.search(text):
+            reset_payment_preflight(session)
             session.commerce_flow_status = STATUS_IDLE
             session.pending_isbn_buffer = ""
             return CommerceTurnHint(force_reply=next_book_prompt())

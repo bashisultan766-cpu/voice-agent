@@ -149,14 +149,25 @@ class TestPaymentSupportSplit:
 
 
 class TestCommerceSilentAdvance:
-    def test_blocked_during_payment(self):
+    def test_blocked_during_email_collection(self):
+        session = _session(
+            commerce_flow_status=STATUS_AWAITING_EMAIL_COLLECTION,
+            awaiting_payment_email=True,
+            payment_flow_status="awaiting_email",
+        )
+        assert not commerce_silent_advance_allowed(session, "email", "yes")
+
+    def test_quantity_step_allowed_when_stale_payment_flags(self):
+        """Cart building must win over premature payment_flow_status from old builds."""
         session = _session(
             commerce_flow_status=STATUS_AWAITING_QUANTITY,
             commerce_pending_candidate={"title": "Book", "variant_id": "v1"},
             payment_flow_status="awaiting_email",
             awaiting_payment_email=True,
         )
-        assert not commerce_silent_advance_allowed(session, "email", "yes")
+        assert commerce_silent_advance_allowed(session, "", "I need 2 copies")
+        advance_commerce_state_silent(session, "I need 2 copies")
+        assert session.commerce_allow_add
 
     def test_allowed_during_commerce(self):
         session = _session(
