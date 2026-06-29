@@ -80,20 +80,11 @@ def compose_order_voice_reply(
     *,
     facility: dict[str, Any] | None = None,
 ) -> str:
-    """Voice reply from structured order tool JSON — full details when found."""
+    """Voice reply from structured order tool JSON — brief natural summary."""
     if order.get("found"):
-        summary = (order.get("customer_safe_summary") or "").strip()
-        if not summary:
-            inner = order.get("order") or {}
-            if inner:
-                from ..tools.shopify_tools import _format_order_customer_message
+        from ..voice.order_voice_reply import compose_brief_order_voice_reply
 
-                summary = _format_order_customer_message(
-                    inner,
-                    order_email=(inner.get("customer_email") or inner.get("email") or ""),
-                    verified=bool(order.get("verified", True)),
-                )
-        base = summary or _minimal_order_fallback(order)
+        base = compose_brief_order_voice_reply(order) or _minimal_order_fallback(order)
     else:
         base = _order_lookup_failure_message(order)
 

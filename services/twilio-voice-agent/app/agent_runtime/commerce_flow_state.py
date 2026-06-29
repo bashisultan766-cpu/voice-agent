@@ -73,6 +73,20 @@ _DONE_SHOPPING_PAT = re.compile(
     r"payment link|done shopping|ready to pay|i.?m done)\b",
     re.IGNORECASE,
 )
+_CART_INQUIRY_PAT = re.compile(
+    r"\b(how many (?:books?|items?|cop(?:y|ies))(?:\s+(?:are\s+)?in my cart)?|"
+    r"what(?:'s| is) in my cart|books? in (?:my )?cart|cart count|"
+    r"how (?:book|books) are added|give me the name|tell me (?:the )?name)\b",
+    re.IGNORECASE,
+)
+_NTH_BOOK_PAT = re.compile(
+    r"\b(?P<ord>first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\s+book\b",
+    re.IGNORECASE,
+)
+_PREVIOUS_BOOK_QTY_PAT = re.compile(
+    r"\b(?:and\s+)?(?P<qty>one|a|\d+)\s+(?:copy|copies)\s+of\s+(?:the\s+)?previous\s+book\b",
+    re.IGNORECASE,
+)
 _ADD_INTENT_PAT = re.compile(
     r"\b(add it|add this|i need this|i want this|take it|one copy|1 copy|"
     r"add\s+\d|add\s+one)\b",
@@ -205,6 +219,102 @@ def _parse_price_amount(text: str) -> float | None:
         return float(m.group(1))
     except ValueError:
         return None
+
+
+def _ordinal_index(word: str) -> int | None:
+    mapping = {
+        "first": 1,
+        "1st": 1,
+        "second": 2,
+        "2nd": 2,
+        "third": 3,
+        "3rd": 3,
+        "fourth": 4,
+        "4th": 4,
+        "fifth": 5,
+        "5th": 5,
+    }
+    return mapping.get((word or "").lower().strip("#"))
+
+
+def _spoken_cart_line(item, *, index: int | None = None) -> str:
+    from ..cart.session import CartItem  # noqa: F401
+
+    qty = max(1, int(getattr(item, "quantity", 1) or 1))
+    title = spoken_book_title(getattr(item, "title", "") or "that book")
+    copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+    prefix = ""
+    if index is not None:
+        ordinals = ("first", "second", "third", "fourth", "fifth")
+        if 1 <= index <= len(ordinals):
+            prefix = f"The {ordinals[index - 1]} book is {title} — {copy_phrase}."
+            return prefix
+    return f"{copy_phrase} of {title}"
+
+
+def try_cart_inquiry_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Deterministic cart summary for 'how many books' / 'third book' questions."""
+    from ..cart.session import get_ledger
+
+    text = (caller_text or "").strip()
+    if not text:
+        return None
+    if not _cart_has_confirmed_items(session):
+        if _CART_INQUIRY_PAT.search(text) or _NTH_BOOK_PAT.search(text):
+            return "Your cart is empty right now."
+        return None
+    if not (_CART_INQUIRY_PAT.search(text) or _NTH_BOOK_PAT.search(text)):
+        return None
+
+    ledger = get_ledger(session)
+    confirmed = ledger.confirmed_items
+    if not confirmed:
+        return "Your cart is empty right now."
+
+    nth = _NTH_BOOK_PAT.search(text)
+    if nth:
+        idx = _ordinal_index(nth.group("ord"))
+        if idx and idx <= len(confirmed):
+            return _spoken_cart_line(confirmed[idx - 1], index=idx)
+
+    total_titles = len(confirmed)
+    total_copies = sum(max(1, int(i.quantity or 1)) for i in confirmed)
+    title_word = "title" if total_titles == 1 else "titles"
+    copy_word = "copy" if total_copies == 1 else "copies"
+    lines = [_spoken_cart_line(item) for item in confirmed]
+    if re.search(r"\bhow many\b", text, re.I) and not _NTH_BOOK_PAT.search(text):
+        return (
+            f"You have {total_titles} {title_word} in your cart, "
+            f"{total_copies} {copy_word} total."
+        )
+    return "In your cart: " + ". ".join(lines) + "."
+
+
+def _try_add_previous_book(session: "SessionState", text: str) -> Optional[CommerceTurnHint]:
+    """Add another copy of the book mentioned just before the current one."""
+    m = _PREVIOUS_BOOK_QTY_PAT.search(text or "")
+    if not m:
+        return None
+    from ..cart.session import get_ledger
+
+    confirmed = get_ledger(session).confirmed_items
+    if len(confirmed) < 1:
+        return CommerceTurnHint(
+            force_reply="Which book did you mean? Give me the ISBN or title again.",
+        )
+    target = confirmed[0] if len(confirmed) == 1 else confirmed[-2] if len(confirmed) >= 2 else confirmed[0]
+    qty = _parse_quantity(m.group("qty")) or 1
+    session.commerce_pending_candidate = {
+        "title": target.title,
+        "isbn": target.isbn or "",
+        "variant_id": target.variant_id or "",
+        "price": target.price or "",
+        "available": bool(target.available),
+        "product_id": target.product_id or "",
+    }
+    session.commerce_pending_quantity = qty
+    session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
+    return CommerceTurnHint(force_reply=add_confirm_prompt(session.commerce_pending_candidate, qty))
 
 
 def _price_matches(product_price: str, amount: float) -> bool:
@@ -481,7 +591,12 @@ def gate_add_to_cart(session: "SessionState") -> Optional[PaymentGateResult]:
     return PaymentGateResult(allowed=False, tool_json=json.dumps(payload), reason="book_not_confirmed")
 
 
-def process_commerce_turn(session: "SessionState", caller_text: str) -> CommerceTurnHint:
+def process_commerce_turn(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> CommerceTurnHint:
     """
     Deterministic commerce steps before OpenAI.
 
@@ -493,6 +608,10 @@ def process_commerce_turn(session: "SessionState", caller_text: str) -> Commerce
     text = (caller_text or "").strip()
     if not text:
         return CommerceTurnHint()
+
+    prev_book = _try_add_previous_book(session, text)
+    if prev_book is not None:
+        return prev_book
 
     status = _status(session)
     candidate = _resolve_pending_candidate(session)
@@ -611,6 +730,10 @@ def process_commerce_turn(session: "SessionState", caller_text: str) -> Commerce
             session.pending_isbn_buffer = ""
             return CommerceTurnHint(force_reply=next_book_prompt())
         if _HOLD_OR_WAIT_PAT.search(text) or _ISBN_READY_PAT.search(text):
+            from ..tools.isbn import extract_isbn_candidate
+
+            if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(text):
+                return CommerceTurnHint()
             return CommerceTurnHint(
                 force_reply="Sure — take your time. Give me the ISBN or title when you're ready.",
             )

@@ -264,14 +264,19 @@ async def try_order_enrichment_short_circuit(
     """
     from .order_parallel_enrichment import enrich_order_parallel
 
+    if _should_skip_order_lookup(caller_text, session, turn_mode=turn_mode):
+        return None
+    if (turn_mode or "").strip().lower() in ("isbn", "email"):
+        return None
+
     text = (caller_text or "").strip()
-    order_num = (
-        extract_order_number(text, session, turn_mode=turn_mode)
-        or getattr(session, "pending_order_number", "")
-        or getattr(session, "last_order_number", "")
-    )
-    if turn_mode == "order" and not order_num:
-        order_num = normalize_order_number_from_speech(text)
+    order_num = extract_order_number(text, session, turn_mode=turn_mode) or ""
+    if (turn_mode or "").lower() == "order" and not order_num:
+        order_num = normalize_order_number_from_speech(text) or ""
+    if not order_num and order_intent_detected(text):
+        pending = (getattr(session, "pending_order_number", "") or "").strip().lstrip("#")
+        last = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
+        order_num = pending or last
 
     if not order_num:
         return None

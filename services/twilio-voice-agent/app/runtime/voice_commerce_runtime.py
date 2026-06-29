@@ -327,16 +327,21 @@ class VoiceCommerceRuntime:
             return isbn_hunt
 
         from ..agent_runtime.order_flow_state import (
+            _should_skip_order_lookup,
             extract_order_number,
             order_intent_detected,
             try_order_enrichment_short_circuit,
         )
 
         is_order_turn = (
-            (turn_mode or "").lower() == "order"
-            or bool(extract_order_number(normalized, session, turn_mode=turn_mode))
-            or classification.is_order_lookup
-            or order_intent_detected(normalized)
+            not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode)
+            and (turn_mode or "").lower() not in ("isbn", "email")
+            and (
+                (turn_mode or "").lower() == "order"
+                or bool(extract_order_number(normalized, session, turn_mode=turn_mode))
+                or classification.is_order_lookup
+                or order_intent_detected(normalized)
+            )
         )
         if is_order_turn:
             try:
@@ -352,7 +357,18 @@ class VoiceCommerceRuntime:
                 logger.info("order_enrichment_short_circuit sid=%s", sid)
                 return _result(spoken)
 
-        commerce_hint = process_commerce_turn(session, normalized)
+        from ..agent_runtime.commerce_flow_state import try_cart_inquiry_reply
+
+        cart_reply = try_cart_inquiry_reply(session, normalized)
+        if cart_reply:
+            spoken = self._brain.finalize_response(session, cart_reply, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("cart_inquiry_short_circuit sid=%s", sid)
+            return _result(spoken)
+
+        commerce_hint = process_commerce_turn(
+            session, normalized, turn_mode=turn_mode,
+        )
         if commerce_hint.force_reply:
             spoken = enforce_commerce_response(
                 session,

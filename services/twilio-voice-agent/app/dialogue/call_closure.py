@@ -76,6 +76,10 @@ def process_call_closure_turn(
 
 
 def _active_blocking_flow(session: "SessionState") -> bool:
+    if getattr(session, "payment_link_sent", False):
+        return False
+    if getattr(session, "awaiting_anything_else", False):
+        return False
     if getattr(session, "awaiting_payment_email_confirmation", False):
         return True
     if getattr(session, "awaiting_payment_email", False):
