@@ -137,12 +137,8 @@ def test_order_39667_refunded_brief_reply():
     assert "American Express" in reply
     assert "address" not in reply.lower()
     assert "paid" not in reply.lower()
-    email_pos = reply.lower().find("georgekraemer53")
-    card_pos = reply.lower().find("american express")
-    product_pos = reply.lower().find("home news tribune")
-    assert email_pos >= 0 and card_pos >= 0
-    assert email_pos < product_pos
-    assert card_pos < product_pos
+    assert "free" in reply.lower() or "no shipping" in reply.lower()
+    assert "one product" in reply.lower() or "you ordered" in reply.lower()
 
 
 def test_order_39667_removed_line_items_from_shopify_node():
@@ -367,7 +363,7 @@ def test_order_brain_gate_blocks_dispute_reformat():
 
 
 def test_order_flow_version():
-    assert ORDER_FLOW_VERSION == "v4.48"
+    assert ORDER_FLOW_VERSION == "v4.49"
 
 
 def test_repeated_okay_after_order_gets_wrap_up_prompt():

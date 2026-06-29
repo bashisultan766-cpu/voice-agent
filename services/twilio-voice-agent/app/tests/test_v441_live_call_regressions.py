@@ -42,7 +42,7 @@ class TestVersions:
     def test_versions(self):
         assert ISBN_SHORT_CIRCUIT_VERSION == "v4.43"
         assert COMMERCE_FLOW_VERSION == "v4.44"
-        assert ORDER_FLOW_VERSION == "v4.48"
+        assert ORDER_FLOW_VERSION == "v4.49"
 
 
 class TestIsbnSkipGuards:

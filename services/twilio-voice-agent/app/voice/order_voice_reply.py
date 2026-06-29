@@ -384,37 +384,120 @@ def _tracking_phrase(inner: dict[str, Any]) -> str:
     return "For shipping, " + ", and ".join(parts) + "."
 
 
-def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
-    """Refunded orders — refund email and card first so they are never cut off on long calls."""
+def _complete_pricing_disclosure(inner: dict[str, Any], *, refunded: bool) -> str:
+    """Subtotal, shipping (always), and total — spoken on every automatic order lookup."""
+    pricing = inner.get("pricing") or {}
+    parts: list[str] = []
+
+    subtotal_raw = (
+        pricing.get("subtotal_before_shipping")
+        or pricing.get("subtotal")
+        or ""
+    )
+    if refunded and not _should_speak_money(subtotal_raw):
+        subtotal_raw = pricing.get("original_total") or ""
+    if subtotal_raw and _should_speak_money(subtotal_raw):
+        parts.append(f"the subtotal is {speak_money_field(subtotal_raw)}")
+
+    shipping_line = _shipping_fee_phrase(inner)
+    if shipping_line:
+        parts.append(shipping_line.rstrip("."))
+
+    if refunded:
+        original_raw = (pricing.get("original_total") or "").strip()
+        if original_raw and _should_speak_money(original_raw):
+            parts.append(
+                f"the original total with shipping was {speak_money_field(original_raw)}"
+            )
+        refund_line = _refund_amount_phrase(inner)
+        if refund_line:
+            parts.append(refund_line.rstrip("."))
+    else:
+        total_raw = (
+            pricing.get("total_with_shipping")
+            or pricing.get("total")
+            or ""
+        )
+        if total_raw and _should_speak_money(total_raw):
+            parts.append(f"the total with shipping is {speak_money_field(total_raw)}")
+
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return f"On this order, {parts[0]}."
+    return f"On this order, {', '.join(parts[:-1])}, and {parts[-1]}."
+
+
+def compose_full_order_voice_reply(inner: dict[str, Any]) -> str:
+    """
+    Complete automatic order disclosure when the customer gives an order number.
+    Speaks items, count, subtotal, shipping, total, refund/payment email, card, and reason.
+    """
+    refunded = _order_is_refunded({"found": True}, inner)
     customer_name = _order_customer_name(inner)
     order_date = _speak_order_date(inner)
-    refund_reason = _refund_reason_phrase(inner)
 
     parts = ["I found your order."]
     if customer_name:
         parts.append(f"This order is under {customer_name}.")
-    parts.append("This order has been refunded.")
-    email_line = _refund_email_phrase(inner)
-    if email_line:
-        parts.append(email_line)
-    card_phrase = _payment_card_phrase(inner, refunded=True)
-    if card_phrase:
-        parts.append(card_phrase)
+    if refunded:
+        parts.append("This order has been refunded.")
+    else:
+        status = _financial_status_phrase(inner)
+        if status:
+            parts.append(f"The order status is {status}.")
     if order_date:
-        parts.append(f"It was originally placed on {order_date}.")
-    product_line = _products_natural_phrase(inner)
-    if product_line:
-        parts.append(product_line)
-    pricing_line = _refunded_pricing_phrase(inner)
+        if refunded:
+            parts.append(f"It was originally placed on {order_date}.")
+        else:
+            parts.append(f"It was placed on {order_date}.")
+
+    count_line = _product_count_phrase(inner)
+    if count_line:
+        parts.append(count_line)
+    else:
+        product_line = _products_natural_phrase(inner)
+        if product_line:
+            parts.append(product_line)
+
+    pricing_line = _complete_pricing_disclosure(inner, refunded=refunded)
     if pricing_line:
         parts.append(pricing_line)
-    if refund_reason:
-        parts.append(f"The refund reason on file is: {refund_reason}.")
+
+    if refunded:
+        refund_reason = _refund_reason_phrase(inner)
+        if refund_reason:
+            parts.append(f"The refund reason on file is: {refund_reason}.")
+        email_line = _refund_email_phrase(inner)
+        if email_line:
+            parts.append(email_line)
+        card_phrase = _payment_card_phrase(inner, refunded=True)
+        if card_phrase:
+            parts.append(card_phrase)
+    else:
+        email = _order_email(inner)
+        if email:
+            parts.append(f"The verified email on this order is {speak_email(email)}.")
+        fulfill = _fulfillment_phrase(inner)
+        if fulfill:
+            parts.append(fulfill)
+        card_phrase = _payment_card_phrase(inner, refunded=False)
+        if card_phrase:
+            parts.append(card_phrase)
+        tracking = _tracking_phrase(inner)
+        if tracking:
+            parts.append(tracking)
+
     return " ".join(parts)
 
 
+def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
+    """Refunded orders — full automatic disclosure."""
+    return compose_full_order_voice_reply(inner)
+
+
 def compose_brief_order_voice_reply(order_payload: dict[str, Any]) -> str:
-    """Full automatic order disclosure — natural professional phone tone."""
+    """Full automatic order disclosure — customer only needs to give the order number."""
     if not order_payload.get("found"):
         return ""
 
@@ -422,39 +505,7 @@ def compose_brief_order_voice_reply(order_payload: dict[str, Any]) -> str:
     if not inner:
         return ""
 
-    if _order_is_refunded(order_payload, inner):
-        return compose_refunded_order_voice_reply(inner)
-
-    customer_name = _order_customer_name(inner)
-    email = _order_email(inner)
-    status = _financial_status_phrase(inner)
-    order_date = _speak_order_date(inner)
-
-    parts = ["I found your order."]
-    if customer_name:
-        parts.append(f"This order is under {customer_name}.")
-    if email:
-        parts.append(f"The verified email on this order is {speak_email(email)}.")
-    if status:
-        parts.append(f"The order status is {status}.")
-    fulfill = _fulfillment_phrase(inner)
-    if fulfill:
-        parts.append(fulfill)
-    if order_date:
-        parts.append(f"It was placed on {order_date}.")
-    product_line = _products_natural_phrase(inner)
-    if product_line:
-        parts.append(product_line)
-    pricing_line = _pricing_natural_phrase(inner)
-    if pricing_line:
-        parts.append(pricing_line)
-    tracking = _tracking_phrase(inner)
-    if tracking:
-        parts.append(tracking)
-    card_phrase = _payment_card_phrase(inner, refunded=False)
-    if card_phrase:
-        parts.append(card_phrase)
-    return " ".join(parts)
+    return compose_full_order_voice_reply(inner)
 
 
 def compose_card_last4_reply(inner: dict[str, Any]) -> str:
@@ -622,12 +673,12 @@ def compose_order_followup_reply(inner: dict[str, Any], caller_text: str) -> Opt
         return line or "I don't have pricing details on this order."
 
     if re.search(r"\b(?:repeat|what did you (?:say|find)|order details|summary)\b", text):
-        return compose_brief_order_voice_reply({"found": True, "order": inner})
+        return compose_full_order_voice_reply(inner)
 
     if re.search(
         r"\b(?:all about|information about|tell me about).*(?:this|the|my) order\b",
         text,
     ):
-        return compose_brief_order_voice_reply({"found": True, "order": inner})
+        return compose_full_order_voice_reply(inner)
 
     return None
