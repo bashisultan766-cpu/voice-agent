@@ -106,11 +106,22 @@ def product_payload_to_support_handoff(
     caller_text: str = "",
 ) -> CustomerQueryEscalationPayload:
     query_type = payload.requested_type if payload.requested_type != "unknown" else "product"
-    title = f"Product not found — {payload.requested_type}: {payload.requested_value[:80]}"
-    detail = (
-        f"Customer searched for {payload.requested_type} "
-        f"'{payload.requested_value}'. Shopify/catalog returned no match."
-    )
+    reason = (payload.reason or "product_not_found").strip()
+    if reason == "product_out_of_stock":
+        title = f"Out of stock — {payload.requested_type}: {payload.requested_value[:80]}"
+        detail = (
+            f"Customer wants {payload.requested_type} '{payload.requested_value}'. "
+            "It is not available to order in the Shopify storefront. "
+            "Please check warehouse/backend inventory or partner suppliers, "
+            "source the item, and email the customer when available."
+        )
+    else:
+        title = f"Product not found — {payload.requested_type}: {payload.requested_value[:80]}"
+        detail = (
+            f"Customer searched for {payload.requested_type} "
+            f"'{payload.requested_value}'. Catalog returned no match. "
+            "Please locate the item and contact the customer by email."
+        )
     if payload.quantity:
         detail += f" Requested quantity: {payload.quantity}."
     if payload.facility_name:
@@ -128,7 +139,11 @@ def product_payload_to_support_handoff(
         what_agent_tried="Shopify catalog search (search_products / ISBN lookup)",
         tool_api_result=_sanitize_api_context(payload.last_search_results),
         reason_for_handoff=payload.reason or "product_not_found",
-        recommended_next_action="Source the requested item manually and email the customer.",
+        recommended_next_action=(
+            "Source the requested item from warehouse or partners and email the customer."
+            if reason == "product_out_of_stock"
+            else "Source the requested item manually and email the customer."
+        ),
         conversation_summary=payload.conversation_summary,
         api_context={
             "last_search_results": _sanitize_api_context(payload.last_search_results),
@@ -249,16 +264,23 @@ async def send_support_handoff(
     if session:
         data.setdefault("session_id", getattr(session, "session_id", "") or "")
         data.setdefault("call_sid", getattr(session, "call_sid", "") or "")
-        resolved_name, resolved_email, resolved_phone = resolve_escalation_customer_fields(
-            session,
-            fallback_name=data.get("customer_name", "") or "",
-            fallback_email=data.get("customer_email", "") or "",
-        )
-        data.setdefault("customer_phone", resolved_phone)
-        if resolved_name:
-            data["customer_name"] = resolved_name
-        if resolved_email:
-            data["customer_email"] = resolved_email
+        captured_email = (data.get("customer_email") or "").strip().lower()
+        if captured_email and "@" in captured_email:
+            data["customer_email"] = captured_email
+            data["customer_phone"] = ""
+            if not (data.get("customer_name") or "").strip():
+                data["customer_name"] = "Customer"
+        else:
+            resolved_name, resolved_email, resolved_phone = resolve_escalation_customer_fields(
+                session,
+                fallback_name=data.get("customer_name", "") or "",
+                fallback_email=data.get("customer_email", "") or "",
+            )
+            if resolved_name:
+                data["customer_name"] = resolved_name
+            if resolved_email:
+                data["customer_email"] = resolved_email
+            data.setdefault("customer_phone", resolved_phone)
 
     model = CustomerQueryEscalationPayload.from_dict(data)
 

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.46"
+COMMERCE_FLOW_VERSION = "v4.47"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -535,12 +535,10 @@ def advance_commerce_state_silent(session: "SessionState", caller_text: str) -> 
     status = _status(session)
 
     if status == STATUS_AWAITING_ANOTHER_BOOK:
+        if _HOLD_OR_WAIT_PAT.search(text) or _ISBN_READY_PAT.search(text):
+            return
         if _ANOTHER_PAT.search(text) or _NO_BUT_ANOTHER_PAT.search(text):
-            session.commerce_flow_status = STATUS_IDLE
-            session.commerce_pending_candidate = {}
-            session.awaiting_product_confirmation = False
-            reset_payment_preflight(session)
-        return
+            return
 
     candidate = _resolve_pending_candidate(session)
     if not candidate:
@@ -756,15 +754,25 @@ def process_commerce_turn(
 
     from ..tools.isbn import extract_isbn_candidate
 
-    if extract_isbn_candidate(text) or re.search(
-        r"\b(isbn|iouspl|ouspl|iuspl)\b", text, re.I,
-    ):
-        return CommerceTurnHint()
+    status = _status(session)
+    mentions_isbn = bool(
+        extract_isbn_candidate(text)
+        or re.search(r"\b(isbn|iouspl|ouspl|iuspl)\b", text, re.I)
+    )
+    if mentions_isbn:
+        if status == STATUS_AWAITING_ANOTHER_BOOK and not extract_isbn_candidate(text):
+            if _ISBN_READY_PAT.search(text) or _HOLD_OR_WAIT_PAT.search(text):
+                return CommerceTurnHint(
+                    force_reply="Sure — take your time. Give me the ISBN when you're ready.",
+                )
+            if _ANOTHER_BOOK_INTENT_PAT.search(text):
+                return CommerceTurnHint(force_reply=next_book_prompt())
+        else:
+            return CommerceTurnHint()
 
     if commerce_blocks_open_commerce(session):
         return CommerceTurnHint()
 
-    status = _status(session)
     candidate = _resolve_pending_candidate(session)
     active_quantity_step = status in (
         STATUS_AWAITING_QUANTITY,

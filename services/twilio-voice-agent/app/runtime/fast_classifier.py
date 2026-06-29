@@ -344,6 +344,11 @@ def classify(
         )
 
     if _yes_no_active_workflow(session, text):
+        if getattr(session, "awaiting_not_found_escalation_email", False):
+            return ClassificationResult(
+                action="brain",
+                reason="support_handoff_yes_no",
+            )
         return ClassificationResult(
             action="brain",
             reason="active_workflow_yes_no",
@@ -352,6 +357,19 @@ def classify(
                 or getattr(session, "payment_flow_status", "") not in ("idle", "", None)
             ),
         )
+
+    from ..agent_runtime.yes_engagement import is_bare_yes, yes_engagement_reply
+
+    if is_bare_yes(text) and session is not None:
+        engage = yes_engagement_reply(session)
+        if engage:
+            return ClassificationResult(
+                action="instant",
+                instant_reply=engage,
+                reason="yes_engagement",
+                skip_llm=True,
+                skip_tools=True,
+            )
 
     if _needs_intent_clarification(text) and not getattr(
         session, "awaiting_not_found_escalation_email", False,
