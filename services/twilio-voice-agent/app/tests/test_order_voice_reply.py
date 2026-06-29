@@ -54,6 +54,21 @@ def test_refunded_order_brief_reply():
     assert "Visa" in reply
 
 
+def test_refunded_order_via_refunds_array_only():
+    payload = {
+        "found": True,
+        "order": {
+            "financial_status": "PAID",
+            "customer_email": "georgekraemer53@gmail.com",
+            "payment": {"card_brand": "American Express", "card_last4": "4004"},
+            "refunds": [{"amount": "67.83 USD"}],
+            "pricing": {"total": "0.00 USD"},
+        },
+    }
+    reply = compose_brief_order_voice_reply(payload)
+    assert "refunded" in reply.lower()
+
+
 def test_order_enrichment_skips_isbn_turn_mode():
     from app.agent_runtime.order_flow_state import _should_skip_order_lookup
 

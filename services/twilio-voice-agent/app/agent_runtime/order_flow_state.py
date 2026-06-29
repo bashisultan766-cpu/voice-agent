@@ -29,6 +29,30 @@ _ORDER_STATUS_INTENT = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_ORDER_INFO_INTENT = re.compile(
+    r"\b("
+    r"information about (?:the\s+)?order|about (?:my|the) order|"
+    r"order information|check (?:this|my|the) order|"
+    r"need (?:info|information|details?) about (?:the\s+)?order|"
+    r"tell me about (?:my|the) order|look up (?:my|the) order|"
+    r"status of (?:my|the) order|can you check (?:this|my|the) order"
+    r")\b",
+    re.IGNORECASE,
+)
+_REPEAT_ORDER_NUMBER_PAT = re.compile(
+    r"\b("
+    r"repeat (?:the )?order number|what (?:was|is) the order number|"
+    r"say the order number again|order number again"
+    r")\b",
+    re.I,
+)
+_REPEAT_ORDER_SUMMARY_PAT = re.compile(
+    r"\b("
+    r"repeat (?:what you (?:said|have|found)|that)|what do you have|"
+    r"what did you find|can you repeat (?:what|that)|tell me again"
+    r")\b",
+    re.I,
+)
 _FACILITY_ISSUE_INTENT = re.compile(
     r"\b(returned|rejected|not delivered|didn.?t receive|facility rejected|sent back|"
     r"books? (?:were|was) not (?:delivered|accepted))\b",
@@ -152,7 +176,55 @@ def extract_email_from_turn(text: str) -> Optional[str]:
 
 
 def order_intent_detected(text: str) -> bool:
-    return bool(_ORDER_STATUS_INTENT.search(text or ""))
+    t = text or ""
+    return bool(_ORDER_STATUS_INTENT.search(t) or _ORDER_INFO_INTENT.search(t))
+
+
+def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Replay last order number or last spoken order summary from this call."""
+    text = (caller_text or "").strip()
+    if not text:
+        return None
+    if _REPEAT_ORDER_NUMBER_PAT.search(text):
+        num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
+        if num:
+            spaced = " ".join(num)
+            return f"The order number is {spaced}."
+    if _REPEAT_ORDER_SUMMARY_PAT.search(text):
+        last = (getattr(session, "order_last_voice_reply", "") or "").strip()
+        if last:
+            return last
+        num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
+        if num:
+            return (
+                f"I have order {num} on file from this call. "
+                "What would you like to know about it?"
+            )
+    return None
+
+
+def try_order_collection_short_circuit(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[OrderTurnHint]:
+    """When caller asks about an order but has not given a number yet."""
+    if (turn_mode or "").lower() in ("isbn", "email", "order"):
+        if (turn_mode or "").lower() == "order":
+            return None
+    text = (caller_text or "").strip()
+    if not text or not order_intent_detected(text):
+        return None
+    if extract_order_number(text, session, turn_mode=turn_mode):
+        return None
+    if _should_skip_order_lookup(text, session, turn_mode=turn_mode):
+        return None
+    session.order_flow_status = STATUS_AWAITING_ORDER_NUMBER
+    return OrderTurnHint(
+        force_reply=order_collection_prompt(),
+        openai_skipped=True,
+    )
 
 
 def facility_issue_detected(text: str) -> bool:
@@ -273,10 +345,10 @@ async def try_order_enrichment_short_circuit(
     order_num = extract_order_number(text, session, turn_mode=turn_mode) or ""
     if (turn_mode or "").lower() == "order" and not order_num:
         order_num = normalize_order_number_from_speech(text) or ""
-    if not order_num and order_intent_detected(text):
+    if not order_num:
         pending = (getattr(session, "pending_order_number", "") or "").strip().lstrip("#")
-        last = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
-        order_num = pending or last
+        if pending and (turn_mode or "").lower() == "order":
+            order_num = pending
 
     if not order_num:
         return None

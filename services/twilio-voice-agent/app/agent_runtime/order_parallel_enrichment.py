@@ -179,6 +179,8 @@ async def enrich_order_parallel(
         pass
 
     reply = compose_order_voice_reply(order, refund, facility=facility or None)
+    if order.get("found") and reply:
+        session.order_last_voice_reply = reply[:800]
 
     logger.info(
         "order_parallel_enrichment sid=%s order=%s found=%s facility=%s",

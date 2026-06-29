@@ -330,8 +330,30 @@ class VoiceCommerceRuntime:
             _should_skip_order_lookup,
             extract_order_number,
             order_intent_detected,
+            try_order_collection_short_circuit,
             try_order_enrichment_short_circuit,
+            try_order_repeat_reply,
         )
+
+        repeat_reply = try_order_repeat_reply(session, normalized)
+        if repeat_reply and not extract_order_number(
+            normalized, session, turn_mode=turn_mode,
+        ):
+            spoken = self._brain.finalize_response(session, repeat_reply, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("order_repeat_short_circuit sid=%s", sid)
+            return _result(spoken)
+
+        collection_hint = try_order_collection_short_circuit(
+            session, normalized, turn_mode=turn_mode,
+        )
+        if collection_hint and collection_hint.force_reply:
+            spoken = self._brain.finalize_response(
+                session, collection_hint.force_reply, [],
+            )
+            await self._speak(session, normalized, spoken, send)
+            logger.info("order_collection_short_circuit sid=%s", sid)
+            return _result(spoken)
 
         is_order_turn = (
             not _should_skip_order_lookup(normalized, session, turn_mode=turn_mode)

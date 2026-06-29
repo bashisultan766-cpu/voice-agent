@@ -57,6 +57,9 @@ _ORDER_HINT = re.compile(r"\b(order|order number|order #)\b", re.I)
 _DIGIT_FRAGMENT = re.compile(r"^[\d\s\.\-]+$")
 
 
+_ORDER_CONTINUATION_WINDOW_S = 4.0
+
+
 @dataclass
 class AssemblerState:
     buffer: str = ""
@@ -68,6 +71,8 @@ class AssemblerState:
     isbn_partial_since: float = 0.0
     hold_started_at: float = 0.0
     pending_clarify: str = ""
+    last_order_emit_text: str = ""
+    last_order_emit_at: float = 0.0
 
 
 @dataclass
@@ -189,8 +194,11 @@ class TurnAssembler:
                 return True, "complete_email_spoken"
         if mode == "isbn" and self._should_emit_isbn_immediately(text):
             return True, "complete_isbn"
+        # Always debounce order digits so "3966" + "7" merges before Shopify lookup.
         if mode == "order" and is_complete_order_number(text):
-            return True, "complete_order"
+            if _ORDER_HINT.search(text.lower()):
+                return False, "incomplete"
+            return False, "incomplete"
         if mode == "normal":
             from ..orchestrator.intent_router import is_smalltalk, is_vague_product_request
 
@@ -223,6 +231,11 @@ class TurnAssembler:
             return True
         st.emitted_ids.add(emit_id)
         emit_mode = st.mode
+        if emit_mode == "order":
+            import time
+
+            st.last_order_emit_text = assembled
+            st.last_order_emit_at = time.monotonic()
         st.buffer = ""
         st.mode = "normal"
         st.fragment_group_id = ""
@@ -267,11 +280,44 @@ class TurnAssembler:
                 return await self._emit_buffered(sid, on_emit, "isbn_permission_question")
 
 
+            if (
+                not st.buffer
+                and _DIGIT_FRAGMENT.match(frag)
+                and st.last_order_emit_at > 0
+            ):
+                import time
+
+                frag_digits = "".join(c for c in frag if c.isdigit())
+                if (
+                    1 <= len(frag_digits) <= 3
+                    and time.monotonic() - st.last_order_emit_at
+                    < _ORDER_CONTINUATION_WINDOW_S
+                    and st.last_order_emit_text
+                ):
+                    st.buffer = self._merge_text(st.last_order_emit_text, frag)
+                    st.mode = "order"
+                    st.fragment_group_id = self._new_group_id()
+                    logger.info(
+                        "turn_assembler_merge sid=%s mode=order reason=order_digit_continuation len=%d",
+                        sid,
+                        len(st.buffer),
+                    )
+                    self._emit_callback = on_emit
+                    if self._debounce_task and not self._debounce_task.done():
+                        self._debounce_task.cancel()
+                    self._debounce_task = asyncio.create_task(
+                        self._debounced_emit(sid, st.mode),
+                        name=f"turn-assembler-{sid}",
+                    )
+                    return True
+
             if _RESET_BUFFER.search(frag):
                 st.buffer = ""
                 st.mode = "normal"
                 st.isbn_partial_since = 0.0
                 st.pending_clarify = ""
+                st.last_order_emit_text = ""
+                st.last_order_emit_at = 0.0
                 st.fragment_group_id = self._new_group_id()
                 logger.info(
                     "turn_assembler_hold sid=%s mode=%s reason=buffer_reset",

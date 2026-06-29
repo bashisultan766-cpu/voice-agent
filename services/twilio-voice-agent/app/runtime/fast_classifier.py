@@ -99,6 +99,10 @@ def _normalize_smalltalk(text: str) -> str:
 
 
 def _has_specific_product_detail(text: str) -> bool:
+    from ..agent_runtime.order_flow_state import order_intent_detected
+
+    if order_intent_detected(text):
+        return False
     if _ISBN.search(text):
         return True
     for pattern in (
@@ -230,6 +234,10 @@ def _is_product_search_request(text: str) -> bool:
 
 
 def _is_order_lookup(text: str) -> bool:
+    from ..agent_runtime.order_flow_state import order_intent_detected
+
+    if order_intent_detected(text):
+        return True
     return bool(_ORDER_NUM.search(text)) or bool(
         re.search(r"\b(order status|where is my order|track(?:ing)?)\b", text, re.I)
     )
@@ -355,20 +363,20 @@ def classify(
             is_payment_flow=True,
         )
 
-    # D/E. Real search / order / refund — route to brain without filler acks
-    if _is_product_search_request(text) and not is_vague_product_request(text):
-        return ClassificationResult(
-            action="brain",
-            reason="product_search",
-            is_product_search=True,
-            use_strong_model=_needs_strong_model(text, session),
-        )
-
+    # D/E. Order / refund before product search — "information about the order" is not a catalog query.
     if _is_order_lookup(text):
         return ClassificationResult(
             action="brain",
             reason="order_lookup",
             is_order_lookup=True,
+            use_strong_model=_needs_strong_model(text, session),
+        )
+
+    if _is_product_search_request(text) and not is_vague_product_request(text):
+        return ClassificationResult(
+            action="brain",
+            reason="product_search",
+            is_product_search=True,
             use_strong_model=_needs_strong_model(text, session),
         )
 

@@ -14,6 +14,29 @@ def _inner_order(order_payload: dict[str, Any]) -> dict[str, Any]:
     return order_payload.get("order") or {}
 
 
+def _order_is_refunded(order_payload: dict[str, Any], inner: dict[str, Any]) -> bool:
+    fin = str(
+        inner.get("financial_status")
+        or inner.get("order_status")
+        or order_payload.get("financial_status")
+        or ""
+    ).upper()
+    if "REFUND" in fin or "VOID" in fin:
+        return True
+    if _is_refunded_order(inner):
+        return True
+    refund_info = inner.get("refund_info") or {}
+    if refund_info.get("refunded"):
+        return True
+    if inner.get("refunds") or refund_info.get("refunds"):
+        return True
+    pricing = inner.get("pricing") or {}
+    total_raw = (pricing.get("total") or pricing.get("total_with_shipping") or "").strip()
+    if total_raw.startswith("0") and (inner.get("refunds") or refund_info.get("refunds")):
+        return True
+    return False
+
+
 def _product_count(inner: dict[str, Any]) -> int:
     count = int(inner.get("product_count") or 0)
     if count:
@@ -27,6 +50,8 @@ def _item_phrase(count: int) -> str:
 
     if count == 1:
         return "one product"
+    if count == 0:
+        return "no products"
     return f"{speak_int(count)} products"
 
 
@@ -74,7 +99,7 @@ def compose_brief_order_voice_reply(order_payload: dict[str, Any]) -> str:
     if not inner:
         return ""
 
-    if _is_refunded_order(inner) or (inner.get("refund_info") or {}).get("refunded"):
+    if _order_is_refunded(order_payload, inner):
         return compose_refunded_order_voice_reply(inner)
 
     pricing = inner.get("pricing") or {}
