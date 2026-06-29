@@ -87,6 +87,11 @@ _PREVIOUS_BOOK_QTY_PAT = re.compile(
     r"\b(?:and\s+)?(?P<qty>one|a|\d+)\s+(?:copy|copies)\s+of\s+(?:the\s+)?previous\s+book\b",
     re.IGNORECASE,
 )
+_THIS_THAT_BOOK_QTY_PAT = re.compile(
+    r"\b(?P<qty>one|a|\d+|\d+\s+copy|\d+\s+copies)\s+(?:copy|copies)?\s+of\s+"
+    r"(?:this|that|the same)(?:\s+book|\s+one)?\b",
+    re.IGNORECASE,
+)
 _ADD_INTENT_PAT = re.compile(
     r"\b(add it|add this|i need this|i want this|take it|one copy|1 copy|"
     r"add\s+\d|add\s+one)\b",
@@ -294,7 +299,7 @@ def _try_add_previous_book(session: "SessionState", text: str) -> Optional[Comme
     """Add another copy of the book mentioned just before the current one."""
     m = _PREVIOUS_BOOK_QTY_PAT.search(text or "")
     if not m:
-        return None
+        return _try_add_this_that_book(session, text)
     from ..cart.session import get_ledger
 
     confirmed = get_ledger(session).confirmed_items
@@ -315,6 +320,41 @@ def _try_add_previous_book(session: "SessionState", text: str) -> Optional[Comme
     session.commerce_pending_quantity = qty
     session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
     return CommerceTurnHint(force_reply=add_confirm_prompt(session.commerce_pending_candidate, qty))
+
+
+def _try_add_this_that_book(session: "SessionState", text: str) -> Optional[CommerceTurnHint]:
+    """Resolve '2 copies of this/that' to staged or last-confirmed book."""
+    m = _THIS_THAT_BOOK_QTY_PAT.search(text or "")
+    if not m:
+        return None
+    qty = _parse_quantity(m.group("qty")) or _parse_quantity(text) or 1
+    candidate = _resolve_pending_candidate(session)
+    if not candidate.get("variant_id"):
+        last = dict(getattr(session, "last_confirmed_product", None) or {})
+        if last.get("variant_id"):
+            candidate = last
+    if not candidate.get("variant_id"):
+        from ..cart.session import get_ledger
+
+        confirmed = get_ledger(session).confirmed_items
+        if confirmed:
+            last_item = confirmed[-1]
+            candidate = {
+                "title": last_item.title,
+                "isbn": last_item.isbn or "",
+                "variant_id": last_item.variant_id or "",
+                "price": last_item.price or "",
+                "available": bool(last_item.available),
+                "product_id": last_item.product_id or "",
+            }
+    if not candidate.get("variant_id"):
+        return CommerceTurnHint(
+            force_reply="Which book did you mean — this one or another? Give me the ISBN or title.",
+        )
+    session.commerce_pending_candidate = candidate
+    session.commerce_pending_quantity = qty
+    session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
+    return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty))
 
 
 def _price_matches(product_price: str, amount: float) -> bool:

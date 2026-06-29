@@ -230,11 +230,17 @@ class CartLedger:
         ]
 
     def titles_one_by_one_summary(self) -> str:
-        """Voice-friendly list of found titles and not-found ISBNs."""
+        """Voice-friendly list of confirmed cart titles with copy counts."""
         parts: list[str] = []
-        found = self.found_titles_ordered()
-        for idx, title in enumerate(found, start=1):
-            parts.append(f"The {'first' if idx == 1 else f'{idx}'} book is {title}.")
+        confirmed = self.confirmed_items
+        ordinals = ("first", "second", "third", "fourth", "fifth")
+        for idx, item in enumerate(confirmed, start=1):
+            qty = max(1, int(item.quantity or 1))
+            copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+            ord_label = ordinals[idx - 1] if idx <= len(ordinals) else str(idx)
+            parts.append(
+                f"The {ord_label} book is {item.title} — {copy_phrase}."
+            )
         for isbn in self._isbn_not_found:
             parts.append(f"ISBN {isbn} did not return a matching title.")
         return " ".join(parts) if parts else ""

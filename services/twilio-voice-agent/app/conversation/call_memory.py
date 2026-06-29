@@ -132,6 +132,23 @@ def record_assistant_turn(session: "SessionState", text: str) -> None:
     _rebuild_rolling_summary(state)
 
 
+def record_turn_pair(
+    session: "SessionState",
+    user_text: str,
+    assistant_text: str,
+    *,
+    intent: str = "",
+) -> None:
+    """Record a full turn and refresh durable facts from session state."""
+    record_user_turn(session, user_text, intent=intent)
+    record_assistant_turn(session, assistant_text)
+    try:
+        extract_durable_facts(session, user_text)
+    except Exception:  # noqa: BLE001
+        pass
+    sync_from_session(session)
+
+
 def record_isbn(session: "SessionState", isbn: str) -> None:
     state = get_call_memory(session)
     if isbn and isbn not in state.isbns_provided:
@@ -210,17 +227,34 @@ def sync_from_session(session: "SessionState") -> None:
 
     try:
         from ..cart.session import get_ledger
+
         ledger = get_ledger(session)
-        n = ledger.confirmed_count()
-        if n:
-            state.cart_facts = [f"{n} book(s) in cart"]
-            _append_fact(state, f"Cart count: {n}")
+        confirmed = ledger.confirmed_items
+        if confirmed:
+            total_copies = sum(max(1, int(i.quantity or 1)) for i in confirmed)
+            line_facts: list[str] = []
+            for i in confirmed:
+                qty = max(1, int(i.quantity or 1))
+                copy_word = "copy" if qty == 1 else "copies"
+                title = (i.title or "book")[:80]
+                line_facts.append(f"{qty} {copy_word} of {title}")
+            state.cart_facts = line_facts[-10:]
+            _append_fact(
+                state,
+                f"Cart: {len(confirmed)} title(s), {total_copies} total copies",
+            )
+            for line in line_facts[-5:]:
+                _append_fact(state, f"Cart line: {line}")
     except Exception:
         pass
 
     if session.last_order_number:
         state.order_context = session.last_order_number
         _append_fact(state, f"Order number: {session.last_order_number}")
+
+    for book_title in getattr(session, "requested_books", []) or []:
+        if book_title:
+            _append_fact(state, f"Book discussed: {str(book_title)[:80]}")
 
     sync_email_state(session)
     sync_payment_state(session)

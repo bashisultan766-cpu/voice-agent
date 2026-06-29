@@ -187,6 +187,9 @@ class ConversationRelayOutbound:
 
     async def engine_send(self, msg: dict) -> None:
         """Receive engine/runtime send dict and deliver to Twilio."""
+        if msg.get("type") == "end":
+            await self._send_fn(msg)
+            return
         if msg.get("type") != "text":
             return
 

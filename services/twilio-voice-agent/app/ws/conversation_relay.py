@@ -110,6 +110,7 @@ async def dispatch_assembled_turn(
         stt_to_turn_ms=stt_to_turn_ms,
     )
     if getattr(result, "end_call", False):
+        session.call_ended_gracefully = True  # type: ignore[attr-defined]
         await send({"type": "end", "handoffData": '{"reason":"caller_done"}'})
 
 
@@ -219,6 +220,9 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
 
     async def send(msg: dict) -> None:
         """Engine/runtime send callback — routes through CR outbound adapter."""
+        if msg.get("type") == "end":
+            await _queue_send(msg)
+            return
         if outbound is not None:
             await outbound.engine_send(msg)
         else:
@@ -549,16 +553,25 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
         await _cancel_current()
         if session is not None:
             try:
-                store_resume_snapshot(session)
-                await save_call_resume_by_phone(
-                    session.from_number,
-                    {
-                        "call_sid": session.call_sid,
-                        "call_ended_at": session.call_ended_at,
-                        "snapshot": session.call_resume_snapshot,
-                    },
-                    ttl=settings.CALL_RESUME_WINDOW_MINUTES * 120,
-                )
+                from ..state.session_store import clear_call_resume_by_phone
+
+                if getattr(session, "call_ended_gracefully", False):
+                    await clear_call_resume_by_phone(session.from_number)
+                    logger.info(
+                        "call_resume_cleared_graceful sid=%s",
+                        session.call_sid[:6],
+                    )
+                else:
+                    store_resume_snapshot(session)
+                    await save_call_resume_by_phone(
+                        session.from_number,
+                        {
+                            "call_sid": session.call_sid,
+                            "call_ended_at": session.call_ended_at,
+                            "snapshot": session.call_resume_snapshot,
+                        },
+                        ttl=settings.CALL_RESUME_WINDOW_MINUTES * 120,
+                    )
             except Exception:
                 logger.warning(
                     "call_resume_store_failed sid=%s",

@@ -439,6 +439,12 @@ class VoiceCommerceRuntime:
             (time.monotonic() - t0) * 1000,
             classification.reason,
         )
+        from ..dialogue.call_closure import caller_wants_to_end, process_call_closure_turn
+
+        if caller_wants_to_end(normalized):
+            closure = process_call_closure_turn(session, normalized)
+            if closure and closure.end_call:
+                return _result(closure.reply, end_call=True)
         return _result(spoken)
 
     @staticmethod

@@ -166,6 +166,13 @@ async def load_call_resume_by_phone(phone: str) -> Optional[dict]:
     return await cache_get(_resume_phone_key(phone))
 
 
+async def clear_call_resume_by_phone(phone: str) -> None:
+    """Remove resume snapshot so the next intentional call starts fresh."""
+    if not phone or phone == "unknown":
+        return
+    await cache_delete(_resume_phone_key(phone))
+
+
 # ── Shopify product search cache ──────────────────────────────────────────────
 
 async def shopify_cache_get(key: str) -> Optional[Any]:

@@ -77,6 +77,9 @@ Rules:
 - For facility policy, use cached facility data only.
 - Final answer should be natural and brief for order questions (a few short sentences); stay concise for simple product questions.
 - For cart questions, read titles and copy counts from the cart state — do not guess.
+- When the customer says goodbye, bye, see you, thank you and done, or clearly needs nothing else, give a brief warm closing and STOP — do not ask more questions or start new tasks.
+- Use LIVE CALL STATE and call memory for everything discussed this call: books, ISBNs, quantities, orders, refunds, email, and cart. Never forget earlier turns in the same call.
+- After payment link is sent, only confirm it was emailed unless the customer asks for something else.
 - No markdown, no JSON, no internal tool names, no "as an AI"."""
 
 
@@ -148,6 +151,15 @@ class MainCommerceBrain:
             lines.append("- send_payment_link is allowed after cart confirmed.")
         if getattr(session, "awaiting_cart_confirmation", False):
             lines.append("- Awaiting cart confirmation before checkout.")
+        try:
+            from ..conversation.call_memory import build_brain_context, sync_from_session
+
+            sync_from_session(session)
+            memory_block = build_brain_context(session)
+            if memory_block:
+                lines.append(memory_block)
+        except Exception:  # noqa: BLE001
+            pass
         return "\n".join(lines)
 
     @staticmethod

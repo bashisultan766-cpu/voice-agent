@@ -382,13 +382,18 @@ async def _add_to_cart(args: AddToCartArgs, session) -> str:
         return _err("Need a title, ISBN, or product to add to the cart.")
     from ..cart.session import add_product_candidate, confirm_last_candidate
 
+    pending_qty = int(getattr(session, "commerce_pending_quantity", 0) or 0)
+    qty = max(1, int(args.quantity or 1))
+    if qty == 1 and pending_qty > 1:
+        qty = pending_qty
+
     add_product_candidate(
         session,
         title=args.title or args.isbn or "Selected book",
         isbn=args.isbn,
         variant_id=args.variant_id,
         price=args.price or None,
-        quantity=max(1, int(args.quantity or 1)),
+        quantity=qty,
     )
     # An explicit add-to-cart is an explicit selection; confirm it.
     confirm_last_candidate(session)
@@ -404,6 +409,8 @@ async def _add_to_cart(args: AddToCartArgs, session) -> str:
         from .commerce_flow_state import on_book_added_to_cart
 
         on_book_added_to_cart(session, args.title or args.isbn or "Selected book")
+    session.commerce_pending_quantity = 0
+    session.commerce_allow_add = False
     payload = {"success": True, "cart": view}
     if getattr(session, "commerce_flow_status", "") == "awaiting_another_book":
         from .commerce_flow_state import another_book_after_add_prompt
