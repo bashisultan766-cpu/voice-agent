@@ -137,4 +137,4 @@ def test_is_order_followup_question():
 
 
 def test_order_flow_version():
-    assert ORDER_FLOW_VERSION == "v4.53"
+    assert ORDER_FLOW_VERSION == "v4.54"

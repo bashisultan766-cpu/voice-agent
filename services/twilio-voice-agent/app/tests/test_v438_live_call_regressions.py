@@ -36,8 +36,8 @@ def _session(**kwargs) -> SessionState:
 
 
 def test_version_bump():
-    assert COMMERCE_FLOW_VERSION == "v4.53"
-    assert ISBN_SHORT_CIRCUIT_VERSION == "v4.44"
+    assert COMMERCE_FLOW_VERSION == "v4.54"
+    assert ISBN_SHORT_CIRCUIT_VERSION == "v4.54"
 
 
 def test_another_one_is_not_title_catalog_query():

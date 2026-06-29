@@ -1,4 +1,4 @@
-"""End-to-end email capture, letter-by-letter readback, confirm, and send (v4.53)."""
+"""End-to-end email capture, letter-by-letter readback, confirm, and send (v4.54)."""
 from __future__ import annotations
 
 import json

@@ -1,4 +1,4 @@
-"""Deterministic email speak/spell helpers for voice (v4.50)."""
+"""Deterministic email speak/spell helpers for voice (v4.54)."""
 from __future__ import annotations
 
 import re
@@ -96,6 +96,18 @@ def _spell_segment_chars(segment: str) -> str:
     return ". ".join(tokens) + "."
 
 
+def _spell_micro_chunks(segment: str, *, group_size: int = 3) -> list[str]:
+    """Split a segment into small TTS chunks so no letters are dropped on the phone."""
+    tokens = [_char_to_voice_token(ch) for ch in segment if ch]
+    if not tokens:
+        return []
+    chunks: list[str] = []
+    for i in range(0, len(tokens), group_size):
+        group = tokens[i : i + group_size]
+        chunks.append(". ".join(group) + ".")
+    return chunks
+
+
 def speak_email(email: str) -> str:
     """
     Speak a normalized email for voice — uses ``at`` and ``dot``, never raw ``@`` or ``.``.
@@ -151,7 +163,10 @@ def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
     return False
 
 
-_EMAIL_READBACK_MARKER = re.compile(r"letter\s+by\s+letter", re.I)
+_EMAIL_READBACK_MARKER = re.compile(
+    r"letter\s+by\s+letter|just to confirm,\s+i heard|the name part",
+    re.I,
+)
 
 
 def is_preserved_email_readback(text: str) -> bool:
@@ -176,22 +191,30 @@ def build_email_readback(email: str, raw_text: str = "") -> str:
 
 
 def build_email_readback_parts(email: str, raw_text: str = "") -> list[str]:
-    """Split readback into TTS-sized chunks so no letters are dropped on the phone."""
+    """Split readback into micro TTS chunks — each delivered with play_immediately."""
     normalized = normalize_email_for_customer_readback(email)
     if not normalized or email_confidence_is_low(normalized, raw_text):
         return [build_email_readback(email, raw_text)]
 
     spoken = speak_email(normalized)
     local, domain = normalized.split("@", 1)
-    local_spelled = _spell_segment_chars(local)
     domain_parts = [part for part in domain.lower().split(".") if part]
-    domain_spelled = ". Dot. ".join(_spell_segment_chars(part) for part in domain_parts)
-    return [
+
+    parts = [
         f"Just to confirm, I heard {spoken}.",
-        f"Slowly, letter by letter, the name part is {local_spelled}",
-        f"At. {domain_spelled}",
-        "Is that correct?",
+        "Now I will read it back slowly, letter by letter.",
     ]
+    for chunk in _spell_micro_chunks(local):
+        parts.append(f"The name part is {chunk}")
+    parts.append("At.")
+    for part in domain_parts:
+        for chunk in _spell_micro_chunks(part):
+            parts.append(chunk)
+        parts.append("Dot.")
+    if parts and parts[-1] == "Dot.":
+        parts.pop()
+    parts.append("Is that correct?")
+    return parts
 
 
 def build_email_spell_only(email: str, raw_text: str = "") -> str:

@@ -182,28 +182,32 @@ def test_format_openai_bad_request_safe_details():
 # ── Brain tool loop tests ─────────────────────────────────────────────────────
 
 def test_game_of_thrones_requests_search_products():
+    catalog_json = json.dumps({
+        "results": [{
+            "title": "Game of Thrones",
+            "price": "12.99",
+            "variant_id": "v1",
+            "available": True,
+            "inventory_quantity": 5,
+        }],
+        "count": 1,
+    })
     runtime = VoiceCommerceRuntime(settings=_FakeSettings())
-    runtime._brain._client = _FakeClient([
-        _tool_response("search_products", {"query": "Game of Thrones"}),
-        _text_response("I found Game of Thrones. Would you like to add it?"),
-    ])
-
-    async def fake_dispatch(name, args, session):
-        return json.dumps({"success": True, "results": [{"title": "Game of Thrones"}]})
 
     sent: list[dict] = []
 
     async def send(msg):
         sent.append(msg)
 
-    with patch.object(llm_tools, "dispatch", side_effect=fake_dispatch):
+    with patch(
+        "app.agent_runtime.llm_tools._catalog_search",
+        new_callable=AsyncMock,
+        return_value=catalog_json,
+    ):
         result = asyncio.run(runtime.handle_turn(_session(), "I need the book Game of Thrones", send))
 
-    first_call = runtime._brain._client.chat.completions.calls[0]
-    assert first_call["tools"]
-    tool_names = {t["function"]["name"] for t in first_call["tools"]}
-    assert "search_products" in tool_names
     assert "Game of Thrones" in result.response_text
+    assert "How many copies" in result.response_text
 
 
 def test_tool_result_produces_final_llm_answer():

@@ -211,8 +211,16 @@ class VoiceCommerceRuntime:
         if (turn_mode or "").lower() == "email" or getattr(session, "awaiting_payment_email", False):
             captured = email_cap.capture_from_speech(sanitized)
             if captured.readback and "do not have a complete email" not in captured.readback.lower():
-                await self._speak(session, caller_text, captured.readback, send)
-                return _result(captured.readback)
+                from ..email.speller import is_preserved_email_readback
+
+                if is_preserved_email_readback(captured.readback) and captured.email:
+                    spoken = await self._speak_email_readback_text(
+                        session, caller_text, captured.readback, send,
+                    )
+                else:
+                    await self._speak(session, caller_text, captured.readback, send)
+                    spoken = captured.readback
+                return _result(spoken)
 
         return None
 
@@ -266,14 +274,19 @@ class VoiceCommerceRuntime:
 
         parts = build_email_readback_parts(email, caller_text) if email else [full_text]
         session.history.append({"role": "user", "content": caller_text})
-        for part in parts:
-            if part.strip():
-                await _await_send(
-                    send,
-                    {"type": "text", "token": part.strip(), "last": False, "interruptible": True},
-                )
-        await _await_send(send, {"type": "text", "token": "", "last": True})
-        combined = " ".join(p.strip() for p in parts if p.strip())
+        non_empty = [p.strip() for p in parts if p.strip()]
+        for part in non_empty:
+            await _await_send(
+                send,
+                {
+                    "type": "text",
+                    "token": part,
+                    "last": True,
+                    "play_immediately": True,
+                    "interruptible": False,
+                },
+            )
+        combined = " ".join(non_empty)
         session.history.append({"role": "assistant", "content": combined})
         self._record_turn(session, caller_text, combined)
         return combined

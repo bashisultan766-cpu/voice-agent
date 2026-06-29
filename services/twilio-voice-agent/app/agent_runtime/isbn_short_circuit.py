@@ -18,7 +18,37 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ISBN_SHORT_CIRCUIT_VERSION = "v4.44"
+ISBN_SHORT_CIRCUIT_VERSION = "v4.54"
+
+_EXACT_TITLE_SCORE = 88
+_SIMILAR_TITLE_SCORE = 52
+
+_ORDER_FOLLOWUP_BLOCK_PAT = re.compile(
+    r"\b(?:what (?:was|is) the|which (?:card|book)|order number|last four|"
+    r"card used|my order|this order|order status)\b",
+    re.I,
+)
+_BOOK_SEARCH_INTENT_PAT = re.compile(
+    r"\b(?:do you have|looking for|search(?:ing)? for|find (?:me )?(?:a )?book|"
+    r"i (?:want|need)(?: the)?(?: book)?|got (?:any )?|carry|sell|"
+    r"is (?:there|this) (?:a )?book|book (?:called|named|titled)|"
+    r"the book is|title is|book title|have (?:the )?book)\b",
+    re.I,
+)
+_TITLE_QUERY_STRIP_PATS = (
+    re.compile(r"^(?:yes|yeah|yep|no|okay|ok|sure)[,\.\s]+", re.I),
+    re.compile(
+        r"^(?:i(?:'m| am) )?(?:looking for|searching for|trying to find)\s+(?:the book\s+)?",
+        re.I,
+    ),
+    re.compile(r"^(?:do you have|can you find|find me|i need|i want)\s+(?:the book\s+)?", re.I),
+    re.compile(r"^(?:the )?(?:book )?(?:title is|is called|named|titled)\s+", re.I),
+)
+_NON_TITLE_SINGLE_WORDS = frozenset({
+    "yes", "no", "yeah", "yep", "nope", "hello", "hi", "hey", "thanks", "thank",
+    "okay", "ok", "sure", "cancel", "refund", "help", "stop", "wait", "hold",
+    "correct", "wrong", "email", "order", "shipping", "payment", "price",
+})
 
 _ASSEMBLER_KEEPALIVE = "No problem, I'm here. Go ahead when you're ready."
 
@@ -74,6 +104,18 @@ def payment_email_context_active(session: "SessionState", turn_mode: str = "") -
     return False
 
 
+def extract_title_catalog_query(text: str) -> str:
+    """Strip book-search preamble so Shopify gets the title phrase."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    for pat in _TITLE_QUERY_STRIP_PATS:
+        t = pat.sub("", t).strip()
+    t = re.sub(r"\b(?:book|isbn|please)\s*$", "", t, flags=re.I).strip()
+    t = re.sub(r"^[\"\']|[\"\']$", "", t).strip()
+    return t or (text or "").strip()
+
+
 def looks_like_book_title_request(text: str) -> bool:
     """Heuristic: spoken title/periodical — not an ISBN digit stream."""
     expanded = _expand_text(text or "")
@@ -86,17 +128,38 @@ def looks_like_book_title_request(text: str) -> bool:
         return False
     if re.search(r"\bisbn\b", lower):
         return False
+    from ..tools.isbn import extract_isbn_candidate
+
+    if extract_isbn_candidate(text or ""):
+        return False
+    if _ORDER_FOLLOWUP_BLOCK_PAT.search(lower):
+        return False
+    if _QUANTITY_COPY_PAT.search(lower):
+        return False
+    if _ORDER_SPEECH_CONTEXT.search(lower):
+        return False
     if _ANOTHER_BOOK_INTENT_PAT.search(lower) and not _TITLE_NOT_ISBN_PAT.search(lower):
         return False
     if _META_BOOK_PHRASE_PAT.search(lower) and not _TITLE_NOT_ISBN_PAT.search(lower):
         return False
     if re.search(r"\b(it'?s a title|the title is|another title|book title)\b", lower):
         return True
+    if _BOOK_SEARCH_INTENT_PAT.search(lower):
+        query = extract_title_catalog_query(text)
+        if sum(c.isalpha() for c in query) >= 3:
+            return True
     letters = sum(1 for c in lower if c.isalpha())
     digits = sum(1 for c in lower if c.isdigit())
     words = [w for w in re.split(r"\s+", lower) if w]
     if len(words) >= 6 and letters >= 12 and digits <= 2:
         return True
+    if len(words) >= 3 and letters >= 8 and digits <= 2:
+        return True
+    if len(words) == 2 and letters >= 8 and digits == 0:
+        return True
+    if len(words) == 1 and letters >= 5 and digits == 0:
+        if words[0] not in _NON_TITLE_SINGLE_WORDS:
+            return True
     if _TITLE_NOT_ISBN_PAT.search(lower) and letters > digits * 2:
         return True
     return False
@@ -655,7 +718,15 @@ async def try_title_catalog_short_circuit(
         STATUS_AWAITING_QUANTITY,
         STATUS_AWAITING_ANOTHER_BOOK,
         STATUS_IDLE,
+        _price_phrase,
+        _title,
+        normalize_catalog_hit,
+        quantity_prompt,
+        stage_product_candidate,
     )
+    from .llm_tools import CatalogSearchArgs, _catalog_search
+    from .not_found_escalation_flow import begin_unavailable_product_handoff
+    from ..conversation.call_memory import record_product_candidate
 
     status = getattr(session, "commerce_flow_status", "idle") or "idle"
     text = (caller_text or "").strip()
@@ -679,13 +750,8 @@ async def try_title_catalog_short_circuit(
     if not looks_like_book_title_request(caller_text):
         return None
 
-    from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
-    from .llm_tools import CatalogSearchArgs, _catalog_search
-    from .not_found_escalation_flow import begin_unavailable_product_handoff
-    from ..conversation.call_memory import record_product_candidate
-
     session.pending_isbn_buffer = ""
-    query = caller_text.strip()
+    query = extract_title_catalog_query(caller_text)
     raw = await _catalog_search(
         CatalogSearchArgs(query=query, limit=5),
         session,
@@ -699,26 +765,44 @@ async def try_title_catalog_short_circuit(
         ("catalog_search", payload if isinstance(payload, dict) else {}),
     ]
     results = (payload.get("results") or []) if isinstance(payload, dict) else []
-    if results and isinstance(results[0], dict):
-        top = normalize_catalog_hit(results[0])
-        record_product_candidate(session, title=top.get("title") or "", found=True)
-        if top.get("variant_id") and not catalog_hit_is_orderable(top):
-            title = (top.get("title") or "").strip()
-            msg = begin_unavailable_product_handoff(
-                session,
-                user_text=caller_text,
-                query=query,
-                reason="product_out_of_stock",
-                search_result={"results": results[:3], "count": len(results)},
-                product_title=title,
-            )
-            return IsbnShortCircuitResult(force_reply=msg, tool_results=tool_results)
-        if top.get("variant_id"):
-            stage_product_candidate(session, top)
-            return IsbnShortCircuitResult(
-                force_reply=quantity_prompt(top),
-                tool_results=tool_results,
-            )
+    if results:
+        scored: list[tuple[dict[str, Any], float]] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            hit = normalize_catalog_hit(item)
+            scored.append((hit, _title_match_score(query, hit)))
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        if scored:
+            top, score = scored[0]
+            record_product_candidate(session, title=top.get("title") or "", found=True)
+            if top.get("variant_id") and not catalog_hit_is_orderable(top):
+                title = (top.get("title") or "").strip()
+                msg = begin_unavailable_product_handoff(
+                    session,
+                    user_text=caller_text,
+                    query=query,
+                    reason="product_out_of_stock",
+                    search_result={"results": results[:3], "count": len(results)},
+                    product_title=title,
+                )
+                return IsbnShortCircuitResult(force_reply=msg, tool_results=tool_results)
+            if top.get("variant_id"):
+                stage_product_candidate(session, top)
+                if score >= _EXACT_TITLE_SCORE:
+                    return IsbnShortCircuitResult(
+                        force_reply=quantity_prompt(top),
+                        tool_results=tool_results,
+                    )
+                title = _title(top)
+                price = _price_phrase(top)
+                return IsbnShortCircuitResult(
+                    force_reply=(
+                        f"I did not find an exact match for {query}, but I found {title}. "
+                        f"{price} How many copies would you like?"
+                    ),
+                    tool_results=tool_results,
+                )
 
     record_product_candidate(session, title=query[:80], found=False)
     msg = begin_unavailable_product_handoff(
@@ -732,6 +816,25 @@ async def try_title_catalog_short_circuit(
         force_reply=msg,
         tool_results=tool_results,
     )
+
+
+def _title_match_score(query: str, hit: dict[str, Any]) -> float:
+    """Fuzzy similarity between spoken title and catalog hit."""
+    q = (query or "").strip().lower()
+    if not q:
+        return 0.0
+    title = str(hit.get("title") or "").lower()
+    author = str(hit.get("author") or "").lower()
+    try:
+        from rapidfuzz import fuzz
+
+        return max(
+            fuzz.WRatio(q, title),
+            fuzz.partial_ratio(q, title),
+            fuzz.WRatio(q, f"{title} {author}".strip()),
+        )
+    except Exception:  # noqa: BLE001
+        return 100.0 if q in title else 0.0
 
 
 def is_conversational_ack(text: str) -> bool:

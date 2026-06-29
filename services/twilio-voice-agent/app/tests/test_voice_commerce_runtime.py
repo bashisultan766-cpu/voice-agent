@@ -193,37 +193,54 @@ def test_no_shopify_for_vague_request():
 
 def test_specific_product_search_calls_llm_and_tools():
     search_json = json.dumps({
-        "success": True,
-        "products": [{"title": "Game of Thrones", "price": "12.99", "variant_id": "v1"}],
+        "results": [{
+            "title": "Game of Thrones",
+            "price": "12.99",
+            "variant_id": "v1",
+            "available": True,
+            "inventory_quantity": 5,
+        }],
+        "count": 1,
     })
-    runtime = _build_runtime([
-        _tool_response("search_products", {"query": "Game of Thrones"}),
-        _text_response("I found Game of Thrones for $12.99. Would you like me to add it to your cart?"),
-    ])
 
-    async def fake_dispatch(name, args, session):
-        return search_json
-
-    with patch.object(llm_tools, "dispatch", side_effect=fake_dispatch):
+    with patch(
+        "app.agent_runtime.llm_tools._catalog_search",
+        new_callable=AsyncMock,
+        return_value=search_json,
+    ):
+        runtime = _build_runtime([
+            _tool_response("search_products", {"query": "Game of Thrones"}),
+            _text_response("I found Game of Thrones for $12.99. Would you like me to add it to your cart?"),
+        ])
         result, sent = _run_turn(runtime, _session(), "I need Game of Thrones")
 
-    assert runtime._brain._client.chat.completions.calls
     assert "Game of Thrones" in result.response_text
     spoken = "".join(m.get("token", "") for m in sent)
     assert "Game of Thrones" in spoken
-    assert "Let me check" not in spoken
+    assert "How many copies" in spoken
 
 
 def test_llm_final_answer_uses_tool_result():
-    runtime = _build_runtime([
-        _tool_response("search_products", {"query": "Atomic Habits"}),
-        _text_response("I found Atomic Habits for $16. Would you like to add it?"),
-    ])
+    catalog_json = json.dumps({
+        "results": [{
+            "title": "Atomic Habits",
+            "price": "16.00",
+            "variant_id": "v2",
+            "available": True,
+            "inventory_quantity": 5,
+        }],
+        "count": 1,
+    })
 
-    async def fake_dispatch(name, args, session):
-        return json.dumps({"success": True, "products": [{"title": "Atomic Habits", "price": "16.00"}]})
-
-    with patch.object(llm_tools, "dispatch", side_effect=fake_dispatch):
+    with patch(
+        "app.agent_runtime.llm_tools._catalog_search",
+        new_callable=AsyncMock,
+        return_value=catalog_json,
+    ):
+        runtime = _build_runtime([
+            _tool_response("search_products", {"query": "Atomic Habits"}),
+            _text_response("I found Atomic Habits for $16. Would you like to add it?"),
+        ])
         result, _ = _run_turn(runtime, _session(), "Atomic Habits")
 
     assert "Atomic Habits" in result.response_text

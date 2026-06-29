@@ -171,6 +171,20 @@ def resolve_primary_workflow(
         return WORKFLOW_PRODUCT
     if commerce_workflow_active(session):
         return WORKFLOW_COMMERCE
+    try:
+        from .isbn_short_circuit import (
+            catalog_title_search_allowed,
+            looks_like_book_title_request,
+        )
+
+        if (
+            catalog_title_search_allowed(session, turn_mode)
+            and looks_like_book_title_request(text or "")
+            and not extract_isbn_candidate(text or "")
+        ):
+            return WORKFLOW_PRODUCT
+    except Exception:  # noqa: BLE001
+        pass
     if product_workflow_active(session, turn_mode, text):
         return WORKFLOW_PRODUCT
     return WORKFLOW_IDLE
@@ -250,10 +264,20 @@ def product_handling_allowed(
 
     if payment_email_context_active(session, turn_mode):
         return False
+    from .isbn_short_circuit import (
+        catalog_title_search_allowed,
+        looks_like_book_title_request,
+    )
     from ..tools.isbn import extract_isbn_candidate
 
     mode = (turn_mode or "").strip().lower()
     if mode == "isbn" or extract_isbn_candidate(text or ""):
+        return True
+    if (
+        catalog_title_search_allowed(session, turn_mode)
+        and looks_like_book_title_request(text or "")
+        and not extract_isbn_candidate(text or "")
+    ):
         return True
     return False
 

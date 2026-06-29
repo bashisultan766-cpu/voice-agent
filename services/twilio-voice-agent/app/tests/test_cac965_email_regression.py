@@ -55,7 +55,7 @@ def test_spell_uses_period_pacing():
 
 def test_readback_split_into_chunks():
     parts = build_email_readback_parts("bashi64@gmail.com")
-    assert len(parts) >= 3
+    assert len(parts) >= 5
     assert parts[0].startswith("Just to confirm")
     assert parts[-1] == "Is that correct?"
 
