@@ -16,7 +16,6 @@ from typing import Any, Optional, TYPE_CHECKING
 import httpx
 
 from ..config import get_settings
-from .conversation_summarizer import summarize_conversation_for_support
 from .models import CustomerQueryEscalationPayload, ProductNotFoundEscalationPayload
 from .product_not_found_escalation import (
     _get_existing_record,
@@ -138,37 +137,79 @@ def product_payload_to_support_handoff(
     )
 
 
-def _build_email_body(payload: CustomerQueryEscalationPayload) -> str:
-    api_ctx = _sanitize_api_context(payload.api_context)
-    tool_result = payload.tool_api_result or api_ctx
-    if isinstance(tool_result, dict):
-        tool_result_text = json.dumps(tool_result, indent=2, default=str)[:2500]
-    else:
-        tool_result_text = str(tool_result)[:2500]
+def resolve_escalation_customer_fields(
+    session: Optional["SessionState"],
+    *,
+    fallback_email: str = "",
+    fallback_name: str = "",
+) -> tuple[str, str, str]:
+    """
+    Best-effort caller identity for support handoff.
 
+    Email priority: confirmed payment email → pending/offered → profile email.
+    Name: greeting-safe session name, else fallback, else 'Customer'.
+    """
+    from ..dialogue.greeting import greeting_safe_name
+    from ..payment.email_state import (
+        get_canonical_confirmed_email,
+        get_last_offered_payment_email,
+        get_pending_payment_email,
+    )
+
+    phone = ""
+    name = ""
+    email = ""
+
+    if session is not None:
+        phone = (getattr(session, "from_number", "") or "").strip()
+        name = greeting_safe_name(getattr(session, "caller_name", "") or "")
+        email = get_canonical_confirmed_email(session)
+        if not email:
+            email = (
+                get_pending_payment_email(session)
+                or get_last_offered_payment_email(session)
+                or (getattr(session, "pending_email", "") or "").strip().lower()
+            )
+        if not email:
+            email = (getattr(session, "caller_email", "") or "").strip().lower()
+
+    if not name:
+        name = greeting_safe_name(fallback_name)
+    if not name:
+        name = "Customer"
+    if not email and fallback_email:
+        email = fallback_email.strip().lower()
+
+    return name, email, phone
+
+
+def _short_issue_text(payload: CustomerQueryEscalationPayload) -> str:
+    for candidate in (
+        payload.issue_detail,
+        payload.reason_for_handoff,
+        payload.issue_title,
+        payload.what_customer_asked,
+        payload.reason,
+    ):
+        text = (candidate or "").strip()
+        if text:
+            return text[:280]
+    return "Customer requested support assistance."
+
+
+def _build_email_body(payload: CustomerQueryEscalationPayload) -> str:
+    issue = _short_issue_text(payload)
     lines = [
         "Voice Agent Support Handoff",
         "",
-        f"Customer name: {payload.customer_name or 'unknown'}",
+        f"Customer name: {payload.customer_name or 'Customer'}",
         f"Customer email: {payload.customer_email or 'unknown'}",
         f"Customer phone: {payload.customer_phone or 'unknown'}",
+        f"Issue: {issue}",
+        "",
         f"Call SID: {payload.call_sid or 'unknown'}",
         f"Session ID: {payload.session_id or 'unknown'}",
-        f"Issue type: {_issue_type_label(payload.query_type)}",
-        f"Requested item/order: {payload.issue_title or 'N/A'}",
-        f"What the customer asked: {payload.what_customer_asked or payload.issue_detail or 'N/A'}",
-        f"What the agent tried: {payload.what_agent_tried or 'Automated Shopify/catalog/order lookup'}",
-        f"Tool/API result: {tool_result_text or 'N/A'}",
-        f"Reason for handoff: {payload.reason_for_handoff or payload.reason or 'data_unavailable'}",
-        (
-            f"Recommended next action: "
-            f"{payload.recommended_next_action or 'Follow up with the customer by email.'}"
-        ),
         "",
-        "Conversation summary:",
-        payload.conversation_summary or "N/A",
-        "",
-        "---",
         "Reply to the customer email above when you have an update.",
     ]
     return "\n".join(lines)
@@ -193,8 +234,16 @@ async def send_support_handoff(
     if session:
         data.setdefault("session_id", getattr(session, "session_id", "") or "")
         data.setdefault("call_sid", getattr(session, "call_sid", "") or "")
-        data.setdefault("customer_phone", getattr(session, "from_number", "") or "")
-        data.setdefault("customer_name", getattr(session, "caller_name", "") or "")
+        resolved_name, resolved_email, resolved_phone = resolve_escalation_customer_fields(
+            session,
+            fallback_name=data.get("customer_name", "") or "",
+            fallback_email=data.get("customer_email", "") or "",
+        )
+        data.setdefault("customer_phone", resolved_phone)
+        if resolved_name:
+            data["customer_name"] = resolved_name
+        if resolved_email:
+            data["customer_email"] = resolved_email
 
     model = CustomerQueryEscalationPayload.from_dict(data)
 
@@ -270,23 +319,11 @@ async def send_support_handoff(
             "customer_message": _CUSTOMER_MESSAGE_SUCCESS,
         })
 
-    summary, transcript = await summarize_conversation_for_support(
-        session,
-        caller_text=caller_text,
-        issue_title=model.issue_title,
-        issue_detail=model.issue_detail,
-        api_context=_sanitize_api_context(model.api_context),
-    )
-    if summary:
-        model.conversation_summary = summary
-    if transcript and not model.what_customer_asked:
-        model.what_customer_asked = transcript[-500:]
-
     escalation_id = str(uuid.uuid4())
     from_addr = resolve_escalation_from_email(settings)
-    customer_name = (model.customer_name or "Caller").strip()
+    customer_name = (model.customer_name or "Customer").strip()
     issue_label = _issue_type_label(model.query_type)
-    subject = f"Voice Agent Support Handoff — {issue_label} — {customer_name}"
+    subject = f"Voice Agent Support — {customer_name} — {issue_label}"
     body = _build_email_body(model)
 
     logger.info(

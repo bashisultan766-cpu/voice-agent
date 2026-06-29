@@ -139,18 +139,13 @@ class TestCreateProductNotFoundEscalation:
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
             with patch("app.escalation.support_handoff.httpx.AsyncClient") as mock_client_cls:
-                with patch(
-                    "app.escalation.support_handoff.summarize_conversation_for_support",
-                    new_callable=AsyncMock,
-                    return_value=("Customer asked for ISBN", "user: isbn"),
-                ):
-                    mock_client = AsyncMock()
-                    mock_client.post = AsyncMock(return_value=mock_resp)
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=False)
-                    mock_client_cls.return_value = mock_client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_resp)
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=False)
+                mock_client_cls.return_value = mock_client
 
-                    raw = await create_product_not_found_escalation(payload)
+                raw = await create_product_not_found_escalation(payload)
 
         data = json.loads(raw)
         assert data["success"] is True
@@ -185,19 +180,14 @@ class TestCreateProductNotFoundEscalation:
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
             with patch("app.escalation.support_handoff.httpx.AsyncClient") as mock_client_cls:
-                with patch(
-                    "app.escalation.support_handoff.summarize_conversation_for_support",
-                    new_callable=AsyncMock,
-                    return_value=("Summary", "transcript"),
-                ):
-                    mock_client = AsyncMock()
-                    mock_client.post = AsyncMock(return_value=mock_resp)
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=False)
-                    mock_client_cls.return_value = mock_client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_resp)
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=False)
+                mock_client_cls.return_value = mock_client
 
-                    first = json.loads(await create_product_not_found_escalation(payload))
-                    second = json.loads(await create_product_not_found_escalation(payload))
+                first = json.loads(await create_product_not_found_escalation(payload))
+                second = json.loads(await create_product_not_found_escalation(payload))
 
         assert first["success"] is True
         assert second["success"] is True
@@ -350,22 +340,17 @@ class TestOrchestratorNotFoundFlow:
 
         with patch("app.escalation.product_not_found_escalation.get_settings", return_value=settings):
             with patch("app.escalation.support_handoff.httpx.AsyncClient") as mock_client_cls:
-                with patch(
-                    "app.escalation.support_handoff.summarize_conversation_for_support",
-                    new_callable=AsyncMock,
-                    return_value=("Summary", "transcript"),
-                ):
-                    mock_client = AsyncMock()
-                    mock_client.post = AsyncMock(return_value=mock_resp)
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=False)
-                    mock_client_cls.return_value = mock_client
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_resp)
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=False)
+                mock_client_cls.return_value = mock_client
 
-                    hint1 = await process_not_found_escalation_turn(
-                        session, "my email is buyer@example.com"
-                    )
-                    assert "buyer@example.com" in hint1.force_reply
-                    hint2 = await process_not_found_escalation_turn(session, "yes")
+                hint1 = await process_not_found_escalation_turn(
+                    session, "my email is buyer@example.com"
+                )
+                assert "buyer@example.com" in hint1.force_reply
+                hint2 = await process_not_found_escalation_turn(session, "yes")
 
         assert hint2.force_reply
         assert hint2.extra_tool_result and hint2.extra_tool_result.success

@@ -21,6 +21,25 @@ _FORBIDDEN_GREETING_WORDS = (
     "let me check",
 )
 
+_GARBAGE_NAME_WORDS = frozenset({
+    "saying",
+    "yeah",
+    "yes",
+    "okay",
+    "ok",
+    "hi",
+    "hello",
+    "thanks",
+    "thank",
+    "caller",
+    "customer",
+    "unknown",
+    "there",
+    "here",
+    "correct",
+    "right",
+})
+
 
 def greeting_safe_name(name: str) -> str:
     """Reject STT garbage or question fragments masquerading as a caller name."""
@@ -32,6 +51,9 @@ def greeting_safe_name(name: str) -> str:
         n,
         re.I,
     ):
+        return ""
+    first = n.split()[0].lower().rstrip(".,!?")
+    if first in _GARBAGE_NAME_WORDS:
         return ""
     return n
 

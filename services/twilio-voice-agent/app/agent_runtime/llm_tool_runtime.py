@@ -459,55 +459,47 @@ class LLMToolRuntime:
             prepare_order_turn_context(session, caller_text, turn_mode=turn_mode)
 
         payment_hint = process_payment_turn(session, caller_text, turn_mode=turn_mode)
-        if not llm_only:
-            if payment_hint.force_reply:
-                spoken = self._finalize(session, payment_hint.force_reply)
-                session.history.append({"role": "user", "content": caller_text})
-                session.history.append({"role": "assistant", "content": spoken})
-                await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
-                await _await_send(send, {"type": "text", "token": "", "last": True})
-                self._record_turn(session, caller_text, spoken)
-                logger.info(
-                    "email_capture_short_circuit sid=%s stage=confirm_prompt "
-                    "payment_email_state_version=%s awaiting_confirmation=%s",
-                    session.call_sid[:6],
-                    PAYMENT_EMAIL_STATE_VERSION,
-                    bool(getattr(session, "awaiting_payment_email_confirmation", False)),
-                )
-                logger.info(
-                    "llm_tool_runtime_payment_confirm_prompt sid=%s openai_skipped=true",
-                    session.call_sid[:6],
-                )
-                return _result(spoken)
-
-            if payment_hint.email_confirmed:
-                return await self._execute_payment_auto_send(
-                    session,
-                    caller_text,
-                    send,
-                    sid=sid,
-                    stage="auto_send_after_confirm",
-                )
-
-            from ..payment.payment_state_machine import needs_deferred_payment_auto_send
-
-            if needs_deferred_payment_auto_send(session):
-                logger.warning(
-                    "payment_deferred_auto_send sid=%s confirmed_email_present=true "
-                    "payment_link_sent=false",
-                    sid,
-                )
-                return await self._execute_payment_auto_send(
-                    session,
-                    caller_text,
-                    send,
-                    sid=sid,
-                    stage="deferred_auto_send",
-                )
-        elif payment_hint.email_confirmed:
+        if payment_hint.force_reply:
+            spoken = self._finalize(session, payment_hint.force_reply)
+            session.history.append({"role": "user", "content": caller_text})
+            session.history.append({"role": "assistant", "content": spoken})
+            await _await_send(send, {"type": "text", "token": spoken, "last": False, "interruptible": True})
+            await _await_send(send, {"type": "text", "token": "", "last": True})
+            self._record_turn(session, caller_text, spoken)
             logger.info(
-                "llm_only_payment_email_confirmed sid=%s send_deferred_to_llm_tools=true",
+                "email_capture_short_circuit sid=%s stage=confirm_prompt "
+                "payment_email_state_version=%s awaiting_confirmation=%s llm_only=%s",
+                session.call_sid[:6],
+                PAYMENT_EMAIL_STATE_VERSION,
+                bool(getattr(session, "awaiting_payment_email_confirmation", False)),
+                llm_only,
+            )
+            return _result(spoken)
+
+        if payment_hint.email_confirmed:
+            return await self._execute_payment_auto_send(
+                session,
+                caller_text,
+                send,
+                sid=sid,
+                stage="auto_send_after_confirm_llm_only" if llm_only else "auto_send_after_confirm",
+            )
+
+        from ..payment.payment_state_machine import needs_deferred_payment_auto_send
+
+        if needs_deferred_payment_auto_send(session):
+            logger.warning(
+                "payment_deferred_auto_send sid=%s confirmed_email_present=true "
+                "payment_link_sent=false llm_only=%s",
                 sid,
+                llm_only,
+            )
+            return await self._execute_payment_auto_send(
+                session,
+                caller_text,
+                send,
+                sid=sid,
+                stage="deferred_auto_send",
             )
 
         if not llm_only:

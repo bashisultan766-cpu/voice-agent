@@ -72,6 +72,35 @@ def speak_email(email: str) -> str:
     return f"{local} at {_domain_voice_part(domain)}"
 
 
+def spell_email_letter_by_letter(email: str) -> str:
+    """
+    Spell the entire email letter-by-letter, including the domain.
+
+    Example: jessica@sureshotbooks.com →
+    ``J-E-S-S-I-C-A at S-U-R-E-S-H-O-T-B-O-O-K-S dot C-O-M``
+    """
+    normalized = normalize_email_for_customer_readback(email)
+    if not normalized or "@" not in normalized:
+        return ""
+
+    local, domain = normalized.split("@", 1)
+
+    def _spell_segment(segment: str) -> str:
+        chars: list[str] = []
+        for ch in segment:
+            if ch.isalpha():
+                chars.append(ch.upper())
+            elif ch.isdigit():
+                chars.append(ch)
+            elif ch in "-_+.":
+                chars.append(ch)
+        return "-".join(chars)
+
+    domain_parts = domain.lower().split(".")
+    domain_spelled = " dot ".join(_spell_segment(part) for part in domain_parts if part)
+    return f"{_spell_segment(local)} at {domain_spelled}"
+
+
 def spell_email_for_voice(email: str) -> str:
     """
     Spell the local part letter-by-letter (uppercase) and digits one-by-one.
@@ -124,9 +153,9 @@ def build_email_readback(email: str, raw_text: str = "") -> str:
         return "I may have heard that wrong. Please spell the email slowly."
 
     spoken = speak_email(normalized)
-    spelled = spell_email_for_voice(normalized)
+    spelled = spell_email_letter_by_letter(normalized)
     return (
-        f"I heard {spoken}. That is {spelled}. Is that correct?"
+        f"I heard {spoken}. Letter by letter, that is {spelled}. Is that correct?"
     )
 
 

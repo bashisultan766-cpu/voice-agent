@@ -486,7 +486,10 @@ async def escalate_to_human(
 ) -> str:
     """Record escalation and email support via canonical support handoff."""
     from ..escalation.models import CustomerQueryEscalationPayload
-    from ..escalation.support_handoff import send_support_handoff
+    from ..escalation.support_handoff import (
+        resolve_escalation_customer_fields,
+        send_support_handoff,
+    )
 
     masked = _mask(caller_phone) if caller_phone else "unknown"
     logger.info(
@@ -496,17 +499,9 @@ async def escalate_to_human(
         summary[:120],
     )
 
-    email = ""
-    name = ""
-    phone = caller_phone or ""
-    if session is not None:
-        phone = getattr(session, "from_number", "") or phone
-        name = getattr(session, "caller_name", "") or ""
-        for attr in ("confirmed_email", "caller_email"):
-            val = (getattr(session, attr, "") or "").strip().lower()
-            if val and "@" in val:
-                email = val
-                break
+    name, email, phone = resolve_escalation_customer_fields(session)
+    if not phone and session is not None:
+        phone = getattr(session, "from_number", "") or caller_phone or ""
 
     payload = CustomerQueryEscalationPayload(
         session_id=(
@@ -2901,15 +2896,23 @@ async def SaveCallerName(
         return json.dumps({"success": False, "error": "Name cannot be empty."})
 
     clean_name = name.strip()[:100]
+    from ..dialogue.greeting import greeting_safe_name
+
+    safe = greeting_safe_name(clean_name)
+    if not safe:
+        return json.dumps({
+            "success": False,
+            "error": "I didn't catch a valid name. Could you say your first name again?",
+        })
 
     if session:
-        session.caller_name = clean_name
+        session.caller_name = safe
         logger.info("SaveCallerName sid=%s", session.call_sid[:6] if session.call_sid else "???")
 
     return json.dumps({
         "success": True,
-        "name": clean_name,
-        "message": f"Got it, thank you {clean_name}. How can I help you today?",
+        "name": safe,
+        "message": f"Got it, thank you {safe}. How can I help you today?",
     })
 
 

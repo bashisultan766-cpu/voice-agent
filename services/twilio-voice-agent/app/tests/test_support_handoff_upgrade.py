@@ -164,26 +164,22 @@ async def test_support_handoff_collects_name_and_email():
 
     with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
         with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):
-            with patch(
-                "app.escalation.support_handoff.summarize_conversation_for_support",
-                new_callable=AsyncMock,
-                return_value=("Summary for support.", "transcript"),
-            ):
-                hint1 = await process_not_found_escalation_turn(
-                    session, "my name is Maria Lopez and my email is maria@example.com"
-                )
-                assert "maria@example.com" in hint1.force_reply
-                assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is True
+            hint1 = await process_not_found_escalation_turn(
+                session, "my name is Maria Lopez and my email is maria@example.com"
+            )
+            assert "maria@example.com" in hint1.force_reply
+            assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is True
 
-                hint2 = await process_not_found_escalation_turn(session, "yes")
+            hint2 = await process_not_found_escalation_turn(session, "yes")
 
     assert hint2.force_reply
     assert session.caller_email == "maria@example.com"
     assert session.caller_name == "Maria Lopez"
     body = mock_client.post.call_args.kwargs["json"]["text"]
-    assert "Conversation summary:" in body
-    assert "Summary for support." in body
-    assert "maria@example.com" in body
+    assert "Customer name: Maria Lopez" in body
+    assert "Customer email: maria@example.com" in body
+    assert "Issue:" in body
+    assert "Conversation summary:" not in body
 
 
 @pytest.mark.asyncio
@@ -207,12 +203,7 @@ async def test_support_email_excludes_secrets():
 
     with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
         with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):
-            with patch(
-                "app.escalation.support_handoff.summarize_conversation_for_support",
-                new_callable=AsyncMock,
-                return_value=("LLM summary.", "user: order"),
-            ):
-                raw = await send_support_handoff(payload, session=session)
+            raw = await send_support_handoff(payload, session=session)
 
     assert json.loads(raw)["success"] is True
     body = mock_client.post.call_args.kwargs["json"]["text"]

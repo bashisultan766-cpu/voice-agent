@@ -54,7 +54,7 @@ def test_order_39667_refunded_brief_reply():
     assert "georgekraemer53 at gmail dot com" in reply
     assert "4004" in reply
     assert "American Express" in reply
-    assert len(reply) < 280
+    assert len(reply) < 400
     assert "address" not in reply.lower()
     assert "Home News Tribune" not in reply
 

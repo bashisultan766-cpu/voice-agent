@@ -138,14 +138,14 @@ def extract_email_from_text(
 
 
 def speak_confirmation_prompt(email: str) -> str:
-    """Full unmasked confirmation — privacy exception for payment email."""
-    from ..email.speller import speak_email, spell_email_for_voice
+    """Full unmasked confirmation — spoken email plus letter-by-letter readback."""
+    from ..email.speller import speak_email, spell_email_letter_by_letter
 
     spoken = speak_email(email)
-    spelled = spell_email_for_voice(email)
+    spelled = spell_email_letter_by_letter(email)
     return (
         f"Just to confirm, I heard {spoken}. "
-        f"That is {spelled}. Is that correct?"
+        f"Letter by letter, that is {spelled}. Is that correct?"
     )
 
 
@@ -265,6 +265,8 @@ def _try_confirm_email_turn(
     from ..email.capture import is_email_confirmation
     from ..agent_runtime.yes_engagement import is_bare_yes
 
+    sync_llm_offered_email_from_history(session)
+
     awaiting = bool(getattr(session, "awaiting_payment_email_confirmation", False))
     pending = get_pending_payment_email(session)
     if not awaiting and not pending:
@@ -279,6 +281,63 @@ def _try_confirm_email_turn(
 
         save_session_email_to_active_group(session)
     return hint
+
+
+_CONFIRM_MARKERS = re.compile(
+    r"\b(just to confirm|i heard|is that correct|that is)\b",
+    re.I,
+)
+
+
+def sync_llm_offered_email_from_history(session: "SessionState") -> bool:
+    """
+    When the LLM read back an email for confirmation, track it as pending so
+    a later yes/correct can promote it to confirmed_email.
+    """
+    if getattr(session, "payment_email_confirmed", False):
+        return False
+    if not (in_payment_flow(session) or _cart_has_confirmed_items(session)):
+        items = getattr(session, "cart_items", None) or []
+        if not any(int(i.get("quantity", 0) or 0) >= 1 for i in items):
+            pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+            if pfs not in (
+                "awaiting_email",
+                "awaiting_email_confirmation",
+                "awaiting_send_confirmation",
+            ):
+                return False
+
+    from ..email.capture import normalize_spoken_email
+
+    history = list(getattr(session, "history", None) or [])
+    for msg in reversed(history):
+        if (msg.get("role") or "") != "assistant":
+            continue
+        content = (msg.get("content") or "").strip()
+        if not content or not _CONFIRM_MARKERS.search(content):
+            break
+
+        quoted = re.search(r'["\']([^"\']+at[^"\']+)["\']', content, re.I)
+        candidate_text = (quoted.group(1) if quoted else content).strip().rstrip('."\'')
+        email = normalize_spoken_email(candidate_text)
+        if not email:
+            typed = re.search(
+                r"\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b",
+                candidate_text,
+            )
+            email = typed.group(1).lower().strip() if typed else None
+        if not email or "@" not in email:
+            break
+
+        normalized = email.strip().lower()
+        existing = get_pending_payment_email(session)
+        if existing != normalized:
+            set_pending_payment_email(session, normalized)
+        else:
+            session.awaiting_payment_email_confirmation = True
+            session.payment_flow_status = "awaiting_email_confirmation"
+        return True
+    return False
 
 
 def process_payment_turn(
@@ -307,6 +366,9 @@ def process_payment_turn(
     text = (caller_text or "").strip()
     if not text:
         return PaymentTurnHint()
+
+    if _cart_has_confirmed_items(session):
+        sync_llm_offered_email_from_history(session)
 
     confirm_hint = _try_confirm_email_turn(session, text)
     if confirm_hint.email_confirmed or confirm_hint.force_reply:

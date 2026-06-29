@@ -31,6 +31,7 @@ class TestGreetingSafeName:
     def test_rejects_saying_that_stt_garbage(self):
         assert greeting_safe_name("saying that?") == ""
         assert greeting_safe_name("Saying that") == ""
+        assert greeting_safe_name("saying") == ""
 
     def test_twiml_new_caller_greeting(self):
         text = build_twiml_greeting(returning=False)

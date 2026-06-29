@@ -23,6 +23,7 @@ def test_brief_order_found_reply():
         "found": True,
         "order": {
             "financial_status": "PAID",
+            "order_date": "2026-03-10",
             "product_count": 2,
             "pricing": {
                 "subtotal_before_shipping": "45.00 USD",
@@ -33,6 +34,8 @@ def test_brief_order_found_reply():
     }
     reply = compose_brief_order_voice_reply(payload)
     assert reply.startswith("I found your order.")
+    assert "paid" in reply.lower()
+    assert "March 10" in reply
     assert "two products" in reply
     assert "forty five dollars" in reply
     assert "five dollars and ninety nine cents" in reply
@@ -43,15 +46,40 @@ def test_brief_order_found_reply():
 def test_refunded_order_brief_reply():
     inner = {
         "financial_status": "REFUNDED",
+        "order_date": "2026-01-15",
+        "product_count": 2,
+        "customer_name": "Maria Lopez",
         "customer_email": "test@example.com",
         "payment": {"card_brand": "Visa", "card_last4": "4242"},
+        "pricing": {
+            "subtotal_before_shipping": "45.00 USD",
+            "shipping": "5.99 USD",
+            "total": "50.99 USD",
+        },
+        "refunds": [{"reason": "Customer requested cancellation before shipment."}],
         "refund_info": {"refunded": True},
     }
     reply = compose_refunded_order_voice_reply(inner)
     assert "refunded" in reply.lower()
+    assert "Maria Lopez" in reply
+    assert "refund reason" in reply.lower()
+    assert "cancellation before shipment" in reply
+    assert "January 15" in reply
+    assert "two products" in reply
+    assert "forty five dollars" in reply
     assert "test at example dot com" in reply
     assert "4242" in reply
     assert "Visa" in reply
+    assert "processing fee" not in reply.lower()
+
+
+def test_spell_email_letter_by_letter_includes_domain():
+    from app.email.speller import spell_email_letter_by_letter
+
+    spelled = spell_email_letter_by_letter("jessica@sureshotbooks.com")
+    assert "J-E-S-S-I-C-A" in spelled
+    assert "S-U-R-E-S-H-O-T-B-O-O-K-S" in spelled
+    assert "C-O-M" in spelled
 
 
 def test_refunded_order_via_refunds_array_only():

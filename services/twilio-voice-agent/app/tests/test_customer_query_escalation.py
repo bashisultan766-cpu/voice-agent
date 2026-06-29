@@ -106,7 +106,7 @@ async def test_order_not_found_does_not_send_with_profile_email():
 
 
 @pytest.mark.asyncio
-async def test_send_support_handoff_includes_llm_summary():
+async def test_send_support_handoff_short_professional_body():
     session = _session(caller_email="test@example.com")
     session.history = [
         {"role": "user", "content": "Where is my order 55555?"},
@@ -129,19 +129,17 @@ async def test_send_support_handoff_includes_llm_summary():
             "app.escalation.support_handoff.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            with patch(
-                "app.escalation.support_handoff.summarize_conversation_for_support",
-                new_callable=AsyncMock,
-                return_value=("LLM summary of the call.", "user: Where is my order"),
-            ):
-                raw = await send_support_handoff(payload, session=session)
+            raw = await send_support_handoff(payload, session=session)
 
     data = json.loads(raw)
     assert data["success"] is True
     body = mock_client.post.call_args.kwargs["json"]["text"]
-    assert "LLM summary of the call." in body
-    assert "Maria Lopez" in body
-    assert "test@example.com" in body
+    assert "Customer name: Maria Lopez" in body
+    assert "Customer email: test@example.com" in body
+    assert "Issue:" in body
+    assert "Shopify returned no match." in body
+    assert "Conversation summary:" not in body
+    assert "Dear Backend Team" not in body
 
 
 @pytest.mark.asyncio
@@ -164,16 +162,11 @@ async def test_email_capture_on_followup_turn():
             "app.escalation.support_handoff.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            with patch(
-                "app.escalation.support_handoff.summarize_conversation_for_support",
-                new_callable=AsyncMock,
-                return_value=("Summary", "transcript"),
-            ):
-                hint1 = await process_not_found_escalation_turn(
-                    session, "my email is maria@example.com"
-                )
-                assert "maria@example.com" in hint1.force_reply
-                hint2 = await process_not_found_escalation_turn(session, "yes")
+            hint1 = await process_not_found_escalation_turn(
+                session, "my email is maria@example.com"
+            )
+            assert "maria@example.com" in hint1.force_reply
+            hint2 = await process_not_found_escalation_turn(session, "yes")
 
     assert hint2.force_reply
     assert session.awaiting_not_found_escalation_email is False
