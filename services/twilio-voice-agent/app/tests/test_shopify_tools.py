@@ -267,7 +267,14 @@ async def test_escalate_to_human_returns_safe_message():
         to_number="+15559999999",
         caller_email="caller@example.com",
     )
-    with patch("app.escalation.support_handoff.send_support_handoff", new_callable=AsyncMock) as mock_send:
+    session.pending_not_found_escalation = {
+        "customer_email": "caller@example.com",
+        "email_confirmed": True,
+    }
+    with patch(
+        "app.escalation.support_handoff.send_support_handoff",
+        new_callable=AsyncMock,
+    ) as mock_send:
         mock_send.return_value = json.dumps({
             "success": True,
             "customer_message": "I've forwarded your request to our support team.",

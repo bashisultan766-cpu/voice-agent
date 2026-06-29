@@ -312,8 +312,11 @@ class VoiceCommerceRuntime:
         from ..agent_runtime.order_flow_state import (
             _should_skip_order_lookup,
             extract_order_number,
+            is_actionable_order_number,
+            try_another_order_short_circuit,
             try_order_collection_short_circuit,
             try_order_enrichment_short_circuit,
+            try_order_hold_reply,
             try_order_repeat_reply,
         )
         from ..runtime.fast_classifier import ClassificationResult
@@ -352,12 +355,29 @@ class VoiceCommerceRuntime:
                         return _result(spoken)
 
         repeat_reply = try_order_repeat_reply(session, normalized)
-        if repeat_reply and not extract_order_number(
-            normalized, session, turn_mode=turn_mode,
-        ):
+        spoken_num = extract_order_number(normalized, session, turn_mode=turn_mode)
+        if repeat_reply and not (spoken_num and is_actionable_order_number(spoken_num)):
             spoken = self._brain.finalize_response(session, repeat_reply, [])
             await self._speak(session, normalized, spoken, send)
             logger.info("order_repeat_short_circuit sid=%s", sid)
+            return _result(spoken)
+
+        hold_reply = try_order_hold_reply(session, normalized)
+        if hold_reply:
+            spoken = self._brain.finalize_response(session, hold_reply, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("order_hold_short_circuit sid=%s", sid)
+            return _result(spoken)
+
+        another_hint = try_another_order_short_circuit(
+            session, normalized, turn_mode=turn_mode,
+        )
+        if another_hint and another_hint.force_reply:
+            spoken = self._brain.finalize_response(
+                session, another_hint.force_reply, [],
+            )
+            await self._speak(session, normalized, spoken, send)
+            logger.info("another_order_short_circuit sid=%s", sid)
             return _result(spoken)
 
         collection_hint = try_order_collection_short_circuit(

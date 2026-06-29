@@ -10,8 +10,12 @@ from app.agent_runtime.order_flow_state import (
     extract_order_number,
     is_actionable_order_number,
     order_intent_detected,
+    try_another_order_short_circuit,
     try_order_collection_short_circuit,
+    try_order_hold_reply,
     try_order_repeat_reply,
+    try_order_brain_gate,
+    ORDER_FLOW_VERSION,
 )
 from app.runtime.fast_classifier import classify
 from app.voice.order_voice_reply import compose_brief_order_voice_reply
@@ -221,3 +225,44 @@ async def test_turn_assembler_holds_bare_four_digit_order():
     text, mode = emitted[0]
     assert mode == "order"
     assert extract_order_number(text, _Session()) == "38873"
+
+
+def test_other_order_intent():
+    assert order_intent_detected("I want information about the other order.")
+
+
+def test_another_order_short_circuit():
+    session = _Session()
+    session.last_order_number = "41635"
+    session.order_last_voice_reply = "I found your order 41635."
+    hint = try_another_order_short_circuit(session, "Yeah. I want information about the other order.")
+    assert hint is not None
+    assert "other order number" in hint.force_reply.lower()
+    assert session.order_flow_status == "awaiting_order_number"
+
+
+def test_hold_during_order_collection():
+    session = _Session()
+    session.order_flow_status = "awaiting_order_number"
+    reply = try_order_hold_reply(session, "Okay. Just hold a second.")
+    assert reply is not None
+    assert "take your time" in reply.lower()
+
+
+def test_order_dispute_replays_shopify_template():
+    session = _Session()
+    session.order_last_voice_reply = "I found your order. Status is paid."
+    reply = try_order_repeat_reply(session, "Your detail is not correct.")
+    assert reply == session.order_last_voice_reply
+
+
+def test_order_brain_gate_blocks_dispute_reformat():
+    session = _Session()
+    session.order_last_voice_reply = "I found your order 40179. Two books."
+    session.last_order_number = "40179"
+    gated = try_order_brain_gate(session, "You are giving the wrong information.")
+    assert gated == session.order_last_voice_reply
+
+
+def test_order_flow_version():
+    assert ORDER_FLOW_VERSION == "v4.43"

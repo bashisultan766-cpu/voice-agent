@@ -151,4 +151,52 @@ def gate_tool_call(name: str, session: "SessionState | None") -> Optional[Paymen
             return _blocked(error_code="email_unconfirmed", customer_message=msg)
         return None
 
+    if name in (
+        "lookup_shopify_order_details",
+        "get_order_details",
+        "lookup_order",
+        "lookup_order_status",
+    ):
+        last_reply = (getattr(session, "order_last_voice_reply", "") or "").strip()
+        if last_reply:
+            payload = build_payment_tool_result(
+                success=True,
+                email_sent=False,
+                customer_message=last_reply,
+                error_code="order_already_disclosed",
+                retryable=False,
+            )
+            return PaymentGateResult(
+                allowed=False,
+                tool_json=json.dumps(payload),
+                reason="order_template_already_spoken",
+            )
+
+    if name in ("escalate_to_customer_service", "escalate_to_human"):
+        from ..agent_runtime.not_found_escalation_flow import (
+            _resolved_customer_email,
+            build_support_handoff_payload,
+            stage_pending_escalation,
+        )
+
+        if not _resolved_customer_email(session):
+            if not getattr(session, "awaiting_not_found_escalation_email", False):
+                payload = build_support_handoff_payload(
+                    session,
+                    query_type="general",
+                    issue_title="Customer service escalation",
+                    issue_detail="Customer requested human support during the call.",
+                    reason="human_escalation",
+                    what_agent_tried="Voice agent tools and automated Shopify lookups",
+                )
+                stage_pending_escalation(session, payload)
+            msg = (
+                "I can forward your message to our customer support team, and they'll "
+                "follow up with you by email. May I have your name and email address?"
+            )
+            return _blocked(
+                error_code="support_email_unconfirmed",
+                customer_message=msg,
+            )
+
     return None

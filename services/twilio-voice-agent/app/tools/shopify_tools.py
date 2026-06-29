@@ -484,12 +484,15 @@ async def escalate_to_human(
     summary: str = "",
     session: Optional["SessionState"] = None,
 ) -> str:
-    """Record escalation and email support via canonical support handoff."""
-    from ..escalation.models import CustomerQueryEscalationPayload
-    from ..escalation.support_handoff import (
-        resolve_escalation_customer_fields,
-        send_support_handoff,
+    """Stage or send support handoff — never emails support without spell-confirmed email."""
+    from ..agent_runtime.not_found_escalation_flow import (
+        _resolved_customer_email,
+        build_support_handoff_payload,
+        maybe_execute_escalation,
+        stage_pending_escalation,
     )
+    from ..email.resolver import resolve_spoken_email_address
+    from ..payment.payment_state_machine import speak_confirmation_prompt
 
     masked = _mask(caller_phone) if caller_phone else "unknown"
     logger.info(
@@ -499,72 +502,72 @@ async def escalate_to_human(
         summary[:120],
     )
 
-    name, email, phone = resolve_escalation_customer_fields(session)
-    if not phone and session is not None:
-        phone = getattr(session, "from_number", "") or caller_phone or ""
+    confirmed_email = _resolved_customer_email(session) if session else ""
+    if session is not None and not confirmed_email:
+        from ..payment.email_state import get_canonical_confirmed_email
 
-    payload = CustomerQueryEscalationPayload(
-        session_id=(
-            getattr(session, "session_id", "") if session else ""
-        ) or (getattr(session, "call_sid", "") if session else ""),
-        call_sid=getattr(session, "call_sid", "") if session else "",
-        customer_phone=phone,
-        customer_name=name,
-        customer_email=email,
+        confirmed_email = get_canonical_confirmed_email(session) or ""
+
+    payload = build_support_handoff_payload(
+        session,  # type: ignore[arg-type]
         query_type="general",
         issue_title=(reason or "Customer service escalation")[:120],
         issue_detail=(summary or reason or "")[:500],
-        what_customer_asked=(summary or reason or "")[:500],
-        what_agent_tried="Voice agent tools and automated lookups",
-        reason_for_handoff=reason or "human_escalation",
-        recommended_next_action="Contact the customer and resolve the request manually.",
+        customer_email=confirmed_email,
         reason=reason or "human_escalation",
+        what_customer_asked=(summary or reason or "")[:500],
+        what_agent_tried="Voice agent tools and automated Shopify lookups",
+        recommended_next_action="Contact the customer and resolve the request manually.",
     )
 
-    if not email:
+    if confirmed_email:
+        if session is not None:
+            payload.customer_email = confirmed_email
+        result = await maybe_execute_escalation(
+            session,  # type: ignore[arg-type]
+            payload,
+            caller_text=summary,
+        )
+        parsed = result.result if result else {}
+        if parsed.get("success"):
+            return json.dumps({
+                "escalated": True,
+                "message": parsed.get("customer_message") or (
+                    "I've forwarded your request to our support team. "
+                    "They'll contact you by email."
+                ),
+            })
         return json.dumps({
             "escalated": False,
-            "needs_contact_info": True,
-            "message": (
-                "I'm not seeing that information available right now. "
-                "I can have our support team follow up with you by email. "
-                "May I have your name and email?"
-            ),
-        })
-
-    raw = await send_support_handoff(payload, session=session, caller_text=summary)
-    parsed = json.loads(raw)
-    if parsed.get("success"):
-        if session is not None:
-            try:
-                from ..memory.postgres_store import persist_escalation_if_configured
-                from ..workflow.hooks import schedule_workflow_event
-
-                persist_escalation_if_configured(
-                    session,
-                    escalation_type="human_escalation",
-                    payload={"reason": reason, "summary": (summary or "")[:200]},
-                )
-                schedule_workflow_event(
-                    session,
-                    "escalation_created",
-                    {"type": "human_escalation", "reason": reason[:120]},
-                )
-            except Exception:
-                pass
-        return json.dumps({
-            "escalated": True,
+            "error_code": parsed.get("error_code", "escalation_failed"),
             "message": parsed.get("customer_message") or (
-                "I've forwarded your request to our support team. "
-                "They'll contact you by email."
+                "I had trouble notifying our team — please try again in a moment."
             ),
         })
+
+    if session is not None:
+        stage_pending_escalation(session, payload)
+        spoken_email = ""
+        resolved = resolve_spoken_email_address(summary or reason or "")
+        if resolved.email:
+            spoken_email = resolved.email
+        if spoken_email:
+            pending = dict(getattr(session, "pending_not_found_escalation", None) or {})
+            pending["staging_email"] = spoken_email
+            pending["awaiting_email_confirmation"] = True
+            session.pending_not_found_escalation = pending
+            return json.dumps({
+                "escalated": False,
+                "needs_email_confirmation": True,
+                "message": speak_confirmation_prompt(spoken_email),
+            })
 
     return json.dumps({
         "escalated": False,
-        "error_code": parsed.get("error_code", "escalation_failed"),
-        "message": parsed.get("customer_message") or (
-            "I had trouble notifying our team — please try again in a moment."
+        "needs_contact_info": True,
+        "message": (
+            "I can forward your message to our customer support team, and they'll "
+            "follow up with you by email. May I have your name and email address?"
         ),
     })
 

@@ -14,7 +14,7 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.42"
+ORDER_FLOW_VERSION = "v4.43"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_ORDER_NUMBER = "awaiting_order_number"
@@ -70,6 +70,22 @@ _ORDER_CONFIRM_PAT = re.compile(
 )
 _WRONG_ORDER_PAT = re.compile(
     r"\bwrong (?:order )?number|incorrect order|not the right order\b",
+    re.I,
+)
+_OTHER_ORDER_PAT = re.compile(
+    r"\b(?:another|other|different|second|next)\s+order\b",
+    re.I,
+)
+_HOLD_PAT = re.compile(
+    r"\b(?:hold(?:\s+on)?|wait|just\s+(?:hold|wait)(?:\s+a\s+(?:second|moment))?|"
+    r"one\s+(?:second|moment)|give\s+me\s+a\s+(?:second|moment))\b",
+    re.I,
+)
+_ORDER_DISPUTE_PAT = re.compile(
+    r"\b(?:wrong\s+information|wrong\s+details?|not\s+matching|doesn'?t\s+match|"
+    r"detail(?:s)?\s+(?:is|are)\s+not\s+correct|giving\s+the\s+wrong|"
+    r"your\s+detail(?:s)?\s+(?:is|are)\s+not\s+correct|information\s+is\s+wrong|"
+    r"not\s+the\s+correct\s+(?:one|order))\b",
     re.I,
 )
 _ORDER_PREAMBLE_PAT = re.compile(
@@ -237,7 +253,11 @@ def extract_email_from_turn(text: str) -> Optional[str]:
 
 def order_intent_detected(text: str) -> bool:
     t = text or ""
-    return bool(_ORDER_STATUS_INTENT.search(t) or _ORDER_INFO_INTENT.search(t))
+    return bool(
+        _ORDER_STATUS_INTENT.search(t)
+        or _ORDER_INFO_INTENT.search(t)
+        or _OTHER_ORDER_PAT.search(t)
+    )
 
 
 def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optional[str]:
@@ -254,12 +274,21 @@ def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optiona
             "Sorry about that. Please read your full order number slowly, "
             "one digit at a time."
         )
+    last = (getattr(session, "order_last_voice_reply", "") or "").strip()
+    if _ORDER_DISPUTE_PAT.search(text) and last:
+        return last
     if _REPEAT_ORDER_NUMBER_PAT.search(text):
+        if _REPEAT_ORDER_SUMMARY_PAT.search(text) and last:
+            return last
         num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
         if num:
             spaced = " ".join(num)
+            if last:
+                return (
+                    f"The order number is {spaced}. "
+                    "I can repeat the full order summary if you'd like."
+                )
             return f"The order number is {spaced}."
-    last = (getattr(session, "order_last_voice_reply", "") or "").strip()
     if _REPEAT_ORDER_SUMMARY_PAT.search(text):
         if last:
             return last
@@ -274,6 +303,38 @@ def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optiona
     if _ORDER_CONFUSION_PAT.search(text) and last:
         return last
     return None
+
+
+def try_order_hold_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Acknowledge hold/wait during order collection without invoking the LLM."""
+    if not _HOLD_PAT.search(caller_text or ""):
+        return None
+    if _status(session) == STATUS_AWAITING_ORDER_NUMBER:
+        return "No problem — take your time. Read your order number when you're ready."
+    if getattr(session, "last_order_number", ""):
+        return "Sure — take your time. Let me know when you have the order number."
+    return None
+
+
+def try_another_order_short_circuit(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[OrderTurnHint]:
+    """When caller asks about a different order, collect a new order number."""
+    text = (caller_text or "").strip()
+    if not text or not _OTHER_ORDER_PAT.search(text):
+        return None
+    if extract_order_number(text, session, turn_mode=turn_mode):
+        return None
+    session.order_flow_status = STATUS_AWAITING_ORDER_NUMBER
+    return OrderTurnHint(
+        force_reply=(
+            "Sure — please read the other order number slowly, one digit at a time."
+        ),
+        openai_skipped=True,
+    )
 
 
 def try_order_brain_gate(
@@ -294,14 +355,18 @@ def try_order_brain_gate(
     if replay:
         return replay
 
+    if _ORDER_DISPUTE_PAT.search(caller_text or ""):
+        return last_reply
+
     spoken_num = extract_order_number(caller_text, session, turn_mode=turn_mode) or ""
     last_num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
     if spoken_num and last_num and spoken_num == last_num:
         return last_reply
 
-    if last_num and not spoken_num and not order_intent_detected(caller_text):
-        if re.search(
-            r"\b(order|refund|shipping|tracking|status|that order|my order)\b",
+    if last_num and not spoken_num:
+        if order_intent_detected(caller_text) or re.search(
+            r"\b(order|refund|shipping|tracking|status|that order|my order|"
+            r"wrong|incorrect|not correct|not matching)\b",
             caller_text or "",
             re.I,
         ):
