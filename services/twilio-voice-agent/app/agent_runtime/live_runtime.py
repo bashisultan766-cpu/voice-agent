@@ -1,24 +1,17 @@
 """
-Live runtime identity — resolves active turn handler.
+Live runtime identity — canonical voice commerce handler only.
 """
 from __future__ import annotations
 
-from .llm_tool_runtime import RUNTIME_MODE as LLM_TOOL_RUNTIME_MODE
-
 
 def resolve_live_turn_handler(settings=None) -> str:
-    """
-    Return the active live WebSocket turn handler label.
-
-    Priority: voice_commerce_runtime > orchestrator > llm_tool_runtime.
-    """
+    """Return the active live WebSocket turn handler label."""
     from ..config import get_settings
-    from ..runtime.voice_commerce_runtime import RUNTIME_MODE as COMMERCE_MODE, voice_commerce_enabled
-    from ..orchestrator.runtime import RUNTIME_MODE as ORCHESTRATOR_MODE
+    from ..runtime.voice_commerce_runtime import RUNTIME_MODE, voice_commerce_enabled
 
     s = settings or get_settings()
-    if voice_commerce_enabled(s):
-        return COMMERCE_MODE
-    if getattr(s, "VOICE_ORCHESTRATOR_ENABLED", False):
-        return ORCHESTRATOR_MODE
-    return LLM_TOOL_RUNTIME_MODE
+    if not voice_commerce_enabled(s):
+        raise RuntimeError(
+            "VOICE_COMMERCE_RUNTIME_ENABLED must be true — legacy runtimes removed"
+        )
+    return RUNTIME_MODE

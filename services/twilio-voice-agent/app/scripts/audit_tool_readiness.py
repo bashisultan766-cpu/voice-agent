@@ -47,8 +47,8 @@ def _tool_inventory() -> list[ToolAuditRow]:
         ToolAuditRow("lookup_order_status", "shopify_tools.lookup_order", "shopify", "test_order_refund", "ready", True),
         ToolAuditRow("lookup_refund_status", "shopify_tools.get_refund_status", "shopify", "test_order_refund", "ready", True),
         ToolAuditRow("calculate_pricing", "shopify_tools.CalculatePricing", "shopify", "partial", "ready", True),
-        ToolAuditRow("check_facility_approval", "FacilityApprovalWorker", "worker/cache", "test_v41_facility_workers", "partial", True),
-        ToolAuditRow("check_order_facility_restrictions", "FacilityRestrictionWorker", "worker/cache", "test_v41_facility_workers", "partial", True),
+        ToolAuditRow("check_facility_approval", "facility.approval_worker", "cache+local", "test_v433_facility_intelligence", "partial", True),
+        ToolAuditRow("check_order_facility_restrictions", "facility.policy_service", "cache+local", "test_v433_facility_intelligence", "partial", True),
         ToolAuditRow(
             "reconcile_order_facility_books",
             "facility.order_reconciliation.reconcile_order_facility_json",
@@ -63,7 +63,7 @@ def _tool_inventory() -> list[ToolAuditRow]:
         ToolAuditRow("cancel_order_request", "shopify_tools.CancelOrderRequest", "shopify", "test_v419_elevenlabs_alignment", "ready", True),
         ToolAuditRow("shipping_policy_lookup", "knowledge_base", "local", "test_v411_knowledge_base", "ready", True),
         ToolAuditRow("refund_policy_lookup", "knowledge_base", "local", "test_workers", "ready", True),
-        ToolAuditRow("facility_policy_lookup", "CheckFacilityApproval", "worker/cache", "test_v4144", "partial", True),
+        ToolAuditRow("facility_policy_lookup", "facility.policy_service", "cache+local", "test_v433", "partial", True),
         ToolAuditRow("faq_lookup", "knowledge_base", "local", "test_v411_knowledge_base", "ready", True),
         ToolAuditRow("escalate_to_human", "shopify_tools.escalate_to_human", "resend+logs", "test_shopify_tools", "ready", True),
         ToolAuditRow("escalate_to_customer_service", "EscalateToCustomerService", "resend+logs", "test_v418", "ready", True),
@@ -122,7 +122,7 @@ def _check_twilio() -> tuple[bool, str]:
 def run() -> int:
     from app.agent_runtime import llm_tools
     from app.agent_runtime.master_prompt import prompt_startup_diagnostic
-    from app.agent_runtime.runtime import resolve_live_turn_handler
+    from app.agent_runtime.live_runtime import resolve_live_turn_handler
     from app.config import get_settings
 
     settings = get_settings()
@@ -136,7 +136,7 @@ def run() -> int:
     print(f"VOICE_AGENT_RUNTIME_MODE: {settings.VOICE_AGENT_RUNTIME_MODE}")
     print(
         f"Legacy agent tools blocked: {settings.VOICE_LIVE_DISABLE_OPENAI_TOOLS} "
-        f"(llm_tool_runtime unaffected)"
+        f"(voice_commerce_runtime unaffected)"
     )
 
     diag = prompt_startup_diagnostic()
@@ -192,7 +192,7 @@ def run() -> int:
     print(f"  Payment send:      {'ready' if shopify_ok and resend_ok else 'partial'}")
     print(f"  Order lookup:      {'ready' if shopify_ok else 'broken'}")
     print(f"  Refund lookup:     {'ready' if shopify_ok else 'broken'}")
-    print(f"  Facility tools:    partial (worker/cache — not live Shopify)")
+    print(f"  Facility tools:    partial (facility/policy_service cache)")
 
     print()
     print("Tool audit table:")

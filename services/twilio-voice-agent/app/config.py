@@ -106,7 +106,7 @@ class Settings(BaseSettings):
     # ── v4.2: Legacy OpenAI agent tool-calling guard ─────────────────────────
     # When true (default), blocks the OLD run_agent_turn streaming path and the
     # RealtimePipelineEngine worker→composer fallback from using OpenAI tools.
-    # Does NOT affect llm_tool_runtime, which is the sole live runtime and
+    # Does NOT affect voice_commerce_runtime, which is the sole live runtime.
     # always uses OpenAI function-calling via app/agent_runtime/llm_tools.py.
     VOICE_LIVE_DISABLE_OPENAI_TOOLS: bool = True
 
@@ -115,18 +115,11 @@ class Settings(BaseSettings):
     JESSICA_EMAIL: str = ""
     CUSTOMER_SERVICE_EMAIL: str = ""
 
-    # ── v4.18: LLM-first tool runtime (single active runtime) ─────────────────
-    # The only supported live runtime. Legacy modes (main_llm_agent,
-    # eric_agent_runtime, legacy_v410, llm_first) are quarantined and never run
-    # in the customer path — dispatch always routes to llm_tool_runtime.
-    VOICE_AGENT_RUNTIME_MODE: str = "llm_tool_runtime"
-    # When true, route turns through app/orchestrator (supervisor → planner → tools).
-    # Disabled by default — replaced by voice_commerce_runtime (single-brain).
+    # ── Canonical live runtime (voice_commerce_runtime only) ─────────────────
+    VOICE_AGENT_RUNTIME_MODE: str = "voice_commerce_runtime"
     VOICE_ORCHESTRATOR_ENABLED: bool = False
-    # Single-brain commerce runtime (fast classifier → Main LLM Brain → tool router).
     VOICE_COMMERCE_RUNTIME_ENABLED: bool = True
-    # When true, orchestrator failures fall back to llm_tool_runtime for this release.
-    VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED: bool = True
+    VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED: bool = False
     # Approximate token budget for the system prompt; above this the master
     # prompt is sent section-by-section (safety sections always included).
     VOICE_PROMPT_TOKEN_BUDGET: int = 4000
@@ -209,6 +202,8 @@ class Settings(BaseSettings):
     VOICE_DIGIT_COLLECTION_SILENCE_MS: int = 2500
     VOICE_EMAIL_COLLECTION_SILENCE_MS: int = 2500
     VOICE_ORDER_COLLECTION_SILENCE_MS: int = 2500
+    VOICE_ORDER_PARTIAL_TIMEOUT_MS: int = 8000
+    VOICE_MIN_ORDER_DIGITS: int = 5
     VOICE_ALLOW_BARGE_IN: bool = True
     VOICE_INTERRUPT_GRACE_MS: int = 500
 

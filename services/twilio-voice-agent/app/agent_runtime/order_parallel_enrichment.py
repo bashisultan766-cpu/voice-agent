@@ -160,16 +160,15 @@ async def enrich_order_parallel(
         order["order_number"] = order_number
 
     inner = order.get("order") or {}
-    session.last_order_number = (
-        inner.get("order_number")
-        or order.get("order_number")
-        or order_number
-    )
-    if facility_name:
-        session.last_facility_name = facility_name
-
     if order.get("found") and inner:
+        session.last_order_number = (
+            inner.get("order_number")
+            or order.get("order_number")
+            or order_number
+        )
         session.order_context = json.dumps(inner)[:2000]
+    elif facility_name:
+        session.last_facility_name = facility_name
 
     try:
         from ..conversation.call_memory import extract_durable_facts

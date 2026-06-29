@@ -497,6 +497,15 @@ class VoiceCommerceRuntime:
                 {"type": "text", "token": classification.ack_reply, "last": False, "interruptible": True},
             )
 
+        from ..agent_runtime.order_flow_state import try_order_brain_gate
+
+        order_brain_gate = try_order_brain_gate(session, normalized, turn_mode=turn_mode)
+        if order_brain_gate:
+            spoken = self._brain.finalize_response(session, order_brain_gate, [])
+            await self._speak(session, normalized, spoken, send)
+            logger.info("order_brain_gate sid=%s", sid)
+            return _result(spoken)
+
         live_context = self._build_live_context(
             session, normalized, turn_mode=turn_mode, caller_context=caller_context,
         )

@@ -27,7 +27,7 @@ from app.agent_runtime.commerce_flow_state import (
     stage_product_candidate,
 )
 from app.config import Settings
-from app.agent_runtime.llm_tool_runtime import LLMToolRuntime
+from app.runtime.voice_commerce_runtime import VoiceCommerceRuntime
 from app.agent_runtime.payment_flow_state import (
     PAYMENT_SUCCESS_MESSAGE,
     confirmation_prompt,
@@ -156,7 +156,7 @@ class TestYesHandling:
 
 class TestEmailConfirmation:
     def test_email_mode_short_circuits_before_openai(self):
-        runtime = LLMToolRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
+        runtime = VoiceCommerceRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
         session = _session()
         add_product_candidate(session, title=BOOK_A["title"], isbn=BOOK_A["isbn"],
                               variant_id=BOOK_A["variant_id"], price=BOOK_A["price"])
@@ -196,7 +196,7 @@ class TestEmailConfirmation:
 
     @pytest.mark.asyncio
     async def test_auto_send_uses_session_email_not_arg(self, monkeypatch):
-        runtime = LLMToolRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
+        runtime = VoiceCommerceRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
         session = _session()
         add_product_candidate(session, title=BOOK_A["title"], isbn=BOOK_A["isbn"],
                               variant_id=BOOK_A["variant_id"], price=BOOK_A["price"])
@@ -331,7 +331,7 @@ class TestProgressSends:
 class TestLiveLogRegression:
     @pytest.mark.asyncio
     async def test_full_two_book_email_payment_flow(self, monkeypatch):
-        runtime = LLMToolRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
+        runtime = VoiceCommerceRuntime(settings=_LEGACY_RUNTIME_SETTINGS)
         session = _session()
 
         stage_product_candidate(session, BOOK_A)

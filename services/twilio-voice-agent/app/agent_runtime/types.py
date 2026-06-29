@@ -112,3 +112,44 @@ class RuntimeTurnResult:
     source: str = "llm"
     end_call: bool = False
     supervisor: Optional[SupervisorDecision] = None
+
+
+@dataclass
+class ToolExecutionResult:
+    tool: str
+    success: bool
+    result: dict[str, Any] = field(default_factory=dict)
+    raw_json: str = ""
+    error_code: str = ""
+    latency_ms: float = 0.0
+    blocked_by_guard: bool = False
+
+
+@dataclass
+class SupervisorResult:
+    intent: str = "unknown"
+    confidence: float = 0.0
+
+
+@dataclass
+class PlanStep:
+    tool: str
+    args: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PlannerResult:
+    steps: list[PlanStep] = field(default_factory=list)
+
+
+@dataclass
+class OrchestratorTurnContext:
+    """Minimal context for support escalation after tool results."""
+
+    user_text: str = ""
+    turn_id: str = ""
+    turn_mode: str = ""
+    memory_summary: str = ""
+    supervisor: Any = None
+    planner: Any = None
+    tool_results: list[ToolExecutionResult] = field(default_factory=list)

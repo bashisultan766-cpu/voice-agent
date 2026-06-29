@@ -197,8 +197,13 @@ def _short_issue_text(payload: CustomerQueryEscalationPayload) -> str:
     return "Customer requested support assistance."
 
 
-def _build_email_body(payload: CustomerQueryEscalationPayload) -> str:
+def _build_email_body(
+    payload: CustomerQueryEscalationPayload,
+    *,
+    conversation_summary: str = "",
+) -> str:
     issue = _short_issue_text(payload)
+    summary = (conversation_summary or payload.conversation_summary or "").strip()
     lines = [
         "Voice Agent Support Handoff",
         "",
@@ -207,11 +212,24 @@ def _build_email_body(payload: CustomerQueryEscalationPayload) -> str:
         f"Customer phone: {payload.customer_phone or 'unknown'}",
         f"Issue: {issue}",
         "",
+    ]
+    if payload.what_customer_asked:
+        lines.append(f"What customer asked: {payload.what_customer_asked[:500]}")
+    if payload.what_agent_tried:
+        lines.append(f"Tools attempted: {payload.what_agent_tried[:500]}")
+    if payload.reason_for_handoff or payload.reason:
+        reason = (payload.reason_for_handoff or payload.reason or "").strip()
+        if reason:
+            lines.append(f"Reason lookup failed: {reason[:500]}")
+    if summary:
+        lines.extend(["", "Conversation summary:", summary])
+    lines.extend([
+        "",
         f"Call SID: {payload.call_sid or 'unknown'}",
         f"Session ID: {payload.session_id or 'unknown'}",
         "",
         "Reply to the customer email above when you have an update.",
-    ]
+    ])
     return "\n".join(lines)
 
 
@@ -224,6 +242,8 @@ async def send_support_handoff(
     """
     Summarize conversation (LLM), email support team via Resend, return JSON string.
     """
+    from .conversation_summarizer import summarize_conversation_for_support
+
     settings = get_settings()
 
     if isinstance(payload, dict):
@@ -324,7 +344,16 @@ async def send_support_handoff(
     customer_name = (model.customer_name or "Customer").strip()
     issue_label = _issue_type_label(model.query_type)
     subject = f"Voice Agent Support — {customer_name} — {issue_label}"
-    body = _build_email_body(model)
+
+    llm_summary, _transcript = await summarize_conversation_for_support(
+        session,
+        caller_text=caller_text,
+        issue_title=model.issue_title,
+        issue_detail=model.issue_detail,
+        api_context=model.api_context,
+    )
+    model.conversation_summary = llm_summary or model.conversation_summary
+    body = _build_email_body(model, conversation_summary=llm_summary)
 
     logger.info(
         "support_handoff_send call_sid=%s type=%s name=%s email=%s phone=%s",

@@ -44,6 +44,9 @@ _ISBN_CONTINUATION = re.compile(
 _PARTIAL_ISBN_CLARIFY = (
     "I have part of it. Please continue with the remaining digits."
 )
+_PARTIAL_ORDER_CLARIFY = (
+    "I only heard part of the order number. Please continue with the remaining digits."
+)
 _KEEPALIVE_RESPONSE = "No problem, I'm here. Go ahead when you're ready."
 _EMAIL_COMPLETE = re.compile(
     r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}",
@@ -69,6 +72,7 @@ class AssemblerState:
     emitted_ids: set[str] = field(default_factory=set)
     extend_until: float = 0.0
     isbn_partial_since: float = 0.0
+    order_partial_since: float = 0.0
     hold_started_at: float = 0.0
     pending_clarify: str = ""
     last_order_emit_text: str = ""
@@ -233,7 +237,7 @@ class TurnAssembler:
             return False, "incomplete"
         if mode == "normal":
             from ..agent_runtime.order_flow_state import order_intent_detected
-            from ..orchestrator.intent_router import is_smalltalk, is_vague_product_request
+            from ..runtime.intent_heuristics import is_smalltalk, is_vague_product_request
 
             stripped = text.strip()
             if is_isbn_permission_question(stripped):
@@ -358,6 +362,7 @@ class TurnAssembler:
                 st.buffer = ""
                 st.mode = "normal"
                 st.isbn_partial_since = 0.0
+                st.order_partial_since = 0.0
                 st.pending_clarify = ""
                 st.last_order_emit_text = ""
                 st.last_order_emit_at = 0.0
@@ -464,6 +469,7 @@ class TurnAssembler:
 
             if st.buffer:
                 st.buffer = self._merge_text(st.buffer, frag)
+                st.order_partial_since = 0.0
                 redetected = self._detect_mode(
                     st.buffer,
                     call_sid=call_sid,
@@ -483,6 +489,8 @@ class TurnAssembler:
             else:
                 st.buffer = frag
                 st.mode = mode
+                if mode == "order":
+                    st.order_partial_since = 0.0
 
             immediate, reason = self._can_emit_immediately(st.buffer, st.mode)
             if immediate:
@@ -577,6 +585,43 @@ class TurnAssembler:
             buf_lower = st.buffer.lower()
             if emit_mode == "email" or (" at " in buf_lower and "dot" in buf_lower):
                 if " at " not in buf_lower:
+                    return
+
+            if emit_mode == "order":
+                from .turn_taking import is_complete_order_number, min_order_digits
+
+                digits = "".join(c for c in st.buffer if c.isdigit())
+                if (
+                    1 <= len(digits) < min_order_digits()
+                    and not digits.startswith(("978", "979"))
+                ):
+                    import time
+
+                    if st.order_partial_since <= 0:
+                        st.order_partial_since = time.monotonic()
+                    timeout_s = getattr(
+                        self._settings, "VOICE_ORDER_PARTIAL_TIMEOUT_MS", 8000,
+                    ) / 1000
+                    if time.monotonic() - st.order_partial_since < timeout_s:
+                        logger.info(
+                            "turn_assembler_hold sid=%s mode=order reason=incomplete_order digits=%d",
+                            sid,
+                            len(digits),
+                        )
+                        return
+                    st.order_partial_since = 0.0
+                    st.buffer = _PARTIAL_ORDER_CLARIFY
+                    st.mode = "normal"
+                    await self._emit_buffered(
+                        sid, self._emit_callback, "partial_order_timeout",
+                    )
+                    return
+                if not is_complete_order_number(st.buffer):
+                    logger.info(
+                        "turn_assembler_hold sid=%s mode=order reason=incomplete_order digits=%d",
+                        sid,
+                        len(digits),
+                    )
                     return
 
             if self._emit_callback:

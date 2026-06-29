@@ -8,6 +8,7 @@ import pytest
 from app.agent_runtime.order_flow_state import (
     _should_skip_order_lookup,
     extract_order_number,
+    is_actionable_order_number,
     order_intent_detected,
     try_order_collection_short_circuit,
     try_order_repeat_reply,
@@ -126,6 +127,38 @@ def test_repeat_order_summary_from_memory():
     assert reply == session.order_last_voice_reply
 
 
+def test_what_replays_last_order_summary():
+    session = _Session()
+    session.order_last_voice_reply = "I found your order 38873."
+    reply = try_order_repeat_reply(session, "What?")
+    assert reply == session.order_last_voice_reply
+
+
+def test_order_confirm_replays_last_summary():
+    session = _Session()
+    session.order_last_voice_reply = "I found your order 38873."
+    reply = try_order_repeat_reply(session, "Yes. This is the correct order number.")
+    assert reply == session.order_last_voice_reply
+
+
+def test_bare_four_digits_not_actionable():
+    assert extract_order_number("3 8 8 7.", _Session()) is None
+    assert not is_actionable_order_number("3887")
+
+
+def test_five_digit_order_is_actionable():
+    assert extract_order_number("38873.", _Session()) == "38873"
+    assert is_actionable_order_number("38873")
+
+
+def test_order_number_preamble_short_circuit():
+    session = _Session()
+    hint = try_order_collection_short_circuit(session, "order number is")
+    assert hint is not None
+    assert "listening" in hint.force_reply.lower()
+    assert session.order_flow_status == "awaiting_order_number"
+
+
 def test_partial_order_speech_merges_before_lookup():
     session = _Session()
     # Spoken partial still parses as 3966; turn assembler debounces before lookup.
@@ -163,3 +196,28 @@ async def test_turn_assembler_merges_trailing_order_digit():
     text, mode = emitted[0]
     assert mode == "order"
     assert extract_order_number(text, _Session()) == "39667"
+
+
+@pytest.mark.asyncio
+async def test_turn_assembler_holds_bare_four_digit_order():
+    emitted: list[tuple[str, str]] = []
+
+    async def on_emit(turn):
+        emitted.append((turn.text, turn.mode))
+
+    asm = TurnAssembler()
+    asm._settings.VOICE_ORDER_COLLECTION_SILENCE_MS = 80
+
+    held = await asm.ingest("3 8 8 7.", on_emit, call_sid="CAtest2")
+    assert held is True
+    assert asm._state.mode == "order"
+    await asyncio.sleep(0.15)
+    assert emitted == []
+
+    held2 = await asm.ingest("3.", on_emit, call_sid="CAtest2")
+    assert held2 is True
+    await asyncio.sleep(0.15)
+    assert len(emitted) == 1
+    text, mode = emitted[0]
+    assert mode == "order"
+    assert extract_order_number(text, _Session()) == "38873"

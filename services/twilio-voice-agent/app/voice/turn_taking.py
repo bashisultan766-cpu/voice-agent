@@ -208,7 +208,19 @@ def is_complete_isbn(text: str) -> bool:
     return False
 
 
+def min_order_digits() -> int:
+    """Minimum digit count before treating speech as a complete Shopify order number."""
+    try:
+        from ..config import get_settings
+
+        return int(getattr(get_settings(), "VOICE_MIN_ORDER_DIGITS", 5))
+    except Exception:
+        return 5
+
+
 def is_complete_order_number(text: str) -> bool:
-    """Return True if text contains a plausible order number (4+ digits)."""
+    """Return True when speech contains enough digits for a Shopify order lookup."""
     digits = "".join(c for c in text if c.isdigit())
-    return len(digits) >= 4
+    if digits.startswith(("978", "979")):
+        return False
+    return len(digits) >= min_order_digits()

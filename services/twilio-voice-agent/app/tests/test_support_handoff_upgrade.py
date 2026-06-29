@@ -125,7 +125,7 @@ async def test_shopify_api_error_does_not_auto_escalate():
             order={"found": False, "error_code": "shopify_api_error"},
             suggested_response="I'm having trouble reaching our order system right now.",
         )
-        hint = await try_order_enrichment_short_circuit(session, "order 1001")
+        hint = await try_order_enrichment_short_circuit(session, "order 10001")
 
     assert hint and hint.force_reply
     assert "order system" in hint.force_reply.lower()
@@ -180,7 +180,7 @@ async def test_support_handoff_collects_name_and_email():
     assert "Customer name: Maria Lopez" in body
     assert "Customer email: maria@example.com" in body
     assert "Issue:" in body
-    assert "Conversation summary:" not in body
+    assert "Conversation summary:" in body
 
 
 @pytest.mark.asyncio

@@ -29,12 +29,11 @@ logger = logging.getLogger(__name__)
 
 
 def _runtime_mode() -> str:
+    from ..agent_runtime.live_runtime import resolve_live_turn_handler
     from ..config import get_settings
 
     s = get_settings()
-    if getattr(s, "VOICE_ORCHESTRATOR_ENABLED", True):
-        return "orchestrator"
-    return getattr(s, "VOICE_AGENT_RUNTIME_MODE", "") or "llm_tool_runtime"
+    return resolve_live_turn_handler(s)
 
 
 def _session_id(session: "SessionState") -> str:

@@ -36,7 +36,7 @@ def run() -> int:
     lines: list[str] = []
     required_ok = True
 
-    print("Agent Runtime Check (LLM-first tool runtime)")
+    print("Agent Runtime Check (voice commerce runtime)")
     print("=" * 56)
 
     # ── Required env vars (presence only; values never printed) ───────────────
@@ -73,11 +73,9 @@ def run() -> int:
             required_ok = required_ok and ok
 
     def _openai_client():
-        # Build the client through the runtime (keeps the openai import inside
-        # app/agent_runtime/, the single LLM layer).
-        from app.agent_runtime.llm_tool_runtime import LLMToolRuntime
+        from app.agents.main_commerce_brain import MainCommerceBrain
 
-        LLMToolRuntime(settings=settings)._get_client()
+        MainCommerceBrain(settings=settings)._get_client()
         return bool(settings.OPENAI_API_KEY), settings.OPENAI_MODEL
 
     def _shopify_client():
@@ -105,16 +103,18 @@ def run() -> int:
         return bool(mp.text), f"{mp.approx_tokens} tokens, {len(mp.sections)} sections"
 
     def _active_runtime():
-        from app.agent_runtime.runtime import resolve_live_turn_handler
-        from app.agent_runtime.llm_tool_runtime import RUNTIME_MODE
+        from app.agent_runtime.live_runtime import resolve_live_turn_handler
+        from app.runtime.voice_commerce_runtime import RUNTIME_MODE
 
         handler = resolve_live_turn_handler(settings)
         return handler == RUNTIME_MODE, handler
 
     def _legacy_disabled():
-        from app.agent_runtime.legacy_disabled import QUARANTINED_MODULES, ACTIVE_RUNTIME
-
-        return ACTIVE_RUNTIME.endswith("llm_tool_runtime"), f"{len(QUARANTINED_MODULES)} quarantined"
+        return (
+            not settings.VOICE_ORCHESTRATOR_ENABLED
+            and not settings.VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED
+            and settings.VOICE_COMMERCE_RUNTIME_ENABLED
+        ), "orchestrator+legacy off, commerce on"
 
     print()
     _check("OpenAI client init", _openai_client)
@@ -123,8 +123,8 @@ def run() -> int:
     _check("ElevenLabs config (optional)", _elevenlabs_cfg, required=False)
     _check("Canonical tools registered", _tools_registered)
     _check("Master prompt loads", _master_prompt)
-    _check("Active runtime = LLM_TOOL_RUNTIME", _active_runtime)
-    _check("Legacy runtime disabled", _legacy_disabled)
+    _check("Active runtime = voice_commerce_runtime", _active_runtime)
+    _check("Legacy runtimes disabled", _legacy_disabled)
 
     for line in lines:
         print(line)
@@ -134,7 +134,7 @@ def run() -> int:
     if not required_ok:
         print("FAIL: one or more required checks are missing.")
         return 1
-    print("OK: runtime is configured and the LLM-first tool runtime is active.")
+    print("OK: runtime is configured and voice_commerce_runtime is active.")
     return 0
 
 

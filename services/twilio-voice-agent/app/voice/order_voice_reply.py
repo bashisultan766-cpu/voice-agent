@@ -214,6 +214,53 @@ def compose_refunded_order_voice_reply(inner: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _product_name_phrase(inner: dict[str, Any]) -> str:
+    items = inner.get("products") or inner.get("items") or []
+    names: list[str] = []
+    for item in items:
+        if _is_processing_fee_item(item):
+            continue
+        title = (item.get("title") or item.get("name") or "").strip()
+        qty = int(item.get("quantity") or 1)
+        if not title:
+            continue
+        if qty > 1:
+            names.append(f"{speak_int(qty)} copies of {title}")
+        else:
+            names.append(title)
+        if len(names) >= 3:
+            break
+    if not names:
+        return ""
+    if len(names) == 1:
+        return f"The product is {names[0]}."
+    return "The products include " + ", ".join(names[:-1]) + f", and {names[-1]}."
+
+
+def _fulfillment_phrase(inner: dict[str, Any]) -> str:
+    status = (
+        inner.get("fulfillment_status")
+        or (inner.get("shipping") or {}).get("fulfillment_status")
+        or ""
+    ).strip().lower().replace("_", " ")
+    if status:
+        return f"Fulfillment status is {status}."
+    return ""
+
+
+def _tracking_phrase(inner: dict[str, Any]) -> str:
+    tracking = inner.get("tracking") or {}
+    number = (tracking.get("tracking_number") or inner.get("tracking_number") or "").strip()
+    carrier = (tracking.get("carrier") or inner.get("carrier") or "").strip()
+    parts: list[str] = []
+    if carrier:
+        parts.append(f"Carrier is {carrier}.")
+    if number:
+        spaced = " ".join(number)
+        parts.append(f"Tracking number is {spaced}.")
+    return " ".join(parts)
+
+
 def compose_brief_order_voice_reply(order_payload: dict[str, Any]) -> str:
     """
     Default order-found script: status, date, item count, subtotal, shipping, total.
@@ -233,19 +280,39 @@ def compose_brief_order_voice_reply(order_payload: dict[str, Any]) -> str:
     count = _product_count(inner)
     order_date = _speak_order_date(inner)
     status = _financial_status_phrase(inner)
+    customer_name = _order_customer_name(inner)
+    email = (
+        inner.get("customer_email")
+        or (inner.get("customer") or {}).get("email")
+        or ""
+    )
 
     parts = ["I found your order."]
+    if customer_name:
+        parts.append(f"This order is under {customer_name}.")
+    if email:
+        parts.append(f"The email on the order is {speak_email(email)}.")
     if status:
         parts.append(f"The order status is {status}.")
+    fulfill = _fulfillment_phrase(inner)
+    if fulfill:
+        parts.append(fulfill)
     if order_date:
         parts.append(f"The order date is {order_date}.")
-    parts.append(f"It has {_item_phrase(count)}.")
+    product_line = _product_name_phrase(inner)
+    if product_line:
+        parts.append(product_line)
+    else:
+        parts.append(f"It has {_item_phrase(count)}.")
     if subtotal_raw and _should_speak_money(subtotal_raw):
         parts.append(f"The subtotal is {speak_money_field(subtotal_raw)}.")
     if shipping_raw and _should_speak_money(shipping_raw):
         parts.append(f"Shipping is {speak_money_field(shipping_raw)}.")
     if total_raw and _should_speak_money(total_raw):
         parts.append(f"The total is {speak_money_field(total_raw)}.")
+    tracking = _tracking_phrase(inner)
+    if tracking:
+        parts.append(tracking)
     card_phrase = _payment_card_phrase(inner, refunded=False)
     if card_phrase:
         parts.append(card_phrase)

@@ -14,11 +14,13 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-ORDER_FLOW_VERSION = "v4.41"
+ORDER_FLOW_VERSION = "v4.42"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_ORDER_NUMBER = "awaiting_order_number"
 STATUS_AWAITING_ORDER_VERIFICATION = "awaiting_order_verification"
+
+MIN_ORDER_DIGITS = 5
 
 _ORDER_STATUS_INTENT = re.compile(
     r"\b("
@@ -55,6 +57,25 @@ _REPEAT_ORDER_SUMMARY_PAT = re.compile(
     r")\b",
     re.I,
 )
+_ORDER_CONFUSION_PAT = re.compile(
+    r"\b("
+    r"what\??|what'?s up|wrong|not correct|not giving|incorrect|"
+    r"that(?:'s| is) not|not the right"
+    r")\b",
+    re.I,
+)
+_ORDER_CONFIRM_PAT = re.compile(
+    r"\b(?:yes\.?\s*)?(?:this is )?(?:the )?correct order(?: number)?\b",
+    re.I,
+)
+_WRONG_ORDER_PAT = re.compile(
+    r"\bwrong (?:order )?number|incorrect order|not the right order\b",
+    re.I,
+)
+_ORDER_PREAMBLE_PAT = re.compile(
+    r"\border\s*(?:number|no\.?|#)\s*is\s*\.?\s*$",
+    re.I,
+)
 _FACILITY_ISSUE_INTENT = re.compile(
     r"\b(returned|rejected|not delivered|didn.?t receive|facility rejected|sent back|"
     r"books? (?:were|was) not (?:delivered|accepted))\b",
@@ -80,6 +101,26 @@ class OrderTurnHint:
 
 def _status(session: "SessionState") -> str:
     return getattr(session, "order_flow_status", STATUS_IDLE) or STATUS_IDLE
+
+
+def _order_digit_count(num: str) -> int:
+    return len(re.sub(r"\D", "", num or ""))
+
+
+def is_actionable_order_number(num: str) -> bool:
+    """Enough digits to run a Shopify order lookup."""
+    digits = re.sub(r"\D", "", num or "")
+    return (
+        MIN_ORDER_DIGITS <= len(digits) <= 10
+        and not digits.startswith(("978", "979"))
+    )
+
+
+def _has_order_number_preamble(text: str) -> bool:
+    return bool(
+        _ORDER_PREAMBLE_PAT.search(text or "")
+        or re.search(r"\border\s*(?:number|no\.?|#)\s*is\b", text or "", re.I)
+    )
 
 
 def _should_skip_order_lookup(
@@ -180,7 +221,11 @@ def extract_order_number(
     if _should_skip_order_lookup(text, session, turn_mode):
         return None
     order_num = normalize_order_number_from_speech(text)
-    if order_num:
+    if not order_num:
+        return None
+    if is_actionable_order_number(order_num):
+        return order_num
+    if _has_order_number_preamble(text):
         return order_num
     return None
 
@@ -200,13 +245,22 @@ def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optiona
     text = (caller_text or "").strip()
     if not text:
         return None
+    if _WRONG_ORDER_PAT.search(text):
+        session.last_order_number = ""
+        session.order_last_voice_reply = ""
+        session.pending_order_number = ""
+        session.order_flow_status = STATUS_AWAITING_ORDER_NUMBER
+        return (
+            "Sorry about that. Please read your full order number slowly, "
+            "one digit at a time."
+        )
     if _REPEAT_ORDER_NUMBER_PAT.search(text):
         num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
         if num:
             spaced = " ".join(num)
             return f"The order number is {spaced}."
+    last = (getattr(session, "order_last_voice_reply", "") or "").strip()
     if _REPEAT_ORDER_SUMMARY_PAT.search(text):
-        last = (getattr(session, "order_last_voice_reply", "") or "").strip()
         if last:
             return last
         num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
@@ -215,6 +269,43 @@ def try_order_repeat_reply(session: "SessionState", caller_text: str) -> Optiona
                 f"I have order {num} on file from this call. "
                 "What would you like to know about it?"
             )
+    if _ORDER_CONFIRM_PAT.search(text) and last:
+        return last
+    if _ORDER_CONFUSION_PAT.search(text) and last:
+        return last
+    return None
+
+
+def try_order_brain_gate(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[str]:
+    """
+    Prevent the LLM from reformatting or re-fetching order data already spoken.
+    Returns a deterministic replay when order context is established.
+    """
+    last_reply = (getattr(session, "order_last_voice_reply", "") or "").strip()
+    if not last_reply:
+        return None
+
+    replay = try_order_repeat_reply(session, caller_text)
+    if replay:
+        return replay
+
+    spoken_num = extract_order_number(caller_text, session, turn_mode=turn_mode) or ""
+    last_num = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
+    if spoken_num and last_num and spoken_num == last_num:
+        return last_reply
+
+    if last_num and not spoken_num and not order_intent_detected(caller_text):
+        if re.search(
+            r"\b(order|refund|shipping|tracking|status|that order|my order)\b",
+            caller_text or "",
+            re.I,
+        ):
+            return last_reply
     return None
 
 
@@ -225,11 +316,23 @@ def try_order_collection_short_circuit(
     turn_mode: str = "",
 ) -> Optional[OrderTurnHint]:
     """When caller asks about an order but has not given a number yet."""
+    text = (caller_text or "").strip()
+    if not text:
+        return None
+
+    if _has_order_number_preamble(text) and not extract_order_number(
+        text, session, turn_mode=turn_mode,
+    ):
+        session.order_flow_status = STATUS_AWAITING_ORDER_NUMBER
+        return OrderTurnHint(
+            force_reply="Go ahead — I'm listening for your order number.",
+            openai_skipped=True,
+        )
+
     if (turn_mode or "").lower() in ("isbn", "email", "order"):
         if (turn_mode or "").lower() == "order":
             return None
-    text = (caller_text or "").strip()
-    if not text or not order_intent_detected(text):
+    if not order_intent_detected(text):
         return None
     if extract_order_number(text, session, turn_mode=turn_mode):
         return None
@@ -287,7 +390,7 @@ def prepare_order_turn_context(
     order_num = extract_order_number(text, session, turn_mode=turn_mode)
     if not order_num and re.search(r"\border\b", text, re.I):
         order_num = normalize_order_number_from_speech(text)
-    if order_num:
+    if order_num and is_actionable_order_number(order_num):
         session.pending_order_number = order_num
         session.last_order_number = order_num
         session.order_flow_status = STATUS_IDLE
@@ -306,7 +409,7 @@ def process_order_turn(session: "SessionState", caller_text: str, *, turn_mode: 
     status = _status(session)
     order_num = extract_order_number(text, session, turn_mode=turn_mode)
 
-    if order_num:
+    if order_num and is_actionable_order_number(order_num):
         session.pending_order_number = order_num
         session.last_order_number = order_num
         session.order_flow_status = STATUS_IDLE
@@ -367,6 +470,26 @@ async def try_order_enrichment_short_circuit(
 
     if not order_num:
         return None
+
+    if not is_actionable_order_number(order_num):
+        return OrderTurnHint(
+            force_reply=(
+                "I only heard part of the order number. "
+                "Please continue with the remaining digits."
+            ),
+            openai_skipped=True,
+        )
+
+    last = (getattr(session, "last_order_number", "") or "").strip().lstrip("#")
+    cached = (getattr(session, "order_last_voice_reply", "") or "").strip()
+    if order_num == last and cached:
+        session.order_flow_status = STATUS_IDLE
+        session.pending_order_number = ""
+        return OrderTurnHint(
+            force_reply=cached,
+            openai_skipped=True,
+            enrichment_done=True,
+        )
 
     email = extract_email_from_turn(text)
     if email:

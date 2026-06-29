@@ -81,25 +81,13 @@ async def dispatch_assembled_turn(
     """
     Route one assembled ConversationRelay turn through central dispatch.
 
-    Default path: orchestrator (supervisor → planner → tools → composer).
-    When VOICE_ORCHESTRATOR_ENABLED=false, falls back to llm_tool_runtime.
-    When orchestrator raises and VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED=true,
-    dispatch falls back to llm_tool_runtime for this release.
+    Canonical path: voice_commerce_runtime only.
     """
-    from ..agent_runtime.llm_tool_runtime import RUNTIME_MODE as LLM_MODE
-    from ..orchestrator.runtime import RUNTIME_MODE as ORCH_MODE, orchestrator_enabled
+    from ..runtime.voice_commerce_runtime import RUNTIME_MODE
     from .turn_dispatch import dispatch_turn
 
     sid = session.call_sid[:6]
-    configured = settings.VOICE_AGENT_RUNTIME_MODE
-    use_orchestrator = orchestrator_enabled(settings)
-    handler = ORCH_MODE if use_orchestrator else LLM_MODE
-
-    if configured not in (LLM_MODE, ORCH_MODE) and configured != handler:
-        logger.warning(
-            "legacy_runtime_mode_ignored sid=%s configured=%s using=%s",
-            sid, configured, handler,
-        )
+    handler = RUNTIME_MODE
 
     result = await dispatch_turn(
         settings,

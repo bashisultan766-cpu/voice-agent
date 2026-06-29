@@ -20,7 +20,7 @@ from ..tools.isbn import extract_isbn_candidate
 
 if TYPE_CHECKING:
     from ..config import Settings
-    from ..orchestrator.types import OrchestratorTurnContext, ToolExecutionResult
+    from .types import OrchestratorTurnContext, ToolExecutionResult
     from ..state.models import SessionState
 
 logger = logging.getLogger(__name__)
@@ -198,7 +198,7 @@ def clear_pending_escalation(session: "SessionState") -> None:
 
 
 def _tool_execution_result(tool: str, parsed: dict[str, Any], *, raw: str = "") -> "ToolExecutionResult":
-    from ..orchestrator.types import ToolExecutionResult
+    from .types import ToolExecutionResult
 
     return ToolExecutionResult(
         tool=tool,

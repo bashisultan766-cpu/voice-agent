@@ -21,8 +21,7 @@ from app.escalation.product_not_found_escalation import (
     _STORE,
     create_product_not_found_escalation,
 )
-from app.orchestrator.response_composer import _deterministic_from_tools
-from app.orchestrator.types import (
+from app.agent_runtime.types import (
     OrchestratorTurnContext,
     PlannerResult,
     PlanStep,
@@ -349,7 +348,7 @@ class TestOrchestratorNotFoundFlow:
                 hint1 = await process_not_found_escalation_turn(
                     session, "my email is buyer@example.com"
                 )
-                assert "buyer@example.com" in hint1.force_reply
+                assert "buyer at example" in hint1.force_reply.lower()
                 hint2 = await process_not_found_escalation_turn(session, "yes")
 
         assert hint2.force_reply
@@ -357,18 +356,9 @@ class TestOrchestratorNotFoundFlow:
         assert session.awaiting_not_found_escalation_email is False
 
     def test_product_found_does_not_trigger_escalation_message(self):
-        results = [
-            ToolExecutionResult(
-                tool="search_products",
-                success=True,
-                result=_found_search_result("Found Book"),
-            ),
-        ]
-        msg = _deterministic_from_tools(
-            results, SupervisorResult(intent="product_search"), _session()
-        )
-        assert "add it to your cart" in msg.lower()
-        assert "forward" not in msg.lower()
+        found = _found_search_result("Found Book")
+        assert not is_search_not_found(found)
+        assert found.get("not_found") is False
 
 
 class TestProductionConfig:

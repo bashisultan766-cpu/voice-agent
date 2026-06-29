@@ -127,7 +127,7 @@ def collect_runtime_identity(service_root: Path | None = None) -> dict[str, Any]
         "send_payment_link_customer_facing": SEND_PAYMENT_LINK_CUSTOMER_FACING,
         "create_checkout_present_in_tool_specs": "create_checkout" in tool_spec_names,
         "customer_facing_tool_count": len(llm_tools.customer_facing_tool_names()),
-        "llm_tool_runtime_module": _module_file("app.agent_runtime.llm_tool_runtime"),
+        "voice_commerce_runtime_module": _module_file("app.runtime.voice_commerce_runtime"),
         "commerce_flow_module": _module_file("app.agent_runtime.commerce_flow_state"),
         "tool_progress_module": _module_file("app.agent_runtime.tool_progress"),
         "email_state_module": _module_file("app.payment.email_state"),

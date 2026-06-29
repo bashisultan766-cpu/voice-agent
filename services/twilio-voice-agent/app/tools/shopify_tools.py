@@ -1534,7 +1534,7 @@ def _parse_email_or_phone(value: str | None) -> tuple[str | None, str | None]:
     raw = str(value).strip()
     if "@" in raw or re.search(r"\bat\b", raw, re.I):
         try:
-            from ..pipeline.email_capture import normalize_spoken_email
+            from ..email.capture import normalize_spoken_email
             normalized = normalize_spoken_email(raw) or raw
         except Exception:
             normalized = raw

@@ -138,7 +138,7 @@ async def test_send_support_handoff_short_professional_body():
     assert "Customer email: test@example.com" in body
     assert "Issue:" in body
     assert "Shopify returned no match." in body
-    assert "Conversation summary:" not in body
+    assert "Conversation summary:" in body
     assert "Dear Backend Team" not in body
 
 

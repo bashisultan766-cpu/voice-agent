@@ -155,14 +155,20 @@ def check_twilio(settings=None) -> GateCheck:
     )
 
 
-def check_orchestrator_enabled(settings=None) -> GateCheck:
+def check_voice_commerce_runtime(settings=None) -> GateCheck:
     s = settings or _settings()
-    ok = bool(getattr(s, "VOICE_ORCHESTRATOR_ENABLED", True))
+    commerce_on = bool(getattr(s, "VOICE_COMMERCE_RUNTIME_ENABLED", False))
+    orchestrator_off = not bool(getattr(s, "VOICE_ORCHESTRATOR_ENABLED", True))
+    legacy_off = not bool(getattr(s, "VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED", True))
+    ok = commerce_on and orchestrator_off and legacy_off
     return GateCheck(
-        "Orchestrator enabled",
+        "Canonical voice commerce runtime",
         ok,
-        critical=False,
-        detail=f"VOICE_ORCHESTRATOR_ENABLED={ok}",
+        critical=s.is_production,
+        detail=(
+            f"commerce={commerce_on} orchestrator={not orchestrator_off} "
+            f"legacy_fallback={not legacy_off}"
+        ),
     )
 
 
@@ -311,7 +317,7 @@ def run_all_checks(
         check_resend(s),
         check_support_email(s),
         check_twilio(s),
-        check_orchestrator_enabled(s),
+        check_voice_commerce_runtime(s),
         check_legacy_fallback_policy(s),
         check_api_docs_disabled(s),
         check_admin_debug_disabled(s),
