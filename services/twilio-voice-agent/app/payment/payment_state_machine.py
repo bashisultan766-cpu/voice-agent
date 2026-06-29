@@ -111,7 +111,7 @@ def speak_confirmation_prompt(email: str) -> str:
     spelled = spell_email_letter_by_letter(email)
     return (
         f"Just to confirm, I heard {spoken}. "
-        f"Letter by letter, that is {spelled}. Is that correct?"
+        f"Slowly, letter by letter, that is {spelled}. Is that correct?"
     )
 
 

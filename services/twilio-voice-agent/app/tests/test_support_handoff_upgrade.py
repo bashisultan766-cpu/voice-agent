@@ -168,7 +168,7 @@ async def test_support_handoff_collects_name_and_email():
                 session, "my name is Maria Lopez and my email is maria@example.com"
             )
             assert "maria at example dot com" in hint1.force_reply
-            assert "Letter by letter" in hint1.force_reply
+            assert "letter by letter" in hint1.force_reply
             assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is True
 
             hint2 = await process_not_found_escalation_turn(session, "yes")

@@ -83,6 +83,15 @@ _DOMAIN_ALIASES: dict[str, str] = {
     "qq": "qq.com",
     "163": "163.com",
     "126": "126.com",
+    "googlemail": "gmail.com",
+    "rocketmail": "yahoo.com",
+    "att": "att.net",
+    "comcast": "comcast.net",
+    "verizon": "verizon.net",
+    "bellsouth": "bellsouth.net",
+    "cox": "cox.net",
+    "charter": "charter.net",
+    "sbcglobal": "sbcglobal.net",
 }
 
 # Domain misspellings produced by ASR (applied after space-removal)
@@ -130,6 +139,8 @@ _CONFIRMATION_PATS = re.compile(
     r"|^\s*(that\s*'?s\s+)?(right|correct)(\s+email)?\s*[.!]?\s*$"
     r"|^\s*that\s*'?s\s+(the\s+)?(right|correct)\s+email"
     r"|\b(theek hai|thik hai|sahi hai|that is correct|that's correct|that's true|that is true|you got it|exactly right)\b"
+    r"|\b(that'?s?\s+)?fine\b|\bit'?s?\s+fine\b|\b(that\s+is|that's)\s+fine\b"
+    r"|\b(all good|good to go|that works|works for me|sounds?\s+fine)\b"
     r"|sounds?\s+(right|correct|good)"
     r"|^\s*(perfect|exactly|go ahead|confirmed?)\b",
     re.IGNORECASE,
@@ -152,6 +163,15 @@ _SUFFIX_PAT = re.compile(
     r"^\.?(com|net|org|edu|gov|io|me|co\.?uk)$",
     re.IGNORECASE,
 )
+
+
+_KNOWN_PROVIDER_DOMAINS = frozenset(_DOMAIN_ALIASES.values()) | frozenset({
+    "gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
+    "icloud.com", "aol.com", "proton.me", "protonmail.com",
+    "live.com", "me.com", "msn.com", "mail.com", "zoho.com",
+    "gmx.com", "yandex.com", "rediffmail.com", "att.net",
+    "comcast.net", "verizon.net", "bellsouth.net", "cox.net",
+})
 
 
 # ── Core normalizer ────────────────────────────────────────────────────────────
@@ -189,7 +209,8 @@ def normalize_spoken_email(text: str) -> Optional[str]:
     t = re.sub(r"\bactivate\b", "at", t, flags=re.IGNORECASE)
     # "add" → "at" only when immediately before a known domain name
     t = re.sub(
-        r"\badd\b(?=\s+(?:gmail|yahoo|outlook|hotmail|icloud|aol|proton|live|msn|me)\b)",
+        r"\badd\b(?=\s+(?:gmail|yahoo|outlook|hotmail|icloud|aol|proton|live|msn|me|"
+        r"googlemail|rocketmail|mail|zoho|gmx|yandex|rediff|att|comcast|verizon)\b)",
         "at", t, flags=re.IGNORECASE,
     )
 
@@ -232,6 +253,8 @@ def normalize_spoken_email(text: str) -> Optional[str]:
     domain_clean = domain_part.rstrip(".")
     if domain_clean in _DOMAIN_ALIASES and "." not in domain_clean:
         domain_part = _DOMAIN_ALIASES[domain_clean]
+    elif domain_part.startswith("googlemail."):
+        domain_part = "gmail." + domain_part[len("googlemail."):]
 
     email = local_part + "@" + domain_part.rstrip(".")
 
@@ -423,11 +446,7 @@ def email_confidence(email: Optional[str], raw_text: str) -> str:
     if len(local) < 2:
         return "low"
 
-    common = domain in (
-        "gmail.com", "yahoo.com", "outlook.com", "hotmail.com",
-        "icloud.com", "aol.com", "proton.me", "protonmail.com",
-        "live.com", "me.com", "msn.com",
-    )
+    common = domain in _KNOWN_PROVIDER_DOMAINS
 
     # If the raw text contains "@" directly (typed-style)
     if "@" in raw_text:
@@ -511,6 +530,8 @@ def is_email_confirmation(text: str) -> bool:
     if _CORRECTION_PATS.search(text):
         return False
     if re.match(r"^\s*no\b", t, re.I):
+        return False
+    if re.search(r"\bnot\s+fine\b", t, re.I):
         return False
     return bool(_CONFIRMATION_PATS.search(t))
 

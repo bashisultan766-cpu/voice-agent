@@ -29,6 +29,19 @@ _COMMON_DOMAINS = {
     "hotmail.com": "hotmail dot com",
     "outlook.com": "outlook dot com",
     "icloud.com": "icloud dot com",
+    "aol.com": "aol dot com",
+    "protonmail.com": "protonmail dot com",
+    "proton.me": "proton dot me",
+    "live.com": "live dot com",
+    "me.com": "me dot com",
+    "msn.com": "msn dot com",
+    "mail.com": "mail dot com",
+    "zoho.com": "zoho dot com",
+    "rediffmail.com": "rediffmail dot com",
+    "gmx.com": "gmx dot com",
+    "yandex.com": "yandex dot com",
+    "att.net": "att dot net",
+    "comcast.net": "comcast dot net",
 }
 
 _ACTIVATE_LOCAL_RE = re.compile(r"^activate@", re.IGNORECASE)
@@ -156,7 +169,7 @@ def build_email_readback(email: str, raw_text: str = "") -> str:
     spoken = speak_email(normalized)
     spelled = spell_email_letter_by_letter(normalized)
     return (
-        f"I heard {spoken}. Letter by letter, that is {spelled}. Is that correct?"
+        f"I heard {spoken}. Slowly, letter by letter, that is {spelled}. Is that correct?"
     )
 
 

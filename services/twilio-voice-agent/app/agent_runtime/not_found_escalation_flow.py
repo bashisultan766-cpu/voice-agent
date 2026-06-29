@@ -61,6 +61,7 @@ _EMAIL_CONFIRM_YES = re.compile(
 _EMAIL_CONFIRM_LOOSE = re.compile(
     r"\b("
     r"that'?s?\s+correct|that\s+is\s+correct|that'?s?\s+true|that\s+is\s+true|"
+    r"that'?s?\s+fine|that\s+is\s+fine|it'?s?\s+fine|"
     r"correct\s+email|correct\s+name|"
     r"you\s+may|sounds?\s+right|that'?s?\s+right|that'?s?\s+good|"
     r"email\s+is\s+correct|name\s+is\s+correct|absolutely"

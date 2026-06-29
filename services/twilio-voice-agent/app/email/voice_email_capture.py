@@ -124,4 +124,4 @@ class VoiceEmailCapture:
             return "What email should I send the payment link to?"
         spoken = speak_email(addr)
         spelled = spell_email_letter_by_letter(addr)
-        return f"I heard {spoken}. Letter by letter, that is {spelled}. Is that correct?"
+        return f"I heard {spoken}. Slowly, letter by letter, that is {spelled}. Is that correct?"

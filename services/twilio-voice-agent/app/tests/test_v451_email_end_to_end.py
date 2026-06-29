@@ -1,4 +1,4 @@
-"""End-to-end email capture, letter-by-letter readback, confirm, and send (v4.51)."""
+"""End-to-end email capture, letter-by-letter readback, confirm, and send (v4.52)."""
 from __future__ import annotations
 
 import json
@@ -69,7 +69,7 @@ class TestPaymentEmailFlow:
         hint = process_payment_turn(session, SPELLED, turn_mode="email")
         assert hint.email_captured
         assert session.pending_payment_email == EMAIL
-        assert "Letter by letter" in hint.force_reply
+        assert "letter by letter" in hint.force_reply
         assert spell_email_letter_by_letter(EMAIL) in hint.force_reply
 
     def test_confirm_then_ready_for_send(self):
@@ -108,7 +108,7 @@ class TestSupportHandoffEmailFlow:
         )
         hint1 = await process_not_found_escalation_turn(session, SPELLED)
         assert hint1.force_reply
-        assert "Letter by letter" in hint1.force_reply
+        assert "letter by letter" in hint1.force_reply
         assert spell_email_letter_by_letter(EMAIL) in hint1.force_reply
 
         pending = session.pending_not_found_escalation

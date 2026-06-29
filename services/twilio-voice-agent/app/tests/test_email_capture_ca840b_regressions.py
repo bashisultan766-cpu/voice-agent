@@ -49,7 +49,7 @@ def test_clean_email_turn_gets_full_confirmation_not_fragment_hint():
     )
     assert hint.email_captured is True
     assert hint.force_reply
-    assert "Letter by letter" in hint.force_reply
+    assert "letter by letter" in hint.force_reply
     assert "please continue" not in hint.force_reply.lower()
     assert session.pending_payment_email == "bilalabbasi0341@gmail.com"
 
@@ -63,7 +63,7 @@ def test_email_frustration_repeats_pending_spelling():
     )
     hint = process_payment_turn(session, "I told you my email 5 times.")
     assert hint.force_reply
-    assert "Letter by letter" in hint.force_reply
+    assert "letter by letter" in hint.force_reply
     assert hint.skip_openai is True
 
 

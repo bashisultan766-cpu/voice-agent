@@ -111,7 +111,7 @@ async def test_oos_isbn_handoff_sends_after_thats_correct_email():
                     session,
                     "bashisultan766 at gmail dot com",
                 )
-                assert "Letter by letter" in email_hint.force_reply
+                assert "letter by letter" in email_hint.force_reply
 
                 send_hint = await process_not_found_escalation_turn(
                     session, "Yeah. That's correct email.",
