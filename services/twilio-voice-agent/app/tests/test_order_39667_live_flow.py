@@ -363,7 +363,7 @@ def test_order_brain_gate_blocks_dispute_reformat():
 
 
 def test_order_flow_version():
-    assert ORDER_FLOW_VERSION == "v4.52"
+    assert ORDER_FLOW_VERSION == "v4.53"
 
 
 def test_repeated_okay_after_order_gets_wrap_up_prompt():

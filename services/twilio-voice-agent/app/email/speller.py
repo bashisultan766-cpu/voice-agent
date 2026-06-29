@@ -89,9 +89,11 @@ def _char_to_voice_token(ch: str) -> str:
 
 
 def _spell_segment_chars(segment: str) -> str:
-    """Comma-separated letter/digit readback — avoids TTS reading hyphens as 'dash'."""
+    """Period-separated tokens — ElevenLabs pauses clearly between each letter."""
     tokens = [_char_to_voice_token(ch) for ch in segment if ch]
-    return ", ".join(tokens)
+    if not tokens:
+        return ""
+    return ". ".join(tokens) + "."
 
 
 def speak_email(email: str) -> str:
@@ -124,8 +126,8 @@ def spell_email_letter_by_letter(email: str) -> str:
     local, domain = normalized.split("@", 1)
     local_spelled = _spell_segment_chars(local)
     domain_parts = [part for part in domain.lower().split(".") if part]
-    domain_spelled = " dot ".join(_spell_segment_chars(part) for part in domain_parts)
-    return f"{local_spelled}, at, {domain_spelled}"
+    domain_spelled = ". Dot. ".join(_spell_segment_chars(part) for part in domain_parts)
+    return f"{local_spelled}. At. {domain_spelled}"
 
 
 def spell_email_for_voice(email: str) -> str:
@@ -171,6 +173,25 @@ def build_email_readback(email: str, raw_text: str = "") -> str:
     return (
         f"I heard {spoken}. Slowly, letter by letter, that is {spelled}. Is that correct?"
     )
+
+
+def build_email_readback_parts(email: str, raw_text: str = "") -> list[str]:
+    """Split readback into TTS-sized chunks so no letters are dropped on the phone."""
+    normalized = normalize_email_for_customer_readback(email)
+    if not normalized or email_confidence_is_low(normalized, raw_text):
+        return [build_email_readback(email, raw_text)]
+
+    spoken = speak_email(normalized)
+    local, domain = normalized.split("@", 1)
+    local_spelled = _spell_segment_chars(local)
+    domain_parts = [part for part in domain.lower().split(".") if part]
+    domain_spelled = ". Dot. ".join(_spell_segment_chars(part) for part in domain_parts)
+    return [
+        f"Just to confirm, I heard {spoken}.",
+        f"Slowly, letter by letter, the name part is {local_spelled}",
+        f"At. {domain_spelled}",
+        "Is that correct?",
+    ]
 
 
 def build_email_spell_only(email: str, raw_text: str = "") -> str:

@@ -1,4 +1,4 @@
-"""End-to-end email capture, letter-by-letter readback, confirm, and send (v4.52)."""
+"""End-to-end email capture, letter-by-letter readback, confirm, and send (v4.53)."""
 from __future__ import annotations
 
 import json
@@ -57,9 +57,9 @@ class TestEmailCaptureVariants:
 
     def test_readback_matches_stored_chars(self):
         spelled = spell_email_letter_by_letter(EMAIL)
-        assert "M, U, B, A, S, H, I, R" in spelled
+        assert "M. U. B. A. S. H. I. R" in spelled
         assert "three" in spelled
-        assert "G, M, A, I, L" in spelled
+        assert "G. M. A. I. L" in spelled
         assert "-" not in spelled
 
 

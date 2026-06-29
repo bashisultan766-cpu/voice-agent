@@ -78,7 +78,7 @@ def _session(**kwargs) -> SessionState:
 class TestRuntimeIdentity:
     def test_identity_reports_v424_flags(self):
         identity = collect_runtime_identity()
-        assert identity["voice_sales_flow_version"] == "v4.52"
+        assert identity["voice_sales_flow_version"] == "v4.53"
         assert identity["tool_progress_prompts_enabled"] is True
         assert identity["payment_email_state_version"] == "v4.33"
         assert identity["llm_only_final_output"] is True
@@ -176,7 +176,9 @@ class TestEmailConfirmation:
             session, f"My email is {EMAIL}", send, assembled_turn_mode="email",
         ))
         assert speak_email(EMAIL) in result.response_text
-        assert spell_email_letter_by_letter(EMAIL) in result.response_text
+        assert "letter by letter" in result.response_text.lower()
+        assert "B. A. S." in result.response_text
+        assert "G. M. A. I. L" in result.response_text
         assert "***" not in result.response_text
 
     def test_confirmation_includes_full_and_spelled_email(self):

@@ -56,7 +56,7 @@ def _cart_with_got(session: SessionState) -> None:
 
 class TestVersions:
     def test_commerce_flow_version(self):
-        assert COMMERCE_FLOW_VERSION == "v4.52"
+        assert COMMERCE_FLOW_VERSION == "v4.53"
 
 
 class TestIsbnDuringActiveCart:

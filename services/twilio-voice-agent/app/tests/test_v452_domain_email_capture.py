@@ -1,4 +1,4 @@
-"""All domain email types: capture, slow readback, fine/correct confirm (v4.52)."""
+"""All domain email types: capture, slow readback, fine/correct confirm (v4.53)."""
 from __future__ import annotations
 
 import pytest
@@ -57,8 +57,8 @@ def test_custom_domain_slow_readback():
     prompt = speak_confirmation_prompt(email)
     assert "Slowly, letter by letter" in prompt
     spelled = spell_email_letter_by_letter(email)
-    assert "S, U, R, E, S, H, O, T, B, O, O, K, S" in spelled
-    assert "C, O, M" in spelled
+    assert "S. U. R. E. S. H. O. T. B. O. O. K. S" in spelled
+    assert "C. O. M" in spelled
     assert speak_email(email) == "sales at sureshotbooks dot com"
 
 

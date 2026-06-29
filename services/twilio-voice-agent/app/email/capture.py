@@ -117,10 +117,42 @@ _DOMAIN_FIXES: dict[str, str] = {
 
 # ── Correction / confirmation patterns ────────────────────────────────────────
 
+_EMAIL_SUPPLY_PAT = re.compile(
+    r"\b(?:my\s+)?(?:correct\s+)?email(?:\s+address)?\s+is\b",
+    re.IGNORECASE,
+)
+
+
+def is_supplying_email_address(text: str) -> bool:
+    """True when caller is dictating a new email, not confirming the pending one."""
+    return bool(_EMAIL_SUPPLY_PAT.search((text or "").strip()))
+
+
+def email_capture_turn_active(session: object) -> bool:
+    """True when payment or support handoff is collecting or confirming an email."""
+    if getattr(session, "awaiting_payment_email", False):
+        return True
+    if getattr(session, "awaiting_payment_email_confirmation", False):
+        return True
+    pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+    if pfs in ("awaiting_email", "awaiting_email_confirmation", "awaiting_send_confirmation"):
+        return True
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        pending = getattr(session, "pending_not_found_escalation", None) or {}
+        if isinstance(pending, dict) and (
+            pending.get("awaiting_email_confirmation")
+            or not pending.get("email_confirmed")
+        ):
+            return True
+    return False
+
+
 _CORRECTION_PATS = re.compile(
     r"\b("
     r"no that.?s (wrong|not correct|incorrect)"
     r"|not correct"
+    r"|it.?s not correct"
+    r"|that.?s not correct"
     r"|that.?s wrong"
     r"|that.?s not right"
     r"|i said"
@@ -194,7 +226,7 @@ def normalize_spoken_email(text: str) -> Optional[str]:
 
     # Strip filler lead-in phrases
     t = re.sub(
-        r"^(?:(?:the\s+)?(?:my\s+)?email(?:\s+address)?\s+is|send\s+(?:it\s+)?to|"
+        r"^(?:(?:the\s+)?(?:my\s+)?(?:correct\s+)?email(?:\s+address)?\s+is|send\s+(?:it\s+)?to|"
         r"it.?s)\s+",
         "",
         t,
@@ -526,6 +558,8 @@ def is_email_confirmation(text: str) -> bool:
     """True if the caller is confirming the pending email candidate."""
     t = (text or "").strip()
     if not t:
+        return False
+    if is_supplying_email_address(text):
         return False
     if _CORRECTION_PATS.search(text):
         return False

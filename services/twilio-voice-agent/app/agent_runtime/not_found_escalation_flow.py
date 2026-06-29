@@ -147,12 +147,30 @@ def _extract_name_from_text(text: str) -> str:
     return ""
 
 
+def _email_ready_to_confirm(email: str, raw_text: str) -> bool:
+    """Block fragment emails like 64@gmail.com from skipping readback."""
+    from ..email.capture import email_confidence, is_supplying_email_address
+
+    if not email or "@" not in email:
+        return False
+    conf = email_confidence(email, raw_text)
+    if conf == "low":
+        return False
+    local = email.split("@", 1)[0]
+    if len(local) < 3 and conf != "high":
+        return False
+    if local.isdigit() and len(local) <= 3:
+        return False
+    return True
+
+
 def _is_email_confirmation(text: str) -> bool:
-    """Accept bare yes and natural confirmations — not 'yes my name is …'."""
+    """Accept bare yes and natural confirmations — not 'my correct email is …'."""
+    from ..email.capture import is_supplying_email_address
     from ..agent_runtime.yes_engagement import is_bare_yes
 
     cleaned = (text or "").strip()
-    if not cleaned:
+    if not cleaned or is_supplying_email_address(text):
         return False
     if _EMAIL_CONFIRM_YES.match(cleaned):
         return True
@@ -164,7 +182,9 @@ def _is_email_confirmation(text: str) -> bool:
         if re.search(r"\b(name|email|isbn|book|order|my\s+name)\b", cleaned, re.I):
             return False
         return True
-    return False
+    from ..email.capture import is_email_confirmation
+
+    return is_email_confirmation(text)
 
 
 def _handoff_customer_name(pending: dict[str, Any], caller_text: str = "") -> str:
@@ -530,6 +550,16 @@ async def process_not_found_escalation_turn(
 
     if pending.get("awaiting_email_confirmation"):
         staged_email = (pending.get("staging_email") or "").strip().lower()
+        from ..email.capture import is_email_correction
+
+        if is_email_correction(caller_text):
+            pending.pop("awaiting_email_confirmation", None)
+            pending.pop("staging_email", None)
+            stage_pending_escalation(session, pending)
+            return NotFoundEscalationTurnHint(
+                force_reply="No problem — please say your full email address slowly.",
+            )
+
         if _is_email_confirmation(caller_text):
             if not staged_email or "@" not in staged_email:
                 pending.pop("awaiting_email_confirmation", None)
@@ -597,6 +627,12 @@ async def process_not_found_escalation_turn(
 
         if hasattr(session, "pending_email_fragments"):
             session.pending_email_fragments = []
+        if not _email_ready_to_confirm(email, caller_text):
+            pending["email_fragments"] = _handoff_email_fragments(pending) + [caller_text.strip()]
+            stage_pending_escalation(session, pending)
+            return NotFoundEscalationTurnHint(
+                force_reply=fragment_capture_prompt(len(pending["email_fragments"])),
+            )
         pending["staging_email"] = email
         pending["awaiting_email_confirmation"] = True
         pending.pop("email_fragments", None)

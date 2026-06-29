@@ -30,6 +30,14 @@ def anti_silence_reply(session: "SessionState", caller_text: str) -> Optional[st
     if not text:
         return None
 
+    from ..email.capture import email_capture_turn_active, is_email_correction
+
+    if email_capture_turn_active(session) and (
+        is_email_correction(text)
+        or re.search(r"\b(repeat|spell|letter\s+by\s+letter)\b.*\bemail\b", text, re.I)
+    ):
+        return None
+
     from .naturalness import NaturalnessController
 
     if not caller_needs_presence_reply(text) and not NaturalnessController.detect_frustration(text):

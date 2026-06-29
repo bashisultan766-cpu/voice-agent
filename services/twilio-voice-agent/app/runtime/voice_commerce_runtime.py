@@ -175,13 +175,30 @@ class VoiceCommerceRuntime:
                 await self._speak(session, caller_text, spoken, send)
                 return _result(spoken)
             if result.readback:
-                await self._speak(session, caller_text, result.readback, send)
-                return _result(result.readback)
+                from ..email.speller import is_preserved_email_readback
+
+                if is_preserved_email_readback(result.readback) and result.email:
+                    spoken = await self._speak_email_readback_text(
+                        session, caller_text, result.readback, send,
+                    )
+                else:
+                    await self._speak(session, caller_text, result.readback, send)
+                    spoken = result.readback
+                return _result(spoken)
 
         payment_hint = process_payment_turn(session, caller_text, turn_mode=turn_mode)
         if payment_hint.force_reply:
-            spoken = payment_hint.force_reply
-            await self._speak(session, caller_text, spoken, send)
+            from ..email.speller import is_preserved_email_readback
+            from ..payment.email_state import get_pending_payment_email
+
+            reply = payment_hint.force_reply
+            if is_preserved_email_readback(reply) and get_pending_payment_email(session):
+                spoken = await self._speak_email_readback_text(
+                    session, caller_text, reply, send,
+                )
+            else:
+                spoken = reply
+                await self._speak(session, caller_text, spoken, send)
             logger.info("email_fsm_force_reply sid=%s", session.call_sid[:6])
             return _result(spoken)
 
@@ -230,6 +247,36 @@ class VoiceCommerceRuntime:
         await self._speak(session, caller_text, spoken, send)
         logger.info("payment_auto_send sid=%s success=%s", sid, bool(parsed.get("email_sent")))
         return _result(spoken)
+
+    async def _speak_email_readback_text(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        full_text: str,
+        send: Callable,
+    ) -> str:
+        """Deliver letter-by-letter readback in paced chunks for clear TTS."""
+        from ..email.speller import build_email_readback_parts
+        from ..payment.email_state import get_pending_payment_email
+
+        email = get_pending_payment_email(session) or ""
+        pending_esc = getattr(session, "pending_not_found_escalation", None) or {}
+        if not email and isinstance(pending_esc, dict):
+            email = (pending_esc.get("staging_email") or "").strip().lower()
+
+        parts = build_email_readback_parts(email, caller_text) if email else [full_text]
+        session.history.append({"role": "user", "content": caller_text})
+        for part in parts:
+            if part.strip():
+                await _await_send(
+                    send,
+                    {"type": "text", "token": part.strip(), "last": False, "interruptible": True},
+                )
+        await _await_send(send, {"type": "text", "token": "", "last": True})
+        combined = " ".join(p.strip() for p in parts if p.strip())
+        session.history.append({"role": "assistant", "content": combined})
+        self._record_turn(session, caller_text, combined)
+        return combined
 
     async def _speak(
         self,
@@ -313,6 +360,44 @@ class VoiceCommerceRuntime:
             await self._speak(session, normalized, spoken, send)
             return _result(spoken, end_call=closure.end_call)
 
+        from ..payment.payment_state_machine import payment_email_turn_priority
+
+        if support_handling_allowed(session, turn_mode, normalized):
+            from ..agent_runtime.not_found_escalation_flow import (
+                process_not_found_escalation_turn,
+                should_clear_handoff_for_shopping,
+                clear_pending_escalation,
+            )
+
+            if should_clear_handoff_for_shopping(session, normalized, turn_mode=turn_mode):
+                clear_pending_escalation(session)
+            else:
+                esc_early = await process_not_found_escalation_turn(
+                    session, normalized, turn_mode=turn_mode,
+                )
+                if esc_early.force_reply:
+                    from ..email.speller import is_preserved_email_readback
+
+                    reply = esc_early.force_reply
+                    if is_preserved_email_readback(reply):
+                        spoken = await self._speak_email_readback_text(
+                            session, normalized, reply, send,
+                        )
+                    else:
+                        spoken = self._brain.finalize_response(session, reply, [])
+                        await self._speak(session, normalized, spoken, send)
+                    logger.info("support_handoff_email_early sid=%s", sid)
+                    return _result(spoken)
+
+        if payment_handling_allowed(session, turn_mode, normalized) or payment_email_turn_priority(
+            session, turn_mode,
+        ):
+            email_early = await self._handle_email_fsm(
+                session, normalized, send, turn_mode=turn_mode,
+            )
+            if email_early is not None:
+                return email_early
+
         from ..dialogue.anti_silence import anti_silence_reply
 
         presence = anti_silence_reply(session, normalized)
@@ -335,41 +420,6 @@ class VoiceCommerceRuntime:
                 await self._speak(session, normalized, spoken, send)
                 logger.info("order_followup_early sid=%s", sid)
                 return _result(spoken)
-
-        from ..payment.payment_state_machine import payment_email_turn_priority
-
-        if support_handling_allowed(session, turn_mode, normalized):
-            from ..agent_runtime.not_found_escalation_flow import (
-                process_not_found_escalation_turn,
-                should_clear_handoff_for_shopping,
-                clear_pending_escalation,
-            )
-
-            if should_clear_handoff_for_shopping(session, normalized, turn_mode=turn_mode):
-                clear_pending_escalation(session)
-            else:
-                esc_early = await process_not_found_escalation_turn(
-                    session, normalized, turn_mode=turn_mode,
-                )
-                if esc_early.force_reply:
-                    from ..email.speller import is_preserved_email_readback
-
-                    reply = esc_early.force_reply
-                    spoken = (
-                        reply
-                        if is_preserved_email_readback(reply)
-                        else self._brain.finalize_response(session, reply, [])
-                    )
-                    await self._speak(session, normalized, spoken, send)
-                    logger.info("support_handoff_email_early sid=%s", sid)
-                    return _result(spoken)
-
-        if payment_handling_allowed(session, turn_mode, normalized):
-            email_early = await self._handle_email_fsm(
-                session, normalized, send, turn_mode=turn_mode,
-            )
-            if email_early is not None:
-                return email_early
 
         from ..agent_runtime.order_flow_state import (
             _should_skip_order_lookup,
@@ -506,12 +556,13 @@ class VoiceCommerceRuntime:
                 from ..email.speller import is_preserved_email_readback
 
                 reply = esc_hint.force_reply
-                spoken = (
-                    reply
-                    if is_preserved_email_readback(reply)
-                    else self._brain.finalize_response(session, reply, [])
-                )
-                await self._speak(session, normalized, spoken, send)
+                if is_preserved_email_readback(reply):
+                    spoken = await self._speak_email_readback_text(
+                        session, normalized, reply, send,
+                    )
+                else:
+                    spoken = self._brain.finalize_response(session, reply, [])
+                    await self._speak(session, normalized, spoken, send)
                 logger.info("support_handoff_email_capture sid=%s", sid)
                 return _result(spoken)
 

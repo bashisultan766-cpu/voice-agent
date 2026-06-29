@@ -391,6 +391,12 @@ def process_payment_turn(
 
     sync_active_group_to_session_email(session)
 
+    if is_email_spell_request(text) or is_repeat_email_request(text):
+        pending = get_pending_payment_email(session) or get_canonical_confirmed_email(session)
+        if pending:
+            log_payment_flow_diagnostics(session, stage="email_spell_request")
+            return PaymentTurnHint(force_reply=repeat_email_prompt(pending), skip_openai=True)
+
     email_ctx = email_capture_context_active(session, turn_mode) or email_payment_ctx
     awaiting_email_confirm = bool(getattr(session, "awaiting_payment_email_confirmation", False))
 

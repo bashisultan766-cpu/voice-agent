@@ -35,7 +35,16 @@ def support_handoff_active(session: "SessionState") -> bool:
 
 
 def payment_workflow_active(session: "SessionState", turn_mode: str = "") -> bool:
-    """Payment / multi-email capture — never overlaps support handoff or cart building."""
+    """Payment / multi-email capture — cart checkout email beats stale support handoff."""
+    mode = (turn_mode or "").strip().lower()
+    if support_handoff_active(session) and mode == "email":
+        from ..payment.payment_state_machine import _cart_has_confirmed_items
+
+        if _cart_has_confirmed_items(session):
+            return True
+        pfs = getattr(session, "payment_flow_status", "idle") or "idle"
+        if pfs in ("awaiting_email", "awaiting_email_confirmation", "awaiting_send_confirmation"):
+            return True
     if support_handoff_active(session):
         return False
     from .commerce_flow_state import (
@@ -299,6 +308,10 @@ def isolate_workflow_buffers(
 
     if wf in (WORKFLOW_SUPPORT, WORKFLOW_PAYMENT):
         session.pending_isbn_buffer = ""
+        if wf == WORKFLOW_PAYMENT and support_handoff_active(session):
+            from .not_found_escalation_flow import clear_pending_escalation
+
+            clear_pending_escalation(session)
 
     if wf == WORKFLOW_ORDER:
         session.pending_isbn_buffer = ""
