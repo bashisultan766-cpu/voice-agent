@@ -196,6 +196,7 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
 
     session: Optional[SessionState] = None
     current_task: Optional[asyncio.Task] = None
+    use_v2 = bool(getattr(settings, "VOICE_OS_V2_ENABLED", False))
 
     # ── Profile-loading coordination ───────────────────────────────────────────
     # profile_task: the background asyncio.Task started at setup time.
@@ -238,6 +239,11 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
         """Engine/runtime send callback — routes through CR outbound adapter."""
         if msg.get("type") == "end":
             await _queue_send(msg)
+            return
+        if use_v2 and msg.get("type") == "text":
+            await _queue_send(msg)
+            cr_stats.responses_sent += 1
+            cr_stats.last_outbound_type = "text"
             return
         if outbound is not None:
             await outbound.engine_send(msg)
@@ -420,10 +426,11 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                         session.session_id,
                     )
                     logger.info(
-                        "voice_runtime_selected sid=%s env_mode=%s handler=%s",
+                        "voice_runtime_selected sid=%s env_mode=%s handler=%s v2=%s",
                         session.call_sid[:6],
                         settings.VOICE_AGENT_RUNTIME_MODE,
                         resolve_live_turn_handler(settings),
+                        use_v2,
                     )
                     # v4.8: resume prior call context if caller reconnected within window
                     try:
@@ -530,6 +537,9 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                             cr_stats.assembled_turns,
                             turn.mode,
                         )
+                        if use_v2:
+                            await _run_turn(turn.text, turn.mode)
+                            return
                         await _cancel_current()
                         current_task = asyncio.create_task(
                             _run_turn(turn.text, turn.mode),
@@ -546,9 +556,10 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
 
                 case "interrupt":
                     logger.info(
-                        "Interrupt | sid=%s after=%sms",
+                        "Interrupt | sid=%s after=%sms v2=%s",
                         session.call_sid if session else "?",
                         msg.get("durationUntilInterruptMs", "?"),
+                        use_v2,
                     )
                     if session is not None:
                         session.voice_interrupted = True
@@ -563,17 +574,25 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                             session.call_sid[:6] if session else "?",
                             dropped,
                         )
-                    await _cancel_current()
+                    if use_v2 and session is not None:
+                        from ..voice_os_v2.session_state import set_interrupt_flag
+
+                        await set_interrupt_flag(session.call_sid, True)
+                    else:
+                        await _cancel_current()
 
                 case "dtmf":
                     digit = msg.get("digit", "")
                     logger.debug("DTMF digit=%r sid=%s", digit, session.call_sid if session else "?")
                     if session and digit:
-                        await _cancel_current()
-                        current_task = asyncio.create_task(
-                            _run_turn(f"(Keypad: {digit})"),
-                            name="dtmf-turn",
-                        )
+                        if use_v2:
+                            await _run_turn(f"(Keypad: {digit})")
+                        else:
+                            await _cancel_current()
+                            current_task = asyncio.create_task(
+                                _run_turn(f"(Keypad: {digit})"),
+                                name="dtmf-turn",
+                            )
 
                 case "error":
                     desc = msg.get("description", "")
@@ -599,7 +618,17 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
             session.call_sid if session else "?",
         )
     finally:
-        await _cancel_current()
+        if not use_v2:
+            await _cancel_current()
+        if session is not None and use_v2:
+            try:
+                from ..voice_os_v2.session_state import delete_v2_session
+                from ..voice_os_v2.turn_controller import get_turn_controller
+
+                await delete_v2_session(session.call_sid)
+                get_turn_controller().release_call(session.call_sid)
+            except Exception:
+                logger.debug("v2_session_cleanup_skipped sid=%s", session.call_sid[:6])
         if session is not None:
             try:
                 from ..state.session_store import clear_call_resume_by_phone

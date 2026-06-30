@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
     # Prove OpenAI configuration at startup (no secrets logged).
     from .agent_runtime.openai_health import log_startup_health
     from .agent_runtime.live_runtime import resolve_live_turn_handler
+    from .voice_os_v2.runtime import voice_os_v2_enabled
 
     log_startup_health(settings)
     from .agent_runtime import llm_tools
@@ -94,11 +95,12 @@ async def lifespan(app: FastAPI):
         prompt_diag["path"],
     )
     _log.info(
-        "voice_runtime=%s active_turn_handler=%s "
+        "voice_runtime=%s active_turn_handler=%s voice_os_v2=%s "
         "customer_facing_tools=%d openai_model=%s "
         "llm_only_final_output=%s",
         settings.VOICE_RUNTIME,
         resolve_live_turn_handler(settings),
+        voice_os_v2_enabled(settings),
         len(llm_tools.customer_facing_tool_names()),
         settings.OPENAI_MODEL,
         settings.VOICE_LLM_ONLY_FINAL_OUTPUT,

@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     JESSICA_EMAIL: str = ""
     CUSTOMER_SERVICE_EMAIL: str = ""
 
+    # ── VOICE_AGENT_OS_V2 (production rebuild) ─────────────────────────────
+    # When true, all turns use app/voice_os_v2 — legacy FSMs are not invoked.
+    VOICE_OS_V2_ENABLED: bool = False
+
     # ── Canonical live runtime (voice_commerce_runtime only) ─────────────────
     VOICE_AGENT_RUNTIME_MODE: str = "voice_commerce_runtime"
     VOICE_ORCHESTRATOR_ENABLED: bool = False
