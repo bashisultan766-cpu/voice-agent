@@ -189,8 +189,8 @@ def test_no_shopify_for_vague_request():
         result, _ = _run_turn(runtime, _session(), "I want a book")
         mock_dispatch.assert_not_called()
     assert runtime._brain._client.chat.completions.calls == []
-    assert "product name" in result.response_text.lower()
-    assert "i s b n" in result.response_text.lower() or "isbn" in result.response_text.lower()
+    assert "book title" in result.response_text.lower()
+    assert "s b n" in result.response_text.lower() or "isbn" in result.response_text.lower()
 
 
 def test_bare_title_clarification_no_llm_or_catalog():
@@ -204,10 +204,10 @@ def test_bare_title_clarification_no_llm_or_catalog():
         result, _ = _run_turn(runtime, _session(), "Game of Thrones")
         catalog.assert_not_called()
     assert runtime._brain._client.chat.completions.calls == []
-    assert "product name" in result.response_text.lower()
-    assert "i s b n" in result.response_text.lower() or "isbn" in result.response_text.lower()
+    assert "book title" in result.response_text.lower()
+    assert "s b n" in result.response_text.lower() or "isbn" in result.response_text.lower()
     assert "Passive Income" not in result.response_text
-    assert "exact item" in result.response_text.lower()
+    assert "book title" in result.response_text.lower()
 
 
 # ── Brain + tool tests ───────────────────────────────────────────────────────

@@ -31,7 +31,8 @@ def test_load_product_search_workflow():
     clarification = wf.get_state("clarification")
     assert clarification is not None
     assert clarification.handler == "product_clarification_turn"
-    assert "isbn_search" in clarification.allowed_next
+    assert "isbn_search" not in clarification.allowed_next
+    assert "match_resolution" in clarification.allowed_next
 
 
 def test_validate_all_workflows_passes_compiler_checks():

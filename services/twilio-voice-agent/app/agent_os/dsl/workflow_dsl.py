@@ -132,35 +132,7 @@ PRODUCT_SEARCH_WORKFLOW_DSL = WorkflowDefinition(
         WorkflowState(
             name="clarification",
             handler="product_clarification_turn",
-            allowed_next=("isbn_search", "title_search", "clarification"),
-        ),
-        WorkflowState(
-            name="isbn_partial",
-            handler="isbn_partial_reply",
-            allowed_next=("isbn_search", "clarification"),
-        ),
-        WorkflowState(
-            name="isbn_search",
-            handler="try_isbn_short_circuit",
-            allowed_next=(
-                "isbn_partial",
-                "match_resolution",
-                "exact_match",
-                "similarity_fallback",
-                "handoff_staged",
-                "fallback",
-            ),
-        ),
-        WorkflowState(
-            name="title_search",
-            handler="try_title_catalog_short_circuit",
-            allowed_next=(
-                "match_resolution",
-                "exact_match",
-                "similarity_fallback",
-                "handoff_staged",
-                "fallback",
-            ),
+            allowed_next=("match_resolution", "clarification", "handoff_staged"),
         ),
         WorkflowState(
             name="match_resolution",
