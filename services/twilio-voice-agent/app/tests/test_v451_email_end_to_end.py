@@ -116,6 +116,7 @@ class TestSupportHandoffEmailFlow:
         settings = Settings(
             SUPPORT_EMAIL="support@test.com",
             RESEND_API_KEY="re_test",
+            SUPPORT_ESCALATION_FROM_EMAIL="Voice Agent <noreply@test.com>",
             SUPPORT_ESCALATION_ENABLED=True,
         )
 

@@ -9,6 +9,8 @@ from app.agent_runtime.not_found_escalation_flow import (
     _is_email_confirmation,
     process_not_found_escalation_turn,
 )
+from app.config import Settings
+from app.config import Settings
 from app.dialogue.anti_silence import anti_silence_reply
 from app.email.capture import (
     email_capture_turn_active,
@@ -117,9 +119,10 @@ async def test_support_handoff_sends_silently_after_email():
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with patch("app.escalation.support_handoff.get_settings") as mock_settings:
-        mock_settings.return_value = MagicMock(
+        mock_settings.return_value = Settings(
             SUPPORT_EMAIL="support@test.com",
             RESEND_API_KEY="re_test",
+            SUPPORT_ESCALATION_FROM_EMAIL="Voice Agent <noreply@test.com>",
             SUPPORT_ESCALATION_ENABLED=True,
         )
         with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):

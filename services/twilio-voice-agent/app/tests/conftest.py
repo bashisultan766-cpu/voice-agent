@@ -1,6 +1,16 @@
 """Pytest configuration — skip legacy runtime tests removed in canonical refactor."""
 from __future__ import annotations
 
+import os
+from unittest.mock import patch
+
+import pytest
+
+# Keep pytest isolated from production .env on VPS (APP_ENV=production, Redis, etc.).
+os.environ["APP_ENV"] = "test"
+os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ["OPENAI_MODEL"] = "gpt-4o"
+
 LEGACY_TEST_PREFIXES = (
     "test_pipeline",
     "test_worker",
@@ -47,3 +57,25 @@ def pytest_ignore_collect(collection_path, config):
         if name.startswith(prefix):
             return True
     return False
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_escalation_idempotency():
+    """Escalation idempotency uses Redis on VPS — isolate each test to in-memory store."""
+    from app.escalation import product_not_found_escalation as pne
+
+    pne._STORE.clear()
+    pne._SYNC_REDIS = None
+    with patch.object(pne, "_get_sync_redis", return_value=None):
+        yield
+    pne._STORE.clear()
+    pne._SYNC_REDIS = None
