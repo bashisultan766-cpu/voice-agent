@@ -90,5 +90,8 @@ def test_health_endpoint():
     resp = client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["ok"] is True
+    assert data["ok"] is True, (
+        f"health degraded: redis={data.get('redis_status')} "
+        f"identity_failures={data.get('runtime_identity_failures')}"
+    )
     assert data["runtime"] == "twilio_conversation_relay"

@@ -19,14 +19,23 @@ async def health() -> dict:
         if s.REDIS_URL:
             client = await get_redis_client()
             if client is not None:
-                await client.ping()
-                redis_status = "ok"
+                try:
+                    await client.ping()
+                    redis_status = "ok"
+                except Exception:
+                    if s.allow_memory_store_fallback:
+                        redis_status = "fallback_memory"
+                    else:
+                        redis_status = "error"
             elif s.allow_memory_store_fallback:
                 redis_status = "fallback_memory"
             else:
                 redis_status = "unavailable"
     except Exception:
-        redis_status = "error"
+        if s.allow_memory_store_fallback:
+            redis_status = "fallback_memory"
+        else:
+            redis_status = "error"
 
     return {
         "ok": not bool(failures) and redis_status in ("ok", "fallback_memory", "not_configured"),
