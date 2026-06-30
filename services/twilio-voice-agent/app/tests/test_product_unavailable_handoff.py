@@ -68,9 +68,9 @@ async def test_isbn_not_found_stages_fallback_without_immediate_handoff():
             result = await try_isbn_short_circuit(session, TEST_ISBN, turn_mode="isbn")
 
     assert result is not None
-    assert "couldn't find" in result.force_reply.lower()
-    assert session.awaiting_not_found_escalation_email is False
-    assert session.product_search_fallback_pending.get("escalation_eligible") is True
+    assert "name and email" in result.force_reply.lower()
+    assert session.awaiting_not_found_escalation_email is True
+    assert session.pending_not_found_escalation.get("reason") == "product_not_found"
 
 
 @pytest.mark.asyncio
@@ -126,9 +126,9 @@ async def test_title_not_found_stages_fallback_without_immediate_handoff():
             )
 
     assert result is not None
-    assert "couldn't find" in result.force_reply.lower()
-    assert session.awaiting_not_found_escalation_email is False
-    assert session.product_search_fallback_pending.get("escalation_eligible") is True
+    assert "name and email" in result.force_reply.lower()
+    assert session.awaiting_not_found_escalation_email is True
+    assert session.pending_not_found_escalation.get("reason") == "product_not_found"
 
 
 def test_commerce_oos_utterance_triggers_handoff():

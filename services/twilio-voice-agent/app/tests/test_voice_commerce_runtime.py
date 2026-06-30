@@ -145,18 +145,19 @@ def test_hello_instant_response_no_llm():
     assert "SureShot" in result.instant_reply or "help" in result.instant_reply.lower()
 
 
-def test_i_need_a_book_asks_title_not_search():
+def test_i_need_a_book_routes_product_search_not_brain():
     result = classify("I need a book")
-    assert result.action == "instant"
-    assert result.skip_tools is True
-    assert "title" in result.instant_reply.lower() or "isbn" in result.instant_reply.lower()
+    assert result.is_product_search is True
+    assert result.skip_brain is True
+    assert result.skip_llm is True
+    assert result.reason == "vague_product_intent"
     assert is_vague_product_request("I need a book")
 
 
-def test_vague_magazine_clarification():
+def test_vague_magazine_routes_product_search():
     result = classify("I need a magazine")
-    assert result.action == "instant"
-    assert "magazine" in result.instant_reply.lower()
+    assert result.is_product_search is True
+    assert result.skip_brain is True
 
 
 def test_game_of_thrones_triggers_product_search_workflow():
@@ -188,7 +189,8 @@ def test_no_shopify_for_vague_request():
         result, _ = _run_turn(runtime, _session(), "I want a book")
         mock_dispatch.assert_not_called()
     assert runtime._brain._client.chat.completions.calls == []
-    assert "title" in result.response_text.lower() or "isbn" in result.response_text.lower()
+    assert "product name" in result.response_text.lower()
+    assert "i s b n" in result.response_text.lower() or "isbn" in result.response_text.lower()
 
 
 def test_bare_title_clarification_no_llm_or_catalog():
@@ -203,9 +205,9 @@ def test_bare_title_clarification_no_llm_or_catalog():
         catalog.assert_not_called()
     assert runtime._brain._client.chat.completions.calls == []
     assert "product name" in result.response_text.lower()
-    assert "isbn" in result.response_text.lower()
+    assert "i s b n" in result.response_text.lower() or "isbn" in result.response_text.lower()
     assert "Passive Income" not in result.response_text
-    assert _PRODUCT_CLARIFICATION_REPLY.split("..")[0] in result.response_text.replace("..", "")
+    assert "exact item" in result.response_text.lower()
 
 
 # ── Brain + tool tests ───────────────────────────────────────────────────────

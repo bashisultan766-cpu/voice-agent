@@ -61,11 +61,13 @@ class TestUnclearSpeech:
         assert _needs_intent_clarification("um")
         assert _needs_intent_clarification("help")
 
-    def test_classifier_asks_intent_on_vague_help(self):
+    def test_classifier_routes_uncertain_to_product_search(self):
         result = classify("help", _session())
-        assert result.action == "instant"
-        assert result.reason == "unclear_intent"
-        assert "cancel an order" in result.instant_reply.lower()
+        assert result.is_product_search is True
+        assert result.product_intent_detected is True
+        assert result.skip_brain is True
+        assert result.skip_llm is True
+        assert result.reason == "unclear_intent_product_default"
 
 
 class TestSupportEmailFormat:

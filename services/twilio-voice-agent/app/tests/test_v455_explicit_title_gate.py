@@ -56,10 +56,11 @@ class TestNoAutoProductSearch:
         result = classify("how are you doing today", session)
         assert not result.is_product_search
 
-    def test_classifier_does_not_search_on_book_title_mention_alone(self):
+    def test_classifier_routes_bare_title_to_product_workflow(self):
         session = _session()
         result = classify("Game of Thrones", session)
-        assert not result.is_product_search
+        assert result.is_product_search
+        assert result.skip_brain
 
 
 @pytest.mark.asyncio

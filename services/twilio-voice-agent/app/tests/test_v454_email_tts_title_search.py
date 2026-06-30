@@ -76,9 +76,13 @@ async def test_title_catalog_search_idle():
         new_callable=AsyncMock,
         return_value=json.dumps(payload),
     ):
-        result = await try_title_catalog_short_circuit(
-            session, "Do you have Red River Vengeance",
-        )
+        with patch(
+            "app.agent_runtime.product_resolution.similarity_engine",
+            return_value=[],
+        ):
+            result = await try_title_catalog_short_circuit(
+                session, "Do you have Red River Vengeance",
+            )
 
     assert result is not None
     assert result.force_reply
@@ -105,14 +109,27 @@ async def test_title_catalog_similar_offer():
         "count": 1,
     }
 
+    similar_hit = {
+        "title": "A Different Kind of School",
+        "variant_id": "gid://shopify/ProductVariant/88",
+        "price": "11.50",
+        "available": True,
+        "inventory_quantity": 3,
+        "source": "shopify_catalog",
+    }
+
     with patch(
         "app.agent_runtime.llm_tools._catalog_search",
         new_callable=AsyncMock,
         return_value=json.dumps(payload),
     ):
-        result = await try_title_catalog_short_circuit(
-            session, "I'm looking for Gurdwara",
-        )
+        with patch(
+            "app.agent_runtime.product_resolution.similarity_engine",
+            return_value=[similar_hit],
+        ):
+            result = await try_title_catalog_short_circuit(
+                session, "I'm looking for Gurdwara",
+            )
 
     assert result is not None
     assert "couldn't find the exact product" in result.force_reply.lower()

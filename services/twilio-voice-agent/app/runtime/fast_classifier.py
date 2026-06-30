@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 _ISBN = re.compile(r"\b(?:97[89]\d{10}|\d{9}[\dXx]|\d{13})\b")
 _ORDER_NUM = re.compile(r"\b(?:order\s*)?#?\s*(\d{4,10})\b", re.I)
+_LONG_NUMERIC_ID = re.compile(r"\b\d{6,}\b")
+_PRODUCT_KEYWORD_RE = re.compile(r"\b(book|books|novel|novels|title|titles)\b", re.I)
 _YES = re.compile(
     r"^(?:yes|yeah|yep|yup|correct|that'?s right|that is right|affirmative|sure|ok(?:ay)?)\s*[.!]?\s*$",
     re.I,
@@ -75,8 +77,10 @@ class ClassificationResult:
     ack_reply: str = ""
     reason: str = ""
     skip_llm: bool = False
+    skip_brain: bool = False
     skip_tools: bool = False
     is_product_search: bool = False
+    product_intent_detected: bool = False
     is_order_lookup: bool = False
     is_refund_lookup: bool = False
     is_cancellation_request: bool = False
@@ -224,13 +228,79 @@ def _is_isbn_digit_utterance(text: str) -> bool:
 
 
 def _is_product_search_request(text: str) -> bool:
-    if _is_isbn_digit_utterance(text):
+    if product_intent_detected(text):
         return True
     if _has_specific_product_detail(text):
         return True
     if re.search(r"\b(author|by)\s+\w+", text, re.I) and re.search(r"\bbook\b", text, re.I):
         return True
     return False
+
+
+def product_intent_detected(text: str) -> bool:
+    """
+    Strict deterministic product intent — ISBN, catalog keywords, long numeric IDs.
+
+    Order/cancellation utterances with only an order number are excluded.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+
+    from ..agent_runtime.order_flow_state import order_intent_detected
+
+    has_order_signal = bool(
+        order_intent_detected(cleaned)
+        or _is_cancellation_request(cleaned)
+        or _ORDER_NUM.search(cleaned),
+    )
+    has_catalog_signal = bool(
+        _ISBN.search(cleaned)
+        or _is_isbn_digit_utterance(cleaned)
+        or _PRODUCT_KEYWORD_RE.search(cleaned)
+        or _LONG_NUMERIC_ID.search(cleaned)
+        or _has_specific_product_detail(cleaned)
+    )
+
+    if has_order_signal and not (
+        _ISBN.search(cleaned)
+        or _PRODUCT_KEYWORD_RE.search(cleaned)
+        or _is_isbn_digit_utterance(cleaned)
+    ):
+        return False
+
+    return has_catalog_signal
+
+
+def _product_search_route(reason: str) -> ClassificationResult:
+    """Hard route to product_search_workflow — never MainCommerceBrain."""
+    return ClassificationResult(
+        action="instant",
+        reason=reason,
+        is_product_search=True,
+        product_intent_detected=True,
+        skip_llm=True,
+        skip_brain=True,
+        skip_tools=True,
+    )
+
+
+def apply_product_intent_hard_gate(
+    result: ClassificationResult,
+    text: str,
+) -> ClassificationResult:
+    """Enforce skip_llm + skip_brain when product intent is present."""
+    if not product_intent_detected(text):
+        return result
+    result.is_product_search = True
+    result.product_intent_detected = True
+    result.skip_llm = True
+    result.skip_brain = True
+    if result.action == "brain":
+        result.action = "instant"
+        if not result.reason or result.reason == "default_brain":
+            result.reason = "product_intent_hard_gate"
+    return result
 
 
 def _is_cancellation_request(text: str) -> bool:
@@ -401,25 +471,7 @@ def classify(
                     )
         except Exception:  # noqa: BLE001
             pass
-        clarify = _CLARIFY_INTENT
-        if session is not None:
-            try:
-                from ..agent_runtime.commerce_flow_state import commerce_flow_active
-
-                if commerce_flow_active(session):
-                    clarify = (
-                        "Sorry, I didn't quite get that. "
-                        "Are we still on the book you were looking for, or would you like to do something else?"
-                    )
-            except Exception:  # noqa: BLE001
-                pass
-        return ClassificationResult(
-            action="instant",
-            instant_reply=clarify,
-            reason="unclear_intent",
-            skip_llm=True,
-            skip_tools=True,
-        )
+        return _product_search_route("unclear_intent_product_default")
 
     if _is_cancellation_request(text):
         return ClassificationResult(
@@ -512,15 +564,9 @@ def classify(
             skip_tools=True,
         )
 
-    # C. Vague product — clarify, no Shopify
+    # C. Vague product — route to deterministic product_search_workflow
     if is_vague_product_request(text):
-        return ClassificationResult(
-            action="instant",
-            instant_reply=resolve_product_clarification(text),
-            reason="vague_product_request",
-            skip_llm=True,
-            skip_tools=True,
-        )
+        return _product_search_route("vague_product_intent")
 
     # Email confirmation deterministic path handled by payment FSM in runtime
     if (turn_mode or "").lower() == "email":
@@ -543,14 +589,8 @@ def classify(
                 is_order_lookup=True,
             )
 
-    if _is_product_search_request(text) and not is_vague_product_request(text):
-        return ClassificationResult(
-            action="instant",
-            reason="product_search",
-            is_product_search=True,
-            skip_llm=True,
-            skip_tools=True,
-        )
+    if product_intent_detected(text):
+        return _product_search_route("product_intent_deterministic")
 
     if _is_refund_lookup(text):
         return ClassificationResult(
@@ -575,8 +615,4 @@ def classify(
             is_payment_flow=True,
         )
 
-    return ClassificationResult(
-        action="brain",
-        reason="default_brain",
-        use_strong_model=_needs_strong_model(text, session),
-    )
+    return _product_search_route("uncertain_default_product_search")

@@ -85,8 +85,7 @@ LLM_FORBIDDEN_CALL_MARKERS: frozenset[str] = frozenset({
 
 # Calls allowed only inside specific parent nodes (mirrors runtime depth guards).
 NESTED_ALLOWED_CALLS: dict[str, frozenset[str]] = {
-    "match_product": frozenset({"_catalog_search", "_load_catalog_hits", "search_product_by_isbn"}),
-    "_load_catalog_hits": frozenset({"_catalog_search"}),
+    "match_product": frozenset({"_catalog_search", "search_product_by_isbn"}),
 }
 # Cross-domain staging: product may call these support-prefixed symbols intentionally.
 CROSS_DOMAIN_ALLOWED_CALLS: frozenset[str] = frozenset({

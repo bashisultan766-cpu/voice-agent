@@ -26,7 +26,13 @@ from ..agents.main_commerce_brain import MainCommerceBrain
 from ..cart.commerce_cart_service import CommerceCartService
 from ..payment.email_state import PAYMENT_AUTO_SEND_ENABLED
 from ..payment.payment_state_machine import needs_deferred_payment_auto_send
-from .fast_classifier import ClassificationResult, classify, normalize_speech_text
+from .fast_classifier import (
+    ClassificationResult,
+    apply_product_intent_hard_gate,
+    classify,
+    normalize_speech_text,
+    product_intent_detected,
+)
 
 if TYPE_CHECKING:
     from ..state.models import SafeCallerContext, SessionState
@@ -46,6 +52,139 @@ _STUCK_RECOVERY = (
 )
 
 _GUIDED_AWAITING_ORDER_PROMPT = "Please tell me your order number."
+
+# ── Voice Stability Normalization Layer (TTS-only — no workflow changes) ─────
+
+_REPEATED_WORD_RE = re.compile(r"\b(\w+)(?:\s+\1\b)+", re.I)
+_ACK_FRAGMENT_RE = re.compile(
+    r"^(Yes|Yeah|Yep|Okay|Ok|Sure|Right|So|Well)\.\s+([A-Za-z].*)$",
+    re.I,
+)
+_DANGLING_ACK_ONLY_RE = re.compile(
+    r"^(Yes|Yeah|Yep|Okay|Ok|Sure|Right)\.\s*$",
+    re.I,
+)
+_MULTI_SPACE_RE = re.compile(r"\s+")
+_PUNCT_SPACE_FIX_RE = re.compile(r"([,.!?])([^\s\"'\)])")
+_ABBREV_EXPANSIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bMr\.\s*", re.I), "Mister "),
+    (re.compile(r"\bMrs\.\s*", re.I), "Missus "),
+    (re.compile(r"\bMs\.\s*", re.I), "Ms "),
+    (re.compile(r"\bDr\.\s*", re.I), "Doctor "),
+    (re.compile(r"\bvs\.\s*", re.I), "versus "),
+    (re.compile(r"\be\.g\.\s*", re.I), "for example "),
+    (re.compile(r"\bi\.e\.\s*", re.I), "that is "),
+    (re.compile(r"\betc\.\s*", re.I), "etcetera "),
+    (re.compile(r"\bISBN\b"), "I S B N"),
+)
+
+
+def normalize_tts_text(text: str, *, user_text: str = "") -> str:
+    """
+    Stabilize spoken text before TTS — structural cleanup only.
+
+    - Collapse repeated words ("I I need" → "I need")
+    - Merge ack fragments ("Yes. The book" → "Yes, the book")
+    - Expand common abbreviations for speech
+    - Normalize punctuation and spacing for TTS
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+
+    cleaned = _MULTI_SPACE_RE.sub(" ", cleaned)
+
+    prev = None
+    while prev != cleaned:
+        prev = cleaned
+        cleaned = _REPEATED_WORD_RE.sub(r"\1", cleaned)
+
+    ack_match = _ACK_FRAGMENT_RE.match(cleaned)
+    if ack_match:
+        ack = ack_match.group(1)
+        rest = ack_match.group(2).strip()
+        if rest:
+            cleaned = f"{ack}, {rest[0].lower()}{rest[1:]}" if len(rest) > 1 else f"{ack}, {rest.lower()}"
+
+    if _DANGLING_ACK_ONLY_RE.match(cleaned) and (user_text or "").strip():
+        topic = _infer_ack_completion_topic(user_text)
+        if topic:
+            cleaned = f"{cleaned.rstrip('.')}, {topic}."
+
+    for pattern, replacement in _ABBREV_EXPANSIONS:
+        cleaned = pattern.sub(replacement, cleaned)
+
+    cleaned = re.sub(r"\.{2,}", ".", cleaned)
+    cleaned = re.sub(r"!{2,}", "!", cleaned)
+    cleaned = re.sub(r"\?{2,}", "?", cleaned)
+    cleaned = re.sub(r"\s+([,.!?])", r"\1", cleaned)
+    cleaned = _PUNCT_SPACE_FIX_RE.sub(r"\1 \2", cleaned)
+    cleaned = _MULTI_SPACE_RE.sub(" ", cleaned).strip()
+
+    # Ensure terminal punctuation for complete thoughts (voice pacing).
+    if cleaned and cleaned[-1] not in ".!?":
+        if len(cleaned.split()) >= 4:
+            cleaned = f"{cleaned}."
+
+    return cleaned
+
+
+def _infer_ack_completion_topic(user_text: str) -> str:
+    """Light context hint when the model emits a dangling acknowledgment."""
+    lower = (user_text or "").lower()
+    if re.search(r"\b(book|isbn|title|author|copy|copies)\b", lower):
+        return "about the book"
+    if re.search(r"\b(order|tracking|shipment|delivery)\b", lower):
+        return "about your order"
+    if re.search(r"\b(cancel|refund|return)\b", lower):
+        return "I can help with that"
+    if re.search(r"\b(email|payment|checkout)\b", lower):
+        return "let's continue"
+    return ""
+
+
+def finalize_voice_output(
+    text: str,
+    session: Optional["SessionState"] = None,
+    *,
+    user_text: str = "",
+    log_metrics: bool = True,
+) -> str:
+    """
+    Final TTS pipeline — no raw handler/LLM text may bypass this before speech.
+
+    normalize_tts_text → voice output contract → voice response formatter
+    """
+    from ..email.speller import is_preserved_email_readback
+
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if is_preserved_email_readback(raw):
+        return raw
+
+    normalized = normalize_tts_text(raw, user_text=user_text)
+    stability_changed = normalized != raw
+
+    result = VoiceCommerceRuntime._apply_voice_output_pipeline(
+        normalized,
+        session,
+        user_text=user_text,
+    )
+    result = re.sub(r"\.{2,}", ".", result)
+    result = re.sub(r"\s+", " ", result).strip()
+
+    if log_metrics:
+        logger.info(
+            "voice_stability_normalized=%s voice_output_length_before=%d "
+            "voice_output_length_after=%d",
+            str(stability_changed).lower(),
+            len(raw),
+            len(result),
+        )
+
+    return result
+
 
 from ..agent_runtime.voice_workflows import (
     PRODUCT_CLARIFICATION_REPLY as _PRODUCT_CLARIFICATION_REPLY,
@@ -150,11 +289,33 @@ def _product_search_turn_active(
 ) -> bool:
     from ..agent_runtime.workflow_isolation import WORKFLOW_PRODUCT, product_handling_allowed
 
+    if classification.product_intent_detected or classification.skip_brain:
+        return product_handling_allowed(session, turn_mode, text)
     if not product_handling_allowed(session, turn_mode, text):
         return False
     if active_workflow == WORKFLOW_PRODUCT:
         return True
     return bool(classification.is_product_search)
+
+
+def _log_intent_routing_decision(
+    sid: str,
+    classification: ClassificationResult,
+    *,
+    route: str = "",
+    active_workflow: str = "",
+) -> None:
+    logger.info(
+        "intent_routing_decision sid=%s route=%s active_workflow=%s "
+        "product_intent_detected=%s skip_llm=%s skip_brain=%s reason=%s",
+        sid,
+        route or "-",
+        active_workflow or "-",
+        str(classification.product_intent_detected).lower(),
+        str(classification.skip_llm).lower(),
+        str(classification.skip_brain).lower(),
+        classification.reason or "-",
+    )
 
 
 def _llm_blocked_for_workflow(
@@ -180,6 +341,8 @@ def _llm_blocked_for_workflow(
     if active_workflow in (WORKFLOW_SUPPORT, SUPPORT_HANDOFF_WORKFLOW):
         return True
     if support_handling_allowed(session, turn_mode, text):
+        return True
+    if classification.product_intent_detected or classification.skip_brain:
         return True
     if _product_search_turn_active(session, text, turn_mode, classification, active_workflow):
         return True
@@ -521,6 +684,7 @@ class VoiceOrchestrator:
             turn_mode=turn_mode,
             twiml_greeting_already=twiml_greeting,
         )
+        classification = apply_product_intent_hard_gate(classification, caller_text)
         plan.classification = classification
 
         from ..agent_runtime.workflow_isolation import support_handling_allowed
@@ -532,10 +696,14 @@ class VoiceOrchestrator:
             plan.plan_ms = (time.monotonic() - t0) * 1000
             return plan
 
-        if classification.is_product_search:
+        if (
+            classification.is_product_search
+            or classification.product_intent_detected
+            or product_intent_detected(caller_text)
+        ):
             plan.use_llm = False
             plan.fast_route = "product_search_workflow"
-            plan.reason = "product_search_deterministic"
+            plan.reason = classification.reason or "product_search_deterministic"
             plan.plan_ms = (time.monotonic() - t0) * 1000
             return plan
 
@@ -593,7 +761,11 @@ class VoiceOrchestrator:
     @staticmethod
     def allows_llm(plan: OrchestratorPlan) -> bool:
         """LLM is fallback only — never run when plan forbids it."""
-        if plan.classification and plan.classification.skip_llm:
+        if plan.classification and (
+            plan.classification.skip_llm
+            or plan.classification.skip_brain
+            or plan.classification.product_intent_detected
+        ):
             return False
         return plan.use_llm
 
@@ -970,16 +1142,22 @@ class VoiceCommerceRuntime:
         *,
         user_text: str = "",
     ) -> str:
-        """Normalize handler text into short voice-ready speech before Twilio TTS."""
-        from ..email.speller import is_preserved_email_readback
+        """Single TTS gate — all spoken text passes through finalize_voice_output."""
+        return finalize_voice_output(spoken, session, user_text=user_text)
 
-        text = (spoken or "").strip()
-        if not text or is_preserved_email_readback(text):
-            return text
-        return VoiceCommerceRuntime._apply_voice_output_pipeline(
-            text,
+    @staticmethod
+    def _format_stream_chunk(
+        spoken: str,
+        session: Optional["SessionState"] = None,
+        *,
+        user_text: str = "",
+    ) -> str:
+        """Streaming micro-chunks use the same TTS stability pipeline (metrics off)."""
+        return finalize_voice_output(
+            spoken,
             session,
             user_text=user_text,
+            log_metrics=False,
         )
 
     @staticmethod
@@ -1037,25 +1215,6 @@ class VoiceCommerceRuntime:
         self._record_turn(session, caller_text, combined)
         return combined
 
-    @staticmethod
-    def _format_stream_chunk(
-        spoken: str,
-        session: Optional["SessionState"] = None,
-        *,
-        user_text: str = "",
-    ) -> str:
-        """Voice Contract → Formatter for one streaming micro-chunk."""
-        from ..email.speller import is_preserved_email_readback
-
-        text = (spoken or "").strip()
-        if not text or is_preserved_email_readback(text):
-            return text
-        return VoiceCommerceRuntime._apply_voice_output_pipeline(
-            text,
-            session,
-            user_text=user_text,
-        )
-
     async def _emit_stream_speech_chunks(
         self,
         session: "SessionState",
@@ -1097,7 +1256,7 @@ class VoiceCommerceRuntime:
         interruptible: bool = True,
     ) -> tuple[str, list[str], list[tuple[str, dict]], list[str]]:
         """
-        Stream LLM tokens into speech chunks: Contract → Formatter → TTS.
+        Stream LLM tokens into speech chunks: Stability → Contract → Formatter → TTS.
 
         Returns (final_text, tools_used, tool_results, spoken_chunks).
         """
@@ -1321,6 +1480,34 @@ class VoiceCommerceRuntime:
                 turn_mode=turn_mode,
                 twiml_greeting_already=twiml_greeting,
             )
+        classification = apply_product_intent_hard_gate(classification, normalized)
+        if plan.classification is not None:
+            plan.classification = classification
+
+        _log_intent_routing_decision(
+            sid,
+            classification,
+            route=plan.fast_route or "",
+            active_workflow=active_workflow,
+        )
+
+        if (
+            classification.product_intent_detected
+            or classification.is_product_search
+            or classification.skip_brain
+            or plan.fast_route == "product_search_workflow"
+        ):
+            if product_handling_allowed(session, turn_mode, normalized):
+                product_early = await self.route_to_product_search_workflow(
+                    session,
+                    normalized,
+                    send,
+                    turn_mode=turn_mode,
+                    classification=classification,
+                    sid=sid,
+                )
+                if product_early is not None:
+                    return product_early
 
         if plan.fast_route == "product_clarification":
             spoken = await self._product_clarification_turn(session, normalized, send)
@@ -1695,7 +1882,31 @@ class VoiceCommerceRuntime:
             logger.info("product_clarification_pre_brain sid=%s", sid)
             return await self._product_clarification_turn(session, normalized, send)
 
+        if classification.skip_brain or classification.product_intent_detected:
+            product_blocked = await self.route_to_product_search_workflow(
+                session,
+                normalized,
+                send,
+                turn_mode=turn_mode,
+                classification=classification,
+                sid=sid,
+            )
+            if product_blocked is not None:
+                return product_blocked
+            return await self._product_clarification_turn(session, normalized, send)
+
         if not VoiceOrchestrator.allows_llm(plan):
+            if classification.product_intent_detected or classification.skip_brain:
+                product_blocked = await self.route_to_product_search_workflow(
+                    session,
+                    normalized,
+                    send,
+                    turn_mode=turn_mode,
+                    classification=classification,
+                    sid=sid,
+                )
+                if product_blocked is not None:
+                    return product_blocked
             spoken = _STUCK_RECOVERY
             spoken = await self._speak(session, normalized, spoken, send)
             logger.info(
