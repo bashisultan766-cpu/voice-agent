@@ -29,6 +29,9 @@ async def lifespan(app: FastAPI):
     from .agent_runtime.workflow_compiler import compile_workflows_at_startup
 
     compile_workflows_at_startup()
+    from app.agent_os.dsl.workflow_dsl import export_workflow_dsl
+
+    export_workflow_dsl(validate=True)
     # Prove OpenAI configuration at startup (no secrets logged).
     from .agent_runtime.openai_health import log_startup_health
     from .agent_runtime.live_runtime import resolve_live_turn_handler

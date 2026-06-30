@@ -272,7 +272,7 @@ async def test_escalate_to_human_returns_safe_message():
         "email_confirmed": True,
     }
     with patch(
-        "app.escalation.support_handoff.send_support_handoff",
+        "app.agent_runtime.not_found_escalation_flow.send_support_handoff",
         new_callable=AsyncMock,
     ) as mock_send:
         mock_send.return_value = json.dumps({
