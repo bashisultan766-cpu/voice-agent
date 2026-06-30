@@ -80,6 +80,28 @@ def test_bare_title_requires_clarification_not_search():
 
 
 @pytest.mark.asyncio
+async def test_workflow_clarifies_incomplete_title_lead():
+    session = _session()
+    with patch(
+        "app.agent_runtime.workflow_isolation.product_handling_allowed",
+        return_value=True,
+    ):
+        with patch(
+            "app.agent_runtime.product_resolution.match_product",
+            new_callable=AsyncMock,
+        ) as match_product:
+            result = await execute_product_search_workflow(
+                session,
+                "Okay. The book title is",
+            )
+
+    match_product.assert_not_called()
+    assert result is not None
+    assert result.route == "clarification"
+    assert result.force_reply == PRODUCT_CLARIFICATION_REPLY
+
+
+@pytest.mark.asyncio
 async def test_workflow_clarifies_without_catalog_search():
     session = _session()
     with patch(

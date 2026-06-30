@@ -115,6 +115,12 @@ def payment_email_context_active(session: "SessionState", turn_mode: str = "") -
     return False
 
 
+_TITLE_META_WORDS = frozenset({
+    "okay", "ok", "sure", "yes", "yeah", "yep", "well", "the", "book", "title",
+    "is", "called", "named", "titled", "its", "it's", "it",
+})
+
+
 def extract_title_catalog_query(text: str) -> str:
     """Strip book-search preamble so Shopify gets the title phrase."""
     t = (text or "").strip()
@@ -124,7 +130,13 @@ def extract_title_catalog_query(text: str) -> str:
         t = pat.sub("", t).strip()
     t = re.sub(r"\b(?:book|isbn|please)\s*$", "", t, flags=re.I).strip()
     t = re.sub(r"^[\"\']|[\"\']$", "", t).strip()
-    return t or (text or "").strip()
+    if not t:
+        return ""
+    q = re.sub(r"[^\w\s]", "", t.lower()).strip()
+    words = [w for w in q.split() if w]
+    if words and all(w in _TITLE_META_WORDS for w in words):
+        return ""
+    return t
 
 
 def _catalog_query_is_actionable(query: str) -> bool:
@@ -137,9 +149,11 @@ def _catalog_query_is_actionable(query: str) -> bool:
         q = q[: -len(" from you")].strip()
         if not q or q in _VAGUE_TITLE_TAILS:
             return False
+    words = q.split()
+    if words and all(w in _TITLE_META_WORDS for w in words):
+        return False
     if sum(c.isalpha() for c in q) < 4:
         return False
-    words = q.split()
     if len(words) == 1 and words[0] in _NON_TITLE_SINGLE_WORDS:
         return False
     return True

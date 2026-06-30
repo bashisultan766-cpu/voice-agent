@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agent_runtime.isbn_short_circuit import (
+    extract_title_catalog_query,
     is_explicit_title_catalog_query,
     looks_like_book_title_request,
     try_title_catalog_short_circuit,
@@ -42,6 +43,11 @@ class TestNoAutoProductSearch:
         assert is_explicit_title_catalog_query("Do you have Red River Vengeance")
         assert is_explicit_title_catalog_query("I'm looking for Gurdwara")
         assert is_explicit_title_catalog_query("The book title is Atomic Habits")
+
+    def test_incomplete_title_lead_does_not_trigger(self):
+        assert not is_explicit_title_catalog_query("Okay. The book title is")
+        assert not is_explicit_title_catalog_query("The book title is")
+        assert extract_title_catalog_query("Okay. The book title is") == ""
 
     def test_product_handling_blocked_without_title(self):
         session = _session()

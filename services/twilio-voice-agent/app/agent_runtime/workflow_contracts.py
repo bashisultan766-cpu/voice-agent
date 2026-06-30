@@ -355,7 +355,7 @@ def workflow_execution(domain: str):
     try:
         yield
     finally:
-        _active_workflow.reset(token)
+        end_workflow_domain(token)
 
 
 def begin_workflow_domain(domain: str) -> Token:
@@ -363,7 +363,11 @@ def begin_workflow_domain(domain: str) -> Token:
 
 
 def end_workflow_domain(token: Token) -> None:
-    _active_workflow.reset(token)
+    try:
+        _active_workflow.reset(token)
+    except ValueError:
+        # Token was created in a different asyncio Task (e.g. cancelled mid-turn).
+        _active_workflow.set(None)
 
 
 def clear_turn_workflow_contract(session: Any) -> None:
@@ -371,6 +375,8 @@ def clear_turn_workflow_contract(session: Any) -> None:
     if token is not None:
         end_workflow_domain(token)
         session._workflow_contract_token = None  # type: ignore[attr-defined]
+    else:
+        _active_workflow.set(None)
     reset_product_search_routing_state()
     if session is not None:
         session._product_search_routed_this_turn = False  # type: ignore[attr-defined]
