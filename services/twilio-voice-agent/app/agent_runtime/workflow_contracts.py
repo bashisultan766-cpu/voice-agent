@@ -72,6 +72,13 @@ FORBIDDEN_IN_PRODUCT_SEARCH: frozenset[str] = frozenset({
     "try_escalate_unresolved_query",
     "handle_search_not_found_results",
     "analyze_conversation_for_support",
+    "try_isbn_short_circuit",
+    "try_title_catalog_short_circuit",
+    "title_catalog_hunt",
+    "product_catalog_hunt",
+    "_try_title_catalog_hunt",
+    "_try_isbn_product_hunt",
+    "route_to_product_search_workflow",
 })
 
 FORBIDDEN_IN_SUPPORT_HANDOFF: frozenset[str] = frozenset({
@@ -97,6 +104,17 @@ CANONICAL_WORKFLOW_DOMAINS: frozenset[str] = frozenset({
 
 _validate_workflow_call_hook: Callable[[str, str], None] | None = None
 
+CANONICAL_PRODUCT_SEARCH_HANDLER = "execute_product_search_workflow"
+
+_product_search_handler: ContextVar[str | None] = ContextVar(
+    "product_search_handler",
+    default=None,
+)
+_product_search_router_invocations: ContextVar[int] = ContextVar(
+    "product_search_router_invocations",
+    default=0,
+)
+
 
 def register_validate_workflow_call_hook(
     hook: Callable[[str, str], None] | None,
@@ -108,6 +126,51 @@ def register_validate_workflow_call_hook(
 
 class WorkflowViolationError(RuntimeError):
     """Raised when a workflow contract rule is violated — execution must stop."""
+
+
+def reset_product_search_routing_state() -> None:
+    """Clear per-turn product search router tracking."""
+    _product_search_handler.set(None)
+    _product_search_router_invocations.set(0)
+
+
+def assert_product_search_single_entry(handler: str) -> None:
+    """
+  Hard assert: product_search may only enter via execute_product_search_workflow.
+    """
+    active = _active_workflow.get()
+    if handler != CANONICAL_PRODUCT_SEARCH_HANDLER:
+        logger.error(
+            "multi_router_detected active=%s handler=%s expected=%s",
+            active or "-",
+            handler,
+            CANONICAL_PRODUCT_SEARCH_HANDLER,
+        )
+        raise WorkflowViolationError("MULTI_ROUTER_DETECTED")
+    if active == PRODUCT_SEARCH_WORKFLOW:
+        current = _product_search_handler.get()
+        if current is not None and current != handler:
+            logger.error(
+                "multi_router_detected active=%s current=%s incoming=%s",
+                active,
+                current,
+                handler,
+            )
+            raise WorkflowViolationError("MULTI_ROUTER_DETECTED")
+    _product_search_handler.set(handler)
+
+
+def register_product_search_router_invocation() -> None:
+    """One runtime dispatch per turn — second call raises MULTI_ROUTER_DETECTED."""
+    count = _product_search_router_invocations.get() + 1
+    if count > 1:
+        logger.error("multi_router_detected invocations=%d", count)
+        raise WorkflowViolationError("MULTI_ROUTER_DETECTED")
+    _product_search_router_invocations.set(count)
+
+
+def release_product_search_handler() -> None:
+    _product_search_handler.set(None)
 
 
 def active_workflow_domain() -> str | None:
@@ -308,6 +371,9 @@ def clear_turn_workflow_contract(session: Any) -> None:
     if token is not None:
         end_workflow_domain(token)
         session._workflow_contract_token = None  # type: ignore[attr-defined]
+    reset_product_search_routing_state()
+    if session is not None:
+        session._product_search_routed_this_turn = False  # type: ignore[attr-defined]
 
 
 def apply_turn_workflow_contract(session: Any, active_workflow: str) -> None:
@@ -362,7 +428,13 @@ def workflow_entry_guard(domain: str, function_name: str | None = None) -> Calla
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 with workflow_execution(domain):
-                    return await fn(*args, **kwargs)
+                    if domain == PRODUCT_SEARCH_WORKFLOW:
+                        assert_product_search_single_entry(name)
+                    try:
+                        return await fn(*args, **kwargs)
+                    finally:
+                        if domain == PRODUCT_SEARCH_WORKFLOW:
+                            release_product_search_handler()
 
             return async_wrapper  # type: ignore[return-value]
 

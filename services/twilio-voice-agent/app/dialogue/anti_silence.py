@@ -72,7 +72,7 @@ def anti_silence_reply(session: "SessionState", caller_text: str) -> Optional[st
     if status == STATUS_AWAITING_ANOTHER_BOOK:
         return (
             "I'm right here — sorry for the pause. "
-            "What's the next ISBN or title you'd like to add?"
+            "Would you like to add another book to your cart?"
         )
 
     from ..agent_runtime.yes_engagement import yes_engagement_fallback

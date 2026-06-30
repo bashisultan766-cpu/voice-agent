@@ -440,17 +440,20 @@ def classify(
             )
 
     if session is not None:
-        from ..dialogue.anti_silence import anti_silence_reply
+        if product_intent_detected(text):
+            pass
+        else:
+            from ..dialogue.anti_silence import anti_silence_reply
 
-        presence = anti_silence_reply(session, text)
-        if presence:
-            return ClassificationResult(
-                action="instant",
-                instant_reply=presence,
-                reason="anti_silence",
-                skip_llm=True,
-                skip_tools=True,
-            )
+            presence = anti_silence_reply(session, text)
+            if presence:
+                return ClassificationResult(
+                    action="instant",
+                    instant_reply=presence,
+                    reason="anti_silence",
+                    skip_llm=True,
+                    skip_tools=True,
+                )
 
     if _needs_intent_clarification(text) and not getattr(
         session, "awaiting_not_found_escalation_email", False,

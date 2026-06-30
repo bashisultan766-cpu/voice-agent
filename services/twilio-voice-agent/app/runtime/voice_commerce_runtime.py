@@ -298,6 +298,53 @@ def _product_search_turn_active(
     return bool(classification.is_product_search)
 
 
+def _should_dispatch_product_search_workflow(
+    session: "SessionState",
+    text: str,
+    turn_mode: str,
+    classification: ClassificationResult,
+    plan: "OrchestratorPlan",
+    active_workflow: str,
+) -> bool:
+    """True when this turn must use the single product_search_workflow entry."""
+    from ..agent_runtime.workflow_isolation import product_handling_allowed
+    from ..tools.isbn import extract_isbn_candidate
+
+    if not product_handling_allowed(session, turn_mode, text):
+        return False
+    if plan.fast_route in ("product_search_workflow", "product_clarification"):
+        return True
+    if classification.product_intent_detected or classification.skip_brain:
+        return True
+    if _product_search_turn_active(session, text, turn_mode, classification, active_workflow):
+        return True
+    if requires_product_clarification_before_brain(session, text, turn_mode):
+        return True
+    if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(text or ""):
+        return True
+    return False
+
+
+def _anti_silence_allowed_for_turn(
+    session: "SessionState",
+    text: str,
+    turn_mode: str,
+    classification: ClassificationResult,
+    plan: "OrchestratorPlan",
+    active_workflow: str,
+) -> bool:
+    """Anti-silence must not preempt or substitute product_search routing."""
+    if _should_dispatch_product_search_workflow(
+        session, text, turn_mode, classification, plan, active_workflow,
+    ):
+        return False
+    if classification.product_intent_detected or classification.is_product_search:
+        return False
+    if product_intent_detected(text):
+        return False
+    return True
+
+
 def _log_intent_routing_decision(
     sid: str,
     classification: ClassificationResult,
@@ -916,6 +963,35 @@ class VoiceCommerceRuntime:
         """LLM context is sandboxed in MainCommerceBrain — no workflow state injection."""
         return ""
 
+    async def _route_product_search_once(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        send: Callable,
+        *,
+        turn_mode: str = "",
+        classification: ClassificationResult,
+        sid: str,
+    ) -> Optional[RuntimeTurnResult]:
+        """Single per-turn dispatch into execute_product_search_workflow()."""
+        from ..agent_runtime.workflow_contracts import (
+            WorkflowViolationError,
+            register_product_search_router_invocation,
+        )
+
+        if getattr(session, "_product_search_routed_this_turn", False):
+            raise WorkflowViolationError("MULTI_ROUTER_DETECTED")
+        register_product_search_router_invocation()
+        session._product_search_routed_this_turn = True  # type: ignore[attr-defined]
+        return await self.route_to_product_search_workflow(
+            session,
+            caller_text,
+            send,
+            turn_mode=turn_mode,
+            classification=classification,
+            sid=sid,
+        )
+
     async def route_to_product_search_workflow(
         self,
         session: "SessionState",
@@ -933,6 +1009,7 @@ class VoiceCommerceRuntime:
         """
         from ..agent_runtime.commerce_flow_state import enforce_commerce_response
         from ..agent_runtime.voice_workflows import execute_product_search_workflow
+        from ..agent_runtime.workflow_contracts import WorkflowViolationError
 
         try:
             result = await execute_product_search_workflow(
@@ -941,6 +1018,8 @@ class VoiceCommerceRuntime:
                 turn_mode=turn_mode,
                 classification=classification,
             )
+        except WorkflowViolationError:
+            raise
         except Exception as exc:
             logger.warning(
                 "product_search_workflow_failed sid=%s err=%s",
@@ -1042,7 +1121,25 @@ class VoiceCommerceRuntime:
         session: "SessionState",
         caller_text: str,
         send: Callable,
+        *,
+        turn_mode: str = "",
+        classification: Optional[ClassificationResult] = None,
     ) -> RuntimeTurnResult:
+        if not getattr(session, "_product_search_routed_this_turn", False):
+            if classification is None:
+                classification = classify(caller_text, session, turn_mode=turn_mode)
+                classification = apply_product_intent_hard_gate(classification, caller_text)
+            sid = (session.call_sid or "")[:6]
+            routed = await self._route_product_search_once(
+                session,
+                caller_text,
+                send,
+                turn_mode=turn_mode,
+                classification=classification,
+                sid=sid,
+            )
+            if routed is not None:
+                return routed
         spoken = self._brain.finalize_response(session, _PRODUCT_CLARIFICATION_REPLY, [])
         spoken = await self._speak(session, caller_text, spoken, send)
         return _result(spoken)
@@ -1418,14 +1515,6 @@ class VoiceCommerceRuntime:
         if commerce_silent_advance_allowed(session, turn_mode, normalized):
             advance_commerce_state_silent(session, normalized)
 
-        from ..agent_runtime.isbn_short_circuit import resolve_spoken_isbn
-
-        if product_handling_allowed(session, turn_mode, normalized):
-            if re.search(
-                r"\b(isbn|978|979|ouspl|iuspl|iouspl)\b", normalized, re.I,
-            ) or getattr(session, "pending_isbn_buffer", ""):
-                resolve_spoken_isbn(normalized, session=session, turn_mode=turn_mode)
-
         from ..dialogue.call_closure import process_call_closure_turn
 
         closure = process_call_closure_turn(session, normalized)
@@ -1491,28 +1580,24 @@ class VoiceCommerceRuntime:
             active_workflow=active_workflow,
         )
 
-        if (
-            classification.product_intent_detected
-            or classification.is_product_search
-            or classification.skip_brain
-            or plan.fast_route == "product_search_workflow"
+        if _should_dispatch_product_search_workflow(
+            session,
+            normalized,
+            turn_mode,
+            classification,
+            plan,
+            active_workflow,
         ):
-            if product_handling_allowed(session, turn_mode, normalized):
-                product_early = await self.route_to_product_search_workflow(
-                    session,
-                    normalized,
-                    send,
-                    turn_mode=turn_mode,
-                    classification=classification,
-                    sid=sid,
-                )
-                if product_early is not None:
-                    return product_early
-
-        if plan.fast_route == "product_clarification":
-            spoken = await self._product_clarification_turn(session, normalized, send)
-            logger.info("product_clarification_orchestrator sid=%s", sid)
-            return spoken
+            product_once = await self._route_product_search_once(
+                session,
+                normalized,
+                send,
+                turn_mode=turn_mode,
+                classification=classification,
+                sid=sid,
+            )
+            if product_once is not None:
+                return product_once
 
         from ..dialogue.anti_silence import anti_silence_reply
         from ..dialogue.side_speech import side_speech_reply
@@ -1524,7 +1609,16 @@ class VoiceCommerceRuntime:
             logger.info("side_speech_short_circuit sid=%s", sid)
             return _result(spoken)
 
-        presence = anti_silence_reply(session, normalized)
+        presence = None
+        if _anti_silence_allowed_for_turn(
+            session,
+            normalized,
+            turn_mode,
+            classification,
+            plan,
+            active_workflow,
+        ):
+            presence = anti_silence_reply(session, normalized)
         if presence:
             spoken = self._brain.finalize_response(session, presence, [])
             spoken = await self._speak(session, normalized, spoken, send)
@@ -1705,20 +1799,6 @@ class VoiceCommerceRuntime:
                 logger.info("cancellation_support_handoff sid=%s", sid)
                 return _result(spoken)
 
-        if _product_search_turn_active(
-            session, normalized, turn_mode, classification, active_workflow,
-        ):
-            product_result = await self.route_to_product_search_workflow(
-                session,
-                normalized,
-                send,
-                turn_mode=turn_mode,
-                classification=classification,
-                sid=sid,
-            )
-            if product_result is not None:
-                return product_result
-
         from ..agent_runtime.order_flow_state import (
             _should_skip_order_lookup,
             extract_order_number,
@@ -1775,21 +1855,8 @@ class VoiceCommerceRuntime:
                     return _result(spoken)
 
         from ..agent_runtime.commerce_flow_state import try_cart_inquiry_reply
-        from ..tools.isbn import extract_isbn_candidate
 
         if commerce_handling_allowed(session, turn_mode, normalized):
-            if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(normalized):
-                product_in_cart = await self.route_to_product_search_workflow(
-                    session,
-                    normalized,
-                    send,
-                    turn_mode=turn_mode,
-                    classification=classification,
-                    sid=sid,
-                )
-                if product_in_cart is not None:
-                    return product_in_cart
-
             cart_reply = try_cart_inquiry_reply(
                 session, normalized, turn_mode=turn_mode,
             )
@@ -1862,51 +1929,45 @@ class VoiceCommerceRuntime:
                 )
                 if handoff is not None:
                     return handoff
-            if _product_search_turn_active(
-                session, normalized, turn_mode, classification, active_workflow,
-            ):
-                product_result = await self.route_to_product_search_workflow(
-                    session,
-                    normalized,
-                    send,
-                    turn_mode=turn_mode,
-                    classification=classification,
-                    sid=sid,
-                )
-                if product_result is not None:
-                    return product_result
             logger.info("workflow_llm_gate sid=%s workflow=%s", sid, active_workflow or "-")
-            return await self._product_clarification_turn(session, normalized, send)
-
-        if requires_product_clarification_before_brain(session, normalized, turn_mode):
-            logger.info("product_clarification_pre_brain sid=%s", sid)
-            return await self._product_clarification_turn(session, normalized, send)
-
-        if classification.skip_brain or classification.product_intent_detected:
-            product_blocked = await self.route_to_product_search_workflow(
+            return await self._product_clarification_turn(
                 session,
                 normalized,
                 send,
                 turn_mode=turn_mode,
                 classification=classification,
-                sid=sid,
             )
-            if product_blocked is not None:
-                return product_blocked
-            return await self._product_clarification_turn(session, normalized, send)
+
+        if requires_product_clarification_before_brain(session, normalized, turn_mode):
+            logger.info("product_clarification_pre_brain sid=%s", sid)
+            return await self._product_clarification_turn(
+                session,
+                normalized,
+                send,
+                turn_mode=turn_mode,
+                classification=classification,
+            )
+
+        if classification.skip_brain or classification.product_intent_detected:
+            return await self._product_clarification_turn(
+                session,
+                normalized,
+                send,
+                turn_mode=turn_mode,
+                classification=classification,
+            )
 
         if not VoiceOrchestrator.allows_llm(plan):
             if classification.product_intent_detected or classification.skip_brain:
-                product_blocked = await self.route_to_product_search_workflow(
+                clarified = await self._product_clarification_turn(
                     session,
                     normalized,
                     send,
                     turn_mode=turn_mode,
                     classification=classification,
-                    sid=sid,
                 )
-                if product_blocked is not None:
-                    return product_blocked
+                if clarified is not None:
+                    return clarified
             spoken = _STUCK_RECOVERY
             spoken = await self._speak(session, normalized, spoken, send)
             logger.info(

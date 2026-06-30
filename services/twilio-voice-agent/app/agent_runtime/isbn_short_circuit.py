@@ -611,6 +611,9 @@ async def try_isbn_short_circuit(
     """
     Run catalog search on a resolved ISBN and return a spoken reply, or None.
     """
+    from .workflow_contracts import validate_external_handler_blocked
+
+    validate_external_handler_blocked("try_isbn_short_circuit")
     if should_skip_isbn_short_circuit(session, caller_text, turn_mode=turn_mode):
         return None
 
@@ -694,6 +697,9 @@ async def try_title_catalog_short_circuit(
     turn_mode: str = "",
 ) -> Optional[IsbnShortCircuitResult]:
     """Catalog search when the caller speaks a title, magazine, or newspaper name."""
+    from .workflow_contracts import validate_external_handler_blocked
+
+    validate_external_handler_blocked("try_title_catalog_short_circuit")
     if not catalog_title_search_allowed(session, turn_mode):
         return None
     if turn_mode == "isbn":
