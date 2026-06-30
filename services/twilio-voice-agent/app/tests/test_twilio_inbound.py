@@ -14,7 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 # Patch env before importing the app.
+os.environ["APP_ENV"] = "test"
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ["OPENAI_MODEL"] = "gpt-4o"
 os.environ.setdefault("VALIDATE_TWILIO_SIGNATURES", "false")
 os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://test.example.com")

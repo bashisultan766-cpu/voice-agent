@@ -35,7 +35,8 @@ class TestGreetingSafeName:
 
     def test_twiml_new_caller_greeting(self):
         text = build_twiml_greeting(returning=False)
-        assert "This is SureShot Books" in text
+        assert "SureShot Books" in text
+        assert "How can I help you" in text
         assert "saying that" not in text.lower()
 
     def test_twiml_returning_filters_bad_name(self):

@@ -37,7 +37,7 @@ echo "==> Tests"
 if [[ "${DEPLOY_SKIP_TESTS:-}" == "1" ]]; then
   echo "    DEPLOY_SKIP_TESTS=1 — skipping pytest"
 else
-  .venv/bin/python -m pytest -q
+  APP_ENV=test OPENAI_MODEL=gpt-4o .venv/bin/python -m pytest -q
 fi
 
 echo "==> Runtime identity"

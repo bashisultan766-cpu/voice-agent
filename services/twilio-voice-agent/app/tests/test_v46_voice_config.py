@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 
+os.environ["APP_ENV"] = "test"
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ["OPENAI_MODEL"] = "gpt-4o"
 os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://test.example.com")
 os.environ.setdefault("ELEVENLABS_API_KEY", "secret-key-do-not-expose")
