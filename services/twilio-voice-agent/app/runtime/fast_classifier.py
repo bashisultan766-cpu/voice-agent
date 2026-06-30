@@ -67,6 +67,11 @@ _INSTANT_SMALLTALK: list[tuple[re.Pattern[str], str]] = [
 _SEARCH_ACK = ""
 _ORDER_ACK = ""
 
+LOCK_ORDER_WORKFLOW = "order_workflow"
+LOCK_PRODUCT_SEARCH_WORKFLOW = "product_search_workflow"
+LOCK_LLM_BRAIN = "llm_brain"
+LOCK_DETERMINISTIC_INSTANT = "deterministic_instant"
+
 
 @dataclass
 class ClassificationResult:
@@ -88,6 +93,8 @@ class ClassificationResult:
     is_payment_flow: bool = False
     is_facility: bool = False
     use_strong_model: bool = False
+    intent_lock: bool = False
+    locked_workflow: str = ""
     metadata: dict = field(default_factory=dict)
 
 
@@ -274,7 +281,7 @@ def product_intent_detected(text: str) -> bool:
 
 def _product_search_route(reason: str) -> ClassificationResult:
     """Hard route to product_search_workflow — never MainCommerceBrain."""
-    return ClassificationResult(
+    return apply_intent_lock(ClassificationResult(
         action="instant",
         reason=reason,
         is_product_search=True,
@@ -282,7 +289,65 @@ def _product_search_route(reason: str) -> ClassificationResult:
         skip_llm=True,
         skip_brain=True,
         skip_tools=True,
-    )
+    ))
+
+
+def apply_intent_lock(result: ClassificationResult) -> ClassificationResult:
+    """
+    Deterministic intent lock — set once at classification time.
+
+    Priority: order_workflow > product_search_workflow > llm_brain.
+    """
+    if result.intent_lock:
+        return result
+
+    if result.is_cancellation_request or result.is_order_lookup or result.is_refund_lookup:
+        result.locked_workflow = LOCK_ORDER_WORKFLOW
+    elif result.is_product_search or result.product_intent_detected:
+        result.locked_workflow = LOCK_PRODUCT_SEARCH_WORKFLOW
+    elif result.action == "instant" and result.instant_reply:
+        result.locked_workflow = LOCK_DETERMINISTIC_INSTANT
+    elif result.action == "brain":
+        result.locked_workflow = LOCK_LLM_BRAIN
+    elif result.skip_brain or result.skip_llm:
+        if result.is_order_lookup:
+            result.locked_workflow = LOCK_ORDER_WORKFLOW
+        elif result.is_product_search or result.product_intent_detected:
+            result.locked_workflow = LOCK_PRODUCT_SEARCH_WORKFLOW
+        else:
+            result.locked_workflow = LOCK_DETERMINISTIC_INSTANT
+    else:
+        result.locked_workflow = LOCK_LLM_BRAIN
+
+    result.intent_lock = True
+    return result
+
+
+def bind_session_intent_lock(
+    session: "SessionState | None",
+    result: ClassificationResult,
+) -> ClassificationResult:
+    """Persist turn intent lock on the session — pipeline may not override."""
+    locked = apply_intent_lock(result)
+    if session is not None:
+        session._turn_intent_lock = True  # type: ignore[attr-defined]
+        session._locked_workflow = locked.locked_workflow  # type: ignore[attr-defined]
+    return locked
+
+
+def locked_workflow_allows_llm(result: ClassificationResult) -> bool:
+    locked = apply_intent_lock(result)
+    return locked.locked_workflow == LOCK_LLM_BRAIN
+
+
+def locked_workflow_requires_product_search(result: ClassificationResult) -> bool:
+    locked = apply_intent_lock(result)
+    return locked.locked_workflow == LOCK_PRODUCT_SEARCH_WORKFLOW
+
+
+def locked_workflow_requires_order(result: ClassificationResult) -> bool:
+    locked = apply_intent_lock(result)
+    return locked.locked_workflow == LOCK_ORDER_WORKFLOW
 
 
 def apply_product_intent_hard_gate(
@@ -290,6 +355,8 @@ def apply_product_intent_hard_gate(
     text: str,
 ) -> ClassificationResult:
     """Enforce skip_llm + skip_brain when product intent is present."""
+    if result.intent_lock and result.locked_workflow == LOCK_ORDER_WORKFLOW:
+        return result
     if not product_intent_detected(text):
         return result
     result.is_product_search = True
@@ -300,6 +367,8 @@ def apply_product_intent_hard_gate(
         result.action = "instant"
         if not result.reason or result.reason == "default_brain":
             result.reason = "product_intent_hard_gate"
+    if result.intent_lock:
+        result.locked_workflow = LOCK_PRODUCT_SEARCH_WORKFLOW
     return result
 
 
@@ -389,6 +458,36 @@ def _needs_strong_model(text: str, session: "SessionState | None") -> bool:
     return False
 
 
+def _is_bare_title_product_intent(text: str) -> bool:
+    """Actionable title phrase without order context — never LLM catalog guess."""
+    from ..agent_runtime.isbn_short_circuit import (
+        _catalog_query_is_actionable,
+        extract_title_catalog_query,
+    )
+
+    if _is_order_lookup(text) or _is_cancellation_request(text):
+        return False
+    if _is_facility_question(text):
+        return False
+    if re.search(
+        r"\b(hours?|open|close|located|location|address|website|phone number|"
+        r"shipping policy|return policy|refund policy)\b",
+        text,
+        re.I,
+    ):
+        return False
+    if re.search(r"^(what|how|when|where|why)\s+(are|is|do|can|does)\b", text, re.I):
+        if not _PRODUCT_KEYWORD_RE.search(text) and not _ISBN.search(text):
+            return False
+    query = extract_title_catalog_query(text)
+    if not _catalog_query_is_actionable(query):
+        return False
+    if _PRODUCT_KEYWORD_RE.search(text) or _ISBN.search(text):
+        return True
+    words = [w for w in re.split(r"\s+", query.strip()) if w]
+    return len(words) >= 2
+
+
 def classify(
     utterance: str,
     session: "SessionState | None" = None,
@@ -474,23 +573,29 @@ def classify(
                     )
         except Exception:  # noqa: BLE001
             pass
-        return _product_search_route("unclear_intent_product_default")
+        if product_intent_detected(text) or is_vague_product_request(text):
+            return _product_search_route("unclear_intent_product_default")
+        return apply_intent_lock(ClassificationResult(
+            action="brain",
+            reason="unclear_intent_llm",
+            use_strong_model=_needs_strong_model(text, session),
+        ))
 
     if _is_cancellation_request(text):
-        return ClassificationResult(
+        return apply_intent_lock(ClassificationResult(
             action="brain",
             reason="cancellation_request",
             is_cancellation_request=True,
             use_strong_model=True,
-        )
+        ))
 
     if _is_complaint(text):
-        return ClassificationResult(
+        return apply_intent_lock(ClassificationResult(
             action="brain",
             reason="complaint",
             is_complaint=True,
             use_strong_model=True,
-        )
+        ))
 
     if _is_order_lookup(text):
         if session is not None:
@@ -502,20 +607,20 @@ def classify(
 
             if not extract_order_number(text, session):
                 session.order_flow_status = STATUS_AWAITING_ORDER_NUMBER
-                return ClassificationResult(
+                return apply_intent_lock(ClassificationResult(
                     action="instant",
                     instant_reply=order_collection_prompt(),
                     reason="order_collection_prompt",
                     is_order_lookup=True,
                     skip_llm=True,
                     skip_tools=True,
-                )
-        return ClassificationResult(
+                ))
+        return apply_intent_lock(ClassificationResult(
             action="brain",
             reason="order_lookup",
             is_order_lookup=True,
             use_strong_model=_needs_strong_model(text, session),
-        )
+        ))
 
     # A. Instant smalltalk — no LLM, no tools
     norm = _normalize_smalltalk(text)
@@ -596,26 +701,36 @@ def classify(
         return _product_search_route("product_intent_deterministic")
 
     if _is_refund_lookup(text):
-        return ClassificationResult(
+        return apply_intent_lock(ClassificationResult(
             action="brain",
             reason="refund_lookup",
             is_refund_lookup=True,
             use_strong_model=True,
-        )
+        ))
 
     if _is_facility_question(text):
-        return ClassificationResult(
+        return apply_intent_lock(ClassificationResult(
             action="brain",
             reason="facility_question",
             is_facility=True,
             use_strong_model=True,
-        )
+        ))
 
     if re.search(r"\b(payment\s*link|checkout|send\s+(?:me\s+)?(?:the\s+)?link)\b", text, re.I):
-        return ClassificationResult(
+        return apply_intent_lock(ClassificationResult(
             action="brain",
             reason="payment_request",
             is_payment_flow=True,
-        )
+        ))
 
-    return _product_search_route("uncertain_default_product_search")
+    if _is_product_search_request(text) or is_vague_product_request(text):
+        return _product_search_route("book_keyword_product_default")
+
+    if _is_bare_title_product_intent(text):
+        return _product_search_route("bare_title_product_default")
+
+    return apply_intent_lock(ClassificationResult(
+        action="brain",
+        reason="default_brain",
+        use_strong_model=_needs_strong_model(text, session),
+    ))

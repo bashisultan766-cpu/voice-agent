@@ -28,8 +28,15 @@ from ..payment.email_state import PAYMENT_AUTO_SEND_ENABLED
 from ..payment.payment_state_machine import needs_deferred_payment_auto_send
 from .fast_classifier import (
     ClassificationResult,
+    LOCK_LLM_BRAIN,
+    LOCK_ORDER_WORKFLOW,
+    LOCK_PRODUCT_SEARCH_WORKFLOW,
+    apply_intent_lock,
     apply_product_intent_hard_gate,
+    bind_session_intent_lock,
     classify,
+    locked_workflow_allows_llm,
+    locked_workflow_requires_product_search,
     normalize_speech_text,
     product_intent_detected,
 )
@@ -272,6 +279,78 @@ async def _try_isbn_product_hunt(*args, **kwargs):
     )
 
 
+def _enforce_plan_intent_lock(
+    plan: "OrchestratorPlan",
+    classification: ClassificationResult,
+    session: "SessionState",
+    caller_text: str,
+    turn_mode: str,
+) -> "OrchestratorPlan":
+    """
+    Map locked intent to orchestrator plan — lock cannot be overridden downstream.
+    """
+    from ..agent_runtime.order_flow_state import extract_order_number, order_intent_detected
+
+    locked = apply_intent_lock(classification)
+    plan.classification = locked
+
+    if locked.locked_workflow == LOCK_PRODUCT_SEARCH_WORKFLOW:
+        plan.use_llm = False
+        plan.fast_route = "product_search_workflow"
+        plan.reason = locked.reason or "product_search_locked"
+        return plan
+
+    if locked.locked_workflow == LOCK_ORDER_WORKFLOW:
+        plan.use_llm = False
+        if locked.action == "instant" and locked.instant_reply:
+            plan.fast_route = "classifier_instant"
+        elif (
+            order_intent_detected(caller_text)
+            and not extract_order_number(caller_text, session, turn_mode=turn_mode)
+        ):
+            plan.fast_route = "order_collection"
+        else:
+            plan.fast_route = "order_workflow"
+        plan.reason = locked.reason or "order_workflow_locked"
+        return plan
+
+    if locked.locked_workflow == LOCK_LLM_BRAIN:
+        plan.use_llm = True
+        plan.fast_route = "llm_fallback" if locked.action == "brain" else "ack_then_brain"
+        plan.reason = locked.reason or "llm_brain_locked"
+        return plan
+
+    if locked.action == "instant" and locked.instant_reply:
+        plan.use_llm = False
+        plan.fast_route = "classifier_instant"
+        plan.reason = locked.reason or "deterministic_instant_locked"
+    return plan
+
+
+def _intent_lock_blocks_route(
+    classification: ClassificationResult,
+    attempted_route: str,
+) -> bool:
+    """True when attempted route conflicts with locked workflow."""
+    locked = apply_intent_lock(classification)
+    if not locked.intent_lock:
+        return False
+    if locked.locked_workflow == LOCK_PRODUCT_SEARCH_WORKFLOW:
+        return attempted_route in ("llm_fallback", "ack_then_brain", "brain")
+    if locked.locked_workflow == LOCK_LLM_BRAIN:
+        return attempted_route in (
+            "product_search_workflow",
+            "product_clarification",
+        )
+    if locked.locked_workflow == LOCK_ORDER_WORKFLOW:
+        return attempted_route in (
+            "product_search_workflow",
+            "product_clarification",
+            "llm_fallback",
+        )
+    return False
+
+
 def _explicit_search_query(
     session: "SessionState",
     text: str,
@@ -306,9 +385,12 @@ def _should_dispatch_product_search_workflow(
     plan: "OrchestratorPlan",
     active_workflow: str,
 ) -> bool:
-    """True when this turn must use the single product_search_workflow entry."""
+    """True when locked intent requires the single product_search_workflow entry."""
+    if locked_workflow_requires_product_search(classification):
+        return True
+    if _intent_lock_blocks_route(classification, "product_search_workflow"):
+        return False
     from ..agent_runtime.workflow_isolation import product_handling_allowed
-    from ..tools.isbn import extract_isbn_candidate
 
     if not product_handling_allowed(session, turn_mode, text):
         return False
@@ -320,6 +402,8 @@ def _should_dispatch_product_search_workflow(
         return True
     if requires_product_clarification_before_brain(session, text, turn_mode):
         return True
+    from ..tools.isbn import extract_isbn_candidate
+
     if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(text or ""):
         return True
     return False
@@ -354,7 +438,8 @@ def _log_intent_routing_decision(
 ) -> None:
     logger.info(
         "intent_routing_decision sid=%s route=%s active_workflow=%s "
-        "product_intent_detected=%s skip_llm=%s skip_brain=%s reason=%s",
+        "product_intent_detected=%s skip_llm=%s skip_brain=%s reason=%s "
+        "intent_lock=%s locked_workflow=%s",
         sid,
         route or "-",
         active_workflow or "-",
@@ -362,6 +447,8 @@ def _log_intent_routing_decision(
         str(classification.skip_llm).lower(),
         str(classification.skip_brain).lower(),
         classification.reason or "-",
+        str(classification.intent_lock).lower(),
+        classification.locked_workflow or "-",
     )
 
 
@@ -732,88 +819,39 @@ class VoiceOrchestrator:
             twiml_greeting_already=twiml_greeting,
         )
         classification = apply_product_intent_hard_gate(classification, caller_text)
+        classification = bind_session_intent_lock(session, apply_intent_lock(classification))
         plan.classification = classification
 
         from ..agent_runtime.workflow_isolation import support_handling_allowed
 
-        if support_handling_allowed(session, turn_mode, caller_text):
+        if (
+            support_handling_allowed(session, turn_mode, caller_text)
+            and classification.locked_workflow != LOCK_PRODUCT_SEARCH_WORKFLOW
+        ):
             plan.use_llm = False
             plan.fast_route = "support_handoff_workflow"
             plan.reason = "support_handoff_deterministic"
             plan.plan_ms = (time.monotonic() - t0) * 1000
             return plan
 
-        if (
-            classification.is_product_search
-            or classification.product_intent_detected
-            or product_intent_detected(caller_text)
-        ):
-            plan.use_llm = False
-            plan.fast_route = "product_search_workflow"
-            plan.reason = classification.reason or "product_search_deterministic"
-            plan.plan_ms = (time.monotonic() - t0) * 1000
-            return plan
-
-        if classification.action == "instant" and classification.instant_reply:
-            plan.use_llm = False
-            plan.fast_route = "classifier_instant"
-            plan.reason = classification.reason or "classifier_instant"
-            plan.plan_ms = (time.monotonic() - t0) * 1000
-            return plan
-
-        if classification.skip_llm:
-            plan.use_llm = False
-            plan.fast_route = "classifier_skip"
-            plan.reason = classification.reason or "classifier_skip_llm"
-            plan.plan_ms = (time.monotonic() - t0) * 1000
-            return plan
-
-        if requires_product_clarification_before_brain(session, caller_text, turn_mode):
-            plan.use_llm = False
-            plan.fast_route = "product_clarification"
-            plan.reason = "product_search_no_structured_input"
-            plan.plan_ms = (time.monotonic() - t0) * 1000
-            return plan
-
-        if (
-            order_handling_allowed(session, turn_mode, caller_text)
-            and order_intent_detected(caller_text)
-            and not extract_order_number(caller_text, session, turn_mode=turn_mode)
-        ):
-            plan.use_llm = False
-            plan.fast_route = "order_collection"
-            plan.reason = "order_intent_no_number"
-            plan.plan_ms = (time.monotonic() - t0) * 1000
-            return plan
-
-        if classification.action == "ack_then_brain":
-            plan.use_llm = True
-            plan.fast_route = "ack_then_brain"
-            plan.reason = classification.reason or "ack_then_brain"
-            plan.plan_ms = (time.monotonic() - t0) * 1000
-            return plan
-
-        if classification.action == "brain":
-            plan.use_llm = True
-            plan.fast_route = "llm_fallback"
-            plan.reason = "llm_fallback"
-        else:
-            plan.use_llm = False
-            plan.fast_route = "deterministic"
-            plan.reason = classification.reason or "deterministic_route"
-
+        plan = _enforce_plan_intent_lock(
+            plan, classification, session, caller_text, turn_mode,
+        )
         plan.plan_ms = (time.monotonic() - t0) * 1000
         return plan
 
     @staticmethod
     def allows_llm(plan: OrchestratorPlan) -> bool:
-        """LLM is fallback only — never run when plan forbids it."""
-        if plan.classification and (
-            plan.classification.skip_llm
-            or plan.classification.skip_brain
-            or plan.classification.product_intent_detected
-        ):
-            return False
+        """LLM is fallback only — never run when intent lock forbids it."""
+        if plan.classification:
+            if not locked_workflow_allows_llm(plan.classification):
+                return False
+            if (
+                plan.classification.skip_llm
+                or plan.classification.skip_brain
+                or plan.classification.product_intent_detected
+            ):
+                return False
         return plan.use_llm
 
 
@@ -1572,6 +1610,8 @@ class VoiceCommerceRuntime:
         classification = apply_product_intent_hard_gate(classification, normalized)
         if plan.classification is not None:
             plan.classification = classification
+        classification = bind_session_intent_lock(session, apply_intent_lock(classification))
+        plan.classification = classification
 
         _log_intent_routing_decision(
             sid,
@@ -1938,7 +1978,9 @@ class VoiceCommerceRuntime:
                 classification=classification,
             )
 
-        if requires_product_clarification_before_brain(session, normalized, turn_mode):
+        if requires_product_clarification_before_brain(
+            session, normalized, turn_mode,
+        ) and locked_workflow_requires_product_search(classification):
             logger.info("product_clarification_pre_brain sid=%s", sid)
             return await self._product_clarification_turn(
                 session,
@@ -1948,7 +1990,18 @@ class VoiceCommerceRuntime:
                 classification=classification,
             )
 
-        if classification.skip_brain or classification.product_intent_detected:
+        if locked_workflow_requires_product_search(classification):
+            if not getattr(session, "_product_search_routed_this_turn", False):
+                product_locked = await self._route_product_search_once(
+                    session,
+                    normalized,
+                    send,
+                    turn_mode=turn_mode,
+                    classification=classification,
+                    sid=sid,
+                )
+                if product_locked is not None:
+                    return product_locked
             return await self._product_clarification_turn(
                 session,
                 normalized,
@@ -1958,16 +2011,6 @@ class VoiceCommerceRuntime:
             )
 
         if not VoiceOrchestrator.allows_llm(plan):
-            if classification.product_intent_detected or classification.skip_brain:
-                clarified = await self._product_clarification_turn(
-                    session,
-                    normalized,
-                    send,
-                    turn_mode=turn_mode,
-                    classification=classification,
-                )
-                if clarified is not None:
-                    return clarified
             spoken = _STUCK_RECOVERY
             spoken = await self._speak(session, normalized, spoken, send)
             logger.info(
@@ -1976,6 +2019,12 @@ class VoiceCommerceRuntime:
                 plan.reason,
                 plan.fast_route or "-",
             )
+            return _result(spoken)
+
+        if not locked_workflow_allows_llm(classification):
+            spoken = _STUCK_RECOVERY
+            spoken = await self._speak(session, normalized, spoken, send)
+            logger.info("intent_lock_blocked_brain sid=%s workflow=%s", sid, classification.locked_workflow)
             return _result(spoken)
 
         live_context = self._build_live_context(

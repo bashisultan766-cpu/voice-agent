@@ -61,13 +61,18 @@ class TestUnclearSpeech:
         assert _needs_intent_clarification("um")
         assert _needs_intent_clarification("help")
 
-    def test_classifier_routes_uncertain_to_product_search(self):
+    def test_classifier_routes_uncertain_non_book_to_llm(self):
         result = classify("help", _session())
+        assert result.intent_lock is True
+        assert result.locked_workflow == "llm_brain"
+        assert result.action == "brain"
+        assert not result.is_product_search
+
+    def test_classifier_routes_uncertain_book_to_product_search(self):
+        result = classify("I want a book", _session())
         assert result.is_product_search is True
-        assert result.product_intent_detected is True
+        assert result.locked_workflow == "product_search_workflow"
         assert result.skip_brain is True
-        assert result.skip_llm is True
-        assert result.reason == "unclear_intent_product_default"
 
 
 class TestSupportEmailFormat:

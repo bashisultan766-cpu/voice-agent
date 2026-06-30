@@ -45,8 +45,23 @@ def test_classifier_sets_skip_brain_for_product():
     assert result.product_intent_detected
 
 
-def test_uncertain_defaults_to_product_search_not_brain():
-    result = classify("um", _session())
+def test_uncertain_book_defaults_to_product_search_not_brain():
+    result = classify("I want a book", _session())
     assert result.is_product_search
     assert result.skip_brain
-    assert result.action != "brain"
+    assert result.locked_workflow == "product_search_workflow"
+    assert result.intent_lock is True
+
+
+def test_order_intent_locks_order_workflow():
+    result = classify("where is my order 12345", _session())
+    assert result.intent_lock is True
+    assert result.locked_workflow == "order_workflow"
+    assert result.is_order_lookup
+
+
+def test_generic_query_locks_llm_brain():
+    result = classify("what are your store hours", _session())
+    assert result.intent_lock is True
+    assert result.locked_workflow == "llm_brain"
+    assert result.action == "brain"

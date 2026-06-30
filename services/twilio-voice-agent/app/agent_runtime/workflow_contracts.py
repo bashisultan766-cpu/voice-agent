@@ -374,6 +374,8 @@ def clear_turn_workflow_contract(session: Any) -> None:
     reset_product_search_routing_state()
     if session is not None:
         session._product_search_routed_this_turn = False  # type: ignore[attr-defined]
+        session._turn_intent_lock = False  # type: ignore[attr-defined]
+        session._locked_workflow = ""  # type: ignore[attr-defined]
 
 
 def apply_turn_workflow_contract(session: Any, active_workflow: str) -> None:
