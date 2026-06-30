@@ -112,7 +112,7 @@ async def test_emit_stream_chunks_use_play_immediately():
         captured.append(msg)
 
     emitted = await runtime._emit_stream_speech_chunks(
-        session, capture, ["I found your order."],
+        session, capture, ["I found your order number today."],
     )
     assert len(emitted) == 1
     assert captured[0]["play_immediately"] is True

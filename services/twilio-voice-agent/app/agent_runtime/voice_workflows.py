@@ -164,6 +164,69 @@ class ProductSearchTurnResult:
     route: str = ""
 
 
+def detect_product_search_intent(
+    session: "SessionState",
+    text: str,
+    turn_mode: str = "",
+    *,
+    classification: Optional["ClassificationResult"] = None,
+) -> bool:
+    """
+    Step 1 — detect product intent only.
+
+    No catalog search, no LLM, no product suggestions.
+    """
+    if classification is not None:
+        from ..runtime.fast_classifier import locked_workflow_requires_product_search
+
+        if (
+            classification.product_intent_detected
+            or classification.is_product_search
+            or locked_workflow_requires_product_search(classification)
+        ):
+            return True
+    from ..runtime.fast_classifier import (
+        _is_bare_title_product_intent,
+        _is_product_search_request,
+        is_vague_product_request,
+        product_intent_detected,
+    )
+
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    if product_intent_detected(cleaned):
+        return True
+    if is_vague_product_request(cleaned):
+        return True
+    if _is_product_search_request(cleaned):
+        return True
+    return bool(_is_bare_title_product_intent(cleaned))
+
+
+def product_clarification_turn_result() -> ProductSearchTurnResult:
+    """Step 2 — single clarification question, no catalog search."""
+    return ProductSearchTurnResult(
+        force_reply=PRODUCT_CLARIFICATION_REPLY,
+        route="clarification",
+    )
+
+
+def requires_product_clarification(
+    session: "SessionState",
+    text: str,
+    turn_mode: str = "",
+    *,
+    classification: Optional["ClassificationResult"] = None,
+) -> bool:
+    """True when product intent is present but ISBN/title is not yet actionable."""
+    if not detect_product_search_intent(
+        session, text, turn_mode, classification=classification,
+    ):
+        return False
+    return not has_valid_product_identifier(session, text, turn_mode)
+
+
 async def _resolve_via_match_product(
     session: "SessionState",
     caller_text: str,
@@ -224,86 +287,16 @@ async def execute_product_search_workflow(
     classification: Optional["ClassificationResult"] = None,
 ) -> Optional[ProductSearchTurnResult]:
     """
-    Strict ElevenLabs-style product_search flow:
+    Step 3 — catalog resolution only after a valid ISBN or explicit title.
 
-    1. Detect intent — no catalog search
-    2. Missing ISBN/title — structured clarification only
-    3. Valid identifier — match_product()
-    4. No exact hit — similarity alternatives or support handoff (in resolution)
+    Intent detection and clarification happen before this entry point.
     """
-    from .isbn_short_circuit import (
-        conversational_ack_reply,
-        is_conversational_ack,
-    )
-    from .not_found_escalation_flow import try_product_search_fallback_escalation
     from .workflow_isolation import product_handling_allowed
 
     if not product_handling_allowed(session, turn_mode, caller_text):
         return None
 
-    from ..observability.workflow_events import (
-        STEP_PRODUCT_SEARCH_STARTED,
-        emit_event,
-    )
-
-    has_identifier = has_valid_product_identifier(session, caller_text, turn_mode)
-    search_input_type = "unknown"
-    if has_identifier:
-        from ..tools.isbn import extract_isbn_candidate
-        from .isbn_short_circuit import resolve_spoken_isbn
-
-        isbn = extract_isbn_candidate(caller_text or "") or ""
-        if not isbn:
-            resolved, _buf = resolve_spoken_isbn(
-                caller_text or "",
-                session=session,
-                turn_mode=turn_mode,
-            )
-            if resolved:
-                isbn = resolved
-        if isbn:
-            search_input_type = "isbn"
-        elif product_title_detected(session, caller_text, turn_mode):
-            search_input_type = "title"
-
-    emit_event(
-        {
-            "event_type": "workflow_transition",
-            "domain": "product_search",
-            "step": STEP_PRODUCT_SEARCH_STARTED,
-            "input_type": search_input_type,
-            "outcome": "clarify" if not has_identifier else "unknown",
-            "metadata": {"turn_mode": turn_mode or ""},
-        },
-        session=session,
-    )
-
-    _log_product_search_ux_step(
-        session,
-        step="intent_detected",
-        route="product_search_workflow",
-        has_identifier=has_identifier,
-    )
-
-    fallback_reply = try_product_search_fallback_escalation(session, caller_text)
-    if fallback_reply:
-        _log_product_search_ux_step(
-            session,
-            step="support_handoff_transition",
-            route="support_handoff_transition",
-            has_identifier=has_identifier,
-        )
-        return ProductSearchTurnResult(
-            force_reply=fallback_reply,
-            route="support_handoff_transition",
-        )
-
-    if is_conversational_ack(caller_text):
-        ack = conversational_ack_reply(session, turn_mode=turn_mode)
-        if ack:
-            return ProductSearchTurnResult(force_reply=ack, route="conversational_ack")
-
-    if not has_identifier:
+    if not has_valid_product_identifier(session, caller_text, turn_mode):
         _clear_partial_isbn_collection(session)
         _log_product_search_ux_step(
             session,
@@ -311,10 +304,42 @@ async def execute_product_search_workflow(
             route="clarification",
             has_identifier=False,
         )
-        return ProductSearchTurnResult(
-            force_reply=PRODUCT_CLARIFICATION_REPLY,
-            route="clarification",
+        return product_clarification_turn_result()
+
+    from ..observability.workflow_events import (
+        STEP_PRODUCT_SEARCH_STARTED,
+        emit_event,
+    )
+
+    search_input_type = "unknown"
+    from ..tools.isbn import extract_isbn_candidate
+    from .isbn_short_circuit import resolve_spoken_isbn
+
+    isbn = extract_isbn_candidate(caller_text or "") or ""
+    if not isbn:
+        resolved, _buf = resolve_spoken_isbn(
+            caller_text or "",
+            session=session,
+            turn_mode=turn_mode,
         )
+        if resolved:
+            isbn = resolved
+    if isbn:
+        search_input_type = "isbn"
+    elif product_title_detected(session, caller_text, turn_mode):
+        search_input_type = "title"
+
+    emit_event(
+        {
+            "event_type": "workflow_transition",
+            "domain": "product_search",
+            "step": STEP_PRODUCT_SEARCH_STARTED,
+            "input_type": search_input_type,
+            "outcome": "unknown",
+            "metadata": {"turn_mode": turn_mode or ""},
+        },
+        session=session,
+    )
 
     _log_product_search_ux_step(
         session,
@@ -331,10 +356,7 @@ async def execute_product_search_workflow(
         return resolved
 
     _clear_partial_isbn_collection(session)
-    return ProductSearchTurnResult(
-        force_reply=PRODUCT_CLARIFICATION_REPLY,
-        route="clarification",
-    )
+    return product_clarification_turn_result()
 
 
 @workflow_entry_guard(SUPPORT_HANDOFF_WORKFLOW, "execute_support_handoff_workflow")

@@ -85,6 +85,179 @@ _ABBREV_EXPANSIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bISBN\b"), "I S B N"),
 )
 
+_MIN_TTS_WORDS = 5
+_KNOWN_PARTIAL_CUTS = frozenset({
+    "fro", "bu", "lo", "fr", "th", "wi", "wh", "co", "un", "ve", "re",
+})
+_SENTENCE_TERMINAL_RE = re.compile(r"[.!?]\s*$")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+@dataclass
+class FinalVoicePipelineResult:
+    """Outcome of final_voice_pipeline — empty text means TTS must not run."""
+
+    text: str = ""
+    blocked: bool = False
+    reason: str = ""
+    complete: bool = False
+
+
+def _word_count(text: str) -> int:
+    return len((text or "").split())
+
+
+def _is_sentence_complete(text: str) -> bool:
+    stripped = (text or "").strip()
+    return bool(stripped) and stripped[-1] in ".!?"
+
+
+def _strip_partial_cuts(text: str) -> str:
+    """Drop known streaming fragments and trailing orphan syllables."""
+    words = (text or "").split()
+    if not words:
+        return ""
+
+    cleaned: list[str] = []
+    for word in words:
+        core = re.sub(r"[^\w]", "", word).lower()
+        if core in _KNOWN_PARTIAL_CUTS:
+            continue
+        cleaned.append(word)
+
+    if cleaned and not _is_sentence_complete(" ".join(cleaned)):
+        last_core = re.sub(r"[^\w]", "", cleaned[-1]).lower()
+        if len(last_core) <= 2:
+            cleaned.pop()
+
+    return " ".join(cleaned).strip()
+
+
+def _merge_incomplete_sentences(
+    text: str,
+    *,
+    pending_fragment: str = "",
+    last_valid_sentence: str = "",
+) -> str:
+    """Join buffered fragments and continue from the last valid sentence."""
+    parts = [p.strip() for p in (pending_fragment, text) if (p or "").strip()]
+    merged = " ".join(parts).strip()
+    if not merged:
+        return ""
+
+    if last_valid_sentence and merged[0].islower():
+        base = last_valid_sentence.rstrip(".!?").strip()
+        if base:
+            merged = f"{base} {merged}"
+
+    return _MULTI_SPACE_RE.sub(" ", merged).strip()
+
+
+def _predict_sentence_end(text: str) -> str:
+    """Add terminal punctuation when the utterance is long enough to speak."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return ""
+    if _is_sentence_complete(stripped):
+        return stripped
+    if _word_count(stripped) >= _MIN_TTS_WORDS:
+        return f"{stripped}."
+    return stripped
+
+
+def _get_tts_sentence_cache(session: Optional["SessionState"]) -> tuple[str, str]:
+    if session is None:
+        return "", ""
+    pending = str(getattr(session, "_tts_pending_fragment", "") or "")
+    last_valid = str(getattr(session, "_tts_last_valid_sentence", "") or "")
+    return pending, last_valid
+
+
+def _set_tts_sentence_cache(
+    session: Optional["SessionState"],
+    *,
+    pending_fragment: str = "",
+    last_valid_sentence: str = "",
+) -> None:
+    if session is None:
+        return
+    session._tts_pending_fragment = pending_fragment  # type: ignore[attr-defined]
+    session._tts_last_valid_sentence = last_valid_sentence  # type: ignore[attr-defined]
+
+
+def clear_tts_sentence_cache(session: Optional["SessionState"]) -> None:
+    _set_tts_sentence_cache(session, pending_fragment="", last_valid_sentence="")
+
+
+def final_voice_pipeline(
+    text: str,
+    session: Optional["SessionState"] = None,
+    *,
+    user_text: str = "",
+    require_complete: bool = True,
+    min_words: int = _MIN_TTS_WORDS,
+    allow_short: bool = False,
+) -> FinalVoicePipelineResult:
+    """
+    Last gate before TTS — merge fragments, strip cuts, enforce completeness.
+
+    Blocks output when the sentence is incomplete or shorter than min_words.
+    """
+    from ..email.speller import is_preserved_email_readback
+
+    raw = (text or "").strip()
+    if not raw:
+        return FinalVoicePipelineResult(blocked=True, reason="empty", complete=False)
+    if is_preserved_email_readback(raw):
+        return FinalVoicePipelineResult(text=raw, complete=True)
+
+    pending, last_valid = _get_tts_sentence_cache(session)
+    merged = _merge_incomplete_sentences(
+        raw,
+        pending_fragment=pending,
+        last_valid_sentence=last_valid,
+    )
+    merged = _strip_partial_cuts(merged)
+
+    if not merged:
+        _set_tts_sentence_cache(session, pending_fragment=pending + raw, last_valid_sentence=last_valid)
+        return FinalVoicePipelineResult(blocked=True, reason="partial_cut_only", complete=False)
+
+    pre_complete = _is_sentence_complete(merged)
+    if require_complete and not pre_complete:
+        _set_tts_sentence_cache(session, pending_fragment=merged, last_valid_sentence=last_valid)
+        return FinalVoicePipelineResult(
+            blocked=True,
+            reason="incomplete_sentence",
+            complete=False,
+        )
+
+    merged = normalize_tts_text(merged, user_text=user_text)
+
+    if not merged:
+        _set_tts_sentence_cache(session, pending_fragment=pending + raw, last_valid_sentence=last_valid)
+        return FinalVoicePipelineResult(blocked=True, reason="partial_cut_only", complete=False)
+
+    complete = _is_sentence_complete(merged)
+    words = _word_count(merged)
+
+    if not allow_short and words < min_words:
+        _set_tts_sentence_cache(session, pending_fragment=merged, last_valid_sentence=last_valid)
+        return FinalVoicePipelineResult(
+            blocked=True,
+            reason="too_short",
+            complete=complete,
+        )
+
+    if not complete and not require_complete:
+        merged = _predict_sentence_end(merged)
+        complete = _is_sentence_complete(merged)
+
+    if session is not None and complete and merged:
+        _set_tts_sentence_cache(session, pending_fragment="", last_valid_sentence=merged)
+
+    return FinalVoicePipelineResult(text=merged, blocked=False, complete=complete)
+
 
 def normalize_tts_text(text: str, *, user_text: str = "") -> str:
     """
@@ -156,11 +329,13 @@ def finalize_voice_output(
     *,
     user_text: str = "",
     log_metrics: bool = True,
+    require_complete: bool = False,
+    allow_short: bool = True,
 ) -> str:
     """
     Final TTS pipeline — no raw handler/LLM text may bypass this before speech.
 
-    normalize_tts_text → voice output contract → voice response formatter
+    final_voice_pipeline → voice output contract → voice response formatter
     """
     from ..email.speller import is_preserved_email_readback
 
@@ -170,7 +345,23 @@ def finalize_voice_output(
     if is_preserved_email_readback(raw):
         return raw
 
-    normalized = normalize_tts_text(raw, user_text=user_text)
+    pipeline = final_voice_pipeline(
+        raw,
+        session,
+        user_text=user_text,
+        require_complete=require_complete,
+        allow_short=allow_short,
+    )
+    if pipeline.blocked or not pipeline.text:
+        if log_metrics:
+            logger.info(
+                "voice_pipeline_blocked reason=%s complete=%s",
+                pipeline.reason or "-",
+                str(pipeline.complete).lower(),
+            )
+        return ""
+
+    normalized = pipeline.text
     stability_changed = normalized != raw
 
     result = VoiceCommerceRuntime._apply_voice_output_pipeline(
@@ -184,10 +375,11 @@ def finalize_voice_output(
     if log_metrics:
         logger.info(
             "voice_stability_normalized=%s voice_output_length_before=%d "
-            "voice_output_length_after=%d",
+            "voice_output_length_after=%d voice_pipeline_complete=%s",
             str(stability_changed).lower(),
             len(raw),
             len(result),
+            str(pipeline.complete).lower(),
         )
 
     return result
@@ -195,9 +387,13 @@ def finalize_voice_output(
 
 from ..agent_runtime.voice_workflows import (
     PRODUCT_CLARIFICATION_REPLY as _PRODUCT_CLARIFICATION_REPLY,
+    detect_product_search_intent,
     has_structured_product_search_input,
+    has_valid_product_identifier,
     isbn_detected as _isbn_detected,
+    product_clarification_turn_result,
     product_title_detected as _product_title_detected,
+    requires_product_clarification,
 )
 
 _runtime: Optional["VoiceCommerceRuntime"] = None
@@ -296,7 +492,10 @@ def _enforce_plan_intent_lock(
 
     if locked.locked_workflow == LOCK_PRODUCT_SEARCH_WORKFLOW:
         plan.use_llm = False
-        plan.fast_route = "product_search_workflow"
+        if has_valid_product_identifier(session, caller_text, turn_mode):
+            plan.fast_route = "product_search_workflow"
+        else:
+            plan.fast_route = "product_clarification"
         plan.reason = locked.reason or "product_search_locked"
         return plan
 
@@ -385,7 +584,9 @@ def _should_dispatch_product_search_workflow(
     plan: "OrchestratorPlan",
     active_workflow: str,
 ) -> bool:
-    """True when locked intent requires the single product_search_workflow entry."""
+    """Step 3 — run catalog search only when ISBN/title is actionable."""
+    if not has_valid_product_identifier(session, text, turn_mode):
+        return False
     if locked_workflow_requires_product_search(classification):
         return True
     if _intent_lock_blocks_route(classification, "product_search_workflow"):
@@ -394,17 +595,37 @@ def _should_dispatch_product_search_workflow(
 
     if not product_handling_allowed(session, turn_mode, text):
         return False
-    if plan.fast_route in ("product_search_workflow", "product_clarification"):
-        return True
-    if classification.product_intent_detected or classification.skip_brain:
+    if plan.fast_route == "product_search_workflow":
         return True
     if _product_search_turn_active(session, text, turn_mode, classification, active_workflow):
-        return True
-    if requires_product_clarification_before_brain(session, text, turn_mode):
         return True
     from ..tools.isbn import extract_isbn_candidate
 
     if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(text or ""):
+        return True
+    return False
+
+
+def _should_product_clarify_turn(
+    session: "SessionState",
+    text: str,
+    turn_mode: str,
+    classification: ClassificationResult,
+    plan: "OrchestratorPlan",
+    active_workflow: str,
+) -> bool:
+    """Step 2 — intent without valid ISBN/title: clarify only, no catalog search."""
+    if has_valid_product_identifier(session, text, turn_mode):
+        return False
+    if requires_product_clarification(
+        session, text, turn_mode, classification=classification,
+    ):
+        return True
+    if plan.fast_route == "product_clarification":
+        return True
+    if locked_workflow_requires_product_search(classification):
+        return True
+    if requires_product_clarification_before_brain(session, text, turn_mode):
         return True
     return False
 
@@ -418,13 +639,17 @@ def _anti_silence_allowed_for_turn(
     active_workflow: str,
 ) -> bool:
     """Anti-silence must not preempt or substitute product_search routing."""
+    if _should_product_clarify_turn(
+        session, text, turn_mode, classification, plan, active_workflow,
+    ):
+        return False
     if _should_dispatch_product_search_workflow(
         session, text, turn_mode, classification, plan, active_workflow,
     ):
         return False
-    if classification.product_intent_detected or classification.is_product_search:
-        return False
-    if product_intent_detected(text):
+    if detect_product_search_intent(
+        session, text, turn_mode, classification=classification,
+    ):
         return False
     return True
 
@@ -748,6 +973,49 @@ class StreamingResponseBuffer:
             if chunk:
                 chunks.append(chunk)
         return chunks
+
+
+class TtsSentenceCompleteBuffer:
+    """
+    Accumulate LLM tokens until a full sentence is ready.
+
+    NEVER emits partial clauses, word splits, or incomplete fragments to TTS.
+    """
+
+    def __init__(self) -> None:
+        self._raw = ""
+
+    def feed(self, token: str) -> None:
+        if token:
+            self._raw += token
+
+    @property
+    def pending(self) -> str:
+        return self._raw
+
+    def drain_complete_sentences(self) -> list[str]:
+        """Return only fully terminated sentences — keep remainder buffered."""
+        ready: list[str] = []
+        while self._raw.strip():
+            match = _SENTENCE_SPLIT_RE.search(self._raw)
+            if match:
+                end = match.start()
+                sentence = self._raw[:end].strip()
+                self._raw = self._raw[match.end():]
+            elif _is_sentence_complete(self._raw):
+                sentence = self._raw.strip()
+                self._raw = ""
+            else:
+                break
+            if sentence:
+                ready.append(sentence)
+        return ready
+
+    def flush_remainder(self) -> str:
+        """Return trailing text after the LLM stream ends (may be incomplete)."""
+        remainder = self._raw.strip()
+        self._raw = ""
+        return remainder
 
 
 class VoiceOrchestrator:
@@ -1163,23 +1431,32 @@ class VoiceCommerceRuntime:
         turn_mode: str = "",
         classification: Optional[ClassificationResult] = None,
     ) -> RuntimeTurnResult:
-        if not getattr(session, "_product_search_routed_this_turn", False):
-            if classification is None:
-                classification = classify(caller_text, session, turn_mode=turn_mode)
-                classification = apply_product_intent_hard_gate(classification, caller_text)
-            sid = (session.call_sid or "")[:6]
-            routed = await self._route_product_search_once(
-                session,
-                caller_text,
-                send,
-                turn_mode=turn_mode,
-                classification=classification,
-                sid=sid,
-            )
-            if routed is not None:
-                return routed
-        spoken = self._brain.finalize_response(session, _PRODUCT_CLARIFICATION_REPLY, [])
-        spoken = await self._speak(session, caller_text, spoken, send)
+        """Step 2 — one clarification question, no catalog search or LLM."""
+        from ..agent_runtime.voice_workflows import _clear_partial_isbn_collection
+
+        if has_valid_product_identifier(session, caller_text, turn_mode):
+            if not getattr(session, "_product_search_routed_this_turn", False):
+                if classification is None:
+                    classification = classify(caller_text, session, turn_mode=turn_mode)
+                    classification = apply_product_intent_hard_gate(classification, caller_text)
+                sid = (session.call_sid or "")[:6]
+                routed = await self._route_product_search_once(
+                    session,
+                    caller_text,
+                    send,
+                    turn_mode=turn_mode,
+                    classification=classification,
+                    sid=sid,
+                )
+                if routed is not None:
+                    return routed
+        _clear_partial_isbn_collection(session)
+        spoken = await self._speak(
+            session,
+            caller_text,
+            _PRODUCT_CLARIFICATION_REPLY,
+            send,
+        )
         return _result(spoken)
 
     async def _handle_email_fsm(
@@ -1287,12 +1564,14 @@ class VoiceCommerceRuntime:
         *,
         user_text: str = "",
     ) -> str:
-        """Streaming micro-chunks use the same TTS stability pipeline (metrics off)."""
+        """Streaming chunks require complete sentences — never partial LLM tokens."""
         return finalize_voice_output(
             spoken,
             session,
             user_text=user_text,
             log_metrics=False,
+            require_complete=True,
+            allow_short=False,
         )
 
     @staticmethod
@@ -1391,19 +1670,22 @@ class VoiceCommerceRuntime:
         interruptible: bool = True,
     ) -> tuple[str, list[str], list[tuple[str, dict]], list[str]]:
         """
-        Stream LLM tokens into speech chunks: Stability → Contract → Formatter → TTS.
+        Buffer LLM tokens until each sentence is complete, then TTS.
 
-        Returns (final_text, tools_used, tool_results, spoken_chunks).
+        NEVER streams partial LLM output to TTS.
         """
-        buffer = StreamingResponseBuffer()
+        buffer = TtsSentenceCompleteBuffer()
         spoken_parts: list[str] = []
 
         async def on_token(token: str) -> None:
             if getattr(session, "voice_interrupted", False):
                 return
             buffer.feed(token)
+            complete_sentences = buffer.drain_complete_sentences()
+            if not complete_sentences:
+                return
             new_chunks = await self._emit_stream_speech_chunks(
-                session, send, buffer.drain_ready(),
+                session, send, complete_sentences,
                 user_text=caller_text,
                 interruptible=interruptible,
             )
@@ -1411,14 +1693,29 @@ class VoiceCommerceRuntime:
 
         final_text, tools_used, tool_results = await on_token_source(on_token)
 
-        if spoken_parts and not getattr(session, "voice_interrupted", False):
-            tail = await self._emit_stream_speech_chunks(
-                session, send, buffer.flush(),
-                user_text=caller_text,
-                interruptible=interruptible,
-            )
-            spoken_parts.extend(tail)
-            await _await_send(send, {"type": "text", "token": "", "last": True}, session)
+        if not getattr(session, "voice_interrupted", False):
+            remainder = buffer.flush_remainder()
+            if remainder.strip():
+                completed = _predict_sentence_end(
+                    _merge_incomplete_sentences(
+                        remainder,
+                        pending_fragment=str(
+                            getattr(session, "_tts_pending_fragment", "") or "",
+                        ),
+                        last_valid_sentence=str(
+                            getattr(session, "_tts_last_valid_sentence", "") or "",
+                        ),
+                    ),
+                )
+                if completed.strip():
+                    tail_chunks = await self._emit_stream_speech_chunks(
+                        session, send, [completed],
+                        user_text=caller_text,
+                        interruptible=interruptible,
+                    )
+                    spoken_parts.extend(tail_chunks)
+            if spoken_parts:
+                await _await_send(send, {"type": "text", "token": "", "last": True}, session)
 
         return final_text, tools_used, tool_results, spoken_parts
 
@@ -1487,6 +1784,7 @@ class VoiceCommerceRuntime:
         from ..agent_runtime.workflow_contracts import clear_turn_workflow_contract
 
         clear_turn_workflow_contract(session)
+        clear_tts_sentence_cache(session)
 
         from ..agent_runtime.workflow_isolation import (
             WORKFLOW_ISOLATION_VERSION,
@@ -1619,6 +1917,34 @@ class VoiceCommerceRuntime:
             route=plan.fast_route or "",
             active_workflow=active_workflow,
         )
+
+        from ..agent_runtime.not_found_escalation_flow import (
+            try_product_search_fallback_escalation,
+        )
+
+        fallback_reply = try_product_search_fallback_escalation(session, normalized)
+        if fallback_reply:
+            spoken = await self._speak_support_handoff_reply(
+                session, normalized, fallback_reply, send,
+            )
+            logger.info("product_search_purchase_insistence_handoff sid=%s", sid)
+            return _result(spoken)
+
+        if _should_product_clarify_turn(
+            session,
+            normalized,
+            turn_mode,
+            classification,
+            plan,
+            active_workflow,
+        ):
+            return await self._product_clarification_turn(
+                session,
+                normalized,
+                send,
+                turn_mode=turn_mode,
+                classification=classification,
+            )
 
         if _should_dispatch_product_search_workflow(
             session,

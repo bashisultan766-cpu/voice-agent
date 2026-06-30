@@ -125,14 +125,9 @@ PRODUCT_SEARCH_WORKFLOW_DSL = WorkflowDefinition(
     entry="execute_product_search_workflow",
     states=(
         WorkflowState(
-            name="fallback_escalation",
-            handler="try_product_search_fallback_escalation",
-            allowed_next=("handoff_staged",),
-        ),
-        WorkflowState(
             name="clarification",
             handler="product_clarification_turn",
-            allowed_next=("match_resolution", "clarification", "handoff_staged"),
+            allowed_next=("match_resolution", "clarification"),
         ),
         WorkflowState(
             name="match_resolution",
@@ -142,7 +137,7 @@ PRODUCT_SEARCH_WORKFLOW_DSL = WorkflowDefinition(
         WorkflowState(
             name="similarity_fallback",
             handler="similarity_engine",
-            allowed_next=("no_exact_match", "fallback_escalation", "handoff_staged"),
+            allowed_next=("no_exact_match", "handoff_staged"),
         ),
         WorkflowState(
             name="exact_match",
@@ -152,7 +147,7 @@ PRODUCT_SEARCH_WORKFLOW_DSL = WorkflowDefinition(
         WorkflowState(
             name="no_exact_match",
             handler="format_no_exact_reply",
-            allowed_next=("fallback_escalation", "handoff_staged", "similarity_fallback"),
+            allowed_next=("handoff_staged", "similarity_fallback"),
         ),
         WorkflowState(
             name="handoff_staged",
