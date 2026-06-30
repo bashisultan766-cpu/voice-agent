@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agent_runtime.isbn_short_circuit import IsbnShortCircuitResult
+from app.agent_runtime.voice_workflows import ProductSearchTurnResult
 from app.agent_runtime.order_flow_state import STATUS_IDLE
 from app.runtime.voice_commerce_runtime import VoiceCommerceRuntime
 from app.state.models import SessionState
@@ -50,15 +50,14 @@ async def test_isbn_turn_after_order_lookup_speaks():
     async def send(msg: dict) -> None:
         sent.append(msg)
 
-    sc = IsbnShortCircuitResult(
-        force_reply="I found Atomic Habits for eighteen dollars.",
-        isbn="9781544503547",
-    )
-
     with patch(
-        "app.agent_runtime.isbn_short_circuit.try_isbn_short_circuit",
+        "app.agent_runtime.voice_workflows.execute_product_search_workflow",
         new_callable=AsyncMock,
-        return_value=sc,
+        return_value=ProductSearchTurnResult(
+            force_reply="I found Atomic Habits for eighteen dollars.",
+            isbn="9781544503547",
+            route="isbn_resolve",
+        ),
     ):
         result = await runtime.handle_turn(
             session,
