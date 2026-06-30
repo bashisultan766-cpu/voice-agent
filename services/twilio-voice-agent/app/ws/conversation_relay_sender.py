@@ -9,13 +9,17 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from ..safety.response_sanitizer import is_order_disclosure_text, sanitize_customer_response
+
+if TYPE_CHECKING:
+    from ..state.models import SessionState
 
 logger = logging.getLogger(__name__)
 
 SendFn = Callable[[dict], Awaitable[None]]
+InterruptCheck = Callable[[], bool]
 
 _LEAK_CHECK = re.compile(
     r"(available tools|system prompt|you are eric|role=tool|do not invent)",
@@ -23,6 +27,9 @@ _LEAK_CHECK = re.compile(
 )
 
 _DEFAULT_CHUNK = 500
+_VOICE_CHUNK_MAX_WORDS = 12
+_VOICE_CHUNK_MIN_WORDS = 8
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 @dataclass
@@ -66,6 +73,66 @@ def _sanitize_outbound_text(text: str, *, call_sid: str = "") -> str:
     return text.strip()
 
 
+def split_voice_speech_chunks(
+    text: str,
+    *,
+    max_words: int = _VOICE_CHUNK_MAX_WORDS,
+    min_words: int = _VOICE_CHUNK_MIN_WORDS,
+) -> list[str]:
+    """
+    Split speech into interrupt-friendly chunks: one sentence max, 8–12 words each.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+
+    sentences = [part.strip() for part in _SENTENCE_SPLIT.split(cleaned) if part.strip()]
+    if not sentences:
+        sentences = [cleaned]
+
+    chunks: list[str] = []
+    for sentence in sentences:
+        words = sentence.split()
+        if len(words) <= max_words:
+            chunks.append(sentence)
+            continue
+        i = 0
+        while i < len(words):
+            remaining = len(words) - i
+            take = min(max_words, remaining)
+            if remaining > max_words and remaining - take < min_words and take > min_words:
+                take = max(min_words, remaining - min_words)
+            chunks.append(" ".join(words[i : i + take]))
+            i += take
+    return chunks
+
+
+def acquire_speech_lock(session: Optional["SessionState"]) -> bool:
+    """Atomically allow outbound TTS for this session. False if already interrupted."""
+    if session is None:
+        return True
+    if getattr(session, "voice_interrupted", False):
+        release_speech_lock(session)
+        return False
+    session.speech_lock = True
+    session.is_speaking = True
+    return True
+
+
+def release_speech_lock(session: Optional["SessionState"]) -> None:
+    """Release TTS lock immediately (interrupt or delivery complete)."""
+    if session is None:
+        return
+    session.speech_lock = False
+    session.is_speaking = False
+
+
+def is_speech_locked(session: Optional["SessionState"]) -> bool:
+    if session is None:
+        return True
+    return bool(getattr(session, "speech_lock", False))
+
+
 def build_text_payload(
     token: str,
     *,
@@ -97,15 +164,22 @@ async def send_text_to_conversation_relay(
     lang: str | None = None,
     call_sid: str = "",
     chunk_size: int = _DEFAULT_CHUNK,
+    voice_chunk: bool = True,
+    interrupt_check: InterruptCheck | None = None,
+    session: Optional["SessionState"] = None,
 ) -> SendResult:
     """
     Send customer-facing text to Twilio ConversationRelay via send_fn.
 
-    Short responses: one message with last=true.
-    Long text: split into chunks; final chunk has last=true.
+    Short responses: one or more micro-chunks; final chunk has last=true.
     """
     sid_short = (sid or call_sid or "")[:6]
     turn_n = turn if turn is not None else 0
+
+    if interrupt_check and interrupt_check():
+        return SendResult(skipped=True, reason="interrupted")
+    if session is not None and getattr(session, "voice_interrupted", False):
+        return SendResult(skipped=True, reason="interrupted")
 
     cleaned = _sanitize_outbound_text(text, call_sid=call_sid or sid)
     if not cleaned:
@@ -115,7 +189,9 @@ async def send_text_to_conversation_relay(
         )
         return SendResult(skipped=True, reason="empty")
 
-    if len(cleaned) <= chunk_size:
+    if voice_chunk:
+        chunks = split_voice_speech_chunks(cleaned)
+    elif len(cleaned) <= chunk_size:
         chunks = [cleaned]
     else:
         chunks = [
@@ -123,10 +199,42 @@ async def send_text_to_conversation_relay(
             for i in range(0, len(cleaned), chunk_size)
         ]
 
+    if not chunks:
+        return SendResult(skipped=True, reason="empty")
+
+    if not acquire_speech_lock(session):
+        return SendResult(skipped=True, reason="interrupted")
+
     sent_count = 0
     total_chars = 0
     try:
         for i, chunk in enumerate(chunks):
+            if interrupt_check and interrupt_check():
+                logger.info(
+                    "conversationrelay_text_cancelled sid=%s turn=%s reason=interrupt",
+                    sid_short, turn_n,
+                )
+                return SendResult(
+                    skipped=True,
+                    reason="interrupted",
+                    chars=total_chars,
+                    chunks=sent_count,
+                )
+            if session is not None and (
+                getattr(session, "voice_interrupted", False)
+                or not is_speech_locked(session)
+            ):
+                logger.info(
+                    "conversationrelay_text_cancelled sid=%s turn=%s reason=speech_lock",
+                    sid_short, turn_n,
+                )
+                return SendResult(
+                    skipped=True,
+                    reason="interrupted",
+                    chars=total_chars,
+                    chunks=sent_count,
+                )
+
             is_last = i == len(chunks) - 1
             payload = build_text_payload(
                 chunk,
@@ -136,8 +244,8 @@ async def send_text_to_conversation_relay(
                 lang=lang,
             )
             logger.info(
-                "conversationrelay_text_send_attempt sid=%s turn=%s chars=%d last=%s",
-                sid_short, turn_n, len(chunk), is_last,
+                "conversationrelay_text_send_attempt sid=%s turn=%s chars=%d last=%s chunk=%d/%d",
+                sid_short, turn_n, len(chunk), is_last, i + 1, len(chunks),
             )
             await send_fn(payload)
             sent_count += 1
@@ -153,6 +261,42 @@ async def send_text_to_conversation_relay(
             sid_short, type(exc).__name__,
         )
         return SendResult(failed=True, reason=type(exc).__name__)
+    finally:
+        release_speech_lock(session)
+
+
+def _wrap_send_with_speech_lock(
+    send_fn: SendFn,
+    session: Optional["SessionState"],
+    *,
+    call_sid: str = "",
+    interrupt_check: InterruptCheck | None = None,
+) -> SendFn:
+    """Final gate before queue/websocket — blocks text when lock is released."""
+
+    async def guarded_send(msg: dict) -> None:
+        if msg.get("type") != "text":
+            await send_fn(msg)
+            return
+        sid = (call_sid or "")[:6]
+        if interrupt_check and interrupt_check():
+            logger.info(
+                "conversationrelay_chunk_blocked sid=%s reason=interrupt_check",
+                sid,
+            )
+            return
+        if session is not None and (
+            getattr(session, "voice_interrupted", False)
+            or not is_speech_locked(session)
+        ):
+            logger.info(
+                "conversationrelay_chunk_blocked sid=%s reason=speech_lock",
+                sid,
+            )
+            return
+        await send_fn(msg)
+
+    return guarded_send
 
 
 class ConversationRelayOutbound:
@@ -169,14 +313,40 @@ class ConversationRelayOutbound:
         settings,
         call_sid: str,
         stats: ConversationRelayStats,
+        session: Optional["SessionState"] = None,
     ):
-        self._send_fn = send_fn
         self._settings = settings
         self._call_sid = call_sid
         self._stats = stats
+        self._session = session
         self._buffer = ""
         self._streamed_any = False
         self._turn = 0
+        self._speech_cancelled = False
+        self._send_fn = _wrap_send_with_speech_lock(
+            send_fn,
+            session,
+            call_sid=call_sid,
+            interrupt_check=self._interrupt_active,
+        )
+
+    def cancel_speech(self) -> None:
+        """Stop TTS immediately: release lock, clear buffer, cancel queued chunks."""
+        release_speech_lock(self._session)
+        self._buffer = ""
+        self._streamed_any = False
+        self._speech_cancelled = True
+
+    def reset_speech_cancel(self) -> None:
+        self._speech_cancelled = False
+        release_speech_lock(self._session)
+
+    def _interrupt_active(self) -> bool:
+        if self._speech_cancelled:
+            return True
+        if self._session is not None and getattr(self._session, "voice_interrupted", False):
+            return True
+        return False
 
     @property
     def stats(self) -> ConversationRelayStats:
@@ -214,9 +384,12 @@ class ConversationRelayOutbound:
                 if self._buffer.strip():
                     await self._deliver(
                         self._buffer, interruptible, preemptible, lang,
+                        voice_chunk=False,
                     )
                     self._buffer = ""
-                await self._deliver(token, interruptible, preemptible, lang)
+                await self._deliver(
+                    token, interruptible, preemptible, lang, voice_chunk=False,
+                )
                 self._streamed_any = True
             elif is_last:
                 combined = self._buffer + token
@@ -240,8 +413,17 @@ class ConversationRelayOutbound:
         interruptible: bool,
         preemptible: bool,
         lang: str | None,
+        *,
+        voice_chunk: bool = True,
     ) -> None:
         from ..agent_runtime.live_runtime import resolve_live_turn_handler
+
+        if self._interrupt_active():
+            logger.info(
+                "conversationrelay_delivery_skipped sid=%s reason=interrupt",
+                self._call_sid[:6],
+            )
+            return
 
         sid = self._call_sid[:6]
         runtime_mode = resolve_live_turn_handler(self._settings)
@@ -274,6 +456,9 @@ class ConversationRelayOutbound:
             preemptible=preemptible,
             lang=lang,
             call_sid=self._call_sid,
+            voice_chunk=voice_chunk,
+            interrupt_check=self._interrupt_active,
+            session=self._session,
         )
 
         if result.sent:
@@ -311,6 +496,8 @@ class ConversationRelayOutbound:
             preemptible=preemptible,
             lang=lang,
             call_sid=self._call_sid,
+            interrupt_check=self._interrupt_active,
+            session=self._session,
         )
         if result.sent:
             self._stats.responses_sent += 1
@@ -321,7 +508,7 @@ class ConversationRelayOutbound:
 
     async def flush(self) -> None:
         """Flush any buffered text at end of turn."""
-        if self._buffer.strip():
+        if self._buffer.strip() and not self._interrupt_active():
             await self._deliver(
                 self._buffer,
                 getattr(self._settings, "VOICE_CR_TEXT_INTERRUPTIBLE", True),

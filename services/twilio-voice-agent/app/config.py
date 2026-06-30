@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     VOICE_SHOPIFY_TIMEOUT_MS: int = 2500
     # OpenAI streaming call timeout (ms).
     VOICE_OPENAI_TIMEOUT_MS: int = 8000
+    # Stream LLM tokens into TTS micro-chunks inside voice_commerce_runtime.
+    VOICE_LLM_STREAM_ENABLED: bool = True
     # Emit a filler phrase only if tools have not responded after this many ms.
     VOICE_FILLER_AFTER_MS: int = 250
     VOICE_TOOL_PROGRESS_AFTER_MS: int = 400

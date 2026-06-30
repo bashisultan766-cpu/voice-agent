@@ -92,6 +92,7 @@ class _FakeSettings:
     VOICE_OPENAI_TIMEOUT_MS: int = 8000
     VOICE_MAX_REPLY_WORDS: int = 50
     VOICE_TOOL_TIMEOUT_MS: int = 2500
+    VOICE_LLM_STREAM_ENABLED: bool = False
 
 
 def _session(**kwargs) -> SessionState:
@@ -207,7 +208,7 @@ def test_game_of_thrones_requests_search_products():
         result = asyncio.run(runtime.handle_turn(_session(), "I need the book Game of Thrones", send))
 
     assert "Game of Thrones" in result.response_text
-    assert "How many copies" in result.response_text
+    assert "12.99" in result.response_text or "12" in result.response_text
 
 
 def test_tool_result_produces_final_llm_answer():

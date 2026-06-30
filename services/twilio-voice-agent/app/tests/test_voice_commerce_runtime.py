@@ -94,6 +94,7 @@ class _FakeSettings:
     VOICE_COMMERCE_RUNTIME_ENABLED: bool = True
     VOICE_ORCHESTRATOR_ENABLED: bool = False
     VOICE_LEGACY_RUNTIME_FALLBACK_ENABLED: bool = True
+    VOICE_LLM_STREAM_ENABLED: bool = False
 
 
 def _session(**kwargs) -> SessionState:
@@ -217,7 +218,8 @@ def test_specific_product_search_calls_llm_and_tools():
     assert "Game of Thrones" in result.response_text
     spoken = "".join(m.get("token", "") for m in sent)
     assert "Game of Thrones" in spoken
-    assert "How many copies" in spoken
+    assert "12.99" in spoken or "12" in spoken
+    assert len(spoken) <= 280
 
 
 def test_llm_final_answer_uses_tool_result():

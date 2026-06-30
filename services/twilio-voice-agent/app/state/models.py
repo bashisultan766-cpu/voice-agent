@@ -221,5 +221,30 @@ class SessionState:
     awaiting_product_confirmation: bool = False
     # v4.25 — tool progress + interrupt coordination
     voice_interrupted: bool = False
+    is_speaking: bool = False
+    speech_lock: bool = False
     last_spoken_response: str = ""
     tool_progress_sent_for_op: str = ""
+
+    # ── Guided voice conversation (runtime UX) ────────────────────────────────
+    # stage: idle | awaiting_order_number | order_lookup | completed
+    voice_conversation: dict[str, Any] = field(default_factory=lambda: {
+        "stage": "idle",
+        "last_intent": "",
+        "last_order_id": None,
+    })
+
+    # ── Continuous emotional field (VoiceResponseFormatter / SpeechPacer) ───────
+    # valence: -1 negative → +1 positive | arousal: 0 calm → 1 excited
+    # stability: 0 volatile → 1 stable
+    emotion_field: dict[str, float] = field(default_factory=lambda: {
+        "valence": 0.0,
+        "arousal": 0.3,
+        "stability": 0.7,
+    })
+
+    # ── Long-term emotional drift (baseline personality over the call) ──────────
+    emotional_memory: dict[str, float] = field(default_factory=lambda: {
+        "baseline_valence": 0.0,
+        "baseline_arousal": 0.3,
+    })

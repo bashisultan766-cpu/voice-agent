@@ -10,7 +10,8 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional, TYPE_CHECKING
 
 from ..agent_runtime import llm_tools
 from ..agent_runtime.openai_health import log_request_started, log_response_completed
@@ -341,6 +342,90 @@ class MainCommerceBrain:
                 )
             raise
 
+    async def _stream_completion_tokens(
+        self,
+        messages: list[dict],
+        model: str,
+        sid: str,
+        *,
+        tools: list | None = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+    ) -> tuple[str, list | None]:
+        """
+        Stream chat completion tokens. Returns (full_content, tool_calls_or_none).
+
+        When tools are enabled, tokens are buffered until the stream ends — if tool
+        calls appear, nothing was streamed to TTS. Otherwise on_token fires live.
+        """
+        from ..reliability.openai_retry import call_with_retry
+
+        client = self._get_client()
+        timeout = self._settings.VOICE_OPENAI_TIMEOUT_MS / 1000
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.62,
+            "max_tokens": 450,
+            "stream": True,
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+
+        async def _call():
+            return await asyncio.wait_for(
+                client.chat.completions.create(**kwargs),
+                timeout=timeout,
+            )
+
+        purpose = "main_commerce_brain_stream" if tools else "main_commerce_brain_final_stream"
+        stream = await call_with_retry(_call, purpose=purpose, max_attempts=2)
+
+        content_parts: list[str] = []
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+        saw_tool_calls = False
+        stream_live = on_token is not None and not tools
+
+        async for event in stream:
+            if not event.choices:
+                continue
+            delta = event.choices[0].delta
+            if delta.content:
+                content_parts.append(delta.content)
+                if stream_live:
+                    await on_token(delta.content)
+                elif on_token and not saw_tool_calls:
+                    pass
+            if delta.tool_calls:
+                saw_tool_calls = True
+                for tc in delta.tool_calls:
+                    idx = tc.index if tc.index is not None else 0
+                    entry = tool_calls_acc.setdefault(
+                        idx,
+                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                    )
+                    if tc.id:
+                        entry["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            entry["function"]["name"] = (
+                                entry["function"]["name"] + tc.function.name
+                            )
+                        if tc.function.arguments:
+                            entry["function"]["arguments"] = (
+                                entry["function"]["arguments"] + tc.function.arguments
+                            )
+
+        content = "".join(content_parts).strip()
+        if on_token and tools and not saw_tool_calls and content:
+            await on_token(content)
+
+        if not saw_tool_calls:
+            return content, None
+
+        tool_calls = [tool_calls_acc[i] for i in sorted(tool_calls_acc)]
+        return content, tool_calls
+
     async def run_turn(
         self,
         session: "SessionState",
@@ -351,6 +436,7 @@ class MainCommerceBrain:
         use_strong_model: bool = False,
         live_context: str = "",
         caller_context: Optional["SafeCallerContext"] = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> tuple[str, list[str], list[tuple[str, dict]]]:
         """
         Run the brain tool loop and return (final_text, tools_used, tool_results).
@@ -368,30 +454,70 @@ class MainCommerceBrain:
         tools_used: list[str] = []
         tool_results: list[tuple[str, dict]] = []
 
+        tools = tool_specs_for_brain()
+
         try:
             for _round in range(_MAX_TOOL_ROUNDS):
                 started = log_request_started(session.call_sid, model, purpose="main_commerce_brain")
-                resp = await self._complete(messages, model, sid)
-                log_response_completed(
-                    session.call_sid, model, response=resp, started_at=started, purpose="main_commerce_brain",
-                )
-                msg = resp.choices[0].message
-                tool_calls = getattr(msg, "tool_calls", None)
+                use_stream = on_token is not None and _round == 0
+                if use_stream:
+                    content, streamed_tools = await self._stream_completion_tokens(
+                        messages,
+                        model,
+                        sid,
+                        tools=tools,
+                        on_token=on_token,
+                    )
+                    log_response_completed(
+                        session.call_sid,
+                        model,
+                        response=None,
+                        started_at=started,
+                        purpose="main_commerce_brain_stream",
+                    )
+                    if streamed_tools:
+                        tool_calls = streamed_tools
+                        msg_content = content or None
+                    elif content:
+                        final = content or _STUCK_RECOVERY
+                        return final, tools_used, tool_results
+                    else:
+                        tool_calls = None
+                        msg_content = None
+                else:
+                    resp = await self._complete(messages, model, sid)
+                    log_response_completed(
+                        session.call_sid, model, response=resp, started_at=started, purpose="main_commerce_brain",
+                    )
+                    msg = resp.choices[0].message
+                    tool_calls = getattr(msg, "tool_calls", None)
+                    msg_content = msg.content
 
                 if not tool_calls:
-                    final = (msg.content or "").strip()
+                    final = (msg_content or "").strip()
                     if not final:
                         final = _STUCK_RECOVERY
                     return final, tools_used, tool_results
 
                 assistant_entry: dict[str, Any] = {
                     "role": "assistant",
-                    "content": msg.content or None,
+                    "content": msg_content or None,
                     "tool_calls": [
                         {
-                            "id": tc.id,
+                            "id": tc["id"] if isinstance(tc, dict) else tc.id,
                             "type": "function",
-                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                            "function": {
+                                "name": (
+                                    tc["function"]["name"]
+                                    if isinstance(tc, dict)
+                                    else tc.function.name
+                                ),
+                                "arguments": (
+                                    tc["function"]["arguments"]
+                                    if isinstance(tc, dict)
+                                    else tc.function.arguments
+                                ),
+                            },
                         }
                         for tc in tool_calls
                     ],
@@ -401,12 +527,20 @@ class MainCommerceBrain:
 
                 parsed_calls: list[tuple[str, dict, Any]] = []
                 for tc in tool_calls:
-                    name = tc.function.name
-                    try:
-                        args = json.loads(tc.function.arguments or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
-                    parsed_calls.append((name, args, tc))
+                    if isinstance(tc, dict):
+                        name = tc["function"]["name"]
+                        try:
+                            args = json.loads(tc["function"]["arguments"] or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        parsed_calls.append((name, args, tc))
+                    else:
+                        name = tc.function.name
+                        try:
+                            args = json.loads(tc.function.arguments or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        parsed_calls.append((name, args, tc))
 
                 if len(parsed_calls) == 1 and send and TOOL_PROGRESS_ENABLED:
                     name, args, tc = parsed_calls[0]
@@ -422,7 +556,8 @@ class MainCommerceBrain:
                     tools_used.append(name)
                     parsed = parse_tool_result(result_str)
                     tool_results.append((name, parsed))
-                    tool_entry = {"role": "tool", "tool_call_id": tc.id, "content": result_str}
+                    tc_id = tc["id"] if isinstance(tc, dict) else tc.id
+                    tool_entry = {"role": "tool", "tool_call_id": tc_id, "content": result_str}
                     messages.append(tool_entry)
                     session.history.append(tool_entry)
                     continue
@@ -435,9 +570,10 @@ class MainCommerceBrain:
                 for (name, _args, tc), result in zip(parsed_calls, batch.results):
                     tools_used.append(name)
                     tool_results.append((name, result.result))
+                    tc_id = tc["id"] if isinstance(tc, dict) else tc.id
                     tool_entry = {
                         "role": "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": tc_id,
                         "content": result.raw_json or json.dumps(result.result),
                     }
                     messages.append(tool_entry)
@@ -445,11 +581,23 @@ class MainCommerceBrain:
 
             # Exhausted tool rounds — one final synthesis call without tools.
             started = log_request_started(session.call_sid, model, purpose="main_commerce_brain_final")
-            resp = await self._complete_final(messages, model, sid)
-            log_response_completed(
-                session.call_sid, model, response=resp, started_at=started, purpose="main_commerce_brain_final",
-            )
-            final = (resp.choices[0].message.content or "").strip()
+            if on_token:
+                final, _ = await self._stream_completion_tokens(
+                    messages, model, sid, on_token=on_token,
+                )
+                log_response_completed(
+                    session.call_sid,
+                    model,
+                    response=None,
+                    started_at=started,
+                    purpose="main_commerce_brain_final_stream",
+                )
+            else:
+                resp = await self._complete_final(messages, model, sid)
+                log_response_completed(
+                    session.call_sid, model, response=resp, started_at=started, purpose="main_commerce_brain_final",
+                )
+                final = (resp.choices[0].message.content or "").strip()
             if not final:
                 final = _STUCK_RECOVERY
             return final, tools_used, tool_results

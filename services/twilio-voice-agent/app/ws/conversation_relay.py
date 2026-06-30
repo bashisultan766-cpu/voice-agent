@@ -57,6 +57,33 @@ from ..voice.turn_assembler import clear_turn_assembler, get_turn_assembler
 from ..payment.payment_state_machine import payment_email_turn_priority
 from .conversation_relay_sender import ConversationRelayOutbound, ConversationRelayStats
 
+
+def _clear_pending_tts_queue(send_q: asyncio.Queue) -> int:
+    """Drop queued text tokens so interrupted speech cannot continue."""
+    pending: list[Optional[dict]] = []
+    while True:
+        try:
+            pending.append(send_q.get_nowait())
+        except asyncio.QueueEmpty:
+            break
+
+    dropped = 0
+    for item in pending:
+        if item is None:
+            try:
+                send_q.put_nowait(item)
+            except asyncio.QueueFull:
+                pass
+            continue
+        if isinstance(item, dict) and item.get("type") == "text":
+            dropped += 1
+            continue
+        try:
+            send_q.put_nowait(item)
+        except asyncio.QueueFull:
+            pass
+    return dropped
+
 logger = logging.getLogger(__name__)
 
 
@@ -308,9 +335,12 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
             return
 
         session.voice_interrupted = False
+        session.is_speaking = False
+        session.speech_lock = False
         session.tool_progress_sent_for_op = ""
         session.turn_count += 1
         if outbound is not None:
+            outbound.reset_speech_cancel()
             outbound.set_turn(session.turn_count)
 
         # ── First turn only: briefly await the profile task ────────────────
@@ -380,7 +410,7 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                         twiml_greeting_spoken=True,
                     )
                     outbound = ConversationRelayOutbound(
-                        _queue_send, settings, session.call_sid, cr_stats,
+                        _queue_send, settings, session.call_sid, cr_stats, session=session,
                     )
                     logger.info(
                         "ConversationRelay setup | sid=%s from=%s to=%s session=%s",
@@ -522,6 +552,17 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                     )
                     if session is not None:
                         session.voice_interrupted = True
+                        session.speech_lock = False
+                        session.is_speaking = False
+                    if outbound is not None:
+                        outbound.cancel_speech()
+                    dropped = _clear_pending_tts_queue(send_q)
+                    if dropped:
+                        logger.info(
+                            "conversationrelay_interrupt_cleared sid=%s dropped_chunks=%d",
+                            session.call_sid[:6] if session else "?",
+                            dropped,
+                        )
                     await _cancel_current()
 
                 case "dtmf":
