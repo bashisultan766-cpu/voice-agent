@@ -1,0 +1,11 @@
+{
+  "url": "https://www.kosciusko.in.gov/department/?structureid=22",
+  "status": "403",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T10:47:15.558967+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Kosciusko County Sheriff Office"
+  ]
+}

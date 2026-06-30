@@ -1,0 +1,11 @@
+{
+  "url": "https://www.sheriff.us/inmate-mail",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T11:25:37.652627+00:00",
+  "text_length": 1261,
+  "error": null,
+  "source_facilities": [
+    "Chautauqua County Jail"
+  ]
+}

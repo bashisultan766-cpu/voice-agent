@@ -1,26 +1,33 @@
 """
 Workflow isolation — one active business workflow per turn.
 
-Order lookup, product/ISBN search, commerce cart, payment email, and support
-handoff each own their session flags. This module decides which workflow may
-handle the current turn so they do not cross-contaminate.
+Canonical domains (see voice_workflows.py):
+  order_workflow, product_search_workflow, support_handoff_workflow
+
+Payment checkout and commerce cart are sub-states of product_search, not
+separate domain workflows.
 """
 from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
 
+from .workflow_contracts import (
+    ORDER_WORKFLOW,
+    PRODUCT_SEARCH_WORKFLOW,
+    SUPPORT_HANDOFF_WORKFLOW,
+    WORKFLOW_COMMERCE,
+    WORKFLOW_IDLE,
+    WORKFLOW_ORDER,
+    WORKFLOW_PAYMENT,
+    WORKFLOW_PRODUCT,
+    WORKFLOW_SUPPORT,
+)
+
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
 WORKFLOW_ISOLATION_VERSION = "v1.2"
-
-WORKFLOW_IDLE = "idle"
-WORKFLOW_SUPPORT = "support_handoff"
-WORKFLOW_PAYMENT = "payment"
-WORKFLOW_ORDER = "order"
-WORKFLOW_COMMERCE = "commerce_cart"
-WORKFLOW_PRODUCT = "product_search"
 
 _ORDER_PASSIVE_PAT = re.compile(
     r"\b(?:last\s*(?:four|4)|card|credit\s*card|refund|email|"
@@ -145,7 +152,7 @@ def resolve_primary_workflow(
     support > payment > order > commerce > product > idle
     """
     if support_handoff_active(session):
-        return WORKFLOW_SUPPORT
+        return SUPPORT_HANDOFF_WORKFLOW
     if payment_workflow_active(session, turn_mode):
         return WORKFLOW_PAYMENT
     from .order_flow_state import (
@@ -157,9 +164,9 @@ def resolve_primary_workflow(
     if order_intent_detected(text or ""):
         num = extract_order_number(text, session, turn_mode=turn_mode) or ""
         if not num or not is_actionable_order_number(num):
-            return WORKFLOW_ORDER
+            return ORDER_WORKFLOW
     if order_workflow_active(session, turn_mode):
-        return WORKFLOW_ORDER
+        return ORDER_WORKFLOW
     from ..tools.isbn import extract_isbn_candidate
 
     mode = (turn_mode or "").strip().lower()
@@ -168,7 +175,7 @@ def resolve_primary_workflow(
         or extract_isbn_candidate(text or "")
         or getattr(session, "pending_isbn_buffer", "")
     ):
-        return WORKFLOW_PRODUCT
+        return PRODUCT_SEARCH_WORKFLOW
     if commerce_workflow_active(session):
         return WORKFLOW_COMMERCE
     try:
@@ -186,11 +193,11 @@ def resolve_primary_workflow(
             )
             and not extract_isbn_candidate(text or "")
         ):
-            return WORKFLOW_PRODUCT
+            return PRODUCT_SEARCH_WORKFLOW
     except Exception:  # noqa: BLE001
         pass
     if product_workflow_active(session, turn_mode, text):
-        return WORKFLOW_PRODUCT
+        return PRODUCT_SEARCH_WORKFLOW
     return WORKFLOW_IDLE
 
 
@@ -199,7 +206,7 @@ def support_handling_allowed(
     turn_mode: str = "",
     text: str = "",
 ) -> bool:
-    return resolve_primary_workflow(session, turn_mode, text) == WORKFLOW_SUPPORT
+    return resolve_primary_workflow(session, turn_mode, text) == SUPPORT_HANDOFF_WORKFLOW
 
 
 def payment_handling_allowed(
@@ -229,12 +236,12 @@ def order_handling_allowed(
 
     if order_intent_detected(text or ""):
         wf = resolve_primary_workflow(session, turn_mode, text)
-        if wf in (WORKFLOW_SUPPORT, WORKFLOW_PAYMENT):
+        if wf in (SUPPORT_HANDOFF_WORKFLOW, WORKFLOW_PAYMENT):
             return False
         return True
 
     wf = resolve_primary_workflow(session, turn_mode, text)
-    if wf == WORKFLOW_ORDER:
+    if wf == ORDER_WORKFLOW:
         return True
     if wf != WORKFLOW_IDLE:
         return False
@@ -260,7 +267,7 @@ def product_handling_allowed(
     text: str = "",
 ) -> bool:
     wf = resolve_primary_workflow(session, turn_mode, text)
-    if wf == WORKFLOW_PRODUCT:
+    if wf == PRODUCT_SEARCH_WORKFLOW:
         return True
     if wf != WORKFLOW_IDLE:
         return False
@@ -314,11 +321,11 @@ def commerce_silent_advance_allowed(
 ) -> bool:
     """Commerce state may advance only inside commerce or idle shopping turns."""
     wf = resolve_primary_workflow(session, turn_mode, text)
-    if wf in (WORKFLOW_SUPPORT, WORKFLOW_PAYMENT, WORKFLOW_ORDER):
+    if wf in (SUPPORT_HANDOFF_WORKFLOW, WORKFLOW_PAYMENT, ORDER_WORKFLOW):
         return False
     if wf == WORKFLOW_COMMERCE:
         return True
-    if wf == WORKFLOW_PRODUCT:
+    if wf == PRODUCT_SEARCH_WORKFLOW:
         return False
     from .commerce_flow_state import commerce_blocks_open_commerce
 
@@ -338,17 +345,17 @@ def isolate_workflow_buffers(
     """
     wf = resolve_primary_workflow(session, turn_mode, text)
 
-    if wf in (WORKFLOW_SUPPORT, WORKFLOW_PAYMENT):
+    if wf in (SUPPORT_HANDOFF_WORKFLOW, WORKFLOW_PAYMENT):
         session.pending_isbn_buffer = ""
         if wf == WORKFLOW_PAYMENT and support_handoff_active(session):
             from .not_found_escalation_flow import clear_pending_escalation
 
             clear_pending_escalation(session)
 
-    if wf == WORKFLOW_ORDER:
+    if wf == ORDER_WORKFLOW:
         session.pending_isbn_buffer = ""
 
-    if wf == WORKFLOW_PRODUCT:
+    if wf == PRODUCT_SEARCH_WORKFLOW:
         from .order_flow_state import STATUS_AWAITING_ORDER_NUMBER, STATUS_IDLE
 
         ofs = getattr(session, "order_flow_status", "idle") or "idle"

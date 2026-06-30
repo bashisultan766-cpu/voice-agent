@@ -136,9 +136,27 @@ class MainCommerceBrain:
         turn_mode: str = "",
         live_context: str = "",
     ) -> dict:
-        state = live_context or self._build_live_context(session, caller_text, turn_mode=turn_mode)
-        content = f"{_ERIC_SYSTEM_PROMPT}\n\n{state}"
-        return {"role": "system", "content": content}
+        from ..agent_runtime.llm_sandbox import (
+            build_conversation_summary_for_llm,
+            sanitize_llm_input,
+            sanitize_text_block,
+        )
+
+        summary = build_conversation_summary_for_llm(session)
+        if live_context:
+            extra = sanitize_text_block(live_context)
+            if extra:
+                summary = f"{summary}\n{extra}".strip() if summary else extra
+
+        system_content = _ERIC_SYSTEM_PROMPT
+        if summary:
+            system_content = f"{_ERIC_SYSTEM_PROMPT}\n\nConversation so far:\n{summary}"
+
+        sanitized = sanitize_llm_input(
+            [{"role": "system", "content": system_content}],
+            static_system_prompt=_ERIC_SYSTEM_PROMPT,
+        )
+        return sanitized[0] if sanitized else {"role": "system", "content": _ERIC_SYSTEM_PROMPT}
 
     def _build_live_context(
         self,
@@ -147,58 +165,10 @@ class MainCommerceBrain:
         *,
         turn_mode: str = "",
     ) -> str:
-        from ..caller.repository import mask_email
-        from ..cart.commerce_cart_service import CommerceCartService
-        from ..email.voice_email_capture import VoiceEmailCapture
+        """Deprecated — live context is sandboxed inside _system_message."""
+        from ..agent_runtime.llm_sandbox import build_conversation_summary_for_llm
 
-        cart = CommerceCartService(session)
-        email_cap = VoiceEmailCapture(session)
-        summary = cart.get_summary()
-
-        verified = bool(getattr(session, "verified_email", False)) or bool(
-            getattr(session, "verified_phone", False)
-        )
-        lines = [
-            "LIVE CALL STATE (context only — do not read aloud):",
-            f"- Caller: {getattr(session, 'caller_name', '') or 'unknown'}",
-            f"- Identity verified this call: {'yes' if verified else 'no'}",
-            f"- Cart: {summary.summary_text or 'empty'}",
-            f"- Payment flow: {getattr(session, 'payment_flow_status', 'idle')}",
-            f"- Email confirmed: {'yes' if email_cap.is_verified else 'no'}",
-            f"- Pending email: {mask_email(email_cap.pending_email) if email_cap.pending_email else 'none'}",
-            f"- Awaiting email confirm: {'yes' if getattr(session, 'awaiting_payment_email_confirmation', False) else 'no'}",
-            f"- Last order: {getattr(session, 'last_order_number', '') or 'none'}",
-            f"- Commerce flow: {getattr(session, 'commerce_flow_status', 'idle')}",
-        ]
-        if getattr(session, "payment_email_confirmed", False):
-            lines.append("- send_payment_link is allowed after cart confirmed.")
-        if getattr(session, "awaiting_cart_confirmation", False):
-            lines.append("- Awaiting cart confirmation before checkout.")
-        try:
-            from ..conversation.call_memory import build_brain_context, sync_from_session
-            from ..dialogue.naturalness import NaturalnessController
-
-            sync_from_session(session)
-            memory_block = build_brain_context(session)
-            if memory_block:
-                lines.append(memory_block)
-            style = NaturalnessController.style_hint(session)
-            if style:
-                lines.append(f"- Tone hint (do not read aloud): {style}")
-            avoid = NaturalnessController.avoid_repetition_note(session)
-            if avoid:
-                lines.append(f"- {avoid}")
-        except Exception:  # noqa: BLE001
-            pass
-        if caller_text:
-            try:
-                from ..tools.voice_intent import normalize_voice_intent
-
-                intent_hint = normalize_voice_intent(caller_text)
-                lines.append(f"- Caller intent hint (do not read aloud): {intent_hint}")
-            except Exception:  # noqa: BLE001
-                pass
-        return "\n".join(lines)
+        return build_conversation_summary_for_llm(session)
 
     @staticmethod
     def _safe_trim(history: list[dict]) -> list[dict]:
@@ -258,6 +228,8 @@ class MainCommerceBrain:
         turn_mode: str = "",
         live_context: str = "",
     ) -> list[dict]:
+        from ..agent_runtime.llm_sandbox import sanitize_llm_input, sanitize_user_text
+
         messages: list[dict] = [
             self._system_message(
                 session,
@@ -266,9 +238,21 @@ class MainCommerceBrain:
                 live_context=live_context,
             ),
         ]
-        messages.extend(self._sanitize_messages(self._safe_trim(session.history)))
-        messages.append({"role": "user", "content": caller_text})
-        return self._sanitize_messages(messages)
+        for msg in self._sanitize_messages(self._safe_trim(session.history)):
+            role = msg.get("role")
+            if role == "tool":
+                continue
+            if role == "assistant" and msg.get("tool_calls"):
+                continue
+            if role in ("user", "assistant") and msg.get("content"):
+                content = (
+                    sanitize_user_text(str(msg["content"]))
+                    if role == "user"
+                    else str(msg["content"])
+                )
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": sanitize_user_text(caller_text)})
+        return sanitize_llm_input(messages, static_system_prompt=_ERIC_SYSTEM_PROMPT)
 
     async def _complete(self, messages: list[dict], model: str, sid: str):
         from ..reliability.openai_retry import call_with_retry
@@ -449,6 +433,9 @@ class MainCommerceBrain:
             turn_mode=turn_mode,
             live_context=live_context,
         )
+        from ..agent_runtime.llm_sandbox import sanitize_llm_input
+
+        messages = sanitize_llm_input(messages)
         session.history.append({"role": "user", "content": caller_text})
 
         tools_used: list[str] = []
@@ -557,7 +544,13 @@ class MainCommerceBrain:
                     parsed = parse_tool_result(result_str)
                     tool_results.append((name, parsed))
                     tc_id = tc["id"] if isinstance(tc, dict) else tc.id
-                    tool_entry = {"role": "tool", "tool_call_id": tc_id, "content": result_str}
+                    from ..agent_runtime.llm_sandbox import sanitize_tool_output_content
+
+                    tool_entry = {
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": sanitize_tool_output_content(name, result_str),
+                    }
                     messages.append(tool_entry)
                     session.history.append(tool_entry)
                     continue
@@ -571,10 +564,13 @@ class MainCommerceBrain:
                     tools_used.append(name)
                     tool_results.append((name, result.result))
                     tc_id = tc["id"] if isinstance(tc, dict) else tc.id
+                    from ..agent_runtime.llm_sandbox import sanitize_tool_output_content
+
+                    raw = result.raw_json or json.dumps(result.result)
                     tool_entry = {
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": result.raw_json or json.dumps(result.result),
+                        "content": sanitize_tool_output_content(name, raw),
                     }
                     messages.append(tool_entry)
                     session.history.append(tool_entry)

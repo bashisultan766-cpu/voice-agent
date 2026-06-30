@@ -1,0 +1,11 @@
+{
+  "url": "https://www.fordcounty.net/413/Inmate-Mail",
+  "status": "200",
+  "content_type": "text/html; charset=utf-8",
+  "fetched_at": "2026-06-26T10:11:28.253696+00:00",
+  "text_length": 4759,
+  "error": null,
+  "source_facilities": [
+    "Ford County Sheriff's Office"
+  ]
+}

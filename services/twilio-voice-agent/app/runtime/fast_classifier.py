@@ -545,10 +545,11 @@ def classify(
 
     if _is_product_search_request(text) and not is_vague_product_request(text):
         return ClassificationResult(
-            action="brain",
+            action="instant",
             reason="product_search",
             is_product_search=True,
-            use_strong_model=_needs_strong_model(text, session),
+            skip_llm=True,
+            skip_tools=True,
         )
 
     if _is_refund_lookup(text):

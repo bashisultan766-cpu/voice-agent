@@ -1,0 +1,11 @@
+{
+  "url": "https://www.logancokyjail.com/home?postTypeId=whaNew",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:51:59.332627+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Logan County Jail"
+  ]
+}

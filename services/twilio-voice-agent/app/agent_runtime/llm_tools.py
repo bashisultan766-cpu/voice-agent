@@ -306,6 +306,9 @@ def _rerank_by_fuzzy(query: str, results: list[dict]) -> list[dict]:
 
 
 async def _search_products(args: SearchProductsArgs, session) -> str:
+    from .workflow_contracts import validate_catalog_query_allowed
+
+    validate_catalog_query_allowed("search_products")
     raw = await _st.search_products(query=args.query, limit=args.limit)
     try:
         payload = json.loads(raw)
@@ -851,6 +854,9 @@ async def _get_order(args: GetOrderArgs, session) -> str:
 
 
 async def _catalog_search(args: CatalogSearchArgs, session) -> str:
+    from .workflow_contracts import validate_catalog_query_allowed
+
+    validate_catalog_query_allowed("_catalog_search")
     from .isbn_short_circuit import normalize_catalog_search_query
 
     query, resolved_isbn = normalize_catalog_search_query(args.query, session)

@@ -1,0 +1,11 @@
+{
+  "url": "https://www.lea.nm.gov/satellite-academies/dona-ana-county-sherriffs-office-daso-training-academy/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:51:43.813793+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Dona Ana County Sherriff\u2019s Office"
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "url": "https://www.mdoc.ms.gov/family-friends/sending-mail-to-an-inmate",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:55:59.838414+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Alcorn County Correctional Facility",
+    "Bolivar County Correctional Facility",
+    "Carroll-Montgomery County Regional Correctional Facility",
+    "Central Mississippi Correctional Facility",
+    "Chickasaw County Regional Correctional Facility",
+    "East Mississippi Correctional Facility",
+    "George-Greene County Regional Correctional Facility",
+    "Holmes-Humphreys County Regional Correctional Facility",
+    "Issaquena County Correctional Facility",
+    "Jefferson-Franklin County Correctional",
+    "Kemper Neshoba Correctional Facility",
+    "Leake County Correctional Facility",
+    "Marion Walthall County Regional Correctional Facility",
+    "Marshall County Correctional Facility",
+    "Mississippi State Penitentiary",
+    "South Mississippi Correctional Institution",
+    "Stone County Correctional Facility",
+    "Walnut Grove Correctional Facility",
+    "Washington County Regional Correctional Facility",
+    "Wilkinson County Correctional Center"
+  ]
+}

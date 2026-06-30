@@ -130,12 +130,14 @@ async def test_send_support_handoff_short_professional_body():
             return_value=mock_client,
         ):
             with patch(
-                "app.escalation.conversation_summarizer.summarize_conversation_for_support",
+                "app.escalation.conversation_summarizer.analyze_conversation_for_support",
                 new_callable=AsyncMock,
-                return_value=(
-                    "Subject: Long LLM letter. Dear Team, please handle this request...",
-                    "",
-                ),
+                return_value=({
+                    "issue_summary": "Order 55555 not found",
+                    "user_intent": "order lookup",
+                    "unresolved_needs": "Shopify returned no match.",
+                    "urgency_level": "medium",
+                }, ""),
             ):
                 raw = await send_support_handoff(payload, session=session)
 
@@ -144,9 +146,9 @@ async def test_send_support_handoff_short_professional_body():
     body = mock_client.post.call_args.kwargs["json"]["text"]
     assert "Name: Maria Lopez" in body
     assert "Email: test@example.com" in body
-    assert "Request:" in body
+    assert "User request:" in body
     assert "Order 55555 not found" in body
-    assert "Conversation:" in body
+    assert "Issue summary:" in body
     assert "Call SID:" not in body
     assert "Session ID:" not in body
     assert "Dear Backend Team" not in body
@@ -174,16 +176,25 @@ async def test_email_capture_on_followup_turn():
             "app.escalation.support_handoff.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            hint1 = await process_not_found_escalation_turn(
-                session, "my email is maria@example.com"
-            )
-            assert "maria at example dot com" in hint1.force_reply
-            assert "letter by letter" in hint1.force_reply
-            hint2 = await process_not_found_escalation_turn(session, "yes")
+            with patch(
+                "app.escalation.conversation_summarizer.analyze_conversation_for_support",
+                new_callable=AsyncMock,
+                return_value=({
+                    "issue_summary": "Order 11111 not found",
+                    "user_intent": "order",
+                    "unresolved_needs": "No Shopify match.",
+                    "urgency_level": "medium",
+                }, ""),
+            ):
+                hint = await process_not_found_escalation_turn(
+                    session, "my email is maria@example.com"
+                )
 
-    assert hint2.force_reply
+    assert hint.force_reply
+    assert "letter by letter" not in hint.force_reply.lower()
+    assert "maria at example" not in hint.force_reply.lower()
     assert session.awaiting_not_found_escalation_email is False
-    assert hint2.extra_tool_result and hint2.extra_tool_result.success
+    assert hint.extra_tool_result and hint.extra_tool_result.success
     assert mock_client.post.await_count == 1
 
 

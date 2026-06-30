@@ -1,0 +1,11 @@
+{
+  "url": "https://www.randolphcountync.gov/369/Confined-Inmates",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:13:20.278429+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Randolph County Jail"
+  ]
+}

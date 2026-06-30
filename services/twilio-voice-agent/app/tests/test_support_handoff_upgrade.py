@@ -159,27 +159,46 @@ async def test_support_handoff_collects_name_and_email():
         "issue_title": "Order 11111 not found",
         "issue_detail": "No Shopify match.",
         "customer_phone": "+15551234001",
+        "email_capture_mode": "silent",
     }
     mock_client = _mock_resend()
+    analysis = {
+        "issue_summary": "Order 11111 not found",
+        "user_intent": "order lookup",
+        "unresolved_needs": "No Shopify match.",
+        "urgency_level": "medium",
+    }
 
     with patch("app.escalation.support_handoff.get_settings", return_value=_settings()):
         with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):
-            hint1 = await process_not_found_escalation_turn(
-                session, "my name is Maria Lopez and my email is maria@example.com"
-            )
-            assert "maria at example dot com" in hint1.force_reply
-            assert "letter by letter" in hint1.force_reply
-            assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is True
+            with patch(
+                "app.escalation.conversation_summarizer.analyze_conversation_for_support",
+                new_callable=AsyncMock,
+                return_value=(analysis, ""),
+            ):
+                hint = await process_not_found_escalation_turn(
+                    session, "my name is Maria Lopez and my email is maria@example.com"
+                )
 
-            hint2 = await process_not_found_escalation_turn(session, "yes")
-
-    assert hint2.force_reply
+    assert hint.force_reply
+    assert "letter by letter" not in hint.force_reply.lower()
+    assert "maria at example" not in hint.force_reply.lower()
+    assert "@" not in hint.force_reply
+    assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is not True
     assert session.caller_email == "maria@example.com"
     assert session.caller_name == "Maria Lopez"
+    assert session.support_handoff_contact == {
+        "email": "maria@example.com",
+        "name": "Maria Lopez",
+        "issue_summary": "Order 11111 not found",
+    }
     body = mock_client.post.call_args.kwargs["json"]["text"]
+    subject = mock_client.post.call_args.kwargs["json"]["subject"]
+    assert subject == "User Support Request - Order/Product Issue"
     assert "Name: Maria Lopez" in body
     assert "Email: maria@example.com" in body
-    assert "Request:" in body
+    assert "User request:" in body
+    assert "Issue summary:" in body
     assert "Call SID:" not in body
     assert "Session ID:" not in body
     assert "Dear Team" not in body

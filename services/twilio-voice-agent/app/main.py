@@ -26,6 +26,9 @@ async def lifespan(app: FastAPI):
     from .db.connection import verify_postgres_at_startup
 
     await verify_postgres_at_startup()
+    from .agent_runtime.workflow_compiler import compile_workflows_at_startup
+
+    compile_workflows_at_startup()
     # Prove OpenAI configuration at startup (no secrets logged).
     from .agent_runtime.openai_health import log_startup_health
     from .agent_runtime.live_runtime import resolve_live_turn_handler

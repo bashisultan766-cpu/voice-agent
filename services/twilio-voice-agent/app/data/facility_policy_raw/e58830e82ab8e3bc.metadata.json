@@ -1,0 +1,11 @@
+{
+  "url": "https://www.scottcountysheriff.org/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:17:59.677283+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Scott County Sheriff's Department"
+  ]
+}

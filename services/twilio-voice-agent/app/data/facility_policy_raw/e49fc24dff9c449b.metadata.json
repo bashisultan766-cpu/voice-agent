@@ -1,0 +1,11 @@
+{
+  "url": "https://www.salemmo.com/dent/offices/sheriff/index.php",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:14:08.256916+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Dent County Sheriff's Department"
+  ]
+}

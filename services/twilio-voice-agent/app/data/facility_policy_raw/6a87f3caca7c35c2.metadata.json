@@ -1,0 +1,11 @@
+{
+  "url": "https://www.hcso.org/",
+  "status": "200",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T10:25:55.358431+00:00",
+  "text_length": 6910,
+  "error": null,
+  "source_facilities": [
+    "Hamilton County Sheriff"
+  ]
+}

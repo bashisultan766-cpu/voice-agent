@@ -21,9 +21,9 @@ from app.agent_runtime.not_found_escalation_flow import (
     should_clear_handoff_for_shopping,
     stage_pending_escalation,
 )
+from app.agent_runtime.voice_workflows import PRODUCT_SEARCH_WORKFLOW
 from app.agent_runtime.workflow_isolation import (
     WORKFLOW_COMMERCE,
-    WORKFLOW_PRODUCT,
     product_handling_allowed,
     resolve_primary_workflow,
 )
@@ -65,7 +65,7 @@ class TestIsbnDuringActiveCart:
         _cart_with_got(session)
         assert resolve_primary_workflow(
             session, "isbn", "9780553579901",
-        ) == WORKFLOW_PRODUCT
+        ) == PRODUCT_SEARCH_WORKFLOW
         assert product_handling_allowed(session, "isbn", "9780553579901")
 
     def test_cart_inquiry_skips_isbn_and_purchase_intent(self):
@@ -97,7 +97,7 @@ class TestIsbnDuringActiveCart:
         assert not session.awaiting_not_found_escalation_email
         assert resolve_primary_workflow(
             session, "isbn", "9780553392968",
-        ) == WORKFLOW_PRODUCT
+        ) == PRODUCT_SEARCH_WORKFLOW
 
 
 class TestQuantityDuringStagedBook:

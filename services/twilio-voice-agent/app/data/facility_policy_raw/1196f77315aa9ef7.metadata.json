@@ -1,0 +1,13 @@
+{
+  "url": "https://www.daviscountyutah.gov/sheriff/inmate-roster",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:52:39.419563+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Davis County Jail",
+    "Davis County Utah \r\nSheriff's Office",
+    "Davis County Sheriff's Office"
+  ]
+}

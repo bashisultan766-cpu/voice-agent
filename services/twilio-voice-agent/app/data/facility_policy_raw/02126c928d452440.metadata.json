@@ -1,0 +1,11 @@
+{
+  "url": "https://www.griggscountynd.gov/departments/sheriff",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:22:01.244955+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Griggs County Sheriff"
+  ]
+}

@@ -115,8 +115,9 @@ async def test_title_catalog_similar_offer():
         )
 
     assert result is not None
-    assert "did not find an exact match" in result.force_reply.lower()
-    assert "How many copies" in result.force_reply
+    assert "couldn't find the exact product" in result.force_reply.lower()
+    assert "different kind of school" in result.force_reply.lower()
+    assert "name and email" not in result.force_reply.lower()
 
 
 @pytest.mark.asyncio

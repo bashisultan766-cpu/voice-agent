@@ -1,0 +1,11 @@
+{
+  "url": "https://www.eauclairecounty.gov/departments/sheriff/inmate_clothing_mail_money",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T10:03:29.371965+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Eau Claire County Jail"
+  ]
+}

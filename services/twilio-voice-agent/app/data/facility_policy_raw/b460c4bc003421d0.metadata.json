@@ -1,0 +1,11 @@
+{
+  "url": "https://www.seminolesheriff.org/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:21:19.773606+00:00",
+  "text_length": 0,
+  "error": "The read operation timed out",
+  "source_facilities": [
+    "Seminole County Sheriff's Office"
+  ]
+}

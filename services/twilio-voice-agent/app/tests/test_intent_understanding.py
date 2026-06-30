@@ -86,9 +86,9 @@ class TestSupportEmailFormat:
         )
         assert "Name: Jane Doe" in body
         assert "Email: jane@example.com" in body
-        assert "Request:" in body
+        assert "User request:" in body
         assert "cancel" in body.lower()
-        assert "Conversation:" in body
+        assert "Conversation context:" in body
         assert "Caller asked to cancel" in body
         assert "Call SID" not in body
         assert "Session ID" not in body
@@ -120,13 +120,18 @@ class TestSupportEmailFormat:
         with patch("app.escalation.support_handoff.get_settings", return_value=settings):
             with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):
                 with patch(
-                    "app.escalation.conversation_summarizer.summarize_conversation_for_support",
+                    "app.escalation.conversation_summarizer.analyze_conversation_for_support",
                     new_callable=AsyncMock,
-                    return_value=("Summary text", ""),
+                    return_value=({
+                        "issue_summary": "Cancellation",
+                        "user_intent": "cancellation",
+                        "unresolved_needs": "Cancel order 999.",
+                        "urgency_level": "medium",
+                    }, ""),
                 ):
                     raw = await send_support_handoff(payload, session=session)
 
         assert json.loads(raw)["success"] is True
         body = mock_client.post.call_args.kwargs["json"]["text"]
-        assert "Request:" in body
+        assert "User request:" in body
         assert "Call SID" not in body

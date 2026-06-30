@@ -158,7 +158,7 @@ class TestCreateProductNotFoundEscalation:
         assert "9781234567890" in body
         assert "Name:" in body
         assert "Email:" in body
-        assert "Request:" in body
+        assert "User request:" in body
         assert "jane@example.com" in body
         assert "CA_NF001" not in body
         assert "sess_nf_001" not in body
@@ -351,8 +351,11 @@ class TestOrchestratorNotFoundFlow:
                 hint1 = await process_not_found_escalation_turn(
                     session, "my email is buyer@example.com"
                 )
-                assert "buyer at example" in hint1.force_reply.lower()
-                hint2 = await process_not_found_escalation_turn(session, "yes")
+                assert "name" in hint1.force_reply.lower()
+                assert "buyer at example" not in hint1.force_reply.lower()
+                hint2 = await process_not_found_escalation_turn(
+                    session, "my name is Jane Buyer"
+                )
 
         assert hint2.force_reply
         assert hint2.extra_tool_result and hint2.extra_tool_result.success

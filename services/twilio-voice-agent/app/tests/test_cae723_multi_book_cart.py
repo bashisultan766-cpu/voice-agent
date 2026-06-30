@@ -11,9 +11,9 @@ from app.agent_runtime.commerce_flow_state import (
     reset_payment_preflight,
     stage_product_candidate,
 )
+from app.agent_runtime.voice_workflows import PRODUCT_SEARCH_WORKFLOW
 from app.agent_runtime.workflow_isolation import (
     WORKFLOW_COMMERCE,
-    WORKFLOW_PRODUCT,
     payment_workflow_active,
     product_handling_allowed,
     resolve_primary_workflow,
@@ -69,7 +69,7 @@ class TestPaymentDoesNotHijackCartBuilding:
         hint = process_commerce_turn(session, "Yes. I want another book.")
         assert hint.force_reply
         assert product_handling_allowed(session, "isbn", "9780062511409")
-        assert resolve_primary_workflow(session, "isbn", "9780062511409") == WORKFLOW_PRODUCT
+        assert resolve_primary_workflow(session, "isbn", "9780062511409") == PRODUCT_SEARCH_WORKFLOW
 
     def test_quantity_after_isbn_stays_commerce(self):
         session = _session()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.agent_runtime.not_found_escalation_flow import (
     _email_ready_to_confirm,
@@ -92,7 +93,7 @@ def test_payment_correction_after_reject():
 
 
 @pytest.mark.asyncio
-async def test_support_handoff_does_not_send_on_my_correct_email():
+async def test_support_handoff_sends_silently_after_email():
     session = SessionState(
         session_id="s",
         call_sid="CAc965",
@@ -104,14 +105,36 @@ async def test_support_handoff_does_not_send_on_my_correct_email():
             "call_sid": "CAc965",
             "query_type": "title",
             "issue_title": "Not found",
+            "issue_detail": "No catalog match.",
             "customer_name": "Han",
+            "email_capture_mode": "silent",
         },
     )
-    hint = await process_not_found_escalation_turn(
-        session,
-        "My correct email is bashi 6 4 at g mail dot com",
-    )
+    mock_resp = MagicMock(status_code=200)
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.escalation.support_handoff.get_settings") as mock_settings:
+        mock_settings.return_value = MagicMock(
+            SUPPORT_EMAIL="support@test.com",
+            RESEND_API_KEY="re_test",
+            SUPPORT_ESCALATION_ENABLED=True,
+        )
+        with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):
+            with patch(
+                "app.escalation.conversation_summarizer.analyze_conversation_for_support",
+                new_callable=AsyncMock,
+                return_value=({"issue_summary": "Not found", "user_intent": "title", "unresolved_needs": "x", "urgency_level": "medium"}, ""),
+            ):
+                hint = await process_not_found_escalation_turn(
+                    session,
+                    "My correct email is bashi 6 4 at g mail dot com",
+                )
+
     assert hint.force_reply
-    assert "letter by letter" in hint.force_reply.lower()
-    assert session.pending_not_found_escalation.get("awaiting_email_confirmation")
-    assert session.pending_not_found_escalation.get("staging_email") == "bashi64@gmail.com"
+    assert "letter by letter" not in hint.force_reply.lower()
+    assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is not True
+    assert session.caller_email == "bashi64@gmail.com"
+    assert mock_client.post.await_count == 1

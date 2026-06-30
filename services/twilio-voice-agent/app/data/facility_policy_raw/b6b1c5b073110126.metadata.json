@@ -1,0 +1,11 @@
+{
+  "url": "https://www.moodycounty.net/sheriffs-department/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:00:21.010566+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Moody County Sheriff"
+  ]
+}

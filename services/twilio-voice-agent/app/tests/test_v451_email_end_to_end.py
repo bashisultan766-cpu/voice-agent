@@ -92,7 +92,7 @@ class TestPaymentEmailFlow:
 
 class TestSupportHandoffEmailFlow:
     @pytest.mark.asyncio
-    async def test_support_capture_readback_and_confirm(self):
+    async def test_support_capture_silent_send(self):
         session = _session(
             awaiting_not_found_escalation_email=True,
             payment_flow_status="idle",
@@ -104,19 +104,9 @@ class TestSupportHandoffEmailFlow:
                 "issue_title": "Not found",
                 "issue_detail": "No match",
                 "customer_name": "Ali",
+                "email_capture_mode": "silent",
             },
         )
-        hint1 = await process_not_found_escalation_turn(session, SPELLED)
-        assert hint1.force_reply
-        assert "letter by letter" in hint1.force_reply
-        assert spell_email_letter_by_letter(EMAIL) in hint1.force_reply
-
-        pending = session.pending_not_found_escalation
-        assert pending.get("awaiting_email_confirmation")
-        assert pending.get("staging_email") == EMAIL
-
-        assert is_email_confirmation("that's true")
-
         mock_client = AsyncMock()
         mock_resp = MagicMock(status_code=200)
         mock_client.post = AsyncMock(return_value=mock_resp)
@@ -132,18 +122,25 @@ class TestSupportHandoffEmailFlow:
         with patch("app.escalation.support_handoff.get_settings", return_value=settings):
             with patch("app.escalation.support_handoff.httpx.AsyncClient", return_value=mock_client):
                 with patch(
-                    "app.escalation.conversation_summarizer.summarize_conversation_for_support",
+                    "app.escalation.conversation_summarizer.analyze_conversation_for_support",
                     new_callable=AsyncMock,
-                    return_value=("- Customer wants the book.\n- Not in catalog.", ""),
+                    return_value=({
+                        "issue_summary": "Not found",
+                        "user_intent": "product",
+                        "unresolved_needs": "No match",
+                        "urgency_level": "medium",
+                    }, ""),
                 ):
-                    hint2 = await process_not_found_escalation_turn(session, "that's true")
+                    hint = await process_not_found_escalation_turn(session, SPELLED)
 
-        assert hint2.force_reply
-        assert "support team" in hint2.force_reply.lower()
+        assert hint.force_reply
+        assert "letter by letter" not in hint.force_reply.lower()
+        assert spell_email_letter_by_letter(EMAIL) not in hint.force_reply
+        assert "support team" in hint.force_reply.lower()
         body = mock_client.post.call_args.kwargs["json"]["text"]
         assert f"Email: {EMAIL}" in body
-        assert "Conversation:" in body
         assert session.awaiting_not_found_escalation_email is False
+        assert session.pending_not_found_escalation.get("awaiting_email_confirmation") is not True
 
     def test_support_handoff_thats_true_confirms(self):
         from app.agent_runtime.not_found_escalation_flow import _is_email_confirmation

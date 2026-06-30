@@ -1,0 +1,12 @@
+{
+  "url": "https://www.salinecounty.org/government/sheriff_s_office/index.php",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:14:10.372022+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Saline County Sheriff's Office",
+    "Saline County Sheriff's Office"
+  ]
+}

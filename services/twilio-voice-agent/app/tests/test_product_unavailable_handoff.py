@@ -46,7 +46,7 @@ def _clear_escalation_store():
 
 
 @pytest.mark.asyncio
-async def test_isbn_not_found_starts_support_handoff():
+async def test_isbn_not_found_stages_fallback_without_immediate_handoff():
     session = _session()
     not_found_payload = {
         "found": False,
@@ -61,13 +61,16 @@ async def test_isbn_not_found_starts_support_handoff():
         new_callable=AsyncMock,
         return_value=json.dumps(not_found_payload),
     ):
-        result = await try_isbn_short_circuit(session, TEST_ISBN, turn_mode="isbn")
+        with patch(
+            "app.agent_runtime.product_resolution.similarity_engine",
+            return_value=[],
+        ):
+            result = await try_isbn_short_circuit(session, TEST_ISBN, turn_mode="isbn")
 
     assert result is not None
-    assert "name and email" in result.force_reply.lower()
-    assert "support team" in result.force_reply.lower()
-    assert session.awaiting_not_found_escalation_email is True
-    assert session.pending_not_found_escalation.get("reason") == "product_not_found"
+    assert "couldn't find" in result.force_reply.lower()
+    assert session.awaiting_not_found_escalation_email is False
+    assert session.product_search_fallback_pending.get("escalation_eligible") is True
 
 
 @pytest.mark.asyncio
@@ -104,7 +107,7 @@ async def test_isbn_out_of_stock_starts_support_handoff():
 
 
 @pytest.mark.asyncio
-async def test_title_not_found_starts_support_handoff():
+async def test_title_not_found_stages_fallback_without_immediate_handoff():
     session = _session()
     empty_catalog = json.dumps({"results": [], "count": 0})
     with patch(
@@ -112,15 +115,20 @@ async def test_title_not_found_starts_support_handoff():
         new_callable=AsyncMock,
         return_value=empty_catalog,
     ):
-        result = await try_title_catalog_short_circuit(
-            session,
-            "I need the Sunday Times newspaper subscription for Texas",
-            turn_mode="",
-        )
+        with patch(
+            "app.agent_runtime.product_resolution.similarity_engine",
+            return_value=[],
+        ):
+            result = await try_title_catalog_short_circuit(
+                session,
+                "I need the Sunday Times newspaper subscription for Texas",
+                turn_mode="",
+            )
 
     assert result is not None
-    assert "name and email" in result.force_reply.lower()
-    assert session.awaiting_not_found_escalation_email is True
+    assert "couldn't find" in result.force_reply.lower()
+    assert session.awaiting_not_found_escalation_email is False
+    assert session.product_search_fallback_pending.get("escalation_eligible") is True
 
 
 def test_commerce_oos_utterance_triggers_handoff():

@@ -15,13 +15,20 @@ from ..escalation.models import CustomerQueryEscalationPayload, ProductNotFoundE
 from ..escalation.support_handoff import send_support_handoff
 from ..payment.payment_state_machine import extract_email_from_text, speak_confirmation_prompt
 from ..email.capture import is_email_spell_request, is_repeat_email_request
-from ..email.resolver import fragment_capture_prompt, resolve_spoken_email_address
+from ..email.resolver import resolve_spoken_email_address
 from ..tools.isbn import extract_isbn_candidate
 
 if TYPE_CHECKING:
     from ..config import Settings
     from .types import OrchestratorTurnContext, ToolExecutionResult
     from ..state.models import SessionState
+
+from .workflow_contracts import (
+    PRODUCT_SEARCH_WORKFLOW,
+    SUPPORT_HANDOFF_WORKFLOW,
+    validate_external_handler_blocked,
+    workflow_guard,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +61,11 @@ _MSG_NOT_FOUND_PRODUCT = (
 
 _MSG_ASK_EMAIL_ONLY = "Thanks. What's your email address?"
 
+_MSG_ASK_NAME_ONLY = "Thanks. What name should our team use for this request?"
+
+_SUPPORT_EMAIL_RE = re.compile(
+    r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+)
 _EMAIL_CONFIRM_YES = re.compile(
     r"^\s*(yes|yeah|yep|yup|correct|that's right|that is right|right)\s*\.?\s*$",
     re.I,
@@ -72,6 +84,276 @@ _HANDOFF_ACK_ONLY = re.compile(
     r"^\s*(okay|ok|that'?s?\s+good|sounds?\s+good|got\s+it|alright|sure|thanks|thank\s+you)\s*\.?\s*$",
     re.I,
 )
+
+PRODUCT_SEARCH_FALLBACK_HANDOFF_PROMPT = (
+    "To help you better, please share your email address and name. "
+    "Our support team will check availability."
+)
+
+_INSIST_PURCHASE_RE = re.compile(
+    r"\b("
+    r"still\s+want|really\s+need|must\s+have|need\s+to\s+(?:buy|order|get)|"
+    r"want\s+to\s+(?:buy|order|purchase|get)|"
+    r"please\s+(?:order|get)\s+(?:it|that|this)|"
+    r"just\s+(?:order|buy|get)\s+it|"
+    r"can\s+you\s+(?:order|get|find)\s+(?:it|that)|"
+    r"check\s+availability|source\s+it|get\s+it\s+for\s+me|"
+    r"help\s+me\s+(?:get|find|order)\s+it|"
+    r"not\s+(?:those|the)\s+alternatives|don'?t\s+want\s+(?:those|the)\s+alternatives|"
+    r"only\s+want\s+that|that\s+specific\s+(?:book|one|title|item)"
+    r")\b",
+    re.I,
+)
+
+
+def user_insists_on_purchase(text: str) -> bool:
+    """Caller still wants the unavailable / not-found item."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    if _INSIST_PURCHASE_RE.search(cleaned):
+        return True
+    from .yes_engagement import is_bare_yes
+
+    if is_bare_yes(cleaned):
+        return True
+    return bool(re.match(r"^\s*(yes|yeah|yep|yup|sure|please)\s*\.?\s*$", cleaned, re.I))
+
+
+def clear_product_search_fallback(session: "SessionState") -> None:
+    session.product_search_fallback_pending = {}
+
+
+def stage_product_search_fallback(
+    session: "SessionState",
+    *,
+    query: str = "",
+    isbn: str = "",
+    escalation_eligible: bool,
+) -> None:
+    session.product_search_fallback_pending = {
+        "query": (query or isbn or "").strip(),
+        "isbn": (isbn or "").strip(),
+        "escalation_eligible": bool(escalation_eligible),
+    }
+
+
+def try_product_search_fallback_escalation(
+    session: "SessionState",
+    caller_text: str,
+) -> str | None:
+    """
+    Product_search → support_handoff transition when not-found, no similar match,
+    and caller insists on purchase.
+    """
+    if getattr(session, "awaiting_not_found_escalation_email", False):
+        return None
+
+    pending = dict(getattr(session, "product_search_fallback_pending", None) or {})
+    if not pending or not pending.get("escalation_eligible"):
+        return None
+    if not user_insists_on_purchase(caller_text):
+        return None
+
+    query = (pending.get("query") or pending.get("isbn") or "").strip()
+    clear_product_search_fallback(session)
+    return support_handoff_preparation(
+        session,
+        user_text=caller_text,
+        query=query,
+        reason="product_not_found",
+        search_result={"results": [], "count": 0, "not_found": True},
+        handoff_prompt=PRODUCT_SEARCH_FALLBACK_HANDOFF_PROMPT,
+    )
+
+
+@workflow_guard(PRODUCT_SEARCH_WORKFLOW, "support_handoff_preparation")
+def support_handoff_preparation(
+    session: "SessionState",
+    *,
+    user_text: str,
+    query: str,
+    reason: str = "product_not_found",
+    search_result: dict[str, Any] | None = None,
+    product_title: str = "",
+    alternatives: list[dict[str, Any]] | None = None,
+    spoken_prefix: str = "",
+    handoff_prompt: str = "",
+) -> str:
+    """Stage support_handoff_workflow after product resolution failure."""
+    from ..observability.workflow_events import (
+        STEP_PRODUCT_HANDOFF_STAGED,
+        emit_event,
+    )
+
+    input_type = "fallback" if reason == "product_not_found" else "unknown"
+    if (query or "").strip() and extract_isbn_candidate(query):
+        input_type = "isbn"
+    elif (query or "").strip():
+        input_type = "title"
+
+    emit_event(
+        {
+            "event_type": "workflow_transition",
+            "domain": "product_search",
+            "step": STEP_PRODUCT_HANDOFF_STAGED,
+            "input_type": input_type,
+            "outcome": "escalate",
+            "metadata": {
+                "reason": reason,
+                "query_len": len((query or "").strip()),
+            },
+        },
+        session=session,
+    )
+
+    merged = dict(search_result or {"count": 0})
+    if alternatives:
+        merged["similar_products"] = [
+            {
+                "title": alt.get("title"),
+                "variant_id": alt.get("variant_id"),
+                "price": alt.get("price"),
+            }
+            for alt in alternatives[:3]
+        ]
+
+    begin_unavailable_product_handoff(
+        session,
+        user_text=user_text,
+        query=query,
+        reason=reason,
+        search_result=merged,
+        product_title=product_title,
+    )
+    pending = dict(getattr(session, "pending_not_found_escalation", None) or {})
+    pending["email_capture_mode"] = "silent"
+    session.pending_not_found_escalation = pending
+
+    custom = (handoff_prompt or "").strip()
+    if custom:
+        return custom
+
+    if reason == "product_out_of_stock":
+        handoff_msg = _MSG_UNAVAILABLE_PRODUCT
+    else:
+        handoff_msg = _MSG_NOT_FOUND_PRODUCT
+    prefix = (spoken_prefix or "").strip()
+    if prefix:
+        return f"{prefix.rstrip('.')}. {handoff_msg}"
+    return handoff_msg
+
+
+def _handoff_uses_silent_email(pending: dict[str, Any]) -> bool:
+    mode = (pending.get("email_capture_mode") or "silent").strip().lower()
+    return mode != "legacy"
+
+
+@workflow_guard(SUPPORT_HANDOFF_WORKFLOW, "_validate_support_email")
+def _validate_support_email(email: str) -> bool:
+    return bool(_SUPPORT_EMAIL_RE.match((email or "").strip().lower()))
+
+
+@workflow_guard(SUPPORT_HANDOFF_WORKFLOW, "_sync_support_handoff_contact")
+def _sync_support_handoff_contact(
+    session: "SessionState",
+    pending: dict[str, Any],
+    *,
+    name: str = "",
+    email: str = "",
+    issue_summary: str = "",
+) -> dict[str, str]:
+    contact = dict(pending.get("support_handoff_contact") or {})
+    if name.strip():
+        contact["name"] = name.strip()
+        pending["customer_name"] = name.strip()
+        session.caller_name = name.strip()
+    if email.strip():
+        normalized = email.strip().lower()
+        contact["email"] = normalized
+        pending["customer_email"] = normalized
+        session.caller_email = normalized
+        pending["email_confirmed"] = True
+        if _handoff_uses_silent_email(pending):
+            from ..observability.workflow_events import (
+                STEP_EMAIL_CAPTURED_SILENTLY,
+                emit_event,
+            )
+
+            emit_event(
+                {
+                    "event_type": "workflow_transition",
+                    "domain": "support",
+                    "step": STEP_EMAIL_CAPTURED_SILENTLY,
+                    "input_type": "email",
+                    "outcome": "success",
+                    "metadata": {
+                        "has_name": bool((name or contact.get("name") or "").strip()),
+                    },
+                },
+                session=session,
+            )
+    if issue_summary.strip():
+        contact["issue_summary"] = issue_summary.strip()
+    pending["support_handoff_contact"] = contact
+    session.support_handoff_contact = contact
+    return contact
+
+
+async def _process_silent_support_handoff_turn(
+    session: "SessionState",
+    pending: dict[str, Any],
+    caller_text: str,
+    *,
+    name: str = "",
+) -> NotFoundEscalationTurnHint:
+    """Capture name/email silently — never read email back over TTS."""
+    if hasattr(session, "pending_email_fragments"):
+        session.pending_email_fragments = []
+
+    resolved = resolve_spoken_email_address(caller_text, session=session)
+    email = (
+        resolved.email
+        or extract_email_from_text(caller_text)
+        or ""
+    ).strip().lower()
+
+    if email and not _validate_support_email(email):
+        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_RETRY)
+
+    if email or name:
+        _sync_support_handoff_contact(session, pending, name=name, email=email)
+
+    contact = dict(pending.get("support_handoff_contact") or {})
+    stored_name = (contact.get("name") or pending.get("customer_name") or "").strip()
+    stored_email = (contact.get("email") or pending.get("customer_email") or "").strip().lower()
+
+    if stored_email and _validate_support_email(stored_email) and stored_name:
+        stage_pending_escalation(session, pending)
+        return await _finalize_handoff_send(
+            session, pending, caller_text, name=stored_name,
+        )
+
+    stage_pending_escalation(session, pending)
+    if stored_email and _validate_support_email(stored_email):
+        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_NAME_ONLY)
+    if stored_name:
+        return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_ONLY)
+    return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
+
+
+def _handoff_uses_full_email(pending: dict[str, Any]) -> bool:
+    return _handoff_uses_silent_email(pending)
+
+
+def _handoff_email_confirmation_prompt(email: str, pending: dict[str, Any]) -> str:
+    """Legacy confirmation readback — only when email_capture_mode is legacy."""
+    from ..payment.payment_state_machine import confirmation_prompt, speak_confirmation_prompt
+
+    if _handoff_uses_silent_email(pending):
+        return confirmation_prompt(email, include_spelling=False)
+    return speak_confirmation_prompt(email)
+
 
 _ISBN = re.compile(r"\b(?:97[89]\d{10}|\d{9}[\dXx]|\d{13})\b")
 _NEWSPAPER = re.compile(r"\bnewspaper\b", re.I)
@@ -143,7 +425,14 @@ def _resolved_customer_email(session: "SessionState") -> str:
 def _extract_name_from_text(text: str) -> str:
     m = _NAME_BEFORE_EMAIL.search(text or "")
     if m:
-        return m.group(1).strip()
+        name = m.group(1).strip()
+        name = re.split(
+            r"\s+and\s+(?:my\s+)?(?:email|e-mail)\b",
+            name,
+            maxsplit=1,
+            flags=re.I,
+        )[0].strip()
+        return name.split(",")[0].strip()
     return ""
 
 
@@ -219,6 +508,7 @@ def _store_handoff_email_fragments(pending: dict[str, Any], fragments: list[str]
     pending["email_fragments"] = [f for f in fragments if f.strip()][-6:]
 
 
+@workflow_guard(SUPPORT_HANDOFF_WORKFLOW, "_finalize_handoff_send")
 async def _finalize_handoff_send(
     session: "SessionState",
     pending: dict[str, Any],
@@ -227,6 +517,26 @@ async def _finalize_handoff_send(
     name: str = "",
 ) -> NotFoundEscalationTurnHint:
     """Send staged escalation email to support after verified name + email."""
+    from ..observability.workflow_events import (
+        STEP_SUPPORT_HANDOFF_TRIGGERED,
+        emit_event,
+    )
+
+    emit_event(
+        {
+            "event_type": "workflow_transition",
+            "domain": "support",
+            "step": STEP_SUPPORT_HANDOFF_TRIGGERED,
+            "input_type": "email",
+            "outcome": "escalate",
+            "metadata": {
+                "reason": str(pending.get("reason") or pending.get("escalation_reason") or ""),
+                "has_name": bool((name or pending.get("customer_name") or "").strip()),
+            },
+        },
+        session=session,
+    )
+
     if pending.get("requested_value") and not pending.get("issue_title"):
         payload = ProductNotFoundEscalationPayload.from_dict(pending)
         if name:
@@ -242,6 +552,9 @@ async def _finalize_handoff_send(
     clear_pending_escalation(session)
 
     if result.success:
+        from .escalation_guard import reset
+
+        reset(session)
         return NotFoundEscalationTurnHint(
             force_reply=result.result.get("customer_message") or _MSG_SUCCESS,
             extra_tool_result=result,
@@ -388,9 +701,12 @@ def stage_pending_escalation(
     payload: CustomerQueryEscalationPayload | ProductNotFoundEscalationPayload | dict[str, Any],
 ) -> None:
     if isinstance(payload, dict):
-        session.pending_not_found_escalation = dict(payload)
+        data = dict(payload)
     else:
-        session.pending_not_found_escalation = payload.to_dict()
+        data = payload.to_dict()
+    data.setdefault("email_capture_mode", "silent")
+    data.setdefault("support_handoff_contact", dict(data.get("support_handoff_contact") or {}))
+    session.pending_not_found_escalation = data
     session.awaiting_not_found_escalation_email = True
 
 
@@ -504,6 +820,7 @@ async def try_escalate_unresolved_query(
     recommended_next_action: str = "",
 ) -> NotFoundEscalationTurnHint:
     """Stage or immediately send support handoff for an unresolved customer query."""
+    validate_external_handler_blocked("try_escalate_unresolved_query")
     email = _resolved_customer_email(session)
     payload = build_support_handoff_payload(
         session,
@@ -537,6 +854,15 @@ async def process_not_found_escalation_turn(
     if not getattr(session, "awaiting_not_found_escalation_email", False):
         return NotFoundEscalationTurnHint()
 
+    from .escalation_guard import LOOP_TERMINAL_REPLY
+
+    if getattr(session, "escalation_loop_terminal", False):
+        clear_pending_escalation(session)
+        from .escalation_guard import reset
+
+        reset(session)
+        return NotFoundEscalationTurnHint(force_reply=LOOP_TERMINAL_REPLY)
+
     if should_clear_handoff_for_shopping(session, caller_text, turn_mode=turn_mode):
         clear_pending_escalation(session)
         return NotFoundEscalationTurnHint()
@@ -547,6 +873,11 @@ async def process_not_found_escalation_turn(
         return NotFoundEscalationTurnHint()
 
     name = _sync_handoff_name(session, pending, caller_text)
+
+    if _handoff_uses_silent_email(pending):
+        return await _process_silent_support_handoff_turn(
+            session, pending, caller_text, name=name,
+        )
 
     if pending.get("awaiting_email_confirmation"):
         staged_email = (pending.get("staging_email") or "").strip().lower()
@@ -582,7 +913,7 @@ async def process_not_found_escalation_turn(
         if is_email_spell_request(caller_text) or is_repeat_email_request(caller_text):
             if staged_email:
                 return NotFoundEscalationTurnHint(
-                    force_reply=speak_confirmation_prompt(staged_email),
+                    force_reply=_handoff_email_confirmation_prompt(staged_email, pending),
                 )
 
         fragments = _handoff_email_fragments(pending)
@@ -594,15 +925,31 @@ async def process_not_found_escalation_turn(
             _store_handoff_email_fragments(pending, [])
             stage_pending_escalation(session, pending)
             return NotFoundEscalationTurnHint(
-                force_reply=speak_confirmation_prompt(corrected),
+                force_reply=_handoff_email_confirmation_prompt(corrected, pending),
             )
         if staged_email:
             return NotFoundEscalationTurnHint(
-                force_reply=speak_confirmation_prompt(staged_email),
+                force_reply=_handoff_email_confirmation_prompt(staged_email, pending),
             )
+        if _handoff_uses_full_email(pending):
+            return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_RETRY)
         return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_RETRY)
 
     if not pending.get("email_confirmed"):
+        if _handoff_uses_full_email(pending):
+            resolved = resolve_spoken_email_address(caller_text, session=session)
+            email = (resolved.email or extract_email_from_text(caller_text) or "").strip().lower()
+            if not email or "@" not in email:
+                if name and not _HANDOFF_ACK_ONLY.match(caller_text or ""):
+                    return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_ONLY)
+                return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
+            pending["staging_email"] = email
+            pending["awaiting_email_confirmation"] = True
+            stage_pending_escalation(session, pending)
+            return NotFoundEscalationTurnHint(
+                force_reply=_handoff_email_confirmation_prompt(email, pending),
+            )
+
         fragments = _handoff_email_fragments(pending)
         if hasattr(session, "pending_email_fragments"):
             session.pending_email_fragments = fragments
@@ -616,7 +963,7 @@ async def process_not_found_escalation_turn(
                 stage_pending_escalation(session, pending)
             if fragments:
                 return NotFoundEscalationTurnHint(
-                    force_reply=fragment_capture_prompt(len(fragments)),
+                    force_reply=_MSG_ASK_EMAIL_RETRY,
                 )
             if name and not _HANDOFF_ACK_ONLY.match(caller_text or ""):
                 stage_pending_escalation(session, pending)
@@ -631,13 +978,15 @@ async def process_not_found_escalation_turn(
             pending["email_fragments"] = _handoff_email_fragments(pending) + [caller_text.strip()]
             stage_pending_escalation(session, pending)
             return NotFoundEscalationTurnHint(
-                force_reply=fragment_capture_prompt(len(pending["email_fragments"])),
+                force_reply=_MSG_ASK_EMAIL_RETRY,
             )
         pending["staging_email"] = email
         pending["awaiting_email_confirmation"] = True
         pending.pop("email_fragments", None)
         stage_pending_escalation(session, pending)
-        return NotFoundEscalationTurnHint(force_reply=speak_confirmation_prompt(email))
+        return NotFoundEscalationTurnHint(
+            force_reply=_handoff_email_confirmation_prompt(email, pending),
+        )
 
     return await _finalize_handoff_send(session, pending, caller_text, name=name)
 
@@ -653,6 +1002,7 @@ async def handle_search_not_found_results(
 
     Only runs for product_search intent with a not_found search_products result.
     """
+    validate_external_handler_blocked("handle_search_not_found_results")
     supervisor = ctx.supervisor
     if not supervisor or supervisor.intent != "product_search":
         return NotFoundEscalationTurnHint()

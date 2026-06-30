@@ -1,0 +1,11 @@
+{
+  "url": "https://www.tiftsheriff.org/roster.phpp",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:38:35.521931+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Tift County Sheriff's Office"
+  ]
+}

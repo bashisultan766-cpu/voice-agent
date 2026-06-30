@@ -12,13 +12,15 @@ from app.agent_runtime.order_flow_state import (
     STATUS_AWAITING_ORDER_NUMBER,
     STATUS_IDLE,
 )
-from app.agent_runtime.workflow_isolation import (
+from app.agent_runtime.voice_workflows import (
+    ORDER_WORKFLOW,
+    PRODUCT_SEARCH_WORKFLOW,
+    SUPPORT_HANDOFF_WORKFLOW,
     WORKFLOW_COMMERCE,
     WORKFLOW_IDLE,
-    WORKFLOW_ORDER,
     WORKFLOW_PAYMENT,
-    WORKFLOW_PRODUCT,
-    WORKFLOW_SUPPORT,
+)
+from app.agent_runtime.workflow_isolation import (
     commerce_handling_allowed,
     commerce_silent_advance_allowed,
     isolate_workflow_buffers,
@@ -55,7 +57,7 @@ class TestWorkflowPriority:
             awaiting_payment_email=True,
             payment_flow_status="awaiting_email",
         )
-        assert resolve_primary_workflow(session, "email", "j at gmail dot com") == WORKFLOW_SUPPORT
+        assert resolve_primary_workflow(session, "email", "j at gmail dot com") == SUPPORT_HANDOFF_WORKFLOW
         assert support_handling_allowed(session, "email", "j at gmail dot com")
         assert not payment_handling_allowed(session, "email", "j at gmail dot com")
 
@@ -70,7 +72,7 @@ class TestWorkflowPriority:
 
     def test_order_collection_blocks_product(self):
         session = _session(order_flow_status=STATUS_AWAITING_ORDER_NUMBER)
-        assert resolve_primary_workflow(session, "", "9780553582024") == WORKFLOW_ORDER
+        assert resolve_primary_workflow(session, "", "9780553582024") == ORDER_WORKFLOW
         assert not product_handling_allowed(session, "", "9780553582024")
         assert payment_email_context_active(session, "")
 
@@ -101,7 +103,7 @@ class TestWorkflowPriority:
 
     def test_product_isbn_on_idle(self):
         session = _session()
-        assert resolve_primary_workflow(session, "isbn", "9780553582024") == WORKFLOW_PRODUCT
+        assert resolve_primary_workflow(session, "isbn", "9780553582024") == PRODUCT_SEARCH_WORKFLOW
         assert product_handling_allowed(session, "isbn", "9780553582024")
 
 
@@ -122,7 +124,7 @@ class TestWorkflowBuffers:
             order_flow_status=STATUS_AWAITING_ORDER_NUMBER,
         )
         wf = isolate_workflow_buffers(session, "order", "63482")
-        assert wf == WORKFLOW_ORDER
+        assert wf == ORDER_WORKFLOW
         assert session.pending_isbn_buffer == ""
 
     def test_isbn_after_order_lookup_does_not_crash(self):
@@ -133,7 +135,7 @@ class TestWorkflowBuffers:
             order_flow_status=STATUS_IDLE,
         )
         wf = isolate_workflow_buffers(session, "isbn", "9781544503547.")
-        assert wf == WORKFLOW_PRODUCT
+        assert wf == PRODUCT_SEARCH_WORKFLOW
         assert session.order_flow_status == STATUS_IDLE
 
 

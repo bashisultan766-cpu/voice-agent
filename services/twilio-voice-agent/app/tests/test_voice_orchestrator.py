@@ -46,14 +46,14 @@ def test_awaiting_order_stage_skips_llm():
     assert plan.reason == "stage_awaiting_order_number"
 
 
-def test_brain_classification_allows_llm_fallback():
+def test_product_search_classification_blocks_llm():
     runtime = _runtime()
     plan = VoiceOrchestrator().plan_turn(
         runtime, _session(), "I need Game of Thrones hardcover edition", "",
     )
-    assert plan.use_llm is True
-    assert plan.fast_route == "llm_fallback"
-    assert VoiceOrchestrator.allows_llm(plan) is True
+    assert plan.use_llm is False
+    assert plan.fast_route == "product_search_workflow"
+    assert VoiceOrchestrator.allows_llm(plan) is False
 
 
 def test_instant_classification_blocks_llm():

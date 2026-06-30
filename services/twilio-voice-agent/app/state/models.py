@@ -161,6 +161,10 @@ class SessionState:
     pending_not_found_escalation: dict[str, Any] = field(default_factory=dict)
     awaiting_not_found_escalation_email: bool = False
     not_found_escalation_sent_keys: list[str] = field(default_factory=list)
+    support_handoff_contact: dict[str, str] = field(default_factory=dict)
+
+    # ── Product search fallback escalation (v4.58) ─────────────────────────
+    product_search_fallback_pending: dict[str, Any] = field(default_factory=dict)
 
     # ── v4.5 product candidate persistence ────────────────────────────────────
     last_product_candidate: dict[str, Any] = field(default_factory=dict)
@@ -225,6 +229,14 @@ class SessionState:
     speech_lock: bool = False
     last_spoken_response: str = ""
     tool_progress_sent_for_op: str = ""
+
+    # ── Escalation loop guard (v4.59) ───────────────────────────────────────
+    workflow_stage_tracker: dict[str, Any] = field(default_factory=lambda: {
+        "domain": "",
+        "stage": "",
+        "count": 0,
+    })
+    escalation_loop_terminal: bool = False
 
     # ── Guided voice conversation (runtime UX) ────────────────────────────────
     # stage: idle | awaiting_order_number | order_lookup | completed

@@ -41,6 +41,8 @@ _CUSTOMER_MESSAGE_ASK_CONTACT = (
     "May I have your name and email address?"
 )
 
+_SUPPORT_EMAIL_SUBJECT = "User Support Request - Order/Product Issue"
+
 _SECRET_KEY_RE = re.compile(
     r"(token|api[_-]?key|password|secret|authorization|cvv|cvc|card[_-]?number)",
     re.I,
@@ -327,24 +329,45 @@ def _build_email_body(
     payload: CustomerQueryEscalationPayload,
     *,
     conversation_summary: str = "",
+    analysis: dict[str, str] | None = None,
 ) -> str:
-    """Support team email — name, email, request line, and conversation bullets."""
+    """Single clean support email — issue summary, request, context, urgency."""
     name = (payload.customer_name or "Customer").strip()
     email = (payload.customer_email or "unknown").strip()
     request = _compose_customer_request(payload)
-    bullets = _summary_to_bullet_lines(conversation_summary or payload.conversation_summary or "")
+    analysis = analysis or {}
+    issue_summary = (
+        analysis.get("issue_summary")
+        or payload.issue_title
+        or request
+    ).strip()
+    user_intent = (analysis.get("user_intent") or payload.query_type or "support").strip()
+    unresolved = (
+        analysis.get("unresolved_needs")
+        or payload.issue_detail
+        or payload.recommended_next_action
+        or "Manual follow-up required."
+    ).strip()
+    urgency = (analysis.get("urgency_level") or "medium").strip().lower()
+    context_lines = _summary_to_bullet_lines(
+        conversation_summary or payload.conversation_summary or "",
+    )
 
     lines = [
-        "SureShot Books — Support Request",
+        "SureShot Books — Support Handoff",
         "",
         f"Name: {name}",
         f"Email: {email}",
         "",
-        f"Request: {request}",
+        f"Issue summary: {issue_summary}",
+        f"User request: {request}",
+        f"User intent: {user_intent}",
+        f"Unresolved needs: {unresolved}",
+        f"Urgency: {urgency}",
     ]
-    if bullets:
-        lines.extend(["", "Conversation:"])
-        lines.extend(f"• {b}" for b in bullets)
+    if context_lines:
+        lines.extend(["", "Conversation context:"])
+        lines.extend(f"• {line}" for line in context_lines)
     lines.extend(["", "Reply to the customer by email."])
     return "\n".join(lines)
 
@@ -356,9 +379,9 @@ async def send_support_handoff(
     caller_text: str = "",
 ) -> str:
     """
-    Summarize conversation (LLM), email support team via Resend, return JSON string.
+    Analyze conversation, email support team via Resend, return JSON string.
     """
-    from .conversation_summarizer import summarize_conversation_for_support
+    from .conversation_summarizer import analyze_conversation_for_support
 
     settings = get_settings()
 
@@ -465,19 +488,30 @@ async def send_support_handoff(
     escalation_id = str(uuid.uuid4())
     from_addr = resolve_escalation_from_email(settings)
     customer_name = (model.customer_name or "Customer").strip()
-    issue_label = _issue_type_label(model.query_type)
-    subject = f"Voice Agent Support — {customer_name} — {issue_label}"
+    subject = _SUPPORT_EMAIL_SUBJECT
 
-    llm_summary, transcript = await summarize_conversation_for_support(
+    analysis, transcript = await analyze_conversation_for_support(
         session,
         caller_text=_sanitize_spoken_request(caller_text),
         issue_title=model.issue_title,
         issue_detail=model.issue_detail,
         api_context=model.api_context,
     )
-    model.conversation_summary = llm_summary or model.conversation_summary
+    model.conversation_summary = (
+        f"Issue: {analysis.get('issue_summary', '')}\n"
+        f"Intent: {analysis.get('user_intent', '')}\n"
+        f"Unresolved: {analysis.get('unresolved_needs', '')}\n"
+        f"Urgency: {analysis.get('urgency_level', 'medium')}"
+    ).strip()
     model.conversation_transcript = transcript
-    body = _build_email_body(model, conversation_summary=llm_summary)
+    body = _build_email_body(model, conversation_summary=model.conversation_summary, analysis=analysis)
+
+    if session is not None:
+        session.support_handoff_contact = {
+            "email": model.customer_email.strip().lower(),
+            "name": customer_name,
+            "issue_summary": analysis.get("issue_summary", "") or model.issue_title,
+        }
 
     logger.info(
         "support_handoff_send call_sid=%s type=%s name=%s email=%s phone=%s",

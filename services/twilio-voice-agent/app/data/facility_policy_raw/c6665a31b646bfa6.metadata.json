@@ -1,0 +1,11 @@
+{
+  "url": "https://www.pitkincounty.com/395/Jail",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:12:36.462683+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Pitkin County Sheriff"
+  ]
+}

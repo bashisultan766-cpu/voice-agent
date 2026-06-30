@@ -1,0 +1,11 @@
+{
+  "url": "https://www.keysso.net/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:44:27.821113+00:00",
+  "text_length": 0,
+  "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)",
+  "source_facilities": [
+    "Monroe County Sheriff's Office"
+  ]
+}

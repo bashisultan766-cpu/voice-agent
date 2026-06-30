@@ -1,0 +1,11 @@
+{
+  "url": "https://www.warrencountyjail.com/DIGITAL_MAIL_CENTER_UPDATE_07-15-2024.pdf",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:43:55.702232+00:00",
+  "text_length": 0,
+  "error": "[WinError 10054] An existing connection was forcibly closed by the remote host",
+  "source_facilities": [
+    "Warren County Regional Jail"
+  ]
+}

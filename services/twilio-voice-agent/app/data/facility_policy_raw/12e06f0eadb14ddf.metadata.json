@@ -1,0 +1,11 @@
+{
+  "url": "https://www.yorkcountygov.com/",
+  "status": "200",
+  "content_type": "text/html; charset=utf-8",
+  "fetched_at": "2026-06-26T11:55:24.919386+00:00",
+  "text_length": 4234,
+  "error": null,
+  "source_facilities": [
+    "York County Detention Center"
+  ]
+}

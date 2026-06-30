@@ -1,0 +1,11 @@
+{
+  "url": "sheriffsoffice@deltacountyco.gov",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:58:15.020154+00:00",
+  "text_length": 0,
+  "error": "unknown url type: '/sheriffsoffice@deltacountyco.gov'",
+  "source_facilities": [
+    "Delta County Sheriff"
+  ]
+}

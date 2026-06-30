@@ -1,0 +1,11 @@
+{
+  "url": "https://www.dallascounty.org/departments/sheriff/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:49:00.056290+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Dallas County Sheriff's Department"
+  ]
+}

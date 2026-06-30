@@ -1,0 +1,11 @@
+{
+  "url": "https://www.westmoreland-county.org/201/Sheriffs-Office\r\nWestmoreland Sheriff's Department",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:48:48.525289+00:00",
+  "text_length": 0,
+  "error": "Invalid non-printable ASCII character in URL, '\\r' at position 55.",
+  "source_facilities": [
+    "Berks County Sheriff"
+  ]
+}

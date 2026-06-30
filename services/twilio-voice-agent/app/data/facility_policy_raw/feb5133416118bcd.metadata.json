@@ -1,0 +1,11 @@
+{
+  "url": "https://www.webercountyutah.gov/sheriff/corrections/inmate_services.php",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T11:48:16.192588+00:00",
+  "text_length": 5575,
+  "error": null,
+  "source_facilities": [
+    "Weber County Jail"
+  ]
+}

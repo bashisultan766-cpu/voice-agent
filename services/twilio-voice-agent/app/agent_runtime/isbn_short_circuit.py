@@ -620,8 +620,7 @@ async def try_isbn_short_circuit(
         session.pending_isbn_buffer = getattr(session, "pending_isbn_buffer", "") or ""
         arm_isbn_digit_collection(session)
 
-    from .commerce_flow_state import normalize_catalog_hit, quantity_prompt, stage_product_candidate
-    from ..tools import shopify_tools as shopify_st
+    from .commerce_flow_state import normalize_catalog_hit
     from ..conversation.call_memory import record_isbn
 
     expanded = _expand_text(caller_text)
@@ -663,94 +662,28 @@ async def try_isbn_short_circuit(
     )
 
     record_isbn(session, isbn)
-    raw = await shopify_st.search_product_by_isbn(isbn)
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        payload = {}
+    from .product_resolution import match_product, product_resolution_to_short_circuit
 
-    tool_results: list[tuple[str, dict]] = [
-        ("search_product_by_isbn", payload if isinstance(payload, dict) else {}),
-    ]
-
-    if isinstance(payload, dict) and payload.get("needs_more_digits"):
-        return IsbnShortCircuitResult(
-            force_reply=payload.get("customer_message") or (
-                "I have part of it. Please continue with the remaining digits."
-            ),
-            isbn=isbn,
-            tool_results=tool_results,
-        )
-
-    if isinstance(payload, dict) and payload.get("found") and payload.get("product"):
-        product = payload["product"]
-        top = normalize_catalog_hit({
-            "id": product.get("product_id"),
-            "title": product.get("title"),
-            "price": product.get("price"),
-            "available": product.get("available"),
-            "author": product.get("author"),
-            "inventory_quantity": product.get("inventory_quantity"),
-            "variants": [{"id": product.get("variant_id"), "price": product.get("price")}],
-        })
-        if not catalog_hit_is_orderable(top):
-            from .not_found_escalation_flow import begin_unavailable_product_handoff
-
-            title = (top.get("title") or product.get("title") or "").strip()
-            msg = begin_unavailable_product_handoff(
-                session,
-                user_text=caller_text,
-                query=isbn,
-                reason="product_out_of_stock",
-                search_result=payload if isinstance(payload, dict) else {},
-                product_title=title,
-            )
+    resolution = await match_product(session, isbn=isbn)
+    for _tool, payload in resolution.tool_results:
+        if (
+            _tool == "search_product_by_isbn"
+            and isinstance(payload, dict)
+            and payload.get("needs_more_digits")
+        ):
             return IsbnShortCircuitResult(
-                force_reply=msg,
+                force_reply=payload.get("customer_message") or (
+                    "I have part of it. Please continue with the remaining digits."
+                ),
                 isbn=isbn,
-                tool_results=tool_results,
-            )
-        if top.get("variant_id"):
-            stage_product_candidate(session, top)
-            try:
-                from .conversation_state_machine import get_conversation_state
-
-                cs = get_conversation_state(session.call_sid)
-                cs.mode = "book_collection"
-                cs.expected_next = "quantity"
-            except Exception:  # noqa: BLE001
-                pass
-            spoken = payload.get("customer_message") or quantity_prompt(top)
-            return IsbnShortCircuitResult(
-                force_reply=spoken,
-                isbn=isbn,
-                tool_results=tool_results,
-            )
-        title = (top.get("title") or "").strip()
-        if title:
-            session.last_product_candidate = top
-            spoken = payload.get("customer_message") or (
-                f"I found {title}. How many copies would you like?"
-            )
-            return IsbnShortCircuitResult(
-                force_reply=spoken,
-                isbn=isbn,
-                tool_results=tool_results,
+                tool_results=resolution.tool_results,
             )
 
-    from .not_found_escalation_flow import begin_unavailable_product_handoff
-
-    not_found_msg = begin_unavailable_product_handoff(
+    return await product_resolution_to_short_circuit(
         session,
-        user_text=caller_text,
-        query=isbn,
-        reason="product_not_found",
-        search_result=payload if isinstance(payload, dict) else {},
-    )
-    return IsbnShortCircuitResult(
-        force_reply=not_found_msg,
+        caller_text,
+        resolution,
         isbn=isbn,
-        tool_results=tool_results,
     )
 
 
@@ -772,15 +705,7 @@ async def try_title_catalog_short_circuit(
         STATUS_AWAITING_QUANTITY,
         STATUS_AWAITING_ANOTHER_BOOK,
         STATUS_IDLE,
-        _price_phrase,
-        _title,
-        normalize_catalog_hit,
-        quantity_prompt,
-        stage_product_candidate,
     )
-    from .llm_tools import CatalogSearchArgs, _catalog_search
-    from .not_found_escalation_flow import begin_unavailable_product_handoff
-    from ..conversation.call_memory import record_product_candidate
 
     status = getattr(session, "commerce_flow_status", "idle") or "idle"
     text = (caller_text or "").strip()
@@ -810,70 +735,11 @@ async def try_title_catalog_short_circuit(
     query = extract_title_catalog_query(caller_text)
     if not _catalog_query_is_actionable(query):
         return None
-    raw = await _catalog_search(
-        CatalogSearchArgs(query=query, limit=5),
-        session,
-    )
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        payload = {}
 
-    tool_results: list[tuple[str, dict]] = [
-        ("catalog_search", payload if isinstance(payload, dict) else {}),
-    ]
-    results = (payload.get("results") or []) if isinstance(payload, dict) else []
-    if results:
-        scored: list[tuple[dict[str, Any], float]] = []
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            hit = normalize_catalog_hit(item)
-            scored.append((hit, _title_match_score(query, hit)))
-        scored.sort(key=lambda pair: pair[1], reverse=True)
-        if scored:
-            top, score = scored[0]
-            record_product_candidate(session, title=top.get("title") or "", found=True)
-            if top.get("variant_id") and not catalog_hit_is_orderable(top):
-                title = (top.get("title") or "").strip()
-                msg = begin_unavailable_product_handoff(
-                    session,
-                    user_text=caller_text,
-                    query=query,
-                    reason="product_out_of_stock",
-                    search_result={"results": results[:3], "count": len(results)},
-                    product_title=title,
-                )
-                return IsbnShortCircuitResult(force_reply=msg, tool_results=tool_results)
-            if top.get("variant_id"):
-                stage_product_candidate(session, top)
-                if score >= _EXACT_TITLE_SCORE:
-                    return IsbnShortCircuitResult(
-                        force_reply=quantity_prompt(top),
-                        tool_results=tool_results,
-                    )
-                title = _title(top)
-                price = _price_phrase(top)
-                return IsbnShortCircuitResult(
-                    force_reply=(
-                        f"I did not find an exact match for {query}, but I found {title}. "
-                        f"{price} How many copies would you like?"
-                    ),
-                    tool_results=tool_results,
-                )
+    from .product_resolution import match_product, product_resolution_to_short_circuit
 
-    record_product_candidate(session, title=query[:80], found=False)
-    msg = begin_unavailable_product_handoff(
-        session,
-        user_text=caller_text,
-        query=query,
-        reason="product_not_found",
-        search_result={"results": [], "count": 0},
-    )
-    return IsbnShortCircuitResult(
-        force_reply=msg,
-        tool_results=tool_results,
-    )
+    resolution = await match_product(session, title=query)
+    return await product_resolution_to_short_circuit(session, caller_text, resolution)
 
 
 def _title_match_score(query: str, hit: dict[str, Any]) -> float:

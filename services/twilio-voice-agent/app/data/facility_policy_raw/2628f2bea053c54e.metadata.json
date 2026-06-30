@@ -1,0 +1,12 @@
+{
+  "url": "https://www.sheriffconnect.com/wayne-county-jail-inmate-information/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T11:25:55.671273+00:00",
+  "text_length": 685,
+  "error": null,
+  "source_facilities": [
+    "Wayne County Jail Division 1",
+    "Wayne County Sheriff Department"
+  ]
+}

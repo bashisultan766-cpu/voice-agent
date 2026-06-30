@@ -1,0 +1,11 @@
+{
+  "url": "https://www.claysheriff.com/resources/jail-info/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:25:59.999712+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Clay County Sheriff's Office"
+  ]
+}

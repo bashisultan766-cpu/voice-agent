@@ -98,26 +98,27 @@ async def test_oos_isbn_handoff_sends_after_thats_correct_email():
             return_value=mock_client,
         ):
             with patch(
-                "app.escalation.conversation_summarizer.summarize_conversation_for_support",
+                "app.escalation.conversation_summarizer.analyze_conversation_for_support",
                 new_callable=AsyncMock,
-                return_value=("Customer needs OOS book sourced.", ""),
+                return_value=({
+                    "issue_summary": "Customer needs OOS book sourced.",
+                    "user_intent": "product",
+                    "unresolved_needs": "Source item",
+                    "urgency_level": "medium",
+                }, ""),
             ):
                 name_hint = await process_not_found_escalation_turn(
                     session, "Yes. My name is Bashi Sultan.",
                 )
                 assert "email" in name_hint.force_reply.lower()
 
-                email_hint = await process_not_found_escalation_turn(
+                send_hint = await process_not_found_escalation_turn(
                     session,
                     "bashisultan766 at gmail dot com",
                 )
-                assert "letter by letter" in email_hint.force_reply
-
-                send_hint = await process_not_found_escalation_turn(
-                    session, "Yeah. That's correct email.",
-                )
 
     assert send_hint.extra_tool_result and send_hint.extra_tool_result.success
+    assert "letter by letter" not in (send_hint.force_reply or "").lower()
     assert session.awaiting_not_found_escalation_email is False
     assert mock_client.post.await_count == 1
     body = mock_client.post.call_args.kwargs["json"]["text"]

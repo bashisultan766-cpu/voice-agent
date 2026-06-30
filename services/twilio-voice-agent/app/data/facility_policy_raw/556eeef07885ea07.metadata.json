@@ -1,0 +1,11 @@
+{
+  "url": "https://www.pendoreille.gov/sheriff/page/inmate-mailing-address-instructions",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:11:41.285675+00:00",
+  "text_length": 0,
+  "error": "[WinError 10053] An established connection was aborted by the software in your host machine",
+  "source_facilities": [
+    "Pendoreille County Sheriff"
+  ]
+}

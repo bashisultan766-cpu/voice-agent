@@ -24,7 +24,6 @@ from ..agent_runtime.payment_flow_state import enforce_payment_response, process
 from ..agent_runtime.types import RuntimeTurnResult
 from ..agents.main_commerce_brain import MainCommerceBrain
 from ..cart.commerce_cart_service import CommerceCartService
-from ..email.voice_email_capture import VoiceEmailCapture
 from ..payment.email_state import PAYMENT_AUTO_SEND_ENABLED
 from ..payment.payment_state_machine import needs_deferred_payment_auto_send
 from .fast_classifier import ClassificationResult, classify, normalize_speech_text
@@ -48,7 +47,116 @@ _STUCK_RECOVERY = (
 
 _GUIDED_AWAITING_ORDER_PROMPT = "Please tell me your order number."
 
+from ..agent_runtime.voice_workflows import (
+    PRODUCT_CLARIFICATION_REPLY as _PRODUCT_CLARIFICATION_REPLY,
+    has_structured_product_search_input,
+    isbn_detected as _isbn_detected,
+    product_title_detected as _product_title_detected,
+)
+
 _runtime: Optional["VoiceCommerceRuntime"] = None
+
+
+def _explicit_search_query(
+    session: "SessionState",
+    text: str,
+    turn_mode: str = "",
+) -> bool:
+    return _product_title_detected(session, text, turn_mode)
+
+
+def _product_search_turn_active(
+    session: "SessionState",
+    text: str,
+    turn_mode: str,
+    classification: ClassificationResult,
+    active_workflow: str,
+) -> bool:
+    from ..agent_runtime.workflow_isolation import WORKFLOW_PRODUCT, product_handling_allowed
+
+    if not product_handling_allowed(session, turn_mode, text):
+        return False
+    if active_workflow == WORKFLOW_PRODUCT:
+        return True
+    return bool(classification.is_product_search)
+
+
+def _llm_blocked_for_workflow(
+    session: "SessionState",
+    text: str,
+    turn_mode: str,
+    classification: ClassificationResult,
+    active_workflow: str,
+) -> bool:
+    """Product and support workflows are deterministic — never route decisions to the LLM."""
+    from ..agent_runtime.workflow_contracts import (
+        PRODUCT_SEARCH_WORKFLOW,
+        SUPPORT_HANDOFF_WORKFLOW,
+    )
+    from ..agent_runtime.workflow_isolation import (
+        WORKFLOW_PRODUCT,
+        WORKFLOW_SUPPORT,
+        support_handling_allowed,
+    )
+
+    if active_workflow in (WORKFLOW_PRODUCT, PRODUCT_SEARCH_WORKFLOW):
+        return True
+    if active_workflow in (WORKFLOW_SUPPORT, SUPPORT_HANDOFF_WORKFLOW):
+        return True
+    if support_handling_allowed(session, turn_mode, text):
+        return True
+    if _product_search_turn_active(session, text, turn_mode, classification, active_workflow):
+        return True
+    if classification.is_product_search:
+        return True
+    return False
+
+
+def requires_product_clarification_before_brain(
+    session: "SessionState",
+    text: str,
+    turn_mode: str = "",
+) -> bool:
+    """
+    True when speech looks like product lookup but lacks ISBN or explicit title/query.
+
+    Catches bare titles (e.g. ``Game of Thrones``) that bypass the classifier's
+    ``is_product_search`` flag yet would invite LLM catalog guessing.
+    """
+    if has_structured_product_search_input(session, text, turn_mode):
+        return False
+
+    from ..agent_runtime.isbn_short_circuit import (
+        _catalog_query_is_actionable,
+        extract_title_catalog_query,
+    )
+    from ..agent_runtime.order_flow_state import order_intent_detected
+    from ..agent_runtime.workflow_isolation import (
+        order_workflow_active,
+        payment_workflow_active,
+    )
+    from ..runtime.fast_classifier import (
+        _is_facility_question,
+        _is_product_search_request,
+        is_vague_product_request,
+    )
+
+    if not (text or "").strip():
+        return False
+    if is_vague_product_request(text):
+        return False
+    if order_intent_detected(text):
+        return False
+    if _is_facility_question(text):
+        return False
+    if payment_workflow_active(session, turn_mode) or order_workflow_active(session, turn_mode):
+        return False
+
+    if _is_product_search_request(text):
+        return True
+
+    query = extract_title_catalog_query(text)
+    return _catalog_query_is_actionable(query)
 
 
 async def _await_send(
@@ -339,6 +447,22 @@ class VoiceOrchestrator:
         )
         plan.classification = classification
 
+        from ..agent_runtime.workflow_isolation import support_handling_allowed
+
+        if support_handling_allowed(session, turn_mode, caller_text):
+            plan.use_llm = False
+            plan.fast_route = "support_handoff_workflow"
+            plan.reason = "support_handoff_deterministic"
+            plan.plan_ms = (time.monotonic() - t0) * 1000
+            return plan
+
+        if classification.is_product_search:
+            plan.use_llm = False
+            plan.fast_route = "product_search_workflow"
+            plan.reason = "product_search_deterministic"
+            plan.plan_ms = (time.monotonic() - t0) * 1000
+            return plan
+
         if classification.action == "instant" and classification.instant_reply:
             plan.use_llm = False
             plan.fast_route = "classifier_instant"
@@ -350,6 +474,13 @@ class VoiceOrchestrator:
             plan.use_llm = False
             plan.fast_route = "classifier_skip"
             plan.reason = classification.reason or "classifier_skip_llm"
+            plan.plan_ms = (time.monotonic() - t0) * 1000
+            return plan
+
+        if requires_product_clarification_before_brain(session, caller_text, turn_mode):
+            plan.use_llm = False
+            plan.fast_route = "product_clarification"
+            plan.reason = "product_search_no_structured_input"
             plan.plan_ms = (time.monotonic() - t0) * 1000
             return plan
 
@@ -534,22 +665,10 @@ class VoiceCommerceRuntime:
         turn_mode: str = "",
         caller_context: Optional["SafeCallerContext"] = None,
     ) -> str:
-        base = self._brain._build_live_context(session, caller_text, turn_mode=turn_mode)
-        try:
-            from ..agent_runtime.isbn_short_circuit import (
-                isbn_context_for_state_block,
-                prepare_isbn_turn_context,
-            )
+        """LLM context is sandboxed in MainCommerceBrain — no workflow state injection."""
+        return ""
 
-            prepare_isbn_turn_context(session, caller_text, turn_mode=turn_mode)
-            isbn_hint = isbn_context_for_state_block(session, caller_text, turn_mode=turn_mode)
-            if isbn_hint:
-                return f"{base}\n{isbn_hint}"
-        except Exception:  # noqa: BLE001
-            pass
-        return base
-
-    async def _try_isbn_product_hunt(
+    async def _route_product_search_workflow(
         self,
         session: "SessionState",
         caller_text: str,
@@ -557,57 +676,123 @@ class VoiceCommerceRuntime:
         *,
         turn_mode: str = "",
         classification: ClassificationResult,
+        sid: str,
     ) -> Optional[RuntimeTurnResult]:
-        """Run deterministic ISBN resolution + Shopify search without LLM latency."""
-        from ..agent_runtime.isbn_short_circuit import (
-            _looks_like_isbn_digit_stream,
-            arm_isbn_digit_collection,
-            conversational_ack_reply,
-            is_conversational_ack,
-            try_isbn_short_circuit,
-        )
-        from ..tools.isbn import extract_isbn_candidate
+        """Single entry point for product_search_workflow."""
+        from ..agent_runtime.commerce_flow_state import enforce_commerce_response
+        from ..agent_runtime.voice_workflows import execute_product_search_workflow
 
-        if is_conversational_ack(caller_text):
-            ack = conversational_ack_reply(session, turn_mode=turn_mode)
-            if ack:
-                spoken = self._brain.finalize_response(session, ack, [])
-                spoken = await self._speak(session, caller_text, spoken, send)
-                return _result(spoken)
-
-        is_isbn_turn = (
-            (turn_mode or "").lower() == "isbn"
-            or classification.is_product_search
-            or bool(extract_isbn_candidate(caller_text))
-            or _looks_like_isbn_digit_stream(caller_text)
-            or bool(getattr(session, "pending_isbn_buffer", ""))
-        )
-        if not is_isbn_turn:
-            return None
-
-        sid = (session.call_sid or "")[:6]
         try:
-            sc = await try_isbn_short_circuit(session, caller_text, turn_mode=turn_mode)
+            result = await execute_product_search_workflow(
+                session,
+                caller_text,
+                turn_mode=turn_mode,
+                classification=classification,
+            )
         except Exception as exc:
-            logger.warning("isbn_product_hunt_failed sid=%s err=%s", sid, type(exc).__name__)
+            logger.warning(
+                "product_search_workflow_failed sid=%s err=%s",
+                sid,
+                type(exc).__name__,
+            )
             spoken = self._brain.finalize_response(session, _OPENAI_FALLBACK, [])
             spoken = await self._speak(session, caller_text, spoken, send)
             return _result(spoken)
 
-        if not sc or not sc.force_reply:
+        if not result or not result.force_reply:
             return None
 
         spoken = enforce_commerce_response(
             session,
-            self._brain.finalize_response(session, sc.force_reply, sc.tool_results or []),
-            sc.tool_results or [],
+            self._brain.finalize_response(
+                session, result.force_reply, result.tool_results or [],
+            ),
+            result.tool_results or [],
         )
         spoken = await self._speak(session, caller_text, spoken, send)
         logger.info(
-            "isbn_product_hunt sid=%s isbn=%s ms=fast",
+            "product_search_workflow sid=%s route=%s isbn=%s",
             sid,
-            sc.isbn or "",
+            result.route or "-",
+            (result.isbn or "")[:13],
         )
+        return _result(spoken)
+
+    async def _handle_escalation_loop_forced(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        send: Callable,
+        *,
+        turn_mode: str = "",
+        sid: str,
+        guard_result,
+    ) -> RuntimeTurnResult:
+        """Break infinite workflow loops — force support handoff, no retries, no LLM."""
+        from ..agent_runtime.workflow_contracts import SUPPORT_HANDOFF_WORKFLOW
+
+        reply = guard_result.forced_reply or ""
+        if guard_result.domain == SUPPORT_HANDOFF_WORKFLOW:
+            spoken = await self._speak_support_handoff_reply(
+                session, caller_text, reply, send,
+            )
+            logger.info(
+                "escalation_loop_terminal sid=%s stage=%s count=%d",
+                sid,
+                guard_result.stage,
+                guard_result.repeat_count,
+            )
+            return _result(spoken)
+
+        handoff = await self._route_support_handoff_workflow(
+            session, caller_text, send, turn_mode=turn_mode, sid=sid,
+        )
+        if handoff is not None:
+            return handoff
+
+        spoken = await self._speak_support_handoff_reply(
+            session, caller_text, reply, send,
+        )
+        logger.info(
+            "escalation_loop_forced_handoff sid=%s domain=%s stage=%s count=%d",
+            sid,
+            guard_result.domain,
+            guard_result.stage,
+            guard_result.repeat_count,
+        )
+        return _result(spoken)
+
+    async def _route_support_handoff_workflow(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        send: Callable,
+        *,
+        turn_mode: str = "",
+        sid: str,
+    ) -> Optional[RuntimeTurnResult]:
+        """Single entry point for support_handoff_workflow."""
+        from ..agent_runtime.voice_workflows import execute_support_handoff_workflow
+
+        esc_hint = await execute_support_handoff_workflow(
+            session, caller_text, turn_mode=turn_mode,
+        )
+        if esc_hint and esc_hint.force_reply:
+            spoken = await self._speak_support_handoff_reply(
+                session, caller_text, esc_hint.force_reply, send,
+            )
+            logger.info("support_handoff_workflow sid=%s", sid)
+            return _result(spoken)
+        return None
+
+    async def _product_clarification_turn(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        send: Callable,
+    ) -> RuntimeTurnResult:
+        spoken = self._brain.finalize_response(session, _PRODUCT_CLARIFICATION_REPLY, [])
+        spoken = await self._speak(session, caller_text, spoken, send)
         return _result(spoken)
 
     async def _handle_email_fsm(
@@ -618,32 +803,7 @@ class VoiceCommerceRuntime:
         *,
         turn_mode: str = "",
     ) -> Optional[RuntimeTurnResult]:
-        """Deterministic email capture and confirmation — no LLM."""
-        from ..email.capture import extract_best_email_phrase
-
-        email_cap = VoiceEmailCapture(session)
-        sanitized = extract_best_email_phrase(caller_text) or caller_text
-
-        if getattr(session, "awaiting_payment_email_confirmation", False):
-            result = email_cap.process_confirmation_turn(sanitized)
-            if result.action == "confirmed":
-                if PAYMENT_AUTO_SEND_ENABLED:
-                    auto = await self._auto_send_payment(session, caller_text, send)
-                    return auto
-                spoken = "Got it. I'll send the payment link to your email."
-                spoken = await self._speak(session, caller_text, spoken, send)
-                return _result(spoken)
-            if result.readback:
-                from ..email.speller import is_preserved_email_readback
-
-                if is_preserved_email_readback(result.readback) and result.email:
-                    spoken = await self._speak_email_readback_text(
-                        session, caller_text, result.readback, send,
-                    )
-                else:
-                    spoken = await self._speak(session, caller_text, result.readback, send)
-                return _result(spoken)
-
+        """Payment checkout email — single process_payment_turn pipeline."""
         payment_hint = process_payment_turn(session, caller_text, turn_mode=turn_mode)
         if payment_hint.force_reply:
             from ..email.speller import is_preserved_email_readback
@@ -656,7 +816,7 @@ class VoiceCommerceRuntime:
                 )
             else:
                 spoken = await self._speak(session, caller_text, reply, send)
-            logger.info("email_fsm_force_reply sid=%s", session.call_sid[:6])
+            logger.info("payment_email_workflow sid=%s", session.call_sid[:6])
             return _result(spoken)
 
         if payment_hint.email_confirmed and PAYMENT_AUTO_SEND_ENABLED:
@@ -664,19 +824,6 @@ class VoiceCommerceRuntime:
 
         if needs_deferred_payment_auto_send(session) and PAYMENT_AUTO_SEND_ENABLED:
             return await self._auto_send_payment(session, caller_text, send)
-
-        if (turn_mode or "").lower() == "email" or getattr(session, "awaiting_payment_email", False):
-            captured = email_cap.capture_from_speech(sanitized)
-            if captured.readback and "do not have a complete email" not in captured.readback.lower():
-                from ..email.speller import is_preserved_email_readback
-
-                if is_preserved_email_readback(captured.readback) and captured.email:
-                    spoken = await self._speak_email_readback_text(
-                        session, caller_text, captured.readback, send,
-                    )
-                else:
-                    spoken = await self._speak(session, caller_text, captured.readback, send)
-                return _result(spoken)
 
         return None
 
@@ -762,6 +909,17 @@ class VoiceCommerceRuntime:
 
         contract = enforce_voice_output_contract(raw_llm_text or "")
         return contract.content
+
+    async def _speak_support_handoff_reply(
+        self,
+        session: "SessionState",
+        caller_text: str,
+        reply: str,
+        send: Callable,
+    ) -> str:
+        """Support handoff replies always use normal TTS — never email readback chunks."""
+        spoken = self._brain.finalize_response(session, reply, [])
+        return await self._speak(session, caller_text, spoken, send)
 
     async def _speak_email_readback_text(
         self,
@@ -952,6 +1110,10 @@ class VoiceCommerceRuntime:
         session._current_turn_mode = turn_mode  # type: ignore[attr-defined]
         session._current_caller_text = normalized  # type: ignore[attr-defined]
 
+        from ..agent_runtime.workflow_contracts import clear_turn_workflow_contract
+
+        clear_turn_workflow_contract(session)
+
         from ..agent_runtime.workflow_isolation import (
             WORKFLOW_ISOLATION_VERSION,
             commerce_handling_allowed,
@@ -964,12 +1126,35 @@ class VoiceCommerceRuntime:
         )
 
         active_workflow = isolate_workflow_buffers(session, turn_mode, normalized)
+        from ..agent_runtime.workflow_contracts import apply_turn_workflow_contract
+
+        apply_turn_workflow_contract(session, active_workflow)
         logger.info(
             "workflow_isolation sid=%s workflow=%s version=%s",
             sid,
             active_workflow,
             WORKFLOW_ISOLATION_VERSION,
         )
+
+        from ..agent_runtime.escalation_guard import EscalationGuard
+        from ..agent_runtime.workflow_contracts import CANONICAL_WORKFLOW_DOMAINS
+
+        if active_workflow in CANONICAL_WORKFLOW_DOMAINS:
+            guard_result = EscalationGuard.check_turn(
+                session,
+                active_workflow,
+                normalized,
+                turn_mode=turn_mode,
+            )
+            if guard_result.loop_detected:
+                return await self._handle_escalation_loop_forced(
+                    session,
+                    normalized,
+                    send,
+                    turn_mode=turn_mode,
+                    sid=sid,
+                    guard_result=guard_result,
+                )
 
         if commerce_silent_advance_allowed(session, turn_mode, normalized):
             advance_commerce_state_silent(session, normalized)
@@ -993,31 +1178,11 @@ class VoiceCommerceRuntime:
         from ..payment.payment_state_machine import payment_email_turn_priority
 
         if support_handling_allowed(session, turn_mode, normalized):
-            from ..agent_runtime.not_found_escalation_flow import (
-                process_not_found_escalation_turn,
-                should_clear_handoff_for_shopping,
-                clear_pending_escalation,
+            handoff = await self._route_support_handoff_workflow(
+                session, normalized, send, turn_mode=turn_mode, sid=sid,
             )
-
-            if should_clear_handoff_for_shopping(session, normalized, turn_mode=turn_mode):
-                clear_pending_escalation(session)
-            else:
-                esc_early = await process_not_found_escalation_turn(
-                    session, normalized, turn_mode=turn_mode,
-                )
-                if esc_early.force_reply:
-                    from ..email.speller import is_preserved_email_readback
-
-                    reply = esc_early.force_reply
-                    if is_preserved_email_readback(reply):
-                        spoken = await self._speak_email_readback_text(
-                            session, normalized, reply, send,
-                        )
-                    else:
-                        spoken = self._brain.finalize_response(session, reply, [])
-                        spoken = await self._speak(session, normalized, spoken, send)
-                    logger.info("support_handoff_email_early sid=%s", sid)
-                    return _result(spoken)
+            if handoff is not None:
+                return handoff
 
         if payment_handling_allowed(session, turn_mode, normalized) or payment_email_turn_priority(
             session, turn_mode,
@@ -1056,6 +1221,11 @@ class VoiceCommerceRuntime:
                 turn_mode=turn_mode,
                 twiml_greeting_already=twiml_greeting,
             )
+
+        if plan.fast_route == "product_clarification":
+            spoken = await self._product_clarification_turn(session, normalized, send)
+            logger.info("product_clarification_orchestrator sid=%s", sid)
+            return spoken
 
         from ..dialogue.anti_silence import anti_silence_reply
         from ..dialogue.side_speech import side_speech_reply
@@ -1099,22 +1269,6 @@ class VoiceCommerceRuntime:
             try_order_hold_reply,
             try_order_repeat_reply,
         )
-        from ..runtime.fast_classifier import ClassificationResult
-
-        if product_handling_allowed(session, turn_mode, normalized) and (
-            turn_mode or ""
-        ).lower() == "isbn":
-            isbn_early = await self._try_isbn_product_hunt(
-                session,
-                normalized,
-                send,
-                turn_mode=turn_mode,
-                classification=ClassificationResult(
-                    action="brain", reason="isbn_turn", is_product_search=True,
-                ),
-            )
-            if isbn_early is not None:
-                return isbn_early
 
         if order_handling_allowed(session, turn_mode, normalized):
             awaiting_prompt = self._enforce_awaiting_order_ux(
@@ -1222,26 +1376,11 @@ class VoiceCommerceRuntime:
             return email_result
 
         if support_handling_allowed(session, turn_mode, normalized):
-            from ..agent_runtime.not_found_escalation_flow import (
-                process_not_found_escalation_turn,
+            handoff = await self._route_support_handoff_workflow(
+                session, normalized, send, turn_mode=turn_mode, sid=sid,
             )
-
-            esc_hint = await process_not_found_escalation_turn(
-                session, normalized, turn_mode=turn_mode,
-            )
-            if esc_hint.force_reply:
-                from ..email.speller import is_preserved_email_readback
-
-                reply = esc_hint.force_reply
-                if is_preserved_email_readback(reply):
-                    spoken = await self._speak_email_readback_text(
-                        session, normalized, reply, send,
-                    )
-                else:
-                    spoken = self._brain.finalize_response(session, reply, [])
-                    spoken = await self._speak(session, normalized, spoken, send)
-                logger.info("support_handoff_email_capture sid=%s", sid)
-                return _result(spoken)
+            if handoff is not None:
+                return handoff
 
         if classification.action == "instant" and classification.instant_reply:
             if classification.reason == "isbn_offer_prompt":
@@ -1279,57 +1418,19 @@ class VoiceCommerceRuntime:
                 logger.info("cancellation_support_handoff sid=%s", sid)
                 return _result(spoken)
 
-        # Deterministic ISBN product hunt — bypass LLM for speed and accuracy.
-        isbn_hunt = None
-        if product_handling_allowed(session, turn_mode, normalized):
-            isbn_hunt = await self._try_isbn_product_hunt(
+        if _product_search_turn_active(
+            session, normalized, turn_mode, classification, active_workflow,
+        ):
+            product_result = await self._route_product_search_workflow(
                 session,
                 normalized,
                 send,
                 turn_mode=turn_mode,
                 classification=classification,
+                sid=sid,
             )
-        if isbn_hunt is not None:
-            return isbn_hunt
-
-        title_hunt = None
-        if product_handling_allowed(session, turn_mode, normalized):
-            from ..agent_runtime.isbn_short_circuit import (
-                is_explicit_title_catalog_query,
-                try_title_catalog_short_circuit,
-            )
-            from ..agent_runtime.commerce_flow_state import _status as commerce_status
-            from ..tools.isbn import extract_isbn_candidate
-
-            if (
-                is_explicit_title_catalog_query(
-                    normalized,
-                    commerce_status=commerce_status(session),
-                )
-                and not extract_isbn_candidate(normalized)
-            ):
-                try:
-                    title_sc = await try_title_catalog_short_circuit(
-                        session, normalized, turn_mode=turn_mode,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "title_catalog_hunt_failed sid=%s err=%s",
-                        sid,
-                        type(exc).__name__,
-                    )
-                    title_sc = None
-                if title_sc and title_sc.force_reply:
-                    spoken = enforce_commerce_response(
-                        session,
-                        self._brain.finalize_response(
-                            session, title_sc.force_reply, title_sc.tool_results or [],
-                        ),
-                        title_sc.tool_results or [],
-                    )
-                    spoken = await self._speak(session, normalized, spoken, send)
-                    logger.info("title_catalog_hunt sid=%s ms=fast", sid)
-                    return _result(spoken)
+            if product_result is not None:
+                return product_result
 
         from ..agent_runtime.order_flow_state import (
             _should_skip_order_lookup,
@@ -1391,15 +1492,16 @@ class VoiceCommerceRuntime:
 
         if commerce_handling_allowed(session, turn_mode, normalized):
             if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(normalized):
-                isbn_in_cart = await self._try_isbn_product_hunt(
+                product_in_cart = await self._route_product_search_workflow(
                     session,
                     normalized,
                     send,
                     turn_mode=turn_mode,
                     classification=classification,
+                    sid=sid,
                 )
-                if isbn_in_cart is not None:
-                    return isbn_in_cart
+                if product_in_cart is not None:
+                    return product_in_cart
 
             cart_reply = try_cart_inquiry_reply(
                 session, normalized, turn_mode=turn_mode,
@@ -1463,6 +1565,35 @@ class VoiceCommerceRuntime:
             spoken = await self._speak(session, normalized, spoken, send, interruptible=False)
             logger.info("order_brain_gate sid=%s", sid)
             return _result(spoken)
+
+        if _llm_blocked_for_workflow(
+            session, normalized, turn_mode, classification, active_workflow,
+        ):
+            if support_handling_allowed(session, turn_mode, normalized):
+                handoff = await self._route_support_handoff_workflow(
+                    session, normalized, send, turn_mode=turn_mode, sid=sid,
+                )
+                if handoff is not None:
+                    return handoff
+            if _product_search_turn_active(
+                session, normalized, turn_mode, classification, active_workflow,
+            ):
+                product_result = await self._route_product_search_workflow(
+                    session,
+                    normalized,
+                    send,
+                    turn_mode=turn_mode,
+                    classification=classification,
+                    sid=sid,
+                )
+                if product_result is not None:
+                    return product_result
+            logger.info("workflow_llm_gate sid=%s workflow=%s", sid, active_workflow or "-")
+            return await self._product_clarification_turn(session, normalized, send)
+
+        if requires_product_clarification_before_brain(session, normalized, turn_mode):
+            logger.info("product_clarification_pre_brain sid=%s", sid)
+            return await self._product_clarification_turn(session, normalized, send)
 
         if not VoiceOrchestrator.allows_llm(plan):
             spoken = _STUCK_RECOVERY

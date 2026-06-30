@@ -1,0 +1,11 @@
+{
+  "url": "ttps://www.halecountyal.gov/sheriff",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:58:15.394355+00:00",
+  "text_length": 0,
+  "error": "Request URL has an unsupported protocol 'ttps://'.",
+  "source_facilities": [
+    "Hale County Sheriff"
+  ]
+}

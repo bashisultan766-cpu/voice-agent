@@ -1,0 +1,12 @@
+{
+  "url": "https://www.prisonpro.com/content/new-jersey-inmate-phonessending-money-mail",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:12:58.989818+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Mid-State Correctional Facility",
+    "Garden State Youth Correctional Facility"
+  ]
+}

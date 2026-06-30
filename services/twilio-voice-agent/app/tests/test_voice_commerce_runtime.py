@@ -159,10 +159,11 @@ def test_vague_magazine_clarification():
     assert "magazine" in result.instant_reply.lower()
 
 
-def test_game_of_thrones_triggers_product_search_brain():
+def test_game_of_thrones_triggers_product_search_workflow():
     result = classify("I need Game of Thrones")
-    assert result.action == "brain"
+    assert result.action == "instant"
     assert result.is_product_search is True
+    assert result.skip_llm is True
     assert not result.ack_reply
 
 
@@ -190,9 +191,26 @@ def test_no_shopify_for_vague_request():
     assert "title" in result.response_text.lower() or "isbn" in result.response_text.lower()
 
 
+def test_bare_title_clarification_no_llm_or_catalog():
+    from app.runtime.voice_commerce_runtime import _PRODUCT_CLARIFICATION_REPLY
+
+    runtime = _build_runtime([_text_response("Passive Income Ideas")])
+    with patch(
+        "app.agent_runtime.llm_tools._catalog_search",
+        new_callable=AsyncMock,
+    ) as catalog:
+        result, _ = _run_turn(runtime, _session(), "Game of Thrones")
+        catalog.assert_not_called()
+    assert runtime._brain._client.chat.completions.calls == []
+    assert "product name" in result.response_text.lower()
+    assert "isbn" in result.response_text.lower()
+    assert "Passive Income" not in result.response_text
+    assert _PRODUCT_CLARIFICATION_REPLY.split("..")[0] in result.response_text.replace("..", "")
+
+
 # ── Brain + tool tests ───────────────────────────────────────────────────────
 
-def test_specific_product_search_calls_llm_and_tools():
+def test_specific_product_search_uses_deterministic_workflow_not_llm():
     search_json = json.dumps({
         "results": [{
             "title": "Game of Thrones",
@@ -210,16 +228,14 @@ def test_specific_product_search_calls_llm_and_tools():
         return_value=search_json,
     ):
         runtime = _build_runtime([
-            _tool_response("search_products", {"query": "Game of Thrones"}),
-            _text_response("I found Game of Thrones for $12.99. Would you like me to add it to your cart?"),
+            _text_response("LLM must not be called for product search"),
         ])
         result, sent = _run_turn(runtime, _session(), "I need Game of Thrones")
 
+    assert runtime._brain._client.chat.completions.calls == []
     assert "Game of Thrones" in result.response_text
     spoken = "".join(m.get("token", "") for m in sent)
     assert "Game of Thrones" in spoken
-    assert "12.99" in spoken or "12" in spoken
-    assert len(spoken) <= 280
 
 
 def test_llm_final_answer_uses_tool_result():
@@ -240,11 +256,11 @@ def test_llm_final_answer_uses_tool_result():
         return_value=catalog_json,
     ):
         runtime = _build_runtime([
-            _tool_response("search_products", {"query": "Atomic Habits"}),
-            _text_response("I found Atomic Habits for $16. Would you like to add it?"),
+            _text_response("LLM must not be called for explicit title search"),
         ])
-        result, _ = _run_turn(runtime, _session(), "Atomic Habits")
+        result, _ = _run_turn(runtime, _session(), "Do you have Atomic Habits")
 
+    assert runtime._brain._client.chat.completions.calls == []
     assert "Atomic Habits" in result.response_text
 
 

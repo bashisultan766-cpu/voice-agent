@@ -1,0 +1,11 @@
+{
+  "url": "https://www.kennebec.gov/sheriff/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:43:49.043554+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Kennebec County Sheriff's Office"
+  ]
+}

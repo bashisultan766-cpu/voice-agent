@@ -1,0 +1,11 @@
+{
+  "url": "\u200bhttps://www.vancecountysheriff.org/employment",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:58:16.511546+00:00",
+  "text_length": 0,
+  "error": "unknown url type: '/%E2%80%8Bhttps://www.vancecountysheriff.org/employment'",
+  "source_facilities": [
+    "Vance County Sheriff's Office"
+  ]
+}

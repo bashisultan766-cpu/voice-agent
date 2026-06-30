@@ -1,0 +1,11 @@
+{
+  "url": "https://www.polksheriff.org/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:12:46.175389+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Polk County Sheriff's Office"
+  ]
+}

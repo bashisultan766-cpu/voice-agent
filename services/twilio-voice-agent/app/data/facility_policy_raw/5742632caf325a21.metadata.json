@@ -1,0 +1,11 @@
+{
+  "url": "https://www.leacounty.gov/1359/Lea-County-Sheriff",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:51:44.322065+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Lea County Sheriff Office"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "url": "https://www.ocsheriff.gov/commands-divisions/custody-operations-command/central-mens-womens-jails/inmate-mail",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T11:05:14.704566+00:00",
+  "text_length": 12340,
+  "error": null,
+  "source_facilities": [
+    "Orange County Sheriff / Central Men's Jail, Central Women's Jail, and Intake Release Center (IRC)",
+    "Theo Lacy Facility / Orange County Jail",
+    "James A. Musick Facility / Orange County Sheriff"
+  ]
+}

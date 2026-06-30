@@ -322,9 +322,10 @@ def test_can_i_give_isbn_does_not_call_llm():
     assert "isbn" in result.instant_reply.lower()
 
 
-def test_partial_isbn_digits_route_to_brain():
+def test_partial_isbn_digits_use_deterministic_product_search():
     result = classify("9780747532699")
-    assert result.action in ("ack_then_brain", "brain")
+    assert result.action == "instant"
+    assert result.skip_llm is True
     assert result.is_product_search is True
 
 

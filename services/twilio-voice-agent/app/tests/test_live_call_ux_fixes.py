@@ -117,5 +117,6 @@ class TestNoRoboticAck:
     def test_product_search_skips_ack(self):
         session = _session()
         result = classify("I need the book Atomic Habits", session)
-        assert result.action == "brain"
+        assert result.action == "instant"
+        assert result.skip_llm is True
         assert not result.ack_reply
