@@ -601,9 +601,254 @@ def _print_compile_errors(violations: list[dict[str, Any]]) -> None:
             print(f"       node: {v['node']}", file=sys.stderr)
 
 
+# ── Runtime graph memory + compliance hooks ───────────────────────────────────
+
+_RUNTIME_GRAPH: dict[str, Any] | None = None
+_RUNTIME_GRAPH_INDEX: dict[str, dict[str, Any]] | None = None
+_RUNTIME_HOOKS_INSTALLED = False
+
+
+class WorkflowCompileRuntimeViolation(RuntimeError):
+    """Raised when runtime execution diverges from the compiled workflow graph."""
+
+    def __init__(self, *, domain: str, node: str, reason: str):
+        self.domain = domain
+        self.node = node
+        self.reason = reason
+        super().__init__(
+            f"Workflow compile runtime violation [{domain}::{node}]: {reason}",
+        )
+
+
+def _node_base(node: str) -> str:
+    return (node or "").split("::")[-1].split(".")[-1].strip()
+
+
+def _build_runtime_graph_index(graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for domain in graph.get("domains", []):
+        allowlist = set(graph.get("allowlists", {}).get(domain, []))
+        forbidden = set(graph.get("forbidden", {}).get(domain, []))
+        entries = list(graph.get("entry_points", {}).get(domain, []))
+        nodes: set[str] = set()
+        for wf in graph.get("workflows", []):
+            if wf.get("domain") == domain:
+                nodes.update(wf.get("nodes", []))
+        index[domain] = {
+            "allowlist": allowlist,
+            "forbidden": forbidden,
+            "entries": entries,
+            "nodes": nodes,
+            "node_bases": {_node_base(n) for n in nodes},
+        }
+    return index
+
+
+def inject_compiled_graph(graph: dict[str, Any]) -> None:
+    """Load compiled workflow graph into process memory for runtime checks."""
+    global _RUNTIME_GRAPH, _RUNTIME_GRAPH_INDEX
+    _RUNTIME_GRAPH = graph
+    _RUNTIME_GRAPH_INDEX = _build_runtime_graph_index(graph)
+    logger.info(
+        "workflow_graph_injected version=%s domains=%d",
+        graph.get("version"),
+        len(graph.get("domains", [])),
+    )
+
+
+def get_compiled_workflow_graph() -> dict[str, Any] | None:
+    return _RUNTIME_GRAPH
+
+
+def get_runtime_graph_index() -> dict[str, dict[str, Any]] | None:
+    return _RUNTIME_GRAPH_INDEX
+
+
+def _ensure_runtime_graph_loaded() -> None:
+    if _RUNTIME_GRAPH is not None:
+        return
+    artifact = _DEFAULT_OUTPUT_DIR / "workflow_graph.json"
+    if not artifact.is_file():
+        return
+    graph = json.loads(artifact.read_text(encoding="utf-8"))
+    inject_compiled_graph(graph)
+
+
+def _log_compile_runtime_violation(
+    *,
+    domain: str,
+    node: str,
+    reason: str,
+    phase: str = "turn",
+) -> None:
+    from ..observability.workflow_events import (
+        STEP_WORKFLOW_COMPILE_RUNTIME_VIOLATION,
+        emit_event,
+    )
+
+    logger.error(
+        "workflow_compile_runtime_violation domain=%s node=%s phase=%s reason=%s",
+        domain,
+        node,
+        phase,
+        reason,
+    )
+    emit_event(
+        {
+            "event_type": "workflow_transition",
+            "domain": "unknown",
+            "step": STEP_WORKFLOW_COMPILE_RUNTIME_VIOLATION,
+            "input_type": "unknown",
+            "outcome": "fail",
+            "metadata": {
+                "workflow_domain": domain,
+                "node": node,
+                "phase": phase,
+                "reason": reason,
+            },
+        },
+    )
+
+
+def _raise_compile_runtime_violation(
+    *,
+    domain: str,
+    node: str,
+    reason: str,
+    phase: str = "turn",
+) -> None:
+    _log_compile_runtime_violation(
+        domain=domain,
+        node=node,
+        reason=reason,
+        phase=phase,
+    )
+    raise WorkflowCompileRuntimeViolation(domain=domain, node=node, reason=reason)
+
+
+def _assert_graph_call_compliance(domain: str, function_name: str) -> None:
+    """Graph-layer check for guarded function calls (hook tail)."""
+    if not _RUNTIME_GRAPH_INDEX:
+        return
+    idx = _RUNTIME_GRAPH_INDEX.get(domain)
+    if idx is None:
+        return
+
+    base = _node_base(function_name)
+    if base in idx["forbidden"]:
+        _raise_compile_runtime_violation(
+            domain=domain,
+            node=base,
+            reason="symbol forbidden in compiled graph",
+            phase="call",
+        )
+
+    allowlist = DOMAIN_ALLOWLISTS.get(domain)
+    if allowlist is not None and base not in allowlist:
+        if base in idx["node_bases"] or base in CROSS_DOMAIN_ALLOWED_CALLS:
+            return
+        _raise_compile_runtime_violation(
+            domain=domain,
+            node=base,
+            reason="symbol not in compiled allowlist or graph nodes",
+            phase="call",
+        )
+
+
+def _runtime_validate_workflow_call_hook(domain: str, function_name: str) -> None:
+    """Runtime hook — contract checks then compiled-graph compliance."""
+    from .workflow_contracts import active_workflow_domain, validate_workflow_call_core
+
+    validate_workflow_call_core(domain, function_name)
+    if not active_workflow_domain():
+        return
+    _assert_graph_call_compliance(domain, function_name)
+
+
+def install_runtime_validation_hooks() -> None:
+    """Wire validate_workflow_call() to compiler runtime hook."""
+    global _RUNTIME_HOOKS_INSTALLED
+    from .workflow_contracts import register_validate_workflow_call_hook
+
+    register_validate_workflow_call_hook(_runtime_validate_workflow_call_hook)
+    _RUNTIME_HOOKS_INSTALLED = True
+    logger.info("workflow_runtime_hooks_installed")
+
+
+def resolve_turn_entry_node(domain: str, *, turn_mode: str = "") -> str:
+    """Pick the compiled entry symbol for a live turn's active workflow domain."""
+    entries = WORKFLOW_ENTRY_POINTS.get(domain, [])
+    if not entries:
+        return ""
+    if domain == ORDER_WORKFLOW:
+        mode = (turn_mode or "").strip().lower()
+        if mode == "order":
+            for _module, name in entries:
+                if name == "process_order_turn":
+                    return name
+        return entries[0][1]
+    return entries[0][1]
+
+
+def assert_runtime_compliance(domain: str, node: str) -> None:
+    """
+    Turn-boundary compliance — entry node must exist in the compiled graph.
+
+    Raises WorkflowCompileRuntimeViolation on mismatch (stop execution).
+    """
+    _ensure_runtime_graph_loaded()
+    if not domain or domain not in CANONICAL_WORKFLOW_DOMAINS:
+        return
+
+    base = _node_base(node)
+    if not base:
+        _raise_compile_runtime_violation(
+            domain=domain,
+            node=node,
+            reason="empty workflow node",
+            phase="turn",
+        )
+
+    if not _RUNTIME_GRAPH_INDEX:
+        _raise_compile_runtime_violation(
+            domain=domain,
+            node=base,
+            reason="compiled workflow graph not loaded",
+            phase="turn",
+        )
+
+    idx = _RUNTIME_GRAPH_INDEX.get(domain)
+    if idx is None:
+        _raise_compile_runtime_violation(
+            domain=domain,
+            node=base,
+            reason=f"domain missing from compiled graph: {domain}",
+            phase="turn",
+        )
+
+    entry_bases = {_node_base(entry) for entry in idx["entries"]}
+    if base not in entry_bases:
+        _raise_compile_runtime_violation(
+            domain=domain,
+            node=base,
+            reason="not a compiled workflow entry node",
+            phase="turn",
+        )
+
+    if base in idx["forbidden"]:
+        _raise_compile_runtime_violation(
+            domain=domain,
+            node=base,
+            reason="entry node forbidden in compiled graph",
+            phase="turn",
+        )
+
+
 def compile_workflows_at_startup() -> None:
     """Called from application lifespan — fails server boot on violation."""
-    compile_workflows(fail_fast=True, write_artifacts=True)
+    result = compile_workflows(fail_fast=True, write_artifacts=True)
+    inject_compiled_graph(result.graph)
+    install_runtime_validation_hooks()
 
 
 def main() -> int:

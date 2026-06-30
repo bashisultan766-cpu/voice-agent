@@ -95,6 +95,16 @@ CANONICAL_WORKFLOW_DOMAINS: frozenset[str] = frozenset({
     SUPPORT_HANDOFF_WORKFLOW,
 })
 
+_validate_workflow_call_hook: Callable[[str, str], None] | None = None
+
+
+def register_validate_workflow_call_hook(
+    hook: Callable[[str, str], None] | None,
+) -> None:
+    """Install workflow_compiler runtime validation (startup)."""
+    global _validate_workflow_call_hook
+    _validate_workflow_call_hook = hook
+
 
 class WorkflowViolationError(RuntimeError):
     """Raised when a workflow contract rule is violated — execution must stop."""
@@ -170,7 +180,21 @@ def validate_workflow_call(domain: str, function_name: str) -> None:
     """
     Hard-stop validation for a guarded function entry.
 
-    Raises WorkflowViolationError when the active workflow domain forbids the call.
+    Delegates to the workflow_compiler runtime hook when installed (startup);
+    otherwise runs contract checks only (unit tests).
+    """
+    hook = _validate_workflow_call_hook
+    if hook is not None:
+        hook(domain, function_name)
+        return
+    validate_workflow_call_core(domain, function_name)
+
+
+def validate_workflow_call_core(domain: str, function_name: str) -> None:
+    """
+    Contract-layer validation — active domain, allowlists, forbidden sets.
+
+    Called by the compiler runtime hook and directly when no hook is installed.
     """
     active = _active_workflow.get()
     if not active:

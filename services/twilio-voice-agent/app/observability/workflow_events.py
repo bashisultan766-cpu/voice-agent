@@ -27,6 +27,8 @@ STEP_SUPPORT_HANDOFF_TRIGGERED = "support_handoff_triggered"
 STEP_EMAIL_CAPTURED_SILENTLY = "email_captured_silently"
 STEP_WORKFLOW_VIOLATION_DETECTED = "workflow_violation_detected"
 STEP_ESCALATION_LOOP_DETECTED = "escalation_loop_detected"
+STEP_LEGACY_ROUTE_ATTEMPT_DETECTED = "legacy_route_attempt_detected"
+STEP_WORKFLOW_COMPILE_RUNTIME_VIOLATION = "workflow_compile_runtime_violation"
 
 
 class WorkflowTransitionEvent(TypedDict, total=False):

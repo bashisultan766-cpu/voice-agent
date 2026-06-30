@@ -115,6 +115,7 @@ class TestSupportEmailFormat:
             SUPPORT_EMAIL="support@test.com",
             RESEND_API_KEY="re_test",
             SUPPORT_ESCALATION_ENABLED=True,
+            SUPPORT_ESCALATION_FROM_EMAIL="Voice Agent <noreply@test.com>",
         )
 
         with patch("app.escalation.support_handoff.get_settings", return_value=settings):

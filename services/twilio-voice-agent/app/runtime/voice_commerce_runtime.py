@@ -56,6 +56,82 @@ from ..agent_runtime.voice_workflows import (
 
 _runtime: Optional["VoiceCommerceRuntime"] = None
 
+_LEGACY_PRODUCT_SEARCH_ROUTES = frozenset({
+    "title_catalog_hunt",
+    "product_catalog_hunt",
+    "_try_title_catalog_hunt",
+    "_try_isbn_product_hunt",
+})
+
+
+def _session_from_legacy_args(args: tuple, kwargs: dict) -> Optional["SessionState"]:
+    if args:
+        candidate = args[0]
+        if hasattr(candidate, "call_sid"):
+            return candidate  # type: ignore[return-value]
+    session = kwargs.get("session")
+    if session is not None and hasattr(session, "call_sid"):
+        return session  # type: ignore[return-value]
+    return None
+
+
+def _raise_legacy_product_route_violation(
+    route_name: str,
+    *,
+    session: Optional["SessionState"] = None,
+) -> None:
+    """Hard-stop any fragmented product search pipeline outside the canonical workflow."""
+    from ..agent_runtime.workflow_contracts import WorkflowViolationError
+    from ..observability.workflow_events import (
+        STEP_LEGACY_ROUTE_ATTEMPT_DETECTED,
+        emit_event,
+    )
+
+    emit_event(
+        {
+            "event_type": "workflow_transition",
+            "domain": "product_search",
+            "step": STEP_LEGACY_ROUTE_ATTEMPT_DETECTED,
+            "input_type": "unknown",
+            "outcome": "fail",
+            "metadata": {"legacy_route": route_name},
+        },
+        session=session,
+    )
+    logger.error("legacy_route_attempt_detected route=%s", route_name)
+    raise WorkflowViolationError(
+        f"legacy product search route forbidden: {route_name}; "
+        "use route_to_product_search_workflow → execute_product_search_workflow"
+    )
+
+
+async def title_catalog_hunt(*args, **kwargs):
+    _raise_legacy_product_route_violation(
+        "title_catalog_hunt",
+        session=_session_from_legacy_args(args, kwargs),
+    )
+
+
+async def product_catalog_hunt(*args, **kwargs):
+    _raise_legacy_product_route_violation(
+        "product_catalog_hunt",
+        session=_session_from_legacy_args(args, kwargs),
+    )
+
+
+async def _try_title_catalog_hunt(*args, **kwargs):
+    _raise_legacy_product_route_violation(
+        "_try_title_catalog_hunt",
+        session=_session_from_legacy_args(args, kwargs),
+    )
+
+
+async def _try_isbn_product_hunt(*args, **kwargs):
+    _raise_legacy_product_route_violation(
+        "_try_isbn_product_hunt",
+        session=_session_from_legacy_args(args, kwargs),
+    )
+
 
 def _explicit_search_query(
     session: "SessionState",
@@ -668,7 +744,7 @@ class VoiceCommerceRuntime:
         """LLM context is sandboxed in MainCommerceBrain — no workflow state injection."""
         return ""
 
-    async def _route_product_search_workflow(
+    async def route_to_product_search_workflow(
         self,
         session: "SessionState",
         caller_text: str,
@@ -678,7 +754,11 @@ class VoiceCommerceRuntime:
         classification: ClassificationResult,
         sid: str,
     ) -> Optional[RuntimeTurnResult]:
-        """Single entry point for product_search_workflow."""
+        """
+        Single runtime entry for product_search_workflow.
+
+        Delegates to execute_product_search_workflow() — no legacy hunt pipelines.
+        """
         from ..agent_runtime.commerce_flow_state import enforce_commerce_response
         from ..agent_runtime.voice_workflows import execute_product_search_workflow
 
@@ -1126,7 +1206,10 @@ class VoiceCommerceRuntime:
         )
 
         active_workflow = isolate_workflow_buffers(session, turn_mode, normalized)
-        from ..agent_runtime.workflow_contracts import apply_turn_workflow_contract
+        from ..agent_runtime.workflow_contracts import (
+            CANONICAL_WORKFLOW_DOMAINS,
+            apply_turn_workflow_contract,
+        )
 
         apply_turn_workflow_contract(session, active_workflow)
         logger.info(
@@ -1136,8 +1219,25 @@ class VoiceCommerceRuntime:
             WORKFLOW_ISOLATION_VERSION,
         )
 
+        from ..agent_runtime.workflow_compiler import (
+            WorkflowCompileRuntimeViolation,
+            assert_runtime_compliance,
+            resolve_turn_entry_node,
+        )
+
+        if active_workflow in CANONICAL_WORKFLOW_DOMAINS:
+            try:
+                entry_node = resolve_turn_entry_node(
+                    active_workflow,
+                    turn_mode=turn_mode,
+                )
+                assert_runtime_compliance(active_workflow, entry_node)
+            except WorkflowCompileRuntimeViolation:
+                spoken = self._brain.finalize_response(session, _STUCK_RECOVERY, [])
+                spoken = await self._speak(session, normalized, spoken, send)
+                return _result(spoken)
+
         from ..agent_runtime.escalation_guard import EscalationGuard
-        from ..agent_runtime.workflow_contracts import CANONICAL_WORKFLOW_DOMAINS
 
         if active_workflow in CANONICAL_WORKFLOW_DOMAINS:
             guard_result = EscalationGuard.check_turn(
@@ -1421,7 +1521,7 @@ class VoiceCommerceRuntime:
         if _product_search_turn_active(
             session, normalized, turn_mode, classification, active_workflow,
         ):
-            product_result = await self._route_product_search_workflow(
+            product_result = await self.route_to_product_search_workflow(
                 session,
                 normalized,
                 send,
@@ -1492,7 +1592,7 @@ class VoiceCommerceRuntime:
 
         if commerce_handling_allowed(session, turn_mode, normalized):
             if (turn_mode or "").lower() == "isbn" or extract_isbn_candidate(normalized):
-                product_in_cart = await self._route_product_search_workflow(
+                product_in_cart = await self.route_to_product_search_workflow(
                     session,
                     normalized,
                     send,
@@ -1578,7 +1678,7 @@ class VoiceCommerceRuntime:
             if _product_search_turn_active(
                 session, normalized, turn_mode, classification, active_workflow,
             ):
-                product_result = await self._route_product_search_workflow(
+                product_result = await self.route_to_product_search_workflow(
                     session,
                     normalized,
                     send,
