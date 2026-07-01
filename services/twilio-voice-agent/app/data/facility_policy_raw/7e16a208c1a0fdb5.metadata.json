@@ -1,0 +1,11 @@
+{
+  "url": "https://www.cherokeecounty-nc.gov/306/Inmate-Mail",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:18:28.208848+00:00",
+  "text_length": 0,
+  "error": "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate (_ssl.c:1082)",
+  "source_facilities": [
+    "Cherokee County Sheriff's Department"
+  ]
+}

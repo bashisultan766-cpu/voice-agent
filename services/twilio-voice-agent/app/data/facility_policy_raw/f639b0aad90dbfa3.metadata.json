@@ -1,0 +1,11 @@
+{
+  "url": "https://www.co.tuscarawas.oh.us/government/sheriff/divisions/jail/currently_housed_inmates.php",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T09:39:45.078627+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Tuscarawas County\r\nSheriff's Office"
+  ]
+}

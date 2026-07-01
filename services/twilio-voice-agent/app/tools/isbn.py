@@ -34,6 +34,30 @@ _WORD_TO_DIGIT = {
 _STRIP_RE = re.compile(r"[-\s]")
 _NONDIGIT_X = re.compile(r"[^0-9xX]")
 _ISBN_PREFIX = re.compile(r"\bISBN[:\s-]*", re.IGNORECASE)
+_SPOKEN_REPEAT = re.compile(
+    r"\b(double|triple|quadruple)\s+"
+    r"(zero|one|two|three|four|five|six|seven|eight|nine|oh|o|\d)\b",
+    re.IGNORECASE,
+)
+
+
+def expand_spoken_repeaters(text: str) -> str:
+    """Expand STT phrases like ``triple seven`` → ``7 7 7`` before ISBN parsing."""
+    t = text or ""
+    # STT often inserts "underscore" between digit groups — strip it.
+    t = re.sub(r"\bunderscore\b", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bdash\b", " ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bhyphen\b", " ", t, flags=re.IGNORECASE)
+
+    def _repl(match: re.Match) -> str:
+        mult = {"double": 2, "triple": 3, "quadruple": 4}[match.group(1).lower()]
+        token = match.group(2).lower()
+        digit = _WORD_TO_DIGIT.get(token, token if token.isdigit() else "")
+        if not digit:
+            return match.group(0)
+        return " ".join([digit] * mult)
+
+    return _SPOKEN_REPEAT.sub(_repl, t)
 
 
 def _spoken_digits_to_string(text: str) -> str:
@@ -61,6 +85,7 @@ def normalize_isbn(text: str) -> str | None:
     if not text:
         return None
 
+    text = expand_spoken_repeaters(text)
     # Strip "ISBN" keyword prefix.
     text = _ISBN_PREFIX.sub("", text).strip()
 

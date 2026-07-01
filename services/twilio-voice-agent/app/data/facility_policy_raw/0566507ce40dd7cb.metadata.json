@@ -1,0 +1,22 @@
+{
+  "url": "https://www.mass.gov/doc/103-cmr-481-inmate-mail-0/download",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:52:39.128477+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Boston Pre-Release Center",
+    "Bridgewater State Hospital",
+    "Lemuel Shattuck Hospital Correctional Unit",
+    "Massachusetts Alcohol and Substance Abuse Center",
+    "Massachusetts Treatment Center",
+    "MCI Framingham",
+    "MCI - Norfolk",
+    "MCI - Plymouth",
+    "MCI - Shirley",
+    "North Central Correctional Institution at Gardner NCCI Gardner",
+    "Old Colony Correctional Center",
+    "Souza-Baranowski Correctional Center"
+  ]
+}

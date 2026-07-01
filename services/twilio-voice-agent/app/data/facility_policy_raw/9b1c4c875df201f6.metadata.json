@@ -1,0 +1,20 @@
+{
+  "url": "https://mn.gov/doc/family-visitor/contact-and-general-information/how-send-mail/",
+  "status": "200",
+  "content_type": "text/html;charset=UTF-8",
+  "fetched_at": "2026-06-26T07:43:28.976063+00:00",
+  "text_length": 5623,
+  "error": null,
+  "source_facilities": [
+    "Fairbault Correctional Facility",
+    "Lino Lakes Correctional Facility",
+    "Oak Park Heights Correctional Facility",
+    "Red Wing Correctional Facility",
+    "Rush City Correctional Facility",
+    "Shakopee Correctional Facility",
+    "St. Cloud Correctional Facility",
+    "Stillwater Correctional Facility",
+    "Togo Correctional Facility",
+    "Willow River/Moose Lake Correctional Facility"
+  ]
+}

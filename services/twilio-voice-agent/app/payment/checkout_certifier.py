@@ -134,7 +134,7 @@ def validate_checkout_payload(
             )
 
     if session is not None:
-        cart_check = require_confirmed_cart(session)
+        cart_check = require_confirmed_cart(session, checkout_items=items)
         if not cart_check.allowed:
             return CheckoutCertificationResult(
                 success=False,

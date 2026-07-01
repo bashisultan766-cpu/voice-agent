@@ -1,0 +1,448 @@
+Facility Name,Facility Type,Inmate Sex,State,City,ZIP Code,Physical Address,Inmate Mailing Address,Facility Phone Number,Website URL,Facility Mail Policy Link,Facility Contact Name / Phone,Security Level,Population Size,Vendor Required,Approved Vendors,Vendor Approval Status,Books Allowed,Paperback Allowed,Hardcover Allowed,Single Magazine Allowed,Magazines Allowed,Newspapers Allowed,MailCall Newspapers Allowed,Tattoo Books Allowed,Urban Content Allowed,Restrictions,Sexually Explicit Content Allowed,Adult Magazines Allowed,Other,Must Ship Direct from Publisher,Used Books Allowed,Max Books Per Package / Shipment,Max Size of Publications Restriction,Special Notes on Packaging,Common Rejection Reasons,Strict Facility,Other,Mailroom Contact Name,Mailroom Phone,Mailroom Email,Last Updated Date,Source (Website/Phone/Other),Confidence Level,Internal Notes
+FPC Alderson,Federal,female,West Virginia,ALDERSON,24910,"GLEN RAY RD. BOX A ALDERSON, WV 24910","GLEN RAY RD. BOX A ALDERSON, WV 24910",304-445-3300,https://www.bop.gov/locations/institutions/ald/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,506,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Aliceville",Federal,female,Alabama,ALICEVILLE,35442,"11070 HIGHWAY 14
+ALICEVILLE, AL   35442","P.O.BOX 4000
+ALICEVILLE, AL   35442",	205-373-5000,https://www.bop.gov/locations/institutions/ali/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,"1,054",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Aliceville Satellite Camp",Federal,female,Alabama,ALICEVILLE,35442,"""11070 HIGHWAY 14
+ALICEVILLE, AL   35442""","P.O. BOX 487
+ALICEVILLE, AL   35442","""	205-373-5000""",https://www.bop.gov/locations/institutions/ali/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,107,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Allenwood Low",Federal,male,Pennsylvania,ALLENWOOD,17810,"RT 15,2 MILES N OF ALLENWOOD
+ALLENWOOD, PA   17810","P.O. BOX 1000
+WHITE DEER, PA   17887",570-547-1990,https://www.bop.gov/locations/institutions/alf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,"1,045",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Allenwood Medium",Federal,male,Pennsylvania,WHITE DEER,17810,"RT 15, 2 MI N OF ALLENWOOD
+WHITE DEER, PA   17810","P.O. BOX 2000
+WHITE DEER, PA   17887",570-547-7950,https://www.bop.gov/locations/institutions/alm/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,"1,076",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"USP Allenwood",Federal,male,Pennsylvania,ALLENWOOD,17810,"RT 15,2 MILES N OF ALLENWOOD
+ALLENWOOD, PA   17810","P.O. BOX 3000
+WHITE DEER, PA   17887",	570-547-0963,https://www.bop.gov/locations/institutions/alp/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,350,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Ashland",Federal,male,Kentucky,ASHLAND,41105,"ST. ROUTE 716
+ASHLAND, KY   41105","P.O. BOX 6001
+ASHLAND, KY   41105",606-928-6414,https://www.bop.gov/locations/institutions/ash/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,"1,192",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Ashland Satellite Camp",Federal,male,Kentucky,ASHLAND,41105,"""ST. ROUTE 716
+ASHLAND, KY   41105""","P.O. BOX 6001
+ASHLAND, KY   41105",606-928-6414,https://www.bop.gov/locations/institutions/ash/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,272,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Atlanta",Federal,male,Georgia,ATLANTA,30315,"601 MCDONOUGH BLVD SE
+ATLANTA, GA   30315","P.O. BOX 150160
+ATLANTA, GA   30315",404-635-5100,https://www.bop.gov/locations/institutions/atl/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,"1,897",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"USP Atwater",Federal,male,California,ATWATER,95301,"1 FEDERAL WAY
+ATWATER, CA   95301","P.O. BOX 019001
+ATWATER, CA   95301",209-386-0257,https://www.bop.gov/locations/institutions/atw/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,"1,279",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Bastrop",Federal,male,Texas,BASTROP,78602,"1341 HIGHWAY 95 NORTH
+BASTROP, TX   78602","P.O. BOX 1010
+BASTROP, TX   78602",512-321-3903,https://www.bop.gov/locations/institutions/bas/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,"1,023",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Bastrop Satellite Camp",Federal,male,Texas,BASTROP,78602,"1341 HIGHWAY 95 NORTH
+BASTROP, TX   78602","P.O. BOX 629
+BASTROP, TX   78602",512-321-3903,https://www.bop.gov/locations/institutions/bas/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,106,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Beaumont Low,Federal,male,Texas,BEAUMONT,77705,"5560 KNAUTH ROAD
+BEAUMONT, TX   77705","P.O. BOX 26020
+BEAUMONT, TX   77720",409-727-8172,https://www.bop.gov/locations/institutions/bml/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,2139,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Beaumont Medium,Federal,male,Texas,BEAUMONT,77705,"5830 KNAUTH ROAD
+BEAUMONT, TX   77705","P.O. BOX 26040
+BEAUMONT, TX   77720",	409-727-0101,https://www.bop.gov/locations/institutions/bmm/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1080,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Beckley,Federal,male,West Virginia,BEAVER,25813,"1600 INDUSTRIAL ROAD
+BEAVER, WV   25813","P.O. BOX 350
+BEAVER, WV   25813",304-252-9758,https://www.bop.gov/locations/institutions/bec/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1489,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Beckley (Satellite Camp),Federal,male,West Virginia,BEAVER,25813,"1600 INDUSTRIAL ROAD
+BEAVER, WV   25813","P.O. BOX 350
+BEAVER, WV   25813","304-252-9758",https://www.bop.gov/locations/institutions/bec/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,192,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Beaumont,Federal,male,Texas,BEAMOUNT,77705,"6200 KNAUTH ROAD
+BEAUMONT, TX   77705","P. O. BOX 26030
+BEAUMONT, TX   77720",409-727-8188,https://www.bop.gov/locations/institutions/bmp/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1195,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Bennettsville,Federal,male,South Carolina ,BENNETTSVILLE,29512,"696 MUCKERMAN ROAD
+BENNETTSVILLE, SC   29512","P.O. BOX 52020
+BENNETTSVILLE, SC   29512",843-454-8200,https://www.bop.gov/locations/institutions/ben/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1531,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Berlin,Federal,male,North Hampshire,BERLIN,/03570,"1 SUCCESS LOOP ROAD
+BERLIN, NH   03570","P.O. BOX 9000
+BERLIN, NH   03570",603-342-4000,https://www.bop.gov/locations/institutions/ber/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,721,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Big Sandy,Federal,male,Kentucky,INEZ,41224,"1197 AIRPORT ROAD
+INEZ, KY   41224","P.O. BOX 2068
+INEZ, KY   41224",606-433-2400,"
+https://www.bop.gov/locations/institutions/bsy/",https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1286,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Big Spring,Federal,male,Texas,BIG SPRING,79720,"1900 SIMLER AVE
+BIG SPRING, TX   79720","1900 SIMLER AVE
+BIG SPRING, TX   79720",432-466-2300,https://www.bop.gov/locations/institutions/big/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,601,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI  Butner Low,Federal,male,North Carolina,BUTNER,27509,"OLD NC HWY 75
+BUTNER, NC   27509","P.O. BOX 999
+BUTNER, NC   27509",919-575-5000,https://www.bop.gov/locations/institutions/buf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,983,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Butner Satellite Camp,Federal,male,North Carolina,BUTNER,27509,"OLD NC HWY 75
+BUTNER, NC   27509","P.O. BOX 1000
+BUTNER, NC   27509",919-575-5000,https://www.bop.gov/locations/institutions/buf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,983,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FPC Bryan,Federal,female,Texas,BRYAN,77803,"1100 URSULINE AVENUE
+BRYAN, TX   77803","P.O. BOX 2149
+BRYAN, TX   77805",	979-823-1879,https://www.bop.gov/locations/institutions/bry/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,629,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Butner Medium 1,Federal,male,North Carolina,BUTNER,27509,"OLD NC HWY 75
+BUTNER, NC   27509","P.O. BOX 1000
+BUTNER, NC   27509",	919-575-4541,"
+https://www.bop.gov/locations/institutions/but/",https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,805,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Butner Medium II,Federal,male,North Carolina,BUTNER,27509,"OLD NC HWY 75
+BUTNER, NC   27509","P.O. BOX 1500
+BUTNER, NC   27509",919-575-8000,https://www.bop.gov/locations/institutions/btf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1571,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FMC Butner,Federal,male,North Carolina,BUTNER,27509,"OLD N. CAROLINA HWY 75
+BUTNER, NC   27509","P.O. BOX 1600
+BUTNER, NC   27509",919-575-3900,https://www.bop.gov/locations/institutions/buh/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Administrative,838,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Canaan,Federal,male,Pennsylvania,WAYMART,18472,"3057 ERIC J. WILLIAMS
+MEMORIAL DRIVE
+WAYMART, PA   18472","P.O. BOX 300
+WAYMART, PA   18472
+",570-488-8000,https://www.bop.gov/locations/institutions/caa/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1431,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Canaan Satellite Camp,Federal,male,Pennsylvania ,WAYMART,18472,"3057 ERIC J. WILLIAMS
+MEMORIAL DRIVE
+WAYMART, PA   18472","P.O. BOX 200
+WAYMART, PA   18472",570-488-8000,https://www.bop.gov/locations/institutions/caa/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,92,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FMC Carswell,Federal,female,Texas,FORT WORTH,76114,"NAVAL AIR STATION
+1200 MEANDERING ROAD
+FORT WORTH, TX   76114","P.O. BOX 27137
+FORT WORTH, TX   76127",	817-782-4000,https://www.bop.gov/locations/institutions/crw/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,1150,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MCC Chicago,Federal,Both,Illinois ,CHICAGO,60605,"71 WEST VAN BUREN STREET
+CHICAGO, IL   60605","71 WEST VAN BUREN STREET
+CHICAGO, IL   60605",312-322-0567,https://www.bop.gov/locations/institutions/ccc/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,488,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Coleman II,Federal,male,Florida,SUMTERVILLE,33521,"846 NE 54TH TERRACE
+SUMTERVILLE, FL   33521","P.O. BOX 1034
+COLEMAN, FL   33521",352-689-7000,https://www.bop.gov/locations/institutions/clp/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1040,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Coleman I,Federal,male,Florida,SUMTERVILLE,33521,"846 NE 54TH TERRACE
+SUMTERVILLE, FL   33521","P.O. BOX 1033
+COLEMAN, FL   33521",352-689-6000,https://www.bop.gov/locations/institutions/cop/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1351,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Coleman Low,Federal,male,Florida,SUMTERVILLE,33521,"846 NE 54TH TERRACE
+SUMTERVILLE, FL   33521","P.O. BOX 1031
+COLEMAN, FL   33521",352-689-4000,https://www.bop.gov/locations/institutions/col/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1588,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Coleman Satellite Camp,Federal,male,Florida,SUMTERVILLE,33521,"846 NE 54TH TERRACE
+SUMTERVILLE, FL   33521","P.O. BOX 1027
+COLEMAN, FL   33521",352-689-4000,https://www.bop.gov/locations/institutions/col/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,493,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Coleman Medium,Federal,male,Florida,SUMTERVILLE,33521,"846 NE 54TH TERRACE
+SUMTERVILLE, FL   33521","P.O. BOX 1032
+COLEMAN, FL   33521",352-689-5000,https://www.bop.gov/locations/institutions/com/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1534,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Cumberland,Federal,male,Maryland,CUMBERLAND,21502,"14601 BURBRIDGE RD SE
+CUMBERLAND, MD   21502","P.O. BOX 1000
+CUMBERLAND, MD   21501",301-784-1000,https://www.bop.gov/locations/institutions/cum/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1186,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Danbury,Federal,Both,Connecticut,DANBURY,/06811,"33 1/2 PEMBROKE STATION
+ROUTE 37
+DANBURY, CT   06811","ROUTE 37
+DANBURY, CT   06811",203-743-6471,https://www.bop.gov/locations/institutions/dan/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1210,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FMC Devens,Federal,male,Massachusetts ,AYER,/01432,"42 PATTON ROAD
+AYER, MA   01432","P.O. BOX 879
+AYER, MA   01432",978-796-1000,https://www.bop.gov/locations/institutions/dev/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,1184,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Dublin,Federal,female,California,DUBLIN,94568,"5701 8TH ST - CAMP PARKS
+DUBLIN, CA  94568",SUSPENDED,925-833-7500,https://www.bop.gov/locations/institutions/dub/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FPC Duluth,Federal,male,Minnesota ,DULUTH,55811,"4464 RALSTON DRIVE
+DULUTH, MN   55811","P.O. BOX 1000
+DULUTH, MN   55814",	218-722-8634,https://www.bop.gov/locations/institutions/dth/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,180,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Edgefield,Federal,male,South Carolina ,EDGEFIELD,29824,"501 GARY HILL ROAD
+EDGEFIELD, SC   29824","P.O. BOX 725
+EDGEFIELD, SC   29824",803-637-1500,https://www.bop.gov/locations/institutions/edg/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1674,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI El Reno,Federal,male,Oklahoma ,EL RENO,73036,"4205 HIGHWAY 66 WEST
+EL RENO, OK   73036","P.O. BOX 1500
+EL RENO, OK   73036",405-262-4875,https://www.bop.gov/locations/institutions/ere/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1125,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Elkton,Federal,male,Ohio,LISBON,44432,"8730 SCROGGS ROAD
+LISBON, OH   44432","P.O. BOX 10
+LISBON, OH   44432",330-420-6200,https://www.bop.gov/locations/institutions/elk/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,2037,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Englewood,Federal,male,Colorado,LITTLETON,80123,"9595 WEST QUINCY AVENUE
+LITTLETON, CO   80123","9595 WEST QUINCY AVENUE
+LITTLETON, CO   80123",303-763-4300,https://www.bop.gov/locations/institutions/eng/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,963,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Estill",Federal,female,South Carolina ,ESTILL,29918,"100 PRISON ROAD
+ESTILL, SC   29918","P.O. BOX 699
+ESTILL, SC   29918",803-625-4607,https://www.bop.gov/locations/institutions/est/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,143,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Fairton,Federal,male,New Jersey,FAIRTON,/08320,"655 FAIRTON-MILLVILLE ROAD
+FAIRTON, NJ   08320","P.O. BOX 420
+FAIRTON, NJ   08320",856-453-1177,https://www.bop.gov/locations/institutions/fai/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,738,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Florence ADMAX,Federal,male,Colorado,FLORENCE,81226,"5880 HWY 67 SOUTH
+FLORENCE, CO   81226","PO BOX 8500
+FLORENCE, CO   81226",719-784-9464,https://www.bop.gov/locations/institutions/flm/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,409,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Florence - High,Federal,male,Colorado,FLORENCE,81226,"5880 HWY 67 S
+FLORENCE, CO   81226","P.O. BOX 7000
+FLORENCE, CO   81226",719-784-9454,https://www.bop.gov/locations/institutions/flp/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,794,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Florence,Federal,male,Colorado,FLORENCE,81226,"5880 HWY 67 SOUTH
+FLORENCE, CO   81226","PO BOX 6000
+FLORENCE, CO   81226",719-784-9100,https://www.bop.gov/locations/institutions/flf//,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,994,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Florence Satellite Camp,Federal,male,Colorado,FLORENCE,81226,"5880 HWY 67 SOUTH
+FLORENCE, CO   81226","PO BOX 5000
+FLORENCE, CO   81226",719-784-9100,https://www.bop.gov/locations/institutions/flf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,316,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Forrest City Low,Federal,male,Arkansas ,FORREST CITY,72335,"1400 DALE BUMPERS ROAD
+FORREST CITY, AR   72335","P.O. BOX 9000
+FORREST CITY, AR   72336",870-630-6000,https://www.bop.gov/locations/institutions/for/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1645,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Forrest City Satellite Camp,Federal,male,Arkansas ,FORREST CITY,72335,"1400 DALE BUMPERS ROAD
+FORREST CITY, AR   72335","P.O. BOX 8000
+FORREST CITY, AR   72336",870-630-6000,https://www.bop.gov/locations/institutions/for/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,254,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Forrest City Medium,Federal,male,Arkansas ,FORREST CITY,72335,"1400 DALE BUMPERS ROAD
+FORREST CITY, AR   72335","PO BOX 3000
+FORREST CITY, AR   72336",870-494-4200,https://www.bop.gov/locations/institutions/fom/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1641,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Fort Dix,Federal,male,New Jersey,JOINT BASE MDL, /08640,"5756 HARTFORD &
+POINTVILLE RD
+JOINT BASE MDL, NJ   08640","P.O. BOX 2000
+JOINT BASE MDL, NJ   08640",609-723-1100,https://www.bop.gov/locations/institutions/ftd/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,4044,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FMC Fort Worth,Federal,male,Texas,FORT WORTH,76119,"3150 HORTON ROAD
+FORT WORTH, TX   76119","P.O. BOX 15330
+FORT WORTH, TX   76119",817-534-8400,https://www.bop.gov/locations/institutions/ftw/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,1543,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Gilmer,Federal,male,West Virginia,GLENVILLE,26351,"201 FCI LANE
+GLENVILLE, WV   26351","P.O. BOX 6000
+GLENVILLE, WV   26351",304-626-2500,https://www.bop.gov/locations/institutions/gil/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1192,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Gilmer Satellite Camp,Federal,male,West Virginia,GLENVILLE,26351,"201 FCI LANE
+GLENVILLE, WV   26351","P.O. BOX 7000
+GLENVILLE, WV   26351",304-626-2500,https://www.bop.gov/locations/institutions/gil/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,75,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Greenville,Federal,Both,Illinois ,GREENVILLE,62246,"100 U.S. HWY 40
+GREENVILLE, IL   62246","P.O. BOX 5000
+GREENVILLE, IL   62246",618-664-6200,https://www.bop.gov/locations/institutions/gre/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1142,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Greenville Satellite Camp,Federal,Both,Illinois ,GREENVILLE,62246,"100 U.S. HWY 40
+GREENVILLE, IL   62246","P.O. BOX 6000
+GREENVILLE, IL   62246",618-664-6200,https://www.bop.gov/locations/institutions/gre/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,124,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MDC Guaynabo,Federal,Both,Puerto Rico,GUAYNABO,/00965,"652 CARRETERA 28
+GUAYNABO, PR   00965","P.O. BOX 2005
+CATANO, RQ   00963",787-749-4480,https://www.bop.gov/locations/institutions/gua/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,1080,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Hazelton,Federal,Both,West Virginia,BRUCETON MILLS,26525,"1640 SKY VIEW DRIVE
+BRUCETON MILLS, WV   26525","P.O. BOX 5000
+BRUCETON MILLS, WV   26525",304-379-1500,https://www.bop.gov/locations/institutions/haf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,"1,439",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Hazelton Satellite Camp,Federal,Both,West Virginia,BRUCETON MILLS,26525,"1640 SKY VIEW DRIVE
+BRUCETON MILLS, WV   26525","PO BOX 3000
+BRUCETON MILLS, WV   26525",304-379-1500,https://www.bop.gov/locations/institutions/haf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,511,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Herlong,Federal,male,California,HERLONG,96113,"741-925 ACCESS ROAD A-25
+HERLONG, CA   96113","P.O. BOX 800
+HERLONG, CA   96113",530-827-8000,https://www.bop.gov/locations/institutions/her/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,875,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FDC Honolulu,Federal,Both,Hawaii,HONOLULU,96819,"351 ELLIOTT ST
+HONOLULU, HI   96819","P.O. BOX 30080
+HONOLULU, HI   96820",808-838-4200,https://www.bop.gov/locations/institutions/hon/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,298,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FDC Houston,Federal,Both,Texas,HOUSTON,77002,"1200 TEXAS AVENUE
+HOUSTON, TX   77002","P.O. BOX 526255
+HOUSTON, TX   77052",713-221-5400,https://www.bop.gov/locations/institutions/hou/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,870,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Jesup,Federal,male,Georgia,JESUP,31599,"2600 HIGHWAY 301 SOUTH
+JESUP, GA   31599","2680 301 SOUTH
+JESUP, GA   31599",912-427-0870,https://www.bop.gov/locations/institutions/jes/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1669,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI La Tuna,Federal,male,Texas,ANTHONY,79821,"LA TUNA FCI/SCP
+8500 DONIPHAN ROAD
+ANTHONY, TX   79821","P.O. BOX 3000
+ANTHONY, NM   88021",915-791-9000,https://www.bop.gov/locations/institutions/lat/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,540,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI La Tuna Satellite Camp,Federal,male,Texas,ANTHONY,79821,"LA TUNA FCI/SCP
+8500 DONIPHAN ROAD
+ANTHONY, TX   79821","P.O. BOX 8000
+ANTHONY, NM   88021",915-791-9000,https://www.bop.gov/locations/institutions/lat/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,150,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Leavenworth,Federal,male,Kansas ,LEAVENWORTH,66048,"1300 METROPOLITAN
+LEAVENWORTH, KS   66048","P.O. BOX 1000
+LEAVENWORTH, KS   66048",913-682-8700,https://www.bop.gov/locations/institutions/lvn/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1608,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Lee,Federal,male,Virginia ,PENNINGTON GAP,24277,"LEE COUNTY INDUSTRIAL PARK
+HICKORY FLATS ROAD
+PENNINGTON GAP, VA   24277","P.O. BOX 305
+JONESVILLE, VA   24263",276-546-0150,https://www.bop.gov/locations/institutions/lee/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1133,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Lee Satellite Camp ,Federal,male,Virginia ,PENNINGTON GAP,24277,"LEE COUNTY INDUSTRIAL PARK
+HICKORY FLATS ROAD
+PENNINGTON GAP, VA   24277","P.O. BOX 644
+JONESVILLE, VA   24263",276-546-0150,https://www.bop.gov/locations/institutions/lee/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,61,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Lewisburg,Federal,male,Pennsylvania ,LEWISBURG,17837,"2400 ROBERT F. MILLER DRIVE
+LEWISBURG, PA   17837","P.O. BOX 1000
+LEWISBURG, PA   17837",570-523-1251,https://www.bop.gov/locations/institutions/lew/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1059,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FMC Lexington,Federal,Both,kentucky,LEXINGTON,40511,"3301 LEESTOWN ROAD
+LEXINGTON, KY   40511","P.O. BOX 14500
+LEXINGTON, KY   40512",859-255-6812,https://www.bop.gov/locations/institutions/lex/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,1075,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FMC Lexington Satellite Camp,Federal,Both,Kentucky,LEXINGTON,40511,"3301 LEESTOWN ROAD
+LEXINGTON, KY   40511","P.O. BOX 14525
+LEXINGTON, KY   40512",859-255-6812,https://www.bop.gov/locations/institutions/lex/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,229,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Lompoc I,Federal,male,California,LOMPOC,93436,"3600 GUARD ROAD
+LOMPOC, CA   93436","3600 GUARD ROAD
+LOMPOC, CA   93436",805-736-4154,https://www.bop.gov/locations/institutions/lof/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,890,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Lompoc II,Federal,male,California,LOMPOC,93436,"3901 KLEIN BLVD
+LOMPOC, CA   93436","3901 KLEIN BLVD
+LOMPOC, CA   93436",805-735-2771,https://www.bop.gov/locations/institutions/lom/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1924,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Lompoc II Satellite Camp,Federal,male,California,LOMPOC,93436,"3901 KLEIN BLVD
+LOMPOC, CA   93436","3705 WEST FARM ROAD
+LOMPOC, CA   93436",805-735-2771,https://www.bop.gov/locations/institutions/lom/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,203,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Loretto,Federal,male,Pennsylvania ,CRESSON,15940,"772 SAINT JOSEPH ST.
+LORETTO, PA   15940","P.O. BOX 1000
+CRESSON, PA   16630",814-472-4140,https://www.bop.gov/locations/institutions/lor/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,768,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MDC Los Angeles,Federal,Both,California,LOS ANGELES,90012,"535 N ALAMEDA STREET
+LOS ANGELES, CA   90012","P.O. BOX 531500
+LOS ANGELES, CA   90053",	213-485-0439,https://www.bop.gov/locations/institutions/los/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,952,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Manchester,Federal,male,Kentucky,MANCHESTER,40962,"805 FOX HOLLOW ROAD
+MANCHESTER, KY   40962","P.O. BOX 4000
+MANCHESTER, KY   40962",606-598-1900,https://www.bop.gov/locations/institutions/man/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1196,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Marianna,Federal,Both,Florida,MARIANNA,32446,"3625 FCI ROAD
+MARIANNA, FL   32446","P.O. BOX 7007
+MARIANNA, FL   32447",850-526-2313,https://www.bop.gov/locations/institutions/mna/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,854,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Marianna Satellite Camp,Federal,Both,Florida,MARIANNA,32446,"3625 FCI ROAD
+MARIANNA, FL   32446","P.O. BOX 7006
+MARIANNA, FL   32447",850-526-2313,https://www.bop.gov/locations/institutions/mna/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,225,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Marion,Federal,male,Illinois ,MARION,62959,"4500 PRISON ROAD
+MARION, IL   62959","P.O. BOX 1000
+MARION, IL   62959",618-964-1441,https://www.bop.gov/locations/institutions/mar/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1218,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP McCreary,Federal,male,Kentucky,PINE KNOT,42635,"330 FEDERAL WAY
+PINE KNOT, KY   42635","P.O. BOX 3000
+PINE KNOT, KY   42635",	606-354-7000,https://www.bop.gov/locations/institutions/mcr//,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1478,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI McDowell,Federal,male,West Virginia,WELCH,24801,"101 FEDERAL DRIVE
+WELCH, WV   24801","P.O.BOX 1009
+WELCH, WV   24801",304-436-7300,https://www.bop.gov/locations/institutions/mcd/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1549,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI McKean,Federal,male,Pennsylvania ,LEWIS RUN,16738,"6975 ROUTE 59
+LEWIS RUN, PA   16738","P.O. BOX 8000
+BRADFORD, PA   16701",814-362-8900,https://www.bop.gov/locations/institutions/mck/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1034,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Memphis,Federal,male,Tennessee ,MEMPHIS,38134,"1101 JOHN A DENIE ROAD
+MEMPHIS, TN   38134","P.O, BOX 34550
+MEMPHIS, TN   38184
+",901-372-2269,https://www.bop.gov/locations/institutions/mem/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1030,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Memphis Satellite Camp,Federal,male,Tennessee ,MEMPHIS,38134,"1101 JOHN A DENIE ROAD
+MEMPHIS, TN   38134","P.O. BOX 2000
+MILLINGTON, TN   38083",901-372-2269,https://www.bop.gov/locations/institutions/mem/,https://www.bop.gov/policy/progstat/5266_011.pdf,,NIl,NA,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Mendota,Federal,male,California,MENDOTA,93640,"33500 WEST CALIFORNIA AVENUE
+MENDOTA, CA   93640","P.O. BOX 9
+MENDOTA, CA   93640",559-274-4000,https://www.bop.gov/locations/institutions/men/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,860,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Miami,Federal,male,Florida,MIAMI,33177,"15801 S.W. 137TH AVENUE
+MIAMI, FL   33177","P.O. BOX 779800
+MIAMI, FL   33177",305-259-2100,https://www.bop.gov/locations/institutions/mia/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1002,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FDC Miami,Federal,Both,Florida,MIAMI,33132,"33 NE 4TH STREET
+MIAMI, FL   33132","P.O. BOX 019120
+MIAMI, FL   33101",	305-577-0010,https://www.bop.gov/locations/institutions/mim/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,1428,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Milan,Federal,male,Michigan ,MILAN,48160,"4004 EAST ARKONA ROAD
+MILAN, MI   48160","P.O. BOX 1000
+MILAN, MI   48160",734-439-1511,https://www.bop.gov/locations/institutions/mil/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1524,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FPC Montgomery,Federal,male,Alabama,MONTGOMERY,36112,"MAXWELL AIR FORCE BASE
+MONTGOMERY, AL   36112","MAXWELL AIR FORCE BASE
+MONTGOMERY, AL   36112",334-293-2100,https://www.bop.gov/locations/institutions/mon/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,700,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FPC Morgantown,Federal,male,West Virgina,MORGANTOWN,26501,"446 GREENBAG ROAD, ROUTE 857
+MORGANTOWN, WV   26501","P.O. BOX 1000
+MORGANTOWN, WV   26507",	304-296-4416,https://www.bop.gov/locations/institutions/mrg/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,144,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MCC New York,Federal,male,New York,NEW YORK,10007,"150 PARK ROW
+NEW YORK, NY  10007",SUSPENDED,646-836-6300,https://www.bop.gov/locations/institutions/nym/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Oakdale I,Federal,male,Louisiana ,OAKDALE,71463,"1507 EAST WHATLEY ROAD
+OAKDALE, LA   71463","P.O Box 22800
+Lincoln NE 68542",318-335-4070,https://www.bop.gov/locations/institutions/oak/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,929,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Oakdale II,Federal,male,Louisiana ,OAKDALE,71463,"2105 EAST WHATLEY ROAD
+OAKDALE, LA   71463","P.O. BOX 5010
+OAKDALE, LA   71463",318-335-4466,https://www.bop.gov/locations/institutions/oad/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1129,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FTC Oklahoma City,Federal,Both,Oklahoma ,OKLAHOMA CITY,73169,"7410 S. MACARTHUR BLVD
+OKLAHOMA CITY, OK   73169","P.O. BOX 898801
+OKLAHOMA CITY, OK   73189",405-682-4075,https://www.bop.gov/locations/institutions/okl/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,1304,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Otisville,Federal,male,New York,OTISVILLE,10963,"TWO MILE DRIVE
+OTISVILLE, NY   10963","P.O. BOX 1000
+OTISVILLE, NY   10963",	845-386-6700,https://www.bop.gov/locations/institutions/otv/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,999,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Oxford,Federal,male,Wisconsin,OXFORD,53952,"COUNTY ROAD G & ELK AVENUE
+OXFORD, WI   53952","P.O. BOX 1000
+OXFORD, WI   53952",608-584-5511,https://www.bop.gov/locations/institutions/oxf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1164,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Pekin,Federal,Both,Illinois ,PEKIN,61554,"2600 S. SECOND ST.
+PEKIN, IL   61554","P.O. BOX 5000
+PEKIN, IL   61555",309-346-8588,https://www.bop.gov/locations/institutions/pek/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1289,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FPC Pensacola,Federal,male,Florida,PENSACOLA,32509,"110 RABY AVE
+PENSACOLA, FL   32509","P.O. BOX 3949
+PENSACOLA, FL   32516",850-457-1911,https://www.bop.gov/locations/institutions/pen/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Petersburg Low,Federal,male,Virginia,HOPEWELL,23860,"1100 RIVER ROAD
+HOPEWELL, VA   23860","P.O. BOX 1000
+PETERSBURG, VA   23804",804-733-7881,https://www.bop.gov/locations/institutions/pet/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,590,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Petersburg Medium,Federal,male,Virginia,HOPEWELL,23860,"1060 RIVER ROAD
+HOPEWELL, VA   23860","P.O. BOX 1000
+PETERSBURG, VA   23804",804-504-7200,https://www.bop.gov/locations/institutions/pem/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1528,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FDC Philadelphia,Federal,Both,Pennyslvania,PHILADELPHIA,19106,"700 ARCH STREET
+PHILADELPHIA, PA   19106","P.O. BOX 562
+PHILADELPHIA, PA   19105",215-521-4000,https://www.bop.gov/locations/institutions/phl/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,851,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Phoenix,Federal,Both,Arizona,PHOENIX,85086,"37900 N 45TH AVE
+PHOENIX, AZ   85086","37910 N 45TH AVE
+PHOENIX, AZ   85086",623-465-9757,https://www.bop.gov/locations/institutions/phx/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,853,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Phoenix Satellite Camp,Federal,Both,Arizona,PHOENIX,85086,"37900 N 45TH AVE
+PHOENIX, AZ   85086","37930 N. 45TH AVE.
+PHOENIX, AZ   85086",623-465-9757,https://www.bop.gov/locations/institutions/phx/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,207,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Pollock,Federal,male,Louisiana ,POLLOCK,71467,"1000 AIRBASE ROAD
+POLLOCK, LA   71467","P.O. BOX 4050
+POLLOCK, LA   71467",318-765-4400,https://www.bop.gov/locations/institutions/pom/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1467,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Pollock Satellite Camp,Federal,male,Louisiana ,POLLOCK,71467,"1000 AIRBASE ROAD
+POLLOCK, LA   71467","P.O. BOX 2099
+POLLOCK, LA   71467",318-765-4400,https://www.bop.gov/locations/institutions/pom/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,214,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Pollock,Federal,male,Louisiana ,POLLOCK,71467,"1000 AIRBASE ROAD
+POLLOCK, LA   71467","P.O. BOX 2099
+POLLOCK, LA   71467",318-561-5300,https://www.bop.gov/locations/institutions/pol/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,882,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Ray Brook,Federal,male,New York,RAY BROOK,12977,"128 RAY BROOK ROAD
+RAY BROOK, NY   12977","P.O. BOX 900
+RAY BROOK, NY   12977",518-897-4000,https://www.bop.gov/locations/institutions/rbk/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,850,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FMC Rochester,Federal,male,Minnesota ,ROCHESTER,55904,"2110 EAST CENTER STREET
+ROCHESTER, MN   55904","P.O. BOX 4000
+ROCHESTER, MN   55903",	507-287-0674,https://www.bop.gov/locations/institutions/rch/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,816,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Safford,Federal,male,Arizona,SAFFORD,85546,"1529 WEST HIGHWAY 366
+SAFFORD, AZ   85546","P.O. BOX 9000
+SAFFORD, AZ   85548",928-428-6600,https://www.bop.gov/locations/institutions/saf/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,657,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MCC San Diego,Federal,Both,California,SAN DIEGO,92101,"808 UNION STREET
+SAN DIEGO, CA   92101","808 UNION STREET
+SAN DIEGO, CA   92101",619-232-4311,https://www.bop.gov/locations/institutions/sdc/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,594,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Sandstone,Federal,male,Minnesota ,SANDSTONE,55072,"2300 COUNTY RD 29
+SANDSTONE, MN   55072","P.O. BOX 1000
+SANDSTONE, MN   55072",320-245-2262,https://www.bop.gov/locations/institutions/sst/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1205,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Schuylkill,Federal,male,Pennyslvania,MINERSVILLE,17954,"INTERSTATE 81 & 901 W
+MINERSVILLE, PA   17954","P.O. BOX 759
+MINERSVILLE, PA   17954",570-544-7100,https://www.bop.gov/locations/institutions/sch/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,949,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Schuylkill Satellite Camp ,Federal,male,Pennyslvania,MINERSVILLE,17954,"INTERSTATE 81 & 901 W
+MINERSVILLE, PA   17954","P.O. BOX 670
+MINERSVILLE, PA   17954
+",570-544-7100,https://www.bop.gov/locations/institutions/sst/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,236,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Seagoville,Federal,male,Texas,SEAGOVILLE,75159,"2113 NORTH HWY 175
+SEAGOVILLE, TX   75159","P.O. BOX 9000
+SEAGOVILLE, TX   75159",972-287-2911,https://www.bop.gov/locations/institutions/sea/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1467,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FDC SeaTac,Federal,Both,Washington,SEATTLE,98198,"2425 SOUTH 200TH STREET
+SEATTLE, WA   98198","P.O. BOX 13900
+SEATTLE, WA   98198",206-870-5700,https://www.bop.gov/locations/institutions/set/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,705,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Sheridan,Federal,male,Oregon,SHERIDAN,97378,"27072 BALLSTON ROAD
+SHERIDAN, OR   97378","P.O. BOX 5000
+SHERIDAN, OR   97378",503-843-4442,https://www.bop.gov/locations/institutions/she/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,"1,259",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Sheridan Satellite Camp,Federal,male,Oregon,SHERIDAN,97378,"27072 BALLSTON ROAD
+SHERIDAN, OR   97378","P.O. BOX 6000
+SHERIDAN, OR   97378",503-843-4442,https://www.bop.gov/locations/institutions/she/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,232,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MCFP Springfield,Federal,male,Missouri,SPRINGFIELD,65807,"1900 W. SUNSHINE ST
+SPRINGFIELD, MO   65807","P.O. BOX 4000
+SPRINGFIELD, MO   65801",417-862-7041,https://www.bop.gov/locations/institutions/spg/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Nil,1074,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Talladega,Federal,male,Alabama,TALLADEGA,35160,"565 EAST RENFROE ROAD
+TALLADEGA, AL   35160","P.M.B 1000
+TALLADEGA, AL   35160",256-315-4100,https://www.bop.gov/locations/institutions/tdg/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,982,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Talladega Satellite Camp,Federal,male,Alabama,TALLADEGA,35160,"565 EAST RENFROE ROAD
+TALLADEGA, AL   35160","P.O. BOX 2000
+TALLADEGA, AL   35160",256-315-4100,https://www.bop.gov/locations/institutions/tdg/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,289,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Tallahassee,Federal,Both,Florida,TALLAHASSEE,32301,"501 CAPITAL CIRCLE, NE
+TALLAHASSEE, FL   32301","P.O. BOX 5000
+TALLAHASSEE, FL   32314",850-878-2173,https://www.bop.gov/locations/institutions/tal/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1253,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Terminal Island,Federal,male,California,SAN PEDRO,90731,"1299 SEASIDE AVENUE
+SAN PEDRO, CA   90731","PO BOX 3007
+SAN PEDRO, CA   90733",310-831-8961,https://www.bop.gov/locations/institutions/trm/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Terre Haute,Federal,male,Indiana,TERRE HAUTE,47808,"4200 BUREAU ROAD NORTH
+TERRE HAUTE, IN   47808","P.O. BOX 33
+TERRE HAUTE, IN   47808",812-238-1531,https://www.bop.gov/locations/institutions/tha/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1365,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Terre Haute,Federal,male,Indiana,TERRE HAUTE,47802,"4700 BUREAU ROAD SOUTH
+TERRE HAUTE, IN   47802","P.O. BOX 33
+TERRE HAUTE, IN   47808",812-244-4400,https://www.bop.gov/locations/institutions/thp/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1191,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Texarkana,Federal,male,Texas,TEXARKANA,75501,"4001 LEOPARD DRIVE
+TEXARKANA, TX   75501","P.O. BOX 7000
+TEXARKANA, TX   75505",	903-838-4587,https://www.bop.gov/locations/institutions/tex/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1119,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ FCI Texarkana Satellite Camp,Federal,male,Texas,TEXARKANA,75501,"4001 LEOPARD DRIVE
+TEXARKANA, TX   75501","P.O. BOX 9300
+TEXARKANA, TX   75505",903-838-4587,https://www.bop.gov/locations/institutions/tex/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,239,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Thomson,Federal,male,Illinois ,THOMSON,61285,"1100 ONE MILE ROAD
+THOMSON, IL   61285","PO BOX 1002
+THOMSON, IL   61285",815-259-1000,https://www.bop.gov/locations/institutions/tom/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,2095,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Three Rivers,Federal,male,Texas,THREE RIVERS,78071,"US HIGHWAY 72 WEST
+THREE RIVERS, TX   78071","P.O. BOX 4200
+THREE RIVERS, TX   78071",361-786-3576,https://www.bop.gov/locations/institutions/trv/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1210,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Tucson,Federal,Both,Arizona,TUCSON,85756,"8901 S. WILMOT ROAD
+TUCSON, AZ   85756","P.O. BOX 23811
+TUCSON, AZ   85734",520-574-7100,https://www.bop.gov/locations/institutions/tcn/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,422,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Tucson,Federal,male,Arizona,TUCSON,85756,"9300 SOUTH WILMOT ROAD
+TUCSON, AZ   85756","P.O. BOX 24550
+TUCSON, AZ   85734",520-663-5000,https://www.bop.gov/locations/institutions/tcp/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,991,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+ USP Tucson Satellite Camp,Federal,male,Arizona,TUCSON,85756,"9300 SOUTH WILMOT ROAD
+TUCSON, AZ   85756","P.O. BOX 24549
+TUCSON, AZ   85734",520-663-5000,https://www.bop.gov/locations/institutions/tcp/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,124,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"
+FCI Victorville Medium I",Federal,Both,California,VICTORVILLE,92394,"13777 AIR EXPRESSWAY BLVD
+VICTORVILLE, CA   92394","P.O. BOX 3725
+ADELANTO, CA   92301",760-246-2400,https://www.bop.gov/locations/institutions/vim/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1517,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Victorville Medium II,Federal,male,California,VICTORVILLE,92394,"13777 AIR EXPRESSWAY BLVD
+VICTORVILLE, CA   92394","PO BOX 3850
+ADELANTO, CA   92301",760-530-5700,https://www.bop.gov/locations/institutions/vvm/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1279,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+USP Victorville,Federal,male,California,VICTORVILLE,92394,"13777 AIR EXPRESSWAY BLVD
+VICTORVILLE, CA   92394","P.O. BOX 3900
+ADELANTO, CA   92301",760-530-5000,https://www.bop.gov/locations/institutions/vip/,https://www.bop.gov/policy/progstat/5266_011.pdf,,High,1073,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Waseca,Federal,female,Minnesota ,WASECA,56093,"1000 UNIVERSITY DR, SW
+WASECA, MN   56093","P.O. BOX 1731
+WASECA, MN   56093",507-835-8972,https://www.bop.gov/locations/institutions/was/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,820,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+"FCI Williamsburg
+",Federal,male,South Carolina ,SALTERS,29590,"8301 HIGHWAY 521
+SALTERS, SC   29590","P.O. BOX 340
+SALTERS, SC   29590",843-387-9400,https://www.bop.gov/locations/institutions/wil/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1496,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FPC Yankton,Federal,male,South Dakota,YANKTON,57078,"1016 DOUGLAS AVENUE
+YANKTON, SD   57078","P.O. BOX 700
+YANKTON, SD   57078",605-665-3262,https://www.bop.gov/locations/institutions/yan/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Minimum,481,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Yazoo City Low II,Federal,male,Mississippi ,YAZOO CITY,39194,"2225 HALEY BARBOUR PARKWAY
+YAZOO CITY, MS   39194","P.O. BOX 5000
+YAZOO CITY, MS   39194",	662-716-1020,https://www.bop.gov/locations/institutions/yam/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1537,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Yazoo City Low II,Federal,male,Mississippi ,YAZOO CITY,39194,"2225 HALEY BARBOUR PARKWAY
+YAZOO CITY, MS   39194","P.O. BOX 5000
+YAZOO CITY, MS   39194",662-751-4800,http://bop.gov/locations/institutions/yaz/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Low,1692,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FCI Yazoo City Medium,Federal,male,Mississippi ,YAZOO CITY,39194,"2225 HALEY BARBOUR PKWY
+YAZOO CITY, MS   39194","P.O. BOX 5000
+YAZOO CITY, MS   39194",662-716-1241,https://www.bop.gov/locations/institutions/yap/,https://www.bop.gov/policy/progstat/5266_011.pdf,,Medium,1453,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

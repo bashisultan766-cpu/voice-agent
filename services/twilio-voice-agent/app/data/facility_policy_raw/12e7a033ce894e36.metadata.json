@@ -1,0 +1,12 @@
+{
+  "url": "https://www.baltimorecountymd.gov/departments/sheriff",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T08:52:53.429017+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Baltimore County Sheriff's Office",
+    "Baltimore County Sheriff"
+  ]
+}

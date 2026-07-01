@@ -84,7 +84,10 @@ async def test_search_products_returns_cache_hit():
     with patch("app.tools.shopify_tools.shopify_cache_get", AsyncMock(return_value=cached)):
         from app.tools.shopify_tools import search_products
         result = await search_products("anything")
-    assert json.loads(result) == cached
+    data = json.loads(result)
+    assert data["results"] == cached["results"]
+    assert data["count"] == 1
+    assert data["not_found"] is False
 
 
 @pytest.mark.asyncio
@@ -167,7 +170,7 @@ async def test_lookup_order_unverified_omits_items():
 
     data = json.loads(result)
     assert data["found"] is True
-    assert "items" not in data  # restricted — unverified lookup
+    assert data.get("items")  # full details with order number only
 
 
 @pytest.mark.asyncio
@@ -254,15 +257,52 @@ async def test_create_checkout_link_empty_items():
 
 @pytest.mark.asyncio
 async def test_escalate_to_human_returns_safe_message():
+    from app.state.models import SessionState
     from app.tools.shopify_tools import escalate_to_human
+
+    session = SessionState(
+        session_id="sess_esc",
+        call_sid="CA_ESC",
+        from_number="+15550001111",
+        to_number="+15559999999",
+        caller_email="caller@example.com",
+    )
+    session.pending_not_found_escalation = {
+        "customer_email": "caller@example.com",
+        "email_confirmed": True,
+    }
+    with patch(
+        "app.agent_runtime.not_found_escalation_flow.send_support_handoff",
+        new_callable=AsyncMock,
+    ) as mock_send:
+        mock_send.return_value = json.dumps({
+            "success": True,
+            "customer_message": "I've forwarded your request to our support team.",
+        })
+        result = await escalate_to_human(
+            reason="caller requested human",
+            caller_phone="+15550001111",
+            summary="Caller asked about order #1234",
+            session=session,
+        )
+    data = json.loads(result)
+    assert data["escalated"] is True
+    assert "message" in data
+
+
+@pytest.mark.asyncio
+async def test_escalate_to_human_without_email_asks_contact():
+    from app.tools.shopify_tools import escalate_to_human
+
     result = await escalate_to_human(
         reason="caller requested human",
         caller_phone="+15550001111",
         summary="Caller asked about order #1234",
     )
     data = json.loads(result)
-    assert data["escalated"] is True
-    assert "message" in data
+    assert data["escalated"] is False
+    assert data.get("needs_contact_info") is True
+    assert "name and email" in data["message"].lower()
 
 
 @pytest.mark.asyncio

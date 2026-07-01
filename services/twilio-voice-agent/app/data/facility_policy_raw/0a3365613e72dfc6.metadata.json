@@ -1,0 +1,11 @@
+{
+  "url": "https://adacounty.id.gov/sheriff/",
+  "status": "403",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:22:06.561307+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Ada County Sheriff's Office"
+  ]
+}

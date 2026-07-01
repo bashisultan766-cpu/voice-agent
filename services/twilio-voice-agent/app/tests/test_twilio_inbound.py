@@ -14,7 +14,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 # Patch env before importing the app.
+os.environ["APP_ENV"] = "test"
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ["OPENAI_MODEL"] = "gpt-4o"
 os.environ.setdefault("VALIDATE_TWILIO_SIGNATURES", "false")
 os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://test.example.com")
@@ -88,5 +90,8 @@ def test_health_endpoint():
     resp = client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["ok"] is True
+    assert data["ok"] is True, (
+        f"health degraded: redis={data.get('redis_status')} "
+        f"identity_failures={data.get('runtime_identity_failures')}"
+    )
     assert data["runtime"] == "twilio_conversation_relay"

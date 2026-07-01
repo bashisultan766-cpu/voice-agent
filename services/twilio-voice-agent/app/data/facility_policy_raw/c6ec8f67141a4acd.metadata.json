@@ -1,0 +1,11 @@
+{
+  "url": "https://www.plumascounty.us/587/SheriffCoroner",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:12:40.841150+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Plumas County Sheriff`s Office"
+  ]
+}

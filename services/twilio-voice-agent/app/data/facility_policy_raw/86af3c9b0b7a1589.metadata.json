@@ -1,0 +1,14 @@
+{
+  "url": "https://wp.sbcounty.gov/sheriff/corrections/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T08:17:51.699153+00:00",
+  "text_length": 42226,
+  "error": null,
+  "source_facilities": [
+    "Central Detention Center / \nSan Bernardino County",
+    "Glen Helen Rehabilitation Center / \nSan Bernardino County",
+    "High Desert Detention Center\n/ San Bernardino County",
+    "West Valley Detention Center/\r\nSan Bernardino County"
+  ]
+}

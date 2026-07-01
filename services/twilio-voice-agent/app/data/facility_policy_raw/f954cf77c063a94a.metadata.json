@@ -1,0 +1,11 @@
+{
+  "url": "https://gdc.georgia.gov/locations/pulaski-state-prison",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T07:03:08.371052+00:00",
+  "text_length": 3054,
+  "error": null,
+  "source_facilities": [
+    "Pulaski State Prison"
+  ]
+}

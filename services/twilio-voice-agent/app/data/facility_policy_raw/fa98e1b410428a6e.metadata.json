@@ -1,0 +1,12 @@
+{
+  "url": "https://www.co.juneau.wi.gov/departments/sheriff_s_office/index.php",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T09:31:21.029382+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Juneau County Sheriff's Office",
+    "Juneau County Sheriff"
+  ]
+}

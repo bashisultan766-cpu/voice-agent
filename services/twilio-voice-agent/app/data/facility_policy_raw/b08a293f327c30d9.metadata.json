@@ -1,0 +1,11 @@
+{
+  "url": "https://www.tcsonc.org/inmateSearch",
+  "status": "blocked",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:36:29.841600+00:00",
+  "text_length": 0,
+  "error": "robots_disallowed",
+  "source_facilities": [
+    "Transylvania County Sheriff's Office"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "url": "https://www.woodcountywi.gov/Departments/Sheriff/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:51:42.494458+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Wood County Sheriff"
+  ]
+}

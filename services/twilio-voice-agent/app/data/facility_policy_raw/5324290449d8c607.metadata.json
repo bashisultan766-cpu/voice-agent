@@ -1,0 +1,20 @@
+{
+  "url": "https://corrections.nebraska.gov/i-want/how-do-i-send-mail-money-books-photos-emails-e-cards",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:43:47.143499+00:00",
+  "text_length": 8047,
+  "error": null,
+  "source_facilities": [
+    "Community Corrections Center Lincoln",
+    "Community Corrections Center Omaha",
+    "Diagnostic and Evaluation Center",
+    "Lincoln Correctional Center Nebraska",
+    "Nebraska Correctional Center for Women",
+    "Nebraska Correctional Youth Facility",
+    "Nebraska State Penitentiary",
+    "Omaha Correctional Center",
+    "Tecumseh State Correctional Institution",
+    "Work Ethic Camp"
+  ]
+}

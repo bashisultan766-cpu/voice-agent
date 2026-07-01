@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from ..payment.safety import _mask_email
@@ -13,6 +14,8 @@ from .certification_config import idempotency_ttl_seconds
 logger = logging.getLogger(__name__)
 
 _STORE: dict[str, "IdempotencyRecord"] = {}
+_SYNC_REDIS: Any = None
+_IDEM_PREFIX = "payment_idem:"
 
 
 @dataclass
@@ -55,6 +58,89 @@ def _cart_snapshot_hash(items: list[dict]) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
+def _get_sync_redis() -> Any:
+    global _SYNC_REDIS
+    if _SYNC_REDIS is not None:
+        return _SYNC_REDIS
+    try:
+        from ..config import get_settings
+
+        settings = get_settings()
+        if not settings.REDIS_URL:
+            return None
+        import redis
+
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+        client.ping()
+        _SYNC_REDIS = client
+        return _SYNC_REDIS
+    except Exception as exc:
+        logger.warning("payment_idempotency_redis_unavailable err=%s", type(exc).__name__)
+        return None
+
+
+def _redis_key(key: str) -> str:
+    return f"{_IDEM_PREFIX}{key}"
+
+
+def _record_from_dict(data: dict[str, Any]) -> IdempotencyRecord:
+    return IdempotencyRecord(
+        key=data.get("key", ""),
+        status=data.get("status", ""),
+        checkout_id=data.get("checkout_id", ""),
+        masked_email=data.get("masked_email", ""),
+        created_at=float(data.get("created_at") or time.time()),
+        cart_snapshot_hash=data.get("cart_snapshot_hash", ""),
+        resend_message_id=data.get("resend_message_id", ""),
+        group_id=data.get("group_id", ""),
+        call_sid=data.get("call_sid", ""),
+    )
+
+
+def _load_record(key: str) -> IdempotencyRecord | None:
+    _purge_expired()
+    record = _STORE.get(key)
+    if record:
+        return record
+    redis_client = _get_sync_redis()
+    if not redis_client:
+        return None
+    try:
+        raw = redis_client.get(_redis_key(key))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        record = _record_from_dict(data)
+        _STORE[key] = record
+        return record
+    except Exception as exc:
+        logger.warning("payment_idempotency_redis_get_failed key=%s err=%s", key[:12], type(exc).__name__)
+        return None
+
+
+def _save_record(record: IdempotencyRecord) -> None:
+    _STORE[record.key] = record
+    from ..config import get_settings
+
+    if not get_settings().is_production:
+        return
+    redis_client = _get_sync_redis()
+    if not redis_client:
+        return
+    try:
+        redis_client.setex(
+            _redis_key(record.key),
+            idempotency_ttl_seconds(),
+            json.dumps(asdict(record)),
+        )
+    except Exception as exc:
+        logger.warning(
+            "payment_idempotency_redis_set_failed key=%s err=%s",
+            record.key[:12],
+            type(exc).__name__,
+        )
+
+
 def compute_idempotency_key(
     *,
     call_sid: str,
@@ -79,9 +165,8 @@ def compute_idempotency_key(
 
 
 def check_idempotency(key: str) -> IdempotencyCheckResult:
-    _purge_expired()
     logger.info("payment_idempotency_checked sid=? key=%s", key[:12])
-    record = _STORE.get(key)
+    record = _load_record(key)
     if not record:
         return IdempotencyCheckResult(allowed=True, action="proceed")
 
@@ -132,7 +217,6 @@ def create_idempotency_record(
     items: list[dict] | None = None,
     confirmed_email: str = "",
 ) -> IdempotencyRecord:
-    _purge_expired()
     masked = _mask_email(confirmed_email) if confirmed_email else ""
     record = IdempotencyRecord(
         key=key,
@@ -142,7 +226,7 @@ def create_idempotency_record(
         group_id=group_id,
         call_sid=call_sid,
     )
-    _STORE[key] = record
+    _save_record(record)
     logger.info(
         "payment_idempotency_record_created sid=%s group_id=%s key=%s",
         _short_sid(call_sid),
@@ -153,20 +237,22 @@ def create_idempotency_record(
 
 
 def mark_checkout_created(key: str, checkout_id: str = "") -> None:
-    record = _STORE.get(key)
+    record = _load_record(key)
     if not record:
         return
     record.status = "created"
     record.checkout_id = checkout_id
+    _save_record(record)
     logger.info("payment_idempotency_checkout_created key=%s checkout_id=%s", key[:12], checkout_id[:8] if checkout_id else "")
 
 
 def mark_emailed(key: str, *, resend_message_id: str = "") -> None:
-    record = _STORE.get(key)
+    record = _load_record(key)
     if not record:
         return
     record.status = "emailed"
     record.resend_message_id = resend_message_id
+    _save_record(record)
     logger.info(
         "payment_idempotency_marked_emailed key=%s message_id=%s",
         key[:12],
@@ -175,18 +261,20 @@ def mark_emailed(key: str, *, resend_message_id: str = "") -> None:
 
 
 def mark_failed(key: str) -> None:
-    record = _STORE.get(key)
+    record = _load_record(key)
     if not record:
         return
     record.status = "failed"
+    _save_record(record)
     logger.info("payment_idempotency_marked_failed key=%s", key[:12])
 
 
 def clear_idempotency_store() -> None:
     """Test helper."""
+    global _SYNC_REDIS
     _STORE.clear()
+    _SYNC_REDIS = None
 
 
 def get_record(key: str) -> IdempotencyRecord | None:
-    _purge_expired()
-    return _STORE.get(key)
+    return _load_record(key)

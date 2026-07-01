@@ -1,0 +1,11 @@
+{
+  "url": "https://www.co.clarion.pa.us/government/departments/corrections/inmate_mail.php",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T09:28:08.531372+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Clarion County Corrections"
+  ]
+}

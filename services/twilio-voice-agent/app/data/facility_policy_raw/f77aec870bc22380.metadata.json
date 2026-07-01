@@ -1,0 +1,11 @@
+{
+  "url": "https://craigcountyso.com/inmate-mail-visitation\r\nCraig County Sheriff's Office",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T06:44:01.427120+00:00",
+  "text_length": 0,
+  "error": "Invalid non-printable ASCII character in URL, '\\r' at position 48.",
+  "source_facilities": [
+    "Craig County Sheriff's Office"
+  ]
+}

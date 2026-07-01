@@ -1,0 +1,2 @@
+facility_name,city,state,approved,website_name,website_url,allowed_formats,disallowed_formats,disallowed_keywords,disallowed_categories,content_notes,aliases,source_pdf
+Example Correctional Facility,Example City,TX,true,Example Facility Mail Rules,https://example.com/facility-mail-rules,"paperback,softcover","hardcover,hard cover","violence,gang,explicit,adult,tattoo,nude","adult,erotica","Religious and educational paperback books are generally accepted. All books must ship direct from publisher or approved vendor.","Example Facility,ECF",

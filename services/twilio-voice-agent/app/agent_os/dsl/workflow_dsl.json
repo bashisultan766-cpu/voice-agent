@@ -1,0 +1,244 @@
+{
+  "handler_registry": {
+    "_finalize_handoff_send": "app.agent_runtime.not_found_escalation_flow",
+    "_process_silent_support_handoff_turn": "app.agent_runtime.not_found_escalation_flow",
+    "_sync_support_handoff_contact": "app.agent_runtime.not_found_escalation_flow",
+    "_validate_support_email": "app.agent_runtime.not_found_escalation_flow",
+    "analyze_conversation_for_support": "app.escalation.conversation_summarizer",
+    "execute_product_search_workflow": "app.agent_runtime.voice_workflows",
+    "execute_support_handoff_workflow": "app.agent_runtime.voice_workflows",
+    "format_exact_match_reply": "app.agent_runtime.product_resolution",
+    "format_no_exact_reply": "app.agent_runtime.product_resolution",
+    "isbn_partial_reply": "app.agent_runtime.isbn_short_circuit",
+    "match_product": "app.agent_runtime.product_resolution",
+    "process_not_found_escalation_turn": "app.agent_runtime.not_found_escalation_flow",
+    "process_order_turn": "app.agent_runtime.order_flow_state",
+    "product_clarification_turn": "app.runtime.voice_commerce_runtime",
+    "product_resolution_to_short_circuit": "app.agent_runtime.product_resolution",
+    "send_support_handoff": "app.escalation.support_handoff",
+    "similarity_engine": "app.agent_runtime.product_resolution",
+    "support_handoff_preparation": "app.agent_runtime.not_found_escalation_flow",
+    "try_isbn_short_circuit": "app.agent_runtime.isbn_short_circuit",
+    "try_order_collection_short_circuit": "app.agent_runtime.order_flow_state",
+    "try_order_enrichment_short_circuit": "app.agent_runtime.order_flow_state",
+    "try_product_search_fallback_escalation": "app.agent_runtime.not_found_escalation_flow",
+    "try_title_catalog_short_circuit": "app.agent_runtime.isbn_short_circuit"
+  },
+  "special_transitions": [
+    "exit",
+    "fallback",
+    "loop_terminal",
+    "success"
+  ],
+  "version": "v1.0",
+  "workflows": {
+    "order_workflow": {
+      "alternate_entries": [
+        "process_order_turn",
+        "try_order_collection_short_circuit"
+      ],
+      "entry": "try_order_enrichment_short_circuit",
+      "name": "order_workflow",
+      "states": [
+        {
+          "allowed_next": [
+            "order_lookup",
+            "awaiting_order_number"
+          ],
+          "handler": "try_order_collection_short_circuit",
+          "name": "awaiting_order_number"
+        },
+        {
+          "allowed_next": [
+            "success",
+            "fallback",
+            "awaiting_order_number"
+          ],
+          "handler": "try_order_enrichment_short_circuit",
+          "name": "order_lookup"
+        },
+        {
+          "allowed_next": [
+            "order_lookup",
+            "awaiting_order_number",
+            "success"
+          ],
+          "handler": "process_order_turn",
+          "name": "order_processing"
+        }
+      ],
+      "version": "v1.0"
+    },
+    "product_search_workflow": {
+      "alternate_entries": [],
+      "entry": "execute_product_search_workflow",
+      "name": "product_search_workflow",
+      "states": [
+        {
+          "allowed_next": [
+            "handoff_staged"
+          ],
+          "handler": "try_product_search_fallback_escalation",
+          "name": "fallback_escalation"
+        },
+        {
+          "allowed_next": [
+            "isbn_search",
+            "title_search",
+            "clarification"
+          ],
+          "handler": "product_clarification_turn",
+          "name": "clarification"
+        },
+        {
+          "allowed_next": [
+            "isbn_search",
+            "clarification"
+          ],
+          "handler": "isbn_partial_reply",
+          "name": "isbn_partial"
+        },
+        {
+          "allowed_next": [
+            "isbn_partial",
+            "match_resolution",
+            "exact_match",
+            "similarity_fallback",
+            "handoff_staged",
+            "fallback"
+          ],
+          "handler": "try_isbn_short_circuit",
+          "name": "isbn_search"
+        },
+        {
+          "allowed_next": [
+            "match_resolution",
+            "exact_match",
+            "similarity_fallback",
+            "handoff_staged",
+            "fallback"
+          ],
+          "handler": "try_title_catalog_short_circuit",
+          "name": "title_search"
+        },
+        {
+          "allowed_next": [
+            "exact_match",
+            "similarity_fallback",
+            "handoff_staged"
+          ],
+          "handler": "match_product",
+          "name": "match_resolution"
+        },
+        {
+          "allowed_next": [
+            "no_exact_match",
+            "fallback_escalation",
+            "handoff_staged"
+          ],
+          "handler": "similarity_engine",
+          "name": "similarity_fallback"
+        },
+        {
+          "allowed_next": [
+            "success"
+          ],
+          "handler": "format_exact_match_reply",
+          "name": "exact_match"
+        },
+        {
+          "allowed_next": [
+            "fallback_escalation",
+            "handoff_staged",
+            "similarity_fallback"
+          ],
+          "handler": "format_no_exact_reply",
+          "name": "no_exact_match"
+        },
+        {
+          "allowed_next": [
+            "exit"
+          ],
+          "exit_to": "support_handoff_workflow",
+          "handler": "support_handoff_preparation",
+          "name": "handoff_staged"
+        }
+      ],
+      "version": "v1.0"
+    },
+    "support_handoff_workflow": {
+      "alternate_entries": [],
+      "entry": "execute_support_handoff_workflow",
+      "name": "support_handoff_workflow",
+      "states": [
+        {
+          "allowed_next": [
+            "awaiting_email",
+            "awaiting_name",
+            "awaiting_finalize",
+            "loop_terminal"
+          ],
+          "handler": "process_not_found_escalation_turn",
+          "name": "process_turn"
+        },
+        {
+          "allowed_next": [
+            "email_validation",
+            "awaiting_name",
+            "awaiting_finalize",
+            "loop_terminal"
+          ],
+          "handler": "_process_silent_support_handoff_turn",
+          "name": "awaiting_email"
+        },
+        {
+          "allowed_next": [
+            "awaiting_name",
+            "awaiting_finalize",
+            "awaiting_email"
+          ],
+          "handler": "_validate_support_email",
+          "name": "email_validation"
+        },
+        {
+          "allowed_next": [
+            "awaiting_email",
+            "awaiting_finalize"
+          ],
+          "handler": "_sync_support_handoff_contact",
+          "name": "awaiting_name"
+        },
+        {
+          "allowed_next": [
+            "analyze",
+            "success"
+          ],
+          "handler": "_finalize_handoff_send",
+          "name": "awaiting_finalize"
+        },
+        {
+          "allowed_next": [
+            "send"
+          ],
+          "handler": "analyze_conversation_for_support",
+          "name": "analyze"
+        },
+        {
+          "allowed_next": [
+            "success"
+          ],
+          "handler": "send_support_handoff",
+          "name": "send"
+        },
+        {
+          "allowed_next": [
+            "exit"
+          ],
+          "handler": "process_not_found_escalation_turn",
+          "name": "loop_terminal"
+        }
+      ],
+      "version": "v1.0"
+    }
+  }
+}

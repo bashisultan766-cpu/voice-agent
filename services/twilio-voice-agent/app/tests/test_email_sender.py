@@ -60,8 +60,8 @@ class TestSendPaymentLinkEmail:
             )
 
         assert result["success"] is False
-        assert "fallback_message" in result
-        assert "https://shop.example.com/pay/123" in result["fallback_message"]
+        assert "fallback_message" not in result
+        assert "checkout_url" not in str(result)
 
     async def test_resend_api_error_returns_failure(self):
         mock_resp = MagicMock()

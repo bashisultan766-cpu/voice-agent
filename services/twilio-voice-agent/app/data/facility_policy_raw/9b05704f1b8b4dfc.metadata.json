@@ -1,0 +1,11 @@
+{
+  "url": "https://www.sarpy.gov/441/Department-of-Corrections",
+  "status": "200",
+  "content_type": "text/html; charset=utf-8",
+  "fetched_at": "2026-06-26T11:15:24.217336+00:00",
+  "text_length": 1692,
+  "error": null,
+  "source_facilities": [
+    "Sarpy County Jail"
+  ]
+}

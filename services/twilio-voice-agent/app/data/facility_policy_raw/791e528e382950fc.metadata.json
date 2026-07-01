@@ -1,0 +1,13 @@
+{
+  "url": "https://www.masoncountywa.gov/departments/sheriff/index.php",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:52:38.230676+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Mason County Sheriff",
+    "Mason County Sheriff's Office",
+    "Mason County Jail"
+  ]
+}

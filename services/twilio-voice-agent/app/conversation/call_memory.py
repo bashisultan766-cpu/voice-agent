@@ -132,6 +132,23 @@ def record_assistant_turn(session: "SessionState", text: str) -> None:
     _rebuild_rolling_summary(state)
 
 
+def record_turn_pair(
+    session: "SessionState",
+    user_text: str,
+    assistant_text: str,
+    *,
+    intent: str = "",
+) -> None:
+    """Record a full turn and refresh durable facts from session state."""
+    record_user_turn(session, user_text, intent=intent)
+    record_assistant_turn(session, assistant_text)
+    try:
+        extract_durable_facts(session, user_text)
+    except Exception:  # noqa: BLE001
+        pass
+    sync_from_session(session)
+
+
 def record_isbn(session: "SessionState", isbn: str) -> None:
     state = get_call_memory(session)
     if isbn and isbn not in state.isbns_provided:
@@ -153,11 +170,13 @@ def record_product_candidate(session: "SessionState", title: str, found: bool) -
 
 def record_cart_confirmed(session: "SessionState", title: str, count: int) -> None:
     state = get_call_memory(session)
-    state.cart_facts.append(f"Confirmed: {title[:50]}")
-    _append_fact(state, f"Cart count: {count}")
+    qty = max(1, int(count or 1))
+    copy_word = "copy" if qty == 1 else "copies"
+    state.cart_facts.append(f"{title[:50]} × {qty} {copy_word}")
+    _append_fact(state, f"Cart line added: {qty} {copy_word}")
     logger.info(
         "memory_fact_saved sid=%s type=cart count=%d",
-        session.call_sid[:6], count,
+        session.call_sid[:6], qty,
     )
 
 
@@ -210,17 +229,34 @@ def sync_from_session(session: "SessionState") -> None:
 
     try:
         from ..cart.session import get_ledger
+
         ledger = get_ledger(session)
-        n = ledger.confirmed_count()
-        if n:
-            state.cart_facts = [f"{n} book(s) in cart"]
-            _append_fact(state, f"Cart count: {n}")
+        confirmed = ledger.confirmed_items
+        if confirmed:
+            total_copies = sum(max(1, int(i.quantity or 1)) for i in confirmed)
+            line_facts: list[str] = []
+            for i in confirmed:
+                qty = max(1, int(i.quantity or 1))
+                copy_word = "copy" if qty == 1 else "copies"
+                title = (i.title or "book")[:80]
+                line_facts.append(f"{qty} {copy_word} of {title}")
+            state.cart_facts = line_facts[-10:]
+            _append_fact(
+                state,
+                f"Cart: {len(confirmed)} title(s), {total_copies} total copies",
+            )
+            for line in line_facts[-5:]:
+                _append_fact(state, f"Cart line: {line}")
     except Exception:
         pass
 
     if session.last_order_number:
         state.order_context = session.last_order_number
         _append_fact(state, f"Order number: {session.last_order_number}")
+
+    for book_title in getattr(session, "requested_books", []) or []:
+        if book_title:
+            _append_fact(state, f"Book discussed: {str(book_title)[:80]}")
 
     sync_email_state(session)
     sync_payment_state(session)
@@ -298,7 +334,7 @@ def build_brain_context(session: "SessionState") -> str:
         parts.append(f"ISBNs: {', '.join(state.isbns_provided[-10:])}")
 
     if state.cart_facts:
-        parts.append("Cart: " + "; ".join(state.cart_facts[-5:]))
+        parts.append("Cart: " + "; ".join(state.cart_facts[-20:]))
 
     if state.email_state != "none":
         parts.append(f"Email: {state.email_state}")
@@ -592,6 +628,18 @@ def build_resume_snapshot(session: "SessionState") -> dict:
             i for i in (getattr(session, "cart_items", []) or [])
             if isinstance(i, dict) and i.get("confirmation_status") == "confirmed"
         ]),
+        "cart_items": [
+            {
+                "title": i.get("title", ""),
+                "isbn": i.get("isbn", ""),
+                "variant_id": i.get("variant_id", ""),
+                "quantity": int(i.get("quantity") or 1),
+                "price": i.get("price", ""),
+                "confirmation_status": i.get("confirmation_status", ""),
+            }
+            for i in (getattr(session, "cart_items", []) or [])
+            if isinstance(i, dict) and i.get("confirmation_status") == "confirmed"
+        ],
         "payment_flow_status": pfs,
         "has_checkout_url": bool(getattr(session, "pending_checkout_url", "")),
         "email_state": state.email_state,
@@ -675,6 +723,18 @@ def check_and_apply_resume(
 
     if snapshot.get("last_order_number"):
         new_session.last_order_number = snapshot["last_order_number"]
+
+    cart_restore = snapshot.get("cart_items") or []
+    if cart_restore:
+        new_session.cart_items = list(cart_restore)
+        from ..payment.payment_destination_groups import refresh_payment_groups_from_cart
+
+        refresh_payment_groups_from_cart(new_session)
+        logger.info(
+            "call_resume_cart_restored sid=%s lines=%d",
+            new_session.call_sid[:6],
+            len(cart_restore),
+        )
 
     new_session.is_resumed_call = True
     new_session.resume_greeting_pending = True

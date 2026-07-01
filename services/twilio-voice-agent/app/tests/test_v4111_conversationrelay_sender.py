@@ -66,7 +66,9 @@ class TestConversationRelaySender:
             captured.append(msg)
 
         long_text = "A" * 600
-        await send_text_to_conversation_relay(capture, long_text, sid="CA1", chunk_size=500)
+        await send_text_to_conversation_relay(
+            capture, long_text, sid="CA1", chunk_size=500, voice_chunk=False,
+        )
         assert len(captured) >= 2
         assert captured[-1]["last"] is True
         assert captured[0]["last"] is False

@@ -20,6 +20,7 @@ from ..config import get_settings
 logger = logging.getLogger(__name__)
 
 _RETRY_ON = {429, 500, 502, 503, 504}
+_NO_RETRY_ON = {401, 403}
 
 
 class ShopifyGraphQLClient:
@@ -56,6 +57,26 @@ class ShopifyGraphQLClient:
         retries: int = 3,
     ) -> dict[str, Any]:
         """Execute a GraphQL query/mutation. Retries on transient errors."""
+        from ..observability.otel import span
+        from ..reliability.shopify_circuit_breaker import guarded_execute, is_circuit_open
+
+        if is_circuit_open():
+            from ..reliability.shopify_circuit_breaker import circuit_open_error
+            return circuit_open_error()
+
+        async def _run() -> dict[str, Any]:
+            with span("shopify_request", operation=query[:40].strip()):
+                return await self._execute_once(query, variables, retries)
+
+        return await guarded_execute(_run)
+
+    async def _execute_once(
+        self,
+        query: str,
+        variables: Optional[dict] = None,
+        retries: int = 3,
+    ) -> dict[str, Any]:
+        """Execute a GraphQL query/mutation. Retries on transient errors."""
         payload: dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
@@ -70,6 +91,9 @@ class ShopifyGraphQLClient:
                         headers=self._headers(),
                         json=payload,
                     )
+
+                if resp.status_code in _NO_RETRY_ON:
+                    resp.raise_for_status()
 
                 if resp.status_code in _RETRY_ON:
                     wait = 2 ** attempt

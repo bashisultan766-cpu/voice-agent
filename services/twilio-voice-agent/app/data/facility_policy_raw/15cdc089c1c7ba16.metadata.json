@@ -1,0 +1,11 @@
+{
+  "url": "https://www.halecounty.org/county_offices/sheriff_jail.php",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T10:22:31.735058+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Hale County Sheriff"
+  ]
+}

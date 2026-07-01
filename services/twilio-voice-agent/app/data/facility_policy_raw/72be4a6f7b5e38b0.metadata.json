@@ -1,0 +1,11 @@
+{
+  "url": "https://www.yuba.gov/departments/sheriff-coroner/inmate_mail.php",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T11:55:59.699770+00:00",
+  "text_length": 4136,
+  "error": null,
+  "source_facilities": [
+    "Yuba County Jail"
+  ]
+}

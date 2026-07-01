@@ -1,0 +1,11 @@
+{
+  "url": "https://www.co.dakota.mn.us/LawJustice/Jail/MailMoney/Pages/default.aspx",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:29:23.862021+00:00",
+  "text_length": 0,
+  "error": "_ssl.c:1064: The handshake operation timed out",
+  "source_facilities": [
+    "Dakota County Sheriff"
+  ]
+}

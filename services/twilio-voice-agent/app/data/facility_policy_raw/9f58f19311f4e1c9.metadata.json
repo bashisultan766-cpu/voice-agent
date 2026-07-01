@@ -1,0 +1,11 @@
+{
+  "url": "https://sheriff.calaverasgov.us/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T08:02:37.362337+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Calaveras County Sheriff"
+  ]
+}

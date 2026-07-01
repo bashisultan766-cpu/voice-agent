@@ -120,6 +120,29 @@ class SessionState:
     payment_flow_status: str = "idle"
     payment_block_count: int = 0  # increments on each PaymentSafetyGuard block
 
+    # ── v4.19 LLM payment state machine (explicit flags for llm_tool_runtime) ─
+    email_capture_mode: str = ""  # EMAIL_CAPTURE_MODE while collecting/confirming email
+    awaiting_payment_email: bool = False
+    pending_payment_email: str = ""
+    last_offered_payment_email: str = ""  # survives repeat-email turns until confirm/replace
+    backup_confirmed_email: str = ""  # restored when user rejects a replacement email
+    payment_email_confirmed: bool = False
+    email_verified: bool = False
+    awaiting_payment_email_confirmation: bool = False
+    payment_send_in_progress: bool = False
+    payment_link_sent: bool = False
+    checkout_url: str = ""  # mirrors pending_checkout_url
+    checkout_id: str = ""  # mirrors pending_draft_order_id
+    email_send_attempted: bool = False
+    email_send_success: bool = False
+    payment_cart_confirmed: bool = False
+    last_payment_attempt_status: str = ""  # success | failed | blocked | pending_confirmation
+
+    # ── v4.27 multi-email payment groups (CartLedger-backed) ───────────────
+    payment_destination_groups: list[dict[str, Any]] = field(default_factory=list)
+    active_payment_group_index: int = 0
+    multi_email_payment_active: bool = False
+
     # ── Multi-book cart items ──────────────────────────────────────────────────
     # Each item: {title, isbn, variant_id, quantity, price, available, source}
     # Replaces the old flat cart_items list (backward-compatible: same field name)
@@ -134,6 +157,15 @@ class SessionState:
     isbn_buffer_turn: int = -1      # turn when buffer was last updated
     isbn_history: list[str] = field(default_factory=list)  # ISBNs given this call
     isbn_not_found: list[str] = field(default_factory=list)  # ISBNs with no match
+
+    # ── Product-not-found escalation (Step 5) ─────────────────────────────────
+    pending_not_found_escalation: dict[str, Any] = field(default_factory=dict)
+    awaiting_not_found_escalation_email: bool = False
+    not_found_escalation_sent_keys: list[str] = field(default_factory=list)
+    support_handoff_contact: dict[str, str] = field(default_factory=dict)
+
+    # ── Product search fallback escalation (v4.58) ─────────────────────────
+    product_search_fallback_pending: dict[str, Any] = field(default_factory=dict)
 
     # ── v4.5 product candidate persistence ────────────────────────────────────
     last_product_candidate: dict[str, Any] = field(default_factory=dict)
@@ -162,8 +194,12 @@ class SessionState:
     # ── v4.6 call memory ──────────────────────────────────────────────────────
     call_memory: Any = None
 
+    # ── Session-scoped cart memory (voice_commerce_runtime only, not persisted) ─
+    cart_memory: Any = None
+
     # Twilio TwiML welcomeGreeting was spoken at connect (v4.6).
     twiml_greeting_spoken: bool = False
+    awaiting_anything_else: bool = False
 
     # ── v4.8 call cutoff / resume ─────────────────────────────────────────────
     # Stores a safe, minimal session snapshot for reconnect-within-window.
@@ -182,3 +218,56 @@ class SessionState:
     last_brain_decision: Any = None
     # v4.8 turn-taking hold flag (digit/email fragment in progress).
     turn_taking_hold: bool = False
+
+    # ── v4.24 multi-book commerce flow (CartLedger-backed) ─────────────────
+    commerce_flow_status: str = "idle"
+    commerce_pending_candidate: dict[str, Any] = field(default_factory=dict)
+    commerce_pending_quantity: int = 0
+    commerce_allow_add: bool = False
+    commerce_last_catalog_results: list[dict[str, Any]] = field(default_factory=list)
+    last_confirmed_product: dict[str, Any] = field(default_factory=dict)
+    product_commerce_status: str = "idle"
+    commerce_last_voice_reply: str = ""
+    payment_last_voice_reply: str = ""
+    awaiting_product_confirmation: bool = False
+    # v4.25 — tool progress + interrupt coordination
+    voice_interrupted: bool = False
+    is_speaking: bool = False
+    speech_lock: bool = False
+    last_spoken_response: str = ""
+    tool_progress_sent_for_op: str = ""
+
+    # ── Escalation loop guard (v4.59) ───────────────────────────────────────
+    workflow_stage_tracker: dict[str, Any] = field(default_factory=lambda: {
+        "domain": "",
+        "stage": "",
+        "count": 0,
+    })
+    escalation_loop_terminal: bool = False
+
+    # ── Guided voice conversation (runtime UX) ────────────────────────────────
+    # stage: idle | awaiting_order_number | order_lookup | completed
+    voice_conversation: dict[str, Any] = field(default_factory=lambda: {
+        "stage": "idle",
+        "last_intent": "",
+        "last_order_id": None,
+    })
+
+    # ── Intent commitment (single interpretation per user turn) ───────────────
+    # Intent dataclass lives in voice_commerce_runtime; set once after classifier.
+    committed_intent: Any = None
+
+    # ── Continuous emotional field (VoiceResponseFormatter / SpeechPacer) ───────
+    # valence: -1 negative → +1 positive | arousal: 0 calm → 1 excited
+    # stability: 0 volatile → 1 stable
+    emotion_field: dict[str, float] = field(default_factory=lambda: {
+        "valence": 0.0,
+        "arousal": 0.3,
+        "stability": 0.7,
+    })
+
+    # ── Long-term emotional drift (baseline personality over the call) ──────────
+    emotional_memory: dict[str, float] = field(default_factory=lambda: {
+        "baseline_valence": 0.0,
+        "baseline_arousal": 0.3,
+    })

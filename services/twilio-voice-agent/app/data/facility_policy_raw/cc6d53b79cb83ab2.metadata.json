@@ -1,0 +1,11 @@
+{
+  "url": "https://www.idoc.idaho.gov/content/locations/prisons/idaho_maximum_security_institution",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:32:20.672250+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Idaho Maximum Security Institution (IMSI)"
+  ]
+}

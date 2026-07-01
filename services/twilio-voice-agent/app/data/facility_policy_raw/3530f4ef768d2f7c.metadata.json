@@ -1,0 +1,11 @@
+{
+  "url": "https://www.co.richland.nd.us/departments/jail/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:37:05.723851+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Richland County Jail"
+  ]
+}

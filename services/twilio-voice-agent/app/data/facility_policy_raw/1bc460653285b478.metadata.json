@@ -1,0 +1,11 @@
+{
+  "url": "https://www.adamscountypa.gov/departments/sheriff",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T08:18:48.005253+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Adams County Sheriff"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "url": "https://www.sheriffsc.org/county_map/county/2347",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:27:04.111850+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Lee County Sheriff"
+  ]
+}

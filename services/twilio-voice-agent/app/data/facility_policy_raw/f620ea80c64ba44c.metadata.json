@@ -1,0 +1,11 @@
+{
+  "url": "https://lincolncountysheriffok.gov/inmate-search",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T07:36:38.392397+00:00",
+  "text_length": 1248,
+  "error": null,
+  "source_facilities": [
+    "Lincoln County Sheriff's Office"
+  ]
+}

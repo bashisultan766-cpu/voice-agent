@@ -1,0 +1,11 @@
+{
+  "url": "https://www.parkcountysheriff-wy.gov/detention/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T11:08:51.069188+00:00",
+  "text_length": 5114,
+  "error": null,
+  "source_facilities": [
+    "Park County Jail Detention Center"
+  ]
+}

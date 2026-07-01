@@ -1,0 +1,11 @@
+{
+  "url": "https://www.blainecountyid.gov/320/Recent-Arrests",
+  "status": "200",
+  "content_type": "text/html; charset=utf-8",
+  "fetched_at": "2026-06-26T08:59:56.972987+00:00",
+  "text_length": 968,
+  "error": null,
+  "source_facilities": [
+    "Blaine County Jail"
+  ]
+}

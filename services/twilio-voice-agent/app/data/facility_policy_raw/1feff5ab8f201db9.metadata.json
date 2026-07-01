@@ -1,0 +1,11 @@
+{
+  "url": "https://www.bedfordcountypa.org/document_center/Correctional%20Facility/Mail%20Policy.pdf",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T08:56:49.791877+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Bedford County Jail"
+  ]
+}

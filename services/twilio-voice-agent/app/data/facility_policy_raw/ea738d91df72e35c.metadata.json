@@ -1,0 +1,12 @@
+{
+  "url": "https://lewiscountywa.gov/offices/sheriff/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T07:35:27.846387+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Lewis County Sheriff Department",
+    "Lewis County Sheriff"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "url": "https://www.washingtoncountyor.gov/sheriff/patrol/sheriff-services-location",
+  "status": "403",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T11:45:40.903654+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Washington County Sheriff's Office - East Precinct"
+  ]
+}

@@ -10,12 +10,14 @@ import logging
 import time
 from xml.etree.ElementTree import Element, SubElement, tostring
 
-from fastapi import APIRouter, Form, Request, Response
+from fastapi import APIRouter, Depends, Form, Request, Response
 
 from ..config import get_settings, Settings
 from ..caller.repository import get_caller_profile
-from ..dialogue.greeting import build_resume_twiml_greeting, build_twiml_greeting
+from ..dialogue.greeting import build_resume_twiml_greeting, build_twiml_greeting, greeting_safe_name
+from ..security.rate_limit import rate_limit_dependency
 from ..security.twilio_signature import validate_twilio_signature
+from ..security.ws_token import append_ws_token_to_url
 from ..state.session_store import load_call_resume_by_phone
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,8 @@ def _conversation_relay_twiml(
         "interruptible": "true",
         "language": s.VOICE_LANGUAGE,
         "dtmfDetection": "true",
+        "action": f"{s.PUBLIC_BASE_URL.rstrip('/')}/voice/twilio/relay-action",
+        "method": "POST",
     }
 
     if include_welcome and welcome_greeting:
@@ -124,7 +128,7 @@ async def _resolve_welcome_greeting(from_number: str, settings: Settings) -> tup
     try:
         profile = await get_caller_profile(from_number)
         if profile and profile.call_count and profile.call_count > 0:
-            name = (profile.display_name or "").strip()
+            name = greeting_safe_name((profile.display_name or "").strip())
             return build_twiml_greeting(returning=True, caller_name=name), True
     except Exception:
         logger.debug(
@@ -134,7 +138,7 @@ async def _resolve_welcome_greeting(from_number: str, settings: Settings) -> tup
     return build_twiml_greeting(), True
 
 
-@router.post("/inbound")
+@router.post("/inbound", dependencies=[Depends(rate_limit_dependency("twilio_inbound", limit=120, window_sec=60))])
 async def inbound_call(
     request: Request,
     CallSid: str = Form(...),
@@ -163,8 +167,15 @@ async def inbound_call(
     store_domain = settings.SHOPIFY_SHOP_DOMAIN
     welcome, include_welcome = await _resolve_welcome_greeting(From, settings)
 
+    ws_base = settings.ws_url
+    try:
+        ws_url = append_ws_token_to_url(ws_base, call_sid=CallSid, from_number=From)
+    except Exception:
+        logger.error("ws_token_mint_failed sid=%s", CallSid[:8] if CallSid else "?")
+        ws_url = ws_base
+
     twiml = _conversation_relay_twiml(
-        ws_url=settings.ws_url,
+        ws_url=ws_url,
         call_sid=CallSid,
         from_number=From,
         to_number=To,
@@ -176,4 +187,27 @@ async def inbound_call(
     )
     # Never log voice ID or API keys — TwiML may contain voice attribute only.
     logger.debug("Returning TwiML for %s (voice configured)", CallSid[:8] if CallSid else "?")
+    return Response(content=twiml, media_type="application/xml")
+
+
+@router.post(
+    "/relay-action",
+    dependencies=[Depends(rate_limit_dependency("twilio_relay_action", limit=120, window_sec=60))],
+)
+async def relay_action(request: Request) -> Response:
+    """
+    ConversationRelay action callback — hang up when the agent ends the session.
+    """
+    settings = get_settings()
+    await validate_twilio_signature(request, settings)
+
+    form = await request.form()
+    handoff = str(form.get("HandoffData") or form.get("handoffData") or "")
+    hangup = "caller_done" in handoff or "goodbye" in handoff.lower()
+
+    if hangup:
+        twiml = _XML_HEADER + "<Response><Hangup/></Response>"
+    else:
+        twiml = _XML_HEADER + "<Response></Response>"
+
     return Response(content=twiml, media_type="application/xml")

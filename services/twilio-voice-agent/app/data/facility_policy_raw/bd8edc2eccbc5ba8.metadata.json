@@ -1,0 +1,11 @@
+{
+  "url": "https://gdc.georgia.gov/locations/telfair-state-prison",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T07:03:27.328195+00:00",
+  "text_length": 2210,
+  "error": null,
+  "source_facilities": [
+    "Telfair State Prison"
+  ]
+}

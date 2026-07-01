@@ -20,7 +20,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("PUBLIC_BASE_URL", "https://test.example.com")
 
-from app.pipeline.engine import RealtimePipelineEngine
+from app.sync.call_setup_prefetch import prefetch_on_call_setup
 from app.state.models import SessionState
 from app.sync.repositories import CachedCustomer, CachedOrder
 
@@ -64,7 +64,6 @@ def _make_order(number: str = "#1042", phone: str = "15551234567") -> CachedOrde
 
 class TestPrefetchCustomer:
     async def test_customer_name_populated_from_cache(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -74,12 +73,11 @@ class TestPrefetchCustomer:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         assert session.caller_name == "Bob Jones"
 
     async def test_customer_lookup_uses_from_number(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session(from_number="+14445556666")
         called_with = []
 
@@ -94,12 +92,11 @@ class TestPrefetchCustomer:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         assert "+14445556666" in called_with
 
     async def test_does_not_overwrite_existing_caller_name(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session(caller_name="Pre-set Name")
 
         mock_customer_cache = AsyncMock()
@@ -111,12 +108,11 @@ class TestPrefetchCustomer:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         assert session.caller_name == "Pre-set Name"
 
     async def test_customer_miss_no_crash(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -126,13 +122,12 @@ class TestPrefetchCustomer:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         # No crash, session unchanged
         assert session.caller_name == ""
 
     async def test_customer_cache_error_no_crash(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -142,7 +137,7 @@ class TestPrefetchCustomer:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         # Must not raise
         assert session.caller_name == ""
@@ -152,7 +147,6 @@ class TestPrefetchCustomer:
 
 class TestPrefetchOrder:
     async def test_recent_order_populates_last_order_number(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -164,12 +158,11 @@ class TestPrefetchOrder:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         assert session.last_order_number == "#2099"
 
     async def test_does_not_overwrite_existing_order_number(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session(last_order_number="#9999")
 
         mock_customer_cache = AsyncMock()
@@ -181,12 +174,11 @@ class TestPrefetchOrder:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         assert session.last_order_number == "#9999"
 
     async def test_order_miss_no_crash(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -196,12 +188,11 @@ class TestPrefetchOrder:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         assert session.last_order_number == ""
 
     async def test_order_cache_error_no_crash(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -213,7 +204,7 @@ class TestPrefetchOrder:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         assert session.last_order_number == ""
 
@@ -222,7 +213,6 @@ class TestPrefetchOrder:
 
 class TestPrefetchParallel:
     async def test_both_caches_queried(self):
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -232,14 +222,13 @@ class TestPrefetchParallel:
 
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache):
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         mock_customer_cache.get_by_phone.assert_called_once()
         mock_order_cache.get_recent_by_phone.assert_called_once()
 
     async def test_no_live_shopify_call_made(self):
         """prefetch_on_call_setup must only read from local cache, never call Shopify."""
-        engine = RealtimePipelineEngine(settings=_make_settings())
         session = _make_session()
 
         mock_customer_cache = AsyncMock()
@@ -250,7 +239,7 @@ class TestPrefetchParallel:
         with patch("app.sync.repositories.CustomerCache", return_value=mock_customer_cache), \
              patch("app.sync.repositories.OrderCache", return_value=mock_order_cache), \
              patch("app.shopify.client.ShopifyGraphQLClient") as mock_shopify:
-            await engine.prefetch_on_call_setup(session)
+            await prefetch_on_call_setup(session)
 
         # Shopify client must NEVER be instantiated during call setup
         mock_shopify.assert_not_called()

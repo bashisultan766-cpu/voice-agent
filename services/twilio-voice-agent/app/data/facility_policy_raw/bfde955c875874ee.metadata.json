@@ -1,0 +1,11 @@
+{
+  "url": "https://www.rockinghamcountync.gov/21446/send-moneyletter-to-inmates",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:13:45.442854+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Rockingham County Sheriff's Office"
+  ]
+}

@@ -19,6 +19,39 @@ _lock = asyncio.Lock()
 # Singleton Redis client — initialised lazily on first use.
 _redis: Any = None
 _redis_checked = False
+_redis_startup_verified = False
+
+
+async def get_redis_client() -> Any:
+    """Return the shared Redis client, or None when unavailable."""
+    return await _get_redis()
+
+
+async def verify_redis_at_startup() -> None:
+    """Fail fast in production when Redis is required but unreachable."""
+    global _redis_startup_verified
+    if _redis_startup_verified:
+        return
+    _redis_startup_verified = True
+
+    from ..config import get_settings
+
+    settings = get_settings()
+    if settings.is_production and not settings.REDIS_URL:
+        raise RuntimeError("REDIS_URL is required when APP_ENV=production")
+
+    if not settings.REDIS_URL:
+        if settings.is_production:
+            raise RuntimeError("REDIS_URL is required when APP_ENV=production")
+        logger.warning("REDIS_URL not set — using in-memory session store")
+        return
+
+    client = await _get_redis()
+    if client is None:
+        if settings.allow_memory_store_fallback:
+            logger.warning("Redis unavailable — using in-memory session store (dev/test only)")
+            return
+        raise RuntimeError("Redis connection failed and in-memory fallback is disabled in production")
 
 
 async def _get_redis() -> Any:
@@ -38,9 +71,21 @@ async def _get_redis() -> Any:
         _redis = client
         logger.info("Redis session store connected: %s", url.split("@")[-1])
     except Exception as exc:
-        logger.warning("Redis unavailable, using in-memory store: %s", exc)
+        from ..config import get_settings
+
+        settings = get_settings()
+        if settings.allow_memory_store_fallback:
+            logger.warning("Redis unavailable, using in-memory store: %s", exc)
+        else:
+            logger.error("Redis unavailable in production mode: %s", exc)
         _redis = None
     return _redis
+
+
+def _allow_memory_fallback() -> bool:
+    from ..config import get_settings
+
+    return get_settings().allow_memory_store_fallback
 
 
 # ── Raw key/value helpers ──────────────────────────────────────────────────────
@@ -54,6 +99,8 @@ async def cache_set(key: str, value: Any, ttl: int = 3600) -> None:
             return
         except Exception as exc:
             logger.warning("Redis set failed (%s): %s", key, exc)
+            if not _allow_memory_fallback():
+                raise
     async with _lock:
         _store[key] = serialised
 
@@ -66,6 +113,8 @@ async def cache_get(key: str) -> Optional[Any]:
             return json.loads(raw) if raw else None
         except Exception as exc:
             logger.warning("Redis get failed (%s): %s", key, exc)
+            if not _allow_memory_fallback():
+                raise
     async with _lock:
         raw = _store.get(key)
     return json.loads(raw) if raw else None
@@ -115,6 +164,13 @@ async def load_call_resume_by_phone(phone: str) -> Optional[dict]:
     if not phone or phone == "unknown":
         return None
     return await cache_get(_resume_phone_key(phone))
+
+
+async def clear_call_resume_by_phone(phone: str) -> None:
+    """Remove resume snapshot so the next intentional call starts fresh."""
+    if not phone or phone == "unknown":
+        return
+    await cache_delete(_resume_phone_key(phone))
 
 
 # ── Shopify product search cache ──────────────────────────────────────────────

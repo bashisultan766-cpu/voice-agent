@@ -1,0 +1,12 @@
+{
+  "url": "https://www.unioncountysheriff.net/",
+  "status": "blocked",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:41:39.368851+00:00",
+  "text_length": 0,
+  "error": "robots_disallowed",
+  "source_facilities": [
+    "Union County Jail",
+    "Union County Sheriff's Office"
+  ]
+}

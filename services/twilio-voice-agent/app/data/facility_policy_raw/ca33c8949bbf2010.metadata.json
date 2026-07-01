@@ -1,0 +1,12 @@
+{
+  "url": "https://www.davisoncounty.org/departments/sheriffs-office/jail/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T09:52:46.726389+00:00",
+  "text_length": 5217,
+  "error": null,
+  "source_facilities": [
+    "Davison County Jail",
+    "Davidson County Sheriff's Office"
+  ]
+}

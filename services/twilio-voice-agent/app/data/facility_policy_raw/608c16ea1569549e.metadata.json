@@ -1,0 +1,11 @@
+{
+  "url": "https://www.steelecountymn.gov/sheriff/",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T11:30:21.102698+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Steele County Sheriff's Office"
+  ]
+}

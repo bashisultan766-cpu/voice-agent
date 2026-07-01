@@ -1,0 +1,11 @@
+{
+  "url": "https://www.andrewcountysheriff.org/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T08:51:03.994461+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Andrew County Sheriff's Office"
+  ]
+}

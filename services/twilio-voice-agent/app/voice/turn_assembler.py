@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
-from .turn_taking import is_complete_isbn, is_complete_order_number, should_collect_isbn
+from .turn_taking import is_complete_isbn, is_complete_order_number, is_isbn_permission_question, should_collect_isbn
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +26,26 @@ _RESET_BUFFER = re.compile(
     re.IGNORECASE,
 )
 _KEEPALIVE_FRAGMENT = re.compile(
-    r"\b(hello\??|are you there|why are you not responding|why aren't you responding|"
-    r"what the hell|what the \*+\??)\b",
+    r"\b(?:hello\??|are you there|"
+    r"why are you (?:not (?:responding|talking|proceeding|telling(?: anything)?)|silent|quiet)|"
+    r"why aren't you (?:asking|responding|talking|proceeding)|"
+    r"you are (?:silent|quiet|not talking)|"
+    r"not (?:responding|talking|proceeding))\b",
     re.IGNORECASE,
 )
+def _is_bare_affirm(text: str) -> bool:
+    from ..agent_runtime.yes_engagement import is_bare_yes
+
+    return is_bare_yes(text)
 _ISBN_CONTINUATION = re.compile(
     r"\b(isbn|digit|number|here it is|i will give you|wait)\b",
     re.IGNORECASE,
 )
 _PARTIAL_ISBN_CLARIFY = (
-    "I only have twelve digits. Please give me the last digit, "
-    "or say repeat to start over."
+    "I have part of it. Please continue with the remaining digits."
+)
+_PARTIAL_ORDER_CLARIFY = (
+    "I only heard part of the order number. Please continue with the remaining digits."
 )
 _KEEPALIVE_RESPONSE = "No problem, I'm here. Go ahead when you're ready."
 _EMAIL_COMPLETE = re.compile(
@@ -47,7 +56,11 @@ _EMAIL_SPOKEN = re.compile(
     r"\b[a-z0-9._%+\-]+\s+(?:at|@)\s*[a-z0-9.\-]+(?:\s+(?:dot|\.)\s+(?:com|net|org))?\b",
     re.IGNORECASE,
 )
+_ORDER_HINT = re.compile(r"\b(order|order number|order #)\b", re.I)
 _DIGIT_FRAGMENT = re.compile(r"^[\d\s\.\-]+$")
+
+
+_ORDER_CONTINUATION_WINDOW_S = 4.0
 
 
 @dataclass
@@ -59,8 +72,20 @@ class AssemblerState:
     emitted_ids: set[str] = field(default_factory=set)
     extend_until: float = 0.0
     isbn_partial_since: float = 0.0
+    order_partial_since: float = 0.0
     hold_started_at: float = 0.0
     pending_clarify: str = ""
+    last_order_emit_text: str = ""
+    last_order_emit_at: float = 0.0
+
+
+@dataclass
+class AssembledTurn:
+    """One debounced caller utterance passed to the LLM runtime."""
+
+    text: str
+    mode: str = "normal"
+    agent_reply: str = ""
 
 
 class TurnAssembler:
@@ -77,12 +102,30 @@ class TurnAssembler:
         self._debounce_task: Optional[asyncio.Task] = None
         self._emit_callback: Optional[Callable[[str], Awaitable[None]]] = None
         self._lock = asyncio.Lock()
+        self._call_sid = ""
+        self._payment_awaiting_email = False
 
     def _new_group_id(self) -> str:
         return str(uuid.uuid4())[:12]
 
-    def _detect_mode(self, text: str, *, call_sid: str = "") -> str:
+    def _detect_mode(
+        self,
+        text: str,
+        *,
+        call_sid: str = "",
+        pending_isbn_buffer: str = "",
+        payment_awaiting_email: bool = False,
+    ) -> str:
         t = text.lower().strip()
+        if payment_awaiting_email or self._state.mode == "email":
+            if (
+                _EMAIL_COMPLETE.search(text)
+                or _EMAIL_SPOKEN.search(t)
+                or " at " in t
+                or "@" in t
+                or re.search(r"\b(?:gmail|yahoo|outlook|hotmail|dot com)\b", t)
+            ):
+                return "email"
         if _EMAIL_COMPLETE.search(text) or _EMAIL_SPOKEN.search(t) or " at " in t or "@" in t:
             return "email"
         book_collection = False
@@ -90,11 +133,45 @@ class TurnAssembler:
             from ..agent_runtime.conversation_state_machine import get_conversation_state
             cs = get_conversation_state(call_sid)
             book_collection = cs.mode in ("book_collection", "isbn_collection")
+        if pending_isbn_buffer or self._state.mode == "isbn":
+            if _DIGIT_FRAGMENT.match(text.strip()) or should_collect_isbn(text, book_collection=True):
+                return "isbn"
+        if should_collect_isbn(text, book_collection=book_collection) or is_complete_isbn(text):
+            return "isbn"
+        from ..agent_runtime.order_flow_state import normalize_order_number_from_speech
+
+        digits = "".join(c for c in text if c.isdigit())
+        pending_isbn = pending_isbn_buffer or ""
+        if pending_isbn and (
+            _DIGIT_FRAGMENT.match(text.strip())
+            or should_collect_isbn(text, book_collection=True)
+        ):
+            return "isbn"
+        if (
+            _DIGIT_FRAGMENT.match(text.strip())
+            and digits.startswith(("978", "979"))
+        ):
+            return "isbn"
+        if _DIGIT_FRAGMENT.match(text.strip()) and len(digits) >= 9:
+            return "isbn"
+        if _ORDER_HINT.search(t) or self._state.mode == "order":
+            if normalize_order_number_from_speech(text) or _DIGIT_FRAGMENT.match(text.strip()):
+                return "order"
+        if (
+            _DIGIT_FRAGMENT.match(text.strip())
+            and 4 <= len(digits) <= 8
+            and not digits.startswith(("978", "979"))
+        ):
+            if payment_awaiting_email or self._state.mode == "email":
+                return "email"
+            return "order"
         if self._state.mode == "isbn" and should_collect_isbn(text, book_collection=book_collection):
             return "isbn"
         if not should_collect_isbn(text, book_collection=book_collection):
             return "normal"
         digits = "".join(c for c in text if c.isdigit())
+        if len(digits) == 0:
+            return "normal"
         if len(digits) >= 10:
             return "isbn"
         if _ISBN_DIGIT_HINT(text):
@@ -140,12 +217,11 @@ class TurnAssembler:
             return s.VOICE_EMAIL_COLLECTION_SILENCE_MS
         if mode == "order":
             return s.VOICE_ORDER_COLLECTION_SILENCE_MS
-        return getattr(s, "VOICE_TURN_ASSEMBLER_DEBOUNCE_MS", 750)
+        return s.VOICE_TURN_ASSEMBLER_DEBOUNCE_MS
 
     def _should_emit_isbn_immediately(self, text: str) -> bool:
-        """Only emit ISBN immediately when 13 digits (not partial 10-digit chunks)."""
-        digits = "".join(c for c in text if c.isdigit())
-        return len(digits) == 13
+        """Emit as soon as a checksum-valid complete ISBN is present."""
+        return is_complete_isbn(text)
 
     def _can_emit_immediately(self, text: str, mode: str) -> tuple[bool, str]:
         if mode == "email":
@@ -155,14 +231,32 @@ class TurnAssembler:
                 return True, "complete_email_spoken"
         if mode == "isbn" and self._should_emit_isbn_immediately(text):
             return True, "complete_isbn"
+        # Always debounce order digits so "3966" + "7" merges before Shopify lookup.
         if mode == "order" and is_complete_order_number(text):
-            return True, "complete_order"
+            if _ORDER_HINT.search(text.lower()):
+                return False, "incomplete"
+            return False, "incomplete"
+        if mode == "normal":
+            from ..agent_runtime.order_flow_state import order_intent_detected
+            from ..runtime.intent_heuristics import is_smalltalk, is_vague_product_request
+
+            stripped = text.strip()
+            if is_isbn_permission_question(stripped):
+                return True, "isbn_permission_question"
+            if order_intent_detected(stripped) or should_collect_isbn(stripped):
+                return False, "incomplete"
+            if _is_bare_affirm(stripped):
+                return True, "complete_affirmative"
+            if is_smalltalk(stripped):
+                return True, "immediate_greeting"
+            if is_vague_product_request(stripped):
+                return True, "immediate_vague_product"
         return False, "incomplete"
 
     async def _emit_buffered(
         self,
         sid: str,
-        on_emit: Callable[[str], Awaitable[None]],
+        on_emit: Callable[[AssembledTurn], Awaitable[None]],
         reason: str,
     ) -> bool:
         st = self._state
@@ -177,6 +271,17 @@ class TurnAssembler:
             return True
         st.emitted_ids.add(emit_id)
         emit_mode = st.mode
+        if emit_mode == "email":
+            from ..email.capture import extract_best_email_phrase
+
+            cleaned = extract_best_email_phrase(assembled)
+            if cleaned:
+                assembled = cleaned
+        if emit_mode == "order":
+            import time
+
+            st.last_order_emit_text = assembled
+            st.last_order_emit_at = time.monotonic()
         st.buffer = ""
         st.mode = "normal"
         st.fragment_group_id = ""
@@ -185,15 +290,17 @@ class TurnAssembler:
             "turn_assembler_emit sid=%s mode=%s reason=%s",
             sid, emit_mode, reason,
         )
-        await on_emit(assembled)
+        await on_emit(AssembledTurn(text=assembled, mode=emit_mode))
         return False
 
     async def ingest(
         self,
         fragment: str,
-        on_emit: Callable[[str], Awaitable[None]],
+        on_emit: Callable[[AssembledTurn], Awaitable[None]],
         *,
         call_sid: str = "",
+        pending_isbn_buffer: str = "",
+        payment_awaiting_email: bool = False,
     ) -> bool:
         """
         Accept a transcript fragment.
@@ -203,23 +310,88 @@ class TurnAssembler:
         """
         async with self._lock:
             sid = (call_sid or "")[:6]
+            if call_sid:
+                self._call_sid = call_sid
+            self._pending_isbn_buffer = pending_isbn_buffer or ""
+            self._payment_awaiting_email = bool(payment_awaiting_email)
             frag = (fragment or "").strip()
             if not frag:
                 return True
 
             st = self._state
 
+            # Permission to give ISBN/title — never hold; emit immediately for fast reply.
+            if is_isbn_permission_question(frag):
+                st.buffer = frag
+                st.mode = "normal"
+                st.isbn_partial_since = 0.0
+                return await self._emit_buffered(sid, on_emit, "isbn_permission_question")
+
+
+            if (
+                not st.buffer
+                and _DIGIT_FRAGMENT.match(frag)
+                and st.last_order_emit_at > 0
+            ):
+                import time
+
+                frag_digits = "".join(c for c in frag if c.isdigit())
+                if (
+                    1 <= len(frag_digits) <= 3
+                    and time.monotonic() - st.last_order_emit_at
+                    < _ORDER_CONTINUATION_WINDOW_S
+                    and st.last_order_emit_text
+                ):
+                    st.buffer = self._merge_text(st.last_order_emit_text, frag)
+                    st.mode = "order"
+                    st.fragment_group_id = self._new_group_id()
+                    logger.info(
+                        "turn_assembler_merge sid=%s mode=order reason=order_digit_continuation len=%d",
+                        sid,
+                        len(st.buffer),
+                    )
+                    self._emit_callback = on_emit
+                    if self._debounce_task and not self._debounce_task.done():
+                        self._debounce_task.cancel()
+                    self._debounce_task = asyncio.create_task(
+                        self._debounced_emit(sid, st.mode),
+                        name=f"turn-assembler-{sid}",
+                    )
+                    return True
+
             if _RESET_BUFFER.search(frag):
                 st.buffer = ""
                 st.mode = "normal"
                 st.isbn_partial_since = 0.0
+                st.order_partial_since = 0.0
                 st.pending_clarify = ""
+                st.last_order_emit_text = ""
+                st.last_order_emit_at = 0.0
                 st.fragment_group_id = self._new_group_id()
                 logger.info(
                     "turn_assembler_hold sid=%s mode=%s reason=buffer_reset",
                     sid, st.mode,
                 )
                 return True
+
+            # Email escape: keepalive/hello should not pollute the email buffer.
+            if st.mode == "email" and _KEEPALIVE_FRAGMENT.search(frag):
+                st.buffer = frag
+                st.mode = "normal"
+                logger.info(
+                    "turn_assembler_emit sid=%s mode=normal reason=email_escape_keepalive",
+                    sid,
+                )
+                return await self._emit_buffered(sid, on_emit, "email_escape_keepalive")
+
+            if st.mode == "email" and _is_bare_affirm(frag):
+                st.buffer = frag
+                st.mode = "normal"
+                logger.info(
+                    "turn_assembler_emit sid=%s mode=normal reason=email_escape_affirm",
+                    sid,
+                )
+                return await self._emit_buffered(sid, on_emit, "email_escape_affirm")
 
             # ISBN escape: keepalive/frustration should not merge into ISBN buffer
             if st.mode == "isbn" and _KEEPALIVE_FRAGMENT.search(frag):
@@ -259,11 +431,31 @@ class TurnAssembler:
                 elif time.monotonic() - st.hold_started_at >= max_hold_s:
                     keepalive = getattr(self._settings, "VOICE_COLLECTION_KEEPALIVE_ENABLED", True)
                     if keepalive:
-                        st.buffer = _KEEPALIVE_RESPONSE
+                        held = st.buffer
+                        st.buffer = ""
                         st.mode = "normal"
                         st.hold_started_at = 0.0
-                        return await self._emit_buffered(sid, on_emit, "wait_hold_timeout")
+                        logger.info(
+                            "turn_assembler_keepalive sid=%s reason=wait_hold_timeout",
+                            sid,
+                        )
+                        await on_emit(AssembledTurn(
+                            text=held,
+                            mode="normal",
+                            agent_reply=_KEEPALIVE_RESPONSE,
+                        ))
+                        return False
                 st.buffer = self._merge_text(st.buffer, frag)
+                merged_mode = self._detect_mode(
+                    st.buffer,
+                    call_sid=call_sid,
+                    pending_isbn_buffer=self._pending_isbn_buffer,
+                    payment_awaiting_email=payment_awaiting_email,
+                )
+                if merged_mode != "normal":
+                    st.mode = merged_mode
+                elif is_complete_isbn(st.buffer):
+                    st.mode = "isbn"
                 if self._debounce_task and not self._debounce_task.done():
                     self._debounce_task.cancel()
                 logger.info(
@@ -272,7 +464,12 @@ class TurnAssembler:
                 )
                 return True
 
-            detected = self._detect_mode(frag, call_sid=sid)
+            detected = self._detect_mode(
+                frag,
+                call_sid=call_sid,
+                pending_isbn_buffer=self._pending_isbn_buffer,
+                payment_awaiting_email=payment_awaiting_email,
+            )
             if st.buffer and st.mode != "normal":
                 mode = st.mode
             else:
@@ -283,13 +480,28 @@ class TurnAssembler:
 
             if st.buffer:
                 st.buffer = self._merge_text(st.buffer, frag)
+                st.order_partial_since = 0.0
+                redetected = self._detect_mode(
+                    st.buffer,
+                    call_sid=call_sid,
+                    pending_isbn_buffer=self._pending_isbn_buffer,
+                    payment_awaiting_email=payment_awaiting_email,
+                )
+                if redetected != "normal":
+                    st.mode = redetected
+                elif mode != "normal":
+                    st.mode = mode
+                elif is_complete_isbn(st.buffer):
+                    st.mode = "isbn"
                 logger.info(
                     "turn_assembler_merge sid=%s mode=%s len=%d",
-                    sid, mode, len(st.buffer),
+                    sid, st.mode, len(st.buffer),
                 )
             else:
                 st.buffer = frag
                 st.mode = mode
+                if mode == "order":
+                    st.order_partial_since = 0.0
 
             immediate, reason = self._can_emit_immediately(st.buffer, st.mode)
             if immediate:
@@ -320,19 +532,57 @@ class TurnAssembler:
             if not st.buffer:
                 return
 
+            if _is_bare_affirm(st.buffer.strip()):
+                await self._emit_buffered(sid, self._emit_callback, "debounce_affirmative")
+                return
+
+            if is_complete_isbn(st.buffer):
+                st.mode = "isbn"
+            elif st.mode == "normal":
+                redetected = self._detect_mode(
+                    st.buffer,
+                    call_sid=self._call_sid,
+                    pending_isbn_buffer=getattr(self, "_pending_isbn_buffer", ""),
+                    payment_awaiting_email=getattr(self, "_payment_awaiting_email", False),
+                )
+                if redetected != "normal":
+                    st.mode = redetected
+
             emit_mode = st.mode
             digits = "".join(c for c in st.buffer if c.isdigit())
-            if emit_mode == "isbn" and len(digits) != 13:
+            if emit_mode == "isbn" and len(digits) > 13:
+                from ..tools.isbn_validator import _sliding_window_isbn13
+
+                found = _sliding_window_isbn13(digits)
+                if found:
+                    st.mode = "isbn"
+                    logger.info(
+                        "turn_assembler_emit sid=%s mode=isbn reason=sliding_window_isbn len=%d",
+                        sid,
+                        len(digits),
+                    )
+                    await self._emit_buffered(sid, self._emit_callback, "sliding_window_isbn")
+                    return
+            if emit_mode == "isbn" and not is_complete_isbn(st.buffer):
                 import time
+                if len(digits) == 0:
+                    if is_isbn_permission_question(st.buffer):
+                        st.mode = "normal"
+                        await self._emit_buffered(sid, self._emit_callback, "isbn_permission_question")
+                        return
+                    st.mode = "normal"
+                    await self._emit_buffered(sid, self._emit_callback, "isbn_zero_digits_escape")
+                    return
                 if st.isbn_partial_since <= 0:
                     st.isbn_partial_since = time.monotonic()
                 timeout_s = getattr(self._settings, "VOICE_ISBN_PARTIAL_TIMEOUT_MS", 5000) / 1000
-                if 10 <= len(digits) <= 12 and time.monotonic() - st.isbn_partial_since >= timeout_s:
-                    st.buffer = _PARTIAL_ISBN_CLARIFY
-                    st.mode = "normal"
+                if (
+                    1 <= len(digits) <= 12
+                    and time.monotonic() - st.isbn_partial_since >= timeout_s
+                ):
                     st.isbn_partial_since = 0.0
                     logger.info(
-                        "turn_assembler_emit sid=%s mode=normal reason=partial_isbn_timeout digits=%d",
+                        "turn_assembler_emit sid=%s mode=isbn reason=partial_isbn_timeout digits=%d",
                         sid, len(digits),
                     )
                     await self._emit_buffered(sid, self._emit_callback, "partial_isbn_timeout")
@@ -348,19 +598,57 @@ class TurnAssembler:
                 if " at " not in buf_lower:
                     return
 
+            if emit_mode == "order":
+                from .turn_taking import is_complete_order_number, min_order_digits
+
+                digits = "".join(c for c in st.buffer if c.isdigit())
+                if (
+                    1 <= len(digits) < min_order_digits()
+                    and not digits.startswith(("978", "979"))
+                ):
+                    import time
+
+                    if st.order_partial_since <= 0:
+                        st.order_partial_since = time.monotonic()
+                    timeout_s = getattr(
+                        self._settings, "VOICE_ORDER_PARTIAL_TIMEOUT_MS", 8000,
+                    ) / 1000
+                    if time.monotonic() - st.order_partial_since < timeout_s:
+                        logger.info(
+                            "turn_assembler_hold sid=%s mode=order reason=incomplete_order digits=%d",
+                            sid,
+                            len(digits),
+                        )
+                        return
+                    st.order_partial_since = 0.0
+                    st.buffer = _PARTIAL_ORDER_CLARIFY
+                    st.mode = "normal"
+                    await self._emit_buffered(
+                        sid, self._emit_callback, "partial_order_timeout",
+                    )
+                    return
+                if not is_complete_order_number(st.buffer):
+                    logger.info(
+                        "turn_assembler_hold sid=%s mode=order reason=incomplete_order digits=%d",
+                        sid,
+                        len(digits),
+                    )
+                    return
+
             if self._emit_callback:
                 await self._emit_buffered(sid, self._emit_callback, f"debounce_{emit_mode}")
 
-    async def flush(self, on_emit: Callable[[str], Awaitable[None]], *, call_sid: str = "") -> None:
+    async def flush(self, on_emit: Callable[[AssembledTurn], Awaitable[None]], *, call_sid: str = "") -> None:
         """Force-emit any buffered text (e.g. on disconnect)."""
         async with self._lock:
             if self._debounce_task and not self._debounce_task.done():
                 self._debounce_task.cancel()
             if self._state.buffer:
                 assembled = self._state.buffer
+                emit_mode = self._state.mode
                 self._state.buffer = ""
                 self._state.mode = "normal"
-                await on_emit(assembled)
+                await on_emit(AssembledTurn(text=assembled, mode=emit_mode))
 
 
 def _ISBN_DIGIT_HINT(text: str) -> bool:

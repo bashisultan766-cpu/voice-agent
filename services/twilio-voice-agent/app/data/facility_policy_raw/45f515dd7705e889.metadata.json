@@ -1,0 +1,11 @@
+{
+  "url": "https://greenecountypa.gov/department-sheriff",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T07:21:33.333886+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Greene County Sheriff's Office"
+  ]
+}

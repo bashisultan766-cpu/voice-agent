@@ -59,14 +59,40 @@ class CartLedger:
 
     def add_candidate(self, item: CartItem) -> None:
         """Add a new book candidate (e.g. after ISBN/title search result)."""
-        if item.isbn:
-            for existing in self._items:
-                if existing.isbn == item.isbn and existing.confirmation_status != "rejected":
+        if item.variant_id:
+            for idx, existing in enumerate(self._items):
+                if (
+                    existing.variant_id == item.variant_id
+                    and existing.confirmation_status == "candidate"
+                ):
                     existing.title = item.title or existing.title
-                    existing.variant_id = item.variant_id or existing.variant_id
+                    existing.isbn = item.isbn or existing.isbn
                     existing.price = item.price or existing.price
-                    self._last_candidate_idx = self._items.index(existing)
+                    if item.quantity > 0:
+                        existing.quantity = item.quantity
+                    self._last_candidate_idx = idx
                     return
+        if item.isbn:
+            for idx, existing in enumerate(self._items):
+                if existing.isbn != item.isbn or existing.confirmation_status == "rejected":
+                    continue
+                if (
+                    existing.confirmation_status == "confirmed"
+                    and item.variant_id
+                    and existing.variant_id
+                    and existing.variant_id != item.variant_id
+                ):
+                    continue
+                existing.title = item.title or existing.title
+                existing.variant_id = item.variant_id or existing.variant_id
+                existing.price = item.price or existing.price
+                if item.quantity > 0:
+                    if existing.confirmation_status == "confirmed":
+                        existing.quantity = max(existing.quantity, item.quantity)
+                    else:
+                        existing.quantity = max(existing.quantity, item.quantity)
+                self._last_candidate_idx = idx
+                return
         self._items.append(item)
         self._last_candidate_idx = len(self._items) - 1
 
@@ -106,9 +132,23 @@ class CartLedger:
             candidate.confirmation_status = "rejected"
         return candidate
 
-    def update_quantity(self, isbn_or_title: str, quantity: int) -> bool:
+    def update_quantity(self, isbn_or_title: str, quantity: int, *, variant_id: str = "") -> bool:
+        if variant_id:
+            for item in self._items:
+                if (
+                    item.variant_id == variant_id
+                    and item.confirmation_status != "rejected"
+                ):
+                    item.quantity = max(1, quantity)
+                    return True
+        needle = (isbn_or_title or "").strip().lower()
         for item in self._items:
-            if item.isbn == isbn_or_title or item.title.lower() == isbn_or_title.lower():
+            if item.confirmation_status == "rejected":
+                continue
+            if item.isbn == isbn_or_title:
+                item.quantity = max(1, quantity)
+                return True
+            if needle and item.title.lower() == needle:
                 item.quantity = max(1, quantity)
                 return True
         return False
@@ -190,11 +230,17 @@ class CartLedger:
         ]
 
     def titles_one_by_one_summary(self) -> str:
-        """Voice-friendly list of found titles and not-found ISBNs."""
+        """Voice-friendly list of confirmed cart titles with copy counts."""
         parts: list[str] = []
-        found = self.found_titles_ordered()
-        for idx, title in enumerate(found, start=1):
-            parts.append(f"The {'first' if idx == 1 else f'{idx}'} book is {title}.")
+        confirmed = self.confirmed_items
+        ordinals = ("first", "second", "third", "fourth", "fifth")
+        for idx, item in enumerate(confirmed, start=1):
+            qty = max(1, int(item.quantity or 1))
+            copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+            ord_label = ordinals[idx - 1] if idx <= len(ordinals) else str(idx)
+            parts.append(
+                f"The {ord_label} book is {item.title} — {copy_phrase}."
+            )
         for isbn in self._isbn_not_found:
             parts.append(f"ISBN {isbn} did not return a matching title.")
         return " ".join(parts) if parts else ""
@@ -203,8 +249,40 @@ class CartLedger:
         confirmed = self.confirmed_items
         if not confirmed:
             return "No books confirmed in your cart yet."
-        titles = ", ".join(i.title for i in confirmed if i.title)
-        return f"{len(confirmed)} book{'s' if len(confirmed) != 1 else ''} in cart: {titles}."
+        total_copies = sum(max(1, int(i.quantity or 1)) for i in confirmed)
+        lines: list[str] = []
+        subtotal = 0.0
+        for i in confirmed:
+            qty = max(1, int(i.quantity or 1))
+            copy_word = "copy" if qty == 1 else "copies"
+            price_str = ""
+            if i.price:
+                try:
+                    unit = float(str(i.price).replace("$", "").strip())
+                    line_total = unit * qty
+                    subtotal += line_total
+                    price_str = f" at ${unit:.2f} each"
+                except ValueError:
+                    price_str = f" at {i.price} each"
+            lines.append(f"{qty} {copy_word} of {i.title}{price_str}")
+        detail = "; ".join(lines)
+        summary = (
+            f"{len(confirmed)} title{'s' if len(confirmed) != 1 else ''}, "
+            f"{total_copies} total cop{'y' if total_copies == 1 else 'ies'}: {detail}."
+        )
+        if subtotal > 0:
+            from ..payment.drop_shipping_fee import compute_drop_shipping_fee, CUSTOMER_LABEL
+
+            fee = compute_drop_shipping_fee(
+                [{"title": i.title, "quantity": i.quantity, "price": i.price} for i in confirmed]
+            )
+            total_with_fee = subtotal + fee
+            summary += (
+                f" Subtotal before shipping is ${total_with_fee:.2f}"
+                f" (includes {CUSTOMER_LABEL.lower()})."
+                " Postal shipping is calculated on the payment page."
+            )
+        return summary
 
     @classmethod
     def from_session(cls, cart_items: list, isbn_history: list | None = None,

@@ -14,7 +14,7 @@ from ..cart.session import get_ledger, sync_ledger_to_session
 from .states import DialogueDecision, DialogueState
 
 if TYPE_CHECKING:
-    from ..pipeline.router import IntentResult
+    from .intent_types import IntentResult
     from ..state.models import SessionState
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ _SUBJECT_WORDS = re.compile(
 
 def spell_email_letter_by_letter(email: str) -> str:
     """Return comma-separated letters for voice read-back."""
-    from ..pipeline.email_speller import spell_email_for_voice
+    from ..email.speller import spell_email_for_voice
     return spell_email_for_voice(email)
 
 
@@ -305,7 +305,7 @@ class DialogueManager:
 
     @staticmethod
     def build_spell_email_response(session: "SessionState") -> str:
-        from ..pipeline.email_speller import (
+        from ..email.speller import (
             build_email_readback,
             build_email_spell_only,
             mask_email as spell_mask,

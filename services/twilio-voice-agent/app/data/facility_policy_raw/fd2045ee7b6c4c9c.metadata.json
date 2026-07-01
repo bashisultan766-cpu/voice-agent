@@ -1,0 +1,11 @@
+{
+  "url": "https://apachecountyjailaz.org/inmate-information/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T06:28:05.597865+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Apache County Jail"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "url": "https://www.randolphcountync.gov/280/Sheriffs-Office",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:13:18.657501+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Randolph County Sheriff's Office"
+  ]
+}

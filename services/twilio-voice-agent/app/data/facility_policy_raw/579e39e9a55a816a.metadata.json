@@ -1,0 +1,11 @@
+{
+  "url": "https://www.merrimackcounty.net/departments/corrections/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T10:56:04.489037+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Merrimack County Jail"
+  ]
+}

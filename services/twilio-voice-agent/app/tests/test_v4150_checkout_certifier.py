@@ -19,6 +19,7 @@ def _session():
 
     s = SessionState(session_id="s", call_sid="CA4150CO", from_number="", to_number="")
     s.confirmed_email = "test@example.com"
+    s.payment_email_confirmed = True
     s.cart_items = [{"variant_id": "v1", "quantity": 1, "title": "Book"}]
     return s
 

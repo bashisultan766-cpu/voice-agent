@@ -1,0 +1,11 @@
+{
+  "url": "https://www.napacounty.gov/320/Incarcerated-Person-Mail",
+  "status": "200",
+  "content_type": "text/html; charset=utf-8",
+  "fetched_at": "2026-06-26T11:01:59.985626+00:00",
+  "text_length": 5357,
+  "error": null,
+  "source_facilities": [
+    "Napa County Sheriff Department"
+  ]
+}

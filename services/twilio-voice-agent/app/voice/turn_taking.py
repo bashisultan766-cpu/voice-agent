@@ -32,7 +32,7 @@ _WAIT_PHRASE = re.compile(
 )
 
 _ISBN_CONTEXT_PAT = re.compile(
-    r"\b(isbn|i\s+s\s+b\s+n|book number|barcode number|the number is)\b",
+    r"\b(isbn|i\s+s\s+b\s+n|iouspl|ouspl|iuspl|ibsn|book number|barcode number|the number is)\b",
     re.IGNORECASE,
 )
 _NON_ISBN_DIGIT_PAT = re.compile(
@@ -42,12 +42,24 @@ _NON_ISBN_DIGIT_PAT = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_ISBN_PERMISSION_PAT = re.compile(
+    r"\b(?:can i|i will|i'll|let me|going to)\s+(?:please\s+)?(?:give|read|tell|provide)\s+(?:you\s+)?(?:the\s+)?"
+    r"(?:isbn|i\s*s\s*b\s*n|iouspl|ouspl|iuspl)(?:\s+number)?(?:\s+of(?:\s+the)?\s+book)?\b",
+    re.IGNORECASE,
+)
+
+
+def is_isbn_permission_question(text: str) -> bool:
+    """Caller asking permission to read ISBN/title — not digit collection."""
+    return bool(_ISBN_PERMISSION_PAT.search((text or "").strip()))
 
 
 def should_collect_isbn(text: str, *, book_collection: bool = False) -> bool:
     """True only when transcript context indicates ISBN digit collection."""
     t = (text or "").strip()
     if not t:
+        return False
+    if is_isbn_permission_question(t):
         return False
     if _NON_ISBN_DIGIT_PAT.search(t):
         return False
@@ -184,12 +196,31 @@ def get_silence_threshold_ms(ctx: TurnTakingContext) -> int:
 
 
 def is_complete_isbn(text: str) -> bool:
-    """Return True if text contains what looks like a full 10- or 13-digit ISBN."""
-    digits = "".join(c for c in text if c.isdigit())
-    return len(digits) in (10, 13)
+    """Return True when text contains a checksum-valid ISBN-10/ISBN-13."""
+    from ..tools.isbn import extract_isbn_candidate
+    from ..tools.isbn_validator import _sliding_window_isbn13, extract_digits
+
+    if extract_isbn_candidate(text):
+        return True
+    digits = extract_digits(text)
+    if len(digits) > 13:
+        return _sliding_window_isbn13(digits) is not None
+    return False
+
+
+def min_order_digits() -> int:
+    """Minimum digit count before treating speech as a complete Shopify order number."""
+    try:
+        from ..config import get_settings
+
+        return int(getattr(get_settings(), "VOICE_MIN_ORDER_DIGITS", 5))
+    except Exception:
+        return 5
 
 
 def is_complete_order_number(text: str) -> bool:
-    """Return True if text contains a plausible order number (4+ digits)."""
+    """Return True when speech contains enough digits for a Shopify order lookup."""
     digits = "".join(c for c in text if c.isdigit())
-    return len(digits) >= 4
+    if digits.startswith(("978", "979")):
+        return False
+    return len(digits) >= min_order_digits()

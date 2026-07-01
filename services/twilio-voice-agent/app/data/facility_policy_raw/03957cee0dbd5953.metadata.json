@@ -1,0 +1,12 @@
+{
+  "url": "https://sh.ingham.org/courts_and_sheriff/sheriffs_office/",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T08:00:49.882604+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Ingham County Sheriff",
+    "Ingham County Sheriff's Office"
+  ]
+}

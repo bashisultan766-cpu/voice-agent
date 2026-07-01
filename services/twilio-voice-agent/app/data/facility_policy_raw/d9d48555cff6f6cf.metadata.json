@@ -1,0 +1,30 @@
+{
+  "url": "https://cdoc.colorado.gov/resources-faq/contact-an-inmate",
+  "status": "403",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T06:33:00.786286+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Arrowhead Correctional Center",
+    "Arkansas Valley Correctional Facility",
+    "Buena Vista Correctional Complex",
+    "Centennial Correctional Facility",
+    "Colorado Territorial Correctional Facility",
+    "Delta Correctional Center",
+    "Denver Reception and Diagnostic Center",
+    "Denver Women's Correctional Facility",
+    "Four Mile Correctional Center",
+    "Fremont Correctional Facility",
+    "Limon Correctional Facility",
+    "La Vista Correctional Facility",
+    "Rifle Correctional Center",
+    "Skyline Correctional Center",
+    "San Carlos Correctional Facility",
+    "Sterling Correctional Facility",
+    "Trinidad Correctional Facility",
+    "Youthful Offender System",
+    "Bent County Correctional Facility",
+    "Crowley County Correctional Facility"
+  ]
+}

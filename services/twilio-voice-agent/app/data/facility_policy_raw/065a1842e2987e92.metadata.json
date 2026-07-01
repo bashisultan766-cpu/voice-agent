@@ -1,0 +1,14 @@
+{
+  "url": "https://www.riversidesheriff.org/225/Rules-for-Regular-Incoming-Mail",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:13:39.377395+00:00",
+  "text_length": 0,
+  "error": "[Errno 11001] getaddrinfo failed",
+  "source_facilities": [
+    "Cois M. yrd Detention Center / Riverside county jail",
+    "John J. Benoit Detention Center\r\n/ Riverside County Jail",
+    "Larry D. Smith Correctional Facility\n/ Riverside County Jail",
+    "Robert Presley Detention Center"
+  ]
+}

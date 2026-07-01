@@ -1,0 +1,30 @@
+{
+  "url": "https://drc.ohio.gov/visitation/general-mail-and-email/general-mail-and-email",
+  "status": "404",
+  "content_type": "text/html",
+  "fetched_at": "2026-06-26T06:57:00.314022+00:00",
+  "text_length": 0,
+  "error": "http_404",
+  "source_facilities": [
+    "Allen Oakwood Correctional Institution",
+    "Belmont Correctional Institution",
+    "Chillicothe Correctional Institution",
+    "Correctional Reception Center",
+    "Dayton Correctional Institution",
+    "Franklin Medical Center",
+    "Grafton Correctional Institution",
+    "Lake Erie Correctional Institution",
+    "Lebanon Correctional Institution",
+    "London Correctional Institution",
+    "Lorain Correctional Institution",
+    "Madison Correctional Institution Ohio",
+    "Mansfield Correctional Institution",
+    "Marion Correctional Institution Ohio",
+    "Noble Correctional Institution",
+    "North Central Correctional Complex",
+    "Northeast Reintegration Center",
+    "Ohio Reformatory for Women",
+    "Ohio State Penitentiary",
+    "Pickaway Correctional Institution"
+  ]
+}

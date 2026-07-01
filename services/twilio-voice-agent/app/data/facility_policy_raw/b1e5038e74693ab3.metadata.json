@@ -1,0 +1,11 @@
+{
+  "url": "https://www.coshoctoncounty.net/sheriff/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:45:03.029108+00:00",
+  "text_length": 0,
+  "error": "_ssl.c:1064: The handshake operation timed out",
+  "source_facilities": [
+    "Coshocton County Sheriff's Office"
+  ]
+}

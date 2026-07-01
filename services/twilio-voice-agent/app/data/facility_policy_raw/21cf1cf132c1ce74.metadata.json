@@ -1,0 +1,11 @@
+{
+  "url": "jail@co.whitman.wa.us",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T11:58:14.194644+00:00",
+  "text_length": 0,
+  "error": "unknown url type: '/jail@co.whitman.wa.us'",
+  "source_facilities": [
+    "Whitman County Jail"
+  ]
+}

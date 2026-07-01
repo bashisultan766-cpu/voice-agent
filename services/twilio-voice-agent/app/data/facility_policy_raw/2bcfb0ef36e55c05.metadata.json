@@ -1,0 +1,11 @@
+{
+  "url": "https://sheriff.cherokeecountyga.gov/contact_us.php",
+  "status": "403",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T08:03:15.160959+00:00",
+  "text_length": 0,
+  "error": "http_403",
+  "source_facilities": [
+    "Cherokee County Georgia Sheriff's Office-Headquarters"
+  ]
+}

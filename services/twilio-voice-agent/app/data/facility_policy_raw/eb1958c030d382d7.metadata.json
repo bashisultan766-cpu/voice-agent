@@ -1,0 +1,11 @@
+{
+  "url": "https://doc.iowa.gov/districts-prisons/iowa-state-penitentiary",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:54:52.382825+00:00",
+  "text_length": 2793,
+  "error": null,
+  "source_facilities": [
+    "Iowa State Penitentiary"
+  ]
+}

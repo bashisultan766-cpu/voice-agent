@@ -1,0 +1,12 @@
+{
+  "url": "https://sheriff.senecacountyny.gov/",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T08:06:23.339504+00:00",
+  "text_length": 2668,
+  "error": null,
+  "source_facilities": [
+    "Seneca County Sheriff",
+    "Seneca County Jail"
+  ]
+}

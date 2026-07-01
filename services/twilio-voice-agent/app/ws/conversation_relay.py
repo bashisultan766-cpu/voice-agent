@@ -46,16 +46,43 @@ from ..conversation.call_memory import (
     get_resume_greeting,
     store_resume_snapshot,
 )
-from ..ai.openai_agent import run_agent_turn
 from ..caller.repository import (
     get_caller_profile,
     upsert_caller_profile,
     build_safe_caller_context,
 )
-from ..agent_runtime.runtime import get_eric_runtime, resolve_live_turn_handler
-from ..pipeline.engine import get_engine
+from ..agent_runtime.live_runtime import resolve_live_turn_handler
+from ..sync.call_setup_prefetch import prefetch_on_call_setup
 from ..voice.turn_assembler import clear_turn_assembler, get_turn_assembler
+from ..payment.payment_state_machine import payment_email_turn_priority
 from .conversation_relay_sender import ConversationRelayOutbound, ConversationRelayStats
+
+
+def _clear_pending_tts_queue(send_q: asyncio.Queue) -> int:
+    """Drop queued text tokens so interrupted speech cannot continue."""
+    pending: list[Optional[dict]] = []
+    while True:
+        try:
+            pending.append(send_q.get_nowait())
+        except asyncio.QueueEmpty:
+            break
+
+    dropped = 0
+    for item in pending:
+        if item is None:
+            try:
+                send_q.put_nowait(item)
+            except asyncio.QueueFull:
+                pass
+            continue
+        if isinstance(item, dict) and item.get("type") == "text":
+            dropped += 1
+            continue
+        try:
+            send_q.put_nowait(item)
+        except asyncio.QueueFull:
+            pass
+    return dropped
 
 logger = logging.getLogger(__name__)
 
@@ -74,69 +101,33 @@ async def dispatch_assembled_turn(
     user_text: str,
     send,
     caller_context,
+    *,
+    assembled_turn_mode: str = "",
+    stt_to_turn_ms: float = 0.0,
 ) -> None:
-    """Route one assembled ConversationRelay turn to the configured runtime handler."""
-    mode = settings.VOICE_AGENT_RUNTIME_MODE
-    handler = resolve_live_turn_handler(settings)
+    """
+    Route one assembled ConversationRelay turn through central dispatch.
+
+    Canonical path: voice_commerce_runtime only.
+    """
+    from ..runtime.voice_commerce_runtime import RUNTIME_MODE
+    from .turn_dispatch import dispatch_turn
+
     sid = session.call_sid[:6]
+    handler = RUNTIME_MODE
 
-    logger.info(
-        "voice_turn_handler sid=%s mode=%s handler=%s",
-        sid,
-        mode,
-        handler,
-    )
-
-    # ── v4.17: LLM-first runtime — the single consolidated brain ──────────────
-    if mode == "llm_first":
-        from ..agent_runtime.llm_first_runtime import get_llm_first_runtime
-
-        t0 = time.monotonic()
-        logger.info("llm_first_turn_started sid=%s", sid)
-        result = await get_llm_first_runtime(settings).handle_turn(
-            session,
-            user_text,
-            send,
-            caller_context=caller_context,
-        )
-        chars = len(getattr(result, "response_text", "") or "")
-        logger.info(
-            "llm_first_turn_completed sid=%s chars=%d total_ms=%d",
-            sid,
-            chars,
-            int((time.monotonic() - t0) * 1000),
-        )
-        return
-
-    if mode in ("main_llm_agent", "eric_agent_runtime"):
-        await get_eric_runtime(settings).handle_turn(
-            session,
-            user_text,
-            send,
-            caller_context=caller_context,
-        )
-        return
-
-    if mode == "legacy_v410":
-        engine = get_engine(settings)
-        await engine.handle_turn(session, user_text, send, caller_context=caller_context)
-        return
-
-    # Unknown mode — never leave the caller in silence. Use the LLM-first brain
-    # as the safe fallback so a valid spoken response is always produced.
-    logger.error(
-        "runtime_mode_mismatch sid=%s env_mode=%s attempted=safe_fallback",
-        sid,
-        mode,
-    )
-    from ..agent_runtime.llm_first_runtime import get_llm_first_runtime
-
-    await get_llm_first_runtime(settings).handle_turn(
+    result = await dispatch_turn(
+        settings,
         session,
         user_text,
         send,
-        caller_context=caller_context,
+        caller_context,
+        assembled_turn_mode=assembled_turn_mode,
+        stt_to_turn_ms=stt_to_turn_ms,
     )
+    if getattr(result, "end_call", False):
+        session.call_ended_gracefully = True  # type: ignore[attr-defined]
+        await send({"type": "end", "handoffData": '{"reason":"caller_done"}'})
 
 
 async def await_caller_profile_ready(
@@ -165,12 +156,47 @@ async def await_caller_profile_ready(
 
 
 async def handle_conversation_relay(websocket: WebSocket) -> None:
-    await websocket.accept()
+    from ..observability.otel import span
+
     settings = get_settings()
+    with span("inbound_call"):
+        await _handle_conversation_relay_inner(websocket, settings)
+
+
+async def _handle_conversation_relay_inner(websocket: WebSocket, settings) -> None:
+    from ..observability.otel import span
+
+    if settings.WS_TOKEN_VALIDATION_ENABLED and settings.ws_token_secret:
+        from ..security.rate_limit import check_rate_limit
+        from ..security.ws_token import validate_ws_token
+
+        token = websocket.query_params.get("token", "")
+        payload = validate_ws_token(token)
+        if not payload:
+            await websocket.close(code=4401, reason="Invalid or expired WebSocket token")
+            return
+        call_key = str(payload.get("callSid", ""))[:16]
+        allowed = await check_rate_limit(
+            f"ws_setup:{call_key}",
+            limit=30,
+            window_sec=60,
+        )
+        if not allowed:
+            await websocket.close(code=4429, reason="Rate limit exceeded")
+            return
+
+    await websocket.accept()
+
+    with span("websocket_session"):
+        await _run_conversation_relay_session(websocket, settings)
+
+
+async def _run_conversation_relay_session(websocket: WebSocket, settings) -> None:
+    call_start = time.monotonic()
 
     session: Optional[SessionState] = None
     current_task: Optional[asyncio.Task] = None
-    call_start = time.monotonic()
+    use_v2 = bool(getattr(settings, "VOICE_OS_V2_ENABLED", False))
 
     # ── Profile-loading coordination ───────────────────────────────────────────
     # profile_task: the background asyncio.Task started at setup time.
@@ -211,6 +237,14 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
     async def send(msg: dict) -> None:
         """Engine/runtime send callback — routes through CR outbound adapter."""
+        if msg.get("type") == "end":
+            await _queue_send(msg)
+            return
+        if use_v2 and msg.get("type") == "text":
+            await _queue_send(msg)
+            cr_stats.responses_sent += 1
+            cr_stats.last_outbound_type = "text"
+            return
         if outbound is not None:
             await outbound.engine_send(msg)
         else:
@@ -236,6 +270,9 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                     previous_response=prev_response,
                 )
                 record_sm_interrupt(session.call_sid)
+                from ..agents.openai_request_utils import rollback_interrupted_turn
+
+                session.history = rollback_interrupted_turn(list(session.history or []))
             current_task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(current_task), timeout=1.0)
@@ -255,22 +292,33 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
             return
         try:
             profile = await get_caller_profile(from_number)
-            if not profile:
-                session.caller_profile_loaded = True
-                return
+            if profile:
+                # Populate session with safe profile fields.
+                session.is_returning_caller = True
+                if profile.display_name:
+                    from ..dialogue.greeting import greeting_safe_name
 
-            # Populate session with safe profile fields.
-            session.is_returning_caller = True
-            if profile.display_name:
-                session.caller_name = profile.display_name
-            if profile.preferred_email:
-                session.caller_email = profile.preferred_email
-            if profile.last_order_number:
-                session.last_order_number = profile.last_order_number
-            if profile.call_count:
-                session.caller_call_count = profile.call_count
-            if profile.last_summary:
-                session.caller_last_summary = profile.last_summary
+                    safe = greeting_safe_name(profile.display_name)
+                    if safe:
+                        session.caller_name = safe
+                if profile.preferred_email:
+                    session.caller_email = profile.preferred_email
+                if profile.last_order_number:
+                    session.last_order_number = profile.last_order_number
+                if profile.call_count:
+                    session.caller_call_count = profile.call_count
+                if profile.last_summary:
+                    session.caller_last_summary = profile.last_summary
+
+            # Caller identity (cache + optional live Shopify) for greeting name
+            # and recent-order summary — friendly recognition only, not verification.
+            try:
+                from ..agent_runtime.caller_identity import apply_to_session, get_caller_info
+
+                identity = await get_caller_info(from_number, allow_live=True)
+                apply_to_session(session, identity)
+            except Exception:
+                logger.debug("caller_identity_prefetch_failed sid=%s", session.call_sid[:6])
 
             session.caller_profile_loaded = True
 
@@ -285,15 +333,20 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
             )
             session.caller_profile_loaded = True
 
-    async def _run_turn(user_text: str) -> None:
+    async def _run_turn(user_text: str, turn_mode: str = "normal") -> None:
         """Generate a response for one caller utterance via the pipeline engine."""
         nonlocal first_prompt_received
 
         if session is None:
             return
 
+        session.voice_interrupted = False
+        session.is_speaking = False
+        session.speech_lock = False
+        session.tool_progress_sent_for_op = ""
         session.turn_count += 1
         if outbound is not None:
+            outbound.reset_speech_cancel()
             outbound.set_turn(session.turn_count)
 
         # ── First turn only: briefly await the profile task ────────────────
@@ -313,6 +366,7 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                 user_text,
                 send,
                 ctx,
+                assembled_turn_mode=turn_mode,
             )
         except asyncio.CancelledError:
             logger.info("Turn cancelled by interrupt")
@@ -362,7 +416,7 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         twiml_greeting_spoken=True,
                     )
                     outbound = ConversationRelayOutbound(
-                        _queue_send, settings, session.call_sid, cr_stats,
+                        _queue_send, settings, session.call_sid, cr_stats, session=session,
                     )
                     logger.info(
                         "ConversationRelay setup | sid=%s from=%s to=%s session=%s",
@@ -372,10 +426,11 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         session.session_id,
                     )
                     logger.info(
-                        "voice_runtime_selected sid=%s env_mode=%s handler=%s",
+                        "voice_runtime_selected sid=%s env_mode=%s handler=%s v2=%s",
                         session.call_sid[:6],
                         settings.VOICE_AGENT_RUNTIME_MODE,
                         resolve_live_turn_handler(settings),
+                        use_v2,
                     )
                     # v4.8: resume prior call context if caller reconnected within window
                     try:
@@ -407,8 +462,17 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                     )
                     # Fire-and-forget: warm local caches from Redis for this caller.
                     asyncio.create_task(
-                        get_engine(settings).prefetch_on_call_setup(session),
+                        prefetch_on_call_setup(session),
                         name="setup-prefetch",
+                    )
+                    from ..memory.postgres_store import persist_call_session_if_configured
+                    from ..workflow.hooks import schedule_workflow_event
+
+                    persist_call_session_if_configured(session, status="active")
+                    schedule_workflow_event(
+                        session,
+                        "call_started",
+                        {"call_sid_tail": (session.call_sid or "")[-6:]},
                     )
 
                 case "prompt":
@@ -442,17 +506,43 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
 
                     assembler = get_turn_assembler(session.call_sid, settings)
 
-                    async def _emit_assembled(assembled_text: str) -> None:
+                    async def _emit_assembled(turn) -> None:
                         nonlocal current_task
+                        from ..voice.turn_assembler import AssembledTurn
+
+                        if isinstance(turn, str):
+                            turn = AssembledTurn(text=turn, mode="normal")
+                        if getattr(turn, "agent_reply", ""):
+                            reply = turn.agent_reply.strip()
+                            if reply:
+                                await _queue_send({
+                                    "type": "text",
+                                    "token": reply,
+                                    "last": False,
+                                    "interruptible": True,
+                                })
+                                await _queue_send({"type": "text", "token": "", "last": True})
+                                cr_stats.responses_sent += 1
+                                logger.info(
+                                    "conversationrelay_agent_keepalive sid=%s chars=%d",
+                                    session.call_sid[:6],
+                                    len(reply),
+                                )
+                            if not (turn.text or "").strip():
+                                return
                         cr_stats.assembled_turns += 1
                         logger.info(
-                            "conversationrelay_assembled_turn sid=%s assembled_count=%d",
+                            "conversationrelay_assembled_turn sid=%s assembled_count=%d mode=%s",
                             session.call_sid[:6],
                             cr_stats.assembled_turns,
+                            turn.mode,
                         )
+                        if use_v2:
+                            await _run_turn(turn.text, turn.mode)
+                            return
                         await _cancel_current()
                         current_task = asyncio.create_task(
-                            _run_turn(assembled_text),
+                            _run_turn(turn.text, turn.mode),
                             name=f"turn-{session.turn_count + 1}",
                         )
 
@@ -460,25 +550,52 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
                         voice_prompt,
                         _emit_assembled,
                         call_sid=session.call_sid,
+                        pending_isbn_buffer=getattr(session, "pending_isbn_buffer", "") or "",
+                        payment_awaiting_email=payment_email_turn_priority(session, ""),
                     )
 
                 case "interrupt":
                     logger.info(
-                        "Interrupt | sid=%s after=%sms",
+                        "Interrupt | sid=%s after=%sms v2=%s",
                         session.call_sid if session else "?",
                         msg.get("durationUntilInterruptMs", "?"),
+                        use_v2,
                     )
-                    await _cancel_current()
+                    if session is not None:
+                        session.voice_interrupted = True
+                        session.speech_lock = False
+                        session.is_speaking = False
+                        from ..runtime.voice_commerce_runtime import reset_committed_intent_on_interrupt
+
+                        reset_committed_intent_on_interrupt(session)
+                    if outbound is not None:
+                        outbound.cancel_speech()
+                    dropped = _clear_pending_tts_queue(send_q)
+                    if dropped:
+                        logger.info(
+                            "conversationrelay_interrupt_cleared sid=%s dropped_chunks=%d",
+                            session.call_sid[:6] if session else "?",
+                            dropped,
+                        )
+                    if use_v2 and session is not None:
+                        from ..voice_os_v2.session_state import set_interrupt_flag
+
+                        await set_interrupt_flag(session.call_sid, True)
+                    else:
+                        await _cancel_current()
 
                 case "dtmf":
                     digit = msg.get("digit", "")
                     logger.debug("DTMF digit=%r sid=%s", digit, session.call_sid if session else "?")
                     if session and digit:
-                        await _cancel_current()
-                        current_task = asyncio.create_task(
-                            _run_turn(f"(Keypad: {digit})"),
-                            name="dtmf-turn",
-                        )
+                        if use_v2:
+                            await _run_turn(f"(Keypad: {digit})")
+                        else:
+                            await _cancel_current()
+                            current_task = asyncio.create_task(
+                                _run_turn(f"(Keypad: {digit})"),
+                                name="dtmf-turn",
+                            )
 
                 case "error":
                     desc = msg.get("description", "")
@@ -504,31 +621,72 @@ async def handle_conversation_relay(websocket: WebSocket) -> None:
             session.call_sid if session else "?",
         )
     finally:
-        await _cancel_current()
+        if not use_v2:
+            await _cancel_current()
+        if session is not None and use_v2:
+            try:
+                from ..voice_os_v2.session_state import delete_v2_session
+                from ..voice_os_v2.turn_controller import get_turn_controller
+
+                await delete_v2_session(session.call_sid)
+                get_turn_controller().release_call(session.call_sid)
+            except Exception:
+                logger.debug("v2_session_cleanup_skipped sid=%s", session.call_sid[:6])
         if session is not None:
             try:
-                store_resume_snapshot(session)
-                await save_call_resume_by_phone(
-                    session.from_number,
-                    {
-                        "call_sid": session.call_sid,
-                        "call_ended_at": session.call_ended_at,
-                        "snapshot": session.call_resume_snapshot,
-                    },
-                    ttl=settings.CALL_RESUME_WINDOW_MINUTES * 120,
-                )
+                from ..state.session_store import clear_call_resume_by_phone
+
+                if getattr(session, "call_ended_gracefully", False):
+                    await clear_call_resume_by_phone(session.from_number)
+                    logger.info(
+                        "call_resume_cleared_graceful sid=%s",
+                        session.call_sid[:6],
+                    )
+                else:
+                    store_resume_snapshot(session)
+                    await save_call_resume_by_phone(
+                        session.from_number,
+                        {
+                            "call_sid": session.call_sid,
+                            "call_ended_at": session.call_ended_at,
+                            "snapshot": session.call_resume_snapshot,
+                        },
+                        ttl=settings.CALL_RESUME_WINDOW_MINUTES * 120,
+                    )
             except Exception:
                 logger.warning(
                     "call_resume_store_failed sid=%s",
                     session.call_sid[:6] if session else "?",
                 )
+            try:
+                from ..memory.postgres_store import persist_call_session_if_configured
+                from ..workflow.hooks import schedule_workflow_event
+
+                schedule_workflow_event(session, "call_ended", {})
+                persist_call_session_if_configured(session, status="ended", ended=True)
+            except Exception:
+                logger.debug("postgres_call_end_skipped")
+            try:
+                from ..analytics.post_call import finalize_call_analytics
+
+                asyncio.create_task(
+                    finalize_call_analytics(session),
+                    name="post-call-analytics",
+                )
+            except Exception:
+                logger.debug("post_call_analytics_schedule_skipped")
         await _save_caller_profile()
         if session is not None:
             clear_turn_assembler(session.call_sid)
             from ..agent_runtime.conversation_state_machine import clear_conversation_state
             from ..agent_runtime.interruption_manager import clear_interrupt_context
+            from ..runtime.cart_memory import clear_cart_memory_on_session_end
+            from ..payment.email_state import clear_email_capture_on_session_end
+
             clear_conversation_state(session.call_sid)
             clear_interrupt_context(session.call_sid)
+            clear_cart_memory_on_session_end(session)
+            clear_email_capture_on_session_end(session)
         await send_q.put(None)
         await asyncio.gather(sender_task, return_exceptions=True)
 

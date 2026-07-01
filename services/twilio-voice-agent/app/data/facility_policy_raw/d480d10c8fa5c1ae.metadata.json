@@ -1,0 +1,21 @@
+{
+  "url": "https://doc.wa.gov/family-support/send-something/send-publications",
+  "status": "200",
+  "content_type": "text/html; charset=UTF-8",
+  "fetched_at": "2026-06-26T06:55:29.414734+00:00",
+  "text_length": 13690,
+  "error": null,
+  "source_facilities": [
+    "Airway Heights Corrections Center",
+    "Cedar Creek Corrections Center",
+    "Clallam Bay Corrections Center",
+    "Coyote Ridge Corrections Center",
+    "Mission Creek Corrections Center for Women",
+    "Monroe Correctional Complex",
+    "Olympic Corrections Center",
+    "Stafford Creek Corrections Center",
+    "Washington Corrections Center",
+    "Washington Corrections Center for Women",
+    "Washington State Penitentiary"
+  ]
+}

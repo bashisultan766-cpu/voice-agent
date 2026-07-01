@@ -1,0 +1,1229 @@
+{
+  "allowlists": {
+    "product_search_workflow": [
+      "format_exact_match_reply",
+      "format_no_exact_reply",
+      "match_product",
+      "similarity_engine",
+      "support_handoff_preparation"
+    ],
+    "support_handoff_workflow": [
+      "_finalize_handoff_send",
+      "_sync_support_handoff_contact",
+      "_validate_support_email",
+      "analyze_conversation_for_support"
+    ]
+  },
+  "compiled_at": "2026-06-30T07:20:30.940886+00:00",
+  "contracts_version": "v1.0",
+  "domains": [
+    "order_workflow",
+    "product_search_workflow",
+    "support_handoff_workflow"
+  ],
+  "entry_points": {
+    "order_workflow": [
+      "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+      "app.agent_runtime.order_flow_state::process_order_turn",
+      "app.agent_runtime.order_flow_state::try_order_collection_short_circuit"
+    ],
+    "product_search_workflow": [
+      "app.agent_runtime.voice_workflows::execute_product_search_workflow"
+    ],
+    "support_handoff_workflow": [
+      "app.agent_runtime.voice_workflows::execute_support_handoff_workflow"
+    ]
+  },
+  "forbidden": {
+    "order_workflow": [
+      "format_exact_match_reply",
+      "format_no_exact_reply",
+      "has_good_similarity_match",
+      "match_product",
+      "product_resolution_to_short_circuit",
+      "similarity_engine"
+    ],
+    "product_search_workflow": [
+      "_catalog_search",
+      "_search_products",
+      "analyze_conversation_for_support",
+      "handle_search_not_found_results",
+      "search_products",
+      "try_escalate_unresolved_query"
+    ],
+    "support_handoff_workflow": [
+      "_catalog_search",
+      "_search_products",
+      "fragment_capture_prompt",
+      "match_product",
+      "product_resolution_to_short_circuit",
+      "search_products",
+      "similarity_engine"
+    ]
+  },
+  "guarded_functions": [
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\voice_workflows.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_entry_guard",
+      "line": 97,
+      "module": "app.agent_runtime.voice_workflows",
+      "name": "execute_product_search_workflow"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\voice_workflows.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_entry_guard",
+      "line": 222,
+      "module": "app.agent_runtime.voice_workflows",
+      "name": "execute_support_handoff_workflow"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\product_resolution.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 75,
+      "module": "app.agent_runtime.product_resolution",
+      "name": "similarity_engine"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\product_resolution.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 135,
+      "module": "app.agent_runtime.product_resolution",
+      "name": "match_product"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\product_resolution.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 294,
+      "module": "app.agent_runtime.product_resolution",
+      "name": "format_exact_match_reply"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\product_resolution.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 311,
+      "module": "app.agent_runtime.product_resolution",
+      "name": "format_no_exact_reply"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\not_found_escalation_flow.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 171,
+      "module": "app.agent_runtime.not_found_escalation_flow",
+      "name": "support_handoff_preparation"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\not_found_escalation_flow.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 253,
+      "module": "app.agent_runtime.not_found_escalation_flow",
+      "name": "_validate_support_email"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\not_found_escalation_flow.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 258,
+      "module": "app.agent_runtime.not_found_escalation_flow",
+      "name": "_sync_support_handoff_contact"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\agent_runtime\\not_found_escalation_flow.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 512,
+      "module": "app.agent_runtime.not_found_escalation_flow",
+      "name": "_finalize_handoff_send"
+    },
+    {
+      "allowed_next": [],
+      "domain": "",
+      "file": "E:\\Agents\\shopify agent\\services\\twilio-voice-agent\\app\\escalation\\conversation_summarizer.py",
+      "forbidden_calls": [
+        "format_exact_match_reply",
+        "format_no_exact_reply",
+        "has_good_similarity_match",
+        "match_product",
+        "product_resolution_to_short_circuit",
+        "similarity_engine"
+      ],
+      "guard_kind": "workflow_guard",
+      "line": 138,
+      "module": "app.escalation.conversation_summarizer",
+      "name": "analyze_conversation_for_support"
+    }
+  ],
+  "scan_modules": [
+    "app.agent_runtime.voice_workflows",
+    "app.agent_runtime.product_resolution",
+    "app.agent_runtime.isbn_short_circuit",
+    "app.agent_runtime.not_found_escalation_flow",
+    "app.agent_runtime.order_flow_state",
+    "app.escalation.conversation_summarizer",
+    "app.escalation.support_handoff"
+  ],
+  "version": "v1.0",
+  "workflows": [
+    {
+      "domain": "order_workflow",
+      "edges": [
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::_order_digits"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::_should_skip_order_lookup"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::extract_email_from_turn"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::extract_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::facility_issue_detected"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::is_actionable_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::normalize_order_number_from_speech"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.order_flow_state::order_intent_detected"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::_has_order_number_preamble"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::_should_skip_order_lookup"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::is_actionable_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::normalize_order_number_from_speech"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_expand_text"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        }
+      ],
+      "entry": "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit",
+      "nodes": [
+        "app.agent_runtime.isbn_short_circuit::_expand_text",
+        "app.agent_runtime.isbn_short_circuit::_isbn_collection_active",
+        "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+        "app.agent_runtime.order_flow_state::_has_order_number_preamble",
+        "app.agent_runtime.order_flow_state::_order_digits",
+        "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+        "app.agent_runtime.order_flow_state::extract_email_from_turn",
+        "app.agent_runtime.order_flow_state::extract_order_number",
+        "app.agent_runtime.order_flow_state::facility_issue_detected",
+        "app.agent_runtime.order_flow_state::is_actionable_order_number",
+        "app.agent_runtime.order_flow_state::normalize_order_number_from_speech",
+        "app.agent_runtime.order_flow_state::order_intent_detected",
+        "app.agent_runtime.order_flow_state::try_order_enrichment_short_circuit"
+      ]
+    },
+    {
+      "domain": "order_workflow",
+      "edges": [
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::process_order_turn",
+          "to": "app.agent_runtime.order_flow_state::_status"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::process_order_turn",
+          "to": "app.agent_runtime.order_flow_state::extract_email_from_turn"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::process_order_turn",
+          "to": "app.agent_runtime.order_flow_state::extract_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::process_order_turn",
+          "to": "app.agent_runtime.order_flow_state::is_actionable_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::process_order_turn",
+          "to": "app.agent_runtime.order_flow_state::is_bare_ack"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::process_order_turn",
+          "to": "app.agent_runtime.order_flow_state::order_collection_prompt"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::process_order_turn",
+          "to": "app.agent_runtime.order_flow_state::order_intent_detected"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::_has_order_number_preamble"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::_should_skip_order_lookup"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::is_actionable_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::normalize_order_number_from_speech"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.order_flow_state::order_intent_detected"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_expand_text"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        }
+      ],
+      "entry": "app.agent_runtime.order_flow_state::process_order_turn",
+      "nodes": [
+        "app.agent_runtime.isbn_short_circuit::_expand_text",
+        "app.agent_runtime.isbn_short_circuit::_isbn_collection_active",
+        "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+        "app.agent_runtime.order_flow_state::_has_order_number_preamble",
+        "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+        "app.agent_runtime.order_flow_state::_status",
+        "app.agent_runtime.order_flow_state::extract_email_from_turn",
+        "app.agent_runtime.order_flow_state::extract_order_number",
+        "app.agent_runtime.order_flow_state::is_actionable_order_number",
+        "app.agent_runtime.order_flow_state::is_bare_ack",
+        "app.agent_runtime.order_flow_state::normalize_order_number_from_speech",
+        "app.agent_runtime.order_flow_state::order_collection_prompt",
+        "app.agent_runtime.order_flow_state::order_intent_detected",
+        "app.agent_runtime.order_flow_state::process_order_turn"
+      ]
+    },
+    {
+      "domain": "order_workflow",
+      "edges": [
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_collection_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::_has_order_number_preamble"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_collection_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::_should_skip_order_lookup"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_collection_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::extract_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_collection_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::order_collection_prompt"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::try_order_collection_short_circuit",
+          "to": "app.agent_runtime.order_flow_state::order_intent_detected"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.order_flow_state::order_intent_detected"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+          "to": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::_has_order_number_preamble"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::_should_skip_order_lookup"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::is_actionable_order_number"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.order_flow_state::extract_order_number",
+          "to": "app.agent_runtime.order_flow_state::normalize_order_number_from_speech"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_expand_text"
+        },
+        {
+          "domain": "order_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        }
+      ],
+      "entry": "app.agent_runtime.order_flow_state::try_order_collection_short_circuit",
+      "nodes": [
+        "app.agent_runtime.isbn_short_circuit::_expand_text",
+        "app.agent_runtime.isbn_short_circuit::_isbn_collection_active",
+        "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+        "app.agent_runtime.order_flow_state::_has_order_number_preamble",
+        "app.agent_runtime.order_flow_state::_should_skip_order_lookup",
+        "app.agent_runtime.order_flow_state::extract_order_number",
+        "app.agent_runtime.order_flow_state::is_actionable_order_number",
+        "app.agent_runtime.order_flow_state::normalize_order_number_from_speech",
+        "app.agent_runtime.order_flow_state::order_collection_prompt",
+        "app.agent_runtime.order_flow_state::order_intent_detected",
+        "app.agent_runtime.order_flow_state::try_order_collection_short_circuit"
+      ]
+    },
+    {
+      "domain": "product_search_workflow",
+      "edges": [
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.isbn_short_circuit::conversational_ack_reply"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.voice_workflows::has_structured_product_search_input"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.isbn_short_circuit::is_conversational_ack"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.isbn_short_circuit::is_explicit_title_catalog_query"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.voice_workflows::isbn_detected"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.isbn_short_circuit::isbn_partial_reply"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.voice_workflows::product_title_detected"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.not_found_escalation_flow::try_product_search_fallback_escalation"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+          "to": "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::conversational_ack_reply",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::has_structured_product_search_input",
+          "to": "app.agent_runtime.voice_workflows::isbn_detected"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::has_structured_product_search_input",
+          "to": "app.agent_runtime.voice_workflows::product_title_detected"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::is_explicit_title_catalog_query",
+          "to": "app.agent_runtime.isbn_short_circuit::_catalog_query_is_actionable"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::is_explicit_title_catalog_query",
+          "to": "app.agent_runtime.isbn_short_circuit::extract_title_catalog_query"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::isbn_detected",
+          "to": "app.agent_runtime.isbn_short_circuit::_looks_like_isbn_digit_stream"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::isbn_partial_reply",
+          "to": "app.agent_runtime.isbn_short_circuit::_expand_text"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::isbn_partial_reply",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.voice_workflows::product_title_detected",
+          "to": "app.agent_runtime.isbn_short_circuit::is_explicit_title_catalog_query"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::_expand_text"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::_looks_like_isbn_digit_stream"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::arm_isbn_digit_collection"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::isbn_partial_reply"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.product_resolution::match_product"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::should_skip_isbn_short_circuit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::try_product_search_fallback_escalation",
+          "to": "app.agent_runtime.not_found_escalation_flow::clear_product_search_fallback"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::try_product_search_fallback_escalation",
+          "to": "app.agent_runtime.not_found_escalation_flow::support_handoff_preparation"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::try_product_search_fallback_escalation",
+          "to": "app.agent_runtime.not_found_escalation_flow::user_insists_on_purchase"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::_catalog_query_is_actionable"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::catalog_title_search_allowed"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::extract_title_catalog_query"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::is_explicit_title_catalog_query"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit",
+          "to": "app.agent_runtime.product_resolution::match_product"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit",
+          "to": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::match_product",
+          "to": "app.agent_runtime.product_resolution::_dedupe_hits"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::match_product",
+          "to": "app.agent_runtime.product_resolution::_infer_product_kind"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::match_product",
+          "to": "app.agent_runtime.product_resolution::_load_catalog_hits"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::match_product",
+          "to": "app.agent_runtime.product_resolution::_pick_similar"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::match_product",
+          "to": "app.agent_runtime.product_resolution::_score_hit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::match_product",
+          "to": "app.agent_runtime.product_resolution::similarity_engine"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::catalog_hit_is_orderable"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+          "to": "app.agent_runtime.not_found_escalation_flow::clear_product_search_fallback"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+          "to": "app.agent_runtime.product_resolution::format_exact_match_reply"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+          "to": "app.agent_runtime.product_resolution::format_no_exact_reply"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+          "to": "app.agent_runtime.product_resolution::has_good_similarity_match"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+          "to": "app.agent_runtime.not_found_escalation_flow::stage_product_search_fallback"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+          "to": "app.agent_runtime.not_found_escalation_flow::support_handoff_preparation"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_expand_text"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+          "to": "app.agent_runtime.isbn_short_circuit::_isbn_collection_active"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::should_skip_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::looks_like_book_title_request"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::should_skip_isbn_short_circuit",
+          "to": "app.agent_runtime.isbn_short_circuit::payment_email_context_active"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::support_handoff_preparation",
+          "to": "app.agent_runtime.not_found_escalation_flow::begin_unavailable_product_handoff"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::catalog_title_search_allowed",
+          "to": "app.agent_runtime.isbn_short_circuit::payment_email_context_active"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::_pick_similar",
+          "to": "app.agent_runtime.product_resolution::_dedupe_hits"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::_pick_similar",
+          "to": "app.agent_runtime.product_resolution::_infer_product_kind"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::_pick_similar",
+          "to": "app.agent_runtime.product_resolution::_score_hit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::_score_hit",
+          "to": "app.agent_runtime.isbn_short_circuit::_title_match_score"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::similarity_engine",
+          "to": "app.agent_runtime.product_resolution::_dedupe_hits"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::similarity_engine",
+          "to": "app.agent_runtime.product_resolution::_infer_product_kind"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::similarity_engine",
+          "to": "app.agent_runtime.product_resolution::_score_hit"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::format_exact_match_reply",
+          "to": "app.agent_runtime.product_resolution::_similar_titles"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.product_resolution::format_no_exact_reply",
+          "to": "app.agent_runtime.product_resolution::_similar_titles"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.isbn_short_circuit::looks_like_book_title_request",
+          "to": "app.agent_runtime.isbn_short_circuit::is_explicit_title_catalog_query"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::begin_unavailable_product_handoff",
+          "to": "app.agent_runtime.not_found_escalation_flow::_clear_commerce_for_product_handoff"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::begin_unavailable_product_handoff",
+          "to": "app.agent_runtime.not_found_escalation_flow::build_escalation_payload"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::begin_unavailable_product_handoff",
+          "to": "app.agent_runtime.not_found_escalation_flow::stage_pending_escalation"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::build_escalation_payload",
+          "to": "app.agent_runtime.not_found_escalation_flow::_extract_quantity"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::build_escalation_payload",
+          "to": "app.agent_runtime.not_found_escalation_flow::_resolved_customer_email"
+        },
+        {
+          "domain": "product_search_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::build_escalation_payload",
+          "to": "app.agent_runtime.not_found_escalation_flow::infer_requested_type"
+        }
+      ],
+      "entry": "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+      "nodes": [
+        "app.agent_runtime.isbn_short_circuit::_catalog_query_is_actionable",
+        "app.agent_runtime.isbn_short_circuit::_expand_text",
+        "app.agent_runtime.isbn_short_circuit::_isbn_collection_active",
+        "app.agent_runtime.isbn_short_circuit::_looks_like_isbn_digit_stream",
+        "app.agent_runtime.isbn_short_circuit::_title_match_score",
+        "app.agent_runtime.isbn_short_circuit::arm_isbn_digit_collection",
+        "app.agent_runtime.isbn_short_circuit::catalog_hit_is_orderable",
+        "app.agent_runtime.isbn_short_circuit::catalog_title_search_allowed",
+        "app.agent_runtime.isbn_short_circuit::conversational_ack_reply",
+        "app.agent_runtime.isbn_short_circuit::extract_title_catalog_query",
+        "app.agent_runtime.isbn_short_circuit::is_conversational_ack",
+        "app.agent_runtime.isbn_short_circuit::is_explicit_title_catalog_query",
+        "app.agent_runtime.isbn_short_circuit::isbn_partial_reply",
+        "app.agent_runtime.isbn_short_circuit::looks_like_book_title_request",
+        "app.agent_runtime.isbn_short_circuit::payment_email_context_active",
+        "app.agent_runtime.isbn_short_circuit::resolve_spoken_isbn",
+        "app.agent_runtime.isbn_short_circuit::should_skip_isbn_short_circuit",
+        "app.agent_runtime.isbn_short_circuit::try_isbn_short_circuit",
+        "app.agent_runtime.isbn_short_circuit::try_title_catalog_short_circuit",
+        "app.agent_runtime.not_found_escalation_flow::_clear_commerce_for_product_handoff",
+        "app.agent_runtime.not_found_escalation_flow::_extract_quantity",
+        "app.agent_runtime.not_found_escalation_flow::_resolved_customer_email",
+        "app.agent_runtime.not_found_escalation_flow::begin_unavailable_product_handoff",
+        "app.agent_runtime.not_found_escalation_flow::build_escalation_payload",
+        "app.agent_runtime.not_found_escalation_flow::clear_product_search_fallback",
+        "app.agent_runtime.not_found_escalation_flow::infer_requested_type",
+        "app.agent_runtime.not_found_escalation_flow::stage_pending_escalation",
+        "app.agent_runtime.not_found_escalation_flow::stage_product_search_fallback",
+        "app.agent_runtime.not_found_escalation_flow::support_handoff_preparation",
+        "app.agent_runtime.not_found_escalation_flow::try_product_search_fallback_escalation",
+        "app.agent_runtime.not_found_escalation_flow::user_insists_on_purchase",
+        "app.agent_runtime.product_resolution::_dedupe_hits",
+        "app.agent_runtime.product_resolution::_infer_product_kind",
+        "app.agent_runtime.product_resolution::_load_catalog_hits",
+        "app.agent_runtime.product_resolution::_pick_similar",
+        "app.agent_runtime.product_resolution::_score_hit",
+        "app.agent_runtime.product_resolution::_similar_titles",
+        "app.agent_runtime.product_resolution::format_exact_match_reply",
+        "app.agent_runtime.product_resolution::format_no_exact_reply",
+        "app.agent_runtime.product_resolution::has_good_similarity_match",
+        "app.agent_runtime.product_resolution::match_product",
+        "app.agent_runtime.product_resolution::product_resolution_to_short_circuit",
+        "app.agent_runtime.product_resolution::similarity_engine",
+        "app.agent_runtime.voice_workflows::execute_product_search_workflow",
+        "app.agent_runtime.voice_workflows::has_structured_product_search_input",
+        "app.agent_runtime.voice_workflows::isbn_detected",
+        "app.agent_runtime.voice_workflows::product_title_detected"
+      ]
+    },
+    {
+      "domain": "support_handoff_workflow",
+      "edges": [
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_support_handoff_workflow",
+          "to": "app.agent_runtime.not_found_escalation_flow::clear_pending_escalation"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_support_handoff_workflow",
+          "to": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.voice_workflows::execute_support_handoff_workflow",
+          "to": "app.agent_runtime.not_found_escalation_flow::should_clear_handoff_for_shopping"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_email_ready_to_confirm"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_finalize_handoff_send"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_email_confirmation_prompt"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_email_fragments"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_uses_full_email"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_uses_silent_email"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_is_email_confirmation"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_process_silent_support_handoff_turn"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_store_handoff_email_fragments"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_sync_handoff_name"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::clear_pending_escalation"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::should_clear_handoff_for_shopping"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::stage_pending_escalation"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_finalize_handoff_send",
+          "to": "app.agent_runtime.not_found_escalation_flow::clear_pending_escalation"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_finalize_handoff_send",
+          "to": "app.agent_runtime.not_found_escalation_flow::maybe_execute_escalation"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_handoff_email_confirmation_prompt",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_uses_silent_email"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_handoff_uses_full_email",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_uses_silent_email"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_process_silent_support_handoff_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_finalize_handoff_send"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_process_silent_support_handoff_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_sync_support_handoff_contact"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_process_silent_support_handoff_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::_validate_support_email"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_process_silent_support_handoff_turn",
+          "to": "app.agent_runtime.not_found_escalation_flow::stage_pending_escalation"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_sync_handoff_name",
+          "to": "app.agent_runtime.not_found_escalation_flow::_extract_name_from_text"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_sync_handoff_name",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_customer_name"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::maybe_execute_escalation",
+          "to": "app.agent_runtime.not_found_escalation_flow::_tool_execution_result"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::maybe_execute_escalation",
+          "to": "app.escalation.support_handoff::product_payload_to_support_handoff"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::maybe_execute_escalation",
+          "to": "app.escalation.support_handoff::send_support_handoff"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_sync_support_handoff_contact",
+          "to": "app.agent_runtime.not_found_escalation_flow::_handoff_uses_silent_email"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.agent_runtime.not_found_escalation_flow::_handoff_customer_name",
+          "to": "app.agent_runtime.not_found_escalation_flow::_extract_name_from_text"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::product_payload_to_support_handoff",
+          "to": "app.escalation.support_handoff::_sanitize_api_context"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::send_support_handoff",
+          "to": "app.escalation.support_handoff::_build_email_body"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::send_support_handoff",
+          "to": "app.escalation.support_handoff::_sanitize_spoken_request"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::send_support_handoff",
+          "to": "app.escalation.conversation_summarizer::analyze_conversation_for_support"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::send_support_handoff",
+          "to": "app.escalation.support_handoff::resolve_escalation_customer_fields"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::_sanitize_api_context",
+          "to": "app.escalation.support_handoff::_sanitize_api_context"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::_build_email_body",
+          "to": "app.escalation.support_handoff::_compose_customer_request"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::_build_email_body",
+          "to": "app.escalation.support_handoff::_summary_to_bullet_lines"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.conversation_summarizer::analyze_conversation_for_support",
+          "to": "app.escalation.conversation_summarizer::_fallback_analysis"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.conversation_summarizer::analyze_conversation_for_support",
+          "to": "app.escalation.conversation_summarizer::_parse_analysis_payload"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.conversation_summarizer::analyze_conversation_for_support",
+          "to": "app.escalation.conversation_summarizer::build_conversation_transcript"
+        },
+        {
+          "domain": "support_handoff_workflow",
+          "from": "app.escalation.support_handoff::_compose_customer_request",
+          "to": "app.escalation.support_handoff::_first_sentence"
+        }
+      ],
+      "entry": "app.agent_runtime.voice_workflows::execute_support_handoff_workflow",
+      "nodes": [
+        "app.agent_runtime.not_found_escalation_flow::_email_ready_to_confirm",
+        "app.agent_runtime.not_found_escalation_flow::_extract_name_from_text",
+        "app.agent_runtime.not_found_escalation_flow::_finalize_handoff_send",
+        "app.agent_runtime.not_found_escalation_flow::_handoff_customer_name",
+        "app.agent_runtime.not_found_escalation_flow::_handoff_email_confirmation_prompt",
+        "app.agent_runtime.not_found_escalation_flow::_handoff_email_fragments",
+        "app.agent_runtime.not_found_escalation_flow::_handoff_uses_full_email",
+        "app.agent_runtime.not_found_escalation_flow::_handoff_uses_silent_email",
+        "app.agent_runtime.not_found_escalation_flow::_is_email_confirmation",
+        "app.agent_runtime.not_found_escalation_flow::_process_silent_support_handoff_turn",
+        "app.agent_runtime.not_found_escalation_flow::_store_handoff_email_fragments",
+        "app.agent_runtime.not_found_escalation_flow::_sync_handoff_name",
+        "app.agent_runtime.not_found_escalation_flow::_sync_support_handoff_contact",
+        "app.agent_runtime.not_found_escalation_flow::_tool_execution_result",
+        "app.agent_runtime.not_found_escalation_flow::_validate_support_email",
+        "app.agent_runtime.not_found_escalation_flow::clear_pending_escalation",
+        "app.agent_runtime.not_found_escalation_flow::maybe_execute_escalation",
+        "app.agent_runtime.not_found_escalation_flow::process_not_found_escalation_turn",
+        "app.agent_runtime.not_found_escalation_flow::should_clear_handoff_for_shopping",
+        "app.agent_runtime.not_found_escalation_flow::stage_pending_escalation",
+        "app.agent_runtime.voice_workflows::execute_support_handoff_workflow",
+        "app.escalation.conversation_summarizer::_fallback_analysis",
+        "app.escalation.conversation_summarizer::_parse_analysis_payload",
+        "app.escalation.conversation_summarizer::analyze_conversation_for_support",
+        "app.escalation.conversation_summarizer::build_conversation_transcript",
+        "app.escalation.support_handoff::_build_email_body",
+        "app.escalation.support_handoff::_compose_customer_request",
+        "app.escalation.support_handoff::_first_sentence",
+        "app.escalation.support_handoff::_sanitize_api_context",
+        "app.escalation.support_handoff::_sanitize_spoken_request",
+        "app.escalation.support_handoff::_summary_to_bullet_lines",
+        "app.escalation.support_handoff::product_payload_to_support_handoff",
+        "app.escalation.support_handoff::resolve_escalation_customer_fields",
+        "app.escalation.support_handoff::send_support_handoff"
+      ]
+    }
+  ]
+}

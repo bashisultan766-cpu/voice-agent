@@ -1,0 +1,11 @@
+{
+  "url": "https://ironsheriffut.gov/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T07:27:43.508868+00:00",
+  "text_length": 0,
+  "error": "_ssl.c:1064: The handshake operation timed out",
+  "source_facilities": [
+    "Iron County Sheriff's Office"
+  ]
+}

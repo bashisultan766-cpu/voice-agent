@@ -83,29 +83,183 @@ query LookupOrders($query: String!, $first: Int!) {
       node {
         id
         name
+        createdAt
         displayFinancialStatus
         displayFulfillmentStatus
         email
         phone
+        customer {
+          id
+          firstName
+          lastName
+          email
+          phone
+        }
+        currentTotalPriceSet {
+          shopMoney { amount currencyCode }
+        }
+        totalOutstandingSet {
+          shopMoney { amount currencyCode }
+        }
+        shippingLine {
+          title
+          code
+          carrierIdentifier
+        }
         subtotalPriceSet {
           shopMoney { amount currencyCode }
         }
         totalShippingPriceSet {
           shopMoney { amount currencyCode }
         }
-        lineItems(first: 10) {
+        totalTaxSet {
+          shopMoney { amount currencyCode }
+        }
+        totalDiscountsSet {
+          shopMoney { amount currencyCode }
+        }
+        totalPriceSet {
+          shopMoney { amount currencyCode }
+        }
+        lineItems(first: 20) {
           edges {
             node {
               title
               quantity
+              sku
+              originalUnitPriceSet {
+                shopMoney { amount currencyCode }
+              }
+              discountedTotalSet {
+                shopMoney { amount currencyCode }
+              }
+              originalTotalSet {
+                shopMoney { amount currencyCode }
+              }
+              variant {
+                barcode
+                sku
+              }
             }
           }
         }
-        fulfillments(first: 1) {
-          trackingInfo { number url }
+        fulfillments(first: 5) {
+          status
+          displayStatus
+          createdAt
+          updatedAt
+          deliveredAt
+          estimatedDeliveryAt
+          trackingInfo {
+            company
+            number
+            url
+          }
+        }
+        refunds(first: 5) {
+          id
+          createdAt
+          note
+          totalRefundedSet {
+            shopMoney { amount currencyCode }
+          }
+          refundLineItems(first: 10) {
+            edges {
+              node {
+                quantity
+                subtotalSet {
+                  shopMoney { amount currencyCode }
+                }
+                lineItem { title }
+              }
+            }
+          }
+          transactions(first: 3) {
+            edges {
+              node {
+                kind
+                status
+                gateway
+                amountSet {
+                  shopMoney { amount currencyCode }
+                }
+                paymentDetails {
+                  ... on CardPaymentDetails {
+                    number
+                    company
+                  }
+                }
+              }
+            }
+          }
+        }
+        transactions(first: 5) {
+          kind
+          status
+          gateway
+          amountSet {
+            shopMoney { amount currencyCode }
+          }
+          paymentDetails {
+            ... on CardPaymentDetails {
+              number
+              company
+            }
+          }
         }
         cancelledAt
         canMarkAsPaid
+        note
+        tags
+        customAttributes {
+          key
+          value
+        }
+        shippingAddress {
+          name
+          company
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          countryCode
+        }
+        billingAddress {
+          name
+          city
+          provinceCode
+          countryCode
+        }
+      }
+    }
+  }
+}
+"""
+
+GET_ORDER_TIMELINE = """
+query GetOrderTimeline($id: ID!) {
+  order(id: $id) {
+    id
+    hasTimelineComment
+    events(first: 15, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          __typename
+          createdAt
+          ... on BasicEvent {
+            message
+          }
+          ... on CommentEvent {
+            message
+            author {
+              __typename
+              ... on StaffMember {
+                name
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -140,6 +294,36 @@ query SearchCustomers($query: String!, $first: Int!) {
 }
 """
 
+GET_CUSTOMER_ORDER_HISTORY = """
+query GetCustomerOrderHistory($id: ID!, $ordersFirst: Int!) {
+  customer(id: $id) {
+    id
+    firstName
+    lastName
+    email
+    phone
+    numberOfOrders
+    amountSpent {
+      shopMoney { amount currencyCode }
+    }
+    orders(first: $ordersFirst, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          id
+          name
+          createdAt
+          displayFinancialStatus
+          displayFulfillmentStatus
+          totalPriceSet {
+            shopMoney { amount currencyCode }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 SEARCH_VARIANTS_BY_BARCODE = """
 query SearchVariantsByBarcode($barcode: String!, $first: Int!) {
   productVariants(first: $first, query: $barcode) {
@@ -156,8 +340,21 @@ query SearchVariantsByBarcode($barcode: String!, $first: Int!) {
           id
           title
           handle
+          productType
           onlineStoreUrl
           tags
+          featuredImage {
+            url
+          }
+          metafields(first: 10) {
+            edges {
+              node {
+                namespace
+                key
+                value
+              }
+            }
+          }
         }
       }
     }
@@ -190,11 +387,27 @@ query GetOrderWithRefunds($id: ID!) {
     name
     displayFinancialStatus
     displayFulfillmentStatus
+    email
+    customer {
+      firstName
+      lastName
+      email
+    }
     cancelledAt
     note
     tags
     totalShippingPriceSet {
       shopMoney { amount currencyCode }
+    }
+    transactions(first: 5) {
+      gateway
+      status
+      paymentDetails {
+        ... on CardPaymentDetails {
+          number
+          company
+        }
+      }
     }
     refunds {
       id
@@ -219,9 +432,19 @@ query GetOrderWithRefunds($id: ID!) {
           }
         }
       }
-      orderAdjustments(first: 5) {
-        kind
-        amountSet { shopMoney { amount currencyCode } }
+      transactions(first: 3) {
+        edges {
+          node {
+            gateway
+            status
+            paymentDetails {
+              ... on CardPaymentDetails {
+                number
+                company
+              }
+            }
+          }
+        }
       }
     }
   }

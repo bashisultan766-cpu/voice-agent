@@ -1,0 +1,11 @@
+{
+  "url": "https://www.blairco.org/",
+  "status": "error",
+  "content_type": "",
+  "fetched_at": "2026-06-26T09:00:25.990484+00:00",
+  "text_length": 0,
+  "error": "timed out",
+  "source_facilities": [
+    "Blair County Sheriff"
+  ]
+}
