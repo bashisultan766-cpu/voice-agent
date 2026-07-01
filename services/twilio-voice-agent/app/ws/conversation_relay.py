@@ -565,6 +565,9 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
                         session.voice_interrupted = True
                         session.speech_lock = False
                         session.is_speaking = False
+                        from ..runtime.voice_commerce_runtime import reset_committed_intent_on_interrupt
+
+                        reset_committed_intent_on_interrupt(session)
                     if outbound is not None:
                         outbound.cancel_speech()
                     dropped = _clear_pending_tts_queue(send_q)
@@ -677,8 +680,13 @@ async def _run_conversation_relay_session(websocket: WebSocket, settings) -> Non
             clear_turn_assembler(session.call_sid)
             from ..agent_runtime.conversation_state_machine import clear_conversation_state
             from ..agent_runtime.interruption_manager import clear_interrupt_context
+            from ..runtime.cart_memory import clear_cart_memory_on_session_end
+            from ..payment.email_state import clear_email_capture_on_session_end
+
             clear_conversation_state(session.call_sid)
             clear_interrupt_context(session.call_sid)
+            clear_cart_memory_on_session_end(session)
+            clear_email_capture_on_session_end(session)
         await send_q.put(None)
         await asyncio.gather(sender_task, return_exceptions=True)
 

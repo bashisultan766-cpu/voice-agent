@@ -155,7 +155,7 @@ def validate_runtime_identity(identity: dict[str, Any]) -> list[str]:
         failures.append("tool_progress_disabled")
     if identity.get("llm_only_final_output") and identity.get("openai_model") != "gpt-4o":
         failures.append(f"openai_model_weak={identity.get('openai_model')}")
-    if identity.get("voice_sales_flow_version") != "v4.56":
+    if identity.get("voice_sales_flow_version") != "v4.57":
         failures.append(f"voice_sales_flow_version={identity.get('voice_sales_flow_version')}")
     if not identity.get("process_payment_turn_imported"):
         failures.append("process_payment_turn_missing")
@@ -164,7 +164,7 @@ def validate_runtime_identity(identity: dict[str, Any]) -> list[str]:
     for rel, present in (identity.get("v4_files_present") or {}).items():
         if not present:
             failures.append(f"missing_file:{rel}")
-    if identity.get("payment_email_state_version") != "v4.33":
+    if identity.get("payment_email_state_version") != "v4.34":
         failures.append(f"payment_email_state_version={identity.get('payment_email_state_version')}")
     if identity.get("payment_state_machine_module", "").endswith("missing"):
         failures.append("payment_state_machine_missing")

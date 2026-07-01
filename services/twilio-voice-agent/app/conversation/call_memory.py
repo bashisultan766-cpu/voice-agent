@@ -168,6 +168,25 @@ def record_product_candidate(session: "SessionState", title: str, found: bool) -
         _append_fact(state, "Product candidate not found")
 
 
+def record_catalog_not_found_escalation(
+    session: "SessionState",
+    *,
+    query: str = "",
+) -> None:
+    """Durable fact when catalog ISBN+title resolution fails — support handoff staged."""
+    state = get_call_memory(session)
+    detail = (query or "").strip()[:60]
+    fact = "Catalog product not found — support escalation staged"
+    if detail:
+        fact = f"{fact}: {detail}"
+    _append_fact(state, fact)
+    logger.info(
+        "memory_fact_saved sid=%s type=catalog_not_found query_len=%d",
+        session.call_sid[:6],
+        len(detail),
+    )
+
+
 def record_cart_confirmed(session: "SessionState", title: str, count: int) -> None:
     state = get_call_memory(session)
     qty = max(1, int(count or 1))

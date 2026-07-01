@@ -112,13 +112,20 @@ async def test_oos_isbn_handoff_sends_after_thats_correct_email():
                 )
                 assert "email" in name_hint.force_reply.lower()
 
-                send_hint = await process_not_found_escalation_turn(
+                email_hint = await process_not_found_escalation_turn(
                     session,
                     "bashisultan766 at gmail dot com",
                 )
+                assert email_hint.deliver_email_spell_readback
+                assert session.pending_not_found_escalation.get("staging_email") == "bashisultan766@gmail.com"
+
+                send_hint = await process_not_found_escalation_turn(
+                    session,
+                    "that's correct",
+                )
 
     assert send_hint.extra_tool_result and send_hint.extra_tool_result.success
-    assert "letter by letter" not in (send_hint.force_reply or "").lower()
+    assert not email_hint.force_reply or "letter by letter" not in (email_hint.force_reply or "").lower()
     assert session.awaiting_not_found_escalation_email is False
     assert mock_client.post.await_count == 1
     body = mock_client.post.call_args.kwargs["json"]["text"]

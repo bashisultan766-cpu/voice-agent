@@ -8,6 +8,7 @@ import pytest
 
 from app.agent_runtime.isbn_short_circuit import try_title_catalog_short_circuit
 from app.agent_runtime.not_found_escalation_flow import (
+    CATALOG_NOT_FOUND_FALLBACK_MESSAGE,
     PRODUCT_SEARCH_FALLBACK_HANDOFF_PROMPT,
     process_not_found_escalation_turn,
     try_product_search_fallback_escalation,
@@ -206,7 +207,8 @@ async def test_no_exact_without_similar_triggers_support_handoff():
             )
 
     assert result is not None
-    assert "name and email" in result.force_reply.lower()
+    assert CATALOG_NOT_FOUND_FALLBACK_MESSAGE in result.force_reply
+    assert result.catalog_not_found_escalation is True
     assert session.awaiting_not_found_escalation_email is True
     assert session.pending_not_found_escalation.get("reason") == "product_not_found"
 

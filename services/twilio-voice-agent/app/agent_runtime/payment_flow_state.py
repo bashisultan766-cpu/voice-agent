@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, TYPE_CHECKING
 
 from ..payment.payment_link_service import (
@@ -188,6 +188,287 @@ def gate_send_payment_link(session: "SessionState", tool_email: str = "") -> Pay
             )
 
     return PaymentGateResult(allowed=True)
+
+
+_HOLD_PAT = re.compile(
+    r"\b(?:hold(?:\s+on)?|wait|just\s+(?:hold|wait|second|moment)(?:\s+a\s+(?:second|moment))?|"
+    r"one\s+(?:second|moment)|give\s+me\s+a\s+(?:second|moment))\b",
+    re.I,
+)
+_REPEAT_PAYMENT_PAT = re.compile(
+    r"\b("
+    r"repeat(?: that| what you said| the email| my email)?|what did you say|"
+    r"say that again|spell(?: it)? again|what was that|pardon"
+    r")\b",
+    re.I,
+)
+_PAYMENT_CONFUSION_PAT = re.compile(
+    r"\b(what\??|huh|sorry\??|didn.?t (?:hear|catch)|are you there)\s*$",
+    re.I,
+)
+_CHECKOUT_PAYMENT_INTENT_PAT = re.compile(r"\b(checkout|payment)\b", re.I)
+
+PAYMENT_LINK_VOICE_TEMPLATE = (
+    "You will receive a secure Shopify payment link. "
+    "It contains your order summary."
+)
+PAYMENT_LINK_DUPLICATE_MESSAGE = (
+    "I already sent your secure Shopify payment link for this order. "
+    "Please check your email."
+)
+
+
+@dataclass
+class PaymentCheckoutHint:
+    force_reply: Optional[str] = None
+    openai_skipped: bool = False
+    send_payment_link: bool = False
+    checkout_items: list[dict[str, Any]] = field(default_factory=list)
+    blocked_duplicate: bool = False
+
+
+def checkout_payment_intent_detected(text: str) -> bool:
+    """True when caller asks to checkout or pay (deterministic trigger)."""
+    return bool(_CHECKOUT_PAYMENT_INTENT_PAT.search(text or ""))
+
+
+def build_session_checkout_invoice(session: "SessionState") -> dict[str, Any]:
+    """Build checkout payload from session cart only — items, quantities, total."""
+    from ..cart.session import get_ledger
+    from ..payment.payment_destination_groups import group_checkout_items, refresh_payment_groups_from_cart
+
+    refresh_payment_groups_from_cart(session)
+    ledger = get_ledger(session)
+    items = list(group_checkout_items(session) or ledger.to_checkout_items())
+    lines: list[dict[str, Any]] = []
+    subtotal = 0.0
+    for item in items:
+        qty = max(1, int(item.get("quantity", 1) or 1))
+        title = (item.get("title") or "").strip()
+        line_total: float | None = None
+        price_raw = item.get("price")
+        if price_raw:
+            try:
+                unit = float(str(price_raw).replace("$", "").replace(",", ""))
+                line_total = unit * qty
+                subtotal += line_total
+            except (TypeError, ValueError):
+                line_total = None
+        lines.append({
+            "product_title": title,
+            "variant_id": item.get("variant_id") or "",
+            "quantity": qty,
+            "line_total": line_total,
+        })
+    return {
+        "items": items,
+        "lines": lines,
+        "total_copies": sum(line["quantity"] for line in lines),
+        "total_price": round(subtotal, 2) if subtotal > 0 else None,
+        "summary_text": ledger.cart_summary_text(),
+    }
+
+
+def try_payment_checkout_short_circuit(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[PaymentCheckoutHint]:
+    """
+    Deterministic checkout/payment — mirrors order/product cart short-circuits.
+
+    Requires ``payment_cart_confirmed`` and checkout/payment intent. Sends via
+    existing ``send_payment_link`` tool only (no LLM invoice text).
+    """
+    text = (caller_text or "").strip()
+    if not text or not checkout_payment_intent_detected(text):
+        return None
+
+    mode = (turn_mode or "").strip().lower()
+    if mode in ("order", "isbn"):
+        return None
+
+    session.payment_cart_confirmed = bool(
+        getattr(session, "payment_cart_confirmed", False)
+    ) or _cart_has_confirmed_items(session)
+    if not session.payment_cart_confirmed:
+        return PaymentCheckoutHint(
+            force_reply=(
+                "I need to confirm the books in your cart before checkout. "
+                "Which book would you like to order?"
+            ),
+            openai_skipped=True,
+        )
+
+    if getattr(session, "payment_link_sent", False):
+        return PaymentCheckoutHint(
+            force_reply=PAYMENT_LINK_DUPLICATE_MESSAGE,
+            openai_skipped=True,
+            blocked_duplicate=True,
+        )
+
+    invoice = build_session_checkout_invoice(session)
+    items = invoice.get("items") or []
+    if not items:
+        return PaymentCheckoutHint(
+            force_reply=(
+                "Your cart looks empty right now. "
+                "Tell me the ISBN or title of the book you want."
+            ),
+            openai_skipped=True,
+        )
+
+    from ..payment.email_state import assert_ready_for_payment_send, get_canonical_confirmed_email
+    from ..payment.payment_prompts import payment_email_collection_prompt
+    from ..payment.payment_state_machine import begin_awaiting_payment_email
+
+    if not assert_ready_for_payment_send(session, stage="payment_checkout_short_circuit"):
+        begin_awaiting_payment_email(session)
+        return PaymentCheckoutHint(
+            force_reply=payment_email_collection_prompt(
+                cart_summary=str(invoice.get("summary_text") or ""),
+            ),
+            openai_skipped=True,
+        )
+
+    confirmed_email = get_canonical_confirmed_email(session) or ""
+    from ..payment.payment_idempotency import check_idempotency, compute_idempotency_key
+
+    group_id = "default"
+    groups = getattr(session, "payment_destination_groups", None) or []
+    if groups and isinstance(groups[0], dict):
+        group_id = str(groups[0].get("group_id") or "default")
+    idem_key = compute_idempotency_key(
+        call_sid=getattr(session, "call_sid", "") or "",
+        group_id=group_id,
+        items=items,
+        confirmed_email=confirmed_email,
+    )
+    idem = check_idempotency(idem_key)
+    if not idem.allowed:
+        return PaymentCheckoutHint(
+            force_reply=idem.message or PAYMENT_LINK_DUPLICATE_MESSAGE,
+            openai_skipped=True,
+            blocked_duplicate=True,
+        )
+
+    logger.info(
+        "payment_checkout_short_circuit sid=%s items=%d total_copies=%d total_price=%s",
+        (getattr(session, "call_sid", "") or "")[:6],
+        len(items),
+        invoice.get("total_copies"),
+        invoice.get("total_price"),
+    )
+    return PaymentCheckoutHint(
+        force_reply=PAYMENT_LINK_VOICE_TEMPLATE,
+        openai_skipped=True,
+        send_payment_link=True,
+        checkout_items=items,
+    )
+
+
+def record_payment_voice_reply(session: "SessionState", reply: str) -> None:
+    """Cache last deterministic payment/email speech for repeat/brain-gate replay."""
+    text = (reply or "").strip()
+    if not text:
+        return
+    session.payment_last_voice_reply = text
+    session.last_spoken_response = text
+
+
+def try_payment_hold_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Acknowledge hold/wait during email capture without invoking the LLM."""
+    if not _HOLD_PAT.search(caller_text or ""):
+        return None
+    if getattr(session, "awaiting_payment_email_confirmation", False):
+        pending = get_pending_payment_email(session)
+        if pending:
+            return "No rush — just say yes if the email is correct, or tell me the right one."
+        return "No rush — tell me your email when you're ready."
+    if getattr(session, "awaiting_payment_email", False) or (
+        getattr(session, "payment_flow_status", "") or ""
+    ) == "awaiting_email":
+        return "Sure — take your time. What email should I send the payment link to?"
+    return None
+
+
+def try_payment_repeat_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Replay email confirmation or collection prompts from this call."""
+    from ..email.capture import is_repeat_email_request, is_email_spell_request
+    from ..payment.payment_state_machine import repeat_email_prompt
+
+    text = (caller_text or "").strip()
+    if not text:
+        return None
+    if not (
+        _REPEAT_PAYMENT_PAT.search(text)
+        or _PAYMENT_CONFUSION_PAT.match(text)
+        or is_repeat_email_request(text)
+        or is_email_spell_request(text)
+    ):
+        return None
+
+    last = (getattr(session, "payment_last_voice_reply", "") or "").strip()
+    if last:
+        return last
+
+    pending = get_pending_payment_email(session)
+    if pending:
+        return repeat_email_prompt(pending)
+
+    if getattr(session, "awaiting_payment_email", False) or (
+        getattr(session, "payment_flow_status", "") or ""
+    ) in ("awaiting_email", "awaiting_email_confirmation"):
+        from ..payment.payment_prompts import payment_email_collection_prompt
+
+        return payment_email_collection_prompt()
+    return None
+
+
+def try_payment_brain_gate(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[str]:
+    """
+    Prevent the LLM from reformatting payment/email steps or inventing send success.
+    Returns a deterministic replay when payment email context is active.
+    """
+    from ..payment.payment_state_machine import (
+        email_capture_context_active,
+        in_payment_flow,
+    )
+
+    if not (
+        email_capture_context_active(session, turn_mode)
+        or in_payment_flow(session)
+        or getattr(session, "awaiting_payment_email", False)
+        or getattr(session, "awaiting_payment_email_confirmation", False)
+    ):
+        return None
+
+    hold = try_payment_hold_reply(session, caller_text)
+    if hold:
+        return hold
+
+    repeat = try_payment_repeat_reply(session, caller_text)
+    if repeat:
+        return repeat
+
+    confirm = spoken_email_confirmation(session)
+    if confirm and getattr(session, "awaiting_payment_email_confirmation", False):
+        if _FALSE_SUCCESS_PAT.search(caller_text or ""):
+            return confirm
+        return None
+
+    if getattr(session, "payment_link_sent", False):
+        last = (getattr(session, "payment_last_voice_reply", "") or "").strip()
+        if last and (_REPEAT_PAYMENT_PAT.search(caller_text or "") or _PAYMENT_CONFUSION_PAT.match(caller_text or "")):
+            return last
+
+    return None
 
 
 def spoken_email_confirmation(session: "SessionState") -> Optional[str]:

@@ -48,7 +48,7 @@ class TestYesConfirmAdd:
         session.commerce_pending_quantity = 1
         hint = process_commerce_turn(session, "Yes.")
         assert hint.book_added is True
-        assert "another book" in (hint.force_reply or "").lower()
+        assert "another product" in (hint.force_reply or "").lower()
 
     def test_add_confirm_adds_on_yes_add_copy(self):
         session = _session()

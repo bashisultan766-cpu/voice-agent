@@ -15,6 +15,7 @@ from app.agent_runtime.isbn_short_circuit import (
     try_isbn_short_circuit,
     try_title_catalog_short_circuit,
 )
+from app.agent_runtime.not_found_escalation_flow import CATALOG_NOT_FOUND_FALLBACK_MESSAGE
 from app.escalation.product_not_found_escalation import _STORE
 from app.state.models import SessionState
 
@@ -68,9 +69,9 @@ async def test_isbn_not_found_stages_fallback_without_immediate_handoff():
             result = await try_isbn_short_circuit(session, TEST_ISBN, turn_mode="isbn")
 
     assert result is not None
-    assert "name and email" in result.force_reply.lower()
-    assert session.awaiting_not_found_escalation_email is True
-    assert session.pending_not_found_escalation.get("reason") == "product_not_found"
+    assert "book title" in result.force_reply.lower()
+    assert not result.catalog_not_found_escalation
+    assert not session.awaiting_not_found_escalation_email
 
 
 @pytest.mark.asyncio
@@ -126,7 +127,8 @@ async def test_title_not_found_stages_fallback_without_immediate_handoff():
             )
 
     assert result is not None
-    assert "name and email" in result.force_reply.lower()
+    assert result.force_reply == CATALOG_NOT_FOUND_FALLBACK_MESSAGE
+    assert result.catalog_not_found_escalation is True
     assert session.awaiting_not_found_escalation_email is True
     assert session.pending_not_found_escalation.get("reason") == "product_not_found"
 

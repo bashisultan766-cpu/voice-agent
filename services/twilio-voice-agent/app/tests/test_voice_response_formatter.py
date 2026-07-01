@@ -10,6 +10,7 @@ from app.voice.voice_response_formatter import (
     SpeechPacer,
     VoiceResponseFormatter,
     _apply_prosody_emphasis,
+    _apply_semantic_chunk_prosody,
     _apply_speech_flow_curve,
     _normalize_money_in_text,
     _pronounce_usd_amount,
@@ -190,7 +191,7 @@ def test_render_emphasis_pacing_tiers():
     )
 
 
-def test_format_applies_pacing_and_money():
+def test_format_applies_semantic_normalization_without_pacing():
     session = SessionState(
         session_id="s",
         call_sid="CA1",
@@ -205,8 +206,8 @@ def test_format_applies_pacing_and_money():
     assert "I found" in out.speech_text
     assert "your order" in out.speech_text
     assert "3 items" in out.speech_text
-    assert "90 dollars and 99 cents" in out.speech_text
-    assert re.search(r"\.{2,}", out.speech_text)
+    assert "$90.99" in out.speech_text
+    assert not re.search(r"\.{2,}", out.speech_text)
     assert "*" not in out.speech_text
     assert "(" not in out.speech_text
     assert session.emotion_field["valence"] > default_emotion_field()["valence"]
@@ -248,6 +249,26 @@ def test_note_emotion_interrupt_reduces_stability():
     start = session.emotion_field["stability"]
     note_emotion_interrupt(session)
     assert session.emotion_field["stability"] < start
+
+
+def test_semantic_chunk_prosody_marks_product_and_quantity():
+    marked = _apply_semantic_chunk_prosody(
+        "Found it — Atomic Habits. How many copies would you like?"
+    )
+    assert "*Atomic Habits*" in marked
+    assert "*How many copies*" in marked
+    assert "\n" in marked
+
+
+def test_semantic_chunk_prosody_before_payment_and_email():
+    marked = _apply_semantic_chunk_prosody(
+        "Your cart is ready. You will receive a secure Shopify payment link. "
+        "Just to confirm, I heard you. Slowly, letter by letter, that is the email."
+    )
+    assert "\nYou will receive" in marked
+    assert "*secure Shopify payment link*" in marked
+    assert "\nSlowly" in marked
+    assert "*letter by letter*" in marked
 
 
 def test_high_arousal_shortens_chunks():

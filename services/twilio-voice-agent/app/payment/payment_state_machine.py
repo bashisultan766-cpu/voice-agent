@@ -26,6 +26,7 @@ EMAIL_VERIFICATION_PROGRESS = "I'm verifying your email now."
 from .email_state import (
     _email_hash,
     confirm_payment_email,
+    enter_email_capture_mode,
     get_canonical_confirmed_email,
     get_pending_payment_email,
     log_payment_flow_diagnostics,
@@ -42,6 +43,7 @@ class PaymentTurnHint:
     email_captured: bool = False
     email_confirmed: bool = False
     skip_openai: bool = False
+    deliver_email_spell_readback: bool = False
 
 
 def _cart_has_confirmed_items(session: "SessionState") -> bool:
@@ -104,22 +106,18 @@ def extract_email_from_text(
 
 
 def speak_confirmation_prompt(email: str) -> str:
-    """Full unmasked confirmation — spoken email plus letter-by-letter readback."""
-    from ..email.speller import speak_email, spell_email_letter_by_letter
+    """Raw semantic confirmation — hyphen spell chunks are built at finalize_voice_output."""
+    from ..email.speller import speak_email
 
     spoken = speak_email(email)
-    spelled = spell_email_letter_by_letter(email)
-    return (
-        f"Just to confirm, I heard {spoken}. "
-        f"Slowly, letter by letter, that is {spelled}. Is that correct?"
-    )
+    if not spoken:
+        return "What email should I send the payment link to?"
+    return f"I have {spoken}. Is that correct?"
 
 
 def confirmation_prompt(email: str, *, include_spelling: bool = True) -> str:
-    if include_spelling:
-        return speak_confirmation_prompt(email)
-    from ..email.speller import speak_email
-    return f"Just to confirm, I heard {speak_email(email)}. Is that correct?"
+    _ = include_spelling  # spelling via deliver_email_spell_readback at runtime
+    return speak_confirmation_prompt(email)
 
 
 def repeat_email_prompt(email: str) -> str:
@@ -128,6 +126,7 @@ def repeat_email_prompt(email: str) -> str:
 
 def begin_awaiting_payment_email(session: "SessionState") -> None:
     """Cart is ready — ask for email deterministically."""
+    enter_email_capture_mode(session)
     session.awaiting_payment_email = True
     session.payment_flow_status = "awaiting_email"
     transition_payment_state(session, "idle", "awaiting_email")
@@ -143,6 +142,7 @@ def capture_payment_email(session: "SessionState", email: str, *, raw_text: str 
 
     prior = getattr(session, "payment_flow_status", "idle") or "idle"
     from_state = prior if prior != "idle" else "awaiting_email"
+    enter_email_capture_mode(session)
     set_pending_payment_email(session, normalized)
     session.awaiting_payment_email = False
     save_session_email_to_active_group(session)
@@ -155,7 +155,6 @@ def capture_payment_email(session: "SessionState", email: str, *, raw_text: str 
     )
     transition_payment_state(session, from_state, "awaiting_email_confirmation")
 
-    prompt = speak_confirmation_prompt(normalized)
     logger.info(
         "payment_email_confirmation_prompt sid=%s full_email_spoken=true "
         "spelled=true openai_skipped=true",
@@ -163,7 +162,7 @@ def capture_payment_email(session: "SessionState", email: str, *, raw_text: str 
     )
     return PaymentTurnHint(
         email_captured=True,
-        force_reply=f"{EMAIL_VERIFICATION_PROGRESS} {prompt}",
+        deliver_email_spell_readback=True,
         skip_openai=True,
     )
 
@@ -395,7 +394,7 @@ def process_payment_turn(
         pending = get_pending_payment_email(session) or get_canonical_confirmed_email(session)
         if pending:
             log_payment_flow_diagnostics(session, stage="email_spell_request")
-            return PaymentTurnHint(force_reply=repeat_email_prompt(pending), skip_openai=True)
+            return PaymentTurnHint(deliver_email_spell_readback=True, skip_openai=True)
 
     email_ctx = email_capture_context_active(session, turn_mode) or email_payment_ctx
     awaiting_email_confirm = bool(getattr(session, "awaiting_payment_email_confirmation", False))
@@ -432,7 +431,7 @@ def process_payment_turn(
         pending = get_pending_payment_email(session) or get_canonical_confirmed_email(session)
         if pending:
             log_payment_flow_diagnostics(session, stage="email_spell_request")
-            return PaymentTurnHint(force_reply=repeat_email_prompt(pending), skip_openai=True)
+            return PaymentTurnHint(deliver_email_spell_readback=True, skip_openai=True)
 
     awaiting_confirm = bool(getattr(session, "awaiting_payment_email_confirmation", False))
     awaiting_email = bool(getattr(session, "awaiting_payment_email", False))
@@ -449,7 +448,7 @@ def process_payment_turn(
         pending = get_pending_payment_email(session) or get_canonical_confirmed_email(session)
         if pending:
             log_payment_flow_diagnostics(session, stage="email_frustration_repeat")
-            return PaymentTurnHint(force_reply=repeat_email_prompt(pending), skip_openai=True)
+            return PaymentTurnHint(deliver_email_spell_readback=True, skip_openai=True)
 
     if awaiting_confirm and email_signal and not is_email_confirmation(text):
         replacement = (
@@ -470,7 +469,7 @@ def process_payment_turn(
         session.awaiting_payment_email_confirmation = True
         session.payment_flow_status = "awaiting_email_confirmation"
         log_payment_flow_diagnostics(session, stage="email_repeat")
-        return PaymentTurnHint(force_reply=repeat_email_prompt(pending_offer), skip_openai=True)
+        return PaymentTurnHint(deliver_email_spell_readback=True, skip_openai=True)
 
     email = extract_email_from_text(capture_text, session)
     if email:

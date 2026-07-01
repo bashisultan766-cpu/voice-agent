@@ -130,6 +130,13 @@ def is_supplying_email_address(text: str) -> bool:
 
 def email_capture_turn_active(session: object) -> bool:
     """True when payment or support handoff is collecting or confirming an email."""
+    try:
+        from ..payment.email_state import email_capture_mode_active
+
+        if email_capture_mode_active(session):  # type: ignore[arg-type]
+            return True
+    except Exception:  # noqa: BLE001
+        pass
     if getattr(session, "awaiting_payment_email", False):
         return True
     if getattr(session, "awaiting_payment_email_confirmation", False):

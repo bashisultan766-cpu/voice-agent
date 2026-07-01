@@ -96,6 +96,18 @@ def _spell_segment_chars(segment: str) -> str:
     return ". ".join(tokens) + "."
 
 
+def _spell_hyphen_chunks(segment: str, *, group_size: int = 4) -> list[str]:
+    """Hyphen-separated letter chunks for paced TTS (A-B-C-D)."""
+    tokens = [_char_to_voice_token(ch) for ch in segment if ch]
+    if not tokens:
+        return []
+    chunks: list[str] = []
+    for i in range(0, len(tokens), group_size):
+        group = tokens[i : i + group_size]
+        chunks.append("-".join(group))
+    return chunks
+
+
 def _spell_micro_chunks(segment: str, *, group_size: int = 3) -> list[str]:
     """Split a segment into small TTS chunks so no letters are dropped on the phone."""
     tokens = [_char_to_voice_token(ch) for ch in segment if ch]
@@ -164,64 +176,90 @@ def email_confidence_is_low(email: str, raw_text: str = "") -> bool:
 
 
 _EMAIL_READBACK_MARKER = re.compile(
+    r"i have .+\.\s*i will spell it for confirmation|"
     r"letter\s+by\s+letter|just to confirm,\s+i heard|the name part",
     re.I,
 )
 
 
 def is_preserved_email_readback(text: str) -> bool:
-    """True when text is a deterministic email spell-back that must reach TTS intact."""
+    """True when text is a legacy full-line email spell-back (pre-chunked at runtime)."""
     return bool(_EMAIL_READBACK_MARKER.search(text or ""))
 
 
-def build_email_readback(email: str, raw_text: str = "") -> str:
-    """Pending email: heard + spelled + confirmation."""
+_EMAIL_SPELL_CHUNK_RE = re.compile(r"^[A-Z0-9](?:-[A-Z0-9])+\.?$")
+_EMAIL_READBACK_LITERAL_PARTS = frozenset({
+    "At",
+    "Dot",
+    "Is that correct?",
+    "I will spell it for confirmation.",
+})
+
+
+def is_email_readback_tts_part(text: str) -> bool:
+    """True for per-chunk email spell delivery at the final output stage."""
+    part = (text or "").strip()
+    if not part:
+        return False
+    if is_preserved_email_readback(part):
+        return True
+    if part in _EMAIL_READBACK_LITERAL_PARTS:
+        return True
+    if _EMAIL_SPELL_CHUNK_RE.match(part):
+        return True
+    lower = part.lower()
+    if lower.startswith("i have ") and " at " in lower:
+        return True
+    return False
+
+
+def _email_readback_fallback(email: str, raw_text: str = "") -> str:
     normalized = normalize_email_for_customer_readback(email)
     if not normalized:
         return "I do not have a complete email yet. Please spell it slowly."
-
     if email_confidence_is_low(normalized, raw_text):
         return "I may have heard that wrong. Please spell the email slowly."
+    return ""
 
-    spoken = speak_email(normalized)
-    spelled = spell_email_letter_by_letter(normalized)
-    return (
-        f"I heard {spoken}. Slowly, letter by letter, that is {spelled}. Is that correct?"
-    )
+
+def build_email_readback(email: str, raw_text: str = "") -> str:
+    """Pending email: heard once + hyphen spelling + confirmation."""
+    return " ".join(build_email_readback_parts(email, raw_text))
 
 
 def build_email_readback_parts(email: str, raw_text: str = "") -> list[str]:
     """Split readback into micro TTS chunks — each delivered with play_immediately."""
     normalized = normalize_email_for_customer_readback(email)
-    if not normalized or email_confidence_is_low(normalized, raw_text):
-        return [build_email_readback(email, raw_text)]
+    fallback = _email_readback_fallback(email, raw_text)
+    if fallback:
+        return [fallback]
 
     spoken = speak_email(normalized)
     local, domain = normalized.split("@", 1)
     domain_parts = [part for part in domain.lower().split(".") if part]
 
     parts = [
-        f"Just to confirm, I heard {spoken}.",
-        "Now I will read it back slowly, letter by letter.",
+        f"I have {spoken}.",
+        "I will spell it for confirmation.",
     ]
-    for chunk in _spell_micro_chunks(local):
-        parts.append(f"The name part is {chunk}")
-    parts.append("At.")
-    for part in domain_parts:
-        for chunk in _spell_micro_chunks(part):
+    for chunk in _spell_hyphen_chunks(local):
+        parts.append(chunk)
+    parts.append("At")
+    for idx, part in enumerate(domain_parts):
+        for chunk in _spell_hyphen_chunks(part):
             parts.append(chunk)
-        parts.append("Dot.")
-    if parts and parts[-1] == "Dot.":
-        parts.pop()
+        if idx < len(domain_parts) - 1:
+            parts.append("Dot")
     parts.append("Is that correct?")
     return parts
 
 
 def build_email_spell_only(email: str, raw_text: str = "") -> str:
-    """Confirmed email: have + spelled readback."""
+    """Confirmed email: have + hyphen spelled readback."""
     normalized = normalize_email_for_customer_readback(email)
     if not normalized or email_confidence_is_low(normalized, raw_text):
         return "I do not have a complete email yet. Please spell it slowly."
-    spoken = speak_email(normalized)
-    spelled = spell_email_letter_by_letter(normalized)
-    return f"I have {spoken}. That is {spelled}."
+    parts = build_email_readback_parts(email, raw_text)
+    if parts and parts[-1] == "Is that correct?":
+        parts = parts[:-1]
+    return " ".join(parts)

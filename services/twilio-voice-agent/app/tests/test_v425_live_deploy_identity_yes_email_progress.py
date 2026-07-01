@@ -78,9 +78,9 @@ def _session(**kwargs) -> SessionState:
 class TestRuntimeIdentity:
     def test_identity_reports_v424_flags(self):
         identity = collect_runtime_identity()
-        assert identity["voice_sales_flow_version"] == "v4.56"
+        assert identity["voice_sales_flow_version"] == "v4.57"
         assert identity["tool_progress_prompts_enabled"] is True
-        assert identity["payment_email_state_version"] == "v4.33"
+        assert identity["payment_email_state_version"] == "v4.34"
         assert identity["llm_only_final_output"] is True
         assert identity["openai_model"] == "gpt-4o"
         assert identity["email_capture_short_circuit_enabled"] is True
@@ -110,16 +110,13 @@ class TestYesHandling:
         stage_product_candidate(session, BOOK_A)
         h1 = process_commerce_turn(session, "Yes")
         assert h1.force_reply
-        assert "Add one copy" in h1.force_reply
-        h2 = process_commerce_turn(session, "Yes")
-        assert h2.book_added
+        assert h1.book_added
         assert get_ledger(session).confirmed_count() == 1
-        assert "another book" in h2.force_reply.lower()
+        assert "another product" in h1.force_reply.lower()
 
     def test_repeated_yes_does_not_stall(self):
         session = _session()
         stage_product_candidate(session, BOOK_A)
-        process_commerce_turn(session, "Yes")
         process_commerce_turn(session, "Yes")
         session.commerce_flow_status = STATUS_AWAITING_ANOTHER_BOOK
         h2 = process_commerce_turn(session, "Yes")
@@ -133,9 +130,7 @@ class TestYesHandling:
         session.awaiting_product_confirmation = True
         session.commerce_pending_candidate = dict(BOOK_A)
         h1 = process_commerce_turn(session, "yeah sure")
-        assert "Add one copy" in (h1.force_reply or "")
-        h2 = process_commerce_turn(session, "yes")
-        assert h2.book_added
+        assert h1.book_added
         assert get_ledger(session).confirmed_count() == 1
 
     def test_no_another_book_is_another_request(self):
@@ -176,18 +171,24 @@ class TestEmailConfirmation:
             session, f"My email is {EMAIL}", send, assembled_turn_mode="email",
         ))
         assert speak_email(EMAIL) in result.response_text
-        assert "letter by letter" in result.response_text.lower()
-        assert "B. A. S." in result.response_text
-        assert "G. M. A. I. L" in result.response_text
+        assert "i will spell it for confirmation" in result.response_text.lower()
+        assert "B-A-S" in result.response_text or "B. A. S." in result.response_text
+        assert "G-M-A-I" in result.response_text or "G. M. A. I. L" in result.response_text
         assert "***" not in result.response_text
 
-    def test_confirmation_includes_full_and_spelled_email(self):
+    def test_confirmation_includes_full_email_semantic_only(self):
+        from app.email.speller import build_email_readback_parts
+
         prompt = confirmation_prompt(EMAIL)
         assert speak_email(EMAIL) in prompt
-        assert spell_email_letter_by_letter(EMAIL) in prompt
+        assert "I will spell it for confirmation" not in prompt
+        assert "B-A-S" not in prompt
         assert "***" not in prompt
         assert "gmail" in prompt.lower()
         assert "correct" in prompt.lower()
+        parts = build_email_readback_parts(EMAIL)
+        assert parts[1] == "I will spell it for confirmation."
+        assert any("B-A-S" in p or "B. A. S." in p for p in parts)
 
     def test_spell_email_request_detected(self):
         assert is_email_spell_request("Can you spell my email letter by letter?")

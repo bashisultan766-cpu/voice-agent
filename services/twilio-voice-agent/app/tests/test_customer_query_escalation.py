@@ -186,13 +186,17 @@ async def test_email_capture_on_followup_turn():
                     "urgency_level": "medium",
                 }, ""),
             ):
-                hint = await process_not_found_escalation_turn(
+                capture_hint = await process_not_found_escalation_turn(
                     session, "my email is maria@example.com"
                 )
+                assert capture_hint.deliver_email_spell_readback
+                assert session.pending_not_found_escalation.get("staging_email") == "maria@example.com"
 
-    assert hint.force_reply
-    assert "letter by letter" not in hint.force_reply.lower()
-    assert "maria at example" not in hint.force_reply.lower()
+                hint = await process_not_found_escalation_turn(
+                    session, "that's correct"
+                )
+
+    assert not capture_hint.force_reply or "maria at example" not in (capture_hint.force_reply or "").lower()
     assert session.awaiting_not_found_escalation_email is False
     assert hint.extra_tool_result and hint.extra_tool_result.success
     assert mock_client.post.await_count == 1

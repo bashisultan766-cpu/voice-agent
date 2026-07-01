@@ -63,10 +63,44 @@ _EMPHASIS_MEDIUM: tuple[re.Pattern[str], ...] = (
 )
 _EMPHASIS_MILD: tuple[re.Pattern[str], ...] = (
     re.compile(
-        r"\b(paid|shipped|confirmed|delivered|approved|verified|complete|completed|ready)\b",
+        r"\b(paid|shipped|confirmed|delivered|approved|verified|complete|completed|ready|added)\b",
         re.I,
     ),
 )
+_SEMANTIC_QUANTITY_RE = re.compile(
+    r"\b((?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"fifteen|twenty|thirty|forty|fifty|\d{1,4})\s+(?:copies?|copy))\b",
+    re.I,
+)
+_HOW_MANY_COPIES_RE = re.compile(r"\b(how many copies)\b", re.I)
+_FOUND_IT_TITLE_RE = re.compile(
+    r"(Found it\s*[—\-]\s*)([^.?!\n]+)([.?!])",
+    re.I,
+)
+_OF_TITLE_RE = re.compile(
+    r"(\b(?:one copy|\d+\s+copies?|\d+\s+copy)\s+of\s+)([^.?!\n]+)([.?!])",
+    re.I,
+)
+_COPIES_OF_TITLE_RE = re.compile(
+    r"(how many copies of\s+)([^.?!?\n]+)(\?)",
+    re.I,
+)
+_PAYMENT_LEADIN_RE = re.compile(
+    r"([.!?])\s+("
+    r"You will receive|I will email you|Please tell me your email|"
+    r"When you open that link|I need a confirmed email|I sent the secure payment link"
+    r")",
+    re.I,
+)
+_EMAIL_SPELL_LEADIN_RE = re.compile(
+    r"([.!?])\s+(Slowly,?\s+letter by letter|Now I will read it back slowly)",
+    re.I,
+)
+_PAYMENT_PHRASE_RE = re.compile(
+    r"\b(secure Shopify payment link|payment link|order summary|email address)\b",
+    re.I,
+)
+_EMAIL_SPELL_PHRASE_RE = re.compile(r"\b(letter by letter)\b", re.I)
 _ERROR_SIGNAL_RE = re.compile(
     r"\b(failed|failure|error|unable|cannot|couldn't|denied|rejected|problem|sorry)\b",
     re.I,
@@ -92,6 +126,13 @@ _FLOW_PEAK_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"\b(paid|shipped|confirmed|delivered|approved|verified|complete|completed|ready)\b",
         re.I,
     ),
+    re.compile(r"\b(?:one|\d+)\s+(?:copies?|copy)\b", re.I),
+    re.compile(r"\bhow many copies\b", re.I),
+    re.compile(
+        r"\b(?:payment link|secure Shopify|order summary|email address|letter by letter)\b",
+        re.I,
+    ),
+    re.compile(r"Found it\s*[—\-]\s*[^.?!]+", re.I),
 )
 _CLOSE_FLOW_SKIP_RE = re.compile(
     r"\b(goodbye|good bye|thank you for calling|have a great day|take care|talk to you later)\b",
@@ -477,6 +518,73 @@ def _emphasize_pattern_level(
     return "".join(parts)
 
 
+def _wrap_medium_span(span: str) -> str:
+    inner = (span or "").strip()
+    if not inner or _ANY_EMPHASIS_MARKER_RE.search(inner):
+        return span
+    return f"*{inner}*"
+
+
+def _insert_semantic_idea_breaks(text: str) -> str:
+    """Force inter-chunk pauses before payment/email instruction blocks."""
+    result = text or ""
+    result = _PAYMENT_LEADIN_RE.sub(r"\1\n\2", result)
+    result = _EMAIL_SPELL_LEADIN_RE.sub(r"\1\n\2", result)
+    result = re.sub(
+        r"([.!?])\s+(How many copies)",
+        r"\1\n\2",
+        result,
+        flags=re.I,
+    )
+    result = re.sub(
+        r"([.!?])\s+(Do you want another)",
+        r"\1\n\2",
+        result,
+        flags=re.I,
+    )
+    result = re.sub(
+        r"([.!?])\s+(Just to confirm)",
+        r"\1\n\2",
+        result,
+        flags=re.I,
+    )
+    return result
+
+
+def _apply_semantic_chunk_prosody(text: str) -> str:
+    """
+    Unified pacing for order, product, payment, and email flows.
+
+    Inserts prosody markers (*, **) so SpeechPacer adds micro-pauses after
+    product names, quantities, and before payment/email instructions.
+    """
+    if not text:
+        return ""
+
+    result = _insert_semantic_idea_breaks(text)
+
+    result = _SEMANTIC_QUANTITY_RE.sub(lambda m: _wrap_medium_span(m.group(1)), result)
+    result = _HOW_MANY_COPIES_RE.sub(lambda m: _wrap_medium_span(m.group(1)), result)
+
+    result = _FOUND_IT_TITLE_RE.sub(
+        lambda m: f"{m.group(1)}{_wrap_medium_span(m.group(2))}{m.group(3)}",
+        result,
+    )
+    result = _OF_TITLE_RE.sub(
+        lambda m: f"{m.group(1)}{_wrap_medium_span(m.group(2))}{m.group(3)}",
+        result,
+    )
+    result = _COPIES_OF_TITLE_RE.sub(
+        lambda m: f"{m.group(1)}{_wrap_medium_span(m.group(2))}{m.group(3)}",
+        result,
+    )
+
+    result = _PAYMENT_PHRASE_RE.sub(lambda m: _wrap_medium_span(m.group(1)), result)
+    result = _EMAIL_SPELL_PHRASE_RE.sub(lambda m: _wrap_medium_span(m.group(1)), result)
+
+    return result
+
+
 def _apply_prosody_emphasis(text: str) -> str:
     """
     Apply multi-level prosody markers for SpeechPacer (stripped before TTS).
@@ -535,39 +643,46 @@ def _ideas_from_text(text: str, *, max_idea_words: int = _MAX_IDEA_WORDS) -> lis
         return []
 
     ideas: list[str] = []
-    for sentence in _split_sentences(cleaned):
-        core = sentence.strip()
-        if not core:
+    for paragraph in re.split(r"\n+", cleaned):
+        paragraph = paragraph.strip()
+        if not paragraph:
             continue
-        trailing = ""
-        if core.endswith("?"):
-            trailing = "?"
-            body = core[:-1].strip()
-        elif core.endswith("!"):
-            trailing = "!"
-            body = core[:-1].strip()
-        elif core.endswith("...") and not core.endswith("...."):
-            body = core.strip()
-        elif re.search(r"\.{2,}[^.\n]+\.{2,}", core):
-            body = core.strip()
-        elif core.endswith("."):
-            trailing = "."
-            body = core[:-1].strip()
-        else:
-            body = core.strip()
-        if not body:
-            continue
-        words = body.split()
-        if len(words) <= max_idea_words:
-            ideas.append(f"{body}{trailing}")
-            continue
-        parts = re.split(r",\s+|\s+and\s+", body, flags=re.I)
-        for index, part in enumerate(parts):
-            part = part.strip()
-            if not part:
+        sentences = _split_sentences(paragraph)
+        if not sentences:
+            sentences = [paragraph]
+        for sentence in sentences:
+            core = sentence.strip()
+            if not core:
                 continue
-            suffix = trailing if index == len(parts) - 1 else "."
-            ideas.append(f"{part}{suffix}")
+            trailing = ""
+            if core.endswith("?"):
+                trailing = "?"
+                body = core[:-1].strip()
+            elif core.endswith("!"):
+                trailing = "!"
+                body = core[:-1].strip()
+            elif core.endswith("...") and not core.endswith("...."):
+                body = core.strip()
+            elif re.search(r"\.{2,}[^.\n]+\.{2,}", core):
+                body = core.strip()
+            elif core.endswith("."):
+                trailing = "."
+                body = core[:-1].strip()
+            else:
+                body = core.strip()
+            if not body:
+                continue
+            words = body.split()
+            if len(words) <= max_idea_words:
+                ideas.append(f"{body}{trailing}")
+                continue
+            parts = re.split(r",\s+|\s+and\s+", body, flags=re.I)
+            for index, part in enumerate(parts):
+                part = part.strip()
+                if not part:
+                    continue
+                suffix = trailing if index == len(parts) - 1 else "."
+                ideas.append(f"{part}{suffix}")
     return ideas
 
 
@@ -583,7 +698,8 @@ class SpeechPacer:
     ) -> str:
         profile = emotion_pacing_profile(emotion_field)
         normalized = _normalize_money_in_text(text)
-        emphasized = _apply_prosody_emphasis(normalized)
+        semantic = _apply_semantic_chunk_prosody(normalized)
+        emphasized = _apply_prosody_emphasis(semantic)
         raw_ideas = _ideas_from_text(emphasized, max_idea_words=profile.max_idea_words)
         if not raw_ideas:
             flowed = _apply_speech_flow_to_text(emphasized, profile)
@@ -670,10 +786,7 @@ def _infer_next_action(speech_text: str) -> NextAction:
 
 
 class VoiceResponseFormatter:
-    """Normalize any handler/LLM string into voice-ready speech."""
-
-    def __init__(self) -> None:
-        self._speech_pacer = SpeechPacer()
+    """Normalize handler/LLM strings into semantic speech (no pacing — that is finalize-only)."""
 
     def format(
         self,
@@ -686,7 +799,7 @@ class VoiceResponseFormatter:
         if not cleaned:
             cleaned = (raw_text or "").strip()
 
-        emotion = evolve_emotion_field(
+        evolve_emotion_field(
             session,
             response_text=cleaned,
             user_text=user_text,
@@ -700,12 +813,6 @@ class VoiceResponseFormatter:
 
         if len(speech) > MAX_SPEECH_CHARS:
             speech = _compress_to_budget(speech, MAX_SPEECH_CHARS)
-
-        speech = self._speech_pacer.pace(
-            speech,
-            max_chars=MAX_SPEECH_CHARS,
-            emotion_field=emotion,
-        )
 
         next_action = _infer_next_action(speech)
         should_pause = next_action in ("ask", "confirm")

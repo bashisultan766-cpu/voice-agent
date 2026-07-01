@@ -162,6 +162,7 @@ class ProductSearchTurnResult:
     tool_results: list[tuple[str, dict[str, Any]]] | None = None
     isbn: str = ""
     route: str = ""
+    catalog_not_found_escalation: bool = False
 
 
 def detect_product_search_intent(
@@ -262,6 +263,7 @@ async def _resolve_via_match_product(
                 tool_results=sc.tool_results,
                 isbn=sc.isbn or isbn,
                 route="isbn_resolve",
+                catalog_not_found_escalation=sc.catalog_not_found_escalation,
             )
         return None
 
@@ -274,6 +276,7 @@ async def _resolve_via_match_product(
             tool_results=sc.tool_results,
             isbn=sc.isbn or "",
             route="title_resolve",
+            catalog_not_found_escalation=sc.catalog_not_found_escalation,
         )
     return None
 

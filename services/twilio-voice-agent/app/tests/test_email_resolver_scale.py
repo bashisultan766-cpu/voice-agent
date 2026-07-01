@@ -47,4 +47,4 @@ def test_low_confidence_still_captures_with_full_spellback():
         turn_mode="email",
     )
     assert hint.email_captured is True
-    assert "letter by letter" in (hint.force_reply or "")
+    assert hint.deliver_email_spell_readback

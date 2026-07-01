@@ -56,5 +56,9 @@ def test_pipeline_never_returns_raw_unstructured():
 
 
 def test_format_for_tts_skips_contract_for_email_readback():
+    import re
+
     readback = "Just to confirm, I heard john at gmail dot com."
-    assert VoiceCommerceRuntime._format_for_tts(readback) == readback
+    paced = VoiceCommerceRuntime._format_for_tts(readback)
+    assert "john at gmail dot com" in paced.lower()
+    assert re.search(r"\.{2,}", paced)

@@ -424,8 +424,12 @@ async def product_resolution_to_short_circuit(
 
     from .not_found_escalation_flow import (
         clear_product_search_fallback,
+        prepare_catalog_not_found_fallback_escalation,
+        record_catalog_search_failure,
+        should_trigger_catalog_not_found_escalation,
         stage_product_search_fallback,
         support_handoff_preparation,
+        _MSG_ASK_TITLE_AFTER_ISBN_FAIL,
     )
     from ..observability.workflow_events import (
         STEP_PRODUCT_EXACT_MATCH_FOUND,
@@ -519,15 +523,24 @@ async def product_resolution_to_short_circuit(
             tool_results=tool_results,
         )
 
-    msg = support_handoff_preparation(
+    record_catalog_search_failure(session, isbn=isbn, query=resolution.query or isbn)
+    if not should_trigger_catalog_not_found_escalation(session, isbn=isbn):
+        return IsbnShortCircuitResult(
+            force_reply=_MSG_ASK_TITLE_AFTER_ISBN_FAIL,
+            isbn=isbn,
+            tool_results=tool_results,
+        )
+
+    msg = prepare_catalog_not_found_fallback_escalation(
         session,
         user_text=caller_text,
         query=resolution.query or isbn,
-        reason="product_not_found",
+        isbn=isbn,
         search_result={"results": [], "count": 0, "not_found": True},
     )
     return IsbnShortCircuitResult(
         force_reply=msg,
         isbn=isbn,
         tool_results=tool_results,
+        catalog_not_found_escalation=True,
     )

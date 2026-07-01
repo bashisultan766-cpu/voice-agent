@@ -59,8 +59,10 @@ def test_spell_uses_period_pacing():
 def test_readback_split_into_chunks():
     parts = build_email_readback_parts("bashi64@gmail.com")
     assert len(parts) >= 5
-    assert parts[0].startswith("Just to confirm")
+    assert parts[0].startswith("I have ")
+    assert parts[1] == "I will spell it for confirmation."
     assert parts[-1] == "Is that correct?"
+    assert any("-" in p for p in parts)
 
 
 def test_anti_silence_skips_email_correction():

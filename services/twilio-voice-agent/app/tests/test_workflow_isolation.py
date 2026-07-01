@@ -159,26 +159,22 @@ class TestCommerceSilentAdvance:
         )
         assert not commerce_silent_advance_allowed(session, "email", "yes")
 
-    def test_quantity_step_allowed_when_stale_payment_flags(self):
-        """Cart building must win over premature payment_flow_status from old builds."""
+    def test_quantity_step_uses_deterministic_short_circuit(self):
+        """Quantity collection is handled by product_cart_short_circuit — not silent LLM advance."""
         session = _session(
             commerce_flow_status=STATUS_AWAITING_QUANTITY,
             commerce_pending_candidate={"title": "Book", "variant_id": "v1"},
             payment_flow_status="awaiting_email",
             awaiting_payment_email=True,
         )
-        assert commerce_silent_advance_allowed(session, "", "I need 2 copies")
-        advance_commerce_state_silent(session, "I need 2 copies")
-        assert session.commerce_allow_add
+        assert not commerce_silent_advance_allowed(session, "", "I need 2 copies")
 
-    def test_allowed_during_commerce(self):
+    def test_quantity_step_blocks_silent_advance(self):
         session = _session(
             commerce_flow_status=STATUS_AWAITING_QUANTITY,
             commerce_pending_candidate={"title": "Book", "variant_id": "v1"},
         )
-        assert commerce_silent_advance_allowed(session, "", "Yes.")
-        advance_commerce_state_silent(session, "Yes.")
-        assert session.commerce_pending_quantity == 1
+        assert not commerce_silent_advance_allowed(session, "", "Yes.")
 
     def test_commerce_blocks_when_support_active(self):
         session = _session(awaiting_not_found_escalation_email=True)

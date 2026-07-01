@@ -53,9 +53,15 @@ def test_email_confirmation_phrases(phrase: str):
 
 
 def test_custom_domain_slow_readback():
+    from app.email.speller import build_email_readback_parts
+
     email = "sales@sureshotbooks.com"
     prompt = speak_confirmation_prompt(email)
-    assert "Slowly, letter by letter" in prompt
+    assert "sales at sureshotbooks dot com" in prompt
+    assert "Is that correct?" in prompt
+    assert "I will spell it for confirmation" not in prompt
+    parts = build_email_readback_parts(email)
+    assert parts[1] == "I will spell it for confirmation."
     spelled = spell_email_letter_by_letter(email)
     assert "S. U. R. E. S. H. O. T. B. O. O. K. S" in spelled
     assert "C. O. M" in spelled
@@ -73,8 +79,9 @@ def test_yahoo_confirm_sends_payment_path():
         awaiting_payment_email=True,
     )
     hint = capture_payment_email(session, "buyer@yahoo.com")
-    assert "yahoo dot com" in hint.force_reply
-    assert "Slowly, letter by letter" in hint.force_reply
+    assert hint.deliver_email_spell_readback
+    assert hint.email_captured
+    assert session.pending_payment_email == "buyer@yahoo.com"
 
     confirm = process_payment_turn(session, "that's fine")
     assert session.payment_email_confirmed

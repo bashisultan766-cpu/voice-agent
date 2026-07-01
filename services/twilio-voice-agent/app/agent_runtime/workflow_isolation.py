@@ -27,7 +27,157 @@ from .workflow_contracts import (
 if TYPE_CHECKING:
     from ..state.models import SessionState
 
-WORKFLOW_ISOLATION_VERSION = "v1.2"
+WORKFLOW_ISOLATION_VERSION = "v1.3"
+
+# ── ProductCommerceState FSM (mirrors order_flow_state pattern) ─────────────
+
+PRODUCT_COMMERCE_FSM_VERSION = "v1.0"
+
+PCS_IDLE = "idle"
+PCS_DISCOVERY = "discovery"
+PCS_PRODUCT_SELECTED = "product_selected"
+PCS_AWAITING_QUANTITY = "awaiting_quantity"
+PCS_CART_BUILDING = "cart_building"
+PCS_CART_CONFIRMED = "cart_confirmed"
+PCS_PAYMENT_READY = "payment_ready"
+
+_ALL_PCS_STATES = frozenset({
+    PCS_IDLE,
+    PCS_DISCOVERY,
+    PCS_PRODUCT_SELECTED,
+    PCS_AWAITING_QUANTITY,
+    PCS_CART_BUILDING,
+    PCS_CART_CONFIRMED,
+    PCS_PAYMENT_READY,
+})
+
+_PCS_LLM_BLOCKED = frozenset({
+    PCS_PRODUCT_SELECTED,
+    PCS_AWAITING_QUANTITY,
+    PCS_CART_BUILDING,
+    PCS_CART_CONFIRMED,
+    PCS_PAYMENT_READY,
+})
+
+_PCS_ACTIVE = _ALL_PCS_STATES - {PCS_IDLE}
+
+
+def product_commerce_status(session: "SessionState") -> str:
+    """Current ProductCommerceState for this call."""
+    stored = (getattr(session, "product_commerce_status", "") or "").strip()
+    if stored in _ALL_PCS_STATES:
+        return stored
+    return PCS_IDLE
+
+
+def derive_product_commerce_status(
+    session: "SessionState",
+    text: str = "",
+    *,
+    turn_mode: str = "",
+) -> str:
+    """
+    Derive ProductCommerceState from commerce cart + payment sub-states.
+
+    Does not modify order flow fields.
+    """
+    if order_workflow_active(session, turn_mode):
+        return PCS_IDLE
+
+    from .commerce_flow_state import (
+        STATUS_AWAITING_ADD_CONFIRM,
+        STATUS_AWAITING_ANOTHER_BOOK,
+        STATUS_AWAITING_BOOK_CONFIRM,
+        STATUS_AWAITING_EMAIL_COLLECTION,
+        STATUS_AWAITING_QUANTITY,
+        _cart_has_confirmed_items,
+        _status as commerce_status,
+    )
+
+    cfs = commerce_status(session)
+
+    if payment_workflow_active(session, turn_mode) or cfs == STATUS_AWAITING_EMAIL_COLLECTION:
+        if _cart_has_confirmed_items(session):
+            return PCS_PAYMENT_READY
+
+    if cfs == STATUS_AWAITING_QUANTITY:
+        return PCS_AWAITING_QUANTITY
+
+    if cfs in (STATUS_AWAITING_ADD_CONFIRM, STATUS_AWAITING_ANOTHER_BOOK):
+        return PCS_CART_BUILDING
+
+    if cfs == STATUS_AWAITING_BOOK_CONFIRM:
+        return PCS_PRODUCT_SELECTED
+
+    if _cart_has_confirmed_items(session):
+        return PCS_CART_CONFIRMED
+
+    candidate = dict(getattr(session, "commerce_pending_candidate", None) or {})
+    if candidate.get("variant_id") or getattr(session, "awaiting_product_confirmation", False):
+        return PCS_PRODUCT_SELECTED
+
+    mode = (turn_mode or "").strip().lower()
+    if mode == "isbn" or getattr(session, "pending_isbn_buffer", ""):
+        return PCS_DISCOVERY
+
+    try:
+        from .isbn_short_circuit import _isbn_collection_active
+
+        if _isbn_collection_active(session, turn_mode):
+            return PCS_DISCOVERY
+    except Exception:  # noqa: BLE001
+        pass
+
+    from ..runtime.fast_classifier import product_intent_detected
+
+    if product_intent_detected(text or ""):
+        return PCS_DISCOVERY
+
+    if product_handling_allowed(session, turn_mode, text):
+        return PCS_DISCOVERY
+
+    return PCS_IDLE
+
+
+def sync_product_commerce_state(
+    session: "SessionState",
+    text: str = "",
+    *,
+    turn_mode: str = "",
+) -> str:
+    """Persist ProductCommerceState on the session (order flow untouched)."""
+    if order_workflow_active(session, turn_mode):
+        session.product_commerce_status = PCS_IDLE
+        return PCS_IDLE
+
+    status = derive_product_commerce_status(session, text, turn_mode=turn_mode)
+    session.product_commerce_status = status
+    return status
+
+
+def product_commerce_fsm_active(session: "SessionState") -> bool:
+    return product_commerce_status(session) in _PCS_ACTIVE
+
+
+def product_commerce_blocks_llm(session: "SessionState") -> bool:
+    """Active cart/checkout steps — LLM must not decide routing (classifier still runs)."""
+    return product_commerce_status(session) in _PCS_LLM_BLOCKED
+
+
+def product_commerce_requires_classifier(session: "SessionState") -> bool:
+    """Any non-idle product commerce turn must pass through classify() before brain."""
+    return product_commerce_status(session) != PCS_IDLE
+
+
+def product_commerce_orchestrator_route(session: "SessionState") -> str:
+    """Deterministic orchestrator fast_route for blocked product-commerce stages."""
+    pcs = product_commerce_status(session)
+    if pcs == PCS_DISCOVERY:
+        return "product_search_workflow"
+    if pcs in _PCS_LLM_BLOCKED:
+        return "product_commerce_fsm"
+    return ""
+
 
 _ORDER_PASSIVE_PAT = re.compile(
     r"\b(?:last\s*(?:four|4)|card|credit\s*card|refund|email|"
@@ -323,14 +473,21 @@ def commerce_silent_advance_allowed(
     wf = resolve_primary_workflow(session, turn_mode, text)
     if wf in (SUPPORT_HANDOFF_WORKFLOW, WORKFLOW_PAYMENT, ORDER_WORKFLOW):
         return False
-    if wf == WORKFLOW_COMMERCE:
-        return True
     if wf == PRODUCT_SEARCH_WORKFLOW:
         return False
-    from .commerce_flow_state import commerce_blocks_open_commerce
+    from .commerce_flow_state import (
+        STATUS_AWAITING_ADD_CONFIRM,
+        STATUS_AWAITING_QUANTITY,
+        commerce_blocks_open_commerce,
+    )
+    from .commerce_flow_state import _status as commerce_status
 
     if commerce_blocks_open_commerce(session):
         return False
+    if commerce_status(session) in (STATUS_AWAITING_QUANTITY, STATUS_AWAITING_ADD_CONFIRM):
+        return False
+    if wf == WORKFLOW_COMMERCE:
+        return True
     return True
 
 

@@ -54,17 +54,23 @@ def _complete_pending_add(session: "SessionState") -> Optional[str]:
     from ..voice.title_speech import spoken_book_title
     from .commerce_flow_state import (
         STATUS_AWAITING_ADD_CONFIRM,
+        STATUS_AWAITING_QUANTITY,
         _resolve_pending_candidate,
         _status,
         add_staged_book_to_cart,
         another_book_after_add_prompt,
     )
 
-    if _status(session) != STATUS_AWAITING_ADD_CONFIRM:
+    status = _status(session)
+    if status not in (STATUS_AWAITING_ADD_CONFIRM, STATUS_AWAITING_QUANTITY):
         return None
     candidate = _resolve_pending_candidate(session)
     if not candidate:
         return None
+    if status == STATUS_AWAITING_QUANTITY:
+        last = (getattr(session, "commerce_last_voice_reply", "") or "").lower()
+        if "how many copies" not in last:
+            return None
     qty = int(getattr(session, "commerce_pending_quantity", 0) or 1)
     title = add_staged_book_to_cart(session, quantity=qty)
     if not title:

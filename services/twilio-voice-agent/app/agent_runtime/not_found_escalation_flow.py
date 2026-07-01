@@ -13,7 +13,8 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from ..escalation.models import CustomerQueryEscalationPayload, ProductNotFoundEscalationPayload
 from ..escalation.support_handoff import send_support_handoff
-from ..payment.payment_state_machine import extract_email_from_text, speak_confirmation_prompt
+from ..payment.email_state import enter_email_capture_mode
+from ..payment.payment_state_machine import extract_email_from_text
 from ..email.capture import is_email_spell_request, is_repeat_email_request
 from ..email.resolver import resolve_spoken_email_address
 from ..tools.isbn import extract_isbn_candidate
@@ -90,6 +91,15 @@ PRODUCT_SEARCH_FALLBACK_HANDOFF_PROMPT = (
     "Our support team will check availability."
 )
 
+CATALOG_NOT_FOUND_FALLBACK_MESSAGE = (
+    "I cannot find this product. I will forward your request to our support team."
+)
+
+_MSG_ASK_TITLE_AFTER_ISBN_FAIL = (
+    "I couldn't find that ISBN in our catalog. "
+    "If you have the book title, please tell me now."
+)
+
 _INSIST_PURCHASE_RE = re.compile(
     r"\b("
     r"still\s+want|really\s+need|must\s+have|need\s+to\s+(?:buy|order|get)|"
@@ -122,6 +132,71 @@ def user_insists_on_purchase(text: str) -> bool:
 
 def clear_product_search_fallback(session: "SessionState") -> None:
     session.product_search_fallback_pending = {}
+
+
+def record_catalog_search_failure(
+    session: "SessionState",
+    *,
+    isbn: str = "",
+    query: str = "",
+) -> None:
+    """Track per-call ISBN/title catalog misses for dual-failure escalation."""
+    pending = dict(getattr(session, "product_search_fallback_pending", None) or {})
+    if isbn:
+        pending["isbn_failed"] = True
+        pending["isbn"] = isbn.strip()
+        pending["query"] = pending.get("query") or isbn.strip()
+    else:
+        pending["title_failed"] = True
+        q = (query or "").strip()
+        if q:
+            pending["title_query"] = q
+            pending["query"] = pending.get("query") or q
+    session.product_search_fallback_pending = pending
+
+
+def catalog_dual_search_failed(session: "SessionState") -> bool:
+    pending = dict(getattr(session, "product_search_fallback_pending", None) or {})
+    return bool(pending.get("isbn_failed") and pending.get("title_failed"))
+
+
+def should_trigger_catalog_not_found_escalation(
+    session: "SessionState",
+    *,
+    isbn: str = "",
+) -> bool:
+    """
+    Escalate when a title search fails (title-only or after ISBN miss),
+    or when ISBN fails after a prior title miss.
+    """
+    pending = dict(getattr(session, "product_search_fallback_pending", None) or {})
+    if isbn:
+        return bool(pending.get("title_failed"))
+    return True
+
+
+def prepare_catalog_not_found_fallback_escalation(
+    session: "SessionState",
+    *,
+    user_text: str,
+    query: str,
+    isbn: str = "",
+    search_result: dict[str, Any] | None = None,
+) -> str:
+    """Stage support handoff and return the deterministic runtime escalation message."""
+    from ..conversation.call_memory import record_catalog_not_found_escalation
+
+    clear_product_search_fallback(session)
+    record_catalog_not_found_escalation(session, query=query or isbn)
+    support_handoff_preparation(
+        session,
+        user_text=user_text,
+        query=query or isbn,
+        reason="product_not_found",
+        search_result=search_result or {"results": [], "count": 0, "not_found": True},
+        handoff_prompt=CATALOG_NOT_FOUND_FALLBACK_MESSAGE,
+    )
+    return CATALOG_NOT_FOUND_FALLBACK_MESSAGE
 
 
 def stage_product_search_fallback(
@@ -227,7 +302,7 @@ def support_handoff_preparation(
         product_title=product_title,
     )
     pending = dict(getattr(session, "pending_not_found_escalation", None) or {})
-    pending["email_capture_mode"] = "silent"
+    pending["email_capture_mode"] = "standard"
     session.pending_not_found_escalation = pending
 
     custom = (handoff_prompt or "").strip()
@@ -244,9 +319,12 @@ def support_handoff_preparation(
     return handoff_msg
 
 
+def _handoff_email_capture_mode(pending: dict[str, Any]) -> str:
+    return (pending.get("email_capture_mode") or "standard").strip().lower()
+
+
 def _handoff_uses_silent_email(pending: dict[str, Any]) -> bool:
-    mode = (pending.get("email_capture_mode") or "silent").strip().lower()
-    return mode != "legacy"
+    return _handoff_email_capture_mode(pending) == "silent"
 
 
 @workflow_guard(SUPPORT_HANDOFF_WORKFLOW, "_validate_support_email")
@@ -343,15 +421,15 @@ async def _process_silent_support_handoff_turn(
 
 
 def _handoff_uses_full_email(pending: dict[str, Any]) -> bool:
-    return _handoff_uses_silent_email(pending)
+    """True for standard spell-readback capture (not silent)."""
+    return not _handoff_uses_silent_email(pending)
 
 
 def _handoff_email_confirmation_prompt(email: str, pending: dict[str, Any]) -> str:
-    """Legacy confirmation readback — only when email_capture_mode is legacy."""
-    from ..payment.payment_state_machine import confirmation_prompt, speak_confirmation_prompt
+    """Raw semantic email confirmation — spell delivery is runtime-only."""
+    from ..payment.payment_state_machine import speak_confirmation_prompt
 
-    if _handoff_uses_silent_email(pending):
-        return confirmation_prompt(email, include_spelling=False)
+    _ = pending
     return speak_confirmation_prompt(email)
 
 
@@ -371,6 +449,7 @@ class NotFoundEscalationTurnHint:
     force_reply: Optional[str] = None
     skip_compose: bool = False
     extra_tool_result: Optional["ToolExecutionResult"] = None
+    deliver_email_spell_readback: bool = False
 
 
 def is_search_not_found(result: dict[str, Any]) -> bool:
@@ -547,6 +626,8 @@ async def _finalize_handoff_send(
         payload = CustomerQueryEscalationPayload.from_dict(pending)
         if name:
             payload.customer_name = name
+        elif (pending.get("customer_name") or "").strip():
+            payload.customer_name = str(pending.get("customer_name") or "").strip()
 
     result = await maybe_execute_escalation(session, payload, caller_text=caller_text)
     clear_pending_escalation(session)
@@ -704,15 +785,20 @@ def stage_pending_escalation(
         data = dict(payload)
     else:
         data = payload.to_dict()
-    data.setdefault("email_capture_mode", "silent")
+    data.setdefault("email_capture_mode", "standard")
     data.setdefault("support_handoff_contact", dict(data.get("support_handoff_contact") or {}))
     session.pending_not_found_escalation = data
     session.awaiting_not_found_escalation_email = True
+    enter_email_capture_mode(session)
 
 
 def clear_pending_escalation(session: "SessionState") -> None:
     session.pending_not_found_escalation = {}
     session.awaiting_not_found_escalation_email = False
+    if not getattr(session, "awaiting_payment_email", False) and not getattr(
+        session, "awaiting_payment_email_confirmation", False,
+    ):
+        session.email_capture_mode = ""
 
 
 def should_clear_handoff_for_shopping(
@@ -912,9 +998,8 @@ async def process_not_found_escalation_turn(
 
         if is_email_spell_request(caller_text) or is_repeat_email_request(caller_text):
             if staged_email:
-                return NotFoundEscalationTurnHint(
-                    force_reply=_handoff_email_confirmation_prompt(staged_email, pending),
-                )
+                enter_email_capture_mode(session)
+                return NotFoundEscalationTurnHint(deliver_email_spell_readback=True)
 
         fragments = _handoff_email_fragments(pending)
         if hasattr(session, "pending_email_fragments"):
@@ -924,13 +1009,11 @@ async def process_not_found_escalation_turn(
             pending["staging_email"] = corrected
             _store_handoff_email_fragments(pending, [])
             stage_pending_escalation(session, pending)
-            return NotFoundEscalationTurnHint(
-                force_reply=_handoff_email_confirmation_prompt(corrected, pending),
-            )
+            enter_email_capture_mode(session)
+            return NotFoundEscalationTurnHint(deliver_email_spell_readback=True)
         if staged_email:
-            return NotFoundEscalationTurnHint(
-                force_reply=_handoff_email_confirmation_prompt(staged_email, pending),
-            )
+            enter_email_capture_mode(session)
+            return NotFoundEscalationTurnHint(deliver_email_spell_readback=True)
         if _handoff_uses_full_email(pending):
             return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_RETRY)
         return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_RETRY)
@@ -941,14 +1024,14 @@ async def process_not_found_escalation_turn(
             email = (resolved.email or extract_email_from_text(caller_text) or "").strip().lower()
             if not email or "@" not in email:
                 if name and not _HANDOFF_ACK_ONLY.match(caller_text or ""):
+                    stage_pending_escalation(session, pending)
                     return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_EMAIL_ONLY)
                 return NotFoundEscalationTurnHint(force_reply=_MSG_ASK_CONTACT)
             pending["staging_email"] = email
             pending["awaiting_email_confirmation"] = True
             stage_pending_escalation(session, pending)
-            return NotFoundEscalationTurnHint(
-                force_reply=_handoff_email_confirmation_prompt(email, pending),
-            )
+            enter_email_capture_mode(session)
+            return NotFoundEscalationTurnHint(deliver_email_spell_readback=True)
 
         fragments = _handoff_email_fragments(pending)
         if hasattr(session, "pending_email_fragments"):
@@ -984,9 +1067,8 @@ async def process_not_found_escalation_turn(
         pending["awaiting_email_confirmation"] = True
         pending.pop("email_fragments", None)
         stage_pending_escalation(session, pending)
-        return NotFoundEscalationTurnHint(
-            force_reply=_handoff_email_confirmation_prompt(email, pending),
-        )
+        enter_email_capture_mode(session)
+        return NotFoundEscalationTurnHint(deliver_email_spell_readback=True)
 
     return await _finalize_handoff_send(session, pending, caller_text, name=name)
 

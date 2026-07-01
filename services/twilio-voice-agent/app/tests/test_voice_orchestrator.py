@@ -54,6 +54,21 @@ def test_product_search_classification_blocks_llm():
     assert plan.use_llm is False
     assert plan.fast_route == "product_search_workflow"
     assert VoiceOrchestrator.allows_llm(plan) is False
+    assert plan.classification is not None
+
+
+def test_product_commerce_fsm_blocks_llm_after_classifier():
+    runtime = _runtime()
+    from app.agent_runtime.commerce_flow_state import STATUS_AWAITING_QUANTITY
+
+    session = _session(
+        commerce_flow_status=STATUS_AWAITING_QUANTITY,
+        commerce_pending_candidate={"title": "Book", "variant_id": "v1"},
+    )
+    plan = VoiceOrchestrator().plan_turn(runtime, session, "I need two copies", "")
+    assert plan.classification is not None
+    assert plan.use_llm is False
+    assert plan.fast_route == "product_commerce_fsm"
 
 
 def test_instant_classification_blocks_llm():

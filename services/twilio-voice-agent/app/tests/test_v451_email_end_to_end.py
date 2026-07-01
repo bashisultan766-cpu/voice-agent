@@ -68,9 +68,9 @@ class TestPaymentEmailFlow:
         session = _session()
         hint = process_payment_turn(session, SPELLED, turn_mode="email")
         assert hint.email_captured
+        assert hint.deliver_email_spell_readback
         assert session.pending_payment_email == EMAIL
-        assert "letter by letter" in hint.force_reply
-        assert spell_email_letter_by_letter(EMAIL) in hint.force_reply
+        assert session.email_capture_mode == "email_capture"
 
     def test_confirm_then_ready_for_send(self):
         session = _session()
@@ -81,13 +81,17 @@ class TestPaymentEmailFlow:
         assert session.payment_flow_status == "awaiting_send_confirmation"
 
     def test_finalize_preserves_full_readback(self):
+        from app.email.speller import build_email_readback_parts
+
         brain = MainCommerceBrain(settings=Settings())
         session = _session()
         prompt = speak_confirmation_prompt(EMAIL)
-        assert is_preserved_email_readback(prompt)
+        assert not is_preserved_email_readback(prompt)
         out = brain.finalize_response(session, prompt, [])
-        assert spell_email_letter_by_letter(EMAIL) in out
-        assert "three" in out
+        assert "mubashirbusiness3 at gmail dot com" in out.lower()
+        parts = build_email_readback_parts(EMAIL)
+        assert parts[1] == "I will spell it for confirmation."
+        assert any("M-U-B" in p or "M. U." in p for p in parts)
 
 
 class TestSupportHandoffEmailFlow:

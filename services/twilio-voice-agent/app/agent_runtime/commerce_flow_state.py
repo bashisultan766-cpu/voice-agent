@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMMERCE_FLOW_VERSION = "v4.56"
+COMMERCE_FLOW_VERSION = "v4.57"
 
 STATUS_IDLE = "idle"
 STATUS_AWAITING_BOOK_CONFIRM = "awaiting_book_confirm"
@@ -144,6 +144,7 @@ _PRICE_SELECT_PAT = re.compile(
 class CommerceTurnHint:
     force_reply: Optional[str] = None
     book_added: bool = False
+    openai_skipped: bool = False
 
 
 def _status(session: "SessionState") -> str:
@@ -510,7 +511,164 @@ def _unlock_add_after_quantity(session: "SessionState", qty: int) -> None:
 
 
 def another_book_after_add_prompt(title: str = "") -> str:
-    return "Would you like to add another book?"
+    return "Do you want another product?"
+
+
+def _product_cart_building_active(session: "SessionState") -> bool:
+    """True when deterministic product cart short-circuit should own the turn."""
+    status = _status(session)
+    if status in (
+        STATUS_AWAITING_BOOK_CONFIRM,
+        STATUS_AWAITING_QUANTITY,
+        STATUS_AWAITING_ADD_CONFIRM,
+    ):
+        return bool(_resolve_pending_candidate(session).get("variant_id"))
+    return bool(
+        getattr(session, "awaiting_product_confirmation", False)
+        and _resolve_pending_candidate(session).get("variant_id")
+    )
+
+
+def _product_cart_add_confirm_reply(
+    session: "SessionState",
+    *,
+    quantity: int,
+) -> CommerceTurnHint:
+    """Add staged product to cart and return the spoken confirmation."""
+    qty = max(1, int(quantity or 1))
+    session.commerce_pending_quantity = qty
+    candidate = _resolve_pending_candidate(session)
+    if candidate:
+        session.commerce_pending_candidate = candidate
+    title = add_staged_book_to_cart(session, quantity=qty)
+    session.awaiting_product_confirmation = False
+    if not title:
+        cand = _resolve_pending_candidate(session) or candidate
+        return CommerceTurnHint(
+            force_reply=quantity_prompt(cand) if cand else next_book_prompt(),
+            openai_skipped=True,
+        )
+    copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+    short = spoken_book_title(title)
+    return CommerceTurnHint(
+        force_reply=(
+            f"Got it — added {copy_phrase} of {short}. "
+            f"{another_book_after_add_prompt()}"
+        ),
+        book_added=True,
+        openai_skipped=True,
+    )
+
+
+def try_product_cart_short_circuit(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[CommerceTurnHint]:
+    """
+    Deterministic cart add flow before the LLM — mirrors order collection short-circuit.
+
+    Product confirmed → quantity template; quantity received → add to cart + confirm.
+    """
+    text = (caller_text or "").strip()
+    if not text:
+        return None
+
+    mode = (turn_mode or "").strip().lower()
+    if mode in ("order", "email"):
+        return None
+    if commerce_blocks_open_commerce(session):
+        return None
+    if not _product_cart_building_active(session):
+        return None
+
+    from ..tools.isbn import extract_isbn_candidate
+
+    status = _status(session)
+    candidate = _resolve_pending_candidate(session)
+    if not candidate.get("variant_id"):
+        return None
+
+    mentions_isbn = bool(
+        extract_isbn_candidate(text)
+        or re.search(r"\b(isbn|iouspl|ouspl|iuspl)\b", text, re.I)
+    )
+    if mentions_isbn and status != STATUS_AWAITING_ANOTHER_BOOK:
+        return None
+
+    if status == STATUS_AWAITING_QUANTITY or status == STATUS_AWAITING_ADD_CONFIRM:
+        if _OOS_UTTERANCE.search(text):
+            from .not_found_escalation_flow import begin_unavailable_product_handoff
+
+            query = (candidate.get("isbn") or candidate.get("title") or text).strip()
+            msg = begin_unavailable_product_handoff(
+                session,
+                user_text=caller_text,
+                query=query,
+                reason="product_out_of_stock",
+                product_title=(candidate.get("title") or "").strip(),
+            )
+            return CommerceTurnHint(force_reply=msg, openai_skipped=True)
+        if _ISBN_READY_PAT.search(text) and not _parse_quantity(text):
+            session.commerce_pending_candidate = {}
+            session.commerce_flow_status = STATUS_IDLE
+            session.pending_isbn_buffer = ""
+            session.awaiting_product_confirmation = False
+            return CommerceTurnHint(
+                force_reply="Sure — go ahead with the ISBN when you're ready.",
+                openai_skipped=True,
+            )
+        if _HOLD_OR_WAIT_PAT.search(text) and not _parse_quantity(text):
+            short = spoken_book_title(_title(candidate))
+            return CommerceTurnHint(
+                force_reply=f"No rush — how many copies of {short} would you like?",
+                openai_skipped=True,
+            )
+        qty = _parse_quantity(text)
+        if qty:
+            return _product_cart_add_confirm_reply(session, quantity=qty)
+        if _NEGATE_PAT.match(text):
+            session.commerce_pending_candidate = {}
+            session.commerce_flow_status = (
+                STATUS_AWAITING_ANOTHER_BOOK if _cart_has_confirmed_items(session) else STATUS_IDLE
+            )
+            session.awaiting_product_confirmation = False
+            session.commerce_pending_quantity = 0
+            return CommerceTurnHint(
+                force_reply="No problem. Would you like to look up a different book?",
+                openai_skipped=True,
+            )
+        return CommerceTurnHint(
+            force_reply=quantity_prompt(candidate),
+            openai_skipped=True,
+        )
+
+    awaiting_confirm = (
+        status == STATUS_AWAITING_BOOK_CONFIRM
+        or bool(getattr(session, "awaiting_product_confirmation", False))
+    )
+    if awaiting_confirm:
+        if _NEGATE_PAT.match(text):
+            session.commerce_pending_candidate = {}
+            session.commerce_flow_status = STATUS_IDLE
+            session.awaiting_product_confirmation = False
+            return CommerceTurnHint(
+                force_reply="No problem. Would you like to look up a different book?",
+                openai_skipped=True,
+            )
+        session.commerce_flow_status = STATUS_AWAITING_QUANTITY
+        session.awaiting_product_confirmation = False
+        session.commerce_allow_add = False
+        qty = _parse_quantity(text)
+        if qty and (_QUANTITY_ADD_INTENT.search(text) or qty > 1 or not _is_affirmative(text)):
+            return _product_cart_add_confirm_reply(session, quantity=qty)
+        return CommerceTurnHint(
+            force_reply=quantity_prompt(candidate),
+            openai_skipped=True,
+        )
+
+    return None
 
 
 def next_book_prompt() -> str:
@@ -605,7 +763,7 @@ def stage_product_candidate(session: "SessionState", product: dict[str, Any]) ->
     session.commerce_allow_add = False
     session.commerce_pending_quantity = 0
     session.last_product_candidate = dict(session.commerce_pending_candidate)
-    session.awaiting_product_confirmation = True
+    session.awaiting_product_confirmation = False
     logger.info(
         "commerce_candidate_staged sid=%s title=%r status=%s",
         (getattr(session, "call_sid", "") or "")[:6],
@@ -752,6 +910,123 @@ def gate_add_to_cart(session: "SessionState") -> Optional[PaymentGateResult]:
     return PaymentGateResult(allowed=False, tool_json=json.dumps(payload), reason="book_not_confirmed")
 
 
+_REPEAT_COMMERCE_PAT = re.compile(
+    r"\b("
+    r"repeat(?: that| what you said| the question)?|what did you say|"
+    r"say that again|what was that|pardon|can you repeat"
+    r")\b",
+    re.I,
+)
+_COMMERCE_CONFUSION_PAT = re.compile(
+    r"\b(what\??|huh|sorry\??|didn.?t (?:hear|catch|understand)|"
+    r"are you there|hello\.?\s*hello)\s*$",
+    re.I,
+)
+
+
+def record_commerce_voice_reply(session: "SessionState", reply: str) -> None:
+    """Cache last deterministic commerce speech for repeat/brain-gate replay."""
+    text = (reply or "").strip()
+    if not text:
+        return
+    session.commerce_last_voice_reply = text
+    session.last_spoken_response = text
+
+
+def try_commerce_hold_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Acknowledge hold/wait during cart building without invoking the LLM."""
+    if not _HOLD_OR_WAIT_PAT.search(caller_text or ""):
+        return None
+    status = _status(session)
+    candidate = _resolve_pending_candidate(session)
+    if status == STATUS_AWAITING_QUANTITY and candidate:
+        short = spoken_book_title(_title(candidate))
+        return f"No rush — how many copies of {short} would you like?"
+    if status == STATUS_AWAITING_ADD_CONFIRM and candidate:
+        qty = int(getattr(session, "commerce_pending_quantity", 0) or 1)
+        return add_confirm_prompt(candidate, qty)
+    if status == STATUS_AWAITING_ANOTHER_BOOK:
+        return "Sure — take your time. Give me the ISBN or title when you're ready."
+    if status == STATUS_AWAITING_EMAIL_COLLECTION:
+        return "No problem — what email should I send the payment link to?"
+    return "Sure — take your time. Let me know when you're ready."
+
+
+def try_commerce_repeat_reply(session: "SessionState", caller_text: str) -> Optional[str]:
+    """Replay the last commerce prompt or cart summary from this call."""
+    text = (caller_text or "").strip()
+    if not text:
+        return None
+    if not (_REPEAT_COMMERCE_PAT.search(text) or _COMMERCE_CONFUSION_PAT.match(text)):
+        return None
+
+    last = (getattr(session, "commerce_last_voice_reply", "") or "").strip()
+    if last:
+        return last
+
+    status = _status(session)
+    candidate = _resolve_pending_candidate(session)
+    if status == STATUS_AWAITING_QUANTITY and candidate:
+        return quantity_prompt(candidate)
+    if status == STATUS_AWAITING_ADD_CONFIRM and candidate:
+        qty = int(getattr(session, "commerce_pending_quantity", 0) or 1)
+        return add_confirm_prompt(candidate, qty)
+    if status == STATUS_AWAITING_ANOTHER_BOOK:
+        return another_book_after_add_prompt()
+    if status == STATUS_AWAITING_EMAIL_COLLECTION and _cart_has_confirmed_items(session):
+        return cart_summary_and_email_prompt(session)
+
+    cart_reply = try_cart_inquiry_reply(session, text)
+    if cart_reply:
+        return cart_reply
+    return None
+
+
+def try_commerce_brain_gate(
+    session: "SessionState",
+    caller_text: str,
+    *,
+    turn_mode: str = "",
+) -> Optional[str]:
+    """
+    Prevent the LLM from reformatting or guessing during active cart/commerce steps.
+    Returns a deterministic replay when commerce context is established.
+    """
+    from .order_flow_state import order_intent_detected
+
+    if order_intent_detected(caller_text):
+        return None
+    if (turn_mode or "").strip().lower() in ("order", "email"):
+        return None
+
+    hold = try_commerce_hold_reply(session, caller_text)
+    if hold:
+        return hold
+
+    repeat = try_commerce_repeat_reply(session, caller_text)
+    if repeat:
+        return repeat
+
+    if _CONFIRM_FRUSTRATION_PAT.search(caller_text or ""):
+        status = _status(session)
+        candidate = _resolve_pending_candidate(session)
+        if status == STATUS_AWAITING_ADD_CONFIRM and candidate:
+            qty = int(getattr(session, "commerce_pending_quantity", 0) or 1)
+            copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
+            short = spoken_book_title(_title(candidate))
+            return (
+                f"Sorry about that — shall I add {copy_phrase} of {short}? "
+                "Just say yes."
+            )
+
+    if commerce_flow_active(session) or _cart_has_confirmed_items(session):
+        cart_reply = try_cart_inquiry_reply(session, caller_text, turn_mode=turn_mode)
+        if cart_reply:
+            return cart_reply
+
+    return None
+
+
 def process_commerce_turn(
     session: "SessionState",
     caller_text: str,
@@ -855,26 +1130,7 @@ def process_commerce_turn(
             )
         qty = _parse_quantity(text)
         if qty:
-            if _QUANTITY_ADD_INTENT.search(text) or (
-                _YES_IN_UTTERANCE.search(text) and qty > 1
-            ) or qty > 1:
-                session.commerce_pending_quantity = qty
-                session.commerce_pending_candidate = candidate
-                title = add_staged_book_to_cart(session, quantity=qty)
-                session.awaiting_product_confirmation = False
-                if title:
-                    copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
-                    short = spoken_book_title(title)
-                    return CommerceTurnHint(
-                        force_reply=(
-                            f"Got it — added {copy_phrase} of {short}. "
-                            f"{another_book_after_add_prompt()}"
-                        ),
-                        book_added=True,
-                    )
-            session.commerce_pending_quantity = qty
-            session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
-            return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty))
+            return _product_cart_add_confirm_reply(session, quantity=qty)
         if _NEGATE_PAT.match(text):
             session.commerce_pending_candidate = {}
             session.commerce_flow_status = STATUS_IDLE
@@ -885,52 +1141,11 @@ def process_commerce_turn(
         return CommerceTurnHint(force_reply=quantity_prompt(candidate))
 
     if status == STATUS_AWAITING_ADD_CONFIRM and candidate:
-        qty_override = _parse_quantity(text)
-        if qty_override and not _confirms_pending_add(text):
-            session.commerce_pending_quantity = qty_override
-            if _QUANTITY_ADD_INTENT.search(text) or qty_override > 1:
-                session.commerce_pending_candidate = candidate
-                title = add_staged_book_to_cart(session, quantity=qty_override)
-                session.awaiting_product_confirmation = False
-                if title:
-                    copy_phrase = "one copy" if qty_override == 1 else f"{qty_override} copies"
-                    short = spoken_book_title(title)
-                    return CommerceTurnHint(
-                        force_reply=(
-                            f"Got it — added {copy_phrase} of {short}. "
-                            f"{another_book_after_add_prompt()}"
-                        ),
-                        book_added=True,
-                    )
-            return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty_override))
-        if _confirms_pending_add(text):
-            qty = _parse_quantity(text) or int(
-                getattr(session, "commerce_pending_quantity", 0) or 1
-            )
-            session.commerce_pending_quantity = qty
-            session.commerce_pending_candidate = candidate
-            title = add_staged_book_to_cart(session, quantity=qty)
-            session.awaiting_product_confirmation = False
-            if title:
-                copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
-                short = spoken_book_title(title)
-                return CommerceTurnHint(
-                    force_reply=(
-                        f"Got it — added {copy_phrase} of {short}. "
-                        f"{another_book_after_add_prompt()}"
-                    ),
-                    book_added=True,
-                )
-        if _CONFIRM_FRUSTRATION_PAT.search(text):
-            short = spoken_book_title(_title(candidate))
-            qty = int(getattr(session, "commerce_pending_quantity", 0) or 1)
-            copy_phrase = "one copy" if qty == 1 else f"{qty} copies"
-            return CommerceTurnHint(
-                force_reply=(
-                    f"Sorry about that — shall I add {copy_phrase} of {short}? "
-                    "Just say yes."
-                ),
-            )
+        qty_override = _parse_quantity(text) or int(
+            getattr(session, "commerce_pending_quantity", 0) or 1
+        )
+        if _confirms_pending_add(text) or qty_override:
+            return _product_cart_add_confirm_reply(session, quantity=qty_override)
         if _NEGATE_PAT.match(text):
             session.commerce_pending_candidate = {}
             session.commerce_flow_status = (
@@ -943,9 +1158,7 @@ def process_commerce_turn(
                     "No problem — what's the ISBN or title of the book you want?"
                 ),
             )
-        return CommerceTurnHint(force_reply=add_confirm_prompt(
-            candidate, int(getattr(session, "commerce_pending_quantity", 0) or 1),
-        ))
+        return CommerceTurnHint(force_reply=quantity_prompt(candidate))
 
     awaiting_confirm = (
         status == STATUS_AWAITING_BOOK_CONFIRM
@@ -954,10 +1167,11 @@ def process_commerce_turn(
 
     if awaiting_confirm and candidate and _is_add_affirmative(text):
         session.commerce_flow_status = STATUS_AWAITING_QUANTITY
-        qty = _parse_quantity(text) or 1
-        session.commerce_pending_quantity = qty
-        session.commerce_flow_status = STATUS_AWAITING_ADD_CONFIRM
-        return CommerceTurnHint(force_reply=add_confirm_prompt(candidate, qty))
+        session.awaiting_product_confirmation = False
+        qty = _parse_quantity(text)
+        if qty and (_QUANTITY_ADD_INTENT.search(text) or qty > 1 or not _is_affirmative(text)):
+            return _product_cart_add_confirm_reply(session, quantity=qty)
+        return CommerceTurnHint(force_reply=quantity_prompt(candidate))
 
     if status == STATUS_AWAITING_BOOK_CONFIRM:
         if _NEGATE_PAT.match(text):

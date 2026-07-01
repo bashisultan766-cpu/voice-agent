@@ -11,6 +11,8 @@ from app.runtime.voice_commerce_runtime import (
     normalize_tts_text,
 )
 from app.state.models import SessionState
+from app.voice.voice_response_formatter import SpeechPacer
+import re
 
 
 def _session() -> SessionState:
@@ -60,9 +62,63 @@ def test_format_for_tts_routes_through_finalize():
     assert "order" in paced.lower()
 
 
-def test_email_readback_bypasses_normalization():
-    readback = "Just to confirm, I heard john at gmail dot com."
-    assert VoiceCommerceRuntime._format_for_tts(readback) == readback
+def test_email_readback_gets_unified_pacing():
+    readback = (
+        "Just to confirm, I heard john at gmail dot com. "
+        "Slowly, letter by letter, that is j o h n at gmail dot com. Is that correct?"
+    )
+    paced = VoiceCommerceRuntime._format_for_tts(readback)
+    assert "letter by letter" in paced.lower()
+    assert re.search(r"\.{2,}", paced)
+    assert "Just to confirm" in paced
+
+
+def test_product_flow_pacing_matches_order_rhythm():
+    raw = (
+        "Found it — Atomic Habits. It's 12 dollars. "
+        "How many copies would you like?"
+    )
+    paced = SpeechPacer().pace(raw, emotion_field={"valence": 0, "arousal": 0.3, "stability": 0.7})
+    assert "Atomic Habits" in paced
+    assert "copies" in paced.lower()
+    assert re.search(r"\.{2,}", paced)
+    lines = [line for line in paced.splitlines() if line.strip()]
+    assert len(lines) >= 2
+
+
+def test_payment_instruction_pause_before_link():
+    raw = (
+        "Your cart has 2 books. "
+        "You will receive a secure Shopify payment link. It contains your order summary."
+    )
+    paced = SpeechPacer().pace(raw, emotion_field={"valence": 0, "arousal": 0.3, "stability": 0.7})
+    assert "payment link" in paced.lower()
+    assert re.search(r"\.{2,}", paced)
+    assert "\n" in paced or " .. " in paced.replace("\n", " .. ")
+
+
+def test_added_product_quantity_pacing():
+    raw = "Got it — added 2 copies of Deep Work. Do you want another product?"
+    paced = SpeechPacer().pace(raw, emotion_field={"valence": 0, "arousal": 0.3, "stability": 0.7})
+    assert "2 copies" in paced
+    assert "Deep Work" in paced
+    assert re.search(r"\.{2,}", paced)
+
+
+def test_finalize_preserves_speech_pacer_pauses():
+    session = SessionState(
+        session_id="s",
+        call_sid="CA1",
+        from_number="+1",
+        to_number="+2",
+    )
+    out = finalize_voice_output(
+        "Found it — Atomic Habits. How many copies would you like?",
+        session,
+        log_metrics=False,
+    )
+    assert "Atomic Habits" in out
+    assert re.search(r"\.{2,}", out)
 
 
 def test_final_voice_pipeline_strips_partial_cuts():

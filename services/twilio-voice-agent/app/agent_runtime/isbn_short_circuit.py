@@ -303,6 +303,7 @@ class IsbnShortCircuitResult:
     force_reply: str
     isbn: str = ""
     tool_results: list[tuple[str, dict]] | None = None
+    catalog_not_found_escalation: bool = False
 
 
 def _expand_text(text: str) -> str:

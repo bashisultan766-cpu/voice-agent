@@ -16,11 +16,42 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PAYMENT_EMAIL_STATE_VERSION = "v4.33"
+PAYMENT_EMAIL_STATE_VERSION = "v4.34"
 EMAIL_CAPTURE_SHORT_CIRCUIT_ENABLED = True
+EMAIL_CAPTURE_MODE = "email_capture"
 PAYMENT_AUTO_SEND_ENABLED = True
 CREATE_CHECKOUT_CUSTOMER_FACING = False
 SEND_PAYMENT_LINK_CUSTOMER_FACING = True
+
+
+def enter_email_capture_mode(session: "SessionState") -> None:
+    """Enter session-scoped email capture — cleared on call end only."""
+    session.email_capture_mode = EMAIL_CAPTURE_MODE
+
+
+def email_capture_mode_active(session: "SessionState") -> bool:
+    return (getattr(session, "email_capture_mode", "") or "") == EMAIL_CAPTURE_MODE
+
+
+def clear_email_capture_on_session_end(session: "SessionState") -> None:
+    """Drop all email capture state when the call ends — never persisted."""
+    session.email_capture_mode = ""
+    session.awaiting_payment_email = False
+    session.pending_payment_email = ""
+    session.pending_email = ""
+    session.confirmed_email = ""
+    session.last_offered_payment_email = ""
+    session.backup_confirmed_email = ""
+    session.payment_email_confirmed = False
+    session.email_verified = False
+    session.awaiting_payment_email_confirmation = False
+    session.payment_flow_status = "idle"
+    session.caller_email = ""
+    session.awaiting_not_found_escalation_email = False
+    session.pending_not_found_escalation = {}
+    session.support_handoff_contact = {}
+    if hasattr(session, "pending_email_fragments"):
+        session.pending_email_fragments = []
 
 
 def _email_hash(email: str) -> str:

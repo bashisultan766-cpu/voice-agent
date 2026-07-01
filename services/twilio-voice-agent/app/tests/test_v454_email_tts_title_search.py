@@ -20,9 +20,10 @@ from app.state.models import SessionState
 def test_readback_micro_chunks_for_long_local():
     parts = build_email_readback_parts("bashisultan766@gmail.com")
     assert len(parts) >= 6
-    assert parts[0].startswith("Just to confirm")
-    assert any("name part" in p.lower() for p in parts)
+    assert parts[0].startswith("I have ")
+    assert parts[1] == "I will spell it for confirmation."
     assert parts[-1] == "Is that correct?"
+    assert any("-" in p for p in parts)
     # No single chunk should hold the entire local part spelled out.
     assert all(len(p) < 80 for p in parts)
 

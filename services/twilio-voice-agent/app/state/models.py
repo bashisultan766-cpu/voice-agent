@@ -121,6 +121,7 @@ class SessionState:
     payment_block_count: int = 0  # increments on each PaymentSafetyGuard block
 
     # ── v4.19 LLM payment state machine (explicit flags for llm_tool_runtime) ─
+    email_capture_mode: str = ""  # EMAIL_CAPTURE_MODE while collecting/confirming email
     awaiting_payment_email: bool = False
     pending_payment_email: str = ""
     last_offered_payment_email: str = ""  # survives repeat-email turns until confirm/replace
@@ -193,6 +194,9 @@ class SessionState:
     # ── v4.6 call memory ──────────────────────────────────────────────────────
     call_memory: Any = None
 
+    # ── Session-scoped cart memory (voice_commerce_runtime only, not persisted) ─
+    cart_memory: Any = None
+
     # Twilio TwiML welcomeGreeting was spoken at connect (v4.6).
     twiml_greeting_spoken: bool = False
     awaiting_anything_else: bool = False
@@ -222,6 +226,9 @@ class SessionState:
     commerce_allow_add: bool = False
     commerce_last_catalog_results: list[dict[str, Any]] = field(default_factory=list)
     last_confirmed_product: dict[str, Any] = field(default_factory=dict)
+    product_commerce_status: str = "idle"
+    commerce_last_voice_reply: str = ""
+    payment_last_voice_reply: str = ""
     awaiting_product_confirmation: bool = False
     # v4.25 — tool progress + interrupt coordination
     voice_interrupted: bool = False
@@ -245,6 +252,10 @@ class SessionState:
         "last_intent": "",
         "last_order_id": None,
     })
+
+    # ── Intent commitment (single interpretation per user turn) ───────────────
+    # Intent dataclass lives in voice_commerce_runtime; set once after classifier.
+    committed_intent: Any = None
 
     # ── Continuous emotional field (VoiceResponseFormatter / SpeechPacer) ───────
     # valence: -1 negative → +1 positive | arousal: 0 calm → 1 excited

@@ -189,6 +189,33 @@ def resolve_product_clarification(utterance: str) -> str:
     return _CLARIFY_GENERIC
 
 
+def _commerce_payment_fsm_active(session: "SessionState | None") -> bool:
+    """True when cart, checkout, or payment email collection is in progress."""
+    if session is None:
+        return False
+    from ..agent_runtime.commerce_flow_state import commerce_flow_active
+    from ..agent_runtime.workflow_isolation import payment_workflow_active
+
+    if commerce_flow_active(session):
+        return True
+    if getattr(session, "awaiting_product_confirmation", False):
+        return True
+    if getattr(session, "commerce_pending_candidate", None):
+        return True
+    if payment_workflow_active(session, ""):
+        return True
+    if getattr(session, "awaiting_payment_email", False):
+        return True
+    if getattr(session, "awaiting_payment_email_confirmation", False):
+        return True
+    pfs = getattr(session, "payment_flow_status", "") or ""
+    return pfs in (
+        "awaiting_email",
+        "awaiting_email_confirmation",
+        "awaiting_send_confirmation",
+    )
+
+
 def _yes_no_active_workflow(session: "SessionState | None", utterance: str) -> bool:
     if session is None:
         return False
@@ -557,6 +584,15 @@ def classify(
     if _needs_intent_clarification(text) and not getattr(
         session, "awaiting_not_found_escalation_email", False,
     ):
+        if _commerce_payment_fsm_active(session):
+            return ClassificationResult(
+                action="brain",
+                reason="commerce_payment_fsm_active",
+                is_payment_flow=bool(
+                    getattr(session, "awaiting_payment_email_confirmation", False)
+                    or getattr(session, "payment_flow_status", "") not in ("idle", "", None)
+                ),
+            )
         try:
             from ..agent_runtime.commerce_flow_state import (
                 STATUS_AWAITING_QUANTITY,
