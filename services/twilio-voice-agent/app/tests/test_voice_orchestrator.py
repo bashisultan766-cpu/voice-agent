@@ -1,6 +1,8 @@
 """VoiceOrchestrator — central turn planning inside voice_commerce_runtime."""
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from app.runtime.fast_classifier import ClassificationResult
 from app.runtime.voice_commerce_runtime import VoiceCommerceRuntime, VoiceOrchestrator
 from app.state.models import SessionState
@@ -29,6 +31,23 @@ def test_greeting_skips_llm():
     assert plan.use_llm is False
     assert plan.fast_route == "classifier_instant"
     assert plan.plan_ms < 100
+
+
+def test_plan_turn_passes_session_into_classify_turn_once():
+    """Regression: swapped session/text args caused silent turn failures."""
+    runtime = _runtime()
+    session = _session()
+    with patch("app.runtime.voice_commerce_runtime.classify") as mock_classify:
+        mock_classify.return_value = ClassificationResult(
+            action="brain",
+            reason="test",
+        )
+        plan = VoiceOrchestrator().plan_turn(
+            runtime, session, "Hello. How are you?", "",
+        )
+        mock_classify.assert_called_once()
+        assert mock_classify.call_args[0][1] is session
+    assert plan.classification is not None
 
 
 def test_awaiting_order_stage_skips_llm():

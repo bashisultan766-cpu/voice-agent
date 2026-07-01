@@ -1755,8 +1755,8 @@ class VoiceOrchestrator:
             return plan
 
         classification = classify_turn_once(
-            caller_text,
             session,
+            caller_text,
             turn_mode=turn_mode,
             twiml_greeting_already=twiml_greeting,
             source="plan_turn",
