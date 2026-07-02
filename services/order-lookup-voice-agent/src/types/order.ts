@@ -75,6 +75,10 @@ export interface CallSession {
   orderNumberAttempts: number;
   currentOrder?: StructuredOrder;
   createdAt: number;
+  /** Orchestrator: what we're waiting for from the caller. */
+  awaitingInput?: "order_number" | "product_clarification" | null;
+  greetedThisCall?: boolean;
+  lastOrchestratorIntent?: string;
 }
 
 export interface TwilioRelayInboundMessage {

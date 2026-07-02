@@ -1,0 +1,115 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  classifyOrchestratorIntent,
+  runOrchestratorTurn,
+} from "../src/agents/conversationOrchestrator.js";
+import { createCallSession } from "../src/agents/orderAgent.js";
+import { clearAllCallMemories } from "../src/memory/callMemoryStore.js";
+import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
+import type { StructuredProduct } from "../src/types/product.js";
+import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
+
+const mockCatalog: StructuredProduct[] = [
+  {
+    id: "1",
+    title: "Harry Potter and the Prisoner of Azkaban",
+    handle: "hp-azkaban",
+    productType: "Book",
+    vendor: "J.K. Rowling",
+    tags: ["fiction", "inmates"],
+    isbns: ["9783161484100"],
+    variants: [
+      {
+        id: "10",
+        sku: "9783161484100",
+        barcode: "9783161484100",
+        price: "14.99",
+        inStock: true,
+        inventoryQuantity: 4,
+      },
+    ],
+  },
+  {
+    id: "2",
+    title: "Inmate Reading Guide",
+    handle: "guide",
+    productType: "Book",
+    vendor: "SureShot",
+    tags: ["books", "inmates"],
+    variants: [{ id: "11", price: "9.99", inStock: true, inventoryQuantity: 10 }],
+  },
+];
+
+async function collectSpeech(
+  session: ReturnType<typeof createCallSession>,
+  text: string,
+): Promise<string> {
+  const parts: string[] = [];
+  for await (const event of runOrchestratorTurn(session, text)) {
+    if (event.type === "chunk") parts.push(event.chunk.text);
+  }
+  return parts.join(" ");
+}
+
+describe("conversationOrchestrator intents", () => {
+  it('classifies "hi" as greeting', () => {
+    expect(classifyOrchestratorIntent("hi")).toBe("greeting");
+  });
+
+  it('classifies "where is my order" as order_status', () => {
+    expect(classifyOrchestratorIntent("where is my order")).toBe("order_status");
+  });
+
+  it('classifies "Harry Potter book" as product_search', () => {
+    expect(classifyOrchestratorIntent("I want Harry Potter book")).toBe("product_search");
+  });
+
+  it('classifies ISBN as product_search', () => {
+    expect(classifyOrchestratorIntent("ISBN 9783161484100")).toBe("product_search");
+  });
+
+  it('classifies purchase intent', () => {
+    expect(classifyOrchestratorIntent("I want to buy a book")).toBe("product_purchase_intent");
+  });
+});
+
+describe("conversationOrchestrator flows", () => {
+  beforeEach(() => {
+    clearAllCallMemories();
+    resetShopifyScopeCheck();
+    vi.unstubAllGlobals();
+    mockLiveShopifyFetch(mockCatalog);
+  });
+
+  it('greets naturally on "hello" without order-number demand', async () => {
+    const session = createCallSession("CA_ORCH", "+1", "+2");
+    const speech = await collectSpeech(session, "hello");
+    expect(speech).toMatch(/Sureshot Books|help|today/i);
+    expect(speech).not.toMatch(/valid order number|didn't catch/i);
+  });
+
+  it("asks for order number on order status", async () => {
+    const session = createCallSession("CA_ORD", "+1", "+2");
+    const speech = await collectSpeech(session, "where is my order");
+    expect(speech).toMatch(/order number/i);
+    expect(session.awaitingInput).toBe("order_number");
+  });
+
+  it("searches product on Harry Potter request", async () => {
+    const session = createCallSession("CA_HP", "+1", "+2");
+    const speech = await collectSpeech(session, "I want Harry Potter book");
+    expect(speech).toMatch(/Harry Potter|Azkaban|found/i);
+  });
+
+  it("looks up ISBN directly", async () => {
+    const session = createCallSession("CA_ISBN", "+1", "+2");
+    const speech = await collectSpeech(session, "ISBN 9783161484100");
+    expect(speech).toMatch(/Azkaban|found/i);
+  });
+
+  it("offers recommendations for inmates books", async () => {
+    const session = createCallSession("CA_REC", "+1", "+2");
+    const speech = await collectSpeech(session, "I want books for inmates");
+    expect(speech).toMatch(/found|Harry Potter|Inmate|close options/i);
+  });
+});
