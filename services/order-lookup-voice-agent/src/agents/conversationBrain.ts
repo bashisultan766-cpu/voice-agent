@@ -1,6 +1,6 @@
 /**
  * Conversation Brain — single entry point for all voice turns.
- * Twilio / streamHandler MUST import only from this file.
+ * Twilio webhooks MUST import only from this file.
  */
 import { logger } from "../utils/logger.js";
 import { sanitizeForSpeech } from "../utils/security.js";

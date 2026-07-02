@@ -1,48 +1,53 @@
 # SureShot Books — Order Lookup Voice Agent
 
-**Production voice agent** for Twilio number order-status calls.
+Production AI voice agent for SureShot Books (Shopify bookstore).
 
-## Twilio webhook (unchanged URL)
-
-```
-POST https://your-domain.com/voice/twilio/inbound
-WebSocket: wss://your-domain.com/voice/twilio/ws
-```
-
-## Flow
+## Architecture
 
 ```
-Caller dials Twilio number
-  → POST /voice/twilio/inbound
-  → ConversationRelay (Eric / ElevenLabs)
-  → WebSocket /voice/twilio/ws
-  → Order number → Shopify lookup → streamed voice response
+Caller → Twilio (transport only)
+      → POST /voice/twilio/inbound
+      → conversationOrchestrator (brain + Shopify tools)
+      → ElevenLabs API (ALL speech — direct HTTP)
+      → MP3 stored + served at /voice/twilio/audio/{id}.mp3
+      → TwiML <Play> + <Gather> back to Twilio
 ```
 
-## VPS setup
+**Twilio never generates voice.** No ConversationRelay. No Polly `<Say>`.
 
-```bash
-cd /var/www/voice-agent
-git pull origin main
-cd services/order-lookup-voice-agent
-cp .env.example .env   # edit with real secrets
-npm ci && npm run build
-cd ../..
-sudo cp infra/nginx/voice-agent.mailcallcommunication.com.conf /etc/nginx/sites-available/voice-agent.conf
-sudo nginx -t && sudo systemctl reload nginx
-pm2 delete all
-pm2 start ecosystem.config.cjs
-pm2 save
-curl -s http://127.0.0.1:8001/health
-```
+## Twilio webhooks
+
+| URL | Purpose |
+|-----|---------|
+| `POST /voice/twilio/inbound` | Answer call, play greeting, start speech gather |
+| `POST /voice/twilio/turn` | Process caller speech, play brain response |
+| `GET /voice/twilio/audio/:id.mp3` | Serve ElevenLabs MP3 for `<Play>` |
+| `POST /voice/twilio/status` | Cleanup session on call end (optional) |
+
+Legacy alias: `POST /conversationBrain/inbound` → same as inbound.
 
 ## Required .env
 
-- `PUBLIC_BASE_URL` — your HTTPS domain
-- `TWILIO_AUTH_TOKEN` — same as Twilio Console
+- `PUBLIC_BASE_URL` — HTTPS domain (Twilio must reach audio URLs)
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
 - `OPENAI_API_KEY`
 - `SHOPIFY_SHOP_DOMAIN`, `SHOPIFY_ADMIN_ACCESS_TOKEN`
-- `VOICE_ID` + `VOICE_MODEL` (ElevenLabs via Twilio ConversationRelay, e.g. `abc123-eleven_turbo_v2_5`)
+- `ELEVENLABS_API_KEY`, `VOICE_ID` — **required** for all TTS
+
+## VPS deploy
+
+```bash
+cd /var/www/voice-agent && git pull origin main
+cd services/order-lookup-voice-agent
+cp .env.example .env   # edit with real secrets
+npm ci && npm run build
+pm2 restart order-lookup-voice-agent --update-env
+curl -s http://127.0.0.1:8001/health
+```
+
+Twilio Console → Phone Number → Voice:
+- **A call comes in:** `https://agent.mailcallcommunication.com/voice/twilio/inbound`
+- **Status callback (optional):** `https://agent.mailcallcommunication.com/voice/twilio/status`
 
 ## Tests
 
