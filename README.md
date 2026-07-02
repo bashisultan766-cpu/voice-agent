@@ -5,24 +5,24 @@ AI phone sales agent for Shopify bookstores. Inbound calls hit **Twilio Conversa
 ## Architecture
 
 ```
-Twilio phone call
+Twilio phone call (+12512554549)
     → POST /voice/twilio/inbound
-    → ConversationRelay WebSocket /voice/twilio/ws
-    → Python main agent (port 8001)
-    → OpenAI + Shopify tools
+    → Order Lookup Voice Agent (Node, port 8001)
+    → ConversationRelay + Eric voice
+    → Shopify order lookup + streamed response
 ```
 
-**Twilio webhook:** `POST /voice/twilio/inbound`
+**Production service:** [`services/order-lookup-voice-agent/`](services/order-lookup-voice-agent/)
 
-**Main service:** [`services/twilio-voice-agent/`](services/twilio-voice-agent/) (port 8001)
-
-Optional Node services (`voice-router`, `order-lookup-voice-agent`) are in the repo but **not required** for production — keep them stopped unless you configure them fully.
+**Twilio webhook:** `POST /voice/twilio/inbound` (same URL as before)
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /voice/twilio/inbound` | Twilio voice webhook — returns TwiML `<ConversationRelay>` |
+| `POST /voice/twilio/inbound` | Twilio voice webhook |
 | `WS /voice/twilio/ws` | ConversationRelay WebSocket |
 | `GET /health` | Health check |
+
+The legacy Python commerce agent (`services/twilio-voice-agent/`) remains in the repo for reference but is **not** started in production PM2.
 
 ## Prerequisites
 

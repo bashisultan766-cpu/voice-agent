@@ -44,18 +44,6 @@ export function createApp() {
     }
   });
 
-  // Legacy alias for direct testing without router.
-  app.post("/voice/twilio/inbound", async (req, res) => {
-    try {
-      await handleInboundCall(req, res);
-    } catch (err) {
-      logger.error("inbound_call_failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      res.status(403).send("Forbidden");
-    }
-  });
-
   return app;
 }
 
@@ -74,7 +62,12 @@ export function startServer() {
   });
 
   server.listen(cfg.PORT, () => {
-    logger.info("server_started", { port: cfg.PORT, wsUrl: wsUrl() });
+    logger.info("server_started", {
+      port: cfg.PORT,
+      service: "order-lookup-voice-agent",
+      wsUrl: wsUrl(),
+      inbound: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${VOICE_PATH_PREFIX}/inbound`,
+    });
   });
 
   return server;

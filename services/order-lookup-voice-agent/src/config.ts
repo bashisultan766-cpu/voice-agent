@@ -4,7 +4,7 @@ import { z } from "zod";
 loadEnv();
 
 const envSchema = z.object({
-  PORT: z.coerce.number().default(8002),
+  PORT: z.coerce.number().default(8001),
   PUBLIC_BASE_URL: z.string().url(),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 
@@ -53,7 +53,8 @@ export function getConfig(): AppConfig {
 
 export function wsUrl(): string {
   const base = getConfig().PUBLIC_BASE_URL.replace(/^http/, "ws").replace(/\/$/, "");
-  return `${base}/voice/order/twilio/ws`;
+  return `${base}/voice/twilio/ws`;
 }
 
-export const VOICE_PATH_PREFIX = "/voice/order/twilio";
+/** Standard Twilio ConversationRelay paths (same webhook URL as before). */
+export const VOICE_PATH_PREFIX = "/voice/twilio";
