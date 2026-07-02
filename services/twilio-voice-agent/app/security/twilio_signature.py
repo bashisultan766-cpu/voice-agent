@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 async def validate_twilio_signature(request: Request, settings) -> None:
+    router_secret = (request.headers.get("X-Voice-Router-Forward") or "").strip()
+    expected = (getattr(settings, "VOICE_ROUTER_FORWARD_SECRET", "") or "").strip()
+    if router_secret and expected and router_secret == expected:
+        return
+
     if not settings.VALIDATE_TWILIO_SIGNATURES:
         return
 

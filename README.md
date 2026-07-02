@@ -6,16 +6,23 @@ AI phone sales agent for Shopify bookstores. Inbound calls hit **Twilio Conversa
 
 ```
 Twilio phone call
+    → Voice Router (port 8000) — SINGLE Twilio webhook entry
+    → Order Lookup Agent (port 8002) OR Main Commerce Agent (port 8001)
     → ConversationRelay STT/TTS
-    → FastAPI WebSocket (services/twilio-voice-agent)
-    → OpenAI GPT-4o-mini
-    → Shopify Admin API tools
-    → Resend email
-    → Redis caller memory
-    → Twilio TTS back to caller
+    → OpenAI + Shopify tools
 ```
 
-**Main service:** [`services/twilio-voice-agent/`](services/twilio-voice-agent/)
+**Twilio webhook (production):** `POST /voice-router/twilio/inbound` → [`services/voice-router/`](services/voice-router/)
+
+| Service | Port | Path prefix |
+|---------|------|-------------|
+| Voice Router | 8000 | `/voice-router/*` |
+| Order Lookup (Node) | 8002 | `/voice/order/twilio/*` |
+| Main Agent (Python) | 8001 | `/voice/twilio/*` |
+
+See [`services/voice-router/README.md`](services/voice-router/README.md) for routing rules and nginx config.
+
+**Legacy main service:** [`services/twilio-voice-agent/`](services/twilio-voice-agent/)
 
 | Endpoint | Purpose |
 |----------|---------|

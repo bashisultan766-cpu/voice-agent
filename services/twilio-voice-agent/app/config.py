@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_PHONE_NUMBER: str = ""
     VALIDATE_TWILIO_SIGNATURES: bool = True
+    # Shared secret for trusted forwards from voice-router (port 8000).
+    VOICE_ROUTER_FORWARD_SECRET: str = ""
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     OPENAI_API_KEY: str = ""

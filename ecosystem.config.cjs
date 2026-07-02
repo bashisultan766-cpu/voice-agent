@@ -1,24 +1,42 @@
 /**
- * PM2 — Twilio ConversationRelay voice agent (production).
+ * PM2 — SureShot Books multi-service voice stack.
  *
- * Start:
- *   cd /var/www/voice-agent
- *   cd services/twilio-voice-agent && python -m venv .venv && .venv/bin/pip install -r requirements.txt
- *   pm2 start ecosystem.config.cjs
- *   pm2 save
- *
- * Nginx must proxy:
- *   POST /voice/twilio/inbound  → http://127.0.0.1:8001
- *   GET  /voice/twilio/ws       → http://127.0.0.1:8001  (upgrade: websocket)
- *   GET  /health                → http://127.0.0.1:8001
+ * Twilio webhook MUST point to voice-router (port 8000) only:
+ *   POST /voice-router/twilio/inbound
  */
 const path = require('path');
 
 const root = __dirname;
 const twilioVoiceDir = path.join(root, 'services', 'twilio-voice-agent');
+const orderLookupDir = path.join(root, 'services', 'order-lookup-voice-agent');
+const voiceRouterDir = path.join(root, 'services', 'voice-router');
 
 module.exports = {
   apps: [
+    {
+      name: 'voice-router',
+      cwd: voiceRouterDir,
+      script: 'node',
+      args: 'dist/index.js',
+      interpreter: 'none',
+      exec_mode: 'fork',
+      instances: 1,
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '10s',
+    },
+    {
+      name: 'order-lookup-voice-agent',
+      cwd: orderLookupDir,
+      script: 'node',
+      args: 'dist/index.js',
+      interpreter: 'none',
+      exec_mode: 'fork',
+      instances: 1,
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '10s',
+    },
     {
       name: 'twilio-voice-agent',
       cwd: twilioVoiceDir,
