@@ -2,7 +2,7 @@
   "name": "sureshot-order-lookup-voice-agent",
   "version": "1.0.0",
   "private": true,
-  "description": "SureShot Books AI voice agent — ElevenLabs TTS + Twilio Gather/Play",
+  "description": "SureShot Books AI voice agent — order lookup flow via Twilio ConversationRelay",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

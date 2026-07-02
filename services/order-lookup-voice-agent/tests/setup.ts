@@ -6,6 +6,3 @@ process.env.SHOPIFY_SHOP_DOMAIN ??= "test.myshopify.com";
 process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ??= "shpat_test";
 process.env.VALIDATE_TWILIO_SIGNATURES ??= "false";
 process.env.OPENAI_TIMEOUT_MS ??= "2000";
-process.env.ELEVENLABS_API_KEY ??= "el-test-key";
-process.env.VOICE_ID ??= "test-voice-id";
-process.env.AUDIO_CACHE_DIR ??= "./audio-cache-test";
