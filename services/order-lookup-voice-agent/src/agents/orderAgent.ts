@@ -20,6 +20,7 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
     createdAt: Date.now(),
     awaitingInput: null,
     greetedThisCall: false,
+    productSlots: undefined,
   };
 }
 

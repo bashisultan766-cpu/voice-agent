@@ -67,6 +67,12 @@ export type CallPhase =
   | "follow_up"
   | "ended";
 
+export interface ProductSearchSlots {
+  isbn?: string;
+  title?: string;
+  category?: string;
+}
+
 export interface CallSession {
   callSid: string;
   from: string;
@@ -75,8 +81,16 @@ export interface CallSession {
   orderNumberAttempts: number;
   currentOrder?: StructuredOrder;
   createdAt: number;
+  /** Phase 1 slots — filled before any Shopify product API call. */
+  productSlots?: ProductSearchSlots;
   /** Orchestrator: what we're waiting for from the caller. */
-  awaitingInput?: "order_number" | "product_clarification" | null;
+  awaitingInput?:
+    | "order_number"
+    | "product_slot"
+    | "product_isbn"
+    | "product_title"
+    | "product_category"
+    | null;
   greetedThisCall?: boolean;
   lastOrchestratorIntent?: string;
 }

@@ -1,16 +1,12 @@
 /**
- * Conversation Orchestrator — single master brain for SureShot Books voice agent.
- * Shopify + order tools are called from here; all routing and personality live here.
+ * Conversation Orchestrator — Phase 1 only: intent + slot filling.
+ * Shopify product APIs run exclusively via productToolPhase (Phase 2).
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import {
-  extractOrderNumberFromSpeech,
-  GOODBYE_MESSAGE,
-} from "../utils/formatter.js";
+import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
 import { lookupOrder } from "../services/shopifyService.js";
 import {
-  extractOrderNumberWithLlm,
   classifyFollowUpIntent,
   preAnalyzeOrderIntent,
 } from "../services/llmService.js";
@@ -28,22 +24,23 @@ import {
   appendUserMessage,
   getOrCreateMemory,
 } from "../memory/callMemoryStore.js";
+import { extractIsbnFromSpeech } from "../tools/shopifyProductTools.js";
 import {
-  extractIsbnFromSpeech,
-  searchProductByCategory,
-  searchProductByISBN,
-  searchProductByTitle,
-  STORE_NOT_FOUND_MESSAGE,
-} from "../tools/shopifyProductTools.js";
+  isPhase2Ready,
+  mergeProductSlots,
+  parseProductSlotsFromSpeech,
+  pickProductSlotQuestion,
+} from "./productSlotPhase.js";
+import { executeProductSearch } from "./productToolPhase.js";
 import { smoothForVoice, speechChunksFromText } from "../services/voiceSmoothingEngine.js";
 import type {
   AgentStreamEvent,
   CallSession,
   OrderLookupResult,
+  ProductSearchSlots,
   SpeechChunk,
   StructuredOrder,
 } from "../types/order.js";
-import type { StructuredProduct } from "../types/product.js";
 
 export type OrchestratorIntent =
   | "greeting"
@@ -65,22 +62,19 @@ const GREETING_VARIANTS = [
   "Good to hear from you. I'm here to help with books and orders — what do you need?",
 ];
 
-const PRODUCT_CLARIFY_PROMPT =
-  "Do you have a title or ISBN number, or are you looking for recommendations?";
-
 const ORDER_NUMBER_PROMPT = "Sure — please share your order number.";
 
-const PURCHASE_GUIDE_PROMPT =
-  "I'd love to help you find something to order. Do you have a title or ISBN, or should I suggest popular books for inmates?";
+const UNCLEAR_ORDER_PROMPTS = [
+  "That order number looks a little short — could you read me the full number?",
+  "I didn't quite get a full order number — it's usually at least four digits.",
+  "Could you repeat the full order number for me?",
+];
 
 const UNKNOWN_PROMPTS = [
   "I'm here to help with book searches and order updates. What would you like to do?",
   "I can look up a book or check an order for you. Which would you prefer?",
   "Happy to help — are you browsing books or checking on an order?",
 ];
-
-const RECOMMENDATION_RE =
-  /\b(recommend|suggestion|suggest|popular|what do you have|browse|inmates?|for my (son|daughter|husband|wife))\b/i;
 
 export function classifyOrchestratorIntent(speech: string): OrchestratorIntent {
   const text = (speech ?? "").trim();
@@ -127,7 +121,7 @@ function classifyWithRegexSync(text: string): OrchestratorIntent | null {
     return "order_status";
   }
   if (
-    /\b(book|books|magazine|magazines|newspaper|harry potter|isbn|title|do you have|looking for)\b/i.test(
+    /\b(book|books|magazine|magazines|newspaper|isbn|title|do you have|looking for|i need a book)\b/i.test(
       text,
     )
   ) {
@@ -150,65 +144,7 @@ function recordAssistant(callSid: string, speech: string): string {
   return smooth;
 }
 
-function extractTitleFromSpeech(speech: string): string {
-  return speech
-    .replace(/\b(do you have|looking for|i want|i need|any|available|books?|magazines?|newspapers?)\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function formatProductHits(products: StructuredProduct[], usedSimilar: boolean): string {
-  if (products.length === 0) {
-    return STORE_NOT_FOUND_MESSAGE;
-  }
-  const top = products.slice(0, 3);
-  const lines = top.map((p) => {
-    const price = p.variants[0]?.price ?? "N/A";
-    const stock = p.variants.some((v) => v.inStock) ? "in stock" : "out of stock";
-    return `"${p.title}" at ${price} dollars, ${stock}`;
-  });
-  if (usedSimilar) {
-    return `I couldn't find that exact match, but here are close options: ${lines.join("; ")}.`;
-  }
-  return `Yes — I found ${lines.join("; ")}.`;
-}
-
-async function searchProductsWithFallback(
-  speech: string,
-): Promise<{ products: StructuredProduct[]; usedSimilar: boolean }> {
-  const isbn = extractIsbnFromSpeech(speech);
-  if (isbn) {
-    const result = await searchProductByISBN(isbn);
-    if (result.products.length > 0) {
-      return { products: result.products, usedSimilar: false };
-    }
-    const recs = await searchProductByCategory("books inmates");
-    if (recs.products.length > 0) {
-      return { products: recs.products, usedSimilar: true };
-    }
-    return { products: [], usedSimilar: false };
-  }
-
-  const title = extractTitleFromSpeech(speech) || speech.trim();
-  if (title) {
-    const result = await searchProductByTitle(title);
-    if (result.products.length > 0) {
-      return { products: result.products, usedSimilar: false };
-    }
-    const recs = await searchProductByCategory(`${title} books`);
-    if (recs.products.length > 0) {
-      return { products: recs.products, usedSimilar: true };
-    }
-    const broad = await searchProductByCategory("books inmates");
-    if (broad.products.length > 0) {
-      return { products: broad.products, usedSimilar: true };
-    }
-  }
-
-  return { products: [], usedSimilar: false };
-}
-
-/** Master turn handler — sole routing brain for the voice agent. */
+/** Master turn handler — Phase 1 routing; Phase 2 only when slots are ready. */
 export async function* runOrchestratorTurn(
   session: CallSession,
   callerText: string,
@@ -222,13 +158,26 @@ export async function* runOrchestratorTurn(
     return;
   }
 
+  if (session.phase === "awaiting_order_number" && speechContainsDigitAttempt(text)) {
+    const orderNumber = extractOrderNumberFromSpeech(text);
+    if (!orderNumber) {
+      yield* handleUnclearOrderNumber(session);
+      return;
+    }
+  }
+
   if (session.awaitingInput === "order_number") {
     yield* handleAwaitingOrderNumber(session, text);
     return;
   }
 
-  if (session.awaitingInput === "product_clarification") {
-    yield* handleAwaitingProductClarification(session, text);
+  if (
+    session.awaitingInput === "product_slot" ||
+    session.awaitingInput === "product_isbn" ||
+    session.awaitingInput === "product_title" ||
+    session.awaitingInput === "product_category"
+  ) {
+    yield* handleAwaitingProductSlot(session, text);
     return;
   }
 
@@ -240,6 +189,7 @@ export async function* runOrchestratorTurn(
     callSid: session.callSid.slice(0, 8),
     intent,
     phase: session.phase,
+    conversationPhase: "slot_fill",
   });
 
   switch (intent) {
@@ -250,7 +200,7 @@ export async function* runOrchestratorTurn(
       yield* handleOrderStatus(session, text);
       break;
     case "product_search":
-      yield* handleProductSearch(session, text);
+      yield* phase1ProductFlow(session, text);
       break;
     case "product_purchase_intent":
       yield* handlePurchaseIntent(session);
@@ -260,6 +210,84 @@ export async function* runOrchestratorTurn(
       session.phase = "awaiting_order_number";
       yield doneEvent(session.phase);
   }
+}
+
+/** Phase 1 — merge slots, ask questions, never call Shopify. */
+async function* phase1ProductFlow(
+  session: CallSession,
+  speech: string,
+): AsyncGenerator<AgentStreamEvent> {
+  const incoming = parseProductSlotsFromSpeech(speech);
+  session.productSlots = mergeProductSlots(session.productSlots, incoming);
+
+  if (isPhase2Ready(session.productSlots)) {
+    yield* phase2ProductFlow(session);
+    return;
+  }
+
+  session.awaitingInput = "product_slot";
+  session.phase = "awaiting_order_number";
+  const question = pickProductSlotQuestion(session.productSlots, "both");
+  yield* yieldSpeech(recordAssistant(session.callSid, question));
+  yield doneEvent(session.phase);
+}
+
+async function* handleAwaitingProductSlot(
+  session: CallSession,
+  speech: string,
+): AsyncGenerator<AgentStreamEvent> {
+  if (session.awaitingInput === "product_category") {
+    const incoming = parseProductSlotsFromSpeech(speech);
+    session.productSlots = mergeProductSlots(session.productSlots, incoming);
+    session.awaitingInput = "product_slot";
+    const question = pickProductSlotQuestion(session.productSlots, "both");
+    yield* yieldSpeech(recordAssistant(session.callSid, question));
+    session.phase = "awaiting_order_number";
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  const incoming = parseProductSlotsFromSpeech(speech);
+  session.productSlots = mergeProductSlots(session.productSlots, incoming);
+
+  if (isPhase2Ready(session.productSlots)) {
+    session.awaitingInput = null;
+    yield* phase2ProductFlow(session);
+    return;
+  }
+
+  const promptKind =
+    session.awaitingInput === "product_isbn"
+      ? "isbn"
+      : session.awaitingInput === "product_title"
+        ? "title"
+        : "both";
+
+  session.awaitingInput = "product_slot";
+  session.phase = "awaiting_order_number";
+  yield* yieldSpeech(
+    recordAssistant(session.callSid, pickProductSlotQuestion(session.productSlots, promptKind)),
+  );
+  yield doneEvent(session.phase);
+}
+
+/** Phase 2 — Shopify tool execution after slots confirmed. */
+async function* phase2ProductFlow(session: CallSession): AsyncGenerator<AgentStreamEvent> {
+  const slots: ProductSearchSlots = { ...session.productSlots };
+  session.productSlots = undefined;
+  session.awaitingInput = null;
+
+  logger.info("orchestrator_route", {
+    callSid: session.callSid.slice(0, 8),
+    conversationPhase: "tool_execute",
+    hasIsbn: Boolean(slots.isbn),
+    hasTitle: Boolean(slots.title),
+  });
+
+  const result = await executeProductSearch(slots, session.callSid);
+  yield* yieldSpeech(recordAssistant(session.callSid, result.speech));
+  session.phase = "awaiting_order_number";
+  yield doneEvent(session.phase);
 }
 
 async function* handleGreeting(session: CallSession, speech = ""): AsyncGenerator<AgentStreamEvent> {
@@ -274,34 +302,58 @@ async function* handleGreeting(session: CallSession, speech = ""): AsyncGenerato
   yield doneEvent(session.phase);
 }
 
+function speechContainsDigitAttempt(speech: string): boolean {
+  return (
+    /\b\d+\b/.test(speech) ||
+    /\b(zero|one|two|three|four|five|six|seven|eight|nine|oh)\b/i.test(speech)
+  );
+}
+
 async function* handleOrderStatus(
   session: CallSession,
   speech: string,
 ): AsyncGenerator<AgentStreamEvent> {
-  const orderNumber =
-    extractOrderNumberFromSpeech(speech) ?? (await extractOrderNumberWithLlm(speech));
+  const orderNumber = extractOrderNumberFromSpeech(speech);
 
-  if (!orderNumber) {
-    session.awaitingInput = "order_number";
-    session.phase = "awaiting_order_number";
-    yield* yieldSpeech(recordAssistant(session.callSid, ORDER_NUMBER_PROMPT));
-    yield doneEvent(session.phase);
+  if (orderNumber) {
+    yield* runOrderLookup(session, orderNumber);
     return;
   }
 
-  yield* runOrderLookup(session, orderNumber);
+  if (speechContainsDigitAttempt(speech)) {
+    yield* handleUnclearOrderNumber(session);
+    return;
+  }
+
+  session.awaitingInput = "order_number";
+  session.phase = "awaiting_order_number";
+  yield* yieldSpeech(recordAssistant(session.callSid, ORDER_NUMBER_PROMPT));
+  yield doneEvent(session.phase);
+}
+
+async function* handleUnclearOrderNumber(session: CallSession): AsyncGenerator<AgentStreamEvent> {
+  session.awaitingInput = "order_number";
+  session.phase = "awaiting_order_number";
+  yield* yieldSpeech(
+    recordAssistant(session.callSid, pickVariedLine(UNCLEAR_ORDER_PROMPTS, session.callSid)),
+  );
+  yield doneEvent(session.phase);
 }
 
 async function* handleAwaitingOrderNumber(
   session: CallSession,
   speech: string,
 ): AsyncGenerator<AgentStreamEvent> {
-  const orderNumber =
-    extractOrderNumberFromSpeech(speech) ?? (await extractOrderNumberWithLlm(speech));
+  const orderNumber = extractOrderNumberFromSpeech(speech);
 
   if (orderNumber) {
     session.awaitingInput = null;
     yield* runOrderLookup(session, orderNumber);
+    return;
+  }
+
+  if (speechContainsDigitAttempt(speech)) {
+    yield* handleUnclearOrderNumber(session);
     return;
   }
 
@@ -313,7 +365,7 @@ async function* handleAwaitingOrderNumber(
         yield* handleGreeting(session, speech);
         return;
       case "product_search":
-        yield* handleProductSearch(session, speech);
+        yield* phase1ProductFlow(session, speech);
         return;
       case "product_purchase_intent":
         yield* handlePurchaseIntent(session);
@@ -333,64 +385,13 @@ async function* handleAwaitingOrderNumber(
   yield doneEvent(session.phase);
 }
 
-async function* handleProductSearch(
-  session: CallSession,
-  speech: string,
-): AsyncGenerator<AgentStreamEvent> {
-  const isbn = extractIsbnFromSpeech(speech);
-  const title = extractTitleFromSpeech(speech);
-  const wantsRecs = RECOMMENDATION_RE.test(speech);
-
-  if (!isbn && !title && !wantsRecs) {
-    session.awaitingInput = "product_clarification";
-    session.phase = "awaiting_order_number";
-    yield* yieldSpeech(recordAssistant(session.callSid, PRODUCT_CLARIFY_PROMPT));
-    yield doneEvent(session.phase);
-    return;
-  }
-
-  if (wantsRecs && !isbn && title.length < 4) {
-    const recs = await searchProductByCategory("books inmates");
-    const speech = formatProductHits(recs.products, true);
-    yield* yieldSpeech(recordAssistant(session.callSid, speech));
-    session.phase = "awaiting_order_number";
-    yield doneEvent(session.phase);
-    return;
-  }
-
-  const { products, usedSimilar } = await searchProductsWithFallback(speech);
-  const speechOut = formatProductHits(products, usedSimilar);
-  yield* yieldSpeech(recordAssistant(session.callSid, speechOut));
-  session.phase = "awaiting_order_number";
-  yield doneEvent(session.phase);
-}
-
-async function* handleAwaitingProductClarification(
-  session: CallSession,
-  speech: string,
-): AsyncGenerator<AgentStreamEvent> {
-  session.awaitingInput = null;
-
-  if (RECOMMENDATION_RE.test(speech)) {
-    const recs = await searchProductByCategory("books inmates");
-    yield* yieldSpeech(
-      recordAssistant(session.callSid, formatProductHits(recs.products, true)),
-    );
-    session.phase = "awaiting_order_number";
-    yield doneEvent(session.phase);
-    return;
-  }
-
-  const { products, usedSimilar } = await searchProductsWithFallback(speech);
-  yield* yieldSpeech(recordAssistant(session.callSid, formatProductHits(products, usedSimilar)));
-  session.phase = "awaiting_order_number";
-  yield doneEvent(session.phase);
-}
-
 async function* handlePurchaseIntent(session: CallSession): AsyncGenerator<AgentStreamEvent> {
-  session.awaitingInput = "product_clarification";
+  session.awaitingInput = "product_category";
   session.phase = "awaiting_order_number";
-  yield* yieldSpeech(recordAssistant(session.callSid, PURCHASE_GUIDE_PROMPT));
+  session.lastOrchestratorIntent = "product_purchase_intent";
+  yield* yieldSpeech(
+    recordAssistant(session.callSid, pickProductSlotQuestion({}, "category")),
+  );
   yield doneEvent(session.phase);
 }
 
@@ -484,7 +485,11 @@ async function* handleFollowUpPhase(
   const route = await classifyOrchestratorIntentAsync(callerText);
   if (route === "product_search" || route === "product_purchase_intent") {
     session.phase = "awaiting_order_number";
-    yield* handleProductSearch(session, callerText);
+    if (route === "product_purchase_intent") {
+      yield* handlePurchaseIntent(session);
+    } else {
+      yield* phase1ProductFlow(session, callerText);
+    }
     return;
   }
   if (route === "order_status") {
@@ -540,3 +545,11 @@ function doneEvent(
 ): AgentStreamEvent {
   return { type: "done", phase, endCall, lookupMs };
 }
+
+// Re-export slot helpers for tests
+export {
+  isPhase2Ready,
+  mergeProductSlots,
+  parseProductSlotsFromSpeech,
+  pickProductSlotQuestion,
+} from "./productSlotPhase.js";

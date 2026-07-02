@@ -8,6 +8,7 @@ import { clearAllCallMemories } from "../src/memory/callMemoryStore.js";
 import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
 import type { StructuredProduct } from "../src/types/product.js";
 import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
+import * as shopifyProductTools from "../src/tools/shopifyProductTools.js";
 
 const mockCatalog: StructuredProduct[] = [
   {
@@ -95,21 +96,52 @@ describe("conversationOrchestrator flows", () => {
     expect(session.awaitingInput).toBe("order_number");
   });
 
-  it("searches product on Harry Potter request", async () => {
+  it('Phase 1: "I need a book" asks for ISBN or title without Shopify', async () => {
+    const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
+    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+
+    const session = createCallSession("CA_NEED", "+1", "+2");
+    const speech = await collectSpeech(session, "I need a book");
+
+    expect(speech).toMatch(/ISBN|title/i);
+    expect(session.awaitingInput).toBe("product_slot");
+    expect(isbnSpy).not.toHaveBeenCalled();
+    expect(titleSpy).not.toHaveBeenCalled();
+  });
+
+  it("Phase 2: searches product on Harry Potter title", async () => {
     const session = createCallSession("CA_HP", "+1", "+2");
     const speech = await collectSpeech(session, "I want Harry Potter book");
     expect(speech).toMatch(/Harry Potter|Azkaban|found/i);
+    expect(speech).not.toMatch(/let me search|I will check/i);
   });
 
-  it("looks up ISBN directly", async () => {
+  it("Phase 2: looks up ISBN directly", async () => {
     const session = createCallSession("CA_ISBN", "+1", "+2");
     const speech = await collectSpeech(session, "ISBN 9783161484100");
     expect(speech).toMatch(/Azkaban|found/i);
+    expect(speech).not.toMatch(/let me search|I will check/i);
   });
 
-  it("offers recommendations for inmates books", async () => {
+  it('Phase 1: "I want to buy books" asks category before search', async () => {
+    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+
+    const session = createCallSession("CA_BUY", "+1", "+2");
+    const speech = await collectSpeech(session, "I want to buy books");
+
+    expect(speech).toMatch(/books|magazines|newspapers/i);
+    expect(session.awaitingInput).toBe("product_category");
+    expect(titleSpy).not.toHaveBeenCalled();
+  });
+
+  it('Phase 1: "I want books for inmates" asks clarification, not immediate search', async () => {
+    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+
     const session = createCallSession("CA_REC", "+1", "+2");
     const speech = await collectSpeech(session, "I want books for inmates");
-    expect(speech).toMatch(/found|Harry Potter|Inmate|close options/i);
+
+    expect(speech).toMatch(/ISBN|title/i);
+    expect(session.awaitingInput).toBe("product_slot");
+    expect(titleSpy).not.toHaveBeenCalled();
   });
 });
