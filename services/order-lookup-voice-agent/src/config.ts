@@ -29,7 +29,11 @@ const envSchema = z.object({
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),
   VOICE_ID: z.string().optional(),
-  VOICE_MODEL: z.string().default("eleven_turbo_v2_5"),
+  /** Twilio ConversationRelay model slug (e.g. flash_v2_5). ElevenLabs API prefixes (eleven_*) are stripped automatically. */
+  VOICE_MODEL: z.string().default("flash_v2_5"),
+  VOICE_SPEED: z.coerce.number().min(0.7).max(1.2).optional(),
+  VOICE_STABILITY: z.coerce.number().min(0).max(1).optional(),
+  VOICE_SIMILARITY: z.coerce.number().min(0).max(1).optional(),
   VOICE_LANGUAGE: z.string().default("en-US"),
   VOICE_TTS_PROVIDER: z.string().default("ElevenLabs"),
 
@@ -70,13 +74,43 @@ export function getConfig(): AppConfig {
   return cached;
 }
 
+export function normalizeTwilioElevenLabsModel(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed) return "";
+
+  const aliases: Record<string, string> = {
+    eleven_flash_v2_5: "flash_v2_5",
+    eleven_flash_v2: "flash_v2",
+    eleven_turbo_v2_5: "turbo_v2_5",
+    eleven_turbo_v2: "turbo_v2",
+    eleven_multilingual_v2: "multilingual_v2",
+  };
+
+  if (aliases[trimmed]) return aliases[trimmed];
+  if (trimmed.startsWith("eleven_")) return trimmed.slice("eleven_".length);
+  return trimmed;
+}
+
 export function conversationRelayVoice(): string {
   const cfg = getConfig();
   const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
-  if (cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs" && voiceId) {
-    return `${voiceId}-${cfg.VOICE_MODEL}`;
+  if (cfg.VOICE_TTS_PROVIDER.toLowerCase() !== "elevenlabs" || !voiceId) {
+    return "Google.en-US-Neural2-J";
   }
-  return "Google.en-US-Neural2-J";
+
+  const model = normalizeTwilioElevenLabsModel(cfg.VOICE_MODEL);
+  if (!model) return voiceId;
+
+  const hasTuning =
+    cfg.VOICE_SPEED !== undefined &&
+    cfg.VOICE_STABILITY !== undefined &&
+    cfg.VOICE_SIMILARITY !== undefined;
+
+  if (hasTuning) {
+    return `${voiceId}-${model}-${cfg.VOICE_SPEED}_${cfg.VOICE_STABILITY}_${cfg.VOICE_SIMILARITY}`;
+  }
+
+  return `${voiceId}-${model}`;
 }
 
 export function wsUrl(): string {
