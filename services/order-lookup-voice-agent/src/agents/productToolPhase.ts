@@ -3,7 +3,8 @@
  * MUST only be invoked from conversationOrchestrator inside runInPhase2.
  */
 import { logger } from "../utils/logger.js";
-import { assertToolExecutionAllowed } from "../guards/toolExecutionGuard.js";import {
+import { assertToolExecutionAllowed } from "../guards/toolExecutionGuard.js";
+import {
   getSimilarProducts,
   searchProductByCategory,
   searchProductByISBN,
@@ -42,18 +43,14 @@ export async function executeProductSearch(
       });
       return { products: result.products, usedAlternatives: false, searchKind: "isbn" };
     }
-    const alt = await searchProductByCategory("books inmates");
+    const fallback = await fetchSimilarFallback(callSid, slots.title, lastProductId);
     logger.info("product_tool_isbn_fallback", {
       callSid: callSid.slice(0, 8),
       isbn: slots.isbn,
-      altCount: alt.products.length,
+      altCount: fallback.products.length,
       elapsedMs: Date.now() - started,
     });
-    return {
-      products: alt.products,
-      usedAlternatives: alt.products.length > 0,
-      searchKind: "isbn",
-    };
+    return { ...fallback, searchKind: "isbn" };
   }
 
   if (slots.title) {
@@ -67,23 +64,63 @@ export async function executeProductSearch(
       });
       return { products: result.products, usedAlternatives: false, searchKind: "title" };
     }
-    const alt = await searchProductByCategory(`${slots.title} books`);
-    const broad =
-      alt.products.length > 0 ? alt : await searchProductByCategory("books inmates");
+    const fallback = await fetchSimilarFallback(callSid, slots.title, lastProductId);
     logger.info("product_tool_title_fallback", {
       callSid: callSid.slice(0, 8),
       title: slots.title,
-      altCount: broad.products.length,
+      altCount: fallback.products.length,
       elapsedMs: Date.now() - started,
     });
-    return {
-      products: broad.products,
-      usedAlternatives: broad.products.length > 0,
-      searchKind: "title",
-    };
+    return { ...fallback, searchKind: "title" };
   }
 
   return { products: [], usedAlternatives: false, searchKind: "recommendations" };
+}
+
+async function fetchSimilarFallback(
+  callSid: string,
+  anchorTitle?: string,
+  lastProductId?: string,
+): Promise<Omit<ToolProductResult, "searchKind">> {
+  if (lastProductId) {
+    const similar = await getSimilarProducts(lastProductId);
+    if (similar.products.length > 0) {
+      return {
+        products: similar.products.slice(0, 3),
+        usedAlternatives: true,
+      };
+    }
+  }
+
+  if (anchorTitle) {
+    const loose = await searchProductByTitle(anchorTitle.split(" ")[0] ?? anchorTitle);
+    if (loose.products[0]) {
+      const similar = await getSimilarProducts(loose.products[0].id);
+      if (similar.products.length > 0) {
+        return {
+          products: similar.products.slice(0, 3),
+          usedAlternatives: true,
+        };
+      }
+    }
+  }
+
+  const browse = await searchProductByCategory("books inmates");
+  if (browse.products[0]) {
+    const similar = await getSimilarProducts(browse.products[0].id);
+    if (similar.products.length > 0) {
+      return {
+        products: similar.products.slice(0, 3),
+        usedAlternatives: true,
+      };
+    }
+    return {
+      products: browse.products.slice(0, 3),
+      usedAlternatives: true,
+    };
+  }
+
+  return { products: [], usedAlternatives: false };
 }
 
 async function executeRecommendations(
@@ -101,7 +138,7 @@ async function executeRecommendations(
         elapsedMs: Date.now() - started,
       });
       return {
-        products: similar.products,
+        products: similar.products.slice(0, 3),
         usedAlternatives: false,
         searchKind: "recommendations",
       };
@@ -115,7 +152,7 @@ async function executeRecommendations(
     elapsedMs: Date.now() - started,
   });
   return {
-    products: popular.products,
+    products: popular.products.slice(0, 3),
     usedAlternatives: false,
     searchKind: "recommendations",
   };

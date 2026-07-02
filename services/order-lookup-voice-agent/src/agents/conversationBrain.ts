@@ -1,6 +1,6 @@
 /**
  * Conversation Brain — single entry point for all voice turns.
- * Twilio / streamHandler MUST import only from this file.
+ * Twilio voice layer MUST import only from this file.
  */
 import { logger } from "../utils/logger.js";
 import { sanitizeForSpeech } from "../utils/security.js";
@@ -9,7 +9,7 @@ import type { AgentStreamEvent, CallSession } from "../types/order.js";
 
 /** Fixed greeting spoken at call start (TwiML welcomeGreeting). */
 export const BRAIN_GREETING =
-  "Hi, this is SureShot Books Assistant. How can I help you today?";
+  "Hi, I'm the SureShot Books Assistant. How can I help you today?";
 
 export interface BrainTurnResult {
   speech: string;

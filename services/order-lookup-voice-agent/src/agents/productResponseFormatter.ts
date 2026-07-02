@@ -4,6 +4,12 @@
 import { STORE_NOT_FOUND_MESSAGE } from "../tools/shopifyProductTools.js";
 import type { StructuredProduct } from "../types/product.js";
 
+function formatOneProduct(p: StructuredProduct): string {
+  const price = p.variants[0]?.price ?? "N/A";
+  const stock = p.variants.some((v) => v.inStock) ? "in stock" : "out of stock";
+  return `"${p.title}" at ${price} dollars, ${stock}`;
+}
+
 export function formatProductResults(
   products: StructuredProduct[],
   usedAlternatives: boolean,
@@ -12,17 +18,19 @@ export function formatProductResults(
   if (products.length === 0) {
     return STORE_NOT_FOUND_MESSAGE;
   }
-  const top = products.slice(0, 3);
-  const lines = top.map((p) => {
-    const price = p.variants[0]?.price ?? "N/A";
-    const stock = p.variants.some((v) => v.inStock) ? "in stock" : "out of stock";
-    return `"${p.title}" at ${price} dollars, ${stock}`;
-  });
+
   if (mode === "recommendations") {
-    return `Here are a few popular picks: ${lines.join("; ")}.`;
+    const picks = products.slice(0, 3).map(formatOneProduct);
+    return `Here are a few popular picks: ${picks.join(". ")}.`;
   }
+
   if (usedAlternatives) {
-    return `I couldn't find that exact match, but here are close options: ${lines.join("; ")}.`;
+    const similar = products.slice(0, 3).map(formatOneProduct);
+    return `${STORE_NOT_FOUND_MESSAGE} Here are a few similar options: ${similar.join(". ")}.`;
   }
-  return `Yes — I found ${lines.join("; ")}.`;
+
+  const top = products[0];
+  const price = top.variants[0]?.price ?? "N/A";
+  const stock = top.variants.some((v) => v.inStock) ? "in stock" : "out of stock";
+  return `Yes — "${top.title}" is ${price} dollars and ${stock}.`;
 }

@@ -75,7 +75,7 @@ const GREETING_VARIANTS = [
   "Good to hear from you. I'm here to help with books and orders — what do you need?",
 ];
 
-const ORDER_NUMBER_PROMPT = "Sure — please share your order number.";
+const ORDER_NUMBER_PROMPT = "Sure — please tell me your order number.";
 
 const UNCLEAR_ORDER_PROMPTS = [
   "That order number looks a little short — could you read me the full number?",

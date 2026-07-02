@@ -79,12 +79,12 @@ export function pickProductSlotQuestion(
   kind: ProductSlotPromptKind = "both",
 ): string {
   if (kind === "category") {
-    return "What type are you looking for — books, magazines, or newspapers?";
+    return pickVariedSlotPrompt(CATEGORY_PROMPTS);
   }
   if (slots.isbn && !slots.title) {
     return pickVariedSlotPrompt(ISBN_PROMPTS);
   }
-  if (slots.title && !slots.isbn) {
+  if (slots.title && !slots.isbn && kind !== "both") {
     return pickVariedSlotPrompt(TITLE_PROMPTS);
   }
   if (kind === "isbn") {
@@ -93,23 +93,43 @@ export function pickProductSlotQuestion(
   if (kind === "title") {
     return pickVariedSlotPrompt(TITLE_PROMPTS);
   }
+  if (isGenericBookIntent(slots)) {
+    return pickVariedSlotPrompt(BOOK_INTENT_PROMPTS);
+  }
   return pickVariedSlotPrompt(BOTH_UNCLEAR_PROMPTS);
 }
 
+function isGenericBookIntent(slots: ProductSearchSlots): boolean {
+  return Boolean(
+    slots.category === "book" && !slots.isbn && !slots.title && !slots.wantsRecommendations,
+  );
+}
+
+const CATEGORY_PROMPTS = [
+  "What type are you looking for — books, magazines, or newspapers?",
+  "Are you after a book, a magazine, or a newspaper?",
+];
+
+const BOOK_INTENT_PROMPTS = [
+  "Sure — do you have a title or an ISBN number? Or would you like recommendations?",
+  "Got it — share a title or ISBN, or I can suggest some popular books.",
+  "Happy to help — do you have a title, an ISBN, or would you like recommendations?",
+];
+
 const ISBN_PROMPTS = [
-  "Sure — please share the ISBN number.",
-  "What's the ISBN for the book you're looking for?",
+  "Sure — what's the ISBN number?",
+  "Please share the ISBN and I'll look it up.",
 ];
 
 const TITLE_PROMPTS = [
-  "Sure — what book title are you looking for?",
-  "Which title should I look up for you?",
+  "Sure — what's the book title?",
+  "Which title should I search for?",
 ];
 
 const BOTH_UNCLEAR_PROMPTS = [
-  "Do you have a book title or an ISBN number, or would you like recommendations?",
-  "I can look up a title or ISBN — or I can suggest some popular books. Which works for you?",
-  "Share a title or ISBN, or just say you'd like recommendations.",
+  "Do you have a book title, an ISBN number, a magazine name, or a newspaper name?",
+  "I can look up a title, an ISBN, a magazine, or a newspaper — what do you have?",
+  "Share a title or ISBN, or tell me if you'd like recommendations.",
 ];
 
 let promptRotation = 0;

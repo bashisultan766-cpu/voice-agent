@@ -1,0 +1,37 @@
+import { describe, expect, it } from "vitest";
+import { formatProductResults } from "../src/agents/productResponseFormatter.js";
+import type { StructuredProduct } from "../src/types/product.js";
+
+const sample: StructuredProduct = {
+  id: "1",
+  title: "Harry Potter and the Prisoner of Azkaban",
+  handle: "hp",
+  productType: "Book",
+  vendor: "Rowling",
+  tags: ["fiction"],
+  variants: [{ id: "10", price: "14.99", inStock: true, inventoryQuantity: 3 }],
+};
+
+describe("formatProductResults", () => {
+  it("formats exact match in one natural sentence", () => {
+    const speech = formatProductResults([sample], false);
+    expect(speech).toMatch(/Harry Potter/);
+    expect(speech).toMatch(/14\.99/);
+    expect(speech).toMatch(/in stock/i);
+    expect(speech).not.toMatch(/similar options/i);
+  });
+
+  it("announces not found then similar products", () => {
+    const similar = [
+      sample,
+      { ...sample, id: "2", title: "Inmate Reading Guide" },
+    ];
+    const speech = formatProductResults(similar, true);
+    expect(speech).toMatch(/couldn't find that exact book/i);
+    expect(speech).toMatch(/similar options/i);
+  });
+
+  it("never returns empty when products exist", () => {
+    expect(formatProductResults([sample], false).length).toBeGreaterThan(10);
+  });
+});

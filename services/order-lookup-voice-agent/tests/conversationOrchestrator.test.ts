@@ -107,7 +107,7 @@ describe("conversationOrchestrator flows", () => {
     const session = createCallSession("CA_NEED", "+1", "+2");
     const speech = await collectSpeech(session, "I need a book");
 
-    expect(speech).toMatch(/ISBN|title/i);
+    expect(speech).toMatch(/title or an ISBN|ISBN|recommendations/i);
     expect(session.awaitingInput).toBe("product_slot");
     expect(isbnSpy).not.toHaveBeenCalled();
     expect(titleSpy).not.toHaveBeenCalled();
@@ -178,5 +178,16 @@ describe("conversationOrchestrator flows", () => {
     expect(speech).toMatch(/ISBN|title/i);
     expect(session.awaitingInput).toBe("product_slot");
     expect(titleSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows similar products when exact title not found", async () => {
+    const similarSpy = vi.spyOn(shopifyProductTools, "getSimilarProducts");
+
+    const session = createCallSession("CA_MISS", "+1", "+2");
+    await collectSpeech(session, "I want a book");
+    const speech = await collectSpeech(session, "Imaginary Title XYZ");
+
+    expect(speech).toMatch(/couldn't find that exact book|similar options/i);
+    expect(similarSpy).toHaveBeenCalled();
   });
 });
