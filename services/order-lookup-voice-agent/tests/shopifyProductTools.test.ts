@@ -4,6 +4,7 @@ import {
   normalizeIsbn,
   normalizeSearchText,
   rankBySearchScore,
+  rankLiveProducts,
   scoreTitleMatch,
 } from "../src/utils/productSearchNormalize.js";
 import { tokenFallbackSearch } from "../src/tools/productSemanticSearch.js";
@@ -12,9 +13,10 @@ import {
   getSimilarProducts,
   searchProductByISBN,
   searchProductByTitle,
+  STORE_NOT_FOUND_MESSAGE,
 } from "../src/tools/shopifyProductTools.js";
-import { clearCatalogCache } from "../src/tools/productCatalog.js";
 import type { StructuredProduct } from "../src/types/product.js";
+import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
 
 const mockCatalog: StructuredProduct[] = [
   {
@@ -26,7 +28,16 @@ const mockCatalog: StructuredProduct[] = [
     author: "J.K. Rowling",
     tags: ["fiction", "fantasy", "inmate"],
     isbns: ["9783161484100"],
-    variants: [{ id: "10", sku: "9783161484100", barcode: "9783161484100", price: "14.99", inStock: true, inventoryQuantity: 4 }],
+    variants: [
+      {
+        id: "10",
+        sku: "9783161484100",
+        barcode: "9783161484100",
+        price: "14.99",
+        inStock: true,
+        inventoryQuantity: 4,
+      },
+    ],
   },
   {
     id: "2",
@@ -57,47 +68,6 @@ const mockCatalog: StructuredProduct[] = [
   },
 ];
 
-function mockCatalogFetch(): void {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        data: {
-          products: {
-            pageInfo: { hasNextPage: false, endCursor: null },
-            edges: mockCatalog.map((p) => ({
-              node: {
-                id: `gid://shopify/Product/${p.id}`,
-                title: p.title,
-                handle: p.handle,
-                productType: p.productType,
-                vendor: p.vendor,
-                tags: p.tags,
-                description: p.descriptionSnippet ?? "",
-                isbnCustom: p.isbns?.[0] ? { value: p.isbns[0] } : null,
-                isbnBooks: null,
-                isbnProduct: null,
-                variants: {
-                  edges: p.variants.map((v) => ({
-                    node: {
-                      id: `gid://shopify/ProductVariant/${v.id}`,
-                      sku: v.sku ?? "",
-                      barcode: v.barcode ?? "",
-                      price: v.price,
-                      inventoryQuantity: v.inventoryQuantity,
-                    },
-                  })),
-                },
-              },
-            })),
-          },
-        },
-      }),
-    })),
-  );
-}
-
 describe("productSearchNormalize", () => {
   it("normalizes ISBN hyphen formats to same value", () => {
     expect(normalizeIsbn("978-3-16-148410-0")).toBe("9783161484100");
@@ -108,6 +78,11 @@ describe("productSearchNormalize", () => {
     const ranked = rankBySearchScore(mockCatalog, "Harry Potter Azkaban");
     expect(ranked[0]?.title).toMatch(/Azkaban/i);
     expect(ranked[0]?.searchScore).toBeGreaterThanOrEqual(2);
+  });
+
+  it("ranks live products with exact title match highest", () => {
+    const ranked = rankLiveProducts(mockCatalog, "Harry Potter and the Prisoner of Azkaban");
+    expect(ranked[0]?.title).toMatch(/Azkaban/i);
   });
 
   it("handles misspelled input via token fallback", () => {
@@ -121,39 +96,51 @@ describe("productSearchNormalize", () => {
   });
 });
 
-describe("shopifyProductTools search engine", () => {
+describe("shopifyProductTools live search", () => {
   beforeEach(() => {
     clearProductCache();
-    clearCatalogCache();
     vi.unstubAllGlobals();
-    mockCatalogFetch();
+    mockLiveShopifyFetch(mockCatalog);
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("finds product by ISBN 9783161484100", async () => {
+  it("finds product by ISBN 9783161484100 in under 500ms", async () => {
+    const started = Date.now();
     const result = await searchProductByISBN("9783161484100");
+    expect(Date.now() - started).toBeLessThan(500);
     expect(result.status).toBe("found");
     expect(result.products[0]?.title).toMatch(/Azkaban/i);
+    expect(result.usedSemanticFallback).toBeFalsy();
   });
 
   it("finds same product for hyphenated ISBN", async () => {
     const a = await searchProductByISBN("9783161484100");
-    clearProductCache();
-    clearCatalogCache();
-    mockCatalogFetch();
     const b = await searchProductByISBN("978-3-16-148410-0");
     expect(a.products[0]?.id).toBe(b.products[0]?.id);
   });
 
-  it('finds "Harry Potter Azkaban" by title', async () => {
+  it('finds exact "Harry Potter Azkaban" by title', async () => {
     const result = await searchProductByTitle("Harry Potter Azkaban");
     expect(result.products[0]?.title).toMatch(/Azkaban/i);
   });
 
-  it("returns similar books when searching related title", async () => {
+  it("returns ranked partial title matches", async () => {
+    const result = await searchProductByTitle("Harry Potter");
+    expect(result.products.length).toBeGreaterThanOrEqual(2);
+    expect(result.products.every((p) => /Harry Potter/i.test(p.title))).toBe(true);
+  });
+
+  it("returns store-not-found message when Shopify has no match", async () => {
+    const result = await searchProductByTitle("Nonexistent Book Title XYZ");
+    expect(result.status).toBe("not_found");
+    expect(result.products).toHaveLength(0);
+    expect(result.message).toBe(STORE_NOT_FOUND_MESSAGE);
+  });
+
+  it("returns similar books from live data", async () => {
     const result = await getSimilarProducts("1");
     expect(result.products.length).toBeGreaterThanOrEqual(1);
     expect(result.products.some((p) => p.id !== "1")).toBe(true);

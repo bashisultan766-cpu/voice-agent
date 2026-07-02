@@ -25,6 +25,7 @@ export interface ProductSearchResult {
   products: StructuredProduct[];
   query: string;
   message?: string;
+  usedSemanticFallback?: boolean;
 }
 
 export interface InventoryStatus {

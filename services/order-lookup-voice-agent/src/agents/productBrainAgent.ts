@@ -20,9 +20,8 @@ import {
   searchProductByCategory,
   searchProductByISBN,
   searchProductByTitle,
+  STORE_NOT_FOUND_MESSAGE,
 } from "../tools/shopifyProductTools.js";
-import { semanticProductSearch } from "../tools/productSemanticSearch.js";
-import { getProductCatalog } from "../tools/productCatalog.js";
 import type { StructuredProduct } from "../types/product.js";
 
 let client: OpenAI | null = null;
@@ -87,12 +86,19 @@ async function generateGroundedReply(input: {
   const memory = getOrCreateCustomerMemory(input.callSid);
   setEmotionalTone(memory, detectEmotionalTone(input.userMessage));
 
+  if (input.products.length === 0) {
+    const notFound = shapeVoiceResponse(STORE_NOT_FOUND_MESSAGE, memory);
+    recordAssistantPhrase(memory, notFound);
+    return notFound;
+  }
+
   const system = `${buildPersonalityPrompt(memory)}
 
 You are answering a phone call about SureShot Books products.
 Use ONLY the product facts below. Never invent titles, prices, or availability.
+If no product facts are listed, say you could not find it in the store right now.
 
-Product facts: ${productFacts(input.products) || "none matched exactly"}
+Product facts: ${productFacts(input.products)}
 Situation: ${input.situationalHint}`;
 
   try {
@@ -126,7 +132,7 @@ function fallbackProductReply(input: {
   usedSimilarFallback: boolean;
 }): string {
   if (input.products.length === 0) {
-    return "I couldn't find that exact one, but I can suggest something close — what title or author are you thinking of?";
+    return STORE_NOT_FOUND_MESSAGE;
   }
   const top = input.products[0];
   if (input.usedSimilarFallback) {
@@ -137,6 +143,7 @@ function fallbackProductReply(input: {
 
 /**
  * Core product intelligence agent — title, ISBN, category browse, similar items.
+ * All product data is grounded in live Shopify GraphQL fetches.
  */
 export async function handleProductBrainTurn(input: ProductBrainInput): Promise<ProductBrainResult> {
   const memory = getOrCreateCustomerMemory(input.callSid);
@@ -156,7 +163,9 @@ export async function handleProductBrainTurn(input: ProductBrainInput): Promise<
     if (queryIsbn) recordIsbnQuery(memory, queryIsbn);
     const result = await searchProductByISBN(queryIsbn);
     products = result.products;
-    situationalHint = `ISBN lookup for ${queryIsbn}`;
+    situationalHint = products.length
+      ? `ISBN lookup for ${queryIsbn}`
+      : `ISBN ${queryIsbn} not found in live Shopify data`;
   } else {
     const category = isCategoryBrowse(speech);
     const query = category ? category.label : extractTitleQuery(speech) || speech;
@@ -171,39 +180,22 @@ export async function handleProductBrainTurn(input: ProductBrainInput): Promise<
     } else {
       const result = await searchProductByTitle(query);
       products = result.products;
+      usedSimilarFallback = Boolean(result.usedSemanticFallback);
     }
 
     situationalHint = category
       ? `Browsing ${category.label} category for inmates/families`
-      : `Title search for "${query}"`;
-
-    if (products.length === 0) {
-      const { products: catalog } = await getProductCatalog();
-      products = await semanticProductSearch(query, catalog, 3);
-      usedSimilarFallback = products.length > 0;
-    }
+      : products.length
+        ? `Title search for "${query}"`
+        : `Title "${query}" not found in live Shopify data`;
   }
 
-  if (products.length === 0 && memory.lastSearchedProducts.length > 0) {
-    const lastTitle = memory.lastSearchedProducts[0];
-    const retry = await searchProductByTitle(lastTitle);
-    products = retry.products;
-  }
-
-  if (products.length === 0) {
-    const broad = await searchProductByTitle("book");
-    if (broad.products.length > 0) {
-      const similar = await getSimilarProducts(broad.products[0].id);
-      products = similar.products;
-      usedSimilarFallback = true;
-      situationalHint = "No exact match — offering similar books";
-    }
-  } else if (products.every((p) => !p.variants.some((v) => v.inStock))) {
+  if (products.length > 0 && products.every((p) => !p.variants.some((v) => v.inStock))) {
     const similar = await getSimilarProducts(products[0].id);
     if (similar.products.length > 0) {
       products = [...products, ...similar.products].slice(0, 5);
       usedSimilarFallback = true;
-      situationalHint = "Requested item out of stock — similar alternatives added";
+      situationalHint = "Requested item out of stock — similar alternatives from live catalog";
     }
   }
 

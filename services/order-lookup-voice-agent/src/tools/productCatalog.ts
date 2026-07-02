@@ -1,3 +1,4 @@
+/** @deprecated Search uses live Shopify GraphQL per query (shopifyLiveSearch.ts). Kept for reference only. */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";

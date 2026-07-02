@@ -1,8 +1,16 @@
 import OpenAI from "openai";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { normalizeSearchText, scoreTitleMatch } from "../utils/productSearchNormalize.js";
+import {
+  normalizeSearchText,
+  rankLiveProducts,
+  scoreLiveProduct,
+  scoreTitleMatch,
+} from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
+
+const MIN_LIVE_RESULTS = 3;
+const SEMANTIC_SIMILARITY_THRESHOLD = 0.28;
 
 interface ProductVector {
   productId: string;
@@ -75,35 +83,74 @@ async function ensureVectorIndex(products: StructuredProduct[]): Promise<void> {
   logger.info("product_embedding_index_built", { count: vectorIndex.length });
 }
 
-/** Layer 3 — semantic similarity search via OpenAI embeddings (typos, partial titles). */
+/**
+ * Semantic rerank on LIVE Shopify products only — fallback when live fetch returns <3.
+ * Never invents products outside the live pool.
+ */
+export async function semanticRerankLiveProducts(
+  query: string,
+  liveProducts: StructuredProduct[],
+  topK = 5,
+): Promise<StructuredProduct[]> {
+  const q = query.trim();
+  if (!q || liveProducts.length === 0) return [];
+
+  try {
+    const texts = [q, ...liveProducts.map((p) => p.title)];
+    const vectors = await embedTexts(texts);
+    const queryVector = vectors[0];
+
+    const ranked = liveProducts
+      .map((product, index) => {
+        const similarity = cosineSimilarity(queryVector, vectors[index + 1]);
+        const semanticBonus = similarity >= SEMANTIC_SIMILARITY_THRESHOLD ? 1 : 0;
+        return {
+          product,
+          score: scoreLiveProduct(product, q) + semanticBonus,
+          similarity,
+        };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score || b.similarity - a.similarity)
+      .slice(0, topK);
+
+    return ranked.map((x) => x.product);
+  } catch (err) {
+    logger.warn("semantic_rerank_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return rankLiveProducts(liveProducts, q).slice(0, topK);
+  }
+}
+
+/** Apply semantic rerank only when Shopify live fetch returned fewer than 3 products. */
+export async function applySemanticFallbackIfNeeded(
+  query: string,
+  liveProducts: StructuredProduct[],
+): Promise<{ products: StructuredProduct[]; usedSemantic: boolean }> {
+  const ranked = rankLiveProducts(liveProducts, query);
+  if (liveProducts.length >= MIN_LIVE_RESULTS) {
+    return { products: ranked.slice(0, 5), usedSemantic: false };
+  }
+
+  if (liveProducts.length === 0) {
+    return { products: [], usedSemantic: false };
+  }
+
+  const reranked = await semanticRerankLiveProducts(query, liveProducts, 5);
+  return {
+    products: reranked.length > 0 ? reranked : ranked.slice(0, 5),
+    usedSemantic: true,
+  };
+}
+
+/** @deprecated Use semanticRerankLiveProducts on live Shopify results only. */
 export async function semanticProductSearch(
   query: string,
   catalog: StructuredProduct[],
   topK = 3,
 ): Promise<StructuredProduct[]> {
-  const q = query.trim();
-  if (!q || catalog.length === 0) return [];
-
-  try {
-    await ensureVectorIndex(catalog);
-    const [queryVector] = await embedTexts([q]);
-
-    const ranked = vectorIndex
-      .map((entry) => ({
-        productId: entry.productId,
-        score: cosineSimilarity(queryVector, entry.vector),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, topK);
-
-    const byId = new Map(catalog.map((p) => [p.id, p]));
-    return ranked.map((r) => byId.get(r.productId)).filter(Boolean) as StructuredProduct[];
-  } catch (err) {
-    logger.warn("semantic_search_fallback_to_token", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return tokenFallbackSearch(q, catalog, topK);
-  }
+  return semanticRerankLiveProducts(query, catalog, topK);
 }
 
 /** Token-scored fallback when embeddings unavailable. */

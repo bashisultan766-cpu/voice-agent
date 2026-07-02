@@ -121,3 +121,63 @@ export function tagOverlapScore(tagsA: string[], tagsB: string[]): number {
   const setB = new Set(tagsB.map((t) => normalizeSearchText(t)));
   return tagsA.reduce((sum, tag) => sum + (setB.has(normalizeSearchText(tag)) ? 1 : 0), 0);
 }
+
+/** Check if product matches normalized ISBN via metafields, SKU, or barcode. */
+export function productMatchesIsbn(product: { isbns?: string[]; variants: Array<{ sku?: string; barcode?: string }> }, isbn: string): boolean {
+  const target = normalizeIsbn(isbn);
+  for (const value of product.isbns ?? []) {
+    if (normalizeIsbn(value) === target) return true;
+  }
+  for (const variant of product.variants) {
+    if (variant.sku && normalizeIsbn(variant.sku) === target) return true;
+    if (variant.barcode && normalizeIsbn(variant.barcode) === target) return true;
+    if (variant.sku && normalizeIsbn(variant.sku).includes(target) && target.length >= 8) return true;
+    if (variant.barcode && normalizeIsbn(variant.barcode).includes(target) && target.length >= 8) return true;
+  }
+  return false;
+}
+
+/**
+ * Post-fetch ranking (Shopify live data only):
+ * +3 exact title / ISBN match
+ * +2 partial title match
+ * +1 weak token overlap
+ */
+export function scoreLiveProduct(
+  product: { title: string; isbns?: string[]; variants: Array<{ sku?: string; barcode?: string }> },
+  query: string,
+  queryIsbn?: string,
+): number {
+  let score = 0;
+  const normTitle = normalizeSearchText(product.title);
+  const normQuery = normalizeSearchText(query);
+
+  if (normQuery && normTitle === normQuery) score += 3;
+  else if (normQuery && normTitle.includes(normQuery)) score += 3;
+  else {
+    const titleScore = scoreTitleMatch(product.title, query);
+    if (titleScore >= 3) score += 2;
+    else if (titleScore >= 1) score += 1;
+  }
+
+  if (queryIsbn) {
+    for (const variant of isbnLookupVariants(queryIsbn)) {
+      if (productMatchesIsbn(product, variant)) score += 3;
+    }
+  }
+
+  return score;
+}
+
+export function rankLiveProducts<T extends { title: string; isbns?: string[]; variants: Array<{ sku?: string; barcode?: string }> }>(
+  products: T[],
+  query: string,
+  queryIsbn?: string,
+): T[] {
+  return [...products]
+    .map((p) => ({ p, score: scoreLiveProduct(p, query, queryIsbn) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.p)
+    .slice(0, 5);
+}
