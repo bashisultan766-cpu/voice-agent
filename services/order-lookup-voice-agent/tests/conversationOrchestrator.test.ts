@@ -8,6 +8,7 @@ import { clearAllCallMemories } from "../src/memory/callMemoryStore.js";
 import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
 import type { StructuredProduct } from "../src/types/product.js";
 import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
+import { resetToolExecutionGuard } from "../src/guards/toolExecutionGuard.js";
 import * as shopifyProductTools from "../src/tools/shopifyProductTools.js";
 
 const mockCatalog: StructuredProduct[] = [
@@ -78,6 +79,7 @@ describe("conversationOrchestrator flows", () => {
   beforeEach(() => {
     clearAllCallMemories();
     resetShopifyScopeCheck();
+    resetToolExecutionGuard();
     vi.unstubAllGlobals();
     mockLiveShopifyFetch(mockCatalog);
   });
@@ -109,9 +111,21 @@ describe("conversationOrchestrator flows", () => {
     expect(titleSpy).not.toHaveBeenCalled();
   });
 
-  it("Phase 2: searches product on Harry Potter title", async () => {
+  it('Phase 1: "Harry Potter book" asks before any Shopify call', async () => {
+    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+
     const session = createCallSession("CA_HP", "+1", "+2");
     const speech = await collectSpeech(session, "I want Harry Potter book");
+
+    expect(speech).toMatch(/ISBN|title|recommend/i);
+    expect(session.awaitingInput).toBe("product_slot");
+    expect(titleSpy).not.toHaveBeenCalled();
+  });
+
+  it("Phase 2: searches Harry Potter after slot confirmation", async () => {
+    const session = createCallSession("CA_HP2", "+1", "+2");
+    await collectSpeech(session, "I want a book");
+    const speech = await collectSpeech(session, "Harry Potter");
     expect(speech).toMatch(/Harry Potter|Azkaban|found/i);
     expect(speech).not.toMatch(/let me search|I will check/i);
   });

@@ -17,6 +17,7 @@ import {
 import type { StructuredProduct } from "../src/types/product.js";
 import { mockLiveShopifyFetch, mockShopifyMissingProductScope } from "./helpers/mockLiveShopify.js";
 import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
+import { enableToolExecutionForTests, resetToolExecutionGuard } from "../src/guards/toolExecutionGuard.js";
 
 const mockCatalog: StructuredProduct[] = [
   {
@@ -95,11 +96,15 @@ describe("shopifyProductTools live search", () => {
   beforeEach(() => {
     clearProductCache();
     resetShopifyScopeCheck();
+    resetToolExecutionGuard();
+    enableToolExecutionForTests(true);
     vi.unstubAllGlobals();
     mockLiveShopifyFetch(mockCatalog);
   });
 
   afterEach(() => {
+    enableToolExecutionForTests(false);
+    resetToolExecutionGuard();
     vi.unstubAllGlobals();
   });
 

@@ -5,6 +5,7 @@
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
+import { runInPhase2, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { orderLookupTool } from "../tools/orderLookupTool.js";
 import {
   classifyFollowUpIntent,
@@ -28,7 +29,7 @@ import {
 } from "../memory/callMemoryStore.js";
 import { softFallback } from "./conversationBrainAgent.js";
 import { formatProductResults } from "./productResponseFormatter.js";
-import { extractIsbnFromSpeech } from "../tools/shopifyProductTools.js";
+import { extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import {
   isPhase2Ready,
   mergeProductSlots,
@@ -167,6 +168,7 @@ export async function* runOrchestratorTurn(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  setToolExecutionPhase(session.callSid, "PHASE_1");
   const text = (callerText ?? "").trim();
   const memory = getOrCreateMemory(session.callSid);
   appendUserMessage(memory, text);
@@ -238,7 +240,7 @@ async function* phase1ProductFlow(
   const incoming = parseProductSlotsFromSpeech(speech);
   session.productSlots = mergeProductSlots(session.productSlots, incoming);
 
-  if (isPhase2Ready(session.productSlots)) {
+  if (isPhase2Ready(session.productSlots, session)) {
     yield* phase2ProductFlow(session);
     return;
   }
@@ -268,7 +270,7 @@ async function* handleAwaitingProductSlot(
   const incoming = parseProductSlotsFromSpeech(speech);
   session.productSlots = mergeProductSlots(session.productSlots, incoming);
 
-  if (isPhase2Ready(session.productSlots)) {
+  if (isPhase2Ready(session.productSlots, session)) {
     session.awaitingInput = null;
     yield* phase2ProductFlow(session);
     return;
@@ -304,7 +306,9 @@ async function* phase2ProductFlow(session: CallSession): AsyncGenerator<AgentStr
     wantsRecommendations: Boolean(slots.wantsRecommendations),
   });
 
-  const result = await executeProductSearch(slots, session.callSid, memory.lastProductId);
+  const result = await runInPhase2(session.callSid, () =>
+    executeProductSearch(slots, session.callSid, memory.lastProductId),
+  );
   const speech = formatProductResults(
     result.products,
     result.usedAlternatives,
@@ -432,7 +436,7 @@ async function* runOrderLookup(
 
   yield chunkEvent(planInstantFiller());
 
-  const lookupPromise = orderLookupTool(orderNumber);
+  const lookupPromise = runInPhase2(session.callSid, () => orderLookupTool(orderNumber));
   void preAnalyzeOrderIntent(orderNumber);
   const lookup = await lookupPromise;
   const lookupMs = Date.now() - started;

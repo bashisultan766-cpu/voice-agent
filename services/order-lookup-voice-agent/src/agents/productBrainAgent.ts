@@ -14,6 +14,8 @@ import {
   detectEmotionalTone,
   shapeVoiceResponse,
 } from "./personalityEngine.js";
+import { runInPhase2 } from "../guards/toolExecutionGuard.js";
+import { smoothForVoice } from "../services/voiceSmoothingEngine.js";
 import {
   extractIsbnFromSpeech,
   getSimilarProducts,
@@ -22,7 +24,6 @@ import {
   searchProductByTitle,
   STORE_NOT_FOUND_MESSAGE,
 } from "../tools/shopifyProductTools.js";
-import { smoothForVoice } from "../services/voiceSmoothingEngine.js";
 import type { StructuredProduct } from "../types/product.js";
 
 let client: OpenAI | null = null;
@@ -147,6 +148,10 @@ function fallbackProductReply(input: {
  * All product data is grounded in live Shopify GraphQL fetches.
  */
 export async function handleProductBrainTurn(input: ProductBrainInput): Promise<ProductBrainResult> {
+  return runInPhase2(input.callSid, () => handleProductBrainTurnCore(input));
+}
+
+async function handleProductBrainTurnCore(input: ProductBrainInput): Promise<ProductBrainResult> {
   const memory = getOrCreateCustomerMemory(input.callSid);
   const speech = input.userMessage.trim();
 

@@ -1,8 +1,9 @@
 /**
  * Phase 2 — Tool Execution Engine (data only, no user-facing speech).
+ * MUST only be invoked from conversationOrchestrator inside runInPhase2.
  */
 import { logger } from "../utils/logger.js";
-import {
+import { assertToolExecutionAllowed } from "../guards/toolExecutionGuard.js";import {
   getSimilarProducts,
   searchProductByCategory,
   searchProductByISBN,
@@ -23,6 +24,7 @@ export async function executeProductSearch(
   callSid: string,
   lastProductId?: string,
 ): Promise<ToolProductResult> {
+  assertToolExecutionAllowed("executeProductSearch");
   const started = Date.now();
 
   if (slots.wantsRecommendations) {

@@ -1,8 +1,8 @@
 /**
  * Phase 1 slot parsing — conversation only, no Shopify calls.
  */
-import { extractIsbnFromSpeech } from "../tools/shopifyProductTools.js";
-import type { ProductSearchSlots } from "../types/order.js";
+import { extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
+import type { CallSession, ProductSearchSlots } from "../types/order.js";
 
 const GENERIC_TITLE_RE =
   /^(a |the )?(book|books|magazine|magazines|newspaper|newspapers|something|anything)$/i;
@@ -62,8 +62,14 @@ export function mergeProductSlots(
   };
 }
 
-export function isPhase2Ready(slots: ProductSearchSlots): boolean {
-  return Boolean(slots.isbn || slots.title || slots.wantsRecommendations);
+export function isPhase2Ready(
+  slots: ProductSearchSlots,
+  session?: Pick<CallSession, "awaitingInput">,
+): boolean {
+  if (slots.isbn) return true;
+  if (slots.wantsRecommendations) return true;
+  if (slots.title && session?.awaitingInput === "product_slot") return true;
+  return false;
 }
 
 export type ProductSlotPromptKind = "isbn" | "title" | "both" | "category";
