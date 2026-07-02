@@ -20,7 +20,6 @@ import {
 import {
   ensureShopifyProductScopes,
   resetShopifyScopeCheck,
-  SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR,
 } from "./shopifyScopeCheck.js";
 import type {
   InventoryStatus,
@@ -111,8 +110,6 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
       usedSemanticFallback: usedSemantic,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message === SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR) throw err;
     logger.error("title_search_failed", {
       query: q,
       error: err instanceof Error ? err.message : String(err),
@@ -162,8 +159,6 @@ export async function searchProductByISBN(isbn: string): Promise<ProductSearchRe
       message: products.length === 0 ? STORE_NOT_FOUND_MESSAGE : undefined,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message === SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR) throw err;
     logger.error("isbn_search_failed", {
       isbn: primary,
       error: err instanceof Error ? err.message : String(err),

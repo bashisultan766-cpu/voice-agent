@@ -17,10 +17,7 @@ import {
 } from "../src/tools/shopifyProductTools.js";
 import type { StructuredProduct } from "../src/types/product.js";
 import { mockLiveShopifyFetch, mockShopifyMissingProductScope } from "./helpers/mockLiveShopify.js";
-import {
-  SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR,
-  resetShopifyScopeCheck,
-} from "../src/tools/shopifyScopeCheck.js";
+import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
 
 const mockCatalog: StructuredProduct[] = [
   {
@@ -151,14 +148,14 @@ describe("shopifyProductTools live search", () => {
     expect(result.products.some((p) => p.id !== "1")).toBe(true);
   });
 
-  it("throws when Shopify token is missing read_products scope", async () => {
+  it("returns api_error when Shopify token is missing read_products scope", async () => {
     clearProductCache();
     resetShopifyScopeCheck();
     vi.unstubAllGlobals();
     mockShopifyMissingProductScope();
 
-    await expect(searchProductByISBN("9783161484100")).rejects.toThrow(
-      SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR,
-    );
+    const result = await searchProductByISBN("9783161484100");
+    expect(result.status).toBe("api_error");
+    expect(result.products).toHaveLength(0);
   });
 });

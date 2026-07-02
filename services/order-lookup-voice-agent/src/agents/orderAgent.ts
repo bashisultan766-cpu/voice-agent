@@ -103,12 +103,23 @@ async function* streamOrderNumberCapture(
 
   if (intent.intent === "product_search" || intent.intent === "isbn_query") {
     session.phase = "awaiting_order_number";
-    const productResult = await handleProductBrainTurn({
-      callSid: session.callSid,
-      userMessage: callerText,
-      intent: intent.intent,
-    });
-    yield chunkEvent(productResult.speech, "summary");
+    try {
+      const productResult = await handleProductBrainTurn({
+        callSid: session.callSid,
+        userMessage: callerText,
+        intent: intent.intent,
+      });
+      yield chunkEvent(productResult.speech, "summary");
+    } catch (err) {
+      logger.error("product_brain_turn_failed", {
+        callSid: session.callSid.slice(0, 8),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      yield chunkEvent(
+        "Sorry, I'm having trouble looking up products right now. You can try your order number instead.",
+        "summary",
+      );
+    }
     yield doneEvent(session.phase);
     return;
   }

@@ -6,6 +6,9 @@ import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
 
+const RELAY_ERROR_SPEECH =
+  "Sorry, we're having a brief technical issue. Please try again in a moment.";
+
 type SendFn = (msg: {
   type: "text" | "end";
   token?: string;
@@ -27,66 +30,31 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
 
   socket.on("message", (raw) => {
     void (async () => {
-      let message: TwilioRelayInboundMessage;
       try {
-        message = JSON.parse(raw.toString()) as TwilioRelayInboundMessage;
-      } catch {
-        logger.warn("relay_invalid_json");
-        return;
-      }
-
-      switch (message.type) {
-        case "setup":
-          session = createCallSession(
-            message.callSid ?? "unknown",
-            message.from ?? message.customParameters?.from ?? "unknown",
-            message.to ?? message.customParameters?.to ?? "unknown",
-          );
-          session.phase = "awaiting_order_number";
-          logger.info("relay_setup", { callSid: session.callSid.slice(0, 8) });
-
-          const routerSpeech = (message.customParameters?.routerSpeech ?? "").trim();
-          if (routerSpeech) {
-            currentTurn = runStreamingTurn(session, routerSpeech, send, () => turnAbort);
-            await currentTurn;
-            currentTurn = null;
-          }
-          break;
-
-        case "prompt":
-          if (!session) return;
-          // Only act on final STT — ignore partial transcripts (caller mid-sentence pause).
-          if (!message.last) return;
-
-          turnAbort?.abort();
-          currentTurn = runStreamingTurn(session, message.voicePrompt ?? "", send, (controller) => {
-            turnAbort = controller;
-          });
-          await currentTurn;
-          currentTurn = null;
-          break;
-
-        case "interrupt":
-          logger.debug("relay_interrupt", { callSid: session?.callSid?.slice(0, 8) });
-          turnAbort?.abort();
-          break;
-
-        case "dtmf":
-          if (!session || !message.digit) return;
-          turnAbort?.abort();
-          currentTurn = runStreamingTurn(session, message.digit, send, (controller) => {
-            turnAbort = controller;
-          });
-          await currentTurn;
-          currentTurn = null;
-          break;
-
-        case "error":
-          logger.error("relay_error", { description: message.description });
-          break;
-
-        default:
-          logger.debug("relay_unknown_type", { type: (message as { type?: string }).type });
+        await handleRelayMessage(raw, {
+          getSession: () => session,
+          setSession: (s) => {
+            session = s;
+          },
+          getCurrentTurn: () => currentTurn,
+          setCurrentTurn: (t) => {
+            currentTurn = t;
+          },
+          getTurnAbort: () => turnAbort,
+          setTurnAbort: (a) => {
+            turnAbort = a;
+          },
+          send,
+          isClosed: () => closed,
+        });
+      } catch (err) {
+        logger.error("relay_message_handler_failed", {
+          callSid: session?.callSid?.slice(0, 8),
+          error: err instanceof Error ? err.message : String(err),
+        });
+        if (!closed) {
+          await send({ type: "text", token: RELAY_ERROR_SPEECH, last: true });
+        }
       }
     })();
   });
@@ -156,6 +124,7 @@ async function runStreamingTurn(
       error: err instanceof Error ? err.message : String(err),
     });
     if (!abort.signal.aborted) {
+      await send({ type: "text", token: RELAY_ERROR_SPEECH, last: false });
       await finalizeRelayStream(send);
     }
   }
@@ -163,5 +132,88 @@ async function runStreamingTurn(
   if (endCall && !abort.signal.aborted) {
     await send({ type: "end", handoffData: JSON.stringify({ reason: "caller_done" }) });
     session.phase = "ended";
+  }
+}
+
+interface RelayMessageContext {
+  getSession: () => CallSession | null;
+  setSession: (session: CallSession) => void;
+  getCurrentTurn: () => Promise<void> | null;
+  setCurrentTurn: (turn: Promise<void> | null) => void;
+  getTurnAbort: () => AbortController | null;
+  setTurnAbort: (abort: AbortController | null) => void;
+  send: SendFn;
+  isClosed: () => boolean;
+}
+
+async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageContext): Promise<void> {
+  let message: TwilioRelayInboundMessage;
+  try {
+    message = JSON.parse(raw.toString()) as TwilioRelayInboundMessage;
+  } catch {
+    logger.warn("relay_invalid_json");
+    return;
+  }
+
+  switch (message.type) {
+    case "setup": {
+      const session = createCallSession(
+        message.callSid ?? "unknown",
+        message.from ?? message.customParameters?.from ?? "unknown",
+        message.to ?? message.customParameters?.to ?? "unknown",
+      );
+      session.phase = "awaiting_order_number";
+      ctx.setSession(session);
+      logger.info("relay_setup", { callSid: session.callSid.slice(0, 8) });
+
+      const routerSpeech = (message.customParameters?.routerSpeech ?? "").trim();
+      if (routerSpeech) {
+        const turn = runStreamingTurn(session, routerSpeech, ctx.send, () => ctx.getTurnAbort());
+        ctx.setCurrentTurn(turn);
+        await turn;
+        ctx.setCurrentTurn(null);
+      }
+      break;
+    }
+
+    case "prompt": {
+      const session = ctx.getSession();
+      if (!session) return;
+      if (!message.last) return;
+
+      ctx.getTurnAbort()?.abort();
+      const turn = runStreamingTurn(session, message.voicePrompt ?? "", ctx.send, (controller) => {
+        ctx.setTurnAbort(controller);
+      });
+      ctx.setCurrentTurn(turn);
+      await turn;
+      ctx.setCurrentTurn(null);
+      break;
+    }
+
+    case "interrupt":
+      logger.debug("relay_interrupt", { callSid: ctx.getSession()?.callSid?.slice(0, 8) });
+      ctx.getTurnAbort()?.abort();
+      break;
+
+    case "dtmf": {
+      const session = ctx.getSession();
+      if (!session || !message.digit) return;
+      ctx.getTurnAbort()?.abort();
+      const turn = runStreamingTurn(session, message.digit, ctx.send, (controller) => {
+        ctx.setTurnAbort(controller);
+      });
+      ctx.setCurrentTurn(turn);
+      await turn;
+      ctx.setCurrentTurn(null);
+      break;
+    }
+
+    case "error":
+      logger.error("relay_error", { description: message.description });
+      break;
+
+    default:
+      logger.debug("relay_unknown_type", { type: (message as { type?: string }).type });
   }
 }

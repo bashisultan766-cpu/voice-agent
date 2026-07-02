@@ -38,13 +38,24 @@ const envSchema = z.object({
   VOICE_CHUNK_MAX_PAUSE_MS: z.coerce.number().default(120),
 });
 
+function trimStrings<T extends Record<string, unknown>>(obj: T): T {
+  const out = { ...obj };
+  for (const key of Object.keys(out)) {
+    const val = out[key];
+    if (typeof val === "string") {
+      (out as Record<string, unknown>)[key] = val.trim();
+    }
+  }
+  return out;
+}
+
 export type AppConfig = z.infer<typeof envSchema>;
 
 let cached: AppConfig | null = null;
 
 export function getConfig(): AppConfig {
   if (!cached) {
-    const parsed = envSchema.safeParse(process.env);
+    const parsed = envSchema.safeParse(trimStrings(process.env as Record<string, unknown>));
     if (!parsed.success) {
       const missing = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
       throw new Error(`Invalid environment configuration: ${missing}`);

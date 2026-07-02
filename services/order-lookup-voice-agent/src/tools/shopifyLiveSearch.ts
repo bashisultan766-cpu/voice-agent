@@ -29,10 +29,19 @@ export interface GqlProductNode {
       };
     }>;
   };
-  metafields: {
+  metafields?: {
     edges: Array<{ node: GqlMetafieldNode }>;
   };
 }
+
+const VARIANT_FIELDS = `
+  id
+  sku
+  barcode
+  title
+  price
+  inventoryQuantity
+`;
 
 const PRODUCT_NODE_FIELDS = `
   id
@@ -43,14 +52,7 @@ const PRODUCT_NODE_FIELDS = `
   productType
   variants(first: 10) {
     edges {
-      node {
-        id
-        sku
-        barcode
-        title
-        price
-        inventoryQuantity
-      }
+      node { ${VARIANT_FIELDS} }
     }
   }
   metafields(first: 10) {
@@ -64,7 +66,20 @@ const PRODUCT_NODE_FIELDS = `
   }
 `;
 
-/** Authoritative Shopify product search query — SKU, barcode, metafields, title. */
+const PRODUCT_NODE_FIELDS_BASIC = `
+  id
+  title
+  handle
+  tags
+  vendor
+  productType
+  variants(first: 10) {
+    edges {
+      node { ${VARIANT_FIELDS} }
+    }
+  }
+`;
+
 const PRODUCT_SEARCH_QUERY = `query ProductSearch($query: String!) {
   products(first: 20, query: $query) {
     edges {
@@ -73,8 +88,20 @@ const PRODUCT_SEARCH_QUERY = `query ProductSearch($query: String!) {
   }
 }`;
 
+const PRODUCT_SEARCH_QUERY_BASIC = `query ProductSearch($query: String!) {
+  products(first: 20, query: $query) {
+    edges {
+      node { ${PRODUCT_NODE_FIELDS_BASIC} }
+    }
+  }
+}`;
+
 const GET_PRODUCT_QUERY = `query LiveGetProduct($id: ID!) {
   product(id: $id) { ${PRODUCT_NODE_FIELDS} }
+}`;
+
+const GET_PRODUCT_QUERY_BASIC = `query LiveGetProduct($id: ID!) {
+  product(id: $id) { ${PRODUCT_NODE_FIELDS_BASIC} }
 }`;
 
 const SEARCH_VARIANTS_QUERY = `query LiveSearchVariants($query: String!) {
@@ -90,10 +117,28 @@ const SEARCH_VARIANTS_QUERY = `query LiveSearchVariants($query: String!) {
   }
 }`;
 
+const SEARCH_VARIANTS_QUERY_BASIC = `query LiveSearchVariants($query: String!) {
+  productVariants(first: 10, query: $query) {
+    edges {
+      node {
+        id
+        sku
+        barcode
+        product { ${PRODUCT_NODE_FIELDS_BASIC} }
+      }
+    }
+  }
+}`;
+
 function shopifyBaseUrl(): string {
   const cfg = getConfig();
   const domain = cfg.SHOPIFY_SHOP_DOMAIN.replace(/^https?:\/\//, "").replace(/\/$/, "");
   return `https://${domain}/admin/api/${cfg.SHOPIFY_API_VERSION}`;
+}
+
+function isMetafieldGraphqlError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /metafield/i.test(message);
 }
 
 export async function shopifyGraphql<T>(
@@ -184,6 +229,18 @@ function dedupeProducts(products: StructuredProduct[]): StructuredProduct[] {
   return out;
 }
 
+async function graphqlProductsSearch(
+  shopifyQuery: string,
+  useMetafields: boolean,
+): Promise<StructuredProduct[]> {
+  const gql = useMetafields ? PRODUCT_SEARCH_QUERY : PRODUCT_SEARCH_QUERY_BASIC;
+  const data = await shopifyGraphql<{
+    products: { edges: Array<{ node: GqlProductNode }> };
+  }>(gql, { query: shopifyQuery });
+
+  return dedupeProducts((data.products?.edges ?? []).map(({ node }) => mapGqlProduct(node)));
+}
+
 /**
  * Single authoritative Shopify product search.
  * Verifies read_products scope, then runs ProductSearch GraphQL.
@@ -194,37 +251,66 @@ export async function searchShopifyProducts(shopifyQuery: string): Promise<Struc
 
   await ensureShopifyProductScopes();
 
-  const data = await shopifyGraphql<{
-    products: { edges: Array<{ node: GqlProductNode }> };
-  }>(PRODUCT_SEARCH_QUERY, { query: q });
-
-  return dedupeProducts((data.products?.edges ?? []).map(({ node }) => mapGqlProduct(node)));
+  try {
+    return await graphqlProductsSearch(q, true);
+  } catch (err) {
+    if (!isMetafieldGraphqlError(err)) throw err;
+    logger.warn("shopify_product_search_metafield_fallback", {
+      query: q,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return graphqlProductsSearch(q, false);
+  }
 }
 
 /** Live variant search — supplemental SKU / barcode path. */
 export async function liveSearchVariants(shopifyQuery: string): Promise<StructuredProduct[]> {
   await ensureShopifyProductScopes();
 
-  const data = await shopifyGraphql<{
-    productVariants: {
-      edges: Array<{ node: { product: GqlProductNode } }>;
-    };
-  }>(SEARCH_VARIANTS_QUERY, { query: shopifyQuery });
+  try {
+    const data = await shopifyGraphql<{
+      productVariants: {
+        edges: Array<{ node: { product: GqlProductNode } }>;
+      };
+    }>(SEARCH_VARIANTS_QUERY, { query: shopifyQuery });
 
-  const products = (data.productVariants?.edges ?? [])
-    .map(({ node }) => node.product)
-    .filter(Boolean)
-    .map((node) => mapGqlProduct(node));
+    const products = (data.productVariants?.edges ?? [])
+      .map(({ node }) => node.product)
+      .filter(Boolean)
+      .map((node) => mapGqlProduct(node));
 
-  return dedupeProducts(products);
+    return dedupeProducts(products);
+  } catch (err) {
+    if (!isMetafieldGraphqlError(err)) throw err;
+
+    const data = await shopifyGraphql<{
+      productVariants: {
+        edges: Array<{ node: { product: GqlProductNode } }>;
+      };
+    }>(SEARCH_VARIANTS_QUERY_BASIC, { query: shopifyQuery });
+
+    const products = (data.productVariants?.edges ?? [])
+      .map(({ node }) => node.product)
+      .filter(Boolean)
+      .map((node) => mapGqlProduct(node));
+
+    return dedupeProducts(products);
+  }
 }
 
 export async function liveFetchProductById(productId: string): Promise<StructuredProduct | null> {
   await ensureShopifyProductScopes();
 
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
-  const data = await shopifyGraphql<{ product: GqlProductNode | null }>(GET_PRODUCT_QUERY, { id: gid });
-  return data.product ? mapGqlProduct(data.product) : null;
+
+  try {
+    const data = await shopifyGraphql<{ product: GqlProductNode | null }>(GET_PRODUCT_QUERY, { id: gid });
+    return data.product ? mapGqlProduct(data.product) : null;
+  } catch (err) {
+    if (!isMetafieldGraphqlError(err)) throw err;
+    const data = await shopifyGraphql<{ product: GqlProductNode | null }>(GET_PRODUCT_QUERY_BASIC, { id: gid });
+    return data.product ? mapGqlProduct(data.product) : null;
+  }
 }
 
 /** Run multiple live Shopify queries in parallel and merge (no cache). */
@@ -239,11 +325,9 @@ export async function liveSearchMulti(queries: string[]): Promise<StructuredProd
         ]);
         return [...byProduct, ...byVariant];
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message === SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR) throw err;
         logger.warn("shopify_live_query_failed", {
           query: q,
-          error: message,
+          error: err instanceof Error ? err.message : String(err),
         });
         return [];
       }
@@ -254,3 +338,5 @@ export async function liveSearchMulti(queries: string[]): Promise<StructuredProd
 
 /** @deprecated Use searchShopifyProducts */
 export const liveSearchProducts = searchShopifyProducts;
+
+export { SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR };

@@ -78,4 +78,10 @@ export function startServer() {
   return server;
 }
 
+process.on("unhandledRejection", (reason) => {
+  logger.error("unhandled_rejection", {
+    error: reason instanceof Error ? reason.message : String(reason),
+  });
+});
+
 startServer();
