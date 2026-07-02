@@ -107,6 +107,7 @@ export function buildConversationRelayVoiceAttrs(): Record<string, string> {
   if (cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs") {
     attrs.ttsProvider = "ElevenLabs";
     attrs.voice = conversationRelayVoice();
+    attrs.elevenlabsTextNormalization = cfg.ELEVENLABS_TEXT_NORMALIZATION;
   } else {
     attrs.voice = conversationRelayVoice();
   }

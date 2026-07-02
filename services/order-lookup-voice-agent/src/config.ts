@@ -39,6 +39,8 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
+  /** Twilio ConversationRelay — improves pronunciation (slight latency tradeoff). */
+  ELEVENLABS_TEXT_NORMALIZATION: z.enum(["on", "off", "auto"]).default("on"),
   VOICE_LANGUAGE: z.string().default("en-US"),
   VOICE_TTS_PROVIDER: z.string().default("ElevenLabs"),
 
