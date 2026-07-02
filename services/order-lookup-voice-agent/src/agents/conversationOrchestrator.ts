@@ -31,11 +31,12 @@ import {
 } from "../memory/callMemoryStore.js";
 import {
   applyDecisionToCallState,
+  atomicMergeTurnState,
   finalizeAfterToolExecution,
   getOrCreateCallState,
-  isSlotAnswerComplete,
-  mergeTurnIntoCallState,
+  isProductToolAction,
   saveCallState,
+  validateProductSlotState,
 } from "../memory/callStateStore.js";
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { softFallback } from "./conversationBrainAgent.js";
@@ -230,48 +231,60 @@ async function* runGateControlledTurn(
   text: string,
   memory: ReturnType<typeof getOrCreateMemory>,
 ): AsyncGenerator<AgentStreamEvent> {
-  const callState = getOrCreateCallState(session.callSid);
-  const wasAwaiting = callState.awaitingInput;
+  const analysis = await analyzeBrainTurn(text, session, getOrCreateCallState(session.callSid));
 
-  const analysis = await analyzeBrainTurn(text, session, callState);
-  const mergedState = mergeTurnIntoCallState(callState, {
+  const turn = atomicMergeTurnState(session.callSid, {
     intent: analysis.intent,
     incomingSlots: analysis.slots,
   });
-  const slotsCollected = isSlotAnswerComplete(wasAwaiting, mergedState.slots);
 
-  const decision = decideToolExecution(
+  const rawDecision = decideToolExecution(
     buildToolDecisionState({
-      intent: mergedState.intent,
-      phase: mergedState.phase,
-      awaitingInput: mergedState.awaitingInput,
-      slots: mergedState.slots,
-      slotsCollected,
+      intent: turn.state.intent,
+      phase: turn.state.phase,
+      awaitingInput: turn.state.awaitingInput,
+      slots: turn.state.slots,
+      slotsCollected: turn.slotsCollected,
       orderNumber: analysis.orderNumber,
     }),
   );
 
-  let nextState = applyDecisionToCallState(mergedState, decision);
+  const productToolRequested = isProductToolAction(rawDecision);
+  const toolAllowed = !productToolRequested || turn.validation.ready;
+  let decision = rawDecision;
+  if (productToolRequested && !turn.validation.ready) {
+    decision = "ASK_QUESTION";
+  }
+
+  console.log("STATE BEFORE TOOL:", turn.state);
+  console.log("VALIDATION RESULT:", turn.validation);
+  console.log("TOOL EXECUTION ALLOWED:", toolAllowed);
+
+  let nextState = applyDecisionToCallState(turn.state, decision);
   saveCallState(nextState);
   syncSessionFromCallState(session, nextState);
   setToolExecutionPhase(session.callSid, nextState.phase);
-  memory.inferredIntent = mergedState.intent;
+  memory.inferredIntent = turn.state.intent;
 
   logger.info("tool_decision_gate", {
     callSid: session.callSid.slice(0, 8),
-    intent: mergedState.intent,
+    intent: turn.state.intent,
     decision,
     phase: nextState.phase,
     awaitingInput: nextState.awaitingInput,
-    wasAwaiting,
-    slotsCollected,
+    wasAwaiting: turn.wasAwaiting,
+    slotsCollected: turn.slotsCollected,
+    validationReady: turn.validation.ready,
+    validationReason: turn.validation.reason,
+    rawDecision,
+    toolExecutionAllowed: toolAllowed,
     persistedIsbn: Boolean(nextState.slots.isbn),
     persistedTitle: Boolean(nextState.slots.title),
     source: analysis.source,
     confidence: analysis.confidence,
   });
 
-  yield* executeGateDecision(session, analysis, decision, nextState);
+  yield* executeGateDecision(session, analysis, decision, nextState, turn.slotsCollected);
 }
 
 async function* executeGateDecision(
@@ -279,7 +292,16 @@ async function* executeGateDecision(
   analysis: Awaited<ReturnType<typeof analyzeBrainTurn>>,
   decision: ToolAction,
   callState: ReturnType<typeof getOrCreateCallState>,
+  slotsCollected: boolean,
 ): AsyncGenerator<AgentStreamEvent> {
+  if (isProductToolAction(decision)) {
+    const validation = validateProductSlotState(callState, slotsCollected);
+    if (!validation.ready) {
+      yield* handleGateAskQuestion(session, analysis);
+      return;
+    }
+  }
+
   switch (decision) {
     case "searchProductByISBN":
       session.productSlots = { isbn: callState.slots.isbn };

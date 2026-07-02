@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   applyDecisionToCallState,
+  atomicMergeTurnState,
   clearAllCallStates,
   finalizeAfterToolExecution,
   getOrCreateCallState,
   isSlotAnswerComplete,
   mergeTurnIntoCallState,
   saveCallState,
+  validateProductSlotState,
 } from "../src/memory/callStateStore.js";
 
 describe("callStateStore", () => {
@@ -75,5 +77,52 @@ describe("callStateStore", () => {
     expect(reset.slots).toEqual({});
     expect(reset.awaitingInput).toBe("none");
     expect(reset.intent).toBe("unknown");
+  });
+
+  it("validateProductSlotState blocks missing slots", () => {
+    const state = getOrCreateCallState("CA_VAL");
+    state.intent = "product";
+    saveCallState(state);
+
+    const result = validateProductSlotState(getOrCreateCallState("CA_VAL"), false);
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("missing_slots");
+  });
+
+  it("validateProductSlotState allows ISBN immediately", () => {
+    const state = getOrCreateCallState("CA_ISBN");
+    saveCallState(
+      mergeTurnIntoCallState(state, {
+        intent: "product",
+        incomingSlots: { isbn: "9783161484100" },
+      }),
+    );
+
+    const result = validateProductSlotState(getOrCreateCallState("CA_ISBN"), false);
+    expect(result.ready).toBe(true);
+  });
+
+  it("validateProductSlotState blocks title without prior collection", () => {
+    const state = getOrCreateCallState("CA_TITLE");
+    saveCallState(
+      mergeTurnIntoCallState(
+        { ...state, intent: "product" },
+        { intent: "product", incomingSlots: { title: "Harry Potter" } },
+      ),
+    );
+
+    const result = validateProductSlotState(getOrCreateCallState("CA_TITLE"), false);
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("title_needs_confirmation");
+  });
+
+  it("atomicMergeTurnState persists before validation", () => {
+    const turn = atomicMergeTurnState("CA_ATOMIC", {
+      intent: "product",
+      incomingSlots: { isbn: "9783161484100" },
+    });
+
+    expect(turn.validation.ready).toBe(true);
+    expect(getOrCreateCallState("CA_ATOMIC").slots.isbn).toBe("9783161484100");
   });
 });

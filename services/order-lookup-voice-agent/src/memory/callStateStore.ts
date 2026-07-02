@@ -66,6 +66,87 @@ export function saveCallState(state: CallState): void {
   states.set(state.callSid, state);
 }
 
+export interface ProductSlotValidation {
+  ready: boolean;
+  reason?: "missing_slots" | "title_needs_confirmation" | "recommendations_needs_confirmation";
+}
+
+export interface AtomicTurnResult {
+  state: CallState;
+  wasAwaiting: CallStateAwaitingInput;
+  slotsCollected: boolean;
+  validation: ProductSlotValidation;
+}
+
+/**
+ * Validates product slots before any Shopify tool may run.
+ * ISBN may proceed immediately; title/recommendations require prior slot collection.
+ */
+export function validateProductSlotState(
+  state: CallState,
+  slotsCollected: boolean,
+): ProductSlotValidation {
+  if (state.intent !== "product") {
+    return { ready: true };
+  }
+
+  const hasIsbn = Boolean(state.slots.isbn);
+  const hasTitle = Boolean(state.slots.title);
+  const wantsRec = Boolean(state.slots.wantsRecommendations);
+
+  if (!hasIsbn && !hasTitle && !wantsRec) {
+    return { ready: false, reason: "missing_slots" };
+  }
+
+  if (hasIsbn) {
+    return { ready: true };
+  }
+
+  if (hasTitle && !slotsCollected) {
+    return { ready: false, reason: "title_needs_confirmation" };
+  }
+
+  if (wantsRec && !slotsCollected) {
+    return { ready: false, reason: "recommendations_needs_confirmation" };
+  }
+
+  return { ready: true };
+}
+
+export function isProductToolAction(decision: string): boolean {
+  return (
+    decision === "searchProductByISBN" ||
+    decision === "searchProductByTitle" ||
+    decision === "getSimilarProducts"
+  );
+}
+
+/**
+ * Atomic turn update: read → merge → validate → persist. No partial writes.
+ */
+export function atomicMergeTurnState(
+  callSid: string,
+  input: {
+    intent: GateIntent;
+    incomingSlots: ProductSearchSlots;
+  },
+): AtomicTurnResult {
+  const previous = getOrCreateCallState(callSid);
+  const wasAwaiting = previous.awaitingInput;
+  const merged = mergeTurnIntoCallState(previous, input);
+  const slotsCollected = isSlotAnswerComplete(wasAwaiting, merged.slots);
+  const validation = validateProductSlotState(merged, slotsCollected);
+
+  saveCallState(merged);
+
+  return {
+    state: getOrCreateCallState(callSid),
+    wasAwaiting,
+    slotsCollected,
+    validation,
+  };
+}
+
 export function mergeTurnIntoCallState(
   state: CallState,
   input: {

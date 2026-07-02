@@ -54,14 +54,8 @@ export function decideToolExecution(state: ToolDecisionState): ToolAction {
     const hasIsbn = Boolean(state.slots.isbn);
     const hasTitle = Boolean(state.slots.title);
     const wantsRec = Boolean(state.slots.wantsRecommendations);
-    const bothMissing =
-      state.missingSlots.includes("isbn") && state.missingSlots.includes("title");
 
     if (!hasIsbn && !hasTitle && !wantsRec) {
-      return "ASK_QUESTION";
-    }
-
-    if (bothMissing && !wantsRec) {
       return "ASK_QUESTION";
     }
 
@@ -69,16 +63,8 @@ export function decideToolExecution(state: ToolDecisionState): ToolAction {
       return "searchProductByISBN";
     }
 
-    if (hasTitle && !state.slotsCollected) {
-      return "ASK_QUESTION";
-    }
-
     if (hasTitle && state.slotsCollected) {
       return "searchProductByTitle";
-    }
-
-    if (wantsRec && !state.slotsCollected) {
-      return "ASK_QUESTION";
     }
 
     if (wantsRec && state.slotsCollected) {
