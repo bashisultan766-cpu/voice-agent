@@ -81,7 +81,7 @@ const PRODUCT_NODE_FIELDS_BASIC = `
 `;
 
 const PRODUCT_SEARCH_QUERY = `query ProductSearch($query: String!) {
-  products(first: 20, query: $query) {
+  products(first: 50, query: $query) {
     edges {
       node { ${PRODUCT_NODE_FIELDS} }
     }
@@ -89,7 +89,7 @@ const PRODUCT_SEARCH_QUERY = `query ProductSearch($query: String!) {
 }`;
 
 const PRODUCT_SEARCH_QUERY_BASIC = `query ProductSearch($query: String!) {
-  products(first: 20, query: $query) {
+  products(first: 50, query: $query) {
     edges {
       node { ${PRODUCT_NODE_FIELDS_BASIC} }
     }
@@ -105,7 +105,7 @@ const GET_PRODUCT_QUERY_BASIC = `query LiveGetProduct($id: ID!) {
 }`;
 
 const SEARCH_VARIANTS_QUERY = `query LiveSearchVariants($query: String!) {
-  productVariants(first: 10, query: $query) {
+  productVariants(first: 25, query: $query) {
     edges {
       node {
         id
@@ -118,7 +118,7 @@ const SEARCH_VARIANTS_QUERY = `query LiveSearchVariants($query: String!) {
 }`;
 
 const SEARCH_VARIANTS_QUERY_BASIC = `query LiveSearchVariants($query: String!) {
-  productVariants(first: 10, query: $query) {
+  productVariants(first: 25, query: $query) {
     edges {
       node {
         id

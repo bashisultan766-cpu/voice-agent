@@ -15,11 +15,10 @@ describe("personalityEngine", () => {
     expect(detectEmotionalTone("this is frustrating")).toBe("frustrated");
   });
 
-  it("strips robotic no-results phrasing", () => {
+  it("preserves grounded store-not-found message", () => {
     const memory = getOrCreateCustomerMemory("CA1");
-    const shaped = shapeVoiceResponse("No results found for that.", memory);
-    expect(shaped).not.toMatch(/no results found/i);
-    expect(shaped).toMatch(/close|couldn't find/i);
+    const shaped = shapeVoiceResponse("I couldn't find it in the store right now", memory);
+    expect(shaped).toBe("I couldn't find it in the store right now");
   });
 
   it("avoids repeating identical assistant phrases", () => {

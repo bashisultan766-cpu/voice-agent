@@ -51,7 +51,7 @@ export function buildPersonalityPrompt(memory: CustomerMemory): string {
     historyHint,
     antiRepeat,
     "Keep responses to 1–2 short sentences for phone voice.",
-    "Never say 'no results found' — suggest alternatives naturally.",
+    "If a product is not in the facts list, say exactly: I couldn't find it in the store right now.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -60,16 +60,17 @@ export function buildPersonalityPrompt(memory: CustomerMemory): string {
 export function shapeVoiceResponse(text: string, memory: CustomerMemory): string {
   let cleaned = text.replace(/\s+/g, " ").trim();
 
+  if (/couldn'?t find it in the store right now/i.test(cleaned)) {
+    return cleaned;
+  }
+
   const banned = [
-    /no results found/i,
     /invalid input/i,
-    /i didn'?t catch/i,
     /please provide your order number/i,
   ];
   for (const pattern of banned) {
     if (pattern.test(cleaned)) {
-      cleaned =
-        "I couldn't find that exact one, but I've got something very close you might like — want me to tell you about it?";
+      cleaned = "How can I help you today?";
       break;
     }
   }
@@ -81,7 +82,7 @@ export function shapeVoiceResponse(text: string, memory: CustomerMemory): string
 
   const lower = cleaned.toLowerCase();
   if (memory.recentAssistantPhrases.some((p) => p.toLowerCase() === lower)) {
-    cleaned = "Let me point you toward a couple of options that might work for you.";
+    cleaned = "What else can I help you with?";
   }
 
   return cleaned;

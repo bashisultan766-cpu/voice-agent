@@ -7,7 +7,6 @@ import {
   rankLiveProducts,
   scoreTitleMatch,
 } from "../src/utils/productSearchNormalize.js";
-import { tokenFallbackSearch } from "../src/tools/productSemanticSearch.js";
 import {
   clearProductCache,
   getSimilarProducts,
@@ -86,11 +85,6 @@ describe("productSearchNormalize", () => {
     expect(ranked[0]?.title).toMatch(/Azkaban/i);
   });
 
-  it("handles misspelled input via token fallback", () => {
-    const results = tokenFallbackSearch("Hary Poter Azkaban", mockCatalog, 3);
-    expect(results[0]?.title).toMatch(/Azkaban/i);
-  });
-
   it("normalizes punctuation in search text", () => {
     expect(normalizeSearchText("Harry-Potter!!!")).toBe("harry potter");
     expect(scoreTitleMatch("Harry Potter and the Prisoner of Azkaban", "harry potter azkaban")).toBeGreaterThanOrEqual(2);
@@ -115,7 +109,6 @@ describe("shopifyProductTools live search", () => {
     expect(Date.now() - started).toBeLessThan(500);
     expect(result.status).toBe("found");
     expect(result.products[0]?.title).toMatch(/Azkaban/i);
-    expect(result.usedSemanticFallback).toBeFalsy();
   });
 
   it("finds same product for hyphenated ISBN", async () => {
@@ -126,6 +119,11 @@ describe("shopifyProductTools live search", () => {
 
   it('finds exact "Harry Potter Azkaban" by title', async () => {
     const result = await searchProductByTitle("Harry Potter Azkaban");
+    expect(result.products[0]?.title).toMatch(/Azkaban/i);
+  });
+
+  it("handles misspelled title via live query expansion", async () => {
+    const result = await searchProductByTitle("Hary Poter Azkaban");
     expect(result.products[0]?.title).toMatch(/Azkaban/i);
   });
 

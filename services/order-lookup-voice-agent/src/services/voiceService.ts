@@ -1,4 +1,5 @@
 import { getConfig, conversationRelayVoice } from "../config.js";
+import { smoothForVoice } from "./voiceSmoothingEngine.js";
 import { logger } from "../utils/logger.js";
 import { getCachedPhrase } from "../utils/phraseCache.js";
 import type { SpeechChunk } from "../types/order.js";
@@ -86,12 +87,14 @@ function isCacheablePhrase(text: string): boolean {
   ].includes(normalized);
 }
 
-/** Light prosody hints — ConversationRelay passes plain text to ElevenLabs. */
+/** Light prosody + rhythm smoothing for ConversationRelay text tokens. */
 export function applyVoiceProsody(text: string): string {
-  return text
-    .replace(/\s*—\s*/g, "... ")
-    .replace(/\.\.\./g, "... ")
-    .trim();
+  return smoothForVoice(
+    text
+      .replace(/\s*—\s*/g, "... ")
+      .replace(/\.\.\./g, "... ")
+      .trim(),
+  );
 }
 
 export { getCachedPhrase } from "../utils/phraseCache.js";

@@ -22,6 +22,7 @@ import {
   searchProductByTitle,
   STORE_NOT_FOUND_MESSAGE,
 } from "../tools/shopifyProductTools.js";
+import { smoothForVoice } from "../services/voiceSmoothingEngine.js";
 import type { StructuredProduct } from "../types/product.js";
 
 let client: OpenAI | null = null;
@@ -180,7 +181,6 @@ export async function handleProductBrainTurn(input: ProductBrainInput): Promise<
     } else {
       const result = await searchProductByTitle(query);
       products = result.products;
-      usedSimilarFallback = Boolean(result.usedSemanticFallback);
     }
 
     situationalHint = category
@@ -201,13 +201,15 @@ export async function handleProductBrainTurn(input: ProductBrainInput): Promise<
 
   recordProductSearch(memory, products);
 
-  const reply = await generateGroundedReply({
-    callSid: input.callSid,
-    userMessage: input.userMessage,
-    products,
-    usedSimilarFallback,
-    situationalHint,
-  });
+  const reply = smoothForVoice(
+    await generateGroundedReply({
+      callSid: input.callSid,
+      userMessage: input.userMessage,
+      products,
+      usedSimilarFallback,
+      situationalHint,
+    }),
+  );
 
   return { speech: reply, products, usedSimilarFallback };
 }

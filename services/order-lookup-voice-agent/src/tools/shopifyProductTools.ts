@@ -1,40 +1,24 @@
-import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import {
-  extractIsbnFromSpeech,
-  isbnLookupVariants,
-  isValidIsbnFormat,
-  normalizeIsbn,
-  normalizeSearchText,
-  productMatchesIsbn,
-  rankLiveProducts,
-  scoreTitleMatch,
-  tagOverlapScore,
-  tokenize,
-} from "../utils/productSearchNormalize.js";
-import { applySemanticFallbackIfNeeded, clearSemanticIndex } from "./productSemanticSearch.js";
+import { extractIsbnFromSpeech, scoreTitleMatch, tagOverlapScore } from "../utils/productSearchNormalize.js";
+import { resetShopifyScopeCheck, ensureShopifyProductScopes } from "./shopifyScopeCheck.js";
 import {
   liveFetchProductById,
   liveSearchMulti,
-  searchShopifyProducts,
 } from "./shopifyLiveSearch.js";
 import {
-  ensureShopifyProductScopes,
-  resetShopifyScopeCheck,
-} from "./shopifyScopeCheck.js";
+  STORE_NOT_FOUND_MESSAGE,
+  truthSearchByCategory,
+  truthSearchByIsbn,
+  truthSearchByTitle,
+} from "./shopifyTruthSearch.js";
 import type {
   InventoryStatus,
   ProductSearchResult,
   StructuredProduct,
 } from "../types/product.js";
 
-export const STORE_NOT_FOUND_MESSAGE = "I couldn't find it in the store right now";
-
-function isSafeMode(): boolean {
-  return getConfig().SAFE_MODE;
-}
-
-export { extractIsbnFromSpeech, normalizeIsbn };
+export { STORE_NOT_FOUND_MESSAGE, extractIsbnFromSpeech };
+export { normalizeIsbn } from "../utils/productSearchNormalize.js";
 
 function productInStock(p: StructuredProduct): boolean {
   return p.variants.some((v) => v.inStock);
@@ -51,32 +35,24 @@ function dedupeProducts(products: StructuredProduct[]): StructuredProduct[] {
   return out;
 }
 
-function buildTitleShopifyQueries(query: string): string[] {
-  const q = query.trim();
-  if (!q) return [];
-  const tokens = tokenize(q);
-  const queries = new Set<string>([q, `title:*${q}*`]);
-  if (tokens.length >= 2) {
-    queries.add(tokens.map((t) => `title:*${t}*`).join(" OR "));
+function toSearchResult(
+  products: StructuredProduct[],
+  query: string,
+  apiErrorMessage?: string,
+): ProductSearchResult {
+  if (apiErrorMessage) {
+    return { status: "api_error", products: [], query, message: apiErrorMessage };
   }
-  return [...queries];
+  const ranked = products.slice(0, 5);
+  return {
+    status: ranked.length ? "found" : "not_found",
+    products: ranked,
+    query,
+    message: ranked.length === 0 ? STORE_NOT_FOUND_MESSAGE : undefined,
+  };
 }
 
-function buildIsbnShopifyQueries(isbn: string): string[] {
-  const queries = new Set<string>();
-  for (const variant of isbnLookupVariants(isbn)) {
-    queries.add(`barcode:${variant}`);
-    queries.add(`sku:${variant}`);
-    queries.add(`sku:*${variant}*`);
-    queries.add(`barcode:*${variant}*`);
-    queries.add(`metafields.custom.isbn:${variant}`);
-    queries.add(`metafields.books.isbn:${variant}`);
-    queries.add(`metafields.product.isbn:${variant}`);
-  }
-  return [...queries];
-}
-
-/** Live Shopify title search — post-fetch normalization + ranking; semantic only if live <3. */
+/** Live Shopify title search — truth engine only, no embeddings. */
 export async function searchProductByTitle(query: string): Promise<ProductSearchResult> {
   const q = query.trim();
   if (!q) {
@@ -84,112 +60,30 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
   }
 
   try {
-    if (isSafeMode()) {
-      return {
-        status: "not_found",
-        products: [],
-        query: q,
-        message: STORE_NOT_FOUND_MESSAGE,
-      };
-    }
-    await ensureShopifyProductScopes();
-    const started = Date.now();
-    let live = await liveSearchMulti(buildTitleShopifyQueries(q));
-
-    if (live.length < 3) {
-      const tokens = tokenize(q);
-      if (tokens.length > 0) {
-        const broader = await liveSearchMulti(tokens.map((t) => `title:*${t}*`));
-        live = dedupeProducts([...live, ...broader]);
-      }
-    }
-
-    const { products, usedSemantic } = await applySemanticFallbackIfNeeded(q, live);
-    const ranked = products.length > 0 ? products : rankLiveProducts(live, q);
-
-    logger.info("title_search_live", {
-      query: q,
-      liveCount: live.length,
-      resultCount: ranked.length,
-      usedSemantic,
-      elapsedMs: Date.now() - started,
-    });
-
-    return {
-      status: ranked.length ? "found" : "not_found",
-      products: ranked.slice(0, 5),
-      query: q,
-      message: ranked.length === 0 ? STORE_NOT_FOUND_MESSAGE : undefined,
-      usedSemanticFallback: usedSemantic,
-    };
+    const ranked = await truthSearchByTitle(q);
+    return toSearchResult(ranked, q);
   } catch (err) {
     logger.error("title_search_failed", {
       query: q,
       error: err instanceof Error ? err.message : String(err),
     });
-    return {
-      status: "api_error",
-      products: [],
-      query: q,
-      message: "Product search is temporarily unavailable",
-    };
+    return toSearchResult([], q, "Product search is temporarily unavailable");
   }
 }
 
-/** Live ISBN lookup via SKU, barcode, and metafields — never uses embeddings. */
+/** Live ISBN lookup — truth engine only. */
 export async function searchProductByISBN(isbn: string): Promise<ProductSearchResult> {
-  const variants = isbnLookupVariants(isbn);
-  const primary = variants[0] ?? normalizeIsbn(isbn);
-  if (!primary || !isValidIsbnFormat(primary)) {
-    return {
-      status: "not_found",
-      products: [],
-      query: isbn,
-      message: STORE_NOT_FOUND_MESSAGE,
-    };
-  }
-
   try {
-    if (isSafeMode()) {
-      return {
-        status: "not_found",
-        products: [],
-        query: primary,
-        message: STORE_NOT_FOUND_MESSAGE,
-      };
-    }
     await ensureShopifyProductScopes();
-    const started = Date.now();
-    const live = await liveSearchMulti(buildIsbnShopifyQueries(primary));
-    const matched = live.filter((p) =>
-      variants.some((variant) => productMatchesIsbn(p, variant)),
-    );
-    const products = rankLiveProducts(matched, primary, primary).slice(0, 5);
-
-    logger.info("isbn_search_live", {
-      isbn: primary,
-      liveCount: live.length,
-      matchCount: products.length,
-      elapsedMs: Date.now() - started,
-    });
-
-    return {
-      status: products.length ? "found" : "not_found",
-      products,
-      query: primary,
-      message: products.length === 0 ? STORE_NOT_FOUND_MESSAGE : undefined,
-    };
+    const ranked = await truthSearchByIsbn(isbn);
+    return toSearchResult(ranked, isbn);
   } catch (err) {
-    logger.error("isbn_search_failed", {
-      isbn: primary,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return {
-      status: "api_error",
-      products: [],
-      query: primary,
-      message: "ISBN lookup is temporarily unavailable",
-    };
+    const message = err instanceof Error ? err.message : String(err);
+    if (/read_products/i.test(message)) {
+      return toSearchResult([], isbn, "ISBN lookup is temporarily unavailable");
+    }
+    logger.error("isbn_search_failed", { isbn, error: message });
+    return toSearchResult([], isbn, "ISBN lookup is temporarily unavailable");
   }
 }
 
@@ -205,7 +99,7 @@ function scoreSimilarity(source: StructuredProduct, candidate: StructuredProduct
   return score;
 }
 
-/** Similar products from live Shopify data — category, vendor, tags. */
+/** Similar products from live Shopify catalog only. */
 export async function getSimilarProducts(productId: string): Promise<ProductSearchResult> {
   try {
     const source = await liveFetchProductById(productId);
@@ -227,21 +121,16 @@ export async function getSimilarProducts(productId: string): Promise<ProductSear
     let live = await liveSearchMulti(queries);
     live = live.filter((p) => p.id !== source.id);
 
-    if (live.length < 3 && source.productType) {
-      const broader = await searchShopifyProducts(`product_type:'${source.productType}'`);
+    if (live.length < 10 && source.productType) {
+      const broader = await truthSearchByCategory(source.productType);
       live = dedupeProducts([...live, ...broader.filter((p) => p.id !== source.id)]);
     }
 
-    let similar = live
+    const similar = live
       .map((p) => ({ p, score: scoreSimilarity(source, p) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.p);
-
-    if (live.length < 3) {
-      const { products: reranked } = await applySemanticFallbackIfNeeded(source.title, live);
-      similar = dedupeProducts([...similar, ...reranked.filter((p) => p.id !== source.id)]);
-    }
 
     const outOfStock = !productInStock(source);
     const products = (outOfStock ? similar.filter(productInStock) : similar).slice(0, 5);
@@ -261,7 +150,7 @@ export async function getSimilarProducts(productId: string): Promise<ProductSear
   }
 }
 
-/** Category browse via live Shopify search. */
+/** Category browse via live Shopify truth search. */
 export async function searchProductByCategory(categoryQuery: string): Promise<ProductSearchResult> {
   const q = categoryQuery.trim();
   if (!q) {
@@ -269,36 +158,8 @@ export async function searchProductByCategory(categoryQuery: string): Promise<Pr
   }
 
   try {
-    const tokens = tokenize(q);
-    const queries = [
-      q,
-      ...tokens.map((t) => `title:*${t}*`),
-      ...tokens.map((t) => `product_type:*${t}*`),
-      ...tokens.map((t) => `tag:*${t}*`),
-    ];
-
-    const live = await liveSearchMulti(queries);
-    const haystackQuery = normalizeSearchText(q);
-    const products = live
-      .map((p) => {
-        const haystack = normalizeSearchText(
-          `${p.title} ${p.productType} ${p.tags.join(" ")} ${p.vendor}`,
-        );
-        const tokenHits = tokens.filter((t) => haystack.includes(t)).length;
-        const phraseHit = haystack.includes(haystackQuery) ? 2 : 0;
-        return { p, score: tokenHits + phraseHit };
-      })
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((x) => x.p)
-      .slice(0, 5);
-
-    return {
-      status: products.length ? "found" : "not_found",
-      products,
-      query: categoryQuery,
-      message: products.length === 0 ? STORE_NOT_FOUND_MESSAGE : undefined,
-    };
+    const products = await truthSearchByCategory(q);
+    return toSearchResult(products, categoryQuery);
   } catch (err) {
     logger.error("category_search_failed", {
       query: q,
@@ -323,6 +184,5 @@ export async function checkInventory(productId: string): Promise<InventoryStatus
 }
 
 export function clearProductCache(): void {
-  clearSemanticIndex();
   resetShopifyScopeCheck();
 }

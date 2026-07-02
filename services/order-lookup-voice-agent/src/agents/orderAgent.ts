@@ -25,6 +25,7 @@ import {
 import { classifyCallerIntent } from "./intentClassifier.js";
 import { generateConversationResponse } from "./conversationBrainAgent.js";
 import { handleProductBrainTurn } from "./productBrainAgent.js";
+import { speechChunksFromText } from "../services/voiceSmoothingEngine.js";
 import type {
   AgentStreamEvent,
   CallSession,
@@ -109,13 +110,13 @@ async function* streamOrderNumberCapture(
         userMessage: callerText,
         intent: intent.intent,
       });
-      yield chunkEvent(productResult.speech, "summary");
+      yield* chunksFromText(productResult.speech, "summary");
     } catch (err) {
       logger.error("product_brain_turn_failed", {
         callSid: session.callSid.slice(0, 8),
         error: err instanceof Error ? err.message : String(err),
       });
-      yield chunkEvent(
+      yield* chunksFromText(
         "Sorry, I'm having trouble looking up products right now. You can try your order number instead.",
         "summary",
       );
@@ -145,7 +146,7 @@ async function* streamOrderNumberCapture(
           ? "Caller seems to want order help but no clear order number yet — guide them gently."
           : undefined,
     });
-    yield chunkEvent(brainResponse, "summary");
+    yield* chunksFromText(brainResponse, "summary");
     yield doneEvent(session.phase);
     return;
   }
@@ -238,13 +239,19 @@ async function* streamFollowUp(
     userMessage: callerText,
     inferredIntent: "follow_up",
   });
-  yield chunkEvent(brainResponse, "closing");
+  yield* chunksFromText(brainResponse, "closing");
   yield doneEvent(session.phase);
 }
 
 async function* streamOrderSummary(order: StructuredOrder): AsyncGenerator<AgentStreamEvent> {
   yield chunkEvent(planInstantConfirmation(order));
   for (const chunk of planOrderLookupResponse(order).chunks) {
+    yield { type: "chunk", chunk };
+  }
+}
+
+function* chunksFromText(text: string, kind?: SpeechChunk["kind"]): Generator<AgentStreamEvent> {
+  for (const chunk of speechChunksFromText(text, kind ?? "summary")) {
     yield { type: "chunk", chunk };
   }
 }
