@@ -15,8 +15,13 @@ import { applySemanticFallbackIfNeeded, clearSemanticIndex } from "./productSema
 import {
   liveFetchProductById,
   liveSearchMulti,
-  liveSearchProducts,
+  searchShopifyProducts,
 } from "./shopifyLiveSearch.js";
+import {
+  ensureShopifyProductScopes,
+  resetShopifyScopeCheck,
+  SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR,
+} from "./shopifyScopeCheck.js";
 import type {
   InventoryStatus,
   ProductSearchResult,
@@ -60,6 +65,9 @@ function buildIsbnShopifyQueries(isbn: string): string[] {
     queries.add(`sku:${variant}`);
     queries.add(`sku:*${variant}*`);
     queries.add(`barcode:*${variant}*`);
+    queries.add(`metafields.custom.isbn:${variant}`);
+    queries.add(`metafields.books.isbn:${variant}`);
+    queries.add(`metafields.product.isbn:${variant}`);
   }
   return [...queries];
 }
@@ -72,6 +80,7 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
   }
 
   try {
+    await ensureShopifyProductScopes();
     const started = Date.now();
     let live = await liveSearchMulti(buildTitleShopifyQueries(q));
 
@@ -102,6 +111,8 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
       usedSemanticFallback: usedSemantic,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR) throw err;
     logger.error("title_search_failed", {
       query: q,
       error: err instanceof Error ? err.message : String(err),
@@ -129,6 +140,7 @@ export async function searchProductByISBN(isbn: string): Promise<ProductSearchRe
   }
 
   try {
+    await ensureShopifyProductScopes();
     const started = Date.now();
     const live = await liveSearchMulti(buildIsbnShopifyQueries(primary));
     const matched = live.filter((p) =>
@@ -150,6 +162,8 @@ export async function searchProductByISBN(isbn: string): Promise<ProductSearchRe
       message: products.length === 0 ? STORE_NOT_FOUND_MESSAGE : undefined,
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR) throw err;
     logger.error("isbn_search_failed", {
       isbn: primary,
       error: err instanceof Error ? err.message : String(err),
@@ -198,7 +212,7 @@ export async function getSimilarProducts(productId: string): Promise<ProductSear
     live = live.filter((p) => p.id !== source.id);
 
     if (live.length < 3 && source.productType) {
-      const broader = await liveSearchProducts(`product_type:'${source.productType}'`, 25);
+      const broader = await searchShopifyProducts(`product_type:'${source.productType}'`);
       live = dedupeProducts([...live, ...broader.filter((p) => p.id !== source.id)]);
     }
 
@@ -294,4 +308,5 @@ export async function checkInventory(productId: string): Promise<InventoryStatus
 
 export function clearProductCache(): void {
   clearSemanticIndex();
+  resetShopifyScopeCheck();
 }

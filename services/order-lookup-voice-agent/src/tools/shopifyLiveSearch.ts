@@ -1,6 +1,14 @@
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
+import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
+import { ensureShopifyProductScopes, SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR } from "./shopifyScopeCheck.js";
+
+export interface GqlMetafieldNode {
+  namespace: string;
+  key: string;
+  value: string;
+}
 
 export interface GqlProductNode {
   id: string;
@@ -9,53 +17,64 @@ export interface GqlProductNode {
   productType: string;
   vendor: string;
   tags: string[];
-  description: string;
-  isbnCustom: { value: string } | null;
-  isbnBooks: { value: string } | null;
-  isbnProduct: { value: string } | null;
   variants: {
     edges: Array<{
       node: {
         id: string;
         sku: string;
         barcode: string;
+        title: string;
         price: string;
         inventoryQuantity: number;
       };
     }>;
   };
+  metafields: {
+    edges: Array<{ node: GqlMetafieldNode }>;
+  };
 }
 
-const PRODUCT_FIELDS = `
+const PRODUCT_NODE_FIELDS = `
   id
   title
   handle
-  productType
-  vendor
   tags
-  description
-  isbnCustom: metafield(namespace: "custom", key: "isbn") { value }
-  isbnBooks: metafield(namespace: "books", key: "isbn") { value }
-  isbnProduct: metafield(namespace: "product", key: "isbn") { value }
+  vendor
+  productType
   variants(first: 10) {
     edges {
       node {
         id
         sku
         barcode
+        title
         price
         inventoryQuantity
       }
     }
   }
-`;
-
-const SEARCH_PRODUCTS_QUERY = `query LiveSearchProducts($query: String!, $first: Int!) {
-  products(first: $first, query: $query) {
+  metafields(first: 10) {
     edges {
-      node { ${PRODUCT_FIELDS} }
+      node {
+        namespace
+        key
+        value
+      }
     }
   }
+`;
+
+/** Authoritative Shopify product search query — SKU, barcode, metafields, title. */
+const PRODUCT_SEARCH_QUERY = `query ProductSearch($query: String!) {
+  products(first: 20, query: $query) {
+    edges {
+      node { ${PRODUCT_NODE_FIELDS} }
+    }
+  }
+}`;
+
+const GET_PRODUCT_QUERY = `query LiveGetProduct($id: ID!) {
+  product(id: $id) { ${PRODUCT_NODE_FIELDS} }
 }`;
 
 const SEARCH_VARIANTS_QUERY = `query LiveSearchVariants($query: String!) {
@@ -65,14 +84,10 @@ const SEARCH_VARIANTS_QUERY = `query LiveSearchVariants($query: String!) {
         id
         sku
         barcode
-        product { ${PRODUCT_FIELDS} }
+        product { ${PRODUCT_NODE_FIELDS} }
       }
     }
   }
-}`;
-
-const GET_PRODUCT_QUERY = `query LiveGetProduct($id: ID!) {
-  product(id: $id) { ${PRODUCT_FIELDS} }
 }`;
 
 function shopifyBaseUrl(): string {
@@ -122,10 +137,21 @@ export async function shopifyGraphql<T>(
   }
 }
 
+function extractIsbnsFromMetafields(node: GqlProductNode): string[] {
+  const isbns = new Set<string>();
+  for (const { node: mf } of node.metafields?.edges ?? []) {
+    if (!mf?.value) continue;
+    const key = mf.key?.toLowerCase() ?? "";
+    const ns = mf.namespace?.toLowerCase() ?? "";
+    if (key === "isbn" || key.includes("isbn") || ns.includes("book")) {
+      isbns.add(normalizeIsbn(mf.value));
+    }
+  }
+  return [...isbns];
+}
+
 export function mapGqlProduct(node: GqlProductNode): StructuredProduct {
-  const isbns = [node.isbnCustom?.value, node.isbnBooks?.value, node.isbnProduct?.value]
-    .filter(Boolean)
-    .map((v) => String(v).replace(/[\s-]/g, "").toUpperCase());
+  const isbns = extractIsbnsFromMetafields(node);
 
   return {
     id: node.id.replace("gid://shopify/Product/", ""),
@@ -136,7 +162,6 @@ export function mapGqlProduct(node: GqlProductNode): StructuredProduct {
     author: node.vendor || undefined,
     tags: node.tags ?? [],
     isbns,
-    descriptionSnippet: node.description?.slice(0, 160),
     variants: (node.variants?.edges ?? []).map(({ node: v }) => ({
       id: v.id.replace("gid://shopify/ProductVariant/", ""),
       sku: v.sku,
@@ -159,17 +184,27 @@ function dedupeProducts(products: StructuredProduct[]): StructuredProduct[] {
   return out;
 }
 
-/** Live Shopify product search — authoritative source of truth per query. */
-export async function liveSearchProducts(shopifyQuery: string, first = 25): Promise<StructuredProduct[]> {
+/**
+ * Single authoritative Shopify product search.
+ * Verifies read_products scope, then runs ProductSearch GraphQL.
+ */
+export async function searchShopifyProducts(shopifyQuery: string): Promise<StructuredProduct[]> {
+  const q = shopifyQuery.trim();
+  if (!q) return [];
+
+  await ensureShopifyProductScopes();
+
   const data = await shopifyGraphql<{
     products: { edges: Array<{ node: GqlProductNode }> };
-  }>(SEARCH_PRODUCTS_QUERY, { query: shopifyQuery, first });
+  }>(PRODUCT_SEARCH_QUERY, { query: q });
 
   return dedupeProducts((data.products?.edges ?? []).map(({ node }) => mapGqlProduct(node)));
 }
 
-/** Live variant search — SKU / barcode lookup path. */
+/** Live variant search — supplemental SKU / barcode path. */
 export async function liveSearchVariants(shopifyQuery: string): Promise<StructuredProduct[]> {
+  await ensureShopifyProductScopes();
+
   const data = await shopifyGraphql<{
     productVariants: {
       edges: Array<{ node: { product: GqlProductNode } }>;
@@ -185,6 +220,8 @@ export async function liveSearchVariants(shopifyQuery: string): Promise<Structur
 }
 
 export async function liveFetchProductById(productId: string): Promise<StructuredProduct | null> {
+  await ensureShopifyProductScopes();
+
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
   const data = await shopifyGraphql<{ product: GqlProductNode | null }>(GET_PRODUCT_QUERY, { id: gid });
   return data.product ? mapGqlProduct(data.product) : null;
@@ -197,14 +234,16 @@ export async function liveSearchMulti(queries: string[]): Promise<StructuredProd
     uniqueQueries.map(async (q) => {
       try {
         const [byProduct, byVariant] = await Promise.all([
-          liveSearchProducts(q, 25),
+          searchShopifyProducts(q),
           liveSearchVariants(q),
         ]);
         return [...byProduct, ...byVariant];
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message === SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR) throw err;
         logger.warn("shopify_live_query_failed", {
           query: q,
-          error: err instanceof Error ? err.message : String(err),
+          error: message,
         });
         return [];
       }
@@ -212,3 +251,6 @@ export async function liveSearchMulti(queries: string[]): Promise<StructuredProd
   );
   return dedupeProducts(batches.flat());
 }
+
+/** @deprecated Use searchShopifyProducts */
+export const liveSearchProducts = searchShopifyProducts;

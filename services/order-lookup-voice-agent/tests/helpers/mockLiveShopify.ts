@@ -2,6 +2,10 @@ import { vi } from "vitest";
 import type { StructuredProduct } from "../../src/types/product.js";
 
 function gqlNodeFromProduct(p: StructuredProduct) {
+  const metafieldEdges = (p.isbns ?? []).map((isbn) => ({
+    node: { namespace: "custom", key: "isbn", value: isbn },
+  }));
+
   return {
     id: `gid://shopify/Product/${p.id}`,
     title: p.title,
@@ -9,21 +13,19 @@ function gqlNodeFromProduct(p: StructuredProduct) {
     productType: p.productType,
     vendor: p.vendor,
     tags: p.tags,
-    description: p.descriptionSnippet ?? "",
-    isbnCustom: p.isbns?.[0] ? { value: p.isbns[0] } : null,
-    isbnBooks: null,
-    isbnProduct: null,
     variants: {
       edges: p.variants.map((v) => ({
         node: {
           id: `gid://shopify/ProductVariant/${v.id}`,
           sku: v.sku ?? "",
           barcode: v.barcode ?? "",
+          title: p.title,
           price: v.price,
           inventoryQuantity: v.inventoryQuantity,
         },
       })),
     },
+    metafields: { edges: metafieldEdges },
   };
 }
 
@@ -41,6 +43,10 @@ function matchesShopifyQuery(query: string, product: StructuredProduct): boolean
   if (q.startsWith("sku:")) {
     const val = q.slice("sku:".length).replace(/\*/g, "");
     return product.variants.some((v) => (v.sku ?? "").toLowerCase().includes(val));
+  }
+  if (q.startsWith("metafields.")) {
+    const val = q.split(":").slice(1).join(":").replace(/\*/g, "");
+    return (product.isbns ?? []).some((isbn) => isbn.toLowerCase().includes(val));
   }
   if (q.startsWith("title:")) {
     const val = q.slice("title:".length).replace(/\*/g, "");
@@ -62,10 +68,26 @@ function matchesShopifyQuery(query: string, product: StructuredProduct): boolean
   return haystack.includes(q.replace(/\*/g, ""));
 }
 
+function scopeMockResponse() {
+  return {
+    ok: true,
+    json: async () => ({ access_scopes: [{ handle: "read_products" }] }),
+  };
+}
+
 export function mockLiveShopifyFetch(catalog: StructuredProduct[]): void {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_url: string, init?: RequestInit) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
+      const target = String(url);
+
+      if (target.includes("/shop.json")) {
+        return { ok: true, json: async () => ({ shop: { name: "Test Shop" } }) };
+      }
+      if (target.includes("access_scopes.json")) {
+        return scopeMockResponse();
+      }
+
       const body = JSON.parse(String(init?.body ?? "{}")) as {
         query?: string;
         variables?: Record<string, unknown>;
@@ -116,7 +138,7 @@ export function mockLiveShopifyFetch(catalog: StructuredProduct[]): void {
         };
       }
 
-      if (query.includes("products")) {
+      if (query.includes("ProductSearch") || query.includes("products")) {
         const shopifyQuery = String(variables.query ?? "");
         const matches = catalog.filter((p) => matchesShopifyQuery(shopifyQuery, p));
         return {
@@ -132,6 +154,25 @@ export function mockLiveShopifyFetch(catalog: StructuredProduct[]): void {
       }
 
       return { ok: true, json: async () => ({ data: {} }) };
+    }),
+  );
+}
+
+export function mockShopifyMissingProductScope(): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const target = String(url);
+      if (target.includes("/shop.json")) {
+        return { ok: true, json: async () => ({ shop: { name: "Test Shop" } }) };
+      }
+      if (target.includes("access_scopes.json")) {
+        return {
+          ok: true,
+          json: async () => ({ access_scopes: [{ handle: "read_orders" }] }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
     }),
   );
 }
