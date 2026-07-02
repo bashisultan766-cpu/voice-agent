@@ -132,7 +132,7 @@ describe("conversationOrchestrator flows", () => {
 
   it("Phase 2: looks up ISBN directly", async () => {
     const session = createCallSession("CA_ISBN", "+1", "+2");
-    const speech = await collectSpeech(session, "ISBN 9783161484100");
+    const speech = await collectSpeech(session, "I have ISBN 9783161484100");
     expect(speech).toMatch(/Azkaban|found/i);
     expect(speech).not.toMatch(/let me search|I will check/i);
   });

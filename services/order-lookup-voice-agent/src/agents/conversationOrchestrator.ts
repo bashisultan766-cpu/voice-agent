@@ -7,10 +7,13 @@ import { logger } from "../utils/logger.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
 import { runInPhase2, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { orderLookupTool } from "../tools/orderLookupTool.js";
+import { classifyFollowUpIntent, preAnalyzeOrderIntent } from "../services/llmService.js";
+import { analyzeBrainTurn } from "./brainAnalyzer.js";
 import {
-  classifyFollowUpIntent,
-  preAnalyzeOrderIntent,
-} from "../services/llmService.js";
+  buildToolDecisionState,
+  decideToolExecution,
+  type ToolAction,
+} from "./toolDecisionGate.js";
 import {
   planInstantConfirmation,
   planInstantFiller,
@@ -19,7 +22,6 @@ import {
   planGoodbye,
   planRepeatIntro,
 } from "./responsePlanner.js";
-import { classifyCallerIntent } from "./intentClassifier.js";
 import {
   appendAssistantMessage,
   appendUserMessage,
@@ -31,7 +33,6 @@ import { softFallback } from "./conversationBrainAgent.js";
 import { formatProductResults } from "./productResponseFormatter.js";
 import { extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import {
-  isPhase2Ready,
   mergeProductSlots,
   parseProductSlotsFromSpeech,
   pickProductSlotQuestion,
@@ -110,18 +111,20 @@ export function classifyOrchestratorIntent(speech: string): OrchestratorIntent {
 }
 
 async function classifyOrchestratorIntentAsync(speech: string): Promise<OrchestratorIntent> {
-  const sync = classifyOrchestratorIntent(speech);
-  if (sync !== "unknown") return sync;
-
-  const llm = await classifyCallerIntent(speech);
-  switch (llm.intent) {
-    case "greeting":
+  const analysis = await analyzeBrainTurn(speech, {
+    callSid: "sync",
+    from: "",
+    to: "",
+    phase: "greeting",
+    orderNumberAttempts: 0,
+    createdAt: Date.now(),
+  });
+  switch (analysis.intent) {
+    case "general":
       return "greeting";
-    case "order_lookup":
-    case "refund":
+    case "order":
       return "order_status";
-    case "product_search":
-    case "isbn_query":
+    case "product":
       return "product_search";
     default:
       return "unknown";
@@ -197,101 +200,112 @@ export async function* runOrchestratorTurn(
     session.awaitingInput === "product_title" ||
     session.awaitingInput === "product_category"
   ) {
-    yield* handleAwaitingProductSlot(session, text);
+    yield* runGateControlledTurn(session, text, memory);
     return;
   }
 
-  const intent = await classifyOrchestratorIntentAsync(text);
-  session.lastOrchestratorIntent = intent;
-  memory.inferredIntent = intent;
+  yield* runGateControlledTurn(session, text, memory);
+}
 
-  logger.info("orchestrator_route", {
+async function* runGateControlledTurn(
+  session: CallSession,
+  text: string,
+  memory: ReturnType<typeof getOrCreateMemory>,
+): AsyncGenerator<AgentStreamEvent> {
+  const analysis = await analyzeBrainTurn(text, session);
+  session.productSlots = analysis.slots;
+  session.lastOrchestratorIntent = analysis.intent;
+  memory.inferredIntent = analysis.intent;
+
+  const decision = decideToolExecution(
+    buildToolDecisionState({
+      intent: analysis.intent,
+      slots: analysis.slots,
+      slotsCollected: analysis.slotsCollected,
+      orderNumber: analysis.orderNumber,
+    }),
+  );
+
+  logger.info("tool_decision_gate", {
     callSid: session.callSid.slice(0, 8),
-    intent,
-    phase: session.phase,
-    conversationPhase: "slot_fill",
+    intent: analysis.intent,
+    decision,
+    slotsCollected: analysis.slotsCollected,
+    hasIsbn: Boolean(analysis.slots.isbn),
+    hasTitle: Boolean(analysis.slots.title),
+    source: analysis.source,
+    confidence: analysis.confidence,
   });
 
-  switch (intent) {
-    case "greeting":
-      yield* handleGeneralHelp(session, text);
-      break;
-    case "order_status":
-      yield* handleOrderStatus(session, text);
-      break;
-    case "product_search":
-      yield* phase1ProductFlow(session, text);
-      break;
-    case "product_purchase_intent":
-      yield* phase1ProductFlow(session, text);
-      break;
+  yield* executeGateDecision(session, analysis, decision);
+}
+
+async function* executeGateDecision(
+  session: CallSession,
+  analysis: Awaited<ReturnType<typeof analyzeBrainTurn>>,
+  decision: ToolAction,
+): AsyncGenerator<AgentStreamEvent> {
+  switch (decision) {
+    case "searchProductByISBN":
+      session.productSlots = { isbn: analysis.slots.isbn };
+      yield* phase2ProductFlow(session);
+      return;
+    case "searchProductByTitle":
+      session.productSlots = { title: analysis.slots.title };
+      yield* phase2ProductFlow(session);
+      return;
+    case "getSimilarProducts":
+      session.productSlots = { wantsRecommendations: true };
+      yield* phase2ProductFlow(session);
+      return;
+    case "orderLookupTool":
+      if (analysis.orderNumber) {
+        yield* runOrderLookup(session, analysis.orderNumber);
+      }
+      return;
+    case "ASK_QUESTION":
+      yield* handleGateAskQuestion(session, analysis);
+      return;
+    case "conversationOnly":
     default:
-      yield* yieldSpeech(recordAssistant(session.callSid, pickVariedLine(UNKNOWN_PROMPTS, session.callSid)));
+      if (analysis.intent === "general") {
+        yield* handleGeneralHelp(session, analysis.userMessage);
+        return;
+      }
       session.phase = "awaiting_order_number";
+      yield* yieldSpeech(
+        recordAssistant(session.callSid, pickVariedLine(UNKNOWN_PROMPTS, session.callSid)),
+      );
       yield doneEvent(session.phase);
   }
 }
 
-/** Phase 1 — merge slots, ask questions, never call Shopify. */
-async function* phase1ProductFlow(
+async function* handleGateAskQuestion(
   session: CallSession,
-  speech: string,
+  analysis: Awaited<ReturnType<typeof analyzeBrainTurn>>,
 ): AsyncGenerator<AgentStreamEvent> {
-  const incoming = parseProductSlotsFromSpeech(speech);
-  session.productSlots = mergeProductSlots(session.productSlots, incoming);
-
-  if (isPhase2Ready(session.productSlots, session)) {
-    yield* phase2ProductFlow(session);
-    return;
-  }
-
-  session.awaitingInput = "product_slot";
-  session.phase = "awaiting_order_number";
-  const question = pickProductSlotQuestion(session.productSlots, "both");
-  yield* yieldSpeech(recordAssistant(session.callSid, question));
-  yield doneEvent(session.phase);
-}
-
-async function* handleAwaitingProductSlot(
-  session: CallSession,
-  speech: string,
-): AsyncGenerator<AgentStreamEvent> {
-  if (session.awaitingInput === "product_category") {
-    const incoming = parseProductSlotsFromSpeech(speech);
-    session.productSlots = mergeProductSlots(session.productSlots, incoming);
-    session.awaitingInput = "product_slot";
-    const question = pickProductSlotQuestion(session.productSlots, "both");
-    yield* yieldSpeech(recordAssistant(session.callSid, question));
+  if (analysis.intent === "order") {
+    if (speechContainsDigitAttempt(analysis.userMessage) && !analysis.orderNumber) {
+      yield* handleUnclearOrderNumber(session);
+      return;
+    }
+    session.awaitingInput = "order_number";
     session.phase = "awaiting_order_number";
+    yield* yieldSpeech(recordAssistant(session.callSid, ORDER_NUMBER_PROMPT));
     yield doneEvent(session.phase);
     return;
   }
 
-  const incoming = parseProductSlotsFromSpeech(speech);
-  session.productSlots = mergeProductSlots(session.productSlots, incoming);
-
-  if (isPhase2Ready(session.productSlots, session)) {
-    session.awaitingInput = null;
-    yield* phase2ProductFlow(session);
-    return;
-  }
-
-  const promptKind =
-    session.awaitingInput === "product_isbn"
-      ? "isbn"
-      : session.awaitingInput === "product_title"
-        ? "title"
-        : "both";
-
+  session.productSlots = analysis.slots;
   session.awaitingInput = "product_slot";
   session.phase = "awaiting_order_number";
   yield* yieldSpeech(
-    recordAssistant(session.callSid, pickProductSlotQuestion(session.productSlots, promptKind)),
+    recordAssistant(session.callSid, pickProductSlotQuestion(analysis.slots, "both")),
   );
   yield doneEvent(session.phase);
 }
 
-/** Phase 2 — Shopify tool execution after slots confirmed. */
+/** Phase 2 — Shopify tool execution after gate approval only. */
 async function* phase2ProductFlow(session: CallSession): AsyncGenerator<AgentStreamEvent> {
   const slots: ProductSearchSlots = { ...session.productSlots };
   const memory = getOrCreateMemory(session.callSid);
@@ -351,28 +365,6 @@ function speechContainsDigitAttempt(speech: string): boolean {
   );
 }
 
-async function* handleOrderStatus(
-  session: CallSession,
-  speech: string,
-): AsyncGenerator<AgentStreamEvent> {
-  const orderNumber = extractOrderNumberFromSpeech(speech);
-
-  if (orderNumber) {
-    yield* runOrderLookup(session, orderNumber);
-    return;
-  }
-
-  if (speechContainsDigitAttempt(speech)) {
-    yield* handleUnclearOrderNumber(session);
-    return;
-  }
-
-  session.awaitingInput = "order_number";
-  session.phase = "awaiting_order_number";
-  yield* yieldSpeech(recordAssistant(session.callSid, ORDER_NUMBER_PROMPT));
-  yield doneEvent(session.phase);
-}
-
 async function* handleUnclearOrderNumber(session: CallSession): AsyncGenerator<AgentStreamEvent> {
   session.awaitingInput = "order_number";
   session.phase = "awaiting_order_number";
@@ -399,32 +391,9 @@ async function* handleAwaitingOrderNumber(
     return;
   }
 
-  const intent = await classifyOrchestratorIntentAsync(speech);
-  if (intent !== "unknown" && intent !== "order_status") {
-    session.awaitingInput = null;
-    switch (intent) {
-      case "greeting":
-        yield* handleGeneralHelp(session, speech);
-        return;
-      case "product_search":
-        yield* phase1ProductFlow(session, speech);
-        return;
-      case "product_purchase_intent":
-        yield* phase1ProductFlow(session, speech);
-        return;
-      default:
-        break;
-    }
-  }
-
-  session.phase = "awaiting_order_number";
-  yield* yieldSpeech(
-    recordAssistant(
-      session.callSid,
-      "No problem — whenever you're ready, just tell me the order number.",
-    ),
-  );
-  yield doneEvent(session.phase);
+  session.awaitingInput = null;
+  const memory = getOrCreateMemory(session.callSid);
+  yield* runGateControlledTurn(session, speech, memory);
 }
 
 async function* runOrderLookup(
@@ -515,36 +484,9 @@ async function* handleFollowUpPhase(
     return;
   }
 
-  const route = await classifyOrchestratorIntentAsync(callerText);
-  if (route === "product_search" || route === "product_purchase_intent") {
-    session.phase = "awaiting_order_number";
-    yield* phase1ProductFlow(session, callerText);
-    return;
-  }
-  if (route === "order_status") {
-    session.phase = "awaiting_order_number";
-    yield* handleOrderStatus(session, callerText);
-    return;
-  }
-  if (route === "greeting") {
-    yield* handleGeneralHelp(session, callerText);
-    return;
-  }
-
-  session.phase = "follow_up";
-  yield* yieldSpeech(
-    recordAssistant(
-      session.callSid,
-      pickVariedLine(
-        [
-          "What else can I help you with — another book or your order?",
-          "Happy to keep helping. Books or order status?",
-        ],
-        session.callSid,
-      ),
-    ),
-  );
-  yield doneEvent(session.phase);
+  session.phase = "awaiting_order_number";
+  const memory = getOrCreateMemory(session.callSid);
+  yield* runGateControlledTurn(session, callerText, memory);
 }
 
 async function* streamOrderSummary(order: StructuredOrder): AsyncGenerator<AgentStreamEvent> {
@@ -575,9 +517,14 @@ function doneEvent(
   return { type: "done", phase, endCall, lookupMs };
 }
 
-// Re-export slot helpers for tests
+// Re-export slot helpers and gate for tests
+export { analyzeBrainTurn } from "./brainAnalyzer.js";
 export {
-  isPhase2Ready,
+  buildToolDecisionState,
+  decideToolExecution,
+  type ToolAction,
+} from "./toolDecisionGate.js";
+export {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
   pickProductSlotQuestion,

@@ -87,9 +87,11 @@ async function classifyWithOpenAi(speech: string): Promise<IntentClassification 
 {"intent":"greeting"|"order_lookup"|"refund"|"support"|"product_search"|"isbn_query"|"unknown","confidence":0.0-1.0}
 
 product_search = book titles, magazines, newspapers, catalog browsing
-isbn_query = ISBN numbers
+isbn_query = ISBN numbers in speech (classification only — never triggers tools)
 order_lookup = order status/tracking/order numbers
-greeting = hi, how are you`,
+greeting = hi, how are you
+
+Classify intent only. Never call Shopify or search tools.`,
         },
         { role: "user", content: speech },
       ],
