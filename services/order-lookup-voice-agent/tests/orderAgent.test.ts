@@ -98,11 +98,12 @@ describe("security", () => {
 });
 
 describe("agent QA flows", () => {
-  it("handles invalid order with retry message", async () => {
+  it("guides gently when order number is unclear", async () => {
     const session = createCallSession("CA123", "+15550001", "+15550002");
     session.phase = "awaiting_order_number";
     const result = await handleAgentTurn(session, "my order number is 12");
-    expect(result.speech).toMatch(/valid order number|didn't catch|four to six digits/i);
+    expect(result.speech).toMatch(/order|help|digits|number/i);
+    expect(result.speech).not.toMatch(/didn't catch|invalid input/i);
     expect(session.phase).toBe("awaiting_order_number");
   });
 

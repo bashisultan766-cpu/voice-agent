@@ -17,6 +17,7 @@ const envSchema = z.object({
 
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+  CONVERSATION_BRAIN_MODEL: z.string().default("gpt-4o"),
   OPENAI_TIMEOUT_MS: z.coerce.number().default(8000),
 
   SHOPIFY_SHOP_DOMAIN: z.string().min(1),

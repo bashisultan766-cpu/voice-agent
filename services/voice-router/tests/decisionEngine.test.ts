@@ -7,23 +7,21 @@ describe("decisionEngine", () => {
     clearAllSessions();
   });
 
-  it('routes "how are you" to greeting handler (not order lookup)', async () => {
+  it('routes "how are you" to conversation brain (not order lookup)', async () => {
     const decision = await decideRoute({
       speech: "how are you",
       callSid: "CA_GREET",
     });
-    expect(decision.target).toBe("greeting");
+    expect(decision.target).toBe("conversation_brain");
     expect(decision.intent).toBe("greeting");
-    expect(decision.responseText).toMatch(/doing well|help you/i);
-    expect(decision.responseText).not.toMatch(/valid order number/i);
   });
 
-  it('routes "hello" to greeting handler', async () => {
+  it('routes "hello" to conversation brain', async () => {
     const decision = await decideRoute({
       speech: "hello",
       callSid: "CA_HELLO",
     });
-    expect(decision.target).toBe("greeting");
+    expect(decision.target).toBe("conversation_brain");
     expect(decision.intent).toBe("greeting");
   });
 
@@ -34,7 +32,6 @@ describe("decisionEngine", () => {
     });
     expect(decision.target).toBe("order_lookup");
     expect(decision.intent).toBe("order_lookup");
-    expect(decision.reason).toContain("order_lookup");
   });
 
   it('routes "where is my order" to order_lookup', async () => {
@@ -55,22 +52,20 @@ describe("decisionEngine", () => {
     expect(decision.intent).toBe("refund");
   });
 
-  it("routes ambiguous speech to clarify (not main_agent)", async () => {
+  it("routes ambiguous speech to conversation brain", async () => {
     const decision = await decideRoute({
       speech: "umm yeah so",
       callSid: "CA_UNKNOWN",
     });
-    expect(decision.target).toBe("clarify");
-    expect(decision.responseText).toBeTruthy();
+    expect(decision.target).toBe("conversation_brain");
   });
 
-  it("reprompts on empty speech", async () => {
+  it("routes empty speech to conversation brain", async () => {
     const decision = await decideRoute({
       speech: "",
       callSid: "CA444",
     });
-    expect(decision.target).toBe("clarify");
-    expect(decision.reason).toBe("empty_speech_reprompt");
-    expect(decision.responseText).toMatch(/didn't hear/i);
+    expect(decision.target).toBe("conversation_brain");
+    expect(decision.reason).toBe("empty_speech_brain");
   });
 });

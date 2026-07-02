@@ -1,31 +1,31 @@
 import type { AgentTarget } from "../config.js";
 import { getSession } from "./sessionStore.js";
 import { classifyIntent, type IntentClassification, type IntentType } from "./intentClassifier.js";
-import {
-  buildClarifyingResponse,
-  buildGreetingResponse,
-  buildSilenceReprompt,
-} from "./handlers/greetingHandler.js";
 
-export type RouteTarget = AgentTarget | "greeting" | "clarify";
+export type RouteTarget = AgentTarget | "conversation_brain";
 
 export interface RouteDecision {
   target: RouteTarget;
   intent: IntentType;
   confidence: number;
   reason: string;
-  responseText?: string;
 }
 
-function isForwardTarget(target: RouteTarget): target is AgentTarget {
-  return target === "order_lookup" || target === "main_agent";
+function isOrderIntent(classification: IntentClassification): boolean {
+  return (
+    classification.intent === "order_lookup" ||
+    classification.intent === "refund"
+  );
+}
+
+export function isForwardTarget(target: RouteTarget): target is AgentTarget {
+  return target === "order_lookup";
 }
 
 /**
- * 3-stage pipeline:
- * 1. Intent classification (classifyIntent)
- * 2. Router decision (intent → target)
- * 3. Handler payload (greeting/clarify response text)
+ * Routing model:
+ * - order intent → order-lookup service (8002)
+ * - everything else → conversation brain (LLM)
  */
 export async function decideRoute(input: {
   speech: string;
@@ -36,77 +36,43 @@ export async function decideRoute(input: {
   if (existing) {
     return {
       target: existing.target,
-      intent: targetToIntent(existing.target),
+      intent: existing.target === "order_lookup" ? "order_lookup" : "support",
       confidence: 1,
       reason: `session_locked:${existing.reason}`,
     };
   }
 
   const speech = (input.speech ?? "").trim();
-
   if (!speech) {
     return {
-      target: "clarify",
+      target: "conversation_brain",
       intent: "unknown",
       confidence: 0,
-      reason: "empty_speech_reprompt",
-      responseText: buildSilenceReprompt(),
+      reason: "empty_speech_brain",
     };
   }
 
   const classification = await classifyIntent(speech);
-  return routeFromIntent(classification, speech);
+  return routeFromIntent(classification);
 }
 
-function routeFromIntent(classification: IntentClassification, speech: string): RouteDecision {
+function routeFromIntent(classification: IntentClassification): RouteDecision {
   const base = {
     intent: classification.intent,
     confidence: classification.confidence,
-    reason: `intent_${classification.intent}:${classification.source}`,
   };
 
-  switch (classification.intent) {
-    case "greeting":
-      return {
-        ...base,
-        target: "greeting",
-        responseText: buildGreetingResponse(speech),
-      };
-
-    case "order_lookup":
-      return {
-        ...base,
-        target: "order_lookup",
-      };
-
-    case "refund":
-      return {
-        ...base,
-        target: "order_lookup",
-        reason: `intent_refund:${classification.source}`,
-      };
-
-    case "support":
-      return {
-        ...base,
-        target: "main_agent",
-        reason: `intent_support:${classification.source}`,
-      };
-
-    case "unknown":
-    default:
-      return {
-        ...base,
-        target: "clarify",
-        responseText: buildClarifyingResponse(),
-        reason: `intent_unknown:${classification.source}`,
-      };
+  if (isOrderIntent(classification)) {
+    return {
+      ...base,
+      target: "order_lookup",
+      reason: `order_intent:${classification.source}`,
+    };
   }
-}
 
-function targetToIntent(target: AgentTarget): IntentType {
-  if (target === "order_lookup") return "order_lookup";
-  return "support";
+  return {
+    ...base,
+    target: "conversation_brain",
+    reason: `conversation_brain:${classification.source}`,
+  };
 }
-
-export { isForwardTarget };

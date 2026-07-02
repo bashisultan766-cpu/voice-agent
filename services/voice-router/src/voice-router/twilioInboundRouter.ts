@@ -6,6 +6,7 @@ import { validateTwilioSignature } from "../utils/twilioSignature.js";
 import { decideRoute, isForwardTarget } from "./decisionEngine.js";
 import { forwardToAgent } from "./agentForwarder.js";
 import { getSession, lockSession } from "./sessionStore.js";
+import { generateConversationResponse } from "./agents/conversationBrainAgent.js";
 
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>';
 const ROUTER_GREETING =
@@ -97,7 +98,12 @@ export async function handleGather(req: Request, res: Response): Promise<void> {
 
   if (!speech) {
     logger.info("router_no_speech_reprompt", { callSid: callSid.slice(0, 8) });
-    res.type("application/xml").send(gatherTwiml(gatherUrl, true));
+    const brainReply = await generateConversationResponse({
+      callSid,
+      userMessage: "",
+      inferredIntent: "unknown",
+    });
+    res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, brainReply));
     return;
   }
 
@@ -117,9 +123,12 @@ export async function handleGather(req: Request, res: Response): Promise<void> {
   });
 
   if (!isForwardTarget(decision.target)) {
-    res
-      .type("application/xml")
-      .send(conversationalGatherTwiml(gatherUrl, decision.responseText ?? ROUTER_GREETING));
+    const brainReply = await generateConversationResponse({
+      callSid,
+      userMessage: speech,
+      inferredIntent: decision.intent,
+    });
+    res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, brainReply));
     return;
   }
 
@@ -216,12 +225,6 @@ export async function handleDecide(req: Request, res: Response): Promise<void> {
     intent: decision.intent,
     reason: decision.reason,
     confidence: decision.confidence,
-    responseText: decision.responseText,
-    forwardPath:
-      decision.target === "order_lookup"
-        ? "/voice/order/twilio/inbound"
-        : decision.target === "main_agent"
-          ? "/voice/twilio/agent/inbound"
-          : null,
+    forwardPath: decision.target === "order_lookup" ? "/voice/order/twilio/inbound" : null,
   });
 }

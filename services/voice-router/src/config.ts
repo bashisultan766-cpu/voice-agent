@@ -24,6 +24,7 @@ const envSchema = z.object({
 
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+  CONVERSATION_BRAIN_MODEL: z.string().default("gpt-4o"),
   OPENAI_TIMEOUT_MS: z.coerce.number().default(5000),
 
   SESSION_TTL_SECS: z.coerce.number().default(3600),

@@ -3,7 +3,6 @@ import { logger } from "../utils/logger.js";
 import {
   extractOrderNumberFromSpeech,
   GREETING_PROMPT,
-  INVALID_ORDER_RETRY,
   ORDER_NOT_FOUND_MESSAGE,
   SHOPIFY_DOWN_MESSAGE,
   GOODBYE_MESSAGE,
@@ -20,12 +19,11 @@ import {
   planInstantFiller,
   planLookupError,
   planOrderLookupResponse,
-  planFollowUpClosing,
   planGoodbye,
   planRepeatIntro,
 } from "./responsePlanner.js";
 import { classifyCallerIntent } from "./intentClassifier.js";
-import { buildClarifyingResponse, buildGreetingResponse } from "../handlers/greetingHandler.js";
+import { generateConversationResponse } from "./conversationBrainAgent.js";
 import type {
   AgentStreamEvent,
   CallSession,
@@ -102,23 +100,6 @@ async function* streamOrderNumberCapture(
 ): AsyncGenerator<AgentStreamEvent> {
   const intent = await classifyCallerIntent(callerText);
 
-  if (intent.intent === "greeting") {
-    session.phase = "awaiting_order_number";
-    yield chunkEvent(buildGreetingResponse(callerText), "summary");
-    yield doneEvent(session.phase);
-    return;
-  }
-
-  if (intent.intent === "unknown") {
-    session.phase = "awaiting_order_number";
-    yield chunkEvent(buildClarifyingResponse(), "summary");
-    yield doneEvent(session.phase);
-    return;
-  }
-
-  session.phase = "lookup_in_progress";
-  const started = Date.now();
-
   const regexOrder = extractOrderNumberFromSpeech(callerText);
   let orderNumber: string | null = regexOrder;
 
@@ -126,18 +107,27 @@ async function* streamOrderNumberCapture(
     orderNumber = await extractOrderNumberWithLlm(callerText);
   }
 
-  if (!orderNumber) {
-    session.orderNumberAttempts += 1;
+  const hasOrderIntent =
+    intent.intent === "order_lookup" || intent.intent === "refund" || Boolean(orderNumber);
+
+  if (!orderNumber || !hasOrderIntent) {
     session.phase = "awaiting_order_number";
-    yield chunkEvent(INVALID_ORDER_RETRY, "error");
-    if (session.orderNumberAttempts >= getConfig().ORDER_LOOKUP_MAX_RETRIES) {
-      yield chunkEvent(GOODBYE_MESSAGE, "closing");
-      yield doneEvent("ended", true);
-      return;
-    }
+    const brainResponse = await generateConversationResponse({
+      callSid: session.callSid,
+      userMessage: callerText,
+      inferredIntent: intent.intent,
+      situationalHint:
+        hasOrderIntent && !orderNumber
+          ? "Caller seems to want order help but no clear order number yet — guide them gently."
+          : undefined,
+    });
+    yield chunkEvent(brainResponse, "summary");
     yield doneEvent(session.phase);
     return;
   }
+
+  session.phase = "lookup_in_progress";
+  const started = Date.now();
 
   yield chunkEvent(planInstantFiller());
 
@@ -219,7 +209,12 @@ async function* streamFollowUp(
   }
 
   session.phase = "follow_up";
-  yield chunkEvent(planFollowUpClosing());
+  const brainResponse = await generateConversationResponse({
+    callSid: session.callSid,
+    userMessage: callerText,
+    inferredIntent: "follow_up",
+  });
+  yield chunkEvent(brainResponse, "closing");
   yield doneEvent(session.phase);
 }
 
