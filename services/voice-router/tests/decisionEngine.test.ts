@@ -16,13 +16,23 @@ describe("decisionEngine", () => {
     expect(decision.intent).toBe("greeting");
   });
 
-  it('routes "hello" to conversation brain', async () => {
+  it('routes "Harry Potter book" to order-lookup product brain', async () => {
     const decision = await decideRoute({
-      speech: "hello",
-      callSid: "CA_HELLO",
+      speech: "I want Harry Potter book",
+      callSid: "CA_HP",
     });
-    expect(decision.target).toBe("conversation_brain");
-    expect(decision.intent).toBe("greeting");
+    expect(decision.target).toBe("order_lookup");
+    expect(decision.intent).toBe("product_search");
+    expect(decision.reason).toContain("product_intent");
+  });
+
+  it('routes ISBN query to order-lookup product brain', async () => {
+    const decision = await decideRoute({
+      speech: "ISBN 9781234567890",
+      callSid: "CA_ISBN",
+    });
+    expect(decision.target).toBe("order_lookup");
+    expect(decision.intent).toBe("isbn_query");
   });
 
   it("routes numeric order input to order_lookup", async () => {

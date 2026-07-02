@@ -1,8 +1,16 @@
 import OpenAI from "openai";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
+import { extractIsbnFromSpeech } from "../tools/shopifyProductTools.js";
 
-export type CallerIntent = "greeting" | "order_lookup" | "refund" | "support" | "unknown";
+export type CallerIntent =
+  | "greeting"
+  | "order_lookup"
+  | "refund"
+  | "support"
+  | "product_search"
+  | "isbn_query"
+  | "unknown";
 
 export interface IntentClassification {
   intent: CallerIntent;
@@ -10,6 +18,9 @@ export interface IntentClassification {
   source: "regex" | "openai" | "default";
 }
 
+const ISBN_IN_SPEECH = /\b(isbn|97[89][\d-]{10,17}|[\d-]{9,}[\dXx])\b/i;
+const PRODUCT_SEARCH_RE =
+  /\b(book|books|magazine|magazines|newspaper|newspapers|title|author|do you (have|sell|carry)|looking for|i want .+ book|harry potter|similar to|like this|catalog|browse)\b/i;
 const ORDER_NUMBER_RE = /\b\d{4,12}\b/;
 const ORDER_INTENT_RE =
   /\b(order|tracking|track|status|shipment|shipped|delivery|where\s+is\s+my\s+order|order\s+number|my\s+order)\b/i;
@@ -35,6 +46,14 @@ export async function classifyCallerIntent(speech: string): Promise<IntentClassi
 }
 
 function classifyWithRegex(text: string): IntentClassification | null {
+  if (extractIsbnFromSpeech(text) || ISBN_IN_SPEECH.test(text)) {
+    return { intent: "isbn_query", confidence: 0.95, source: "regex" };
+  }
+
+  if (PRODUCT_SEARCH_RE.test(text) && !ORDER_INTENT_RE.test(text)) {
+    return { intent: "product_search", confidence: 0.9, source: "regex" };
+  }
+
   if (ORDER_NUMBER_RE.test(text) || ORDER_INTENT_RE.test(text)) {
     return { intent: "order_lookup", confidence: 0.95, source: "regex" };
   }
@@ -64,12 +83,13 @@ async function classifyWithOpenAi(speech: string): Promise<IntentClassification 
       messages: [
         {
           role: "system",
-          content: `Classify caller intent for SureShot Books order lookup line. JSON only:
-{"intent":"greeting"|"order_lookup"|"refund"|"support"|"unknown","confidence":0.0-1.0}
+          content: `Classify SureShot Books bookstore phone intent. JSON only:
+{"intent":"greeting"|"order_lookup"|"refund"|"support"|"product_search"|"isbn_query"|"unknown","confidence":0.0-1.0}
 
-greeting = hi, hello, how are you, small talk (NOT an order number attempt).
-order_lookup = order status, tracking, or spoken order numbers.
-unknown = unclear — do NOT treat as invalid order.`,
+product_search = book titles, magazines, newspapers, catalog browsing
+isbn_query = ISBN numbers
+order_lookup = order status/tracking/order numbers
+greeting = hi, how are you`,
         },
         { role: "user", content: speech },
       ],
@@ -78,7 +98,15 @@ unknown = unclear — do NOT treat as invalid order.`,
 
     const raw = response.choices[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(raw) as { intent?: string; confidence?: number };
-    const intents: CallerIntent[] = ["greeting", "order_lookup", "refund", "support", "unknown"];
+    const intents: CallerIntent[] = [
+      "greeting",
+      "order_lookup",
+      "refund",
+      "support",
+      "product_search",
+      "isbn_query",
+      "unknown",
+    ];
     if (!parsed.intent || !intents.includes(parsed.intent as CallerIntent)) return null;
 
     return {

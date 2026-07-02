@@ -12,10 +12,11 @@ export interface RouteDecision {
 }
 
 function isOrderIntent(classification: IntentClassification): boolean {
-  return (
-    classification.intent === "order_lookup" ||
-    classification.intent === "refund"
-  );
+  return classification.intent === "order_lookup" || classification.intent === "refund";
+}
+
+function isProductIntent(classification: IntentClassification): boolean {
+  return classification.intent === "product_search" || classification.intent === "isbn_query";
 }
 
 export function isForwardTarget(target: RouteTarget): target is AgentTarget {
@@ -24,8 +25,9 @@ export function isForwardTarget(target: RouteTarget): target is AgentTarget {
 
 /**
  * Routing model:
- * - order intent → order-lookup service (8002)
- * - everything else → conversation brain (LLM)
+ * - order/refund intent → order-lookup service (order agent)
+ * - product/ISBN intent → order-lookup service (product brain agent)
+ * - everything else → conversation brain (LLM in router)
  */
 export async function decideRoute(input: {
   speech: string;
@@ -67,6 +69,14 @@ function routeFromIntent(classification: IntentClassification): RouteDecision {
       ...base,
       target: "order_lookup",
       reason: `order_intent:${classification.source}`,
+    };
+  }
+
+  if (isProductIntent(classification)) {
+    return {
+      ...base,
+      target: "order_lookup",
+      reason: `product_intent:${classification.source}`,
     };
   }
 

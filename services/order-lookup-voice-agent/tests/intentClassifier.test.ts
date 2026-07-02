@@ -10,9 +10,14 @@ describe("intentClassifier", () => {
     expect(result.intent).toBe("greeting");
   });
 
-  it('classifies "my order is 12345" as order_lookup', async () => {
-    const result = await classifyCallerIntent("my order is 12345");
-    expect(result.intent).toBe("order_lookup");
+  it('classifies "Harry Potter book" as product_search', async () => {
+    const result = await classifyCallerIntent("I want Harry Potter book");
+    expect(result.intent).toBe("product_search");
+  });
+
+  it('classifies ISBN speech as isbn_query', async () => {
+    const result = await classifyCallerIntent("ISBN 9781234567890");
+    expect(result.intent).toBe("isbn_query");
   });
 });
 

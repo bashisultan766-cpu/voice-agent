@@ -24,6 +24,7 @@ import {
 } from "./responsePlanner.js";
 import { classifyCallerIntent } from "./intentClassifier.js";
 import { generateConversationResponse } from "./conversationBrainAgent.js";
+import { handleProductBrainTurn } from "./productBrainAgent.js";
 import type {
   AgentStreamEvent,
   CallSession,
@@ -99,6 +100,18 @@ async function* streamOrderNumberCapture(
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
   const intent = await classifyCallerIntent(callerText);
+
+  if (intent.intent === "product_search" || intent.intent === "isbn_query") {
+    session.phase = "awaiting_order_number";
+    const productResult = await handleProductBrainTurn({
+      callSid: session.callSid,
+      userMessage: callerText,
+      intent: intent.intent,
+    });
+    yield chunkEvent(productResult.speech, "summary");
+    yield doneEvent(session.phase);
+    return;
+  }
 
   const regexOrder = extractOrderNumberFromSpeech(callerText);
   let orderNumber: string | null = regexOrder;

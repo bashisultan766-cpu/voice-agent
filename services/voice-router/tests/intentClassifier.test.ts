@@ -18,9 +18,9 @@ describe("intentClassifier", () => {
     expect(result.intent).toBe("greeting");
   });
 
-  it('classifies "my order is 12345" as order_lookup', async () => {
-    const result = await classifyIntent("my order is 12345");
-    expect(result.intent).toBe("order_lookup");
+  it('classifies "Harry Potter book" as product_search', async () => {
+    const result = await classifyIntent("I want Harry Potter book");
+    expect(result.intent).toBe("product_search");
   });
 
   it('classifies "where is my order" as order_lookup', async () => {

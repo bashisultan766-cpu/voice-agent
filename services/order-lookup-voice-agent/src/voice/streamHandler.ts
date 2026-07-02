@@ -2,6 +2,7 @@ import type { WebSocket } from "ws";
 import { logger } from "../utils/logger.js";
 import { createCallSession, streamAgentTurn } from "../agents/orderAgent.js";
 import { clearCallMemory } from "../memory/callMemoryStore.js";
+import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
 
@@ -95,6 +96,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     turnAbort?.abort();
     if (session?.callSid) {
       clearCallMemory(session.callSid);
+      clearCustomerMemory(session.callSid);
     }
     logger.info("relay_closed", { callSid: session?.callSid?.slice(0, 8) });
   });

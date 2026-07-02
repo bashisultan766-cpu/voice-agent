@@ -2,7 +2,14 @@ import OpenAI from "openai";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 
-export type IntentType = "greeting" | "order_lookup" | "refund" | "support" | "unknown";
+export type IntentType =
+  | "greeting"
+  | "order_lookup"
+  | "refund"
+  | "support"
+  | "product_search"
+  | "isbn_query"
+  | "unknown";
 
 export interface IntentClassification {
   intent: IntentType;
@@ -10,6 +17,9 @@ export interface IntentClassification {
   source: "regex" | "openai" | "default";
 }
 
+const ISBN_IN_SPEECH = /\b(isbn|97[89][\d-]{10,17}|[\d-]{9,}[\dXx])\b/i;
+const PRODUCT_SEARCH_RE =
+  /\b(book|books|magazine|magazines|newspaper|newspapers|do you (have|sell|carry)|looking for|i want .+ book|harry potter|similar to|catalog|browse)\b/i;
 const ORDER_NUMBER_RE = /\b\d{4,12}\b/;
 const ORDER_INTENT_RE =
   /\b(order|tracking|track|status|shipment|shipped|delivery|where\s+is\s+my\s+order|order\s+number|my\s+order)\b/i;
@@ -21,9 +31,6 @@ const GREETING_ONLY_RE =
 const GREETING_PHRASE_RE =
   /\b(how\s+are\s+you|how'?s\s+it\s+going|how\s+are\s+ya|what'?s\s+up|nice\s+to\s+(meet|talk)\s+you|good\s+to\s+hear\s+from\s+you)\b/i;
 
-/**
- * Stage 1 — classify caller speech before any routing or Shopify logic.
- */
 export async function classifyIntent(speech: string): Promise<IntentClassification> {
   const text = (speech ?? "").trim();
   if (!text) {
@@ -40,6 +47,14 @@ export async function classifyIntent(speech: string): Promise<IntentClassificati
 }
 
 function classifyWithRegex(text: string): IntentClassification | null {
+  if (ISBN_IN_SPEECH.test(text)) {
+    return { intent: "isbn_query", confidence: 0.95, source: "regex" };
+  }
+
+  if (PRODUCT_SEARCH_RE.test(text) && !ORDER_INTENT_RE.test(text)) {
+    return { intent: "product_search", confidence: 0.9, source: "regex" };
+  }
+
   if (REFUND_INTENT_RE.test(text)) {
     return { intent: "refund", confidence: 0.9, source: "regex" };
   }
@@ -76,17 +91,12 @@ async function classifyWithOpenAi(speech: string): Promise<IntentClassification 
       messages: [
         {
           role: "system",
-          content: `Classify SureShot Books phone caller intent. Return JSON only:
-{"intent":"greeting"|"order_lookup"|"refund"|"support"|"unknown","confidence":0.0-1.0}
+          content: `Classify SureShot Books phone intent. JSON only:
+{"intent":"greeting"|"order_lookup"|"refund"|"support"|"product_search"|"isbn_query"|"unknown","confidence":0.0-1.0}
 
-Rules:
-- greeting: hi, hello, how are you, small talk — NOT an order attempt
-- order_lookup: order status, tracking, order numbers, "where is my order"
-- refund: refunds, money back, charge disputes on an order
-- support: general help, complaints, speak to someone (non-order-specific)
-- unknown: unclear intent
-
-Never classify casual greetings as order_lookup.`,
+product_search = books, magazines, newspapers, titles
+isbn_query = ISBN numbers
+order_lookup = order tracking/status/numbers`,
         },
         { role: "user", content: speech },
       ],
@@ -113,6 +123,14 @@ Never classify casual greetings as order_lookup.`,
 }
 
 function normalizeIntent(value?: string): IntentType | null {
-  const intents: IntentType[] = ["greeting", "order_lookup", "refund", "support", "unknown"];
+  const intents: IntentType[] = [
+    "greeting",
+    "order_lookup",
+    "refund",
+    "support",
+    "product_search",
+    "isbn_query",
+    "unknown",
+  ];
   return intents.includes(value as IntentType) ? (value as IntentType) : null;
 }
