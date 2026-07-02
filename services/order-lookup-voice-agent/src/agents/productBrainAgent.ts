@@ -17,9 +17,12 @@ import {
 import {
   extractIsbnFromSpeech,
   getSimilarProducts,
+  searchProductByCategory,
   searchProductByISBN,
   searchProductByTitle,
 } from "../tools/shopifyProductTools.js";
+import { semanticProductSearch } from "../tools/productSemanticSearch.js";
+import { getProductCatalog } from "../tools/productCatalog.js";
 import type { StructuredProduct } from "../types/product.js";
 
 let client: OpenAI | null = null;
@@ -158,15 +161,25 @@ export async function handleProductBrainTurn(input: ProductBrainInput): Promise<
     const category = isCategoryBrowse(speech);
     const query = category ? category.label : extractTitleQuery(speech) || speech;
 
-    const result = await searchProductByTitle(query);
-    products = result.products;
+    if (category) {
+      const catResult = await searchProductByCategory(`${category.label} inmates ${category.type}`);
+      products = catResult.products;
+      if (products.length === 0) {
+        const titleResult = await searchProductByTitle(category.type);
+        products = titleResult.products;
+      }
+    } else {
+      const result = await searchProductByTitle(query);
+      products = result.products;
+    }
+
     situationalHint = category
       ? `Browsing ${category.label} category for inmates/families`
       : `Title search for "${query}"`;
 
-    if (products.length === 0 && category) {
-      const typeResult = await searchProductByTitle(category.type);
-      products = typeResult.products;
+    if (products.length === 0) {
+      const { products: catalog } = await getProductCatalog();
+      products = await semanticProductSearch(query, catalog, 3);
       usedSimilarFallback = products.length > 0;
     }
   }

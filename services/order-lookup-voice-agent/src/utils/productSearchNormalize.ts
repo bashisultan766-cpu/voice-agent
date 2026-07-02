@@ -1,0 +1,123 @@
+/** Normalize text for product search — lowercase, strip punctuation, collapse spaces. */
+export function normalizeSearchText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function tokenize(text: string): string[] {
+  return normalizeSearchText(text)
+    .split(/\s+/)
+    .filter((t) => t.length > 1);
+}
+
+/**
+ * Token-based title scoring:
+ * +3 full phrase match
+ * +2 all query tokens present in title
+ * +1 per partial token match (prefix/substring)
+ */
+export function scoreTitleMatch(title: string, query: string): number {
+  const normalizedTitle = normalizeSearchText(title);
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return 0;
+
+  let score = 0;
+
+  if (normalizedTitle === normalizedQuery) return 10;
+  if (normalizedTitle.includes(normalizedQuery)) score += 3;
+
+  const queryTokens = tokenize(normalizedQuery);
+  const titleTokens = new Set(tokenize(normalizedTitle));
+  if (!queryTokens.length) return score;
+
+  let fullTokenHits = 0;
+  let partialHits = 0;
+
+  for (const token of queryTokens) {
+    if (titleTokens.has(token)) {
+      fullTokenHits++;
+      continue;
+    }
+    const partial = [...titleTokens].some(
+      (tt) => tt.includes(token) || token.includes(tt),
+    );
+    if (partial) partialHits++;
+  }
+
+  if (fullTokenHits === queryTokens.length) score += 2;
+  else score += fullTokenHits > 0 ? 1 : 0;
+
+  score += partialHits * 0.5;
+  return score;
+}
+
+export function rankBySearchScore<T extends { title: string }>(
+  items: T[],
+  query: string,
+  minScore = 1,
+): Array<T & { searchScore: number }> {
+  return items
+    .map((item) => ({ ...item, searchScore: scoreTitleMatch(item.title, query) }))
+    .filter((item) => item.searchScore >= minScore)
+    .sort((a, b) => b.searchScore - a.searchScore);
+}
+
+/** ISBN-10 and ISBN-13 normalization — strips hyphens/spaces, uppercases check digit. */
+export function normalizeIsbn(raw: string): string {
+  return raw.replace(/[\s-]/g, "").toUpperCase();
+}
+
+export function isValidIsbnFormat(isbn: string): boolean {
+  const n = normalizeIsbn(isbn);
+  return /^\d{9}[\dX]$/.test(n) || /^97[89]\d{9}[\dX]$/.test(n);
+}
+
+/** Return lookup variants (ISBN-10 + ISBN-13) when convertible. */
+export function isbnLookupVariants(raw: string): string[] {
+  const normalized = normalizeIsbn(raw);
+  const variants = new Set<string>([normalized]);
+
+  if (/^97[89]\d{9}[\dX]$/.test(normalized)) {
+    const core = normalized.slice(3, 12);
+    variants.add(core);
+  }
+
+  if (/^\d{9}[\dX]$/.test(normalized)) {
+    const prefix = "978" + normalized.slice(0, 9);
+    const check = isbn13CheckDigit(prefix);
+    variants.add(prefix + check);
+  }
+
+  return [...variants];
+}
+
+function isbn13CheckDigit(first12: string): string {
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    const digit = Number(first12[i]);
+    sum += i % 2 === 0 ? digit : digit * 3;
+  }
+  const mod = (10 - (sum % 10)) % 10;
+  return String(mod);
+}
+
+export function extractIsbnFromSpeech(text: string): string | null {
+  const isbn13 = text.match(/\b97[89][\d-]{10,17}\b/);
+  if (isbn13) return normalizeIsbn(isbn13[0]);
+
+  const isbn10 = text.match(/\b[\dXx][\d-]{8,12}[\dXx]\b/);
+  if (isbn10) return normalizeIsbn(isbn10[0]);
+
+  const spoken = text.match(/\bisbn\s*#?\s*([\dXx-]{10,17})\b/i);
+  if (spoken?.[1]) return normalizeIsbn(spoken[1]);
+
+  return null;
+}
+
+export function tagOverlapScore(tagsA: string[], tagsB: string[]): number {
+  const setB = new Set(tagsB.map((t) => normalizeSearchText(t)));
+  return tagsA.reduce((sum, tag) => sum + (setB.has(normalizeSearchText(tag)) ? 1 : 0), 0);
+}

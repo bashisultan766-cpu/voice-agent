@@ -3,63 +3,80 @@ import { handleProductBrainTurn } from "../src/agents/productBrainAgent.js";
 import { clearAllCustomerMemories } from "../src/memory/customerMemoryStore.js";
 import { clearProductCache } from "../src/tools/shopifyProductTools.js";
 
-const sampleProducts = {
-  products: [
-    {
-      id: 1,
-      title: "Harry Potter and the Sorcerer's Stone",
-      handle: "harry-potter-1",
-      product_type: "Book",
-      vendor: "Scholastic",
-      tags: "fiction,fantasy",
-      variants: [{ id: 10, price: "12.99", inventory_quantity: 5, sku: "HP1" }],
-    },
-  ],
-};
-
 function mockShopifyFetch(): void {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
       const target = String(url);
-      if (target.includes("graphql")) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: {
-              products: {
-                edges: [
-                  {
-                    node: {
-                      id: "gid://shopify/Product/99",
-                      title: "Test Book",
-                      handle: "test-book",
-                      productType: "Book",
-                      vendor: "Pub",
-                      tags: [],
-                      description: "A test book",
-                      variants: {
-                        edges: [
-                          {
-                            node: {
-                              id: "gid://shopify/ProductVariant/1",
-                              sku: "9781234567890",
-                              barcode: "9781234567890",
-                              price: "15.00",
-                              inventoryQuantity: 2,
-                            },
+      if (!target.includes("graphql")) {
+        return { ok: true, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            products: {
+              pageInfo: { hasNextPage: false, endCursor: null },
+              edges: [
+                {
+                  node: {
+                    id: "gid://shopify/Product/1",
+                    title: "Harry Potter and the Sorcerer's Stone",
+                    handle: "hp1",
+                    productType: "Book",
+                    vendor: "Scholastic",
+                    tags: ["fiction", "fantasy"],
+                    description: "A fantasy book",
+                    isbnCustom: null,
+                    isbnBooks: null,
+                    isbnProduct: null,
+                    variants: {
+                      edges: [
+                        {
+                          node: {
+                            id: "gid://shopify/ProductVariant/10",
+                            sku: "HP1",
+                            barcode: "",
+                            price: "12.99",
+                            inventoryQuantity: 5,
                           },
-                        ],
-                      },
+                        },
+                      ],
                     },
                   },
-                ],
-              },
+                },
+                {
+                  node: {
+                    id: "gid://shopify/Product/99",
+                    title: "Test Book",
+                    handle: "test-book",
+                    productType: "Book",
+                    vendor: "Pub",
+                    tags: [],
+                    description: "A test book",
+                    isbnCustom: { value: "9781234567890" },
+                    isbnBooks: null,
+                    isbnProduct: null,
+                    variants: {
+                      edges: [
+                        {
+                          node: {
+                            id: "gid://shopify/ProductVariant/1",
+                            sku: "9781234567890",
+                            barcode: "9781234567890",
+                            price: "15.00",
+                            inventoryQuantity: 2,
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
             },
-          }),
-        };
-      }
-      return { ok: true, json: async () => sampleProducts };
+          },
+        }),
+      };
     }),
   );
 }

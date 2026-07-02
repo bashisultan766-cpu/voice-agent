@@ -13,8 +13,10 @@ export interface StructuredProduct {
   handle: string;
   productType: string;
   vendor: string;
+  author?: string;
   tags: string[];
   variants: ProductVariant[];
+  isbns?: string[];
   descriptionSnippet?: string;
 }
 
