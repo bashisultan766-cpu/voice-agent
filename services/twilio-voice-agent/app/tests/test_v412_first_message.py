@@ -91,7 +91,7 @@ class TestV412FirstMessage:
 
         client = TestClient(create_app())
         resp = client.post(
-            "/voice/twilio/inbound",
+            "/voice/twilio/agent/inbound",
             data={"CallSid": "CA412C", "From": "+15550004123", "To": "+15550004124"},
         )
         assert resp.status_code == 200

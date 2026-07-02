@@ -1,5 +1,5 @@
 """
-Tests for POST /voice/twilio/inbound.
+Tests for POST /voice/twilio/agent/inbound.
 
 Verifies:
 - Returns valid XML with <ConversationRelay>.
@@ -34,7 +34,7 @@ def _make_client():
 def test_inbound_returns_xml():
     client = _make_client()
     resp = client.post(
-        "/voice/twilio/inbound",
+        "/voice/twilio/agent/inbound",
         data={
             "CallSid": "CA123",
             "From": "+15550001111",
@@ -49,7 +49,7 @@ def test_inbound_returns_xml():
 def test_inbound_twiml_has_wss_url():
     client = _make_client()
     resp = client.post(
-        "/voice/twilio/inbound",
+        "/voice/twilio/agent/inbound",
         data={
             "CallSid": "CA456",
             "From": "+15550001111",
@@ -62,7 +62,7 @@ def test_inbound_twiml_has_wss_url():
 def test_inbound_includes_call_sid_parameter():
     client = _make_client()
     resp = client.post(
-        "/voice/twilio/inbound",
+        "/voice/twilio/agent/inbound",
         data={
             "CallSid": "CA789",
             "From": "+15550001111",
@@ -75,7 +75,7 @@ def test_inbound_includes_call_sid_parameter():
 def test_inbound_welcome_greeting_present():
     client = _make_client()
     resp = client.post(
-        "/voice/twilio/inbound",
+        "/voice/twilio/agent/inbound",
         data={
             "CallSid": "CA000",
             "From": "+15550001111",

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { getConfig, routerBaseUrl } from "../config.js";
+import { routingForwardUrl, routingGatherUrl } from "../paths.js";
 import { logger } from "../utils/logger.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
 import { decideRoute } from "./decisionEngine.js";
@@ -72,12 +73,12 @@ export async function handleInbound(req: Request, res: Response): Promise<void> 
       target: existing.target,
       reason: existing.reason,
     });
-    const forwardUrl = `${routerBaseUrl()}/voice-router/forward-to-agent`;
+    const forwardUrl = routingForwardUrl(routerBaseUrl());
     res.type("application/xml").send(redirectTwiml(forwardUrl));
     return;
   }
 
-  const gatherUrl = `${routerBaseUrl()}/voice-router/twilio/gather`;
+  const gatherUrl = routingGatherUrl(routerBaseUrl());
   res.type("application/xml").send(gatherTwiml(gatherUrl));
 }
 
@@ -87,7 +88,7 @@ export async function handleGather(req: Request, res: Response): Promise<void> {
   const body = twilioBody(req);
   const callSid = body.CallSid ?? "";
   const speech = (body.SpeechResult ?? body.UnstableSpeechResult ?? "").trim();
-  const gatherUrl = `${routerBaseUrl()}/voice-router/twilio/gather`;
+  const gatherUrl = routingGatherUrl(routerBaseUrl());
 
   if (!speech) {
     logger.info("router_no_speech_reprompt", { callSid: callSid.slice(0, 8) });
@@ -111,7 +112,7 @@ export async function handleGather(req: Request, res: Response): Promise<void> {
     speechPreview: speech.slice(0, 80),
   });
 
-  const forwardUrl = `${routerBaseUrl()}/voice-router/forward-to-agent`;
+  const forwardUrl = routingForwardUrl(routerBaseUrl());
   res.type("application/xml").send(redirectTwiml(forwardUrl));
 }
 
@@ -124,7 +125,7 @@ export async function handleForwardToAgent(req: Request, res: Response): Promise
 
   if (!session) {
     logger.warn("router_forward_missing_session", { callSid: callSid.slice(0, 8) });
-    const gatherUrl = `${routerBaseUrl()}/voice-router/twilio/gather`;
+    const gatherUrl = routingGatherUrl(routerBaseUrl());
     res.type("application/xml").send(gatherTwiml(gatherUrl, true));
     return;
   }
@@ -204,6 +205,6 @@ export async function handleDecide(req: Request, res: Response): Promise<void> {
     forwardPath:
       decision.target === "order_lookup"
         ? "/voice/order/twilio/inbound"
-        : "/voice/twilio/inbound",
+        : "/voice/twilio/agent/inbound",
   });
 }

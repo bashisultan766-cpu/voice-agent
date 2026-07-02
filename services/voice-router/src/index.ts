@@ -8,6 +8,12 @@ import {
   handleInbound,
 } from "./voice-router/twilioInboundRouter.js";
 import { sessionCount } from "./voice-router/sessionStore.js";
+import {
+  ROUTING_DECIDE_PATH,
+  ROUTING_FORWARD_PATH,
+  ROUTING_GATHER_PATH,
+  TWILIO_INBOUND_PATH,
+} from "./paths.js";
 
 export function createApp() {
   const app = express();
@@ -19,10 +25,12 @@ export function createApp() {
       ok: true,
       service: "voice-router",
       activeSessions: sessionCount(),
+      twilioWebhook: TWILIO_INBOUND_PATH,
     });
   });
 
-  app.post("/voice-router/twilio/inbound", async (req, res) => {
+  // Original project Twilio webhook URL — do not change in Twilio Console.
+  app.post(TWILIO_INBOUND_PATH, async (req, res) => {
     try {
       await handleInbound(req, res);
     } catch (err) {
@@ -33,7 +41,7 @@ export function createApp() {
     }
   });
 
-  app.post("/voice-router/twilio/gather", async (req, res) => {
+  app.post(ROUTING_GATHER_PATH, async (req, res) => {
     try {
       await handleGather(req, res);
     } catch (err) {
@@ -44,7 +52,7 @@ export function createApp() {
     }
   });
 
-  app.post("/voice-router/forward-to-agent", async (req, res) => {
+  app.post(ROUTING_FORWARD_PATH, async (req, res) => {
     try {
       await handleForwardToAgent(req, res);
     } catch (err) {
@@ -55,7 +63,7 @@ export function createApp() {
     }
   });
 
-  app.post("/voice-router/decide", async (req, res) => {
+  app.post(ROUTING_DECIDE_PATH, async (req, res) => {
     try {
       await handleDecide(req, res);
     } catch (err) {
@@ -77,7 +85,7 @@ export function startServer() {
   app.listen(cfg.PORT, () => {
     logger.info("voice_router_started", {
       port: cfg.PORT,
-      publicEntry: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}/voice-router/twilio/inbound`,
+      twilioWebhook: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${TWILIO_INBOUND_PATH}`,
     });
   });
 }

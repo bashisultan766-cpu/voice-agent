@@ -1,8 +1,9 @@
 /**
  * PM2 — SureShot Books multi-service voice stack.
  *
- * Twilio webhook MUST point to voice-router (port 8000) only:
- *   POST /voice-router/twilio/inbound
+ * Twilio webhook stays at the original project URL:
+ *   POST /voice/twilio/inbound  → voice-router :8000 (nginx)
+ *   POST /voice/twilio/agent/inbound → twilio-voice-agent :8001 (internal)
  */
 const path = require('path');
 
