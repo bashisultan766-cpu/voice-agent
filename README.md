@@ -6,28 +6,21 @@ AI phone sales agent for Shopify bookstores. Inbound calls hit **Twilio Conversa
 
 ```
 Twilio phone call
-    → POST /voice/twilio/inbound (existing webhook — voice-router :8000)
-    → Order Lookup (:8002) OR Main Commerce Agent (:8001)
-    → ConversationRelay STT/TTS
+    → POST /voice/twilio/inbound
+    → ConversationRelay WebSocket /voice/twilio/ws
+    → Python main agent (port 8001)
     → OpenAI + Shopify tools
 ```
 
-**Twilio webhook (unchanged):** `POST /voice/twilio/inbound`
+**Twilio webhook:** `POST /voice/twilio/inbound`
 
-| Service | Port | Paths |
-|---------|------|-------|
-| Voice Router | 8000 | `/voice/twilio/inbound`, `/voice/twilio/routing/*` |
-| Order Lookup (Node) | 8002 | `/voice/order/twilio/*` |
-| Main Agent (Python) | 8001 | `/voice/twilio/ws`, `/voice/twilio/agent/inbound` |
+**Main service:** [`services/twilio-voice-agent/`](services/twilio-voice-agent/) (port 8001)
 
-See [`services/voice-router/README.md`](services/voice-router/README.md) for nginx routing.
-
-**Main commerce service:** [`services/twilio-voice-agent/`](services/twilio-voice-agent/)
+Optional Node services (`voice-router`, `order-lookup-voice-agent`) are in the repo but **not required** for production — keep them stopped unless you configure them fully.
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /voice/twilio/inbound` | Twilio voice webhook (voice-router — intent gather + route) |
-| `POST /voice/twilio/agent/inbound` | Main commerce agent (internal, after routing) |
+| `POST /voice/twilio/inbound` | Twilio voice webhook — returns TwiML `<ConversationRelay>` |
 | `WS /voice/twilio/ws` | ConversationRelay WebSocket |
 | `GET /health` | Health check |
 

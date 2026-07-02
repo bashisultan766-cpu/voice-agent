@@ -138,6 +138,7 @@ async def _resolve_welcome_greeting(from_number: str, settings: Settings) -> tup
     return build_twiml_greeting(), True
 
 
+@router.post("/inbound", dependencies=[Depends(rate_limit_dependency("twilio_inbound", limit=120, window_sec=60))])
 @router.post("/agent/inbound", dependencies=[Depends(rate_limit_dependency("twilio_inbound", limit=120, window_sec=60))])
 async def inbound_call(
     request: Request,
@@ -146,10 +147,11 @@ async def inbound_call(
     To: str = Form(...),
 ) -> Response:
     """
-    Main commerce agent entry — called internally by voice-router after intent routing.
+    Twilio inbound call webhook.
 
-    Twilio Console should point to POST /voice/twilio/inbound (voice-router), not this path.
-  """
+    1. Validate Twilio signature (when VALIDATE_TWILIO_SIGNATURES=true).
+    2. Return TwiML with <Connect><ConversationRelay>.
+    """
     settings = get_settings()
     await validate_twilio_signature(request, settings)
 

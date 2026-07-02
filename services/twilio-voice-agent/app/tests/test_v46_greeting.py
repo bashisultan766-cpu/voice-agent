@@ -91,7 +91,7 @@ class TestInboundTwimlGreeting:
         from app.main import create_app
         client = TestClient(create_app())
         resp = client.post(
-            "/voice/twilio/agent/inbound",
+            "/voice/twilio/inbound",
             data={"CallSid": "CA_G2", "From": "+15550001111", "To": "+15550002222"},
         )
         assert "SureShot Books" in resp.text

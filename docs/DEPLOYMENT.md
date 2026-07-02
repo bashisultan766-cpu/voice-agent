@@ -6,9 +6,7 @@ Deploy the Python service at `services/twilio-voice-agent` behind Nginx with PM2
 
 | Service | Port | Notes |
 |---------|------|-------|
-| voice-router | **8000** | Twilio webhook `/voice/twilio/inbound` |
-| twilio-voice-agent | **8001** | Main commerce agent |
-| order-lookup-voice-agent | **8002** | Order status agent |
+| twilio-voice-agent | **8001** | FastAPI + uvicorn (production) |
 | Redis | **6379** | Session + caller memory + Shopify cache |
 
 ## 1. Server prerequisites
@@ -45,20 +43,15 @@ Required in `.env`:
 From repo root:
 
 ```bash
-cd services/voice-router && npm ci && npm run build
-cd ../order-lookup-voice-agent && npm ci && npm run build
-cd ../..
 pm2 start ecosystem.config.cjs
 pm2 save
-pm2 logs --lines 50
+pm2 logs twilio-voice-agent --lines 50
 ```
 
 Verify locally:
 
 ```bash
-curl -sS http://127.0.0.1:8000/health
 curl -sS http://127.0.0.1:8001/health
-curl -sS http://127.0.0.1:8002/health
 ```
 
 ## 4. Nginx
@@ -72,13 +65,12 @@ sudo ln -sf /etc/nginx/sites-available/voice-agent.conf /etc/nginx/sites-enabled
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Routes (see `infra/nginx/voice-agent.mailcallcommunication.com.conf`):
+Routes proxied to port **8001**:
 
-- `POST /voice/twilio/inbound` → voice-router **8000** (Twilio webhook — unchanged URL)
-- `POST /voice/twilio/routing/*` → voice-router **8000**
-- `GET /voice/twilio/ws` → twilio-voice-agent **8001** (WebSocket)
-- `POST /voice/twilio/agent/*` → twilio-voice-agent **8001** (internal)
-- `/voice/order/*` → order-lookup **8002**
+- `POST /voice/twilio/inbound`
+- `GET /voice/twilio/ws` (WebSocket upgrade)
+- `POST /voice/twilio/relay-action`
+- `GET /health`
 
 ## 5. Twilio Console
 
