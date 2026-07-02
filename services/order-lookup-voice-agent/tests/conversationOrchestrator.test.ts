@@ -123,14 +123,14 @@ describe("conversationOrchestrator flows", () => {
     expect(speech).not.toMatch(/let me search|I will check/i);
   });
 
-  it('Phase 1: "I want to buy books" asks category before search', async () => {
+  it('Phase 1: "I want to buy books" asks title, ISBN, or recommendations', async () => {
     const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
 
     const session = createCallSession("CA_BUY", "+1", "+2");
     const speech = await collectSpeech(session, "I want to buy books");
 
-    expect(speech).toMatch(/books|magazines|newspapers/i);
-    expect(session.awaitingInput).toBe("product_category");
+    expect(speech).toMatch(/ISBN|title|recommend/i);
+    expect(session.awaitingInput).toBe("product_slot");
     expect(titleSpy).not.toHaveBeenCalled();
   });
 

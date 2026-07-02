@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { getConfig, VOICE_PATH_PREFIX, wsUrl } from "../config.js";
-import { logger } from "../utils/logger.js";
-import { buildConversationRelayVoiceAttrs } from "../services/voiceService.js";
+import { BRAIN_GREETING } from "../agents/conversationBrain.js";
+import { logger } from "../utils/logger.js";import { buildConversationRelayVoiceAttrs } from "../services/voiceService.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
 
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>';
@@ -67,9 +67,8 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
   const routerSpeech = String(req.body.RouterSpeech ?? "").trim();
 
   const welcomeGreeting = routerSpeech
-    ? "One moment while I look up your order."
-    : "Hello, thank you for calling SureShot Books. Please provide your order number.";
-
+    ? "One moment while I look that up for you."
+    : BRAIN_GREETING;
   const twiml = renderConversationRelayTwiml({
     wsUrl: wsUrl(),
     callSid,

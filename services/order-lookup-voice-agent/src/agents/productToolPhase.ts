@@ -1,44 +1,33 @@
 /**
- * Phase 2 — Tool Execution Engine
- * Shopify product APIs run ONLY after Phase 1 slot filling confirms ISBN or title.
+ * Phase 2 — Tool Execution Engine (data only, no user-facing speech).
  */
 import { logger } from "../utils/logger.js";
 import {
+  getSimilarProducts,
   searchProductByCategory,
   searchProductByISBN,
   searchProductByTitle,
-  STORE_NOT_FOUND_MESSAGE,
 } from "../tools/shopifyProductTools.js";
 import type { ProductSearchSlots } from "../types/order.js";
 import type { StructuredProduct } from "../types/product.js";
 
-export interface ProductSearchResult {
-  speech: string;
+export interface ToolProductResult {
   products: StructuredProduct[];
-}
-
-function formatProductHits(products: StructuredProduct[], usedAlternatives: boolean): string {
-  if (products.length === 0) {
-    return STORE_NOT_FOUND_MESSAGE;
-  }
-  const top = products.slice(0, 3);
-  const lines = top.map((p) => {
-    const price = p.variants[0]?.price ?? "N/A";
-    const stock = p.variants.some((v) => v.inStock) ? "in stock" : "out of stock";
-    return `"${p.title}" at ${price} dollars, ${stock}`;
-  });
-  if (usedAlternatives) {
-    return `I couldn't find that exact match, but here are close options: ${lines.join("; ")}.`;
-  }
-  return `Yes — I found ${lines.join("; ")}.`;
+  usedAlternatives: boolean;
+  searchKind: "isbn" | "title" | "recommendations";
 }
 
 /** Execute Shopify product search — Phase 2 only. */
 export async function executeProductSearch(
   slots: ProductSearchSlots,
   callSid: string,
-): Promise<ProductSearchResult> {
+  lastProductId?: string,
+): Promise<ToolProductResult> {
   const started = Date.now();
+
+  if (slots.wantsRecommendations) {
+    return executeRecommendations(callSid, started, lastProductId);
+  }
 
   if (slots.isbn) {
     const result = await searchProductByISBN(slots.isbn);
@@ -49,10 +38,7 @@ export async function executeProductSearch(
         count: result.products.length,
         elapsedMs: Date.now() - started,
       });
-      return {
-        speech: formatProductHits(result.products, false),
-        products: result.products,
-      };
+      return { products: result.products, usedAlternatives: false, searchKind: "isbn" };
     }
     const alt = await searchProductByCategory("books inmates");
     logger.info("product_tool_isbn_fallback", {
@@ -62,8 +48,9 @@ export async function executeProductSearch(
       elapsedMs: Date.now() - started,
     });
     return {
-      speech: formatProductHits(alt.products, alt.products.length > 0),
       products: alt.products,
+      usedAlternatives: alt.products.length > 0,
+      searchKind: "isbn",
     };
   }
 
@@ -76,10 +63,7 @@ export async function executeProductSearch(
         count: result.products.length,
         elapsedMs: Date.now() - started,
       });
-      return {
-        speech: formatProductHits(result.products, false),
-        products: result.products,
-      };
+      return { products: result.products, usedAlternatives: false, searchKind: "title" };
     }
     const alt = await searchProductByCategory(`${slots.title} books`);
     const broad =
@@ -91,10 +75,46 @@ export async function executeProductSearch(
       elapsedMs: Date.now() - started,
     });
     return {
-      speech: formatProductHits(broad.products, broad.products.length > 0),
       products: broad.products,
+      usedAlternatives: broad.products.length > 0,
+      searchKind: "title",
     };
   }
 
-  return { speech: STORE_NOT_FOUND_MESSAGE, products: [] };
+  return { products: [], usedAlternatives: false, searchKind: "recommendations" };
+}
+
+async function executeRecommendations(
+  callSid: string,
+  started: number,
+  lastProductId?: string,
+): Promise<ToolProductResult> {
+  if (lastProductId) {
+    const similar = await getSimilarProducts(lastProductId);
+    if (similar.products.length > 0) {
+      logger.info("product_tool_similar_hit", {
+        callSid: callSid.slice(0, 8),
+        productId: lastProductId,
+        count: similar.products.length,
+        elapsedMs: Date.now() - started,
+      });
+      return {
+        products: similar.products,
+        usedAlternatives: false,
+        searchKind: "recommendations",
+      };
+    }
+  }
+
+  const popular = await searchProductByCategory("books inmates");
+  logger.info("product_tool_recommendations", {
+    callSid: callSid.slice(0, 8),
+    count: popular.products.length,
+    elapsedMs: Date.now() - started,
+  });
+  return {
+    products: popular.products,
+    usedAlternatives: false,
+    searchKind: "recommendations",
+  };
 }

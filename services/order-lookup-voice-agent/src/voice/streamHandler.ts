@@ -1,6 +1,6 @@
 import type { WebSocket } from "ws";
 import { logger } from "../utils/logger.js";
-import { createCallSession, streamAgentTurn } from "../agents/orderAgent.js";
+import { createCallSession, streamBrainTurn } from "../agents/conversationBrain.js";
 import { clearCallMemory } from "../memory/callMemoryStore.js";
 import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
@@ -89,7 +89,7 @@ async function runStreamingTurn(
   let firstChunkMs: number | null = null;
 
   try {
-    for await (const event of streamAgentTurn(session, callerText)) {
+    for await (const event of streamBrainTurn(session, callerText)) {
       if (abort.signal.aborted) {
         logger.debug("relay_turn_aborted", { callSid: session.callSid.slice(0, 8) });
         break;

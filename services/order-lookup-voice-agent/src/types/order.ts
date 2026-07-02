@@ -71,6 +71,7 @@ export interface ProductSearchSlots {
   isbn?: string;
   title?: string;
   category?: string;
+  wantsRecommendations?: boolean;
 }
 
 export interface CallSession {

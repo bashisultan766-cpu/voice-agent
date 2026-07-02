@@ -5,7 +5,7 @@
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
-import { lookupOrder } from "../services/shopifyService.js";
+import { orderLookupTool } from "../tools/orderLookupTool.js";
 import {
   classifyFollowUpIntent,
   preAnalyzeOrderIntent,
@@ -23,7 +23,11 @@ import {
   appendAssistantMessage,
   appendUserMessage,
   getOrCreateMemory,
+  recordLastOrderNumber,
+  recordLastProduct,
 } from "../memory/callMemoryStore.js";
+import { softFallback } from "./conversationBrainAgent.js";
+import { formatProductResults } from "./productResponseFormatter.js";
 import { extractIsbnFromSpeech } from "../tools/shopifyProductTools.js";
 import {
   isPhase2Ready,
@@ -42,12 +46,10 @@ import type {
   StructuredOrder,
 } from "../types/order.js";
 
-export type OrchestratorIntent =
-  | "greeting"
-  | "order_status"
-  | "product_search"
-  | "product_purchase_intent"
-  | "unknown";
+export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
+
+/** @deprecated Use BrainIntent */
+export type OrchestratorIntent = BrainIntent | "product_purchase_intent" | "greeting";
 
 const HOW_ARE_YOU_RESPONSES = [
   "I'm doing well, thanks for asking! How can I help you today?",
@@ -76,6 +78,23 @@ const UNKNOWN_PROMPTS = [
   "Happy to help — are you browsing books or checking on an order?",
 ];
 
+const GENERAL_HELP_RESPONSES = [
+  "I'm here for book lookups and order updates — what can I help with?",
+  "Happy to help with books or an order. What do you need?",
+  "SureShot Books — I can find a title or check an order. What's on your mind?",
+];
+
+export function classifyBrainIntent(speech: string): BrainIntent {
+  const text = (speech ?? "").trim();
+  if (!text) return "unknown";
+
+  const base = classifyWithRegexSync(text);
+  if (base === "greeting") return "general_help";
+  if (base) return base;
+
+  return "unknown";
+}
+
 export function classifyOrchestratorIntent(speech: string): OrchestratorIntent {
   const text = (speech ?? "").trim();
   if (!text) return "unknown";
@@ -84,10 +103,9 @@ export function classifyOrchestratorIntent(speech: string): OrchestratorIntent {
     return "product_purchase_intent";
   }
 
-  const base = classifyWithRegexSync(text);
-  if (base) return base;
-
-  return "unknown";
+  const brain = classifyBrainIntent(speech);
+  if (brain === "general_help") return "greeting";
+  return brain;
 }
 
 async function classifyOrchestratorIntentAsync(speech: string): Promise<OrchestratorIntent> {
@@ -109,11 +127,11 @@ async function classifyOrchestratorIntentAsync(speech: string): Promise<Orchestr
   }
 }
 
-function classifyWithRegexSync(text: string): OrchestratorIntent | null {
+function classifyWithRegexSync(text: string): BrainIntent | "greeting" | null {
   if (extractIsbnFromSpeech(text)) return "product_search";
   if (
     /^(hi|hello|hey|howdy|good\s+(morning|afternoon|evening))[\s!.?,]*$/i.test(text) ||
-    /\b(how\s+are\s+you|how'?s\s+it\s+going)\b/i.test(text)
+    /\b(how\s+are\s+you|how'?s\s+it\s+going|what do you do|who are you|your hours)\b/i.test(text)
   ) {
     return "greeting";
   }
@@ -194,7 +212,7 @@ export async function* runOrchestratorTurn(
 
   switch (intent) {
     case "greeting":
-      yield* handleGreeting(session, text);
+      yield* handleGeneralHelp(session, text);
       break;
     case "order_status":
       yield* handleOrderStatus(session, text);
@@ -203,7 +221,7 @@ export async function* runOrchestratorTurn(
       yield* phase1ProductFlow(session, text);
       break;
     case "product_purchase_intent":
-      yield* handlePurchaseIntent(session);
+      yield* phase1ProductFlow(session, text);
       break;
     default:
       yield* yieldSpeech(recordAssistant(session.callSid, pickVariedLine(UNKNOWN_PROMPTS, session.callSid)));
@@ -274,6 +292,7 @@ async function* handleAwaitingProductSlot(
 /** Phase 2 — Shopify tool execution after slots confirmed. */
 async function* phase2ProductFlow(session: CallSession): AsyncGenerator<AgentStreamEvent> {
   const slots: ProductSearchSlots = { ...session.productSlots };
+  const memory = getOrCreateMemory(session.callSid);
   session.productSlots = undefined;
   session.awaitingInput = null;
 
@@ -282,22 +301,41 @@ async function* phase2ProductFlow(session: CallSession): AsyncGenerator<AgentStr
     conversationPhase: "tool_execute",
     hasIsbn: Boolean(slots.isbn),
     hasTitle: Boolean(slots.title),
+    wantsRecommendations: Boolean(slots.wantsRecommendations),
   });
 
-  const result = await executeProductSearch(slots, session.callSid);
-  yield* yieldSpeech(recordAssistant(session.callSid, result.speech));
+  const result = await executeProductSearch(slots, session.callSid, memory.lastProductId);
+  const speech = formatProductResults(
+    result.products,
+    result.usedAlternatives,
+    result.searchKind === "recommendations" ? "recommendations" : "search",
+  );
+
+  if (result.products[0]) {
+    recordLastProduct(memory, result.products[0]);
+  }
+
+  yield* yieldSpeech(recordAssistant(session.callSid, speech));
   session.phase = "awaiting_order_number";
   yield doneEvent(session.phase);
 }
 
-async function* handleGreeting(session: CallSession, speech = ""): AsyncGenerator<AgentStreamEvent> {
+async function* handleGeneralHelp(session: CallSession, speech = ""): AsyncGenerator<AgentStreamEvent> {
   session.greetedThisCall = true;
   session.phase = "awaiting_order_number";
   session.awaitingInput = null;
-  const isHowAreYou = /\bhow\s+are\s+you\b/i.test(speech);
-  const line = isHowAreYou
-    ? pickVariedLine(HOW_ARE_YOU_RESPONSES, session.callSid)
-    : pickVariedLine(GREETING_VARIANTS, session.callSid);
+  const memory = getOrCreateMemory(session.callSid);
+
+  let line: string;
+  if (/\bhow\s+are\s+you\b/i.test(speech)) {
+    line = pickVariedLine(HOW_ARE_YOU_RESPONSES, session.callSid);
+  } else if (!speech.trim() || /^(hi|hello|hey)\b/i.test(speech.trim())) {
+    line = pickVariedLine(GREETING_VARIANTS, session.callSid);
+  } else {
+    line = softFallback(speech);
+  }
+
+  memory.lastIntent = "general_help";
   yield* yieldSpeech(recordAssistant(session.callSid, line));
   yield doneEvent(session.phase);
 }
@@ -362,13 +400,13 @@ async function* handleAwaitingOrderNumber(
     session.awaitingInput = null;
     switch (intent) {
       case "greeting":
-        yield* handleGreeting(session, speech);
+        yield* handleGeneralHelp(session, speech);
         return;
       case "product_search":
         yield* phase1ProductFlow(session, speech);
         return;
       case "product_purchase_intent":
-        yield* handlePurchaseIntent(session);
+        yield* phase1ProductFlow(session, speech);
         return;
       default:
         break;
@@ -385,16 +423,6 @@ async function* handleAwaitingOrderNumber(
   yield doneEvent(session.phase);
 }
 
-async function* handlePurchaseIntent(session: CallSession): AsyncGenerator<AgentStreamEvent> {
-  session.awaitingInput = "product_category";
-  session.phase = "awaiting_order_number";
-  session.lastOrchestratorIntent = "product_purchase_intent";
-  yield* yieldSpeech(
-    recordAssistant(session.callSid, pickProductSlotQuestion({}, "category")),
-  );
-  yield doneEvent(session.phase);
-}
-
 async function* runOrderLookup(
   session: CallSession,
   orderNumber: string,
@@ -404,7 +432,7 @@ async function* runOrderLookup(
 
   yield chunkEvent(planInstantFiller());
 
-  const lookupPromise = lookupOrder(orderNumber);
+  const lookupPromise = orderLookupTool(orderNumber);
   void preAnalyzeOrderIntent(orderNumber);
   const lookup = await lookupPromise;
   const lookupMs = Date.now() - started;
@@ -417,6 +445,7 @@ async function* runOrderLookup(
   });
 
   if (lookup.status === "found") {
+    recordLastOrderNumber(getOrCreateMemory(session.callSid), orderNumber);
     yield chunkEvent(planInstantConfirmation(lookup.order));
     for (const chunk of planOrderLookupResponse(lookup.order).chunks) {
       yield { type: "chunk", chunk };
@@ -485,11 +514,7 @@ async function* handleFollowUpPhase(
   const route = await classifyOrchestratorIntentAsync(callerText);
   if (route === "product_search" || route === "product_purchase_intent") {
     session.phase = "awaiting_order_number";
-    if (route === "product_purchase_intent") {
-      yield* handlePurchaseIntent(session);
-    } else {
-      yield* phase1ProductFlow(session, callerText);
-    }
+    yield* phase1ProductFlow(session, callerText);
     return;
   }
   if (route === "order_status") {
@@ -498,7 +523,7 @@ async function* handleFollowUpPhase(
     return;
   }
   if (route === "greeting") {
-    yield* handleGreeting(session, callerText);
+    yield* handleGeneralHelp(session, callerText);
     return;
   }
 

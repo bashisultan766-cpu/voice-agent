@@ -8,6 +8,7 @@ import { logger, setLogLevel } from "./utils/logger.js";
 import { handleInboundCall, handleRelayAction } from "./voice/twilioWebhook.js";
 import { handleConversationRelaySocket } from "./voice/streamHandler.js";
 
+const CONVERSATION_BRAIN_INBOUND = "/conversationBrain/inbound";
 export function createApp() {
   const app = express();
   app.set("trust proxy", true);
@@ -23,11 +24,26 @@ export function createApp() {
     });
   });
 
-  app.post(`${VOICE_PATH_PREFIX}/inbound`, async (req, res) => {
+  app.post(CONVERSATION_BRAIN_INBOUND, async (req, res) => {
     try {
       await handleInboundCall(req, res);
     } catch (err) {
-      logger.error("inbound_call_failed", {
+      logger.error("conversation_brain_inbound_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res
+        .type("application/xml")
+        .send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Matthew">We are experiencing technical difficulties. Please try again later.</Say></Response>',
+        );
+    }
+  });
+
+  app.post(`${VOICE_PATH_PREFIX}/inbound`, async (req, res) => {
+    logger.info("legacy_inbound_route", { redirect: CONVERSATION_BRAIN_INBOUND });
+    try {
+      await handleInboundCall(req, res);
+    } catch (err) {      logger.error("inbound_call_failed", {
         error: err instanceof Error ? err.message : String(err),
       });
       res
@@ -82,7 +98,8 @@ export function startServer() {
       port: cfg.PORT,
       service: "order-lookup-voice-agent",
       wsUrl: wsUrl(),
-      inbound: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${VOICE_PATH_PREFIX}/inbound`,
+      inbound: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${CONVERSATION_BRAIN_INBOUND}`,
+      legacyInbound: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${VOICE_PATH_PREFIX}/inbound`,
     });
   });
 

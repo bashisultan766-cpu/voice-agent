@@ -9,6 +9,10 @@ export interface CallMemory {
   messages: CallMemoryMessage[];
   inferredIntent?: string;
   recentAssistantPhrases: string[];
+  lastIntent?: string;
+  lastProductTitle?: string;
+  lastProductId?: string;
+  lastOrderNumber?: string;
   updatedAt: number;
 }
 
@@ -64,6 +68,21 @@ function trimMemory(memory: CallMemory): void {
 
 export function setInferredIntent(memory: CallMemory, intent: string): void {
   memory.inferredIntent = intent;
+  memory.lastIntent = intent;
+  memory.updatedAt = Date.now();
+}
+
+export function recordLastProduct(
+  memory: CallMemory,
+  product: { id: string; title: string },
+): void {
+  memory.lastProductId = product.id;
+  memory.lastProductTitle = product.title;
+  memory.updatedAt = Date.now();
+}
+
+export function recordLastOrderNumber(memory: CallMemory, orderNumber: string): void {
+  memory.lastOrderNumber = orderNumber;
   memory.updatedAt = Date.now();
 }
 

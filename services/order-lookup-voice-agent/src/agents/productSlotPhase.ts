@@ -39,6 +39,14 @@ export function parseProductSlotsFromSpeech(speech: string): ProductSearchSlots 
   else if (/\b(newspaper|newspapers)\b/i.test(speech)) slots.category = "newspaper";
   else if (/\b(book|books)\b/i.test(speech)) slots.category = "book";
 
+  if (
+    /\b(recommend|suggestions?|popular|what do you have|surprise me|anything good|suggest something)\b/i.test(
+      speech,
+    )
+  ) {
+    slots.wantsRecommendations = true;
+  }
+
   return slots;
 }
 
@@ -50,11 +58,12 @@ export function mergeProductSlots(
     isbn: incoming.isbn ?? existing?.isbn,
     title: incoming.title ?? existing?.title,
     category: incoming.category ?? existing?.category,
+    wantsRecommendations: incoming.wantsRecommendations ?? existing?.wantsRecommendations,
   };
 }
 
 export function isPhase2Ready(slots: ProductSearchSlots): boolean {
-  return Boolean(slots.isbn || slots.title);
+  return Boolean(slots.isbn || slots.title || slots.wantsRecommendations);
 }
 
 export type ProductSlotPromptKind = "isbn" | "title" | "both" | "category";
@@ -92,9 +101,9 @@ const TITLE_PROMPTS = [
 ];
 
 const BOTH_UNCLEAR_PROMPTS = [
-  "Do you have an ISBN number or a book title?",
-  "Do you have a title or an ISBN number?",
-  "I can look it up by ISBN or title — which do you have?",
+  "Do you have a book title or an ISBN number, or would you like recommendations?",
+  "I can look up a title or ISBN — or I can suggest some popular books. Which works for you?",
+  "Share a title or ISBN, or just say you'd like recommendations.",
 ];
 
 let promptRotation = 0;
