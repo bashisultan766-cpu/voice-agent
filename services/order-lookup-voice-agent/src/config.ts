@@ -31,9 +31,14 @@ const envSchema = z.object({
   VOICE_ID: z.string().optional(),
   /** Twilio ConversationRelay model slug (e.g. flash_v2_5). ElevenLabs API prefixes (eleven_*) are stripped automatically. */
   VOICE_MODEL: z.string().default("flash_v2_5"),
-  VOICE_SPEED: z.coerce.number().min(0.7).max(1.2).optional(),
-  VOICE_STABILITY: z.coerce.number().min(0).max(1).optional(),
-  VOICE_SIMILARITY: z.coerce.number().min(0).max(1).optional(),
+  /** Twilio ConversationRelay tuning — speed 0.7–1.2, stability/similarity 0.0–1.0 */
+  VOICE_SPEED: z.coerce.number().min(0.7).max(1.2).default(0.96),
+  VOICE_STABILITY: z.coerce.number().min(0).max(1).default(0.42),
+  VOICE_SIMILARITY: z.coerce.number().min(0).max(1).default(0.78),
+  VOICE_TUNING_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
   VOICE_LANGUAGE: z.string().default("en-US"),
   VOICE_TTS_PROVIDER: z.string().default("ElevenLabs"),
 
@@ -109,9 +114,12 @@ export function conversationRelayVoice(): string {
   const model = normalizeTwilioElevenLabsModel(cfg.VOICE_MODEL);
   if (!model) return voiceId;
 
-  // Twilio ConversationRelay: VoiceID-model only. VOICE_SPEED/STABILITY/SIMILARITY in .env
-  // are for ElevenLabs direct API — appending them caused Twilio error 64101 (e.g. "1_0.55_0.8").
-  return `${voiceId}-${model}`;
+  if (!cfg.VOICE_TUNING_ENABLED) {
+    return `${voiceId}-${model}`;
+  }
+
+  const tuning = formatTwilioVoiceTuning(cfg.VOICE_SPEED, cfg.VOICE_STABILITY, cfg.VOICE_SIMILARITY);
+  return `${voiceId}-${model}-${tuning}`;
 }
 
 export function wsUrl(): string {
