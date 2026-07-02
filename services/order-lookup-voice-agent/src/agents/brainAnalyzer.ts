@@ -11,6 +11,7 @@ import {
   computeMissingSlots,
   type GateIntent,
 } from "./toolDecisionGate.js";
+import type { CallState } from "../memory/callStateStore.js";
 import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
@@ -43,12 +44,25 @@ function getClient(): OpenAI {
 export async function analyzeBrainTurn(
   userMessage: string,
   session: CallSession,
+  callState?: CallState,
 ): Promise<BrainAnalysis> {
   const text = (userMessage ?? "").trim();
   const parsed = parseProductSlotsFromSpeech(text);
-  const slots = mergeProductSlots(session.productSlots, parsed);
+  const persistedSlots: ProductSearchSlots = callState
+    ? {
+        isbn: callState.slots.isbn,
+        title: callState.slots.title,
+        wantsRecommendations: callState.slots.wantsRecommendations,
+      }
+    : session.productSlots ?? {};
+  const slots = mergeProductSlots(
+    mergeProductSlots(session.productSlots, persistedSlots),
+    parsed,
+  );
   const orderNumber = extractOrderNumberFromSpeech(text);
-  const slotsCollected = session.awaitingInput === "product_slot";
+  const slotsCollected = callState
+    ? callState.awaitingInput !== "none"
+    : session.awaitingInput === "product_slot";
 
   const regex = classifyIntentRegex(text);
   if (regex) {

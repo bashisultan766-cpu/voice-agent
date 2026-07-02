@@ -5,6 +5,7 @@ import {
 } from "../src/agents/conversationOrchestrator.js";
 import { createCallSession } from "../src/agents/orderAgent.js";
 import { clearAllCallMemories } from "../src/memory/callMemoryStore.js";
+import { clearAllCallStates, getOrCreateCallState } from "../src/memory/callStateStore.js";
 import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
 import type { StructuredProduct } from "../src/types/product.js";
 import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
@@ -78,6 +79,7 @@ describe("conversationOrchestrator intents", () => {
 describe("conversationOrchestrator flows", () => {
   beforeEach(() => {
     clearAllCallMemories();
+    clearAllCallStates();
     resetShopifyScopeCheck();
     resetToolExecutionGuard();
     vi.unstubAllGlobals();
@@ -135,6 +137,25 @@ describe("conversationOrchestrator flows", () => {
     const speech = await collectSpeech(session, "I have ISBN 9783161484100");
     expect(speech).toMatch(/Azkaban|found/i);
     expect(speech).not.toMatch(/let me search|I will check/i);
+  });
+
+  it("persists call state: book ask then ISBN search", async () => {
+    const session = createCallSession("CA_STATE", "+1", "+2");
+    const askSpeech = await collectSpeech(session, "I need a book");
+    expect(askSpeech).toMatch(/ISBN|title/i);
+
+    const stateAfterAsk = getOrCreateCallState(session.callSid);
+    expect(stateAfterAsk.intent).toBe("product");
+    expect(stateAfterAsk.awaitingInput).toBe("isbn_or_title");
+    expect(stateAfterAsk.phase).toBe("PHASE_1");
+
+    const searchSpeech = await collectSpeech(session, "I have ISBN 9783161484100");
+    expect(searchSpeech).toMatch(/Azkaban|found/i);
+
+    const stateAfterSearch = getOrCreateCallState(session.callSid);
+    expect(stateAfterSearch.slots).toEqual({});
+    expect(stateAfterSearch.awaitingInput).toBe("none");
+    expect(stateAfterSearch.phase).toBe("PHASE_1");
   });
 
   it('Phase 1: "I want to buy books" asks title, ISBN, or recommendations', async () => {

@@ -4,11 +4,14 @@ import {
   decideToolExecution,
 } from "../src/agents/toolDecisionGate.js";
 
+const phase1 = { phase: "PHASE_1" as const, awaitingInput: "none" as const };
+
 describe("toolDecisionGate", () => {
   it('returns ASK_QUESTION when product intent has no slots', () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
+        ...phase1,
         slots: {},
         slotsCollected: false,
       }),
@@ -20,6 +23,7 @@ describe("toolDecisionGate", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
+        ...phase1,
         slots: { isbn: "9783161484100" },
         slotsCollected: false,
       }),
@@ -31,6 +35,7 @@ describe("toolDecisionGate", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
+        ...phase1,
         slots: { title: "Harry Potter" },
         slotsCollected: false,
       }),
@@ -42,6 +47,8 @@ describe("toolDecisionGate", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
+        phase: "PHASE_1",
+        awaitingInput: "isbn_or_title",
         slots: { title: "Harry Potter" },
         slotsCollected: true,
       }),
@@ -53,6 +60,7 @@ describe("toolDecisionGate", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "order",
+        ...phase1,
         slots: {},
         slotsCollected: false,
         orderNumber: "#45678",
@@ -65,6 +73,7 @@ describe("toolDecisionGate", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "general",
+        ...phase1,
         slots: {},
         slotsCollected: false,
       }),

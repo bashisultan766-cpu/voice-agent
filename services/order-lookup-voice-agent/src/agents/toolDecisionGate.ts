@@ -1,7 +1,12 @@
 /**
  * Tool Decision Gate — ONLY module allowed to decide tool execution.
- * LLM / brain output is input; this layer is fully deterministic.
+ * Decisions use persisted call state, not only the current utterance.
  */
+import type {
+  CallStateAwaitingInput,
+  CallStatePhase,
+  CallStateSlots,
+} from "../memory/callStateStore.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
 export type GateIntent = "order" | "product" | "general" | "unknown";
@@ -16,9 +21,11 @@ export type ToolAction =
 
 export interface ToolDecisionState {
   intent: GateIntent;
+  phase: CallStatePhase;
+  awaitingInput: CallStateAwaitingInput;
   slots: Pick<ProductSearchSlots, "isbn" | "title" | "wantsRecommendations">;
   missingSlots: Array<"isbn" | "title">;
-  /** True after caller responded to a product slot question. */
+  /** Caller answered a prior slot question this turn. */
   slotsCollected: boolean;
   orderNumber?: string | null;
 }
@@ -32,7 +39,7 @@ export function computeMissingSlots(
   return missing;
 }
 
-/** Deterministic tool execution decision — no LLM involvement. */
+/** Deterministic tool execution decision — uses persisted state. */
 export function decideToolExecution(state: ToolDecisionState): ToolAction {
   if (state.intent === "general" || state.intent === "unknown") {
     return "conversationOnly";
@@ -86,12 +93,16 @@ export function decideToolExecution(state: ToolDecisionState): ToolAction {
 
 export function buildToolDecisionState(input: {
   intent: GateIntent;
-  slots: ProductSearchSlots;
+  phase: CallStatePhase;
+  awaitingInput: CallStateAwaitingInput;
+  slots: CallStateSlots;
   slotsCollected: boolean;
   orderNumber?: string | null;
 }): ToolDecisionState {
   return {
     intent: input.intent,
+    phase: input.phase,
+    awaitingInput: input.awaitingInput,
     slots: {
       isbn: input.slots.isbn,
       title: input.slots.title,

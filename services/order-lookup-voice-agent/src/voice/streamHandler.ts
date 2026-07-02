@@ -3,6 +3,7 @@ import { logger } from "../utils/logger.js";
 import { createCallSession, streamBrainTurn } from "../agents/conversationBrain.js";
 import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { clearCallMemory } from "../memory/callMemoryStore.js";
+import { clearCallState } from "../memory/callStateStore.js";
 import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
@@ -66,6 +67,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     if (session?.callSid) {
       clearCallMemory(session.callSid);
       clearCallExecutionPhase(session.callSid);
+      clearCallState(session.callSid);
       clearCustomerMemory(session.callSid);
     }
     logger.info("relay_closed", { callSid: session?.callSid?.slice(0, 8) });
