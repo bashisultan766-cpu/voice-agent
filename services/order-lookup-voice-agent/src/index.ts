@@ -45,7 +45,11 @@ export function createApp() {
       logger.error("relay_action_failed", {
         error: err instanceof Error ? err.message : String(err),
       });
-      res.status(403).send("Forbidden");
+      res
+        .type("application/xml")
+        .send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, something went wrong. Please try again.</Say></Response>',
+        );
     }
   });
 

@@ -249,12 +249,26 @@ export async function searchShopifyProducts(shopifyQuery: string): Promise<Struc
   const q = shopifyQuery.trim();
   if (!q) return [];
 
-  await ensureShopifyProductScopes();
+  try {
+    await ensureShopifyProductScopes();
+  } catch (err) {
+    logger.warn("shopify_scope_check_failed", {
+      query: q,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
 
   try {
     return await graphqlProductsSearch(q, true);
   } catch (err) {
-    if (!isMetafieldGraphqlError(err)) throw err;
+    if (!isMetafieldGraphqlError(err)) {
+      logger.warn("shopify_product_search_failed", {
+        query: q,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
     logger.warn("shopify_product_search_metafield_fallback", {
       query: q,
       error: err instanceof Error ? err.message : String(err),

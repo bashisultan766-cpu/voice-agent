@@ -36,6 +36,11 @@ const envSchema = z.object({
   ORDER_LOOKUP_MAX_RETRIES: z.coerce.number().default(2),
   VOICE_ROUTER_FORWARD_SECRET: z.string().optional(),
   VOICE_CHUNK_MAX_PAUSE_MS: z.coerce.number().default(120),
+
+  SAFE_MODE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 function trimStrings<T extends Record<string, unknown>>(obj: T): T {

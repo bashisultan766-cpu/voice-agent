@@ -1,3 +1,4 @@
+import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import {
   extractIsbnFromSpeech,
@@ -28,6 +29,10 @@ import type {
 } from "../types/product.js";
 
 export const STORE_NOT_FOUND_MESSAGE = "I couldn't find it in the store right now";
+
+function isSafeMode(): boolean {
+  return getConfig().SAFE_MODE;
+}
 
 export { extractIsbnFromSpeech, normalizeIsbn };
 
@@ -79,6 +84,14 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
   }
 
   try {
+    if (isSafeMode()) {
+      return {
+        status: "not_found",
+        products: [],
+        query: q,
+        message: STORE_NOT_FOUND_MESSAGE,
+      };
+    }
     await ensureShopifyProductScopes();
     const started = Date.now();
     let live = await liveSearchMulti(buildTitleShopifyQueries(q));
@@ -137,6 +150,14 @@ export async function searchProductByISBN(isbn: string): Promise<ProductSearchRe
   }
 
   try {
+    if (isSafeMode()) {
+      return {
+        status: "not_found",
+        products: [],
+        query: primary,
+        message: STORE_NOT_FOUND_MESSAGE,
+      };
+    }
     await ensureShopifyProductScopes();
     const started = Date.now();
     const live = await liveSearchMulti(buildIsbnShopifyQueries(primary));

@@ -1,5 +1,6 @@
 import { getConfig, type AgentTarget } from "../config.js";
 import { logger } from "../utils/logger.js";
+import { VOICE_ROUTER_ERROR_TWIML } from "../utils/twilioFallback.js";
 
 export interface ForwardResult {
   twiml: string;
@@ -35,32 +36,46 @@ export async function forwardToAgent(
   let resolvedTarget = target;
   let fallbackUsed = false;
 
-  if (target === "order_lookup") {
-    const healthy = await isOrderLookupHealthy();
-    if (!healthy) {
-      logger.warn("order_lookup_unhealthy_fallback", {
-        callSid: meta.callSid.slice(0, 8),
-        reason: meta.reason,
-      });
-      resolvedTarget = "main_agent";
-      fallbackUsed = true;
+  try {
+    if (target === "order_lookup") {
+      const healthy = await isOrderLookupHealthy();
+      if (!healthy) {
+        logger.warn("order_lookup_unhealthy_fallback", {
+          callSid: meta.callSid.slice(0, 8),
+          reason: meta.reason,
+        });
+        resolvedTarget = "main_agent";
+        fallbackUsed = true;
+      }
     }
+
+    const url =
+      resolvedTarget === "order_lookup"
+        ? getConfig().ORDER_LOOKUP_INBOUND_URL
+        : getConfig().MAIN_AGENT_INBOUND_URL;
+
+    const twiml = await postToAgent(url, twilioBody, meta.initialSpeech);
+    logger.info("agent_forward_success", {
+      callSid: meta.callSid.slice(0, 8),
+      target: resolvedTarget,
+      reason: meta.reason,
+      fallbackUsed,
+    });
+
+    return { twiml, target: resolvedTarget, fallbackUsed };
+  } catch (err) {
+    logger.error("agent_forward_failed", {
+      callSid: meta.callSid.slice(0, 8),
+      target: resolvedTarget,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    console.log("ERROR:", err instanceof Error ? err.stack : String(err));
+    return {
+      twiml: VOICE_ROUTER_ERROR_TWIML,
+      target: resolvedTarget,
+      fallbackUsed: true,
+    };
   }
-
-  const url =
-    resolvedTarget === "order_lookup"
-      ? getConfig().ORDER_LOOKUP_INBOUND_URL
-      : getConfig().MAIN_AGENT_INBOUND_URL;
-
-  const twiml = await postToAgent(url, twilioBody, meta.initialSpeech);
-  logger.info("agent_forward_success", {
-    callSid: meta.callSid.slice(0, 8),
-    target: resolvedTarget,
-    reason: meta.reason,
-    fallbackUsed,
-  });
-
-  return { twiml, target: resolvedTarget, fallbackUsed };
 }
 
 async function postToAgent(
@@ -96,7 +111,11 @@ async function postToAgent(
       throw new Error(`agent_forward_http_${res.status}:${text.slice(0, 120)}`);
     }
 
-    return await res.text();
+    const twiml = await res.text();
+    if (!twiml.includes("<Response")) {
+      throw new Error("agent_forward_invalid_twiml");
+    }
+    return twiml;
   } finally {
     clearTimeout(timer);
   }

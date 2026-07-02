@@ -128,6 +128,9 @@ export async function applySemanticFallbackIfNeeded(
   query: string,
   liveProducts: StructuredProduct[],
 ): Promise<{ products: StructuredProduct[]; usedSemantic: boolean }> {
+  if (getConfig().SAFE_MODE) {
+    return { products: liveProducts.slice(0, 5), usedSemantic: false };
+  }
   const ranked = rankLiveProducts(liveProducts, query);
   if (liveProducts.length >= MIN_LIVE_RESULTS) {
     return { products: ranked.slice(0, 5), usedSemantic: false };

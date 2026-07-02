@@ -1,10 +1,39 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decideRoute } from "../src/voice-router/decisionEngine.js";
 import { clearAllSessions } from "../src/voice-router/sessionStore.js";
+
+describe("decisionEngine safe mode", () => {
+  const originalSafeMode = process.env.SAFE_MODE;
+
+  beforeEach(() => {
+    clearAllSessions();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    process.env.SAFE_MODE = originalSafeMode;
+    vi.resetModules();
+  });
+
+  it("routes all speech to conversation brain when SAFE_MODE=true", async () => {
+    process.env.SAFE_MODE = "true";
+    const { decideRoute: decideRouteSafe } = await import("../src/voice-router/decisionEngine.js");
+
+    const decision = await decideRouteSafe({
+      speech: "My order number is 456789",
+      callSid: "CA_SAFE",
+    });
+
+    expect(decision.target).toBe("conversation_brain");
+    expect(decision.intent).toBe("unknown");
+    expect(decision.reason).toBe("safe_mode");
+  });
+});
 
 describe("decisionEngine", () => {
   beforeEach(() => {
     clearAllSessions();
+    process.env.SAFE_MODE = "false";
   });
 
   it('routes "how are you" to conversation brain (not order lookup)', async () => {

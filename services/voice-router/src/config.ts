@@ -29,6 +29,11 @@ const envSchema = z.object({
 
   SESSION_TTL_SECS: z.coerce.number().default(3600),
   GATHER_TIMEOUT_SECS: z.coerce.number().default(5),
+
+  SAFE_MODE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

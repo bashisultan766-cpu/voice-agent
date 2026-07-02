@@ -3,6 +3,8 @@ import { getConfig, routerBaseUrl } from "../config.js";
 import { routingForwardUrl, routingGatherUrl } from "../paths.js";
 import { logger } from "../utils/logger.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
+import { VOICE_ROUTER_ERROR_TWIML } from "../utils/twilioFallback.js";
+import { isSafeMode } from "../utils/safeMode.js";
 import { decideRoute, isForwardTarget } from "./decisionEngine.js";
 import { forwardToAgent } from "./agentForwarder.js";
 import { getSession, lockSession } from "./sessionStore.js";
@@ -98,20 +100,42 @@ export async function handleGather(req: Request, res: Response): Promise<void> {
 
   if (!speech) {
     logger.info("router_no_speech_reprompt", { callSid: callSid.slice(0, 8) });
-    const brainReply = await generateConversationResponse({
-      callSid,
-      userMessage: "",
-      inferredIntent: "unknown",
-    });
-    res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, brainReply));
+    try {
+      const brainReply = await generateConversationResponse({
+        callSid,
+        userMessage: "",
+        inferredIntent: "unknown",
+      });
+      res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, brainReply));
+    } catch (err) {
+      logger.error("router_no_speech_brain_failed", {
+        callSid: callSid.slice(0, 8),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, ROUTER_GREETING));
+    }
     return;
   }
 
-  const decision = await decideRoute({
-    speech,
-    callSid,
-    from: body.From,
-  });
+  let decision;
+  try {
+    decision = await decideRoute({
+      speech,
+      callSid,
+      from: body.From,
+    });
+  } catch (err) {
+    logger.error("router_decide_failed", {
+      callSid: callSid.slice(0, 8),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    decision = {
+      target: "conversation_brain" as const,
+      intent: "unknown" as const,
+      confidence: 0,
+      reason: "decide_error_fallback",
+    };
+  }
 
   logger.info("router_decision", {
     callSid: callSid.slice(0, 8),
@@ -120,15 +144,25 @@ export async function handleGather(req: Request, res: Response): Promise<void> {
     reason: decision.reason,
     confidence: decision.confidence,
     speechPreview: speech.slice(0, 80),
+    safeMode: isSafeMode(),
   });
+  console.log("ROUTE:", decision.target);
 
-  if (!isForwardTarget(decision.target)) {
-    const brainReply = await generateConversationResponse({
-      callSid,
-      userMessage: speech,
-      inferredIntent: decision.intent,
-    });
-    res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, brainReply));
+  if (!isForwardTarget(decision.target) || isSafeMode()) {
+    try {
+      const brainReply = await generateConversationResponse({
+        callSid,
+        userMessage: speech,
+        inferredIntent: decision.intent,
+      });
+      res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, brainReply));
+    } catch (err) {
+      logger.error("router_brain_failed", {
+        callSid: callSid.slice(0, 8),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      res.type("application/xml").send(conversationalGatherTwiml(gatherUrl, ROUTER_GREETING));
+    }
     return;
   }
 
@@ -170,28 +204,8 @@ export async function handleForwardToAgent(req: Request, res: Response): Promise
       target: session.target,
       error: err instanceof Error ? err.message : String(err),
     });
-
-    if (session.target === "order_lookup") {
-      lockSession(callSid, "main_agent", `forward_error_fallback:${session.reason}`, session.speech);
-      try {
-        const fallback = await forwardToAgent("main_agent", body, {
-          callSid,
-          reason: "forward_error_fallback",
-          initialSpeech: session.speech,
-        });
-        res.type("application/xml").send(fallback.twiml);
-        return;
-      } catch (fallbackErr) {
-        logger.error("router_fallback_failed", {
-          callSid: callSid.slice(0, 8),
-          error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
-        });
-      }
-    }
-
-    res.type("application/xml").send(
-      `${XML_HEADER}<Response><Say>We are experiencing technical difficulties. Please try again later.</Say><Hangup/></Response>`,
-    );
+    console.log("ERROR:", err instanceof Error ? err.stack : String(err));
+    res.type("application/xml").send(VOICE_ROUTER_ERROR_TWIML);
   }
 }
 
