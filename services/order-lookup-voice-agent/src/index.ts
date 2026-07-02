@@ -10,6 +10,7 @@ import { handleConversationRelaySocket } from "./voice/streamHandler.js";
 
 export function createApp() {
   const app = express();
+  app.set("trust proxy", true);
   app.use(express.urlencoded({ extended: false }));
   app.use(express.json());
 
@@ -29,7 +30,11 @@ export function createApp() {
       logger.error("inbound_call_failed", {
         error: err instanceof Error ? err.message : String(err),
       });
-      res.status(403).send("Forbidden");
+      res
+        .type("application/xml")
+        .send(
+          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Matthew">We are experiencing technical difficulties. Please try again later.</Say></Response>',
+        );
     }
   });
 

@@ -47,12 +47,10 @@ function escapeXml(value: string): string {
 
 export async function handleInboundCall(req: Request, res: Response): Promise<void> {
   const cfg = getConfig();
-  await validateTwilioSignature(
-    req,
-    cfg.TWILIO_AUTH_TOKEN,
-    cfg.VALIDATE_TWILIO_SIGNATURES,
-    cfg.VOICE_ROUTER_FORWARD_SECRET,
-  );
+  await validateTwilioSignature(req, cfg.TWILIO_AUTH_TOKEN, cfg.VALIDATE_TWILIO_SIGNATURES, {
+    routerForwardSecret: cfg.VOICE_ROUTER_FORWARD_SECRET,
+    publicBaseUrl: cfg.PUBLIC_BASE_URL,
+  });
 
   const callSid = String(req.body.CallSid ?? "");
   const from = String(req.body.From ?? "unknown");
@@ -84,12 +82,10 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
 
 export async function handleRelayAction(req: Request, res: Response): Promise<void> {
   const cfg = getConfig();
-  await validateTwilioSignature(
-    req,
-    cfg.TWILIO_AUTH_TOKEN,
-    cfg.VALIDATE_TWILIO_SIGNATURES,
-    cfg.VOICE_ROUTER_FORWARD_SECRET,
-  );
+  await validateTwilioSignature(req, cfg.TWILIO_AUTH_TOKEN, cfg.VALIDATE_TWILIO_SIGNATURES, {
+    routerForwardSecret: cfg.VOICE_ROUTER_FORWARD_SECRET,
+    publicBaseUrl: cfg.PUBLIC_BASE_URL,
+  });
 
   const handoff = String(req.body.HandoffData ?? req.body.handoffData ?? "");
   const hangup = handoff.includes("caller_done") || /goodbye/i.test(handoff);

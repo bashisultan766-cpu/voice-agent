@@ -1,4 +1,4 @@
-import { getConfig } from "../config.js";
+import { getConfig, conversationRelayVoice } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { getCachedPhrase } from "../utils/phraseCache.js";
 import type { SpeechChunk } from "../types/order.js";
@@ -26,7 +26,8 @@ export async function synthesizeSpeechChunk(text: string): Promise<VoiceSynthesi
   const cached = chunkAudioCache.get(text);
   if (cached) return cached;
 
-  const voiceId = getConfig().ELEVENLABS_VOICE_ID;
+  const voiceId = (getConfig().VOICE_ID || getConfig().ELEVENLABS_VOICE_ID || "").trim();
+  if (!voiceId) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
 
@@ -105,9 +106,9 @@ export function buildConversationRelayVoiceAttrs(): Record<string, string> {
 
   if (cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs") {
     attrs.ttsProvider = "ElevenLabs";
-    attrs.voice = cfg.ELEVENLABS_VOICE_ID;
+    attrs.voice = conversationRelayVoice();
   } else {
-    attrs.voice = cfg.ELEVENLABS_VOICE_ID;
+    attrs.voice = conversationRelayVoice();
   }
 
   return attrs;

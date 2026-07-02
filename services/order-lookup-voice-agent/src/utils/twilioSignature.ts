@@ -1,13 +1,20 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Request } from "express";
 
+/**
+ * Validate Twilio webhook signature.
+ * Uses PUBLIC_BASE_URL + path (same as Python agent) so nginx TLS termination matches.
+ */
 export async function validateTwilioSignature(
   req: Request,
   authToken: string,
   enabled: boolean,
-  routerForwardSecret?: string,
+  options?: {
+    routerForwardSecret?: string;
+    publicBaseUrl?: string;
+  },
 ): Promise<void> {
-  if (routerForwardSecret && isRouterForwardRequest(req, routerForwardSecret)) {
+  if (options?.routerForwardSecret && isRouterForwardRequest(req, options.routerForwardSecret)) {
     return;
   }
 
@@ -18,7 +25,7 @@ export async function validateTwilioSignature(
     throw new Error("Missing Twilio signature");
   }
 
-  const url = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+  const url = buildSignedUrl(req, options?.publicBaseUrl);
   const params = req.body as Record<string, string>;
   const sortedKeys = Object.keys(params).sort();
   let data = url;
@@ -32,8 +39,19 @@ export async function validateTwilioSignature(
     timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 
   if (!valid) {
-    throw new Error("Invalid Twilio signature");
+    throw new Error(`Invalid Twilio signature for url=${url}`);
   }
+}
+
+function buildSignedUrl(req: Request, publicBaseUrl?: string): string {
+  if (publicBaseUrl) {
+    const base = publicBaseUrl.replace(/\/$/, "");
+    return `${base}${req.originalUrl}`;
+  }
+
+  const proto = req.header("x-forwarded-proto") ?? req.protocol;
+  const host = req.header("x-forwarded-host") ?? req.get("host");
+  return `${proto}://${host}${req.originalUrl}`;
 }
 
 export function isRouterForwardRequest(req: Request, secret: string): boolean {

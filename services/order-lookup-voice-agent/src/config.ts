@@ -26,7 +26,9 @@ const envSchema = z.object({
   SHOPIFY_CACHE_TTL_SECS: z.coerce.number().default(60),
 
   ELEVENLABS_API_KEY: z.string().optional(),
-  ELEVENLABS_VOICE_ID: z.string().default("Eric"),
+  ELEVENLABS_VOICE_ID: z.string().optional(),
+  VOICE_ID: z.string().optional(),
+  VOICE_MODEL: z.string().default("eleven_turbo_v2_5"),
   VOICE_LANGUAGE: z.string().default("en-US"),
   VOICE_TTS_PROVIDER: z.string().default("ElevenLabs"),
 
@@ -49,6 +51,15 @@ export function getConfig(): AppConfig {
     cached = parsed.data;
   }
   return cached;
+}
+
+export function conversationRelayVoice(): string {
+  const cfg = getConfig();
+  const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
+  if (cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs" && voiceId) {
+    return `${voiceId}-${cfg.VOICE_MODEL}`;
+  }
+  return "Google.en-US-Neural2-J";
 }
 
 export function wsUrl(): string {
