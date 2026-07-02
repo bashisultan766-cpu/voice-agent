@@ -38,7 +38,7 @@ describe("conversationRelayVoice", () => {
     expect(voice()).toBe("cjVigY5qzO86Huf0OWal-flash_v2_5");
   });
 
-  it("appends tuning suffix when speed, stability, and similarity are set", async () => {
+  it("ignores VOICE_SPEED/STABILITY/SIMILARITY for Twilio TwiML voice", async () => {
     process.env.PUBLIC_BASE_URL = "https://example.com";
     process.env.TWILIO_ACCOUNT_SID = "ACtest";
     process.env.TWILIO_AUTH_TOKEN = "secret";
@@ -46,13 +46,20 @@ describe("conversationRelayVoice", () => {
     process.env.SHOPIFY_SHOP_DOMAIN = "shop.myshopify.com";
     process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = "shpat";
     process.env.VOICE_TTS_PROVIDER = "ElevenLabs";
-    process.env.VOICE_ID = "voice123";
+    process.env.VOICE_ID = "cjVigY5qzO86Huf0OWal";
     process.env.VOICE_MODEL = "flash_v2_5";
-    process.env.VOICE_SPEED = "0.96";
-    process.env.VOICE_STABILITY = "0.42";
-    process.env.VOICE_SIMILARITY = "0.78";
+    process.env.VOICE_SPEED = "1";
+    process.env.VOICE_STABILITY = "0.55";
+    process.env.VOICE_SIMILARITY = "0.8";
 
     const { conversationRelayVoice: voice } = await import("../src/config.js");
-    expect(voice()).toBe("voice123-flash_v2_5-0.96_0.42_0.78");
+    expect(voice()).toBe("cjVigY5qzO86Huf0OWal-flash_v2_5");
+  });
+});
+
+describe("formatTwilioVoiceTuning", () => {
+  it("formats integers with one decimal place", async () => {
+    const { formatTwilioVoiceTuning } = await import("../src/config.js");
+    expect(formatTwilioVoiceTuning(1, 0.55, 0.8)).toBe("1.0_0.55_0.8");
   });
 });

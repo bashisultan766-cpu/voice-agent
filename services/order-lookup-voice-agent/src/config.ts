@@ -91,6 +91,14 @@ export function normalizeTwilioElevenLabsModel(model: string): string {
   return trimmed;
 }
 
+export function formatTwilioVoiceTuning(speed: number, stability: number, similarity: number): string {
+  const fmt = (n: number) => {
+    const rounded = Math.round(n * 100) / 100;
+    return Number.isInteger(rounded) ? `${rounded}.0` : String(rounded);
+  };
+  return `${fmt(speed)}_${fmt(stability)}_${fmt(similarity)}`;
+}
+
 export function conversationRelayVoice(): string {
   const cfg = getConfig();
   const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
@@ -101,15 +109,8 @@ export function conversationRelayVoice(): string {
   const model = normalizeTwilioElevenLabsModel(cfg.VOICE_MODEL);
   if (!model) return voiceId;
 
-  const hasTuning =
-    cfg.VOICE_SPEED !== undefined &&
-    cfg.VOICE_STABILITY !== undefined &&
-    cfg.VOICE_SIMILARITY !== undefined;
-
-  if (hasTuning) {
-    return `${voiceId}-${model}-${cfg.VOICE_SPEED}_${cfg.VOICE_STABILITY}_${cfg.VOICE_SIMILARITY}`;
-  }
-
+  // Twilio ConversationRelay: VoiceID-model only. VOICE_SPEED/STABILITY/SIMILARITY in .env
+  // are for ElevenLabs direct API — appending them caused Twilio error 64101 (e.g. "1_0.55_0.8").
   return `${voiceId}-${model}`;
 }
 
