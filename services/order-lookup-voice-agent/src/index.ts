@@ -62,7 +62,14 @@ export function startServer() {
   const server = http.createServer(app);
 
   const wss = new WebSocketServer({ server, path: `${VOICE_PATH_PREFIX}/ws` });
-  wss.on("connection", (socket) => {
+  wss.on("connection", (socket, req) => {
+    logger.info("relay_ws_connected", {
+      path: req.url,
+      remote: req.socket.remoteAddress,
+    });
+    socket.on("error", (err) => {
+      logger.error("relay_ws_socket_error", { error: err.message });
+    });
     void handleConversationRelaySocket(socket);
   });
 

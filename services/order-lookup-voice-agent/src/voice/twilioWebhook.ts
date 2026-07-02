@@ -60,6 +60,8 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
     callSid: callSid.slice(0, 8),
     from: maskPhone(from),
     to: maskPhone(to),
+    wsUrl: wsUrl(),
+    voice: buildConversationRelayVoiceAttrs().voice ?? "default",
   });
 
   const routerSpeech = String(req.body.RouterSpeech ?? "").trim();
