@@ -24,6 +24,8 @@ import {
   planGoodbye,
   planRepeatIntro,
 } from "./responsePlanner.js";
+import { classifyCallerIntent } from "./intentClassifier.js";
+import { buildClarifyingResponse, buildGreetingResponse } from "../handlers/greetingHandler.js";
 import type {
   AgentStreamEvent,
   CallSession,
@@ -98,6 +100,22 @@ async function* streamOrderNumberCapture(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  const intent = await classifyCallerIntent(callerText);
+
+  if (intent.intent === "greeting") {
+    session.phase = "awaiting_order_number";
+    yield chunkEvent(buildGreetingResponse(callerText), "summary");
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  if (intent.intent === "unknown") {
+    session.phase = "awaiting_order_number";
+    yield chunkEvent(buildClarifyingResponse(), "summary");
+    yield doneEvent(session.phase);
+    return;
+  }
+
   session.phase = "lookup_in_progress";
   const started = Date.now();
 

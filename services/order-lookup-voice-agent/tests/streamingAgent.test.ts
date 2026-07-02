@@ -18,7 +18,7 @@ describe("streaming agent", () => {
     }
   });
 
-  it("handles invalid order with error chunk", async () => {
+  it("responds to greeting without invalid-order error", async () => {
     const session = createCallSession("CA123", "+15550001", "+15550002");
     session.phase = "awaiting_order_number";
 
@@ -27,7 +27,8 @@ describe("streaming agent", () => {
       if (event.type === "chunk") chunks.push(event.chunk.text);
     }
 
-    expect(chunks.join(" ")).toMatch(/valid order number|didn't catch/i);
+    expect(chunks.join(" ")).toMatch(/hey|help|order/i);
+    expect(chunks.join(" ")).not.toMatch(/valid order number|didn't catch/i);
     expect(session.phase).toBe("awaiting_order_number");
   });
 });

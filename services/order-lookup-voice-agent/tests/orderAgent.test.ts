@@ -101,8 +101,8 @@ describe("agent QA flows", () => {
   it("handles invalid order with retry message", async () => {
     const session = createCallSession("CA123", "+15550001", "+15550002");
     session.phase = "awaiting_order_number";
-    const result = await handleAgentTurn(session, "hello there");
-    expect(result.speech).toMatch(/valid order number|didn't catch/i);
+    const result = await handleAgentTurn(session, "my order number is 12");
+    expect(result.speech).toMatch(/valid order number|didn't catch|four to six digits/i);
     expect(session.phase).toBe("awaiting_order_number");
   });
 

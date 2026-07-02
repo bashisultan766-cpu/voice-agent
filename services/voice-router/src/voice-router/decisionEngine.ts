@@ -1,18 +1,32 @@
-import OpenAI from "openai";
-import { getConfig, type AgentTarget } from "../config.js";
-import { logger } from "../utils/logger.js";
+import type { AgentTarget } from "../config.js";
 import { getSession } from "./sessionStore.js";
+import { classifyIntent, type IntentClassification, type IntentType } from "./intentClassifier.js";
+import {
+  buildClarifyingResponse,
+  buildGreetingResponse,
+  buildSilenceReprompt,
+} from "./handlers/greetingHandler.js";
+
+export type RouteTarget = AgentTarget | "greeting" | "clarify";
 
 export interface RouteDecision {
-  target: AgentTarget;
+  target: RouteTarget;
+  intent: IntentType;
+  confidence: number;
   reason: string;
-  confidence: "high" | "medium" | "low";
+  responseText?: string;
 }
 
-const ORDER_NUMBER_RE = /\b\d{5,12}\b/;
-const ORDER_INTENT_RE =
-  /\b(order|tracking|track|status|shipment|shipped|delivery|refund|where\s+is\s+my\s+order|order\s+number)\b/i;
+function isForwardTarget(target: RouteTarget): target is AgentTarget {
+  return target === "order_lookup" || target === "main_agent";
+}
 
+/**
+ * 3-stage pipeline:
+ * 1. Intent classification (classifyIntent)
+ * 2. Router decision (intent → target)
+ * 3. Handler payload (greeting/clarify response text)
+ */
 export async function decideRoute(input: {
   speech: string;
   callSid: string;
@@ -22,99 +36,77 @@ export async function decideRoute(input: {
   if (existing) {
     return {
       target: existing.target,
+      intent: targetToIntent(existing.target),
+      confidence: 1,
       reason: `session_locked:${existing.reason}`,
-      confidence: "high",
     };
   }
 
   const speech = (input.speech ?? "").trim();
+
   if (!speech) {
     return {
-      target: "main_agent",
-      reason: "empty_speech_default_main",
-      confidence: "low",
+      target: "clarify",
+      intent: "unknown",
+      confidence: 0,
+      reason: "empty_speech_reprompt",
+      responseText: buildSilenceReprompt(),
     };
   }
 
-  if (ORDER_NUMBER_RE.test(speech)) {
-    return {
-      target: "order_lookup",
-      reason: "order_number_pattern",
-      confidence: "high",
-    };
-  }
+  const classification = await classifyIntent(speech);
+  return routeFromIntent(classification, speech);
+}
 
-  if (ORDER_INTENT_RE.test(speech)) {
-    return {
-      target: "order_lookup",
-      reason: "order_intent_keywords",
-      confidence: "high",
-    };
-  }
-
-  const llmDecision = await classifyWithOpenAi(speech);
-  if (llmDecision) {
-    return llmDecision;
-  }
-
-  return {
-    target: "main_agent",
-    reason: "general_intent_default",
-    confidence: "medium",
+function routeFromIntent(classification: IntentClassification, speech: string): RouteDecision {
+  const base = {
+    intent: classification.intent,
+    confidence: classification.confidence,
+    reason: `intent_${classification.intent}:${classification.source}`,
   };
-}
 
-async function classifyWithOpenAi(speech: string): Promise<RouteDecision | null> {
-  const apiKey = getConfig().OPENAI_API_KEY;
-  if (!apiKey) return null;
-
-  try {
-    const client = new OpenAI({
-      apiKey,
-      timeout: getConfig().OPENAI_TIMEOUT_MS,
-    });
-
-    const response = await client.chat.completions.create({
-      model: getConfig().OPENAI_MODEL,
-      temperature: 0,
-      max_tokens: 40,
-      messages: [
-        {
-          role: "system",
-          content:
-            'Classify caller intent for SureShot Books phone support. Return JSON only: {"intent":"order_lookup"|"general","confidence":"high"|"medium"|"low"}. Use order_lookup for order status, tracking, refunds, or order numbers. Use general for catalog, buying books, facilities, or other questions.',
-        },
-        { role: "user", content: speech },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    const raw = response.choices[0]?.message?.content ?? "{}";
-    const parsed = JSON.parse(raw) as {
-      intent?: string;
-      confidence?: "high" | "medium" | "low";
-    };
-
-    if (parsed.intent === "order_lookup") {
+  switch (classification.intent) {
+    case "greeting":
       return {
+        ...base,
+        target: "greeting",
+        responseText: buildGreetingResponse(speech),
+      };
+
+    case "order_lookup":
+      return {
+        ...base,
         target: "order_lookup",
-        reason: "openai_order_lookup",
-        confidence: parsed.confidence ?? "medium",
       };
-    }
 
-    if (parsed.intent === "general") {
+    case "refund":
       return {
-        target: "main_agent",
-        reason: "openai_general",
-        confidence: parsed.confidence ?? "medium",
+        ...base,
+        target: "order_lookup",
+        reason: `intent_refund:${classification.source}`,
       };
-    }
-  } catch (err) {
-    logger.warn("openai_route_classification_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 
-  return null;
+    case "support":
+      return {
+        ...base,
+        target: "main_agent",
+        reason: `intent_support:${classification.source}`,
+      };
+
+    case "unknown":
+    default:
+      return {
+        ...base,
+        target: "clarify",
+        responseText: buildClarifyingResponse(),
+        reason: `intent_unknown:${classification.source}`,
+      };
+  }
 }
+
+function targetToIntent(target: AgentTarget): IntentType {
+  if (target === "order_lookup") return "order_lookup";
+  return "support";
+}
+
+export { isForwardTarget };

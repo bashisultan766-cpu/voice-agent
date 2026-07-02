@@ -3,7 +3,7 @@ import { getConfig, routerBaseUrl } from "../config.js";
 import { routingForwardUrl, routingGatherUrl } from "../paths.js";
 import { logger } from "../utils/logger.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
-import { decideRoute } from "./decisionEngine.js";
+import { decideRoute, isForwardTarget } from "./decisionEngine.js";
 import { forwardToAgent } from "./agentForwarder.js";
 import { getSession, lockSession } from "./sessionStore.js";
 
@@ -31,6 +31,11 @@ function gatherTwiml(actionUrl: string, reprompt = false): string {
     ? "I didn't hear anything. Please tell me your order number, or say how I can help."
     : ROUTER_GREETING;
 
+  return `${XML_HEADER}<Response><Gather input="speech" action="${escapeXml(actionUrl)}" method="POST" speechTimeout="auto" timeout="${cfg.GATHER_TIMEOUT_SECS}" language="en-US"><Say>${escapeXml(sayText)}</Say></Gather><Redirect method="POST">${escapeXml(actionUrl)}</Redirect></Response>`;
+}
+
+function conversationalGatherTwiml(actionUrl: string, sayText: string): string {
+  const cfg = getConfig();
   return `${XML_HEADER}<Response><Gather input="speech" action="${escapeXml(actionUrl)}" method="POST" speechTimeout="auto" timeout="${cfg.GATHER_TIMEOUT_SECS}" language="en-US"><Say>${escapeXml(sayText)}</Say></Gather><Redirect method="POST">${escapeXml(actionUrl)}</Redirect></Response>`;
 }
 
@@ -102,15 +107,23 @@ export async function handleGather(req: Request, res: Response): Promise<void> {
     from: body.From,
   });
 
-  lockSession(callSid, decision.target, decision.reason, speech);
-
   logger.info("router_decision", {
     callSid: callSid.slice(0, 8),
     target: decision.target,
+    intent: decision.intent,
     reason: decision.reason,
     confidence: decision.confidence,
     speechPreview: speech.slice(0, 80),
   });
+
+  if (!isForwardTarget(decision.target)) {
+    res
+      .type("application/xml")
+      .send(conversationalGatherTwiml(gatherUrl, decision.responseText ?? ROUTER_GREETING));
+    return;
+  }
+
+  lockSession(callSid, decision.target, decision.reason, speech);
 
   const forwardUrl = routingForwardUrl(routerBaseUrl());
   res.type("application/xml").send(redirectTwiml(forwardUrl));
@@ -200,11 +213,15 @@ export async function handleDecide(req: Request, res: Response): Promise<void> {
 
   res.json({
     target: decision.target,
+    intent: decision.intent,
     reason: decision.reason,
     confidence: decision.confidence,
+    responseText: decision.responseText,
     forwardPath:
       decision.target === "order_lookup"
         ? "/voice/order/twilio/inbound"
-        : "/voice/twilio/agent/inbound",
+        : decision.target === "main_agent"
+          ? "/voice/twilio/agent/inbound"
+          : null,
   });
 }
