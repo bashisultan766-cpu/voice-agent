@@ -33,6 +33,12 @@ import {
   buildIsbnTruthQueries,
   buildTitleTruthQueries,
 } from "../tools/shopifyTruthSearch.js";
+import {
+  extractPaymentMethod,
+  extractRefundAmount,
+  extractRefundNotificationEmail,
+  extractRefundReason,
+} from "./orderFieldExtractors.js";
 
 // Re-export formatter validation for order numbers (canonical source).
 export { isValidOrderNumberFormat } from "../utils/formatter.js";
@@ -67,8 +73,17 @@ export interface OrderStatusResult {
   orderNote?: string;
   cardLast4?: string;
   cardBrand?: string;
-  /** Email where refund confirmation was sent (refunded orders only). */
+  /** Human-readable gateway when not a card (e.g. PayPal Express Checkout). */
+  paymentGateway?: string;
+  /** Amount refunded (refunded orders only). */
+  refundAmount?: string;
+  /**
+   * Exact email the refund notification was sent to (timeline/custom attributes only).
+   * @deprecated Use refundNotificationEmail — kept for backward compatibility.
+   */
   refundEmail?: string;
+  /** Exact email the refund notification was sent to — never the order billing email. */
+  refundNotificationEmail?: string;
   message?: string;
 }
 
@@ -113,12 +128,27 @@ interface GqlOrderNode {
   totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   totalShippingPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   customAttributes?: Array<{ key?: string; value?: string }>;
+  paymentGatewayNames?: string[];
+  events?: {
+    edges?: Array<{ node?: { message?: string | null; action?: string | null } }>;
+  };
   lineItems?: {
     edges?: Array<{ node?: { title?: string; quantity?: number } }>;
   };
-  refunds?: Array<{ note?: string | null }>;
+  refunds?: Array<{
+    note?: string | null;
+    totalRefundedSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+    transactions?: Array<{
+      gateway?: string;
+      formattedGateway?: string;
+      paymentDetails?: { company?: string; number?: string };
+    }>;
+  }>;
   transactions?: Array<{
+    kind?: string;
+    status?: string;
     gateway?: string;
+    formattedGateway?: string;
     paymentDetails?: {
       company?: string;
       number?: string;
@@ -172,11 +202,41 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
           key
           value
         }
-        refunds(first: 3) {
+        paymentGatewayNames
+        events(first: 25) {
+          edges {
+            node {
+              ... on BasicEvent {
+                message
+                action
+              }
+            }
+          }
+        }
+        refunds(first: 5) {
           note
+          totalRefundedSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          transactions(first: 3) {
+            gateway
+            formattedGateway
+            paymentDetails {
+              ... on CardPaymentDetails {
+                company
+                number
+              }
+            }
+          }
         }
         transactions(first: 5) {
+          kind
+          status
           gateway
+          formattedGateway
           paymentDetails {
             ... on CardPaymentDetails {
               company
@@ -241,10 +301,10 @@ function estimateDeliveryDays(
   return DEFAULT_UNFULFILLED_SHIP_DAYS;
 }
 
-function extractCardLast4(paymentNumber?: string): string | undefined {
-  if (!paymentNumber) return undefined;
-  const digits = paymentNumber.replace(/\D/g, "");
-  return digits.length >= 4 ? digits.slice(-4) : undefined;
+function timelineEvents(node: GqlOrderNode) {
+  return (node.events?.edges ?? [])
+    .map((e) => e.node)
+    .filter((n): n is { message?: string | null; action?: string | null } => Boolean(n));
 }
 
 function formatMoneyAmount(
@@ -263,23 +323,14 @@ function customerDisplayName(
   return name || undefined;
 }
 
-function refundEmailFromOrder(
-  node: GqlOrderNode,
-  isRefunded: boolean,
-): string | undefined {
+function refundEmailFromOrder(node: GqlOrderNode, isRefunded: boolean): string | undefined {
   if (!isRefunded) return undefined;
+  return extractRefundNotificationEmail(timelineEvents(node), node.customAttributes);
+}
 
-  for (const attr of node.customAttributes ?? []) {
-    const key = (attr.key ?? "").toLowerCase();
-    if ((key.includes("refund") && key.includes("email")) || key === "refund_email") {
-      const value = (attr.value ?? "").trim();
-      if (value) return value;
-    }
-  }
-
-  return (
-    (node.email ?? node.customer?.email ?? "").trim() || undefined
-  );
+/** @internal Exported for unit tests — maps a GraphQL order node to voice fields. */
+export function mapGqlOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
+  return mapOrderNode(node);
 }
 
 function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
@@ -304,13 +355,12 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   const itemCount = lineItems.reduce((sum, li) => sum + li.quantity, 0);
 
   const financialStatus = node.displayFinancialStatus ?? "";
-  const refundNote = node.refunds?.find((r) => r.note)?.note ?? undefined;
-  const isRefunded = /refund/i.test(financialStatus);
-
-  const cardTxn = node.transactions?.find(
-    (t) => t.paymentDetails?.number || t.paymentDetails?.company,
-  );
-  const cardLast4 = extractCardLast4(cardTxn?.paymentDetails?.number);
+  const isRefunded = /refund/i.test(financialStatus) || Boolean(node.refunds?.length);
+  const events = timelineEvents(node);
+  const refundReason = extractRefundReason(isRefunded, node.refunds, node.customAttributes, events);
+  const refundNotificationEmail = refundEmailFromOrder(node, isRefunded);
+  const refundAmount = isRefunded ? extractRefundAmount(node.refunds) : undefined;
+  const payment = extractPaymentMethod(node.transactions, node.paymentGatewayNames);
 
   return {
     orderNumber: node.name,
@@ -324,16 +374,19 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     customerName: customerDisplayName(node.customer),
     financialStatus,
     refundStatus: isRefunded ? financialStatus : undefined,
-    refundReason: isRefunded ? refundNote : undefined,
-    refundEmail: refundEmailFromOrder(node, isRefunded),
+    refundReason,
+    refundAmount,
+    refundNotificationEmail,
+    refundEmail: refundNotificationEmail,
     subtotalAmount: formatMoneyAmount(node.subtotalPriceSet?.shopMoney),
     totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
     shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
     itemCount: itemCount || lineItems.length || undefined,
     lineItems: lineItems.length ? lineItems : undefined,
     orderNote: node.note?.trim() || undefined,
-    cardLast4,
-    cardBrand: cardTxn?.paymentDetails?.company ?? cardTxn?.gateway,
+    cardLast4: payment.cardLast4,
+    cardBrand: payment.cardBrand,
+    paymentGateway: payment.paymentGateway,
   };
 }
 

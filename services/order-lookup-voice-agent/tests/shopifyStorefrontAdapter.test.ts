@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getOrderStatus,
+  mapGqlOrderNode,
   parseGraphqlThrottle,
   searchByISBN,
   searchByTitle,
@@ -48,6 +49,10 @@ vi.mock("../src/platform/circuitBreaker.js", async (importOriginal) => {
 });
 
 import { ShopifyThrottledError } from "../src/platform/shopifyErrors.js";
+import {
+  ORDER_21698_F1_EXPECTED,
+  ORDER_21698_F1_GQL_NODE,
+} from "./fixtures/order21698F1.js";
 
 const SAMPLE_ISBN = "9783161484100";
 
@@ -183,6 +188,45 @@ describe("getOrderStatus", () => {
     expect(result.refundStatus).toBe("REFUNDED");
     expect(result.refundReason).toBe("Customer requested cancellation");
     expect(result.refundEmail).toBe("refunds@example.com");
+  });
+
+  it("does not fall back to billing email when timeline has no refund notification", async () => {
+    vi.mocked(shopifyGraphql).mockResolvedValue({
+      orders: {
+        edges: [
+          {
+            node: {
+              id: "gid://shopify/Order/3",
+              name: "#54321",
+              email: "billing@gmail.com",
+              displayFinancialStatus: "REFUNDED",
+              customAttributes: [],
+              events: { edges: [] },
+              refunds: [{ note: "Cancelled" }],
+              lineItems: { edges: [] },
+              fulfillments: [],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await getOrderStatus("54321");
+    expect(result.refundNotificationEmail).toBeUndefined();
+    expect(result.refundEmail).toBeUndefined();
+  });
+
+  it("maps order #21698-F1 fixture with timeline email and PayPal gateway", () => {
+    const mapped = mapGqlOrderNode(ORDER_21698_F1_GQL_NODE);
+    expect(mapped.customerName).toBe(ORDER_21698_F1_EXPECTED.customerName);
+    expect(mapped.refundNotificationEmail).toBe(ORDER_21698_F1_EXPECTED.refundNotificationEmail);
+    expect(mapped.refundEmail).toBe(ORDER_21698_F1_EXPECTED.refundNotificationEmail);
+    expect(mapped.refundReason).toBe(ORDER_21698_F1_EXPECTED.refundReason);
+    expect(mapped.refundAmount).toBe(ORDER_21698_F1_EXPECTED.refundAmount);
+    expect(mapped.paymentGateway).toBe(ORDER_21698_F1_EXPECTED.paymentGateway);
+    expect(mapped.cardLast4).toBeUndefined();
+    expect(mapped.refundNotificationEmail).not.toBe("joel.moore@gmail.com");
+    expect(mapped.lineItems).toEqual(ORDER_21698_F1_EXPECTED.lineItems);
   });
 
   it("returns not_found when Shopify has no match", async () => {

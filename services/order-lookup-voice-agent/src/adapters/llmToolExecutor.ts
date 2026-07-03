@@ -152,9 +152,41 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     return JSON.stringify({ status: record.status, found: false });
   }
 
+  if (record.tool === "get_shopify_order_status" && "orderNumber" in record.data) {
+    return JSON.stringify({
+      status: record.data.status,
+      found: record.data.status === "found",
+      data: shapeOrderStatusForLlm(record.data),
+      instructions:
+        "Use ONLY non-null fields below. If refund_notification_email, payment_method_last4, or payment_gateway is null, omit that detail — never invent a replacement.",
+    });
+  }
+
   return JSON.stringify({
     status: record.data.status,
     found: record.data.status === "found",
     data: record.data,
   });
+}
+
+/** Snake_case order payload — matches system prompt field names exactly. */
+function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown> {
+  return {
+    order_number: data.orderNumber ?? null,
+    customer_name: data.customerName ?? null,
+    items: data.lineItems ?? null,
+    total_amount: data.totalAmount ?? null,
+    shipping_amount: data.shippingFee ?? null,
+    subtotal_amount: data.subtotalAmount ?? null,
+    payment_method_last4: data.cardLast4 ?? null,
+    payment_gateway: data.paymentGateway ?? null,
+    card_brand: data.cardBrand ?? null,
+    refund_status: data.refundStatus ?? null,
+    refund_reason: data.refundReason ?? null,
+    refund_amount: data.refundAmount ?? null,
+    refund_notification_email: data.refundNotificationEmail ?? data.refundEmail ?? null,
+    fulfillment_status: data.fulfillmentStatus ?? null,
+    estimated_delivery_days: data.estimatedDeliveryDays ?? null,
+    tracking_status: data.trackingStatus ?? null,
+  };
 }

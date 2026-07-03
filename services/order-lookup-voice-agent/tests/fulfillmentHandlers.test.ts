@@ -76,21 +76,25 @@ describe("buildOrderStatusTts", () => {
     expect(tts.text).toMatch(/4242|four.*two/i);
   });
 
-  it("includes refund reason and email for refunded orders", () => {
+  it("includes PayPal gateway and timeline refund email for refunded orders", () => {
     const tts = buildOrderStatusTts({
       status: "found",
-      orderNumber: "#99999",
-      customerName: "Maria Lopez",
+      orderNumber: "#21698-F1",
+      customerName: "Joel Moore",
       refundStatus: "REFUNDED",
-      refundReason: "Duplicate order",
-      refundEmail: "maria@example.com",
-      lineItems: [{ title: "Bible Study", quantity: 1 }],
-      subtotalAmount: "12.00 USD",
-      shippingFee: "4.00 USD",
+      refundReason: "OUT OF STOCK",
+      refundAmount: "96.00 USD",
+      refundNotificationEmail: "zzyxx2002@yahoo.com",
+      paymentGateway: "PayPal Express Checkout",
+      lineItems: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
+      totalAmount: "96.00 USD",
+      shippingFee: "5.00 USD",
     });
-    expect(tts.text).toContain("refunded");
-    expect(tts.text).toContain("Duplicate order");
-    expect(tts.text).toContain("maria@example.com");
+    expect(tts.text).toContain("Joel Moore");
+    expect(tts.text).toContain("OUT OF STOCK");
+    expect(tts.text).toContain("zzyxx2002@yahoo.com");
+    expect(tts.text).toContain("PayPal Express Checkout");
+    expect(tts.text).not.toContain("gmail.com");
   });
 });
 

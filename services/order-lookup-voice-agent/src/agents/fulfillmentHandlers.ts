@@ -166,11 +166,15 @@ export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
 
   if (result.refundStatus) {
     parts.push("This order has been refunded.");
-    if (result.refundReason) {
-      parts.push(`The reason on file is ${result.refundReason}.`);
+    if (result.refundAmount) {
+      parts.push(`The refund amount was ${speakMoney(result.refundAmount)}.`);
     }
-    if (result.refundEmail) {
-      parts.push(`The refund confirmation was sent to ${result.refundEmail}.`);
+    if (result.refundReason) {
+      parts.push(`This was refunded because ${result.refundReason}.`);
+    }
+    const notifyEmail = result.refundNotificationEmail ?? result.refundEmail;
+    if (notifyEmail) {
+      parts.push(`A notification was sent to ${notifyEmail}.`);
     }
   } else {
     const status = fulfillmentStatusPhrase(result.fulfillmentStatus ?? "unfulfilled");
@@ -195,6 +199,8 @@ export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
     parts.push(
       `Payment was on ${brand} ending in ${speakCardLast4(result.cardLast4)}.`,
     );
+  } else if (result.paymentGateway) {
+    parts.push(`Payment was via ${result.paymentGateway}.`);
   }
 
   if (result.orderNote) {
