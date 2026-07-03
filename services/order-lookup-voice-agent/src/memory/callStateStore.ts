@@ -302,9 +302,15 @@ export function isSlotAnswerComplete(
 }
 
 function resolveAwaitingAfterAsk(state: CallState): CallStateAwaitingInput {
-  const resolved = resolveProductAwaiting(state, "");
-  const { slots, slotFlags } = state;
+  const { slots, slotFlags, awaitingInput } = state;
 
+  if (slotFlags.isbnCollected && slots.isbn) return "none";
+  if (slotFlags.titleCollected && slots.title) return "none";
+
+  if (awaitingInput === "isbn" && !slotFlags.isbnCollected) return "isbn";
+  if (awaitingInput === "title" && !slotFlags.titleCollected) return "title";
+
+  const resolved = resolveProductAwaiting(state, "");
   if (resolved !== "none") return resolved;
 
   const needsSlot =

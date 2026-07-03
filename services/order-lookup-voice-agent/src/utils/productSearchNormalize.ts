@@ -104,17 +104,98 @@ function isbn13CheckDigit(first12: string): string {
   return String(mod);
 }
 
-export function extractIsbnFromSpeech(text: string): string | null {
-  const isbn13 = text.match(/\b97[89][\d-]{10,17}\b/);
-  if (isbn13) return normalizeIsbn(isbn13[0]);
+const SPOKEN_DIGIT_WORDS: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  o: "0",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+};
 
-  const isbn10 = text.match(/\b[\dXx][\d-]{8,12}[\dXx]\b/);
-  if (isbn10) return normalizeIsbn(isbn10[0]);
+/** Collapse spoken or spaced digits into one string (voice STT friendly). */
+export function digitizeSpeechForIsbn(text: string): string {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .split(/\s+/)
+    .filter(Boolean);
 
-  const spoken = text.match(/\bisbn\s*#?\s*([\dXx-]{10,17})\b/i);
-  if (spoken?.[1]) return normalizeIsbn(spoken[1]);
+  let out = "";
+  for (const token of tokens) {
+    if (/^\d+$/.test(token)) {
+      out += token;
+      continue;
+    }
+    const digit = SPOKEN_DIGIT_WORDS[token];
+    if (digit !== undefined) out += digit;
+  }
+  return out;
+}
+
+function pickValidIsbnFromDigitString(digits: string): string | null {
+  if (!digits) return null;
+
+  if (digits.length === 13 && isValidIsbnFormat(digits)) return normalizeIsbn(digits);
+  if (digits.length === 10 && isValidIsbnFormat(digits)) return normalizeIsbn(digits);
+
+  const isbn13Match = digits.match(/97[89]\d{10}/);
+  if (isbn13Match && isValidIsbnFormat(isbn13Match[0])) {
+    return normalizeIsbn(isbn13Match[0]);
+  }
+
+  if (digits.length > 13) {
+    const tail13 = digits.slice(-13);
+    if (isValidIsbnFormat(tail13)) return normalizeIsbn(tail13);
+  }
+
+  if (digits.length > 10) {
+    const tail10 = digits.slice(-10);
+    if (isValidIsbnFormat(tail10)) return normalizeIsbn(tail10);
+  }
 
   return null;
+}
+
+/**
+ * Extract ISBN from voice transcript — handles compact, spaced, and spoken-digit forms.
+ */
+export function extractIsbnFromSpeech(text: string): string | null {
+  const compact = normalizeIsbn(text);
+  if (compact.length === 10 || compact.length === 13) {
+    if (isValidIsbnFormat(compact)) return compact;
+  }
+
+  const isbn13 = text.match(/\b97[89][\d\s-]{10,25}[\dXx]\b/);
+  if (isbn13) {
+    const candidate = normalizeIsbn(isbn13[0]);
+    if (isValidIsbnFormat(candidate)) return candidate;
+  }
+
+  const isbn10 = text.match(/\b[\dXx][\d\s-]{8,16}[\dXx]\b/);
+  if (isbn10) {
+    const candidate = normalizeIsbn(isbn10[0]);
+    if (isValidIsbnFormat(candidate)) return candidate;
+  }
+
+  const labeled = text.match(/\bisbn\s*#?\s*([\dXx\s-]{10,25})\b/i);
+  if (labeled?.[1]) {
+    const candidate = normalizeIsbn(labeled[1]);
+    if (isValidIsbnFormat(candidate)) return candidate;
+  }
+
+  const spokenDigits = digitizeSpeechForIsbn(text);
+  const fromSpoken = pickValidIsbnFromDigitString(spokenDigits);
+  if (fromSpoken) return fromSpoken;
+
+  const packedDigits = text.replace(/\D/g, "");
+  return pickValidIsbnFromDigitString(packedDigits);
 }
 
 export function tagOverlapScore(tagsA: string[], tagsB: string[]): number {

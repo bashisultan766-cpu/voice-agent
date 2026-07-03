@@ -73,11 +73,7 @@ export function parseProductSlotsFromSpeech(
 
   if (awaiting === "isbn") {
     const isbn = extractIsbnFromSpeech(text);
-    if (isbn) slots.isbn = normalizeIsbn(isbn);
-    else if (/^\d[\dXx-]{8,17}[\dXx]?$/.test(text.replace(/\s/g, ""))) {
-      const normalized = normalizeIsbn(text);
-      if (normalized.length >= 10) slots.isbn = normalized;
-    }
+    if (isbn) slots.isbn = isbn;
   }
 
   if (awaiting === "title") {

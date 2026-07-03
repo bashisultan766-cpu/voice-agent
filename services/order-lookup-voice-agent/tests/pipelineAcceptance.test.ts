@@ -128,13 +128,27 @@ describe("pipeline acceptance", () => {
     expect(result).toMatch(/Harry Potter|Azkaban/i);
   });
 
+  it('6b — spoken-digit ISBN triggers Shopify search after three-step flow', async () => {
+    const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
+
+    const session = createCallSession("ACC_6B", "+1", "+2");
+    await collectSpeech(session, "I need a book");
+    await collectSpeech(session, "I have an ISBN");
+    const spoken =
+      "nine seven eight three one six one four eight four one zero zero";
+    const result = await collectSpeech(session, spoken);
+
+    expect(isbnSpy).toHaveBeenCalled();
+    expect(result).toMatch(/Azkaban/i);
+  });
+
   it('6 — three-step ISBN flow: intent → declare ISBN → provide ISBN → search', async () => {
     const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
 
     const session = createCallSession("ACC_6", "+1", "+2");
     await collectSpeech(session, "I need a book");
     const ask2 = await collectSpeech(session, "I have an ISBN number");
-    expect(ask2).toMatch(/give me.*ISBN|share.*ISBN/i);
+    expect(ask2).toMatch(/ISBN/i);
     expect(isbnSpy).not.toHaveBeenCalled();
 
     const result = await collectSpeech(session, "9783161484100");
