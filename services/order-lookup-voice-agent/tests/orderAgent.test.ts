@@ -31,12 +31,15 @@ describe("order number validation", () => {
   it("normalizes spoken order numbers", () => {
     expect(normalizeOrderNumber("45678")).toBe("#45678");
     expect(normalizeOrderNumber("#45678")).toBe("#45678");
+    expect(normalizeOrderNumber("21698-F1")).toBe("#21698-F1");
     expect(isValidOrderNumberFormat("#45678")).toBe(true);
+    expect(isValidOrderNumberFormat("#21698-F1")).toBe(true);
     expect(isValidOrderNumberFormat("123")).toBe(false);
   });
 
   it("extracts order numbers from speech", () => {
     expect(extractOrderNumberFromSpeech("My order number is 45678")).toBe("#45678");
+    expect(extractOrderNumberFromSpeech("order number 21698-F1")).toBe("#21698-F1");
     expect(extractOrderNumberFromSpeech("four five six seven eight")).toBe("#45678");
   });
 });

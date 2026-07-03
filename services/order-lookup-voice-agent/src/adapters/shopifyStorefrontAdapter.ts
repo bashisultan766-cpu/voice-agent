@@ -24,6 +24,7 @@ import {
 import {
   isValidOrderNumberFormat,
   normalizeOrderNumber,
+  orderNumbersMatch,
 } from "../utils/formatter.js";
 import {
   mapGqlProduct,
@@ -262,7 +263,121 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
   }
 }`;
 
+/** Fallback when enriched fields (events, customAttributes) are unavailable on the shop token/API version. */
+const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: String!, $first: Int!) {
+  orders(first: $first, query: $query) {
+    edges {
+      node {
+        id
+        name
+        note
+        displayFulfillmentStatus
+        displayFinancialStatus
+        email
+        customer {
+          firstName
+          lastName
+          email
+        }
+        subtotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        totalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        totalShippingPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        lineItems(first: 15) {
+          edges {
+            node {
+              title
+              quantity
+            }
+          }
+        }
+        refunds(first: 5) {
+          note
+          totalRefundedSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
+        transactions(first: 5) {
+          kind
+          status
+          gateway
+          paymentDetails {
+            ... on CardPaymentDetails {
+              company
+              number
+            }
+          }
+        }
+        fulfillments(first: 5) {
+          status
+          displayStatus
+          estimatedDeliveryAt
+          deliveredAt
+          trackingInfo {
+            company
+            number
+            url
+          }
+        }
+      }
+    }
+  }
+}`;
+
 const DEFAULT_UNFULFILLED_SHIP_DAYS = 3;
+
+function isGraphqlShapeError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /shopify_graphql_error/i.test(message);
+}
+
+async function lookupOrdersGraphql(
+  query: string,
+  variables: { query: string; first: number },
+): Promise<{ orders: { edges: Array<{ node: GqlOrderNode }> } }> {
+  try {
+    return await shopifyGraphql<{ orders: { edges: Array<{ node: GqlOrderNode }> } }>(
+      LOOKUP_ORDER_QUERY,
+      variables,
+    );
+  } catch (err) {
+    if (!isGraphqlShapeError(err)) throw err;
+    logger.warn("shopify_order_lookup_fallback_minimal_query", {
+      reason: err instanceof Error ? err.message.slice(0, 120) : String(err),
+    });
+    return shopifyGraphql<{ orders: { edges: Array<{ node: GqlOrderNode }> } }>(
+      LOOKUP_ORDER_QUERY_MINIMAL,
+      variables,
+    );
+  }
+}
+
+function findMatchingOrderNode(
+  edges: Array<{ node?: GqlOrderNode }>,
+  normalized: string,
+): GqlOrderNode | undefined {
+  const exact = edges.find(
+    (e) => e.node?.name && orderNumbersMatch(e.node.name, normalized),
+  );
+  return exact?.node;
+}
 
 function orderLookupQueries(orderNumber: string): string[] {
   const bare = orderNumber.replace(/^#/, "");
@@ -508,18 +623,13 @@ export async function getOrderStatus(
   try {
     const result = await runWithGuard(callSid, "order_status", async () => {
       for (const query of orderLookupQueries(normalized)) {
-        const data = await shopifyGraphql<{
-          orders: { edges: Array<{ node: GqlOrderNode }> };
-        }>(LOOKUP_ORDER_QUERY, { query, first: 3 });
+        const data = await lookupOrdersGraphql(query, { query, first: 3 });
 
         const edges = data.orders?.edges ?? [];
-        const match = edges.find(
-          (e) =>
-            e.node?.name?.replace(/^#/, "") === normalized.replace(/^#/, ""),
-        );
+        const node = findMatchingOrderNode(edges, normalized);
 
-        if (match?.node) {
-          return { status: "found" as const, ...mapOrderNode(match.node) };
+        if (node) {
+          return { status: "found" as const, ...mapOrderNode(node) };
         }
       }
       return { status: "not_found" as const };

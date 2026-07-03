@@ -26,7 +26,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
           orderNumber: {
             type: "string",
             description:
-              "Order number the caller explicitly stated (4-10 digits). Never guess.",
+              "Order number the caller explicitly stated (e.g. 21698 or 21698-F1). Never guess.",
           },
         },
         required: ["orderNumber"],

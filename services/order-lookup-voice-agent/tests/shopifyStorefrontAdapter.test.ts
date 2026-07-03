@@ -229,6 +229,31 @@ describe("getOrderStatus", () => {
     expect(mapped.lineItems).toEqual(ORDER_21698_F1_EXPECTED.lineItems);
   });
 
+  it("finds #21698-F1 when caller provides base number 21698", async () => {
+    vi.mocked(shopifyGraphql).mockResolvedValue({
+      orders: {
+        edges: [{ node: ORDER_21698_F1_GQL_NODE }],
+      },
+    });
+
+    const result = await getOrderStatus("21698");
+    expect(result.status).toBe("found");
+    expect(result.orderNumber).toBe("#21698-F1");
+    expect(result.customerName).toBe("Joel Moore");
+  });
+
+  it("finds order when caller provides full suffix number 21698-F1", async () => {
+    vi.mocked(shopifyGraphql).mockResolvedValue({
+      orders: {
+        edges: [{ node: ORDER_21698_F1_GQL_NODE }],
+      },
+    });
+
+    const result = await getOrderStatus("21698-F1");
+    expect(result.status).toBe("found");
+    expect(result.orderNumber).toBe("#21698-F1");
+  });
+
   it("returns not_found when Shopify has no match", async () => {
     vi.mocked(shopifyGraphql).mockResolvedValue({ orders: { edges: [] } });
 

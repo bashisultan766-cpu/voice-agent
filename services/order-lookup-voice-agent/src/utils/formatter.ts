@@ -1,10 +1,16 @@
 import type { StructuredOrder } from "../types/order.js";
 import { planInstantConfirmation, planOrderLookupResponse } from "../agents/responsePlanner.js";
 
-const ORDER_NUMBER_RE = /^#?\d{4,10}$/;
+const ORDER_NUMBER_RE = /^#?\d{4,10}(?:-[A-Za-z0-9]{1,6})?$/;
 
+/** Normalize Shopify order name — supports numeric (#21698) and suffix (#21698-F1). */
 export function normalizeOrderNumber(raw: string): string {
-  const trimmed = raw.trim().replace(/\s+/g, "");
+  const trimmed = raw.trim().replace(/\s+/g, "").toUpperCase();
+  const suffixMatch = trimmed.match(/^#?(\d{4,10})-([A-Z0-9]{1,6})$/);
+  if (suffixMatch) {
+    return `#${suffixMatch[1]}-${suffixMatch[2]}`;
+  }
+
   const digits = trimmed.replace(/[^\d#]/g, "");
   if (digits.startsWith("#")) return digits;
   const onlyDigits = digits.replace(/\D/g, "");
@@ -15,11 +21,21 @@ export function isValidOrderNumberFormat(orderNumber: string): boolean {
   return ORDER_NUMBER_RE.test(orderNumber);
 }
 
+/** True when Shopify order name matches caller-provided number (exact or base+dash suffix). */
+export function orderNumbersMatch(shopifyName: string, normalized: string): boolean {
+  const shop = shopifyName.replace(/^#/, "").toUpperCase();
+  const query = normalized.replace(/^#/, "").toUpperCase();
+  if (!shop || !query) return false;
+  return shop === query || shop.startsWith(`${query}-`);
+}
+
 export function extractOrderNumberFromSpeech(text: string): string | null {
   const spoken = text.toLowerCase();
 
-  const hashMatch = spoken.match(/(?:order\s*(?:number|#)?|number)\s*#?\s*(\d{4,10})/i);
-  if (hashMatch?.[1]) return `#${hashMatch[1]}`;
+  const hashMatch = spoken.match(
+    /(?:order\s*(?:number|#)?|number)\s*#?\s*(\d{4,10}(?:-[a-z0-9]{1,6})?)/i,
+  );
+  if (hashMatch?.[1]) return normalizeOrderNumber(hashMatch[1]);
 
   const digitRun = spoken.match(/\b(\d{4,10})\b/);
   if (digitRun?.[1]) return `#${digitRun[1]}`;

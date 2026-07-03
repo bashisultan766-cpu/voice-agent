@@ -223,14 +223,20 @@ export function extractOrderNumberFromStt(
   const allowLoose = Boolean(options.awaitingSlot);
 
   const labeled = text.match(
-    /(?:order\s*(?:number|#)?|number)\s*#?\s*([A-Za-z0-9]{4,12})/i,
+    /(?:order\s*(?:number|#)?|number)\s*#?\s*([A-Za-z0-9-]{4,14})/i,
   );
   if (labeled?.[1]) {
-    const normalized = normalizeAlphanumericOrderId(labeled[1]);
+    const normalized = normalizeOrderNumber(labeled[1]);
     if (isValidOrderNumberFormat(normalized)) return normalized;
   }
 
   if (hasOrderContext || allowLoose) {
+    const suffixInline = text.match(/\b#?(\d{4,10}-[A-Za-z0-9]{1,6})\b/i);
+    if (suffixInline?.[1]) {
+      const candidate = normalizeOrderNumber(suffixInline[1]);
+      if (isValidOrderNumberFormat(candidate)) return candidate;
+    }
+
     const inline = text.match(/\b#?(\d{4,10})\b/);
     if (inline?.[1]) {
       const candidate = normalizeOrderNumber(`#${inline[1]}`);
