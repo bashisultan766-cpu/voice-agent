@@ -141,4 +141,27 @@ describe("pipeline acceptance", () => {
     expect(isbnSpy).toHaveBeenCalled();
     expect(result).toMatch(/Azkaban/i);
   });
+
+  it("7 — Shopify tools throw when slot validation is not ready", async () => {
+    const { searchProductByISBN } = await import("../src/tools/shopifyProductTools.js");
+    const {
+      setToolExecutionPhase,
+      setSlotValidationReady,
+      resetToolExecutionGuard,
+    } = await import("../src/guards/toolExecutionGuard.js");
+    const { runWithToolAuthorizationAsync, resetToolAccessGuard } = await import(
+      "../src/guards/toolAccessGuard.js"
+    );
+
+    resetToolExecutionGuard();
+    resetToolAccessGuard();
+    setToolExecutionPhase("ACC_GUARD", "PHASE_2");
+    setSlotValidationReady("ACC_GUARD", false);
+
+    await expect(
+      runWithToolAuthorizationAsync("conversationOrchestrator", () =>
+        searchProductByISBN("9783161484100"),
+      ),
+    ).rejects.toThrow("BLOCKED: INVALID SLOT STATE - ISBN OR TITLE REQUIRED");
+  });
 });

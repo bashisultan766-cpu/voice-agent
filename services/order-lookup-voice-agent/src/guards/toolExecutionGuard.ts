@@ -68,24 +68,32 @@ export function logToolCallAttempt(tool: string): void {
   });
 }
 
-export function assertToolExecutionAllowed(tool: string): void {
+export function assertToolExecutionAllowed(tool: string, sourceFile = "toolExecutionGuard.ts"): void {
   logToolCallAttempt(tool);
   const callSid = activeCallSid;
+  const stack = captureCallStack();
   if (!getSlotValidationReady(callSid)) {
     console.log("BLOCKED: INVALID SLOT STATE", {
       tool,
       callSid: callSid?.slice(0, 8),
+      file: sourceFile,
       validationReady: false,
+      stack,
     });
     logger.warn("tool_blocked_invalid_slot_state", {
       tool,
       callSid: callSid?.slice(0, 8),
+      file: sourceFile,
     });
-    throw new Error("TOOL_BLOCKED_INVALID_SLOT_STATE");
+    throw new Error("BLOCKED: INVALID SLOT STATE - ISBN OR TITLE REQUIRED");
   }
   if (!canExecuteTool()) {
     throw new Error("TOOL_BLOCKED_PHASE_1");
   }
+}
+
+function captureCallStack(depth = 8): string {
+  return (new Error().stack ?? "").split("\n").slice(1, depth + 1).join("\n");
 }
 
 export async function runInPhase2<T>(callSid: string, fn: () => Promise<T>): Promise<T> {

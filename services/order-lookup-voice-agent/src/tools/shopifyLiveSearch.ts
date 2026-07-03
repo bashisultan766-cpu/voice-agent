@@ -1,3 +1,7 @@
+/**
+ * Internal Shopify GraphQL search — NOT a public tool entry point.
+ * All production search MUST go through shopifyProductTools (guarded).
+ */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";

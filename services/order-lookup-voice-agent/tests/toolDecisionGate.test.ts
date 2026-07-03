@@ -12,63 +12,66 @@ describe("toolDecisionGate", () => {
     resetPipelineGuard();
     enablePipelineGuardForTests(true);
   });
-  it('returns ASK_QUESTION when product intent has no slots', () => {
+
+  it("returns ASK_QUESTION when product intent has no validation", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         ...phase1,
         slots: {},
         slotsCollected: false,
+        validationReady: false,
       }),
     );
     expect(decision).toBe("ASK_QUESTION");
   });
 
-  it("returns searchProductByISBN when ISBN is present and collected", () => {
-    const decision = decideToolExecution(
+  it("returns searchProductByISBN only when validation.ready", () => {
+    const blocked = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         ...phase1,
         slots: { isbn: "9783161484100" },
         slotsCollected: true,
+        validationReady: false,
       }),
     );
-    expect(decision).toBe("searchProductByISBN");
-  });
+    expect(blocked).toBe("ASK_QUESTION");
 
-  it("returns ASK_QUESTION when ISBN mentioned but not yet collected", () => {
-    const decision = decideToolExecution(
+    const allowed = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
-        phase: "PHASE_1",
-        awaitingInput: "isbn",
-        slots: {},
-        slotsCollected: false,
+        ...phase1,
+        slots: { isbn: "9783161484100" },
+        slotsCollected: true,
+        validationReady: true,
       }),
     );
-    expect(decision).toBe("ASK_QUESTION");
+    expect(allowed).toBe("searchProductByISBN");
   });
 
-  it("returns ASK_QUESTION for title on first turn without slot collection", () => {
+  it("returns ASK_QUESTION for title when validation not ready", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         ...phase1,
         slots: { title: "Harry Potter" },
         slotsCollected: false,
+        validationReady: false,
       }),
     );
     expect(decision).toBe("ASK_QUESTION");
   });
 
-  it("returns searchProductByTitle after slots collected", () => {
+  it("returns searchProductByTitle when validation.ready", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         phase: "PHASE_1",
-        awaitingInput: "isbn_or_title",
+        awaitingInput: "title",
         slots: { title: "Harry Potter" },
         slotsCollected: true,
+        validationReady: true,
       }),
     );
     expect(decision).toBe("searchProductByTitle");
@@ -81,6 +84,7 @@ describe("toolDecisionGate", () => {
         ...phase1,
         slots: {},
         slotsCollected: false,
+        validationReady: true,
         orderNumber: "#45678",
       }),
     );
@@ -94,6 +98,7 @@ describe("toolDecisionGate", () => {
         ...phase1,
         slots: {},
         slotsCollected: false,
+        validationReady: true,
       }),
     );
     expect(decision).toBe("conversationOnly");

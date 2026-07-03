@@ -29,6 +29,8 @@ export interface ToolDecisionState {
   missingSlots: Array<"isbn" | "title">;
   /** Caller answered a prior slot question this turn. */
   slotsCollected: boolean;
+  /** Single source of truth — product tools require validation.ready === true. */
+  validationReady: boolean;
   orderNumber?: string | null;
 }
 
@@ -51,10 +53,8 @@ export function decideToolExecution(state: ToolDecisionState): ToolAction {
     action: "decide",
     state: {
       intent: state.intent,
-      phase: state.phase,
-      awaitingInput: state.awaitingInput,
+      validationReady: state.validationReady,
       slots: state.slots,
-      slotsCollected: state.slotsCollected,
       decision,
     },
   });
@@ -72,25 +72,17 @@ function decideToolExecutionCore(state: ToolDecisionState): ToolAction {
   }
 
   if (state.intent === "product") {
+    if (!state.validationReady) {
+      return "ASK_QUESTION";
+    }
+
     const hasIsbn = Boolean(state.slots.isbn);
     const hasTitle = Boolean(state.slots.title);
     const wantsRec = Boolean(state.slots.wantsRecommendations);
 
-    if (!hasIsbn && !hasTitle && !wantsRec) {
-      return "ASK_QUESTION";
-    }
-
-    if (hasIsbn && state.slotsCollected) {
-      return "searchProductByISBN";
-    }
-
-    if (hasTitle && state.slotsCollected) {
-      return "searchProductByTitle";
-    }
-
-    if (wantsRec && state.slotsCollected) {
-      return "getSimilarProducts";
-    }
+    if (hasIsbn) return "searchProductByISBN";
+    if (hasTitle) return "searchProductByTitle";
+    if (wantsRec) return "getSimilarProducts";
 
     return "ASK_QUESTION";
   }
@@ -104,6 +96,7 @@ export function buildToolDecisionState(input: {
   awaitingInput: CallStateAwaitingInput;
   slots: CallStateSlots;
   slotsCollected: boolean;
+  validationReady: boolean;
   orderNumber?: string | null;
 }): ToolDecisionState {
   return {
@@ -117,6 +110,7 @@ export function buildToolDecisionState(input: {
     },
     missingSlots: computeMissingSlots(input.slots),
     slotsCollected: input.slotsCollected,
+    validationReady: input.validationReady,
     orderNumber: input.orderNumber,
   };
 }

@@ -361,13 +361,15 @@ async function* runGateControlledTurn(
       awaitingInput: turn.state.awaitingInput,
       slots: turn.state.slots,
       slotsCollected: turn.slotsCollected,
+      validationReady: turn.validation.ready,
       orderNumber: analysis.orderNumber,
     }),
   );
 
-  const productToolRequested = isProductToolAction(rawDecision);
   const validationReady = turn.validation.ready;
   const toolExecutionAllowed = validationReady;
+  const finalDecision: "ALLOW_TOOL" | "BLOCK_TOOL" =
+    validationReady && isExecutableToolAction(rawDecision) ? "ALLOW_TOOL" : "BLOCK_TOOL";
 
   let decision = rawDecision;
   if (!validationReady && isExecutableToolAction(rawDecision)) {
@@ -379,11 +381,13 @@ async function* runGateControlledTurn(
     file: "conversationOrchestrator.ts",
     callSid: session.callSid,
     action: "gate_decision",
+    validationReady,
+    toolExecutionAllowed,
+    finalDecision,
     state: {
       intent: turn.state.intent,
       decision,
       rawDecision,
-      toolExecutionAllowed,
       validation: turn.validation,
       slots: turn.state.slots,
     },
@@ -400,13 +404,6 @@ async function* runGateControlledTurn(
   );
   memory.inferredIntent = turn.state.intent;
 
-  console.log({
-    validationReady,
-    toolExecutionAllowed,
-    decision,
-    FINAL_DECISION: validationReady ? "ALLOW_TOOL" : "BLOCK_TOOL",
-  });
-
   logger.info("tool_decision_gate", {
     callSid: session.callSid.slice(0, 8),
     intent: turn.state.intent,
@@ -419,6 +416,7 @@ async function* runGateControlledTurn(
     validationReason: turn.validation.reason,
     rawDecision,
     toolExecutionAllowed,
+    finalDecision,
     persistedIsbn: Boolean(nextState.slots.isbn),
     persistedTitle: Boolean(nextState.slots.title),
     source: analysis.source,
@@ -524,6 +522,10 @@ async function* phase2ProductFlow(
     file: "conversationOrchestrator.ts",
     callSid: session.callSid,
     action: "product_search_execute",
+    validationReady: true,
+    toolExecutionAllowed: true,
+    finalDecision: "ALLOW_TOOL",
+    includeStack: true,
     state: { slots, intent: callState.intent },
   });
 

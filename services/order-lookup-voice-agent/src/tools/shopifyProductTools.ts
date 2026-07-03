@@ -57,7 +57,7 @@ function toSearchResult(
 /** Live Shopify title search — truth engine only, no embeddings. */
 export async function searchProductByTitle(query: string): Promise<ProductSearchResult> {
   assertToolAccessAuthorized("searchProductByTitle", "shopifyProductTools.ts");
-  assertToolExecutionAllowed("searchProductByTitle");
+  assertToolExecutionAllowed("searchProductByTitle", "shopifyProductTools.ts");
   const q = query.trim();
   if (!q) {
     return { status: "not_found", products: [], query: q, message: STORE_NOT_FOUND_MESSAGE };
@@ -78,7 +78,7 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
 /** Live ISBN lookup — truth engine only. */
 export async function searchProductByISBN(isbn: string): Promise<ProductSearchResult> {
   assertToolAccessAuthorized("searchProductByISBN", "shopifyProductTools.ts");
-  assertToolExecutionAllowed("searchProductByISBN");
+  assertToolExecutionAllowed("searchProductByISBN", "shopifyProductTools.ts");
   try {
     await ensureShopifyProductScopes();
     const ranked = await truthSearchByIsbn(isbn);
@@ -108,7 +108,7 @@ function scoreSimilarity(source: StructuredProduct, candidate: StructuredProduct
 /** Similar products from live Shopify catalog only. */
 export async function getSimilarProducts(productId: string): Promise<ProductSearchResult> {
   assertToolAccessAuthorized("getSimilarProducts", "shopifyProductTools.ts");
-  assertToolExecutionAllowed("getSimilarProducts");
+  assertToolExecutionAllowed("getSimilarProducts", "shopifyProductTools.ts");
   try {
     const source = await liveFetchProductById(productId);
     if (!source) {
@@ -161,7 +161,7 @@ export async function getSimilarProducts(productId: string): Promise<ProductSear
 /** Category browse via live Shopify truth search. */
 export async function searchProductByCategory(categoryQuery: string): Promise<ProductSearchResult> {
   assertToolAccessAuthorized("searchProductByCategory", "shopifyProductTools.ts");
-  assertToolExecutionAllowed("searchProductByCategory");
+  assertToolExecutionAllowed("searchProductByCategory", "shopifyProductTools.ts");
   const q = categoryQuery.trim();
   if (!q) {
     return { status: "not_found", products: [], query: q, message: STORE_NOT_FOUND_MESSAGE };

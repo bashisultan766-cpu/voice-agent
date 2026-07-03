@@ -48,7 +48,7 @@ describe("toolExecutionGuard", () => {
     setSlotValidationReady("CA_GUARD", false);
     expect(canExecuteTool()).toBe(false);
     expect(() => assertToolExecutionAllowed("searchProductByISBN")).toThrow(
-      "TOOL_BLOCKED_INVALID_SLOT_STATE",
+      "BLOCKED: INVALID SLOT STATE - ISBN OR TITLE REQUIRED",
     );
   });
 
