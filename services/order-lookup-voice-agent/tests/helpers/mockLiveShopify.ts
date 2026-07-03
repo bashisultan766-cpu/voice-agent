@@ -138,7 +138,11 @@ export function mockLiveShopifyFetch(catalog: StructuredProduct[]): void {
         };
       }
 
-      if (query.includes("ProductSearch") || query.includes("products")) {
+      if (
+        query.includes("ProductSearch") ||
+        query.includes("ProductFulfillmentSearch") ||
+        query.includes("products")
+      ) {
         const shopifyQuery = String(variables.query ?? "");
         const matches = catalog.filter((p) => matchesShopifyQuery(shopifyQuery, p));
         return {

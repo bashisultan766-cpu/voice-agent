@@ -6,6 +6,7 @@ import { logger } from "../utils/logger.js";
 export interface TurnHealthState {
   consecutiveToolFailures: number;
   consecutiveValidationFailures: number;
+  consecutiveApiThrottleFailures: number;
   memoryDesyncEvents: number;
   frustrationSignals: number;
   lastUserUtterance?: string;
@@ -18,6 +19,7 @@ function emptyHealth(): TurnHealthState {
   return {
     consecutiveToolFailures: 0,
     consecutiveValidationFailures: 0,
+    consecutiveApiThrottleFailures: 0,
     memoryDesyncEvents: 0,
     frustrationSignals: 0,
     repeatedUtteranceCount: 0,
@@ -31,6 +33,18 @@ export function getTurnHealth(callSid: string): TurnHealthState {
 export function recordToolSuccess(callSid: string): void {
   const state = getTurnHealth(callSid);
   state.consecutiveToolFailures = 0;
+  healthByCall.set(callSid, state);
+}
+
+export function recordApiThrottleFailure(callSid: string): void {
+  const state = { ...getTurnHealth(callSid) };
+  state.consecutiveApiThrottleFailures += 1;
+  healthByCall.set(callSid, state);
+}
+
+export function clearApiThrottleFailures(callSid: string): void {
+  const state = getTurnHealth(callSid);
+  state.consecutiveApiThrottleFailures = 0;
   healthByCall.set(callSid, state);
 }
 

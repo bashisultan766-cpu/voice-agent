@@ -46,8 +46,20 @@ import {
   recordToolSuccess,
   recordValidationFailure,
   recordValidationSuccess,
+  recordApiThrottleFailure,
+  clearApiThrottleFailures,
   resetTurnHealth,
 } from "../runtime/turnHealthMonitor.js";
+import {
+  getShopifyCircuitSnapshot,
+  isShopifyCircuitOpen,
+  isShopifyDegraded,
+} from "../platform/circuitBreaker.js";
+import {
+  isShopifyThrottleError,
+  ShopifyCircuitOpenError,
+} from "../platform/shopifyErrors.js";
+import { CATALOG_DEGRADED_MESSAGE } from "../constants/systemMessages.js";
 import {
   beginCallTurn,
   captureCallSnapshot,
@@ -81,6 +93,7 @@ import {
   buildToolDecisionState,
   decideToolExecution,
   decideToolExecutionWithReason,
+  type GateIntent,
   type ToolAction,
 } from "./toolDecisionGate.js";
 import {
@@ -118,6 +131,13 @@ import {
 } from "./productRetrievalPolicy.js";
 import { digitizeSpeechForIsbn, extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import {
+  extractEntities,
+  type EntityExtractionResult,
+  type FulfillmentIntent,
+} from "../nlp/entityExtractor.js";
+import { handleFulfillmentTurn } from "./fulfillmentHandlers.js";
+import type { AgentState } from "../platform/agentState.js";
+import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
   pickProductSlotQuestion,
@@ -132,6 +152,13 @@ import type {
   SpeechChunk,
   StructuredOrder,
 } from "../types/order.js";
+import { isNoiseTranscript } from "../utils/noiseGate.js";
+import {
+  clearCallSessionLock,
+  isCallSessionActive,
+  markCallSessionActive,
+  markCallSessionClosed,
+} from "../voice/callSessionLock.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
@@ -141,6 +168,7 @@ export const BRAIN_GREETING =
 
 /** Create a new call session — voice layer must not mutate slots/intent/phase. */
 export function createCallSession(callSid: string, from: string, to: string): CallSession {
+  markCallSessionActive(callSid);
   return {
     callSid,
     from,
@@ -156,6 +184,7 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
 
 /** Tear down all per-call resources when the relay socket closes. */
 export function endCallSession(callSid: string): void {
+  markCallSessionClosed(callSid);
   clearCallMemory(callSid);
   clearCallExecutionPhase(callSid);
   clearCallState(callSid);
@@ -165,6 +194,7 @@ export function endCallSession(callSid: string): void {
   clearShopifyAdapterState(callSid);
   resetTurnHealth(callSid);
   clearCallEventSession(callSid);
+  clearCallSessionLock(callSid);
 }
 
 /**
@@ -181,6 +211,21 @@ export async function* process(
   }
 
   const text = (userInput ?? "").trim();
+
+  if (!isCallSessionActive(callSid)) {
+    logger.debug("turn_dropped_call_inactive", { callSid: callSid.slice(0, 8) });
+    return;
+  }
+
+  if (isNoiseTranscript(text)) {
+    logger.debug("noise_gate_dropped", {
+      callSid: callSid.slice(0, 8),
+      textLength: text.length,
+      preview: text.slice(0, 12),
+    });
+    return;
+  }
+
   const state = getOrCreateCallState(callSid);
 
   beginOrchestratorTurn(callSid);
@@ -417,12 +462,274 @@ async function* runOrchestratorTurnCore(
     return;
   }
 
+  const agentState = getAgentState(session.callSid);
+  const fulfillmentAwaiting = resolveFulfillmentAwaitingSlot(agentState, callState, session);
+  const extractionPreview = extractEntities(text, { awaitingSlot: fulfillmentAwaiting });
+
+  if (
+    shouldUseFulfillmentPath(
+      text,
+      extractionPreview,
+      callState,
+      session,
+      fulfillmentAwaiting,
+    )
+  ) {
+    yield* runFulfillmentOrchestratorTurn(session, text, fulfillmentAwaiting);
+    return;
+  }
+
   if (session.awaitingInput === "order_number") {
     yield* handleAwaitingOrderNumber(session, text);
     return;
   }
 
   yield* runGateControlledTurn(session, text, memory);
+}
+
+type FulfillmentAwaitingSlot = "order_number" | "title" | "isbn";
+
+function isLegacyProductSlotCollection(
+  callState: CallState,
+  session: CallSession,
+): boolean {
+  if (callState.intent !== "product") return false;
+
+  const legacyAwaiting: CallState["awaitingInput"][] = [
+    "isbn_or_title",
+    "isbn",
+    "title",
+  ];
+  if (legacyAwaiting.includes(callState.awaitingInput)) return true;
+
+  return (
+    session.awaitingInput === "product_slot" ||
+    session.awaitingInput === "product_isbn" ||
+    session.awaitingInput === "product_title" ||
+    session.awaitingInput === "product_category"
+  );
+}
+
+function resolveFulfillmentAwaitingSlot(
+  agentState: AgentState,
+  callState: CallState,
+  session: CallSession,
+): FulfillmentAwaitingSlot | undefined {
+  if (agentState.runtime.fulfillmentFlow) {
+    if (callState.awaitingInput === "order_number") return "order_number";
+    if (callState.awaitingInput === "isbn") return "isbn";
+    if (callState.awaitingInput === "title") return "title";
+  }
+
+  if (
+    session.awaitingInput === "order_number" &&
+    !isLegacyProductSlotCollection(callState, session)
+  ) {
+    return "order_number";
+  }
+
+  return undefined;
+}
+
+function shouldUseFulfillmentPath(
+  text: string,
+  extraction: EntityExtractionResult,
+  callState: CallState,
+  session: CallSession,
+  fulfillmentAwaiting: FulfillmentAwaitingSlot | undefined,
+): boolean {
+  if (isLegacyProductSlotCollection(callState, session)) return false;
+  if (fulfillmentAwaiting) return true;
+
+  if (extraction.intent === "order_status") return true;
+
+  if (extraction.intent === "isbn_search") {
+    if (!fulfillmentAwaiting) return false;
+    return Boolean(extraction.isbn);
+  }
+
+  if (extraction.intent === "title_search" && extraction.title) {
+    if (!fulfillmentAwaiting) return false;
+    if (extraction.confidence < 0.85) return false;
+    return true;
+  }
+
+  return false;
+}
+
+function mapFulfillmentIntentToGate(intent: FulfillmentIntent): GateIntent {
+  switch (intent) {
+    case "order_status":
+      return "order";
+    case "title_search":
+    case "isbn_search":
+      return "product";
+    default:
+      return "unknown";
+  }
+}
+
+function fulfillmentToolName(intent: FulfillmentIntent): string {
+  switch (intent) {
+    case "order_status":
+      return "getOrderStatus";
+    case "isbn_search":
+      return "searchByISBN";
+    case "title_search":
+      return "searchByTitle";
+    default:
+      return "fulfillmentClarify";
+  }
+}
+
+function fulfillmentResponseType(
+  extraction: EntityExtractionResult,
+  result: Awaited<ReturnType<typeof handleFulfillmentTurn>>,
+): FinalResponseType {
+  if (!result.data) {
+    return "clarification_question";
+  }
+  if (result.data.status === "found") {
+    return extraction.intent === "order_status" ? "order_found" : "confirmed_product";
+  }
+  if (result.data.status === "api_error" || result.data.status === "throttled") {
+    return extraction.intent === "order_status" ? "order_api_error" : "catalog_degraded";
+  }
+  return extraction.intent === "order_status" ? "order_not_found" : "not_found";
+}
+
+/** Deterministic fulfillment fast-path — bypasses legacy OpenAI tool gate. */
+async function* runFulfillmentOrchestratorTurn(
+  session: CallSession,
+  text: string,
+  fulfillmentAwaiting: FulfillmentAwaitingSlot | undefined,
+): AsyncGenerator<AgentStreamEvent> {
+  const started = Date.now();
+  const callState = getOrCreateCallState(session.callSid);
+  const isbnDraft =
+    fulfillmentAwaiting === "isbn" ? digitizeSpeechForIsbn(callState.slots.isbn ?? "") : undefined;
+
+  const preExtract = extractEntities(text, {
+    awaitingSlot: fulfillmentAwaiting,
+    isbnDraft: isbnDraft || undefined,
+  });
+  if (preExtract.intent === "order_status" && preExtract.orderNumber) {
+    yield chunkEvent(planInstantFiller());
+  }
+
+  const result = await handleFulfillmentTurn({
+    speech: text,
+    callSid: session.callSid,
+    awaitingSlot: fulfillmentAwaiting ?? null,
+    isbnDraft: isbnDraft || undefined,
+  });
+
+  const gateIntent = mapFulfillmentIntentToGate(result.extraction.intent);
+  const toolName = fulfillmentToolName(result.extraction.intent);
+
+  dispatchAgentEvent(session.callSid, {
+    type: "MEMORY_SYNCD",
+    payload: {
+      mergeInput: {
+        intent: gateIntent,
+        incomingSlots: {
+          isbn: result.extraction.isbn,
+          title: result.extraction.title,
+        },
+        userMessage: text,
+      },
+      memoryCommitTimestamp: Date.now(),
+    },
+  });
+
+  dispatchAgentEvent(session.callSid, {
+    type: "TOOL_SELECTED",
+    payload: {
+      tool: toolName,
+      reason: "fulfillment_fast_path",
+      validationReady: Boolean(result.data),
+      intent: gateIntent,
+      flow: result.extraction.intent === "order_status" ? "ORDER_FLOW" : "PRODUCT_FLOW",
+      gateDecision: toolName,
+    },
+  });
+
+  if (result.data) {
+    dispatchAgentEvent(session.callSid, {
+      type: "TOOL_EXECUTION_STARTED",
+      payload: { tool: toolName },
+    });
+
+    const status =
+      result.data.status === "found"
+        ? "found"
+        : result.data.status === "api_error" || result.data.status === "throttled"
+          ? "error"
+          : "not_found";
+
+    dispatchAgentEvent(
+      session.callSid,
+      {
+        type: "TOOL_EXECUTION_COMPLETED",
+        payload: {
+          tool: toolName,
+          status,
+          resultCount: result.data.status === "found" ? 1 : 0,
+          elapsedMs: Date.now() - started,
+          orderStatus: result.extraction.intent === "order_status" ? result.data.status : undefined,
+          products:
+            result.extraction.intent !== "order_status" &&
+            result.data.status === "found" &&
+            "bookName" in result.data
+              ? [
+                  {
+                    id: result.data.productId ?? "unknown",
+                    title: result.data.bookName ?? "Unknown",
+                  },
+                ]
+              : undefined,
+        },
+      },
+      { latencyMs: Date.now() - started },
+    );
+  }
+
+  const speech = recordAssistant(session.callSid, result.tts.text);
+  const responseType = fulfillmentResponseType(result.extraction, result);
+
+  if (result.extraction.intent === "order_status" && result.data?.status === "found") {
+    session.phase = "order_disclosed";
+    session.awaitingInput = null;
+  } else if (result.tts.awaitingSlot === "order_number") {
+    session.phase = "awaiting_order_number";
+    session.awaitingInput = "order_number";
+  } else {
+    session.phase = "awaiting_order_number";
+    session.awaitingInput = null;
+  }
+
+  emitResponseSent(session.callSid, responseType, speech, {
+    fulfillmentAwaitingSlot: result.tts.awaitingSlot ?? undefined,
+    fulfillmentFlow: true,
+    recordOrderNumber:
+      result.extraction.intent === "order_status" && result.extraction.orderNumber
+        ? result.extraction.orderNumber
+        : undefined,
+    recordProduct:
+      result.data?.status === "found" &&
+      result.extraction.intent !== "order_status" &&
+      "bookName" in result.data
+        ? {
+            id: result.data.productId ?? "unknown",
+            title: result.data.bookName ?? "Unknown",
+          }
+        : undefined,
+    finalizeToolExecution: Boolean(result.data),
+  });
+
+  yield* yieldSpeech(speech);
+  syncSessionFromCallState(session, getOrCreateCallState(session.callSid));
+  yield doneEvent(session.phase);
 }
 
 function isExecutableToolAction(decision: string): boolean {
@@ -487,7 +794,7 @@ async function* runGateControlledTurn(
     { memoryBefore: snapshotBeforeCommit },
   );
 
-  if (healEval.shouldHeal) {
+  if (healEval.shouldHeal && !healEval.blockRepeatSearch) {
     logSelfHealTriggered(session.callSid, healEval.reasons);
     logger.info("self_heal_pipeline_restart", {
       callSid: session.callSid.slice(0, 8),
@@ -514,7 +821,8 @@ async function* runGateControlledTurn(
   };
 
   const explicitRepeat =
-    isExplicitRepeatRequest(text) || shouldForceRepeatSearch(healEval);
+    !healEval.blockRepeatSearch &&
+    (isExplicitRepeatRequest(text) || shouldForceRepeatSearch(healEval));
   const searchKey = buildProductSearchKey(productMemory);
 
   if (turn.syncLog) {
@@ -863,27 +1171,63 @@ async function* phase2ProductFlow(
     state: { productMemory, intent: callState.intent, searchKey, frozenAt: executionSnapshot.frozenAt },
   });
 
-  let result = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
-    runInPhase2(session.callSid, () =>
-      orchestratorExecuteProductSearch(executionSnapshot, false),
-    ),
-  );
+  if (isShopifyCircuitOpen()) {
+    yield* yieldDegradedCatalogResponse(session, "product_search", "CIRCUIT_OPEN");
+    return;
+  }
+
+  let result: OrchestratorProductResult;
+  try {
+    result = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
+      runInPhase2(session.callSid, () =>
+        orchestratorExecuteProductSearch(executionSnapshot, false),
+      ),
+    );
+  } catch (err) {
+    if (isShopifyThrottleError(err)) {
+      yield* yieldDegradedCatalogResponse(
+        session,
+        "product_search",
+        err instanceof ShopifyCircuitOpenError ? "CIRCUIT_OPEN" : "THROTTLED",
+      );
+      return;
+    }
+    throw err;
+  }
+
+  if (result.infrastructureFailure) {
+    yield* yieldDegradedCatalogResponse(
+      session,
+      "product_search",
+      result.infrastructureReason ?? "THROTTLED",
+    );
+    return;
+  }
 
   const candidatePool = [...result.canonicalCandidates];
 
-  if (result.resolution?.shouldRetry) {
+  if (result.resolution?.shouldRetry && !isShopifyDegraded()) {
     logger.info("retry_reason_if_any", {
       callSid: session.callSid.slice(0, 8),
       reason: result.resolution.rejected[0]?.reason,
       strictRetry: true,
     });
-    const retryResult = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
-      runInPhase2(session.callSid, () =>
-        orchestratorExecuteProductSearch(executionSnapshot, true),
-      ),
-    );
-    candidatePool.push(...retryResult.canonicalCandidates);
-    result = retryResult;
+    try {
+      const retryResult = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
+        runInPhase2(session.callSid, () =>
+          orchestratorExecuteProductSearch(executionSnapshot, true),
+        ),
+      );
+      if (!retryResult.infrastructureFailure) {
+        candidatePool.push(...retryResult.canonicalCandidates);
+        result = retryResult;
+      }
+    } catch (err) {
+      if (!isShopifyThrottleError(err)) throw err;
+      logger.warn("shopify_strict_retry_skipped_throttle", {
+        callSid: session.callSid.slice(0, 8),
+      });
+    }
   }
 
   const failSafeCandidates = dedupeCanonicalCandidates(candidatePool).slice(0, 2);
@@ -938,7 +1282,8 @@ async function* phase2ProductFlow(
   if (hasConfirmedProduct && result.products[0]) {
     recordValidationSuccess(session.callSid);
     recordToolSuccess(session.callSid);
-  } else if (result.searchKind !== "recommendations") {
+    clearApiThrottleFailures(session.callSid);
+  } else if (result.searchKind !== "recommendations" && !result.infrastructureFailure) {
     recordValidationFailure(session.callSid);
     if (result.resolution?.rejected.some((r) => r.reason.includes("mismatch"))) {
       recordToolFailure(session.callSid);
@@ -1226,6 +1571,41 @@ interface OrchestratorProductResult {
   ambiguousTitle?: boolean;
   validationFailed?: boolean;
   executedSearchKey?: string;
+  infrastructureFailure?: boolean;
+  infrastructureReason?: "THROTTLED" | "CIRCUIT_OPEN";
+}
+
+function emitDegradedMode(
+  callSid: string,
+  reason: "THROTTLED" | "CIRCUIT_OPEN" | "API_TIMEOUT",
+  operation: string,
+): void {
+  const snap = getShopifyCircuitSnapshot();
+  dispatchAgentEvent(callSid, {
+    type: "DEGRADED_MODE",
+    payload: {
+      reason,
+      retryAfterMs: snap.retryAfterMs,
+      operation,
+      circuitState: snap.state === "HALF_OPEN" ? "HALF_OPEN" : snap.state === "OPEN" ? "OPEN" : undefined,
+    },
+  });
+}
+
+async function* yieldDegradedCatalogResponse(
+  session: CallSession,
+  operation: string,
+  reason: "THROTTLED" | "CIRCUIT_OPEN",
+): AsyncGenerator<AgentStreamEvent> {
+  recordApiThrottleFailure(session.callSid);
+  emitDegradedMode(session.callSid, reason, operation);
+  const speech = CATALOG_DEGRADED_MESSAGE;
+  yield* yieldSpeech(recordAssistant(session.callSid, speech));
+  emitResponseSent(session.callSid, "catalog_degraded", speech, { finalizeToolExecution: true });
+  session.phase = "awaiting_order_number";
+  syncSessionFromCallState(session, getOrCreateCallState(session.callSid));
+  setToolExecutionPhase(session.callSid, "PHASE_1");
+  yield doneEvent(session.phase);
 }
 
 function dedupeCanonicalCandidates(candidates: CanonicalProduct[]): CanonicalProduct[] {
@@ -1264,6 +1644,13 @@ function emitResponseSent(
         "title" in meta.recordProduct
           ? (meta.recordProduct as { id: string; title: string; searchKey?: string })
           : undefined,
+      fulfillmentAwaitingSlot:
+        meta?.fulfillmentAwaitingSlot === "order_number" ||
+        meta?.fulfillmentAwaitingSlot === "title" ||
+        meta?.fulfillmentAwaitingSlot === "isbn"
+          ? meta.fulfillmentAwaitingSlot
+          : undefined,
+      fulfillmentFlow: meta?.fulfillmentFlow === true ? true : undefined,
     },
   });
 }

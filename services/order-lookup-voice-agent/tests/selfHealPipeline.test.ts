@@ -7,11 +7,17 @@ import {
   evaluateSelfHeal,
   shouldForceRepeatSearch,
 } from "../src/runtime/selfHealPipeline.js";
-import { clearAllTurnHealth } from "../src/runtime/turnHealthMonitor.js";
+import {
+  clearAllTurnHealth,
+  clearApiThrottleFailures,
+  recordApiThrottleFailure,
+} from "../src/runtime/turnHealthMonitor.js";
+import { resetShopifyCircuitBreaker } from "../src/platform/circuitBreaker.js";
 
 describe("selfHealPipeline", () => {
   beforeEach(() => {
     clearAllTurnHealth();
+    resetShopifyCircuitBreaker();
   });
 
   it("detects frustration signals", () => {
@@ -29,6 +35,18 @@ describe("selfHealPipeline", () => {
       isbnCollected: true,
     };
     expect(detectMemoryDesync(state, memory)).toBe(true);
+  });
+
+  it("blocks self-heal repeat search when API throttle failures recorded", () => {
+    const state = createInitialCallState("HEAL_THR");
+    const memory = emptyProductMemory();
+    recordApiThrottleFailure("HEAL_THR");
+    const evaluation = evaluateSelfHeal("HEAL_THR", "9783161484100", memory, state);
+    expect(evaluation.degradedMode).toBe(true);
+    expect(evaluation.shouldHeal).toBe(false);
+    expect(evaluation.blockRepeatSearch).toBe(true);
+    expect(shouldForceRepeatSearch(evaluation)).toBe(false);
+    clearApiThrottleFailures("HEAL_THR");
   });
 
   it("triggers self-heal on repeated utterance", () => {

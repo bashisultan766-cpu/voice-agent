@@ -2,7 +2,7 @@
  * Apply SQL migrations when DATABASE_URL is configured.
  * Usage: DATABASE_URL=postgres://... npx tsx scripts/runMigrations.ts
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,15 +13,21 @@ if (!databaseUrl) {
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const migrationPath = join(root, "migrations", "001_call_events.sql");
-const sql = readFileSync(migrationPath, "utf8");
+const migrationsDir = join(root, "migrations");
+const files = readdirSync(migrationsDir)
+  .filter((name) => name.endsWith(".sql"))
+  .sort();
 
 const pg = await import("pg");
 const pool = new pg.default.Pool({ connectionString: databaseUrl });
 
 try {
-  await pool.query(sql);
-  console.log("Migration applied:", migrationPath);
+  for (const file of files) {
+    const migrationPath = join(migrationsDir, file);
+    const sql = readFileSync(migrationPath, "utf8");
+    await pool.query(sql);
+    console.log("Migration applied:", migrationPath);
+  }
 } finally {
   await pool.end();
 }

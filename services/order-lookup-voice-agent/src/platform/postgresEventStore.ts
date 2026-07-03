@@ -1,35 +1,110 @@
 /**
  * Postgres dual-write — non-blocking append to immutable call_events table.
- * Disabled when DATABASE_URL is unset (local tests / single-node without DB).
+ *
+ * Startup probe sets postgresEnabled once. If unreachable, POSTGRES_DISABLED is set
+ * for the process lifetime and all appends return immediately (no per-turn spam).
  */
 import { logger } from "../utils/logger.js";
 import type { StoredAgentEvent } from "./events.js";
 
 let pool: import("pg").Pool | null = null;
 let poolInitAttempted = false;
+let postgresEnabled = false;
+let postgresFatalLogged = false;
+
+/** Permanent process-wide silencer after failed startup probe or fatal append error. */
+let POSTGRES_DISABLED = false;
+
+export function isPostgresEventStoreEnabled(): boolean {
+  return postgresEnabled && !POSTGRES_DISABLED;
+}
+
+export function isPostgresDisabled(): boolean {
+  return POSTGRES_DISABLED;
+}
+
+/**
+ * Verify DATABASE_URL and connectivity at startup.
+ * Returns true only when dual-write is safe to use for this process lifetime.
+ */
+export async function initPostgresEventStore(): Promise<boolean> {
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    POSTGRES_DISABLED = true;
+    postgresEnabled = false;
+    logger.info("postgres_event_store_disabled", { reason: "DATABASE_URL unset" });
+    return false;
+  }
+
+  if (postgresEnabled && pool && !POSTGRES_DISABLED) return true;
+
+  try {
+    const db = await createPool(databaseUrl);
+    await db.query("SELECT 1");
+    POSTGRES_DISABLED = false;
+    postgresEnabled = true;
+    logger.info("postgres_event_store_ready");
+    return true;
+  } catch (err) {
+    POSTGRES_DISABLED = true;
+    postgresEnabled = false;
+    if (pool) {
+      await pool.end().catch(() => undefined);
+      pool = null;
+      poolInitAttempted = false;
+    }
+    if (!postgresFatalLogged) {
+      postgresFatalLogged = true;
+      logger.error("postgres_event_store_fatal", {
+        message:
+          "Postgres unreachable at startup — dual-write disabled; using in-memory event store only",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return false;
+  }
+}
+
+async function createPool(databaseUrl: string): Promise<import("pg").Pool> {
+  if (pool) return pool;
+  if (poolInitAttempted && !pool) {
+    throw new Error("postgres_pool_unavailable");
+  }
+
+  poolInitAttempted = true;
+  const pg = await import("pg");
+  pool = new pg.default.Pool({
+    connectionString: databaseUrl,
+    max: 4,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 2_000,
+  });
+  return pool;
+}
 
 async function getPool(): Promise<import("pg").Pool | null> {
+  if (POSTGRES_DISABLED || !postgresEnabled) return null;
+
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) return null;
 
-  if (pool) return pool;
-  if (poolInitAttempted) return null;
-
-  poolInitAttempted = true;
   try {
-    const pg = await import("pg");
-    pool = new pg.default.Pool({
-      connectionString: databaseUrl,
-      max: 4,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 2_000,
-    });
-    return pool;
+    return await createPool(databaseUrl);
   } catch (err) {
-    logger.warn("postgres_event_store_unavailable", {
+    disablePostgresAfterFailure(err);
+    return null;
+  }
+}
+
+function disablePostgresAfterFailure(err: unknown): void {
+  POSTGRES_DISABLED = true;
+  postgresEnabled = false;
+  if (!postgresFatalLogged) {
+    postgresFatalLogged = true;
+    logger.error("postgres_event_store_fatal", {
+      message: "Postgres dual-write disabled after connection failure",
       error: err instanceof Error ? err.message : String(err),
     });
-    return null;
   }
 }
 
@@ -49,17 +124,16 @@ const INSERT_SQL = `
 
 /** Fire-and-forget — never blocks voice path on DB I/O. */
 export function appendToPostgresAsync(event: StoredAgentEvent): void {
+  if (POSTGRES_DISABLED || !postgresEnabled) return;
+
   void appendToPostgres(event).catch((err) => {
-    logger.warn("postgres_event_append_failed", {
-      callSid: event.callSid.slice(0, 8),
-      eventType: event.eventType,
-      turnSeq: event.turnSeq,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    disablePostgresAfterFailure(err);
   });
 }
 
 export async function appendToPostgres(event: StoredAgentEvent): Promise<void> {
+  if (POSTGRES_DISABLED || !postgresEnabled) return;
+
   const db = await getPool();
   if (!db) return;
 
@@ -82,4 +156,14 @@ export async function closePostgresPool(): Promise<void> {
     pool = null;
     poolInitAttempted = false;
   }
+  POSTGRES_DISABLED = true;
+  postgresEnabled = false;
+}
+
+/** Test hook — reset module state between tests. */
+export function resetPostgresEventStoreState(): void {
+  POSTGRES_DISABLED = false;
+  postgresEnabled = false;
+  postgresFatalLogged = false;
+  poolInitAttempted = false;
 }

@@ -4,6 +4,11 @@
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
+import {
+  isShopifyThrottleError,
+  parseShopifyGraphqlErrors,
+  ShopifyThrottledError,
+} from "../platform/shopifyErrors.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
 import { ensureShopifyProductScopes, SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR } from "./shopifyScopeCheck.js";
@@ -172,6 +177,8 @@ export async function shopifyGraphql<T>(
 
     const body = (await res.json()) as { data?: T; errors?: unknown[] };
     if (body.errors?.length) {
+      const throttled = parseShopifyGraphqlErrors(body.errors);
+      if (throttled) throw throttled;
       throw new Error(`shopify_graphql_error:${JSON.stringify(body.errors).slice(0, 200)}`);
     }
 
@@ -266,6 +273,7 @@ export async function searchShopifyProducts(shopifyQuery: string): Promise<Struc
   try {
     return await graphqlProductsSearch(q, true);
   } catch (err) {
+    if (isShopifyThrottleError(err)) throw err;
     if (!isMetafieldGraphqlError(err)) {
       logger.warn("shopify_product_search_failed", {
         query: q,
@@ -299,6 +307,7 @@ export async function liveSearchVariants(shopifyQuery: string): Promise<Structur
 
     return dedupeProducts(products);
   } catch (err) {
+    if (isShopifyThrottleError(err)) throw err;
     if (!isMetafieldGraphqlError(err)) throw err;
 
     const data = await shopifyGraphql<{
@@ -325,6 +334,7 @@ export async function liveFetchProductById(productId: string): Promise<Structure
     const data = await shopifyGraphql<{ product: GqlProductNode | null }>(GET_PRODUCT_QUERY, { id: gid });
     return data.product ? mapGqlProduct(data.product) : null;
   } catch (err) {
+    if (isShopifyThrottleError(err)) throw err;
     if (!isMetafieldGraphqlError(err)) throw err;
     const data = await shopifyGraphql<{ product: GqlProductNode | null }>(GET_PRODUCT_QUERY_BASIC, { id: gid });
     return data.product ? mapGqlProduct(data.product) : null;
@@ -343,6 +353,7 @@ export async function liveSearchMulti(queries: string[]): Promise<StructuredProd
         ]);
         return [...byProduct, ...byVariant];
       } catch (err) {
+        if (isShopifyThrottleError(err)) throw err;
         logger.warn("shopify_live_query_failed", {
           query: q,
           error: err instanceof Error ? err.message : String(err),

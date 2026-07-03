@@ -7,6 +7,7 @@ import { prewarmVoiceCache } from "./services/voiceService.js";
 import { logger, setLogLevel } from "./utils/logger.js";
 import { handleInboundCall, handleRelayAction } from "./voice/twilioWebhook.js";
 import { handleConversationRelaySocket } from "./voice/streamHandler.js";
+import { initPostgresEventStore } from "./platform/postgresEventStore.js";
 
 const CONVERSATION_BRAIN_INBOUND = "/conversationBrain/inbound";
 export function createApp() {
@@ -77,6 +78,7 @@ export function startServer() {
   setLogLevel(cfg.LOG_LEVEL);
   warmPhraseCache();
   void prewarmVoiceCache();
+  void initPostgresEventStore();
 
   const app = createApp();
   const server = http.createServer(app);

@@ -10,6 +10,7 @@ import {
 import { parseAgentEvent } from "../src/platform/events.js";
 import { clearAllCallMemories, getOrCreateMemory } from "../src/memory/callMemoryStore.js";
 import { clearAllCallStates, getOrCreateCallState } from "../src/memory/callStateStore.js";
+import { markCallSessionActive } from "../src/voice/callSessionLock.js";
 
 describe("platform events", () => {
   const callSid = "CA_platform_test";
@@ -18,6 +19,7 @@ describe("platform events", () => {
     clearAllCallEventSessions();
     clearAllCallMemories();
     clearAllCallStates();
+    markCallSessionActive(callSid);
   });
 
   it("parses the AgentEvent discriminated union", () => {

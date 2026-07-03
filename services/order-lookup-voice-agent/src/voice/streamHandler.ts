@@ -14,6 +14,11 @@ import {
 } from "../runtime/streamTurnBarrier.js";
 import { logEventIngestion } from "../runtime/turnObservability.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
+import { isNoiseTranscript } from "../utils/noiseGate.js";
+import {
+  isCallSessionActive,
+  markCallSessionClosed,
+} from "./callSessionLock.js";
 import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
 
 const RELAY_ERROR_SPEECH =
@@ -68,6 +73,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     closed = true;
     turnAbort?.abort();
     if (session?.callSid) {
+      markCallSessionClosed(session.callSid);
       clearStreamBarrier(session.callSid);
       endCallSession(session.callSid);
     }
@@ -84,7 +90,13 @@ async function runStreamingTurn(
   callerText: string,
   send: SendFn,
   setAbort: (controller: AbortController) => void,
+  isClosed: () => boolean,
 ): Promise<void> {
+  if (isClosed() || !isCallSessionActive(session.callSid)) {
+    logger.debug("relay_turn_skipped_inactive", { callSid: session.callSid.slice(0, 8) });
+    return;
+  }
+
   const started = Date.now();
   const abort = new AbortController();
   setAbort(abort);
@@ -151,10 +163,23 @@ function scheduleStreamingTurn(
   callerText: string,
   ctx: RelayMessageContext,
 ): Promise<void> {
+  if (ctx.isClosed() || !isCallSessionActive(session.callSid)) {
+    return Promise.resolve();
+  }
+
+  if (isNoiseTranscript(callerText, { allowShortNumeric: true })) {
+    logger.debug("noise_gate_dropped_relay", {
+      callSid: session.callSid.slice(0, 8),
+      textLength: callerText.length,
+      preview: callerText.slice(0, 12),
+    });
+    return Promise.resolve();
+  }
+
   return enqueueStreamTurn(session.callSid, () =>
     runStreamingTurn(session, callerText, ctx.send, (controller) => {
       ctx.setTurnAbort(controller);
-    }),
+    }, ctx.isClosed),
   );
 }
 
@@ -200,7 +225,7 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
     case "prompt": {
       const session = ctx.getSession();
-      if (!session) return;
+      if (!session || ctx.isClosed()) return;
 
       if (!message.last) {
         bufferPartialTranscript(session.callSid, message.voicePrompt ?? "");
@@ -232,7 +257,7 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
     case "dtmf": {
       const session = ctx.getSession();
-      if (!session || !message.digit) return;
+      if (!session || !message.digit || ctx.isClosed()) return;
       logEventIngestion(session.callSid, {
         source: "dtmf",
         textLength: message.digit.length,

@@ -54,6 +54,22 @@ describe("agentStateReducer", () => {
     expect(state.runtime.validation?.frozen).toBe(true);
     expect(state.product.lastResultProductId).toBe("1");
   });
+
+  it("sets awaitingInput from fulfillmentAwaitingSlot on RESPONSE_SENT", () => {
+    let state = createInitialAgentState(callSid);
+    state = agentStateReducer(state, {
+      type: "RESPONSE_SENT",
+      payload: {
+        responseType: "not_found",
+        speechLength: 40,
+        speech: "I couldn't find that ISBN. What is the title?",
+        fulfillmentAwaitingSlot: "title",
+        fulfillmentFlow: true,
+      },
+    });
+    expect(state.awaitingInput).toBe("title");
+    expect(state.runtime.fulfillmentFlow).toBe(true);
+  });
 });
 
 describe("replayCallTimeline", () => {

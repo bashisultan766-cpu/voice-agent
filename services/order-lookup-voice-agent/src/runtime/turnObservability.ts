@@ -18,6 +18,7 @@ export type FinalResponseType =
   | "order_api_error"
   | "conversation_only"
   | "general_help"
+  | "catalog_degraded"
   | "error";
 
 export function resolveExecutionFlow(

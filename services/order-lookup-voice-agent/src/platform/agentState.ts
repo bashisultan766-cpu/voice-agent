@@ -32,6 +32,8 @@ export interface AgentRuntimeContext {
   frozenAt?: number;
   frozenSearchKey?: string;
   explicitRepeat?: boolean;
+  /** Active when the fulfillment fast-path handled the prior response. */
+  fulfillmentFlow?: boolean;
   lastToolExecution?: {
     tool: string;
     status: string;

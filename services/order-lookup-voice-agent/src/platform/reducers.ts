@@ -229,6 +229,22 @@ export function agentStateReducer(state: AgentState, event: AgentEvent, now = Da
       return next;
     }
 
+    case "DEGRADED_MODE":
+      return {
+        ...state,
+        runtime: {
+          ...state.runtime,
+          validation: state.runtime.validation ?? {
+            passed: false,
+            accepted: 0,
+            rejected: 0,
+            frozen: true,
+            reasons: [event.payload.reason],
+          },
+        },
+        updatedAt: now,
+      };
+
     case "RESPONSE_SENT": {
       let next = { ...state, updatedAt: now };
 
@@ -256,6 +272,35 @@ export function agentStateReducer(state: AgentState, event: AgentEvent, now = Da
 
       if (event.payload.responseType === "general_help") {
         next = { ...next, lastIntent: "general_help" };
+      }
+
+      if (event.payload.fulfillmentAwaitingSlot) {
+        next = {
+          ...next,
+          awaitingInput: event.payload.fulfillmentAwaitingSlot,
+          runtime: {
+            ...next.runtime,
+            fulfillmentFlow: true,
+          },
+        };
+      } else if (event.payload.fulfillmentFlow === false) {
+        next = {
+          ...next,
+          runtime: {
+            ...next.runtime,
+            fulfillmentFlow: false,
+          },
+        };
+      }
+
+      if (event.payload.fulfillmentFlow === true) {
+        next = {
+          ...next,
+          runtime: {
+            ...next.runtime,
+            fulfillmentFlow: true,
+          },
+        };
       }
 
       if (event.payload.finalizeToolExecution) {

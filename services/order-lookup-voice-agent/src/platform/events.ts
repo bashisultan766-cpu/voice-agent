@@ -137,6 +137,13 @@ export const validationResultPayloadSchema = z.object({
   stage: z.string().optional(),
 });
 
+export const degradedModePayloadSchema = z.object({
+  reason: z.enum(["THROTTLED", "CIRCUIT_OPEN", "API_TIMEOUT"]),
+  retryAfterMs: z.number().int().nonnegative().optional(),
+  operation: z.string().optional(),
+  circuitState: z.enum(["OPEN", "HALF_OPEN"]).optional(),
+});
+
 export const responseSentPayloadSchema = z.object({
   responseType: z.string(),
   speechLength: z.number().int().nonnegative(),
@@ -151,6 +158,10 @@ export const responseSentPayloadSchema = z.object({
       searchKey: z.string().optional(),
     })
     .optional(),
+  /** Next slot the fulfillment router should prioritize on the following turn. */
+  fulfillmentAwaitingSlot: z.enum(["order_number", "title", "isbn"]).optional(),
+  /** True when the deterministic fulfillment stack handled this turn (not legacy gate). */
+  fulfillmentFlow: z.boolean().optional(),
 });
 
 export const agentEventSchema = z.discriminatedUnion("type", [
@@ -161,6 +172,7 @@ export const agentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("TOOL_EXECUTION_STARTED"), payload: toolExecutionStartedPayloadSchema }),
   z.object({ type: z.literal("TOOL_EXECUTION_COMPLETED"), payload: toolExecutionCompletedPayloadSchema }),
   z.object({ type: z.literal("VALIDATION_RESULT"), payload: validationResultPayloadSchema }),
+  z.object({ type: z.literal("DEGRADED_MODE"), payload: degradedModePayloadSchema }),
   z.object({ type: z.literal("RESPONSE_SENT"), payload: responseSentPayloadSchema }),
 ]);
 

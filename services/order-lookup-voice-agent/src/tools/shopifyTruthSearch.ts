@@ -4,6 +4,7 @@
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
+import { isShopifyThrottleError } from "../platform/shopifyErrors.js";
 import {
   isbnLookupVariants,
   isValidIsbnFormat,
@@ -120,6 +121,7 @@ async function runTruthQueries(queries: string[]): Promise<StructuredProduct[]> 
         ]);
         return [...byProduct, ...byVariant];
       } catch (err) {
+        if (isShopifyThrottleError(err)) throw err;
         logger.warn("shopify_truth_query_failed", {
           query: q,
           error: err instanceof Error ? err.message : String(err),

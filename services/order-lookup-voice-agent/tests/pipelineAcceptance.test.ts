@@ -128,7 +128,7 @@ describe("pipeline acceptance", () => {
     expect(titleSpy).not.toHaveBeenCalled();
 
     const ask2 = await collectSpeech(session, "I have a title");
-    expect(ask2).toMatch(/give me.*title|what.*title|share.*title/i);
+    expect(ask2).toMatch(/give me.*title|what.*title|share.*title|tell me the title/i);
     expect(titleSpy).not.toHaveBeenCalled();
 
     const result = await collectSpeech(session, "Harry Potter");
