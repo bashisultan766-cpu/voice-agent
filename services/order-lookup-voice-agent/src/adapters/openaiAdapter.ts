@@ -12,6 +12,7 @@ import {
   type LlmToolName,
 } from "./llmToolExecutor.js";
 import { groundedOrderSpeech } from "../agents/fulfillmentHandlers.js";
+import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
 import {
   ORDER_NOT_FOUND_STRICT_SPOKEN,
@@ -19,6 +20,7 @@ import {
 } from "../constants/systemMessages.js";
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
 import { orderNumbersMatch } from "../utils/formatter.js";
+import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -334,6 +336,19 @@ export async function* runLlmAgentTurnEvents(
     return;
   }
 
+  if (isOutOfDomainQuestion(input.userMessage)) {
+    const speech = buildPolitePivotSpeech(input.userMessage);
+    yield {
+      type: "result",
+      result: {
+        speech,
+        toolExecutions: [],
+        responseType: "general_help",
+      },
+    };
+    return;
+  }
+
   const toolExecutions: LlmToolExecutionRecord[] = [];
   let messages: OpenAI.Chat.ChatCompletionMessageParam[] = buildOpenAiMessages(input);
 
@@ -341,7 +356,7 @@ export async function* runLlmAgentTurnEvents(
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
       const response = await getClient().chat.completions.create({
         model: getConfig().CONVERSATION_BRAIN_MODEL,
-        temperature: 0.65,
+        temperature: LLM_ORCHESTRATOR_TEMPERATURE,
         max_tokens: 450,
         tools: SHOPIFY_LLM_TOOLS,
         tool_choice: "auto",

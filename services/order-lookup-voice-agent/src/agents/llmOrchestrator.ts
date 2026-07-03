@@ -18,6 +18,8 @@ import { logFinalResponseType } from "../runtime/turnObservability.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 import type { GateIntent } from "./toolDecisionGate.js";
 
+export { LLM_ORCHESTRATOR_TEMPERATURE } from "./llmConfig.js";
+
 function mapToolToGateIntent(tool: LlmToolExecutionRecord["tool"]): GateIntent {
   if (tool === "get_shopify_order_status") return "order";
   return "product";

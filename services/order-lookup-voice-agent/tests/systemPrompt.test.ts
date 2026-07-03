@@ -11,6 +11,22 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER invent, guess, or create fake customer names/i);
   });
 
+  it("locks Shoshan identity at the top of the prompt", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT.indexOf("YOUR IDENTITY")).toBeLessThan(
+      SHOSHAN_SYSTEM_PROMPT.indexOf("CRITICAL — NO CONVERSATIONAL FILLERS"),
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/official AI Assistant for "Shoshan"/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/not a general AI assistant/i);
+  });
+
+  it("requires Polite Pivot for out-of-domain questions", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CRITICAL RULE — OUT OF DOMAIN/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Polite Pivot/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/football streaming/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/don't have access to recipes/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/strictly forbidden from answering general knowledge/i);
+  });
+
   it("requires fluent English and customer_email in proactive template", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/fluent, professional English/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/customer_email/i);
