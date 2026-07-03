@@ -243,11 +243,11 @@ describe("getOrderStatus", () => {
     expect(result.status).toBe("throttled");
   });
 
-  it("returns api_error on network failure", async () => {
+  it("returns system_maintenance on network failure", async () => {
     vi.mocked(shopifyGraphql).mockRejectedValue(new Error("network down"));
 
     const result = await getOrderStatus("12345");
-    expect(result.status).toBe("api_error");
+    expect(result.status).toBe("system_maintenance");
   });
 });
 
@@ -325,10 +325,10 @@ describe("searchByTitle", () => {
     expect(result.status).toBe("not_found");
   });
 
-  it("returns api_error when GraphQL fails", async () => {
+  it("returns system_maintenance when GraphQL fails", async () => {
     vi.mocked(shopifyGraphql).mockRejectedValue(new Error("graphql exploded"));
 
     const result = await searchByTitle("Some Book");
-    expect(result.status).toBe("api_error");
+    expect(result.status).toBe("system_maintenance");
   });
 });

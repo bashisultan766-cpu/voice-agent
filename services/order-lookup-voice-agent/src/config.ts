@@ -69,6 +69,11 @@ export type AppConfig = z.infer<typeof envSchema>;
 
 let cached: AppConfig | null = null;
 
+/** @internal Test helper — clears memoized config between test cases. */
+export function resetConfigCacheForTests(): void {
+  cached = null;
+}
+
 export function getConfig(): AppConfig {
   if (!cached) {
     const parsed = envSchema.safeParse(trimStrings(process.env as Record<string, unknown>));

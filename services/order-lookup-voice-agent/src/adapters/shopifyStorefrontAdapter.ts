@@ -9,6 +9,7 @@ import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import {
   isShopifyThrottleError,
+  isShopifyMaintenanceFailure,
   parseShopifyGraphqlErrors,
   ShopifyThrottledError,
 } from "../platform/shopifyErrors.js";
@@ -49,6 +50,7 @@ export type AdapterStatus =
   | "not_found"
   | "invalid_format"
   | "api_error"
+  | "system_maintenance"
   | "throttled";
 
 export interface OrderStatusResult {
@@ -390,6 +392,24 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   };
 }
 
+function adapterFailureFromError(
+  err: unknown,
+  logEvent: string,
+  meta?: Record<string, unknown>,
+): Pick<OrderStatusResult, "status" | "message"> {
+  if (isShopifyThrottleError(err)) {
+    return { status: "throttled", message: "Shopify API throttled" };
+  }
+  if (isShopifyMaintenanceFailure(err)) {
+    return { status: "system_maintenance", message: "Catalog temporarily unavailable" };
+  }
+  logger.error(logEvent, {
+    ...meta,
+    error: err instanceof Error ? err.message : String(err),
+  });
+  return { status: "system_maintenance", message: "Catalog temporarily unavailable" };
+}
+
 async function runWithGuard<T>(
   callSid: string,
   operation: string,
@@ -507,14 +527,9 @@ export async function getOrderStatus(
 
     return result;
   } catch (err) {
-    if (isShopifyThrottleError(err)) {
-      return { status: "throttled", message: "Shopify API throttled" };
-    }
-    logger.error("shopify_order_status_failed", {
+    return adapterFailureFromError(err, "shopify_order_status_failed", {
       orderNumber: normalized,
-      error: err instanceof Error ? err.message : String(err),
     });
-    return { status: "api_error", message: "Shopify API unavailable" };
   }
 }
 
@@ -542,7 +557,7 @@ export async function searchByISBN(
       const queries = buildIsbnTruthQueries(normalized);
       const { nodes, hadErrors } = await graphqlProductsForQueries(queries);
       if (hadErrors && nodes.length === 0) {
-        return { status: "api_error" as const, message: "Shopify API unavailable" };
+        return { status: "system_maintenance" as const, message: "Catalog temporarily unavailable" };
       }
       const products = nodes.map((n) => mapGqlProduct(n));
       const ranked = rankLiveProducts(products, normalized, normalized);
@@ -556,14 +571,7 @@ export async function searchByISBN(
 
     return result;
   } catch (err) {
-    if (isShopifyThrottleError(err)) {
-      return { status: "throttled", message: "Shopify API throttled" };
-    }
-    logger.error("shopify_isbn_search_failed", {
-      isbn: normalized,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { status: "api_error", message: "Shopify API unavailable" };
+    return adapterFailureFromError(err, "shopify_isbn_search_failed", { isbn: normalized });
   }
 }
 
@@ -588,7 +596,7 @@ export async function searchByTitle(
       const queries = buildTitleTruthQueries(q);
       const { nodes, hadErrors } = await graphqlProductsForQueries(queries);
       if (hadErrors && nodes.length === 0) {
-        return { status: "api_error" as const, message: "Shopify API unavailable" };
+        return { status: "system_maintenance" as const, message: "Catalog temporarily unavailable" };
       }
       const products = nodes.map((n) => mapGqlProduct(n));
 
@@ -604,14 +612,7 @@ export async function searchByTitle(
 
     return result;
   } catch (err) {
-    if (isShopifyThrottleError(err)) {
-      return { status: "throttled", message: "Shopify API throttled" };
-    }
-    logger.error("shopify_title_search_failed", {
-      title: q,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { status: "api_error", message: "Shopify API unavailable" };
+    return adapterFailureFromError(err, "shopify_title_search_failed", { title: q });
   }
 }
 

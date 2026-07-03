@@ -8,6 +8,7 @@ import { logger, setLogLevel } from "./utils/logger.js";
 import { handleInboundCall, handleRelayAction } from "./voice/twilioWebhook.js";
 import { handleConversationRelaySocket } from "./voice/streamHandler.js";
 import { initPostgresEventStore } from "./platform/postgresEventStore.js";
+import { validateEnvironmentOnStartup } from "./platform/envValidator.js";
 
 const CONVERSATION_BRAIN_INBOUND = "/conversationBrain/inbound";
 export function createApp() {
@@ -108,10 +109,22 @@ export function startServer() {
   return server;
 }
 
+async function bootstrap(): Promise<void> {
+  if (process.env.SKIP_SHOPIFY_STARTUP_CHECK !== "true") {
+    await validateEnvironmentOnStartup();
+  }
+  startServer();
+}
+
 process.on("unhandledRejection", (reason) => {
   logger.error("unhandled_rejection", {
     error: reason instanceof Error ? reason.message : String(reason),
   });
 });
 
-startServer();
+bootstrap().catch((err) => {
+  logger.error("startup_failed", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+  process.exit(1);
+});

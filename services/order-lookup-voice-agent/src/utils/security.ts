@@ -28,6 +28,13 @@ export function maskEmailForLogs(email: string): string {
   return `${user[0]}***@${domain}`;
 }
 
+/** Mask Shopify Admin API tokens in logs — e.g. shpat_****1234 */
+export function maskShopifyToken(token: string): string {
+  const trimmed = token.trim();
+  if (trimmed.length <= 8) return "****";
+  return `${trimmed.slice(0, 6)}****${trimmed.slice(-4)}`;
+}
+
 export function isRefundEmailDisclosureAllowed(order: StructuredOrder): boolean {
   return Boolean(order.refund.refunded && order.refund.refundEmail);
 }

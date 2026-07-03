@@ -141,12 +141,24 @@ function inferResponseType(
 
   if (last.tool === "get_shopify_order_status") {
     if (last.ok) return "order_found";
-    if (last.status === "api_error" || last.status === "throttled") return "order_api_error";
+    if (
+      last.status === "api_error" ||
+      last.status === "system_maintenance" ||
+      last.status === "throttled"
+    ) {
+      return "order_api_error";
+    }
     return "order_not_found";
   }
 
   if (last.ok) return "confirmed_product";
-  if (last.status === "api_error" || last.status === "throttled") return "catalog_degraded";
+  if (
+    last.status === "api_error" ||
+    last.status === "system_maintenance" ||
+    last.status === "throttled"
+  ) {
+    return "catalog_degraded";
+  }
   return "not_found";
 }
 

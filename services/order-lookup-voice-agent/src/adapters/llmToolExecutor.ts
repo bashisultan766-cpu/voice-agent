@@ -27,10 +27,32 @@ export interface LlmToolExecutionRecord {
   tool: LlmToolName;
   args: Record<string, string>;
   ok: boolean;
-  status: "found" | "not_found" | "invalid_format" | "api_error" | "throttled" | "blocked";
+  status:
+    | "found"
+    | "not_found"
+    | "invalid_format"
+    | "api_error"
+    | "system_maintenance"
+    | "throttled"
+    | "blocked";
   data?: OrderStatusResult | BookAvailabilityResult;
   errorMessage?: string;
   elapsedMs: number;
+}
+
+/** Sanitized tool payload — never expose raw Shopify errors to the LLM. */
+export const SYSTEM_MAINTENANCE_LLM_PAYLOAD = {
+  error: "SYSTEM_MAINTENANCE" as const,
+  instructions:
+    "Do not mention API keys or technical issues. Apologize to the user and state the catalog system is undergoing brief maintenance.",
+};
+
+function isMaintenanceToolStatus(status: LlmToolExecutionRecord["status"]): boolean {
+  return (
+    status === "system_maintenance" ||
+    status === "api_error" ||
+    status === "throttled"
+  );
 }
 
 function gateExtraction(
@@ -42,6 +64,24 @@ function gateExtraction(
     slotType: "none",
     confidence: 1,
     ...slots,
+  };
+}
+
+function maintenanceRecord(
+  tool: LlmToolName,
+  args: Record<string, string>,
+  started: number,
+): LlmToolExecutionRecord {
+  return {
+    tool,
+    args,
+    ok: false,
+    status: "system_maintenance",
+    data: {
+      status: "system_maintenance",
+      message: "Catalog temporarily unavailable",
+    },
+    elapsedMs: Date.now() - started,
   };
 }
 
@@ -72,15 +112,19 @@ export async function executeLlmTool(
       };
     }
 
-    const data = await getOrderStatus(orderNumber, callSid);
-    return {
-      tool,
-      args: { orderNumber },
-      ok: data.status === "found",
-      status: data.status,
-      data,
-      elapsedMs: Date.now() - started,
-    };
+    try {
+      const data = await getOrderStatus(orderNumber, callSid);
+      return {
+        tool,
+        args: { orderNumber },
+        ok: data.status === "found",
+        status: data.status,
+        data,
+        elapsedMs: Date.now() - started,
+      };
+    } catch {
+      return maintenanceRecord(tool, { orderNumber }, started);
+    }
   }
 
   if (tool === "search_shopify_book_by_isbn") {
@@ -100,15 +144,19 @@ export async function executeLlmTool(
       };
     }
 
-    const data = await searchByISBN(isbn, callSid);
-    return {
-      tool,
-      args: { isbn },
-      ok: data.status === "found",
-      status: data.status,
-      data,
-      elapsedMs: Date.now() - started,
-    };
+    try {
+      const data = await searchByISBN(isbn, callSid);
+      return {
+        tool,
+        args: { isbn },
+        ok: data.status === "found",
+        status: data.status,
+        data,
+        elapsedMs: Date.now() - started,
+      };
+    } catch {
+      return maintenanceRecord(tool, { isbn }, started);
+    }
   }
 
   const title = (args.title ?? "").trim();
@@ -127,15 +175,19 @@ export async function executeLlmTool(
     };
   }
 
-  const data = await searchByTitle(title, callSid);
-  return {
-    tool,
-    args: { title },
-    ok: data.status === "found",
-    status: data.status,
-    data,
-    elapsedMs: Date.now() - started,
-  };
+  try {
+    const data = await searchByTitle(title, callSid);
+    return {
+      tool,
+      args: { title },
+      ok: data.status === "found",
+      status: data.status,
+      data,
+      elapsedMs: Date.now() - started,
+    };
+  } catch {
+    return maintenanceRecord(tool, { title }, started);
+  }
 }
 
 /** Compact JSON tool result for the LLM synthesis pass. */
@@ -146,6 +198,14 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       message: record.errorMessage,
       hint: "Ask the caller naturally for the missing information. Do not invent data.",
     });
+  }
+
+  if (isMaintenanceToolStatus(record.status)) {
+    return JSON.stringify(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
+  }
+
+  if (record.data && "status" in record.data && isMaintenanceToolStatus(record.data.status)) {
+    return JSON.stringify(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
   }
 
   if (!record.data) {

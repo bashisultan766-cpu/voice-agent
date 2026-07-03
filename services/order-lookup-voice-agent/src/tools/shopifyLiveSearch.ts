@@ -7,11 +7,13 @@ import { logger } from "../utils/logger.js";
 import {
   isShopifyThrottleError,
   parseShopifyGraphqlErrors,
+  ShopifyAuthError,
   ShopifyThrottledError,
 } from "../platform/shopifyErrors.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
 import { ensureShopifyProductScopes, SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR } from "./shopifyScopeCheck.js";
+import { maskShopifyToken } from "../utils/security.js";
 
 export interface GqlMetafieldNode {
   namespace: string;
@@ -171,14 +173,36 @@ export async function shopifyGraphql<T>(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`shopify_graphql_http_${res.status}:${body.slice(0, 120)}`);
+      if (res.status === 401 || res.status === 403) {
+        logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
+          httpStatus: res.status,
+          token: maskShopifyToken(cfg.SHOPIFY_ADMIN_ACCESS_TOKEN),
+          shop: cfg.SHOPIFY_SHOP_DOMAIN,
+        });
+        throw new ShopifyAuthError(res.status);
+      }
+      throw new Error(`shopify_graphql_http_${res.status}`);
     }
 
     const body = (await res.json()) as { data?: T; errors?: unknown[] };
     if (body.errors?.length) {
       const throttled = parseShopifyGraphqlErrors(body.errors);
       if (throttled) throw throttled;
+
+      const authDenied = (body.errors as Array<{ message?: string; extensions?: { code?: string } }>).some(
+        (e) =>
+          /access denied|unauthorized|invalid api key|invalid access token/i.test(
+            e.message ?? "",
+          ) || e.extensions?.code === "ACCESS_DENIED",
+      );
+      if (authDenied) {
+        logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
+          token: maskShopifyToken(cfg.SHOPIFY_ADMIN_ACCESS_TOKEN),
+          shop: cfg.SHOPIFY_SHOP_DOMAIN,
+        });
+        throw new ShopifyAuthError(403);
+      }
+
       throw new Error(`shopify_graphql_error:${JSON.stringify(body.errors).slice(0, 200)}`);
     }
 

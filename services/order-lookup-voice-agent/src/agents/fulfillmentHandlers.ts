@@ -231,7 +231,7 @@ function buildOrderFallbackTts(result: OrderStatusResult): TtsPayload {
       awaitingSlot: "order_number",
     };
   }
-  if (result.status === "throttled" || result.status === "api_error") {
+  if (result.status === "throttled" || result.status === "api_error" || result.status === "system_maintenance") {
     return {
       text: "I'm having trouble reaching our order system right now. Please try again in a moment.",
       awaitingSlot: "order_number",
@@ -259,7 +259,7 @@ function buildBookFallbackTts(
       awaitingSlot: "title",
     };
   }
-  if (result.status === "throttled" || result.status === "api_error") {
+  if (result.status === "throttled" || result.status === "api_error" || result.status === "system_maintenance") {
     return {
       text: "Our catalog system is a bit slow right now. Let me try that search again in just a second.",
       awaitingSlot: intent === "isbn_search" ? "isbn" : "title",
