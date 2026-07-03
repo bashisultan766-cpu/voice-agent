@@ -17,6 +17,7 @@ import {
   isValidOrderNumberFormat,
   normalizeOrderNumber,
 } from "../utils/formatter.js";
+import { logger } from "../utils/logger.js";
 
 export type LlmToolName =
   | "get_shopify_order_status"
@@ -45,6 +46,12 @@ export const SYSTEM_MAINTENANCE_LLM_PAYLOAD = {
   error: "SYSTEM_MAINTENANCE" as const,
   instructions:
     "Do not mention API keys or technical issues. Apologize to the user and state the catalog system is undergoing brief maintenance.",
+};
+
+/** Strict NOT_FOUND payload — LLM must not invent order fields when this is returned. */
+export const ORDER_NOT_FOUND_LLM_PAYLOAD = {
+  status: "NOT_FOUND" as const,
+  error: "Order not found in database.",
 };
 
 function isMaintenanceToolStatus(status: LlmToolExecutionRecord["status"]): boolean {
@@ -208,18 +215,41 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     return JSON.stringify(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
   }
 
+  if (record.tool === "get_shopify_order_status" && record.status === "not_found") {
+    const payload = ORDER_NOT_FOUND_LLM_PAYLOAD;
+    logger.info("tool_output_to_llm", {
+      tool: "get_shopify_order_status",
+      output: payload,
+    });
+    return JSON.stringify(payload);
+  }
+
   if (!record.data) {
     return JSON.stringify({ status: record.status, found: false });
   }
 
   if (record.tool === "get_shopify_order_status" && "orderNumber" in record.data) {
-    return JSON.stringify({
-      status: record.data.status,
-      found: record.data.status === "found",
+    if (record.data.status !== "found") {
+      const payload = ORDER_NOT_FOUND_LLM_PAYLOAD;
+      logger.info("tool_output_to_llm", {
+        tool: "get_shopify_order_status",
+        output: payload,
+      });
+      return JSON.stringify(payload);
+    }
+
+    const payload = {
+      status: "FOUND",
+      found: true,
       data: shapeOrderStatusForLlm(record.data),
       instructions:
         "Use ONLY non-null fields below. If refund_notification_email, payment_method_last4, or payment_gateway is null, omit that detail — never invent a replacement.",
+    };
+    logger.info("tool_output_to_llm", {
+      tool: "get_shopify_order_status",
+      output: payload,
     });
+    return JSON.stringify(payload);
   }
 
   return JSON.stringify({

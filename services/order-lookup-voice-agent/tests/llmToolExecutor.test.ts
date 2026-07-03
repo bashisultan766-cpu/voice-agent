@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   executeLlmTool,
+  ORDER_NOT_FOUND_LLM_PAYLOAD,
   SYSTEM_MAINTENANCE_LLM_PAYLOAD,
   toolResultForLlm,
 } from "../src/adapters/llmToolExecutor.js";
@@ -47,6 +48,32 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.payment_gateway).toBe("PayPal Express Checkout");
     expect(parsed.data.payment_method_last4).toBeNull();
     expect(parsed.instructions).toMatch(/never invent/i);
+    expect(parsed.status).toBe("FOUND");
+    expect(parsed.found).toBe(true);
+  });
+
+  it("returns strict NOT_FOUND payload with zero order fields for hallucination lock", () => {
+    const record: LlmToolExecutionRecord = {
+      tool: "get_shopify_order_status",
+      args: { orderNumber: "21698" },
+      ok: false,
+      status: "not_found",
+      elapsedMs: 8,
+      data: {
+        status: "not_found",
+        error: "Order not found in database.",
+      },
+    };
+
+    const parsed = JSON.parse(toolResultForLlm(record)) as Record<string, unknown>;
+
+    expect(parsed).toEqual(ORDER_NOT_FOUND_LLM_PAYLOAD);
+    expect(parsed.status).toBe("NOT_FOUND");
+    expect(parsed.error).toBe("Order not found in database.");
+    expect(parsed).not.toHaveProperty("data");
+    expect(parsed).not.toHaveProperty("customer_name");
+    expect(parsed).not.toHaveProperty("items");
+    expect(parsed).not.toHaveProperty("found");
   });
 
   it("returns sanitized SYSTEM_MAINTENANCE payload for auth failures", () => {

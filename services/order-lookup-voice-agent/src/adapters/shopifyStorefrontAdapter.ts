@@ -88,6 +88,8 @@ export interface OrderStatusResult {
   /** Exact email the refund notification was sent to — never the order billing email. */
   refundNotificationEmail?: string;
   message?: string;
+  /** Set when Shopify returns zero matching orders. */
+  error?: string;
 }
 
 export interface BookAvailabilityResult {
@@ -382,7 +384,16 @@ function findMatchingOrderNode(
 function orderLookupQueries(orderNumber: string): string[] {
   const bare = orderNumber.replace(/^#/, "");
   const withHash = orderNumber.startsWith("#") ? orderNumber : `#${bare}`;
-  return [`name:${withHash}`, `name:${bare}`];
+  const baseNumeric = bare.replace(/-[A-Za-z0-9]{1,6}$/i, "");
+
+  const out = [
+    `name:${withHash}`,
+    `name:${bare}`,
+    `name:${withHash}*`,
+    `name:${baseNumeric}*`,
+  ];
+
+  return [...new Set(out)];
 }
 
 function daysUntil(isoDate: string): number {
@@ -623,7 +634,7 @@ export async function getOrderStatus(
   try {
     const result = await runWithGuard(callSid, "order_status", async () => {
       for (const query of orderLookupQueries(normalized)) {
-        const data = await lookupOrdersGraphql(query, { query, first: 3 });
+        const data = await lookupOrdersGraphql(query, { query, first: 5 });
 
         const edges = data.orders?.edges ?? [];
         const node = findMatchingOrderNode(edges, normalized);
@@ -632,7 +643,10 @@ export async function getOrderStatus(
           return { status: "found" as const, ...mapOrderNode(node) };
         }
       }
-      return { status: "not_found" as const };
+      return {
+        status: "not_found" as const,
+        error: "Order not found in database.",
+      };
     });
 
     return result;

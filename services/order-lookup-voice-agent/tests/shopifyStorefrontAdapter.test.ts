@@ -259,6 +259,26 @@ describe("getOrderStatus", () => {
 
     const result = await getOrderStatus("99999");
     expect(result.status).toBe("not_found");
+    expect(result.error).toBe("Order not found in database.");
+  });
+
+  it("uses wildcard name query for flexible order number lookup", async () => {
+    vi.mocked(shopifyGraphql).mockImplementation(async (_query, vars) => {
+      const search = (vars as { query: string }).query;
+      if (search.endsWith("*")) {
+        return { orders: { edges: [{ node: ORDER_21698_F1_GQL_NODE }] } };
+      }
+      return { orders: { edges: [] } };
+    });
+
+    const result = await getOrderStatus("21698");
+    expect(result.status).toBe("found");
+    expect(result.orderNumber).toBe("#21698-F1");
+
+    const queries = vi.mocked(shopifyGraphql).mock.calls.map(
+      (call) => (call[1] as { query: string }).query,
+    );
+    expect(queries.some((q) => q.endsWith("*"))).toBe(true);
   });
 
   it("returns throttled when GraphQL rate-limits", async () => {
