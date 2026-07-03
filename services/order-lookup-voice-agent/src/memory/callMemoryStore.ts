@@ -1,3 +1,13 @@
+/** Canonical per-call product memory — sole source of truth for retrieval. */
+export interface SessionProductMemory {
+  isbn?: string;
+  title?: string;
+  lastSearchKey?: string;
+  lastResultProductId?: string;
+  isbnCollected: boolean;
+  titleCollected: boolean;
+}
+
 export interface CallMemoryMessage {
   role: "user" | "assistant";
   content: string;
@@ -10,9 +20,12 @@ export interface CallMemory {
   inferredIntent?: string;
   recentAssistantPhrases: string[];
   lastIntent?: string;
+  /** @deprecated use product.lastResultProductId */
   lastProductTitle?: string;
+  /** @deprecated use product.lastResultProductId */
   lastProductId?: string;
   lastOrderNumber?: string;
+  product: SessionProductMemory;
   updatedAt: number;
 }
 
@@ -21,6 +34,10 @@ const MAX_RECENT_PHRASES = 6;
 const TTL_MS = 60 * 60 * 1000;
 
 const memories = new Map<string, CallMemory>();
+
+export function emptyProductMemory(): SessionProductMemory {
+  return { isbnCollected: false, titleCollected: false };
+}
 
 function purgeExpired(): void {
   const now = Date.now();
@@ -40,6 +57,7 @@ export function getOrCreateMemory(callSid: string): CallMemory {
     callSid,
     messages: [],
     recentAssistantPhrases: [],
+    product: emptyProductMemory(),
     updatedAt: Date.now(),
   };
   memories.set(callSid, memory);
@@ -78,6 +96,18 @@ export function recordLastProduct(
 ): void {
   memory.lastProductId = product.id;
   memory.lastProductTitle = product.title;
+  memory.product.lastResultProductId = product.id;
+  memory.updatedAt = Date.now();
+}
+
+export function recordProductSearchInMemory(
+  memory: CallMemory,
+  searchKey: string,
+  productId: string,
+): void {
+  memory.product.lastSearchKey = searchKey;
+  memory.product.lastResultProductId = productId;
+  memory.lastProductId = productId;
   memory.updatedAt = Date.now();
 }
 

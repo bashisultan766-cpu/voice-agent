@@ -1,5 +1,17 @@
 /**
- * Conversation Orchestrator — sole decision layer and Shopify execution owner.
+ * Production orchestrator — 9-step SaaS agent platform pipeline.
+ *
+ * 1. Event ingestion (streamHandler)
+ * 2. Memory reconciliation (SessionMemory SSOT)
+ * 3. Intent + context resolution
+ * 4. Tool routing (deterministic only)
+ * 5. Execution freeze (snapshot + turn lock)
+ * 6. Tool execution (Shopify / orders, retry once)
+ * 7. Validation engine (canonical identity)
+ * 8. Fail-safe response engine
+ * 9. Response delivery
+ *
+ * Self-heal layer: turnHealthMonitor + selfHealPipeline
  * streamHandler → process → gate → tools
  */
 import { getConfig } from "../config.js";
@@ -9,22 +21,66 @@ import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { runWithToolAuthorizationAsync } from "../guards/toolAccessGuard.js";
 import { beginOrchestratorTurn, endOrchestratorTurn, getActivePipelineCallSid } from "../guards/pipelineGuard.js";
 import { clearCallMemory } from "../memory/callMemoryStore.js";
-import { clearCallState, type CallState, type CallStateSlots } from "../memory/callStateStore.js";
+import { clearCallState, type CallState } from "../memory/callStateStore.js";
 import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
+import { clearTurnQueue } from "../runtime/turnExecutionQueue.js";
+import { clearStreamBarrier } from "../runtime/streamTurnBarrier.js";
+import {
+  evaluateSelfHeal,
+  shouldForceRepeatSearch,
+} from "../runtime/selfHealPipeline.js";
+import {
+  logExecutionFreeze,
+  logFinalResponseType,
+  logIntentDecided,
+  logMemorySnapshot,
+  logSelfHealTriggered,
+  logToolExecutionResult,
+  logToolSelected,
+  logValidationResult,
+  resolveExecutionFlow,
+  type FinalResponseType,
+} from "../runtime/turnObservability.js";
+import {
+  recordToolFailure,
+  recordToolSuccess,
+  recordValidationFailure,
+  recordValidationSuccess,
+  resetTurnHealth,
+} from "../runtime/turnHealthMonitor.js";
+import {
+  beginCallTurn,
+  captureCallSnapshot,
+  clearCallEventSession,
+  detectIsbnPartialCleared,
+  dispatchAgentEvent,
+  getAgentState,
+} from "../platform/eventDispatcher.js";
+import { pureCommitMemoryTurn } from "../platform/mergeLogic.js";
+import { summarizeShopifyProducts } from "../platform/events.js";
+import {
+  freezeExecutionContext,
+  type ExecutionContextSnapshot,
+} from "../runtime/executionContextSnapshot.js";
+import { clearShopifyAdapterState } from "../tools/shopifyProductAdapter.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
 import { runInPhase2, setSlotValidationReady, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { orderLookupTool } from "../tools/orderLookupTool.js";
 import {
   getSimilarProducts,
   searchProductByCategory,
-  searchProductByISBN,
-  searchProductByTitle,
 } from "../tools/shopifyProductTools.js";
+import {
+  searchProductByISBNIsolated,
+  searchProductByTitleIsolated,
+  processShopifySearchResults,
+} from "../tools/shopifyProductAdapter.js";
 import { classifyFollowUpIntent, preAnalyzeOrderIntent } from "../services/llmService.js";
 import { analyzeBrainTurn } from "./brainAnalyzer.js";
 import {
   buildToolDecisionState,
   decideToolExecution,
+  decideToolExecutionWithReason,
   type ToolAction,
 } from "./toolDecisionGate.js";
 import {
@@ -36,25 +92,31 @@ import {
   planRepeatIntro,
 } from "./responsePlanner.js";
 import {
-  appendAssistantMessage,
-  appendUserMessage,
   getOrCreateMemory,
-  recordLastOrderNumber,
-  recordLastProduct,
+  type SessionProductMemory,
 } from "../memory/callMemoryStore.js";
 import {
-  applyDecisionToCallState,
-  atomicMergeTurnState,
-  finalizeAfterToolExecution,
   getOrCreateCallState,
   isProductToolAction,
-  saveCallState,
+  isSlotCollectedThisTurn,
   type ProductSlotValidation,
+  validateProductSlotState,
 } from "../memory/callStateStore.js";
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { softFallback } from "./conversationBrainAgent.js";
-import { formatProductResults } from "./productResponseFormatter.js";
-import { digitizeSpeechForIsbn, extractIsbnFromSpeech, scoreTitleMatch } from "../utils/productSearchNormalize.js";
+import { formatProductResults, formatValidationFailureCandidates } from "./productResponseFormatter.js";
+import {
+  buildProductSearchKey,
+  isExplicitRepeatRequest,
+  isMemorySearchReady,
+  isNewTitleSearch,
+  resolveCanonicalProducts,
+  normalizeProduct,
+  type CanonicalProduct,
+  type CanonicalResolution,
+  type ProductSearchContext,
+} from "./productRetrievalPolicy.js";
+import { digitizeSpeechForIsbn, extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
@@ -98,6 +160,11 @@ export function endCallSession(callSid: string): void {
   clearCallExecutionPhase(callSid);
   clearCallState(callSid);
   clearCustomerMemory(callSid);
+  clearTurnQueue(callSid);
+  clearStreamBarrier(callSid);
+  clearShopifyAdapterState(callSid);
+  resetTurnHealth(callSid);
+  clearCallEventSession(callSid);
 }
 
 /**
@@ -133,6 +200,7 @@ export async function* process(
   try {
     yield* runOrchestratorTurn(session, text);
   } catch (err) {
+    recordToolFailure(callSid);
     logger.error("orchestrator_turn_failed", {
       callSid: callSid.slice(0, 8),
       error: err instanceof Error ? err.message : String(err),
@@ -144,6 +212,11 @@ export async function* process(
         kind: "error",
       },
     };
+    emitResponseSent(
+      callSid,
+      "error",
+      "Sorry, something went wrong on my end. Could you try that once more?",
+    );
     yield { type: "done", phase: session.phase };
   } finally {
     endOrchestratorTurn();
@@ -259,11 +332,28 @@ function pickVariedLine(options: string[], callSid: string): string {
   return pool[Math.floor(Math.random() * pool.length)] ?? options[0];
 }
 
-function recordAssistant(callSid: string, speech: string): string {
-  const memory = getOrCreateMemory(callSid);
-  const smooth = smoothForVoice(speech);
-  appendAssistantMessage(memory, smooth);
-  return smooth;
+function recordAssistant(_callSid: string, speech: string): string {
+  return smoothForVoice(speech);
+}
+
+/** Phase 2: user utterance enters state only via TURN_INGESTED → reducer. */
+function ingestUserTurn(callSid: string, text: string): number {
+  const turnSeq = beginCallTurn(callSid);
+  dispatchAgentEvent(
+    callSid,
+    {
+      type: "TURN_INGESTED",
+      payload: {
+        textLength: text.length,
+        source: "orchestrator",
+        partial: false,
+        textPreview: text.slice(0, 120),
+        userMessage: text,
+      },
+    },
+    { turnSeq },
+  );
+  return turnSeq;
 }
 
 /** Master turn handler — Phase 1 routing; Phase 2 only when slots are ready. */
@@ -292,8 +382,8 @@ async function* runOrchestratorTurnCore(
   setToolExecutionPhase(session.callSid, "PHASE_1");
   setSlotValidationReady(session.callSid, false);
   const text = (callerText ?? "").trim();
+  ingestUserTurn(session.callSid, text);
   const memory = getOrCreateMemory(session.callSid);
-  appendUserMessage(memory, text);
 
   if (session.phase === "order_disclosed" || session.phase === "follow_up") {
     yield* handleFollowUpPhase(session, text);
@@ -346,10 +436,123 @@ async function* runGateControlledTurn(
 ): AsyncGenerator<AgentStreamEvent> {
   const analysis = await analyzeBrainTurn(text, session, getOrCreateCallState(session.callSid));
 
-  const turn = atomicMergeTurnState(session.callSid, {
+  const snapshotBeforeCommit = captureCallSnapshot(session.callSid);
+  const wasAwaiting = getOrCreateCallState(session.callSid).awaitingInput;
+  const memoryCommitTimestamp = Date.now();
+
+  const previewTurn = pureCommitMemoryTurn(getAgentState(session.callSid), {
     intent: analysis.intent,
     incomingSlots: analysis.deltaSlots,
     userMessage: text,
+  });
+
+  const previewAfterSnapshot = {
+    product: previewTurn.productMemory,
+    callState: {
+      intent: previewTurn.callStateSlice.intent,
+      phase: previewTurn.callStateSlice.phase,
+      awaitingInput: previewTurn.callStateSlice.awaitingInput,
+      slots: previewTurn.callStateSlice.slots,
+      slotFlags: previewTurn.callStateSlice.slotFlags,
+    },
+  };
+
+  const healEval = evaluateSelfHeal(session.callSid, text, previewTurn.productMemory, {
+    callSid: session.callSid,
+    ...previewTurn.callStateSlice,
+  } as CallState);
+
+  dispatchAgentEvent(
+    session.callSid,
+    {
+      type: "MEMORY_SYNCD",
+      payload: {
+        mergeInput: {
+          intent: analysis.intent,
+          incomingSlots: analysis.deltaSlots,
+          userMessage: text,
+        },
+        searchKey: buildProductSearchKey(previewTurn.productMemory),
+        explicitRepeat:
+          isExplicitRepeatRequest(text) || shouldForceRepeatSearch(healEval),
+        syncLog: previewTurn.syncLog,
+        isbnPartialCleared: detectIsbnPartialCleared(
+          snapshotBeforeCommit,
+          previewAfterSnapshot,
+        ),
+        selfHealApplied: false,
+        memoryCommitTimestamp,
+      },
+    },
+    { memoryBefore: snapshotBeforeCommit },
+  );
+
+  if (healEval.shouldHeal) {
+    logSelfHealTriggered(session.callSid, healEval.reasons);
+    logger.info("self_heal_pipeline_restart", {
+      callSid: session.callSid.slice(0, 8),
+      reasons: healEval.reasons,
+    });
+    clearShopifyAdapterState(session.callSid);
+    dispatchAgentEvent(session.callSid, {
+      type: "MEMORY_SYNCD",
+      payload: { selfHealResync: true, selfHealApplied: true },
+    });
+  }
+
+  const agentState = getAgentState(session.callSid);
+  const productMemory = agentState.product;
+  const turnState = getOrCreateCallState(session.callSid);
+  const turn = {
+    state: turnState,
+    wasAwaiting,
+    slotsCollected: isSlotCollectedThisTurn(wasAwaiting, turnState),
+    validation: validateProductSlotState(turnState, productMemory),
+    productMemory,
+    syncLog: previewTurn.syncLog,
+    memoryCommitTimestamp,
+  };
+
+  const explicitRepeat =
+    isExplicitRepeatRequest(text) || shouldForceRepeatSearch(healEval);
+  const searchKey = buildProductSearchKey(productMemory);
+
+  if (turn.syncLog) {
+    logger.info("slot_to_memory_sync", {
+      callSid: session.callSid.slice(0, 8),
+      ...turn.syncLog,
+    });
+  }
+
+  logMemorySnapshot(session.callSid, productMemory, {
+    memoryCommitTs: turn.memoryCommitTimestamp,
+    explicitRepeat,
+    searchKey,
+  });
+
+  logIntentDecided(session.callSid, {
+    intent: turn.state.intent,
+    flow: resolveExecutionFlow(
+      turn.state.intent,
+      analysis.orderNumber,
+      isMemorySearchReady(productMemory),
+    ),
+    source: analysis.source,
+    orderNumber: analysis.orderNumber,
+    explicitRepeat,
+  });
+
+  if (turn.syncLog) {
+    logger.info("slot_to_memory_sync", {
+      callSid: session.callSid.slice(0, 8),
+      ...turn.syncLog,
+    });
+  }
+
+  logger.info("search_key_computed", {
+    callSid: session.callSid.slice(0, 8),
+    searchKey,
+    explicitRepeat,
   });
 
   if (turn.wasAwaiting === "isbn") {
@@ -357,23 +560,40 @@ async function* runGateControlledTurn(
       callSid: session.callSid.slice(0, 8),
       transcript: text,
       digitized: digitizeSpeechForIsbn(text),
-      isbn: turn.state.slots.isbn,
-      isbnCollected: turn.state.slotFlags.isbnCollected,
+      isbn: productMemory.isbn,
+      isbnCollected: productMemory.isbnCollected,
       validationReady: turn.validation.ready,
     });
   }
 
-  const rawDecision = decideToolExecution(
+  const gateResult = decideToolExecutionWithReason(
     buildToolDecisionState({
       intent: turn.state.intent,
       phase: turn.state.phase,
       awaitingInput: turn.state.awaitingInput,
-      slots: turn.state.slots,
-      slotsCollected: turn.slotsCollected,
+      productMemory,
       validationReady: turn.validation.ready,
+      explicitRepeat,
+      wantsRecommendations: Boolean(turn.state.slots.wantsRecommendations),
       orderNumber: analysis.orderNumber,
     }),
   );
+
+  logToolSelected(session.callSid, {
+    tool: gateResult.action,
+    reason: gateResult.reason,
+    searchKey,
+    validationReady: turn.validation.ready,
+  });
+
+  logger.info("tool_execution_reason", {
+    callSid: session.callSid.slice(0, 8),
+    action: gateResult.action,
+    reason: gateResult.reason,
+    searchKey,
+  });
+
+  const rawDecision = gateResult.action;
 
   const validationReady = turn.validation.ready;
   const toolExecutionAllowed = validationReady;
@@ -383,6 +603,23 @@ async function* runGateControlledTurn(
   let decision = rawDecision;
   if (!validationReady && isExecutableToolAction(rawDecision)) {
     decision = "ASK_QUESTION";
+  } else if (
+    decision === "ASK_QUESTION" &&
+    turn.state.intent === "product" &&
+    isMemorySearchReady(productMemory)
+  ) {
+    decision = decideToolExecution(
+      buildToolDecisionState({
+        intent: turn.state.intent,
+        phase: turn.state.phase,
+        awaitingInput: turn.state.awaitingInput,
+        productMemory,
+        validationReady: true,
+        explicitRepeat,
+        wantsRecommendations: Boolean(turn.state.slots.wantsRecommendations),
+        orderNumber: analysis.orderNumber,
+      }),
+    );
   }
 
   pipelineTrace({
@@ -402,8 +639,24 @@ async function* runGateControlledTurn(
     },
   });
 
-  let nextState = applyDecisionToCallState(turn.state, decision);
-  saveCallState(nextState);
+  dispatchAgentEvent(session.callSid, {
+    type: "TOOL_SELECTED",
+    payload: {
+      tool: gateResult.action,
+      reason: gateResult.reason,
+      searchKey,
+      validationReady: turn.validation.ready,
+      intent: turn.state.intent,
+      flow: resolveExecutionFlow(
+        turn.state.intent,
+        analysis.orderNumber,
+        isMemorySearchReady(productMemory),
+      ),
+      gateDecision: decision,
+    },
+  });
+
+  const nextState = getOrCreateCallState(session.callSid);
   syncSessionFromCallState(session, nextState);
 
   setSlotValidationReady(session.callSid, validationReady);
@@ -411,7 +664,6 @@ async function* runGateControlledTurn(
     session.callSid,
     validationReady && isExecutableToolAction(decision) ? "PHASE_2" : "PHASE_1",
   );
-  memory.inferredIntent = turn.state.intent;
 
   logger.info("tool_decision_gate", {
     callSid: session.callSid.slice(0, 8),
@@ -421,20 +673,21 @@ async function* runGateControlledTurn(
     awaitingInput: nextState.awaitingInput,
     wasAwaiting: turn.wasAwaiting,
     slotsCollected: turn.slotsCollected,
-    isbnCollected: turn.state.slotFlags.isbnCollected,
-    titleCollected: turn.state.slotFlags.titleCollected,
+    isbnCollected: productMemory.isbnCollected,
+    titleCollected: productMemory.titleCollected,
     validationReady: turn.validation.ready,
     validationReason: turn.validation.reason,
     rawDecision,
     toolExecutionAllowed,
     finalDecision,
-    persistedIsbn: Boolean(nextState.slots.isbn),
-    persistedTitle: Boolean(nextState.slots.title),
+    persistedIsbn: Boolean(productMemory.isbn),
+    persistedTitle: Boolean(productMemory.title),
+    searchKey,
+    toolReason: gateResult.reason,
     source: analysis.source,
-    confidence: analysis.confidence,
   });
 
-  yield* executeGateDecision(session, analysis, decision, nextState, turn.validation);
+  yield* executeGateDecision(session, analysis, decision, nextState, turn.validation, text, productMemory);
 }
 
 async function* executeGateDecision(
@@ -443,24 +696,26 @@ async function* executeGateDecision(
   decision: ToolAction,
   callState: ReturnType<typeof getOrCreateCallState>,
   validation: ProductSlotValidation,
+  userMessage: string,
+  productMemory: ReturnType<typeof getOrCreateMemory>["product"],
 ): AsyncGenerator<AgentStreamEvent> {
   if (isExecutableToolAction(decision) && !validation.ready) {
-    yield* handleGateAskQuestion(session, analysis);
+    yield* handleGateAskQuestion(session, analysis, userMessage);
     return;
   }
 
   switch (decision) {
     case "searchProductByISBN":
-      session.productSlots = { isbn: callState.slots.isbn };
-      yield* phase2ProductFlow(session, callState);
+      session.productSlots = { isbn: productMemory.isbn };
+      yield* phase2ProductFlow(session, callState, userMessage, productMemory);
       return;
     case "searchProductByTitle":
-      session.productSlots = { title: callState.slots.title };
-      yield* phase2ProductFlow(session, callState);
+      session.productSlots = { title: productMemory.title };
+      yield* phase2ProductFlow(session, callState, userMessage, productMemory);
       return;
     case "getSimilarProducts":
       session.productSlots = { wantsRecommendations: true };
-      yield* phase2ProductFlow(session, callState);
+      yield* phase2ProductFlow(session, callState, userMessage, productMemory);
       return;
     case "orderLookupTool":
       if (analysis.orderNumber) {
@@ -468,7 +723,7 @@ async function* executeGateDecision(
       }
       return;
     case "ASK_QUESTION":
-      yield* handleGateAskQuestion(session, analysis);
+      yield* handleGateAskQuestion(session, analysis, userMessage);
       return;
     case "conversationOnly":
     default:
@@ -487,6 +742,7 @@ async function* executeGateDecision(
 async function* handleGateAskQuestion(
   session: CallSession,
   analysis: Awaited<ReturnType<typeof analyzeBrainTurn>>,
+  userMessage: string,
 ): AsyncGenerator<AgentStreamEvent> {
   if (analysis.intent === "order") {
     if (speechContainsDigitAttempt(analysis.userMessage) && !analysis.orderNumber) {
@@ -502,16 +758,44 @@ async function* handleGateAskQuestion(
 
   session.phase = "awaiting_order_number";
   const callState = getOrCreateCallState(session.callSid);
-  yield* yieldSpeech(
-    recordAssistant(
-      session.callSid,
-      pickProductSlotQuestionForAwaiting(
-        callState.awaitingInput,
-        callState.slots,
-        callState.slotFlags,
-      ),
-    ),
+  const memory = getOrCreateMemory(session.callSid);
+  if (analysis.intent === "product" && isMemorySearchReady(memory.product)) {
+    const explicitRepeat = isExplicitRepeatRequest(userMessage);
+    const searchDecision = decideToolExecution(
+      buildToolDecisionState({
+        intent: callState.intent,
+        phase: callState.phase,
+        awaitingInput: callState.awaitingInput,
+        productMemory: memory.product,
+        validationReady: true,
+        explicitRepeat,
+        wantsRecommendations: Boolean(callState.slots.wantsRecommendations),
+        orderNumber: analysis.orderNumber,
+      }),
+    );
+    if (isProductToolAction(searchDecision) || searchDecision === "orderLookupTool") {
+      yield* executeGateDecision(
+        session,
+        analysis,
+        searchDecision,
+        callState,
+        { ready: true },
+        userMessage,
+        memory.product,
+      );
+      return;
+    }
+  }
+
+  const clarificationSpeech = pickProductSlotQuestionForAwaiting(
+    callState.awaitingInput,
+    callState.slots,
+    callState.slotFlags,
   );
+  yield* yieldSpeech(recordAssistant(session.callSid, clarificationSpeech));
+  emitResponseSent(session.callSid, "clarification_question", clarificationSpeech, {
+    awaiting: callState.awaitingInput,
+  });
   yield doneEvent(session.phase);
 }
 
@@ -519,16 +803,53 @@ async function* handleGateAskQuestion(
 async function* phase2ProductFlow(
   session: CallSession,
   callState: CallState,
+  userMessage: string,
+  productMemory: ReturnType<typeof getOrCreateMemory>["product"],
 ): AsyncGenerator<AgentStreamEvent> {
-  const slots: CallStateSlots = { ...callState.slots };
   const memory = getOrCreateMemory(session.callSid);
   session.productSlots = undefined;
   session.awaitingInput = null;
 
-  assertProductSearchAllowed(callState, slots);
+  assertProductSearchAllowed(callState, productMemory);
 
   setSlotValidationReady(session.callSid, true);
   setToolExecutionPhase(session.callSid, "PHASE_2");
+
+  const explicitRepeat = isExplicitRepeatRequest(userMessage);
+  const searchKey = buildProductSearchKey(productMemory) ?? "unknown";
+
+  const executionSnapshot = freezeExecutionContext({
+    callSid: session.callSid,
+    memory: productMemory,
+    slots: callState.slots,
+    explicitRepeat,
+    wantsRecommendations: Boolean(callState.slots.wantsRecommendations),
+  });
+
+  logExecutionFreeze(session.callSid, {
+    frozenAt: executionSnapshot.frozenAt,
+    searchKey: executionSnapshot.searchKey,
+  });
+
+  dispatchAgentEvent(
+    session.callSid,
+    {
+      type: "EXECUTION_FROZEN",
+      payload: {
+        frozenAt: executionSnapshot.frozenAt,
+        searchKey: executionSnapshot.searchKey,
+        explicitRepeat,
+      },
+    },
+    { memoryAfter: captureCallSnapshot(session.callSid) },
+  );
+
+  logger.info("execution_context_frozen", {
+    callSid: session.callSid.slice(0, 8),
+    frozenAt: executionSnapshot.frozenAt,
+    searchKey: executionSnapshot.searchKey,
+    explicitRepeat,
+  });
 
   pipelineTrace({
     layer: "tool",
@@ -539,30 +860,95 @@ async function* phase2ProductFlow(
     toolExecutionAllowed: true,
     finalDecision: "ALLOW_TOOL",
     includeStack: true,
-    state: { slots, intent: callState.intent },
+    state: { productMemory, intent: callState.intent, searchKey, frozenAt: executionSnapshot.frozenAt },
   });
 
-  const result = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
+  let result = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
     runInPhase2(session.callSid, () =>
-      orchestratorExecuteProductSearch(slots, session.callSid, memory.lastProductId),
+      orchestratorExecuteProductSearch(executionSnapshot, false),
     ),
   );
-  const speech = formatProductResults(
-    result.products,
-    result.usedAlternatives,
-    result.searchKind === "recommendations" ? "recommendations" : "search",
-  );
 
-  if (result.products[0]) {
-    recordLastProduct(memory, result.products[0]);
+  const candidatePool = [...result.canonicalCandidates];
+
+  if (result.resolution?.shouldRetry) {
+    logger.info("retry_reason_if_any", {
+      callSid: session.callSid.slice(0, 8),
+      reason: result.resolution.rejected[0]?.reason,
+      strictRetry: true,
+    });
+    const retryResult = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
+      runInPhase2(session.callSid, () =>
+        orchestratorExecuteProductSearch(executionSnapshot, true),
+      ),
+    );
+    candidatePool.push(...retryResult.canonicalCandidates);
+    result = retryResult;
+  }
+
+  const failSafeCandidates = dedupeCanonicalCandidates(candidatePool).slice(0, 2);
+  const executedSearchKey = result.executedSearchKey ?? searchKey;
+  const acceptedCount = result.resolution?.accepted.length ?? 0;
+  const hasConfirmedProduct = acceptedCount === 1 && Boolean(result.products[0]);
+
+  logger.info("final_validation_decision", {
+    callSid: session.callSid.slice(0, 8),
+    accepted: acceptedCount,
+    hasConfirmedProduct,
+    failSafeCandidates: failSafeCandidates.length,
+    searchKind: result.searchKind,
+  });
+
+  let speech: string;
+  let responseType: FinalResponseType;
+  if (hasConfirmedProduct) {
+    const responseMode =
+      result.searchKind === "recommendations"
+        ? "recommendations"
+        : result.ambiguousTitle
+          ? "ambiguous"
+          : "search";
+
+    speech = formatProductResults(
+      result.products,
+      result.usedAlternatives,
+      responseMode,
+    );
+    responseType =
+      result.searchKind === "recommendations"
+        ? "confirmed_product"
+        : result.ambiguousTitle
+          ? "fail_safe_alternatives"
+          : "confirmed_product";
+  } else if (failSafeCandidates.length > 0 && result.searchKind !== "recommendations") {
+    speech = formatValidationFailureCandidates(failSafeCandidates);
+    responseType = "fail_safe_alternatives";
+  } else {
+    speech = formatProductResults(result.products, result.usedAlternatives, "search");
+    responseType = "not_found";
+  }
+
+  emitResponseSent(session.callSid, responseType, speech, {
+    searchKind: result.searchKind,
+    acceptedCount,
+    failSafeCandidates: failSafeCandidates.length,
+    finalizeToolExecution: true,
+  });
+
+  if (hasConfirmedProduct && result.products[0]) {
+    recordValidationSuccess(session.callSid);
+    recordToolSuccess(session.callSid);
+  } else if (result.searchKind !== "recommendations") {
+    recordValidationFailure(session.callSid);
+    if (result.resolution?.rejected.some((r) => r.reason.includes("mismatch"))) {
+      recordToolFailure(session.callSid);
+    }
   }
 
   yield* yieldSpeech(recordAssistant(session.callSid, speech));
   session.phase = "awaiting_order_number";
 
-  const resetState = finalizeAfterToolExecution(getOrCreateCallState(session.callSid));
-  saveCallState(resetState);
-  syncSessionFromCallState(session, resetState);
+  syncSessionFromCallState(session, getOrCreateCallState(session.callSid));
   setToolExecutionPhase(session.callSid, "PHASE_1");
 
   yield doneEvent(session.phase);
@@ -583,8 +969,8 @@ async function* handleGeneralHelp(session: CallSession, speech = ""): AsyncGener
     line = softFallback(speech);
   }
 
-  memory.lastIntent = "general_help";
   yield* yieldSpeech(recordAssistant(session.callSid, line));
+  emitResponseSent(session.callSid, "general_help", line);
   yield doneEvent(session.phase);
 }
 
@@ -638,6 +1024,11 @@ async function* runOrderLookup(
   setSlotValidationReady(session.callSid, true);
   setToolExecutionPhase(session.callSid, "PHASE_2");
 
+  dispatchAgentEvent(session.callSid, {
+    type: "TOOL_EXECUTION_STARTED",
+    payload: { tool: "searchOrderById" },
+  });
+
   const lookupPromise = runWithToolAuthorizationAsync("conversationOrchestrator", () =>
     runInPhase2(session.callSid, () => orderLookupTool(orderNumber)),
   );
@@ -652,8 +1043,30 @@ async function* runOrderLookup(
     lookupMs,
   });
 
+  const orderToolStatus =
+    lookup.status === "found"
+      ? "found"
+      : lookup.status === "api_error"
+        ? "error"
+        : "not_found";
+
+  dispatchAgentEvent(
+    session.callSid,
+    {
+      type: "TOOL_EXECUTION_COMPLETED",
+      payload: {
+        tool: "searchOrderById",
+        status: orderToolStatus,
+        resultCount: lookup.status === "found" ? 1 : 0,
+        elapsedMs: lookupMs,
+        orderStatus: lookup.status,
+      },
+    },
+    { latencyMs: lookupMs },
+  );
+
   if (lookup.status === "found") {
-    recordLastOrderNumber(getOrCreateMemory(session.callSid), orderNumber);
+    recordToolSuccess(session.callSid);
     yield chunkEvent(planInstantConfirmation(lookup.order));
     for (const chunk of planOrderLookupResponse(lookup.order).chunks) {
       yield { type: "chunk", chunk };
@@ -661,11 +1074,34 @@ async function* runOrderLookup(
     session.currentOrder = lookup.order;
     session.phase = "order_disclosed";
     session.awaitingInput = null;
+    logToolExecutionResult(session.callSid, {
+      tool: "searchOrderById",
+      status: "found",
+      resultCount: 1,
+      elapsedMs: lookupMs,
+    });
+    emitResponseSent(session.callSid, "order_found", "", {
+      orderNumber,
+      recordOrderNumber: orderNumber,
+    });
     yield doneEvent(session.phase, false, lookupMs);
     return;
   }
 
+  logToolExecutionResult(session.callSid, {
+    tool: "searchOrderById",
+    status: lookup.status === "api_error" ? "error" : "not_found",
+    resultCount: 0,
+    elapsedMs: lookupMs,
+  });
+
   const errorMeta = yield* streamLookupError(session, lookup);
+  if (lookup.status === "api_error") {
+    recordToolFailure(session.callSid);
+    emitResponseSent(session.callSid, "order_api_error", "", { orderNumber });
+  } else {
+    emitResponseSent(session.callSid, "order_not_found", "", { orderNumber });
+  }
   yield doneEvent(session.phase, errorMeta.endCall, lookupMs);
 }
 
@@ -752,137 +1188,351 @@ function doneEvent(
   return { type: "done", phase, endCall, lookupMs };
 }
 
-function assertProductSearchAllowed(callState: CallState, slots: CallStateSlots): void {
+function assertProductSearchAllowed(
+  callState: CallState,
+  productMemory: SessionProductMemory,
+): void {
   if (callState.intent !== "product") {
     throw new Error("PRODUCT_SEARCH_BLOCKED: intent_not_product");
   }
 
-  const hasIsbn = Boolean(slots.isbn);
-  const hasTitle = Boolean(slots.title);
-  const wantsRec = Boolean(slots.wantsRecommendations);
-  const { slotFlags } = callState;
+  const hasIsbn = Boolean(productMemory.isbn);
+  const hasTitle = Boolean(productMemory.title);
+  const wantsRec = Boolean(callState.slots.wantsRecommendations);
 
   if (!hasIsbn && !hasTitle && !wantsRec) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: missing_isbn_or_title");
   }
 
-  if (hasIsbn && !slotFlags.isbnCollected) {
+  if (hasIsbn && !productMemory.isbnCollected) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: isbn_needs_slot_collection");
   }
 
-  if (hasTitle && !hasIsbn && !slotFlags.titleCollected) {
+  if (hasTitle && !hasIsbn && !productMemory.titleCollected) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: title_needs_slot_collection");
   }
 
-  if (wantsRec && !hasIsbn && !hasTitle && !slotFlags.recommendationsCollected) {
+  if (wantsRec && !hasIsbn && !hasTitle && !callState.slotFlags.recommendationsCollected) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: recommendations_needs_slot_collection");
   }
 }
 
-const STRONG_TITLE_MATCH_SCORE = 2;
-
 interface OrchestratorProductResult {
   products: StructuredProduct[];
+  canonicalCandidates: CanonicalProduct[];
+  resolution: CanonicalResolution | null;
   usedAlternatives: boolean;
   searchKind: "isbn" | "title" | "recommendations";
+  ambiguousTitle?: boolean;
+  validationFailed?: boolean;
+  executedSearchKey?: string;
 }
 
-function isStrongTitleMatch(product: StructuredProduct, queryTitle: string): boolean {
-  return scoreTitleMatch(product.title, queryTitle) >= STRONG_TITLE_MATCH_SCORE;
+function dedupeCanonicalCandidates(candidates: CanonicalProduct[]): CanonicalProduct[] {
+  const seen = new Set<string>();
+  const out: CanonicalProduct[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.id)) continue;
+    seen.add(candidate.id);
+    out.push(candidate);
+  }
+  return out;
 }
 
-/** Shopify product search — ONLY callable from this orchestrator file. */
-async function orchestratorExecuteProductSearch(
-  slots: CallStateSlots,
+/** Dual-write RESPONSE_SENT alongside legacy turnObservability final_response_type log. */
+function emitResponseSent(
   callSid: string,
-  lastProductId?: string,
-): Promise<OrchestratorProductResult> {
-  const started = Date.now();
+  responseType: FinalResponseType,
+  speech: string,
+  meta?: Record<string, unknown>,
+): void {
+  logFinalResponseType(callSid, responseType, meta);
+  dispatchAgentEvent(callSid, {
+    type: "RESPONSE_SENT",
+    payload: {
+      responseType,
+      speechLength: speech.length,
+      speech: speech || undefined,
+      searchKind: typeof meta?.searchKind === "string" ? meta.searchKind : undefined,
+      finalizeToolExecution: meta?.finalizeToolExecution === true,
+      recordOrderNumber:
+        typeof meta?.recordOrderNumber === "string" ? meta.recordOrderNumber : undefined,
+      recordProduct:
+        meta?.recordProduct &&
+        typeof meta.recordProduct === "object" &&
+        "id" in meta.recordProduct &&
+        "title" in meta.recordProduct
+          ? (meta.recordProduct as { id: string; title: string; searchKey?: string })
+          : undefined,
+    },
+  });
+}
 
-  if (slots.wantsRecommendations) {
-    return orchestratorExecuteRecommendations(callSid, started, lastProductId);
+function logCanonicalResolution(
+  callSid: string,
+  stage: string,
+  resolution: CanonicalResolution,
+  strictRetry?: boolean,
+): void {
+  logger.info("product_validation_stage", {
+    callSid: callSid.slice(0, 8),
+    stage,
+    candidateCount: resolution.candidates.length,
+    acceptedCount: resolution.accepted.length,
+    rejectedReasons: resolution.rejected.map((row) => row.reason),
+  });
+  logValidationResult(callSid, {
+    accepted: resolution.accepted.length,
+    rejected: resolution.rejected.length,
+    passed: resolution.accepted.length === 1,
+    reasons: resolution.rejected.map((row) => row.reason),
+    strictRetry,
+  });
+  dispatchAgentEvent(callSid, {
+    type: "VALIDATION_RESULT",
+    payload: {
+      accepted: resolution.accepted.length,
+      rejected: resolution.rejected.length,
+      passed: resolution.accepted.length === 1,
+      reasons: resolution.rejected.map((row) => row.reason),
+      strictRetry,
+      stage,
+    },
+  });
+}
+
+function buildCanonicalResult(
+  resolution: CanonicalResolution,
+  searchKind: "isbn" | "title" | "recommendations",
+  executedSearchKey: string,
+  usedAlternatives = false,
+): OrchestratorProductResult {
+  const acceptedProducts = resolution.accepted.map((row) => row.raw);
+  return {
+    products: acceptedProducts,
+    canonicalCandidates: resolution.candidates,
+    resolution,
+    usedAlternatives,
+    searchKind,
+    ambiguousTitle: acceptedProducts.length > 1,
+    validationFailed: resolution.validationFailed,
+    executedSearchKey,
+  };
+}
+
+/** Shopify → normalize → sanitize → validateCanonicalProduct (frozen snapshot only). */
+async function orchestratorExecuteProductSearch(
+  snapshot: ExecutionContextSnapshot,
+  strictRetry: boolean,
+): Promise<OrchestratorProductResult> {
+  const { memory: productMemory, callSid, explicitRepeat, searchKey } = snapshot;
+  const started = Date.now();
+  const executedSearchKey = searchKey ?? "unknown";
+
+  const context: ProductSearchContext = {
+    memory: productMemory,
+    explicitRepeat,
+    forceFreshTitleQuery: Boolean(
+      productMemory.title && searchKey && isNewTitleSearch(productMemory, searchKey),
+    ),
+    wantsRecommendations: snapshot.wantsRecommendations,
+  };
+
+  const excludeProductId =
+    strictRetry || (!explicitRepeat && productMemory.lastResultProductId)
+      ? productMemory.lastResultProductId
+      : undefined;
+
+  if (context.wantsRecommendations) {
+    const recTool = explicitRepeat && productMemory.lastResultProductId
+      ? "getSimilarProducts"
+      : "searchProductByCategory";
+    dispatchAgentEvent(callSid, {
+      type: "TOOL_EXECUTION_STARTED",
+      payload: { tool: recTool, searchKey: executedSearchKey, strictRetry },
+    });
+    const rec = await orchestratorExecuteRecommendations(
+      callSid,
+      started,
+      explicitRepeat ? productMemory.lastResultProductId : undefined,
+    );
+    const recElapsed = Date.now() - started;
+    dispatchAgentEvent(
+      callSid,
+      {
+        type: "TOOL_EXECUTION_COMPLETED",
+        payload: {
+          tool: recTool,
+          status: rec.products.length > 0 ? "found" : "not_found",
+          resultCount: rec.products.length,
+          elapsedMs: recElapsed,
+          strictRetry,
+          products: summarizeShopifyProducts(rec.products),
+        },
+      },
+      { latencyMs: recElapsed },
+    );
+    return {
+      ...rec,
+      canonicalCandidates: rec.products.map((p) =>
+        normalizeProduct(p, executedSearchKey, { title: productMemory.title }),
+      ),
+      resolution: null,
+      executedSearchKey,
+    };
   }
 
-  if (slots.isbn) {
-    const result = await searchProductByISBN(slots.isbn);
-    if (result.products.length > 0) {
+  if (productMemory.isbn && productMemory.isbnCollected) {
+    dispatchAgentEvent(callSid, {
+      type: "TOOL_EXECUTION_STARTED",
+      payload: {
+        tool: "searchProductByISBN",
+        searchKey: executedSearchKey,
+        strictRetry,
+        excludeProductId,
+      },
+    });
+    const raw = await searchProductByISBNIsolated(callSid, productMemory.isbn, {
+      excludeProductId,
+    });
+    const isbnElapsed = Date.now() - started;
+    dispatchAgentEvent(
+      callSid,
+      {
+        type: "TOOL_EXECUTION_COMPLETED",
+        payload: {
+          tool: "searchProductByISBN",
+          status: raw.products.length ? "found" : "not_found",
+          resultCount: raw.products.length,
+          elapsedMs: isbnElapsed,
+          strictRetry,
+          products: summarizeShopifyProducts(raw.products),
+        },
+      },
+      { latencyMs: isbnElapsed },
+    );
+    const canonical = processShopifySearchResults(
+      raw.products,
+      executedSearchKey,
+      { isbn: productMemory.isbn },
+      callSid,
+    );
+    const resolution = resolveCanonicalProducts(
+      canonical,
+      productMemory,
+      explicitRepeat,
+      executedSearchKey,
+    );
+    logCanonicalResolution(callSid, strictRetry ? "post_retry_isbn" : "post_normalize_isbn", resolution, strictRetry);
+    logToolExecutionResult(callSid, {
+      tool: "searchProductByISBN",
+      status: raw.products.length ? "found" : "not_found",
+      resultCount: raw.products.length,
+      elapsedMs: Date.now() - started,
+      strictRetry,
+    });
+
+    if (resolution.accepted.length > 0) {
       logger.info("product_tool_isbn_hit", {
         callSid: callSid.slice(0, 8),
-        isbn: slots.isbn,
-        count: result.products.length,
+        isbn: productMemory.isbn,
+        count: resolution.accepted.length,
         elapsedMs: Date.now() - started,
+        strictRetry,
       });
-      return { products: result.products, usedAlternatives: false, searchKind: "isbn" };
+      return buildCanonicalResult(resolution, "isbn", executedSearchKey);
     }
-    const fallback = await orchestratorFetchSimilarFallback(
-      slots.title,
-      lastProductId,
+
+    return {
+      products: [],
+      canonicalCandidates: canonical,
+      resolution,
+      usedAlternatives: false,
+      searchKind: "isbn",
+      validationFailed: resolution.validationFailed || canonical.length > 0,
+      executedSearchKey,
+    };
+  }
+
+  if (productMemory.title && productMemory.titleCollected) {
+    dispatchAgentEvent(callSid, {
+      type: "TOOL_EXECUTION_STARTED",
+      payload: {
+        tool: "searchProductByTitle",
+        searchKey: executedSearchKey,
+        strictRetry,
+        excludeProductId,
+      },
+    });
+    const raw = await searchProductByTitleIsolated(callSid, productMemory.title, {
+      excludeProductId,
+      strictExactOnly: strictRetry,
+    });
+    const titleElapsed = Date.now() - started;
+    dispatchAgentEvent(
+      callSid,
+      {
+        type: "TOOL_EXECUTION_COMPLETED",
+        payload: {
+          tool: "searchProductByTitle",
+          status: raw.products.length ? "found" : "not_found",
+          resultCount: raw.products.length,
+          elapsedMs: titleElapsed,
+          strictRetry,
+          products: summarizeShopifyProducts(raw.products),
+        },
+      },
+      { latencyMs: titleElapsed },
     );
-    return { ...fallback, searchKind: "isbn" };
-  }
-
-  if (slots.title) {
-    const result = await searchProductByTitle(slots.title);
-    const top = result.products[0];
-    if (top && isStrongTitleMatch(top, slots.title)) {
-      logger.info("product_tool_title_hit", {
-        callSid: callSid.slice(0, 8),
-        title: slots.title,
-        count: result.products.length,
-        elapsedMs: Date.now() - started,
-      });
-      return { products: result.products, usedAlternatives: false, searchKind: "title" };
-    }
-    const fallback = await orchestratorFetchSimilarFallback(
-      slots.title,
-      lastProductId,
-      top?.id,
+    const canonical = processShopifySearchResults(
+      raw.products,
+      executedSearchKey,
+      { title: productMemory.title },
+      callSid,
     );
-    return { ...fallback, searchKind: "title" };
-  }
+    const resolution = resolveCanonicalProducts(
+      canonical,
+      productMemory,
+      explicitRepeat,
+      executedSearchKey,
+    );
+    logCanonicalResolution(callSid, strictRetry ? "post_retry_title" : "post_normalize_title", resolution, strictRetry);
+    logToolExecutionResult(callSid, {
+      tool: "searchProductByTitle",
+      status: raw.products.length ? "found" : "not_found",
+      resultCount: raw.products.length,
+      elapsedMs: Date.now() - started,
+      strictRetry,
+    });
 
-  return { products: [], usedAlternatives: false, searchKind: "recommendations" };
-}
-
-async function orchestratorFetchSimilarFallback(
-  anchorTitle?: string,
-  lastProductId?: string,
-  weakCandidateId?: string,
-): Promise<Omit<OrchestratorProductResult, "searchKind">> {
-  if (lastProductId) {
-    const similar = await getSimilarProducts(lastProductId);
-    if (similar.products.length > 0) {
-      return { products: similar.products.slice(0, 3), usedAlternatives: true };
+    if (resolution.accepted.length > 0) {
+      return buildCanonicalResult(
+        resolution,
+        "title",
+        executedSearchKey,
+        resolution.accepted.length > 1,
+      );
     }
+
+    return {
+      products: [],
+      canonicalCandidates: canonical,
+      resolution,
+      usedAlternatives: false,
+      searchKind: "title",
+      validationFailed: resolution.validationFailed || canonical.length > 0,
+      executedSearchKey,
+    };
   }
 
-  if (weakCandidateId) {
-    const similar = await getSimilarProducts(weakCandidateId);
-    if (similar.products.length > 0) {
-      return { products: similar.products.slice(0, 3), usedAlternatives: true };
-    }
-  }
-
-  if (anchorTitle) {
-    const loose = await searchProductByTitle(anchorTitle.split(" ")[0] ?? anchorTitle);
-    if (loose.products[0]) {
-      const similar = await getSimilarProducts(loose.products[0].id);
-      if (similar.products.length > 0) {
-        return { products: similar.products.slice(0, 3), usedAlternatives: true };
-      }
-    }
-  }
-
-  const browse = await searchProductByCategory("books inmates");
-  if (browse.products[0]) {
-    const similar = await getSimilarProducts(browse.products[0].id);
-    if (similar.products.length > 0) {
-      return { products: similar.products.slice(0, 3), usedAlternatives: true };
-    }
-    return { products: browse.products.slice(0, 3), usedAlternatives: true };
-  }
-
-  return { products: [], usedAlternatives: false };
+  return {
+    products: [],
+    canonicalCandidates: [],
+    resolution: null,
+    usedAlternatives: false,
+    searchKind: "recommendations",
+    executedSearchKey,
+  };
 }
 
 async function orchestratorExecuteRecommendations(
@@ -897,6 +1547,8 @@ async function orchestratorExecuteRecommendations(
         products: similar.products.slice(0, 3),
         usedAlternatives: false,
         searchKind: "recommendations",
+        canonicalCandidates: [],
+        resolution: null,
       };
     }
   }
@@ -906,6 +1558,8 @@ async function orchestratorExecuteRecommendations(
     products: popular.products.slice(0, 3),
     usedAlternatives: false,
     searchKind: "recommendations",
+    canonicalCandidates: [],
+    resolution: null,
   };
 }
 

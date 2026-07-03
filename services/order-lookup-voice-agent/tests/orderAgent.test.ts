@@ -108,7 +108,7 @@ describe("agent QA flows", () => {
   });
 
   it("uses not found message for missing orders", () => {
-    expect(ORDER_NOT_FOUND_MESSAGE).toContain("couldn't find");
+    expect(ORDER_NOT_FOUND_MESSAGE).toContain("could not find an exact match");
   });
 
   it("uses shopify down fallback message", () => {

@@ -3,6 +3,7 @@ import {
   buildToolDecisionState,
   decideToolExecution,
 } from "../src/agents/toolDecisionGate.js";
+import { emptyProductMemory } from "../src/memory/callMemoryStore.js";
 import { enablePipelineGuardForTests, resetPipelineGuard } from "../src/guards/pipelineGuard.js";
 
 const phase1 = { phase: "PHASE_1" as const, awaitingInput: "none" as const };
@@ -18,9 +19,9 @@ describe("toolDecisionGate", () => {
       buildToolDecisionState({
         intent: "product",
         ...phase1,
-        slots: {},
-        slotsCollected: false,
+        productMemory: emptyProductMemory(),
         validationReady: false,
+        explicitRepeat: false,
       }),
     );
     expect(decision).toBe("ASK_QUESTION");
@@ -31,9 +32,13 @@ describe("toolDecisionGate", () => {
       buildToolDecisionState({
         intent: "product",
         ...phase1,
-        slots: { isbn: "9783161484100" },
-        slotsCollected: true,
+        productMemory: {
+          ...emptyProductMemory(),
+          isbn: "9783161484100",
+          isbnCollected: true,
+        },
         validationReady: false,
+        explicitRepeat: false,
       }),
     );
     expect(blocked).toBe("ASK_QUESTION");
@@ -42,36 +47,50 @@ describe("toolDecisionGate", () => {
       buildToolDecisionState({
         intent: "product",
         ...phase1,
-        slots: { isbn: "9783161484100" },
-        slotsCollected: true,
+        productMemory: {
+          ...emptyProductMemory(),
+          isbn: "9783161484100",
+          isbnCollected: true,
+        },
         validationReady: true,
+        explicitRepeat: false,
       }),
     );
     expect(allowed).toBe("searchProductByISBN");
   });
 
-  it("returns ASK_QUESTION for title when validation not ready", () => {
+  it("prefers ISBN over title when both are in memory", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         ...phase1,
-        slots: { title: "Harry Potter" },
-        slotsCollected: false,
-        validationReady: false,
+        productMemory: {
+          isbn: "9783161484100",
+          title: "Harry Potter",
+          isbnCollected: true,
+          titleCollected: true,
+        },
+        validationReady: true,
+        explicitRepeat: false,
       }),
     );
-    expect(decision).toBe("ASK_QUESTION");
+    expect(decision).toBe("searchProductByISBN");
   });
 
-  it("returns searchProductByTitle when validation.ready", () => {
+  it("returns searchProductByTitle when title search key is new", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         phase: "PHASE_1",
         awaitingInput: "title",
-        slots: { title: "Harry Potter" },
-        slotsCollected: true,
+        productMemory: {
+          title: "Harry Potter",
+          lastSearchKey: "title:old book",
+          isbnCollected: false,
+          titleCollected: true,
+        },
         validationReady: true,
+        explicitRepeat: false,
       }),
     );
     expect(decision).toBe("searchProductByTitle");
@@ -82,9 +101,9 @@ describe("toolDecisionGate", () => {
       buildToolDecisionState({
         intent: "order",
         ...phase1,
-        slots: {},
-        slotsCollected: false,
+        productMemory: emptyProductMemory(),
         validationReady: true,
+        explicitRepeat: false,
         orderNumber: "#45678",
       }),
     );
@@ -96,9 +115,9 @@ describe("toolDecisionGate", () => {
       buildToolDecisionState({
         intent: "general",
         ...phase1,
-        slots: {},
-        slotsCollected: false,
+        productMemory: emptyProductMemory(),
         validationReady: true,
+        explicitRepeat: false,
       }),
     );
     expect(decision).toBe("conversationOnly");

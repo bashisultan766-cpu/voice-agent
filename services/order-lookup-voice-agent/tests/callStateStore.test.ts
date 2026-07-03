@@ -11,13 +11,16 @@ import {
   mergeTurnIntoCallState,
   resolveStickyIntent,
   saveCallState,
+  syncSlotsToProductMemory,
   validateProductSlotState,
 } from "../src/memory/callStateStore.js";
+import { clearAllCallMemories, getOrCreateMemory } from "../src/memory/callMemoryStore.js";
 import { enablePipelineGuardForTests, resetPipelineGuard } from "../src/guards/pipelineGuard.js";
 
 describe("callStateStore", () => {
   beforeEach(() => {
     clearAllCallStates();
+    clearAllCallMemories();
     resetPipelineGuard();
     enablePipelineGuardForTests(true);
   });
@@ -30,13 +33,18 @@ describe("callStateStore", () => {
       slots: { isbn: "9783161484100" },
     });
 
-    const turn = atomicMergeTurnState("CA_1", {
-      intent: "unknown",
-      incomingSlots: {},
-      userMessage: "one moment",
-    });
+    const memory = getOrCreateMemory("CA_1");
+    const turn = atomicMergeTurnState(
+      "CA_1",
+      {
+        intent: "unknown",
+        incomingSlots: {},
+        userMessage: "one moment",
+      },
+      memory,
+    );
 
-    expect(turn.state.slots.isbn).toBe("9783161484100");
+    expect(turn.productMemory.isbn ?? turn.state.slots.isbn).toBe("9783161484100");
   });
 
   it("mergeSlotsCumulative normalizes ISBN and never drops existing slots", () => {
@@ -70,13 +78,18 @@ describe("callStateStore", () => {
     const seeded = getOrCreateCallState("CA_ISBN_FLAG");
     saveCallState({ ...seeded, intent: "product", awaitingInput: "isbn" });
 
-    const turn = atomicMergeTurnState("CA_ISBN_FLAG", {
-      intent: "product",
-      incomingSlots: { isbn: "9783161484100" },
-      userMessage: "9783161484100",
-    });
+    const memory = getOrCreateMemory("CA_ISBN_FLAG");
+    const turn = atomicMergeTurnState(
+      "CA_ISBN_FLAG",
+      {
+        intent: "product",
+        incomingSlots: { isbn: "9783161484100" },
+        userMessage: "9783161484100",
+      },
+      memory,
+    );
 
-    expect(turn.state.slotFlags.isbnCollected).toBe(true);
+    expect(turn.productMemory.isbnCollected).toBe(true);
     expect(turn.state.awaitingInput).toBe("none");
     expect(isSlotCollectedThisTurn("isbn", turn.state)).toBe(true);
   });
@@ -99,13 +112,18 @@ describe("callStateStore", () => {
     const seeded = getOrCreateCallState("CA_TITLE");
     saveCallState({ ...seeded, intent: "product", awaitingInput: "title" });
 
-    const turn = atomicMergeTurnState("CA_TITLE", {
-      intent: "product",
-      incomingSlots: { title: "Harry Potter" },
-      userMessage: "Harry Potter",
-    });
+    const memory = getOrCreateMemory("CA_TITLE");
+    const turn = atomicMergeTurnState(
+      "CA_TITLE",
+      {
+        intent: "product",
+        incomingSlots: { title: "Harry Potter" },
+        userMessage: "Harry Potter",
+      },
+      memory,
+    );
 
-    expect(turn.state.slotFlags.titleCollected).toBe(true);
+    expect(turn.productMemory.titleCollected).toBe(true);
     expect(turn.validation.ready).toBe(true);
   });
 
@@ -134,16 +152,16 @@ describe("callStateStore", () => {
     state.intent = "product";
     saveCallState(state);
 
-    const result = validateProductSlotState(getOrCreateCallState("CA_VAL"));
+    const result = validateProductSlotState(getOrCreateCallState("CA_VAL"), getOrCreateMemory("CA_VAL").product);
     expect(result.ready).toBe(false);
     expect(result.reason).toBe("missing_slots");
   });
 
   it("validateProductSlotState allows ISBN when isbnCollected flag is set", () => {
-    const state = getOrCreateCallState("CA_ISBN");
+    const memory = getOrCreateMemory("CA_ISBN");
     saveCallState(
       mergeTurnIntoCallState(
-        { ...state, intent: "product", awaitingInput: "isbn" },
+        { ...getOrCreateCallState("CA_ISBN"), intent: "product", awaitingInput: "isbn" },
         {
           intent: "product",
           incomingSlots: { isbn: "9783161484100" },
@@ -151,21 +169,22 @@ describe("callStateStore", () => {
         },
       ),
     );
+    syncSlotsToProductMemory(memory, getOrCreateCallState("CA_ISBN").slots, getOrCreateCallState("CA_ISBN").slotFlags);
 
-    const result = validateProductSlotState(getOrCreateCallState("CA_ISBN"));
+    const result = validateProductSlotState(getOrCreateCallState("CA_ISBN"), memory.product);
     expect(result.ready).toBe(true);
   });
 
   it("validateProductSlotState blocks title without titleCollected flag", () => {
-    const state = getOrCreateCallState("CA_TITLE_BLOCK");
-    saveCallState(
-      mergeTurnIntoCallState(
-        { ...state, intent: "product" },
-        { intent: "product", incomingSlots: { title: "Harry Potter" } },
-      ),
+    const memory = getOrCreateMemory("CA_TITLE_BLOCK");
+    const merged = mergeTurnIntoCallState(
+      { ...getOrCreateCallState("CA_TITLE_BLOCK"), intent: "product" },
+      { intent: "product", incomingSlots: { title: "Harry Potter" } },
     );
+    saveCallState(merged);
+    const sync = syncSlotsToProductMemory(memory, merged.slots, merged.slotFlags);
 
-    const result = validateProductSlotState(getOrCreateCallState("CA_TITLE_BLOCK"));
+    const result = validateProductSlotState(merged, sync.memory);
     expect(result.ready).toBe(false);
     expect(result.reason).toBe("title_needs_confirmation");
   });
@@ -219,20 +238,30 @@ describe("callStateStore", () => {
       awaitingInput: "isbn",
     });
 
-    atomicMergeTurnState(callSid, {
-      intent: "product",
-      incomingSlots: {},
-      userMessage: "nine seven eight",
-    });
+    const memory = getOrCreateMemory(callSid);
 
-    const turn = atomicMergeTurnState(callSid, {
-      intent: "product",
-      incomingSlots: {},
-      userMessage: "three one six one four eight four one zero zero",
-    });
+    atomicMergeTurnState(
+      callSid,
+      {
+        intent: "product",
+        incomingSlots: {},
+        userMessage: "nine seven eight",
+      },
+      memory,
+    );
 
-    expect(turn.state.slots.isbn).toBe("9783161484100");
-    expect(turn.state.slotFlags.isbnCollected).toBe(true);
+    const turn = atomicMergeTurnState(
+      callSid,
+      {
+        intent: "product",
+        incomingSlots: {},
+        userMessage: "three one six one four eight four one zero zero",
+      },
+      memory,
+    );
+
+    expect(turn.productMemory.isbn).toBe("9783161484100");
+    expect(turn.productMemory.isbnCollected).toBe(true);
     expect(turn.validation.ready).toBe(true);
   });
 });

@@ -14,6 +14,11 @@ import { resetToolExecutionGuard } from "../src/guards/toolExecutionGuard.js";
 import { resetToolAccessGuard } from "../src/guards/toolAccessGuard.js";
 import { enablePipelineGuardForTests, resetPipelineGuard } from "../src/guards/pipelineGuard.js";
 import * as shopifyProductTools from "../src/tools/shopifyProductTools.js";
+import * as shopifyProductAdapter from "../src/tools/shopifyProductAdapter.js";
+import { clearAllTurnQueues } from "../src/runtime/turnExecutionQueue.js";
+import { clearAllStreamBarriers } from "../src/runtime/streamTurnBarrier.js";
+import { clearAllTurnHealth } from "../src/runtime/turnHealthMonitor.js";
+import { clearAllCallEventSessions, loadCallEventsSince } from "../src/platform/eventDispatcher.js";
 
 const mockCatalog: StructuredProduct[] = [
   {
@@ -83,6 +88,10 @@ describe("conversationOrchestrator flows", () => {
   beforeEach(() => {
     clearAllCallMemories();
     clearAllCallStates();
+    clearAllTurnQueues();
+    clearAllStreamBarriers();
+    clearAllTurnHealth();
+    clearAllCallEventSessions();
     resetShopifyScopeCheck();
     resetToolExecutionGuard();
     resetToolAccessGuard();
@@ -107,8 +116,8 @@ describe("conversationOrchestrator flows", () => {
   });
 
   it('Phase 1: "I need a book" asks for ISBN or title without Shopify', async () => {
-    const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
-    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
+    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
 
     const session = createCallSession("CA_NEED", "+1", "+2");
     const speech = await collectSpeech(session, "I need a book");
@@ -120,7 +129,7 @@ describe("conversationOrchestrator flows", () => {
   });
 
   it('Phase 1: "Harry Potter book" asks clarification before Shopify', async () => {
-    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
 
     const session = createCallSession("CA_HP", "+1", "+2");
     const speech = await collectSpeech(session, "I want Harry Potter book");
@@ -187,8 +196,31 @@ describe("conversationOrchestrator flows", () => {
     expect(stateAfterSearch.phase).toBe("PHASE_1");
   });
 
+  it("captures lifecycle events during process() ISBN flow", async () => {
+    const session = createCallSession("CA_EVENTS", "+1", "+2");
+    const drain = async (text: string) => {
+      for await (const _ of process(session.callSid, text, session)) {
+        /* consume stream */
+      }
+    };
+
+    await drain("I need a book");
+    await drain("I have an ISBN");
+    await drain("9783161484100");
+
+    const events = loadCallEventsSince(session.callSid, 1).map((row) => row.eventType);
+    expect(events).toContain("TURN_INGESTED");
+    expect(events).toContain("MEMORY_SYNCD");
+    expect(events).toContain("TOOL_SELECTED");
+    expect(events).toContain("EXECUTION_FROZEN");
+    expect(events).toContain("TOOL_EXECUTION_STARTED");
+    expect(events).toContain("TOOL_EXECUTION_COMPLETED");
+    expect(events).toContain("VALIDATION_RESULT");
+    expect(events).toContain("RESPONSE_SENT");
+  });
+
   it("reuses stored ISBN for a follow-up product search without re-asking", async () => {
-    const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
+    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
 
     const session = createCallSession("CA_FOLLOW", "+1", "+2");
     await collectSpeech(session, "I need a book");
@@ -197,13 +229,17 @@ describe("conversationOrchestrator flows", () => {
     isbnSpy.mockClear();
 
     const speech = await collectSpeech(session, "look up that book again");
-    expect(isbnSpy).toHaveBeenCalledWith("9783161484100");
+    expect(isbnSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      "9783161484100",
+      expect.anything(),
+    );
     expect(speech).toMatch(/Azkaban/i);
     expect(getOrCreateCallState(session.callSid).slots.isbn).toBe("9783161484100");
   });
 
   it('Phase 1: "I want to buy books" asks title, ISBN, or recommendations', async () => {
-    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
 
     const session = createCallSession("CA_BUY", "+1", "+2");
     const speech = await collectSpeech(session, "I want to buy books");
@@ -214,7 +250,7 @@ describe("conversationOrchestrator flows", () => {
   });
 
   it('Phase 1: "I want books for inmates" asks clarification, not immediate search', async () => {
-    const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
+    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
 
     const session = createCallSession("CA_REC", "+1", "+2");
     const speech = await collectSpeech(session, "I want books for inmates");
@@ -224,7 +260,7 @@ describe("conversationOrchestrator flows", () => {
     expect(titleSpy).not.toHaveBeenCalled();
   });
 
-  it("shows similar products when exact title not found", async () => {
+  it("does not reuse similar products for unknown title searches", async () => {
     const similarSpy = vi.spyOn(shopifyProductTools, "getSimilarProducts");
 
     const session = createCallSession("CA_MISS", "+1", "+2");
@@ -232,7 +268,7 @@ describe("conversationOrchestrator flows", () => {
     await collectSpeech(session, "I have a title");
     const speech = await collectSpeech(session, "Imaginary Title XYZ");
 
-    expect(speech).toMatch(/don't have that exact book|options/i);
-    expect(similarSpy).toHaveBeenCalled();
+    expect(speech).toMatch(/could not find an exact match|closest valid alternatives/i);
+    expect(similarSpy).not.toHaveBeenCalled();
   });
 });

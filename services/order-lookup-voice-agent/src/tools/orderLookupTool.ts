@@ -11,3 +11,6 @@ export async function orderLookupTool(orderNumber: string): Promise<OrderLookupR
   assertToolExecutionAllowed("orderLookupTool");
   return lookupOrder(orderNumber);
 }
+
+/** Spec alias — order ID → Shopify lookup (deterministic tool mapping). */
+export const searchOrderById = orderLookupTool;

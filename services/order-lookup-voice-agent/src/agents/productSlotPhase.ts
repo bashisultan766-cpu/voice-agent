@@ -162,6 +162,9 @@ export function pickProductSlotQuestionForAwaiting(
   slots?: ProductSearchSlots,
   slotFlags?: { isbnCollected?: boolean; titleCollected?: boolean },
 ): string {
+  if (slots?.isbn && isCompleteIsbnValue(slots.isbn)) {
+    return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);
+  }
   if (slotFlags?.isbnCollected && slots?.isbn) {
     return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);
   }
@@ -187,8 +190,8 @@ export function pickProductSlotQuestion(
   if (kind === "category") {
     return pickVariedSlotPrompt(CATEGORY_PROMPTS);
   }
-  if (slots.isbn && isCompleteIsbnValue(slots.isbn) && !slots.title) {
-    return pickVariedSlotPrompt(ISBN_VALUE_PROMPTS);
+  if (slots.isbn && isCompleteIsbnValue(slots.isbn)) {
+    return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);
   }
   if (slots.title && !slots.isbn && kind !== "both") {
     return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);

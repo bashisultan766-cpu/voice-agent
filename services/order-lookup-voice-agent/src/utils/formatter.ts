@@ -127,8 +127,7 @@ export const GREETING_PROMPT =
 export const INVALID_ORDER_RETRY =
   "I didn't catch a valid order number. Please say your order number — it's usually four to six digits.";
 
-export const ORDER_NOT_FOUND_MESSAGE =
-  "I couldn't find that order number in our system. Could you double-check the number and try again?";
+export { ORDER_NOT_FOUND_MESSAGE } from "../constants/systemMessages.js";
 
 export const SHOPIFY_DOWN_MESSAGE =
   "I'm having trouble reaching our order system right now. Please try again in a few minutes, or contact support online.";

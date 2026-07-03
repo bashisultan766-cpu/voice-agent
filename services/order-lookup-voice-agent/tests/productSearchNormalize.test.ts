@@ -8,8 +8,12 @@ import {
   atomicMergeTurnState,
   clearAllCallStates,
   getOrCreateCallState,
+  mergeTurnIntoCallState,
   saveCallState,
+  syncSlotsToProductMemory,
+  validateProductSlotState,
 } from "../src/memory/callStateStore.js";
+import { clearAllCallMemories, getOrCreateMemory } from "../src/memory/callMemoryStore.js";
 import { enablePipelineGuardForTests, resetPipelineGuard } from "../src/guards/pipelineGuard.js";
 
 const SAMPLE_ISBN13 = "9783161484100";
@@ -41,12 +45,14 @@ describe("extractIsbnFromSpeech", () => {
 describe("ISBN slot collection from voice", () => {
   beforeEach(() => {
     clearAllCallStates();
+    clearAllCallMemories();
     resetPipelineGuard();
     enablePipelineGuardForTests(true);
   });
 
   it("collects spoken ISBN when awaiting isbn", () => {
     const callSid = "CA_SPOKEN";
+    const memory = getOrCreateMemory(callSid);
     saveCallState({
       ...getOrCreateCallState(callSid),
       intent: "product",
@@ -58,14 +64,18 @@ describe("ISBN slot collection from voice", () => {
     const delta = parseProductSlotsFromSpeech(spoken, "isbn");
     expect(delta.isbn).toBe(SAMPLE_ISBN13);
 
-    const turn = atomicMergeTurnState(callSid, {
-      intent: "product",
-      incomingSlots: delta,
-      userMessage: spoken,
-    });
+    const turn = atomicMergeTurnState(
+      callSid,
+      {
+        intent: "product",
+        incomingSlots: delta,
+        userMessage: spoken,
+      },
+      memory,
+    );
 
-    expect(turn.state.slotFlags.isbnCollected).toBe(true);
+    expect(turn.productMemory.isbnCollected).toBe(true);
     expect(turn.validation.ready).toBe(true);
-    expect(turn.state.slots.isbn).toBe(SAMPLE_ISBN13);
+    expect(turn.productMemory.isbn).toBe(SAMPLE_ISBN13);
   });
 });

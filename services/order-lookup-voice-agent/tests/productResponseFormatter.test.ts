@@ -21,14 +21,28 @@ describe("formatProductResults", () => {
     expect(speech).not.toMatch(/similar options/i);
   });
 
+  it("formats ambiguous title matches as multiple options", () => {
+    const speech = formatProductResults(
+      [
+        sample,
+        { ...sample, id: "2", title: "Harry Potter and the Chamber of Secrets" },
+      ],
+      false,
+      "ambiguous",
+    );
+    expect(speech).toMatch(/multiple valid options|could not find an exact match/i);
+    expect(speech).toMatch(/Option 1/i);
+    expect(speech).toMatch(/Option 2/i);
+  });
+
   it("announces not found then similar products", () => {
     const similar = [
       sample,
       { ...sample, id: "2", title: "Inmate Reading Guide" },
     ];
     const speech = formatProductResults(similar, true);
-    expect(speech).toMatch(/don't have that exact book/i);
-    expect(speech).toMatch(/options/i);
+    expect(speech).toMatch(/could not find an exact match/i);
+    expect(speech).toMatch(/closest valid alternatives/i);
   });
 
   it("never returns empty when products exist", () => {

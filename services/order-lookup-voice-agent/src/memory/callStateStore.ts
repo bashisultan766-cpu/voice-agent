@@ -11,6 +11,12 @@ import {
   normalizeIsbn,
 } from "../utils/productSearchNormalize.js";
 import type { IncomingProductSlots, ProductSearchSlots } from "../types/order.js";
+import { emptyProductMemory, type CallMemory, type SessionProductMemory } from "./callMemoryStore.js";
+import {
+  buildProductSearchKey,
+  normalizeTitle,
+  type SlotMemorySyncLog,
+} from "../agents/productRetrievalPolicy.js";
 
 export type CallStatePhase = "PHASE_1" | "PHASE_2";
 export type CallStateIntent = GateIntent;
@@ -101,6 +107,9 @@ export interface AtomicTurnResult {
   wasAwaiting: CallStateAwaitingInput;
   slotsCollected: boolean;
   validation: ProductSlotValidation;
+  productMemory: SessionProductMemory;
+  syncLog?: SlotMemorySyncLog;
+  memoryCommitTimestamp?: number;
 }
 
 function normalizeIncomingIsbn(value: string): string | undefined {
@@ -170,8 +179,13 @@ export function mergeSlotsCumulative(
 
   if (incoming.title !== undefined && incoming.title !== "") {
     const nextTitle = incoming.title.trim();
-    if (!merged.title || nextTitle.length >= merged.title.trim().length) {
+    const isNewTitleEntity =
+      merged.title && nextTitle.toLowerCase() !== merged.title.trim().toLowerCase();
+    if (!merged.title || nextTitle.length >= merged.title.trim().length || isNewTitleEntity) {
       merged.title = nextTitle;
+    }
+    if (isNewTitleEntity) {
+      merged.wantsRecommendations = undefined;
     }
   }
 
@@ -184,36 +198,37 @@ export function mergeSlotsCumulative(
 
 /**
  * Validates product slots before any Shopify tool may run.
- * Uses persistent slotFlags — not transient turn signals.
+ * Uses SessionProductMemory as authoritative — slots are advisory only.
  */
-export function validateProductSlotState(state: CallState): ProductSlotValidation {
+export function validateProductSlotState(
+  state: CallState,
+  productMemory: SessionProductMemory,
+): ProductSlotValidation {
   if (state.intent !== "product") {
     return { ready: true };
   }
 
-  const { slots, slotFlags } = state;
-
-  if (slots.isbn && slotFlags.isbnCollected) {
+  if (productMemory.isbn && productMemory.isbnCollected && isCompleteIsbnValue(productMemory.isbn)) {
     return { ready: true };
   }
 
-  if (slots.title && slotFlags.titleCollected) {
+  if (productMemory.title && productMemory.titleCollected) {
     return { ready: true };
   }
 
-  if (slots.wantsRecommendations && slotFlags.recommendationsCollected) {
+  if (state.slots.wantsRecommendations && state.slotFlags.recommendationsCollected) {
     return { ready: true };
   }
 
-  if (slots.isbn && !slotFlags.isbnCollected) {
+  if (productMemory.isbn && !productMemory.isbnCollected) {
     return { ready: false, reason: "isbn_needs_confirmation" };
   }
 
-  if (slots.title && !slotFlags.titleCollected) {
+  if (productMemory.title && !productMemory.titleCollected) {
     return { ready: false, reason: "title_needs_confirmation" };
   }
 
-  if (slots.wantsRecommendations && !slotFlags.recommendationsCollected) {
+  if (state.slots.wantsRecommendations && !state.slotFlags.recommendationsCollected) {
     return { ready: false, reason: "recommendations_needs_confirmation" };
   }
 
@@ -309,6 +324,105 @@ export function resolveStickyIntent(
   return current;
 }
 
+export interface SlotMemorySyncResult {
+  memory: SessionProductMemory;
+  log: SlotMemorySyncLog;
+}
+
+/**
+ * HARD SYNC: merge ephemeral slots into SessionProductMemory.
+ * On conflict, memory wins unless slots carry a newly collected value this turn.
+ */
+export function syncSlotsToProductMemory(
+  callMemory: CallMemory,
+  slots: CallStateSlots,
+  slotFlags: CallStateSlotFlags,
+): SlotMemorySyncResult {
+  const prior = callMemory.product ?? emptyProductMemory();
+
+  const slotIsbn =
+    slots.isbn && isCompleteIsbnValue(slots.isbn) ? normalizeIsbn(slots.isbn) : undefined;
+  const slotTitle = slots.title ? normalizeTitle(slots.title) : undefined;
+
+  let isbn = prior.isbn;
+  let title = prior.title;
+  let memoryWins = false;
+
+  if (prior.isbn && slotIsbn && prior.isbn !== slotIsbn) {
+    isbn = prior.isbn;
+    memoryWins = true;
+  } else if (!prior.isbn && slotIsbn) {
+    isbn = slotIsbn;
+  } else if (slotIsbn && slotFlags.isbnCollected) {
+    isbn = slotIsbn;
+  } else if (prior.isbn) {
+    isbn = prior.isbn;
+    memoryWins = Boolean(slotIsbn && slotIsbn !== prior.isbn);
+  }
+
+  if (prior.title && slotTitle && prior.title.toLowerCase() !== slotTitle.toLowerCase()) {
+    if (slotFlags.titleCollected) {
+      title = slotTitle;
+    } else {
+      title = prior.title;
+      memoryWins = true;
+    }
+  } else if (!prior.title && slotTitle) {
+    title = slotTitle;
+  } else if (slotTitle && slotFlags.titleCollected) {
+    title = slotTitle;
+  } else if (prior.title) {
+    title = prior.title;
+  }
+
+  const synced: SessionProductMemory = {
+    isbn,
+    title,
+    lastSearchKey: prior.lastSearchKey,
+    lastResultProductId: prior.lastResultProductId,
+    isbnCollected:
+      prior.isbnCollected ||
+      slotFlags.isbnCollected ||
+      Boolean(isbn && isCompleteIsbnValue(isbn)),
+    titleCollected: prior.titleCollected || slotFlags.titleCollected,
+  };
+
+  callMemory.product = synced;
+
+  return {
+    memory: synced,
+    log: {
+      slotIsbn: slotIsbn,
+      slotTitle: slotTitle,
+      memoryIsbn: synced.isbn,
+      memoryTitle: synced.title,
+      memoryWins,
+      searchKey: buildProductSearchKey(synced),
+    },
+  };
+}
+
+/** Mirror authoritative memory back into ephemeral call-state slots. */
+export function applyProductMemoryToCallState(
+  state: CallState,
+  productMemory: SessionProductMemory,
+): CallState {
+  return {
+    ...state,
+    slots: {
+      ...state.slots,
+      isbn: productMemory.isbn ?? state.slots.isbn,
+      title: productMemory.title ?? state.slots.title,
+    },
+    slotFlags: {
+      ...state.slotFlags,
+      isbnCollected: productMemory.isbnCollected,
+      titleCollected: productMemory.titleCollected,
+    },
+    updatedAt: Date.now(),
+  };
+}
+
 /** Deterministic awaiting — never re-ask for collected slots. */
 export function resolveProductAwaiting(
   state: Pick<CallState, "awaitingInput" | "slots" | "slotFlags">,
@@ -335,6 +449,48 @@ export function resolveProductAwaiting(
 }
 
 /**
+ * Atomic memory commit — sync slots → memory → call state before gate/tools.
+ * Explicit async yields prevent partial commit under concurrent voice events.
+ */
+export async function commitMemoryTurnAtomic(
+  callSid: string,
+  input: {
+    intent: GateIntent;
+    incomingSlots: IncomingProductSlots;
+    userMessage?: string;
+  },
+  callMemory: CallMemory,
+): Promise<AtomicTurnResult> {
+  assertOrchestratorOnly("commitMemoryTurnAtomic", "callStateStore.ts");
+  const previous = getOrCreateCallState(callSid);
+  const wasAwaiting = previous.awaitingInput;
+  let merged = mergeTurnIntoCallState(previous, input);
+
+  await Promise.resolve();
+  const sync = syncSlotsToProductMemory(callMemory, merged.slots, merged.slotFlags);
+  const memoryCommitTimestamp = Date.now();
+
+  await Promise.resolve();
+  merged = applyProductMemoryToCallState(merged, sync.memory);
+
+  await Promise.resolve();
+  const productMemory = sync.memory;
+  const slotsCollected = isSlotCollectedThisTurn(wasAwaiting, merged);
+  const validation = validateProductSlotState(merged, productMemory);
+  saveCallState(merged);
+
+  return {
+    state: getOrCreateCallState(callSid),
+    wasAwaiting,
+    slotsCollected,
+    validation,
+    productMemory,
+    syncLog: sync.log,
+    memoryCommitTimestamp,
+  };
+}
+
+/**
  * Atomic turn update: read → merge deltas → validate → persist. No partial writes.
  */
 export function atomicMergeTurnState(
@@ -344,13 +500,24 @@ export function atomicMergeTurnState(
     incomingSlots: IncomingProductSlots;
     userMessage?: string;
   },
+  callMemory?: CallMemory,
 ): AtomicTurnResult {
   assertOrchestratorOnly("atomicMergeTurnState", "callStateStore.ts");
   const previous = getOrCreateCallState(callSid);
   const wasAwaiting = previous.awaitingInput;
-  const merged = mergeTurnIntoCallState(previous, input);
+  let merged = mergeTurnIntoCallState(previous, input);
+
+  let productMemory: SessionProductMemory = callMemory?.product ?? emptyProductMemory();
+  let syncLog: SlotMemorySyncLog | undefined;
+  if (callMemory) {
+    const sync = syncSlotsToProductMemory(callMemory, merged.slots, merged.slotFlags);
+    productMemory = sync.memory;
+    syncLog = sync.log;
+    merged = applyProductMemoryToCallState(merged, productMemory);
+  }
+
   const slotsCollected = isSlotCollectedThisTurn(wasAwaiting, merged);
-  const validation = validateProductSlotState(merged);
+  const validation = validateProductSlotState(merged, productMemory);
 
   saveCallState(merged);
 
@@ -359,6 +526,8 @@ export function atomicMergeTurnState(
     wasAwaiting,
     slotsCollected,
     validation,
+    productMemory,
+    syncLog,
   };
 }
 
@@ -409,10 +578,17 @@ export function mergeTurnIntoCallState(
     slots,
   );
 
+  const priorTitle = state.slots.title?.trim().toLowerCase();
+  const nextTitle = slots.title?.trim().toLowerCase();
+  const titleChanged = Boolean(priorTitle && nextTitle && priorTitle !== nextTitle);
+  const resolvedFlags = titleChanged && wasAwaiting !== "title"
+    ? { ...slotFlags, titleCollected: false }
+    : slotFlags;
+
   const intent = resolveStickyIntent(state, input.intent, input.userMessage ?? "");
 
   const productIntent = intent === "product" || input.intent === "product";
-  const draft = { ...state, slots, slotFlags, intent };
+  const draft = { ...state, slots, slotFlags: resolvedFlags, intent };
   const awaitingInput = productIntent
     ? resolveProductAwaiting(draft, input.userMessage ?? "")
     : state.awaitingInput;
@@ -474,6 +650,11 @@ export function applyDecisionToCallState(
   decision: string,
 ): CallState {
   assertOrchestratorOnly("applyDecisionToCallState", "callStateStore.ts");
+  return applyDecisionToCallStatePure(state, decision);
+}
+
+/** Pure gate-decision projection — safe for offline replay / reducers. */
+export function applyDecisionToCallStatePure(state: CallState, decision: string): CallState {
   switch (decision) {
     case "ASK_QUESTION":
       if (state.intent === "product") {

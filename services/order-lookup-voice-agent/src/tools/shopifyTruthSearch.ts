@@ -20,8 +20,7 @@ import {
   searchShopifyProducts,
 } from "./shopifyLiveSearch.js";
 
-export const STORE_NOT_FOUND_MESSAGE =
-  "I couldn't find that exact book in the store.";
+export { EXACT_MATCH_NOT_FOUND_MESSAGE as STORE_NOT_FOUND_MESSAGE } from "../constants/systemMessages.js";
 
 const MIN_RESULTS_BEFORE_EXPAND = 10;
 

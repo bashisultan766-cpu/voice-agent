@@ -1,15 +1,28 @@
 /**
- * Tool Decision Gate — ONLY module allowed to decide tool execution.
- * Decisions use persisted call state, not only the current utterance.
+ * Tool Decision Gate — deterministic only. SessionProductMemory is authoritative.
  */
 import type {
   CallStateAwaitingInput,
   CallStatePhase,
-  CallStateSlots,
 } from "../memory/callStateStore.js";
+import type { SessionProductMemory } from "../memory/callMemoryStore.js";
+import {
+  resolveProductToolAction,
+  type ToolExecutionReason,
+} from "./productRetrievalPolicy.js";
+import type { ExecutionContextSnapshot } from "../runtime/executionContextSnapshot.js";
 import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
 import { pipelineTrace } from "../utils/pipelineTrace.js";
 import type { ProductSearchSlots } from "../types/order.js";
+
+export function computeMissingSlots(
+  slots: Pick<ProductSearchSlots, "isbn" | "title">,
+): Array<"isbn" | "title"> {
+  const missing: Array<"isbn" | "title"> = [];
+  if (!slots.isbn) missing.push("isbn");
+  if (!slots.title) missing.push("title");
+  return missing;
+}
 
 export type GateIntent = "order" | "product" | "general" | "unknown";
 
@@ -25,28 +38,26 @@ export interface ToolDecisionState {
   intent: GateIntent;
   phase: CallStatePhase;
   awaitingInput: CallStateAwaitingInput;
-  slots: Pick<CallStateSlots, "isbn" | "title" | "wantsRecommendations">;
-  missingSlots: Array<"isbn" | "title">;
-  /** Caller answered a prior slot question this turn. */
-  slotsCollected: boolean;
-  /** Single source of truth — product tools require validation.ready === true. */
+  productMemory: SessionProductMemory;
   validationReady: boolean;
+  explicitRepeat: boolean;
+  wantsRecommendations: boolean;
   orderNumber?: string | null;
 }
 
-export function computeMissingSlots(
-  slots: Pick<ProductSearchSlots, "isbn" | "title">,
-): Array<"isbn" | "title"> {
-  const missing: Array<"isbn" | "title"> = [];
-  if (!slots.isbn) missing.push("isbn");
-  if (!slots.title) missing.push("title");
-  return missing;
+export interface ToolDecisionResult {
+  action: ToolAction;
+  reason: ToolExecutionReason | "order_number_present" | "non_product_intent";
 }
 
 /** Deterministic tool execution decision — orchestrator only. */
 export function decideToolExecution(state: ToolDecisionState): ToolAction {
+  return decideToolExecutionWithReason(state).action;
+}
+
+export function decideToolExecutionWithReason(state: ToolDecisionState): ToolDecisionResult {
   assertOrchestratorOnly("decideToolExecution", "toolDecisionGate.ts");
-  const decision = decideToolExecutionCore(state);
+  const result = decideToolExecutionCore(state);
   pipelineTrace({
     layer: "gate",
     file: "toolDecisionGate.ts",
@@ -54,63 +65,81 @@ export function decideToolExecution(state: ToolDecisionState): ToolAction {
     state: {
       intent: state.intent,
       validationReady: state.validationReady,
-      slots: state.slots,
-      decision,
+      productMemory: state.productMemory,
+      decision: result.action,
+      reason: result.reason,
     },
   });
-  return decision;
+  return result;
 }
 
-function decideToolExecutionCore(state: ToolDecisionState): ToolAction {
+function decideToolExecutionCore(state: ToolDecisionState): ToolDecisionResult {
   if (state.intent === "general" || state.intent === "unknown") {
-    return "conversationOnly";
+    return { action: "conversationOnly", reason: "non_product_intent" };
   }
 
   if (state.intent === "order") {
-    if (state.orderNumber) return "orderLookupTool";
-    return "ASK_QUESTION";
+    if (state.orderNumber) {
+      return { action: "orderLookupTool", reason: "order_number_present" };
+    }
+    return { action: "ASK_QUESTION", reason: "missing_memory" };
   }
 
   if (state.intent === "product") {
-    if (!state.validationReady) {
-      return "ASK_QUESTION";
-    }
-
-    const hasIsbn = Boolean(state.slots.isbn);
-    const hasTitle = Boolean(state.slots.title);
-    const wantsRec = Boolean(state.slots.wantsRecommendations);
-
-    if (hasIsbn) return "searchProductByISBN";
-    if (hasTitle) return "searchProductByTitle";
-    if (wantsRec) return "getSimilarProducts";
-
-    return "ASK_QUESTION";
+    const resolved = resolveProductToolAction(
+      state.productMemory,
+      state.validationReady,
+      state.explicitRepeat,
+      state.wantsRecommendations,
+    );
+    return { action: resolved.action, reason: resolved.reason };
   }
 
-  return "conversationOnly";
+  return { action: "conversationOnly", reason: "non_product_intent" };
 }
 
 export function buildToolDecisionState(input: {
   intent: GateIntent;
   phase: CallStatePhase;
   awaitingInput: CallStateAwaitingInput;
-  slots: CallStateSlots;
-  slotsCollected: boolean;
+  productMemory: SessionProductMemory;
   validationReady: boolean;
+  explicitRepeat: boolean;
+  wantsRecommendations?: boolean;
   orderNumber?: string | null;
 }): ToolDecisionState {
   return {
     intent: input.intent,
     phase: input.phase,
     awaitingInput: input.awaitingInput,
-    slots: {
-      isbn: input.slots.isbn,
-      title: input.slots.title,
-      wantsRecommendations: input.slots.wantsRecommendations,
-    },
-    missingSlots: computeMissingSlots(input.slots),
-    slotsCollected: input.slotsCollected,
+    productMemory: input.productMemory,
     validationReady: input.validationReady,
+    explicitRepeat: input.explicitRepeat,
+    wantsRecommendations: Boolean(input.wantsRecommendations),
     orderNumber: input.orderNumber,
   };
+}
+
+/** Build gate input from a frozen execution snapshot — no live state reads. */
+export function buildToolDecisionStateFromSnapshot(
+  snapshot: ExecutionContextSnapshot,
+  input: {
+    intent: GateIntent;
+    phase: CallStatePhase;
+    awaitingInput: CallStateAwaitingInput;
+    validationReady: boolean;
+    orderNumber?: string | null;
+  },
+): ToolDecisionState {
+  assertOrchestratorOnly("buildToolDecisionStateFromSnapshot", "toolDecisionGate.ts");
+  return buildToolDecisionState({
+    intent: input.intent,
+    phase: input.phase,
+    awaitingInput: input.awaitingInput,
+    productMemory: snapshot.memory,
+    validationReady: input.validationReady,
+    explicitRepeat: snapshot.explicitRepeat,
+    wantsRecommendations: snapshot.wantsRecommendations,
+    orderNumber: input.orderNumber,
+  });
 }

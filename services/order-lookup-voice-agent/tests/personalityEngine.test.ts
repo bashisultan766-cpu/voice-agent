@@ -17,8 +17,8 @@ describe("personalityEngine", () => {
 
   it("preserves grounded store-not-found message", () => {
     const memory = getOrCreateCustomerMemory("CA1");
-    const shaped = shapeVoiceResponse("I couldn't find it in the store right now", memory);
-    expect(shaped).toBe("I couldn't find it in the store right now");
+    const shaped = shapeVoiceResponse("I could not find an exact match in the system.", memory);
+    expect(shaped).toBe("I could not find an exact match in the system.");
   });
 
   it("avoids repeating identical assistant phrases", () => {

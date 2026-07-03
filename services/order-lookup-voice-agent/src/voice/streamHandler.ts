@@ -6,6 +6,13 @@ import {
   endCallSession,
   process,
 } from "../agents/conversationOrchestrator.js";
+import {
+  bufferPartialTranscript,
+  clearStreamBarrier,
+  enqueueStreamTurn,
+  takeFinalTranscript,
+} from "../runtime/streamTurnBarrier.js";
+import { logEventIngestion } from "../runtime/turnObservability.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
 
@@ -22,7 +29,6 @@ type SendFn = (msg: {
 
 export async function handleConversationRelaySocket(socket: WebSocket): Promise<void> {
   let session: CallSession | null = null;
-  let currentTurn: Promise<void> | null = null;
   let turnAbort: AbortController | null = null;
   let closed = false;
 
@@ -38,10 +44,6 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
           getSession: () => session,
           setSession: (s) => {
             session = s;
-          },
-          getCurrentTurn: () => currentTurn,
-          setCurrentTurn: (t) => {
-            currentTurn = t;
           },
           getTurnAbort: () => turnAbort,
           setTurnAbort: (a) => {
@@ -66,6 +68,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     closed = true;
     turnAbort?.abort();
     if (session?.callSid) {
+      clearStreamBarrier(session.callSid);
       endCallSession(session.callSid);
     }
     logger.info("relay_closed", { callSid: session?.callSid?.slice(0, 8) });
@@ -143,11 +146,21 @@ async function runStreamingTurn(
   }
 }
 
+function scheduleStreamingTurn(
+  session: CallSession,
+  callerText: string,
+  ctx: RelayMessageContext,
+): Promise<void> {
+  return enqueueStreamTurn(session.callSid, () =>
+    runStreamingTurn(session, callerText, ctx.send, (controller) => {
+      ctx.setTurnAbort(controller);
+    }),
+  );
+}
+
 interface RelayMessageContext {
   getSession: () => CallSession | null;
   setSession: (session: CallSession) => void;
-  getCurrentTurn: () => Promise<void> | null;
-  setCurrentTurn: (turn: Promise<void> | null) => void;
   getTurnAbort: () => AbortController | null;
   setTurnAbort: (abort: AbortController | null) => void;
   send: SendFn;
@@ -175,10 +188,12 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
       const routerSpeech = (message.customParameters?.routerSpeech ?? "").trim();
       if (routerSpeech) {
-        const turn = runStreamingTurn(session, routerSpeech, ctx.send, () => ctx.getTurnAbort());
-        ctx.setCurrentTurn(turn);
-        await turn;
-        ctx.setCurrentTurn(null);
+        logEventIngestion(session.callSid, {
+          source: "router_speech",
+          textLength: routerSpeech.length,
+          partial: false,
+        });
+        await scheduleStreamingTurn(session, routerSpeech, ctx);
       }
       break;
     }
@@ -186,15 +201,27 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
     case "prompt": {
       const session = ctx.getSession();
       if (!session) return;
-      if (!message.last) return;
 
-      ctx.getTurnAbort()?.abort();
-      const turn = runStreamingTurn(session, message.voicePrompt ?? "", ctx.send, (controller) => {
-        ctx.setTurnAbort(controller);
+      if (!message.last) {
+        bufferPartialTranscript(session.callSid, message.voicePrompt ?? "");
+        logEventIngestion(session.callSid, {
+          source: "prompt",
+          textLength: (message.voicePrompt ?? "").length,
+          partial: true,
+        });
+        return;
+      }
+
+      const callerText = takeFinalTranscript(session.callSid, message.voicePrompt ?? "");
+      if (!callerText) return;
+
+      logEventIngestion(session.callSid, {
+        source: "prompt",
+        textLength: callerText.length,
+        partial: false,
       });
-      ctx.setCurrentTurn(turn);
-      await turn;
-      ctx.setCurrentTurn(null);
+
+      await scheduleStreamingTurn(session, callerText, ctx);
       break;
     }
 
@@ -206,13 +233,12 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
     case "dtmf": {
       const session = ctx.getSession();
       if (!session || !message.digit) return;
-      ctx.getTurnAbort()?.abort();
-      const turn = runStreamingTurn(session, message.digit, ctx.send, (controller) => {
-        ctx.setTurnAbort(controller);
+      logEventIngestion(session.callSid, {
+        source: "dtmf",
+        textLength: message.digit.length,
+        partial: false,
       });
-      ctx.setCurrentTurn(turn);
-      await turn;
-      ctx.setCurrentTurn(null);
+      await scheduleStreamingTurn(session, message.digit, ctx);
       break;
     }
 

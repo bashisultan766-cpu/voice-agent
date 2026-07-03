@@ -51,7 +51,7 @@ export function buildPersonalityPrompt(memory: CustomerMemory): string {
     historyHint,
     antiRepeat,
     "Keep responses to 1–2 short sentences for phone voice.",
-    "If a product is not in the facts list, say exactly: I couldn't find it in the store right now.",
+    "If a product is not in the facts list, say exactly: I could not find an exact match in the system.",
   ]
     .filter(Boolean)
     .join("\n");
