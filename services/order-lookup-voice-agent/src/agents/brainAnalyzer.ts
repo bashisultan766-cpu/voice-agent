@@ -47,7 +47,8 @@ export async function analyzeBrainTurn(
   callState?: CallState,
 ): Promise<BrainAnalysis> {
   const text = (userMessage ?? "").trim();
-  const parsed = parseProductSlotsFromSpeech(text);
+  const awaiting = callState?.awaitingInput ?? "none";
+  const parsed = parseProductSlotsFromSpeech(text, awaiting);
   const persistedSlots: ProductSearchSlots = callState
     ? {
         isbn: callState.slots.isbn,
@@ -117,7 +118,7 @@ function classifyIntentRegex(text: string): { intent: GateIntent; confidence: nu
   }
 
   if (
-    /\b(buy|purchase|want to order|book|books|magazine|isbn|title|do you have|looking for|i need a book|harry potter)\b/i.test(
+    /\b(buy|purchase|want to (buy|order)|how (do|can) (i|you) (buy|order|get)|book|books|magazine|isbn|title|do you have|looking for|i need a book)\b/i.test(
       text,
     ) ||
     extractIsbnFromSpeech(text)

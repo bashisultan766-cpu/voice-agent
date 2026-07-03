@@ -4,10 +4,28 @@
 import { STORE_NOT_FOUND_MESSAGE } from "../tools/shopifyProductTools.js";
 import type { StructuredProduct } from "../types/product.js";
 
+function formatVoicePrice(price: string): string {
+  const value = Number(price);
+  if (!Number.isFinite(value)) return price;
+
+  const dollars = Math.floor(value);
+  const cents = Math.round((value - dollars) * 100);
+
+  if (cents === 0) {
+    return `${dollars} dollar${dollars === 1 ? "" : "s"}`;
+  }
+
+  return `${dollars} dollar${dollars === 1 ? "" : "s"} and ${cents} cent${cents === 1 ? "" : "s"}`;
+}
+
+function formatStockPhrase(inStock: boolean): string {
+  return inStock ? "in stock and available" : "not in stock right now";
+}
+
 function formatOneProduct(p: StructuredProduct): string {
-  const price = p.variants[0]?.price ?? "N/A";
-  const stock = p.variants.some((v) => v.inStock) ? "in stock" : "out of stock";
-  return `"${p.title}" at ${price} dollars, ${stock}`;
+  const price = formatVoicePrice(p.variants[0]?.price ?? "0");
+  const inStock = p.variants.some((v) => v.inStock);
+  return `"${p.title}" for ${price}, ${formatStockPhrase(inStock)}`;
 }
 
 export function formatProductResults(
@@ -35,7 +53,7 @@ export function formatProductResults(
   }
 
   const top = products[0];
-  const price = top.variants[0]?.price ?? "N/A";
-  const stock = top.variants.some((v) => v.inStock) ? "in stock" : "out of stock";
-  return `Yes — "${top.title}" is ${price} dollars and ${stock}.`;
+  const price = formatVoicePrice(top.variants[0]?.price ?? "0");
+  const inStock = top.variants.some((v) => v.inStock);
+  return `Yes — we have "${top.title}" for ${price}, and it is ${formatStockPhrase(inStock)}.`;
 }

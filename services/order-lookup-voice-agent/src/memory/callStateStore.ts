@@ -2,6 +2,7 @@
  * Per-call state machine — single source of truth for slots, phase, and intent.
  */
 import type { GateIntent } from "../agents/toolDecisionGate.js";
+import { advanceProductAwaiting } from "../agents/productSlotPhase.js";
 import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
@@ -100,7 +101,11 @@ export function validateProductSlotState(
     return { ready: false, reason: "missing_slots" };
   }
 
-  if (hasIsbn) {
+  if (hasIsbn && slotsCollected) {
+    return { ready: true };
+  }
+
+  if (hasTitle && slotsCollected) {
     return { ready: true };
   }
 
@@ -131,6 +136,7 @@ export function atomicMergeTurnState(
   input: {
     intent: GateIntent;
     incomingSlots: ProductSearchSlots;
+    userMessage?: string;
   },
 ): AtomicTurnResult {
   assertOrchestratorOnly("atomicMergeTurnState", "callStateStore.ts");
@@ -155,6 +161,7 @@ export function mergeTurnIntoCallState(
   input: {
     intent: GateIntent;
     incomingSlots: ProductSearchSlots;
+    userMessage?: string;
   },
 ): CallState {
   const slots: CallStateSlots = {
@@ -171,10 +178,16 @@ export function mergeTurnIntoCallState(
     intent = input.intent;
   }
 
+  const productIntent = intent === "product" || input.intent === "product";
+  const awaitingInput = productIntent
+    ? advanceProductAwaiting(state.awaitingInput, input.userMessage ?? "", slots)
+    : state.awaitingInput;
+
   return {
     ...state,
     intent,
     slots,
+    awaitingInput,
     updatedAt: Date.now(),
   };
 }
@@ -183,14 +196,19 @@ export function isSlotAnswerComplete(
   wasAwaiting: CallStateAwaitingInput,
   slots: CallStateSlots,
 ): boolean {
+  if (wasAwaiting === "isbn") return Boolean(slots.isbn);
+  if (wasAwaiting === "title") return Boolean(slots.title);
+
+  if (wasAwaiting === "isbn_or_title") {
+    if (slots.isbn) return true;
+    if (slots.wantsRecommendations) return true;
+    return false;
+  }
+
   if (wasAwaiting === "none") {
     return Boolean(slots.isbn);
   }
-  if (wasAwaiting === "isbn_or_title") {
-    return Boolean(slots.isbn || slots.title || slots.wantsRecommendations);
-  }
-  if (wasAwaiting === "isbn") return Boolean(slots.isbn);
-  if (wasAwaiting === "title") return Boolean(slots.title);
+
   return false;
 }
 
@@ -202,6 +220,9 @@ export function applyDecisionToCallState(
   switch (decision) {
     case "ASK_QUESTION":
       if (state.intent === "product") {
+        if (state.awaitingInput === "isbn" || state.awaitingInput === "title") {
+          return { ...state, phase: "PHASE_1" };
+        }
         return { ...state, phase: "PHASE_1", awaitingInput: "isbn_or_title" };
       }
       if (state.intent === "order") {

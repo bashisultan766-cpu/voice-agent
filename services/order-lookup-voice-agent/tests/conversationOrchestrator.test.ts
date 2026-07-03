@@ -129,11 +129,12 @@ describe("conversationOrchestrator flows", () => {
     expect(titleSpy).not.toHaveBeenCalled();
   });
 
-  it("Phase 2: searches Harry Potter after slot confirmation", async () => {
+  it("Phase 2: searches Harry Potter after title collection", async () => {
     const session = createCallSession("CA_HP2", "+1", "+2");
     await collectSpeech(session, "I want a book");
+    await collectSpeech(session, "I have a title");
     const speech = await collectSpeech(session, "Harry Potter");
-    expect(speech).toMatch(/Harry Potter|Azkaban|found/i);
+    expect(speech).toMatch(/Harry Potter|Azkaban/i);
     expect(speech).not.toMatch(/let me search|I will check/i);
   });
 
@@ -190,9 +191,10 @@ describe("conversationOrchestrator flows", () => {
 
     const session = createCallSession("CA_MISS", "+1", "+2");
     await collectSpeech(session, "I want a book");
+    await collectSpeech(session, "I have a title");
     const speech = await collectSpeech(session, "Imaginary Title XYZ");
 
-    expect(speech).toMatch(/don't have that exact book|similar options/i);
+    expect(speech).toMatch(/don't have that exact book|options/i);
     expect(similarSpy).toHaveBeenCalled();
   });
 });

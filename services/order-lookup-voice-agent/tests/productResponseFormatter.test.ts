@@ -13,11 +13,11 @@ const sample: StructuredProduct = {
 };
 
 describe("formatProductResults", () => {
-  it("formats exact match in one natural sentence", () => {
+  it("formats exact match with voice-friendly price and stock", () => {
     const speech = formatProductResults([sample], false);
     expect(speech).toMatch(/Harry Potter/);
-    expect(speech).toMatch(/14\.99/);
-    expect(speech).toMatch(/in stock/i);
+    expect(speech).toMatch(/14 dollars and 99 cents/i);
+    expect(speech).toMatch(/in stock and available/i);
     expect(speech).not.toMatch(/similar options/i);
   });
 

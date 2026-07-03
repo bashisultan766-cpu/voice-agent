@@ -80,7 +80,7 @@ function decideToolExecutionCore(state: ToolDecisionState): ToolAction {
       return "ASK_QUESTION";
     }
 
-    if (hasIsbn) {
+    if (hasIsbn && state.slotsCollected) {
       return "searchProductByISBN";
     }
 

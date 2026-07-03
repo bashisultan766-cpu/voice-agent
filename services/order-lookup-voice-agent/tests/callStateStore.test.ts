@@ -55,9 +55,12 @@ describe("callStateStore", () => {
     expect(isSlotAnswerComplete("none", { title: "Harry Potter" })).toBe(false);
   });
 
-  it("marks title answer complete only after prior ask", () => {
+  it("marks title answer complete only after awaiting title", () => {
     expect(
       isSlotAnswerComplete("isbn_or_title", { title: "Harry Potter" }),
+    ).toBe(false);
+    expect(
+      isSlotAnswerComplete("title", { title: "Harry Potter" }),
     ).toBe(true);
     expect(
       isSlotAnswerComplete("none", { title: "Harry Potter" }),
@@ -92,7 +95,7 @@ describe("callStateStore", () => {
     expect(result.reason).toBe("missing_slots");
   });
 
-  it("validateProductSlotState allows ISBN immediately", () => {
+  it("validateProductSlotState allows ISBN when collected", () => {
     const state = getOrCreateCallState("CA_ISBN");
     saveCallState(
       mergeTurnIntoCallState(state, {
@@ -101,7 +104,7 @@ describe("callStateStore", () => {
       }),
     );
 
-    const result = validateProductSlotState(getOrCreateCallState("CA_ISBN"), false);
+    const result = validateProductSlotState(getOrCreateCallState("CA_ISBN"), true);
     expect(result.ready).toBe(true);
   });
 

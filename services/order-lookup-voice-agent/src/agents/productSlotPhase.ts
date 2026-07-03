@@ -1,6 +1,7 @@
 /**
  * Phase 1 slot parsing — conversation only, no Shopify calls.
  */
+import type { CallStateAwaitingInput } from "../memory/callStateStore.js";
 import { extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import type { CallSession, ProductSearchSlots } from "../types/order.js";
 
@@ -25,34 +26,75 @@ export function isMeaningfulTitle(title: string): boolean {
   return true;
 }
 
-/** Title search requires prior slot collection — never on first utterance alone. */
-export function isTitleReadyForSearch(
-  title: string | undefined,
-  slotsCollected: boolean,
-): boolean {
-  if (!title?.trim()) return false;
-  return slotsCollected;
-}
-
-export function parseProductSlotsFromSpeech(speech: string): ProductSearchSlots {
-  const slots: ProductSearchSlots = {};
-  const isbn = extractIsbnFromSpeech(speech);
-  if (isbn) slots.isbn = isbn;
-
-  const titleCandidate = extractTitleCandidate(speech);
-  if (isMeaningfulTitle(titleCandidate)) {
-    slots.title = titleCandidate;
-  }
-
-  if (/\b(magazine|magazines)\b/i.test(speech)) slots.category = "magazine";
-  else if (/\b(newspaper|newspapers)\b/i.test(speech)) slots.category = "newspaper";
-  else if (/\b(book|books)\b/i.test(speech)) slots.category = "book";
+/** Caller declares they have a title, ISBN, or want recommendations (no value yet). */
+export function detectSlotTypeChoice(
+  speech: string,
+): "isbn" | "title" | "recommendations" | null {
+  const text = speech.trim();
+  if (!text) return null;
 
   if (
-    /\b(recommend|suggestions?|popular|what do you have|surprise me|anything good|suggest something)\b/i.test(
-      speech,
+    /\b(recommend|suggestions?|popular|what do you have|surprise me|anything good|suggest something|interested topic|topic)\b/i.test(
+      text,
     )
   ) {
+    return "recommendations";
+  }
+
+  if (
+    /\b(i\s+have|i'?ve\s+got|got|with)\s+(an?\s+)?isbn\b/i.test(text) ||
+    /\bisbn\s+number\b/i.test(text) ||
+    /^(the\s+)?isbn\b/i.test(text)
+  ) {
+    return "isbn";
+  }
+
+  if (
+    /\b(i\s+have|i'?ve\s+got|got|with)\s+(an?\s+)?title\b/i.test(text) ||
+    /\bthe\s+title\b/i.test(text) ||
+    /^title\b/i.test(text)
+  ) {
+    return "title";
+  }
+
+  return null;
+}
+
+/**
+ * Parse slots from speech — context-aware so titles are NOT grabbed on intent-only turns.
+ */
+export function parseProductSlotsFromSpeech(
+  speech: string,
+  awaiting: CallStateAwaitingInput = "none",
+): ProductSearchSlots {
+  const slots: ProductSearchSlots = {};
+  const text = speech.trim();
+
+  const shouldParseIsbn =
+    awaiting === "isbn" ||
+    awaiting === "isbn_or_title" ||
+    (awaiting === "none" && /\bisbn\b/i.test(text)) ||
+    extractIsbnFromSpeech(text) !== null;
+
+  const shouldParseTitle = awaiting === "title";
+
+  if (shouldParseIsbn) {
+    const isbn = extractIsbnFromSpeech(text);
+    if (isbn) slots.isbn = isbn;
+  }
+
+  if (shouldParseTitle) {
+    const titleCandidate = extractTitleCandidate(text);
+    if (isMeaningfulTitle(titleCandidate)) {
+      slots.title = titleCandidate;
+    }
+  }
+
+  if (/\b(magazine|magazines)\b/i.test(text)) slots.category = "magazine";
+  else if (/\b(newspaper|newspapers)\b/i.test(text)) slots.category = "newspaper";
+  else if (/\b(book|books)\b/i.test(text)) slots.category = "book";
+
+  if (detectSlotTypeChoice(text) === "recommendations") {
     slots.wantsRecommendations = true;
   }
 
@@ -71,6 +113,30 @@ export function mergeProductSlots(
   };
 }
 
+/** Advance awaiting state after caller declares slot type or provides a value. */
+export function advanceProductAwaiting(
+  wasAwaiting: CallStateAwaitingInput,
+  speech: string,
+  slots: Pick<ProductSearchSlots, "isbn" | "title" | "wantsRecommendations">,
+): CallStateAwaitingInput {
+  if (wasAwaiting === "isbn" && slots.isbn) return "none";
+  if (wasAwaiting === "title" && slots.title) return "none";
+  if (wasAwaiting === "isbn_or_title" && slots.isbn) return "none";
+
+  const choice = detectSlotTypeChoice(speech);
+
+  if (wasAwaiting === "isbn_or_title") {
+    if (choice === "isbn" && !slots.isbn) return "isbn";
+    if (choice === "title" && !slots.title) return "title";
+    return "isbn_or_title";
+  }
+
+  if (wasAwaiting === "isbn" && !slots.isbn) return "isbn";
+  if (wasAwaiting === "title" && !slots.title) return "title";
+
+  return wasAwaiting;
+}
+
 export function isPhase2Ready(
   slots: ProductSearchSlots,
   session?: Pick<CallSession, "awaitingInput">,
@@ -83,6 +149,23 @@ export function isPhase2Ready(
 
 export type ProductSlotPromptKind = "isbn" | "title" | "both" | "category";
 
+/** Pick prompt based on persisted awaiting state (3-step flow). */
+export function pickProductSlotQuestionForAwaiting(
+  awaiting: CallStateAwaitingInput,
+  slots?: ProductSearchSlots,
+): string {
+  if (awaiting === "isbn") {
+    return pickVariedSlotPrompt(ISBN_VALUE_PROMPTS);
+  }
+  if (awaiting === "title") {
+    return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);
+  }
+  if (awaiting === "isbn_or_title") {
+    return pickVariedSlotPrompt(BOOK_INTENT_PROMPTS);
+  }
+  return pickProductSlotQuestion(slots ?? {}, "both");
+}
+
 export function pickProductSlotQuestion(
   slots: ProductSearchSlots,
   kind: ProductSlotPromptKind = "both",
@@ -91,16 +174,16 @@ export function pickProductSlotQuestion(
     return pickVariedSlotPrompt(CATEGORY_PROMPTS);
   }
   if (slots.isbn && !slots.title) {
-    return pickVariedSlotPrompt(ISBN_PROMPTS);
+    return pickVariedSlotPrompt(ISBN_VALUE_PROMPTS);
   }
   if (slots.title && !slots.isbn && kind !== "both") {
-    return pickVariedSlotPrompt(TITLE_PROMPTS);
+    return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);
   }
   if (kind === "isbn") {
-    return pickVariedSlotPrompt(ISBN_PROMPTS);
+    return pickVariedSlotPrompt(ISBN_VALUE_PROMPTS);
   }
   if (kind === "title") {
-    return pickVariedSlotPrompt(TITLE_PROMPTS);
+    return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);
   }
   if (isGenericBookIntent(slots)) {
     return pickVariedSlotPrompt(BOOK_INTENT_PROMPTS);
@@ -120,25 +203,26 @@ const CATEGORY_PROMPTS = [
 ];
 
 const BOOK_INTENT_PROMPTS = [
-  "Sure — do you have a title or an ISBN number? Or would you like recommendations?",
-  "Got it — share a title or ISBN, or I can suggest some popular books.",
-  "Happy to help — do you have a title, an ISBN, or would you like recommendations?",
+  "Sure — do you have a book title, an ISBN number, or an interested topic you'd like me to search?",
+  "I can help with that. Do you have a title, an ISBN, or would you like recommendations?",
+  "Happy to help — do you have a title, an ISBN number, or a topic in mind?",
 ];
 
-const ISBN_PROMPTS = [
-  "Sure — what's the ISBN number?",
-  "Please share the ISBN and I'll look it up.",
+const ISBN_VALUE_PROMPTS = [
+  "Great — please give me your ISBN number.",
+  "Sure — go ahead and tell me the ISBN number.",
+  "Please share the ISBN and I'll look it up in our store.",
 ];
 
-const TITLE_PROMPTS = [
-  "Sure — what's the book title?",
-  "Which title should I search for?",
+const TITLE_VALUE_PROMPTS = [
+  "Great — please give me the book title.",
+  "Sure — what's the title of the book?",
+  "Go ahead and tell me the title and I'll search our catalog.",
 ];
 
 const BOTH_UNCLEAR_PROMPTS = [
-  "Do you have a book title, an ISBN number, a magazine name, or a newspaper name?",
-  "I can look up a title, an ISBN, a magazine, or a newspaper — what do you have?",
-  "Share a title or ISBN, or tell me if you'd like recommendations.",
+  "Do you have a book title, an ISBN number, or a topic you'd like me to search?",
+  "I can look up a title or ISBN — which do you have?",
 ];
 
 let promptRotation = 0;

@@ -24,16 +24,29 @@ describe("toolDecisionGate", () => {
     expect(decision).toBe("ASK_QUESTION");
   });
 
-  it("returns searchProductByISBN when ISBN is present", () => {
+  it("returns searchProductByISBN when ISBN is present and collected", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         ...phase1,
         slots: { isbn: "9783161484100" },
-        slotsCollected: false,
+        slotsCollected: true,
       }),
     );
     expect(decision).toBe("searchProductByISBN");
+  });
+
+  it("returns ASK_QUESTION when ISBN mentioned but not yet collected", () => {
+    const decision = decideToolExecution(
+      buildToolDecisionState({
+        intent: "product",
+        phase: "PHASE_1",
+        awaitingInput: "isbn",
+        slots: {},
+        slotsCollected: false,
+      }),
+    );
+    expect(decision).toBe("ASK_QUESTION");
   });
 
   it("returns ASK_QUESTION for title on first turn without slot collection", () => {

@@ -60,6 +60,7 @@ import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
   pickProductSlotQuestion,
+  pickProductSlotQuestionForAwaiting,
 } from "./productSlotPhase.js";
 import { smoothForVoice, speechChunksFromText } from "../services/voiceSmoothingEngine.js";
 import type { StructuredProduct } from "../types/product.js";
@@ -345,6 +346,7 @@ async function* runGateControlledTurn(
   const turn = atomicMergeTurnState(session.callSid, {
     intent: analysis.intent,
     incomingSlots: analysis.slots,
+    userMessage: text,
   });
 
   const rawDecision = decideToolExecution(
@@ -474,8 +476,12 @@ async function* handleGateAskQuestion(
   }
 
   session.phase = "awaiting_order_number";
+  const callState = getOrCreateCallState(session.callSid);
   yield* yieldSpeech(
-    recordAssistant(session.callSid, pickProductSlotQuestion(analysis.slots, "both")),
+    recordAssistant(
+      session.callSid,
+      pickProductSlotQuestionForAwaiting(callState.awaitingInput, analysis.slots),
+    ),
   );
   yield doneEvent(session.phase);
 }
