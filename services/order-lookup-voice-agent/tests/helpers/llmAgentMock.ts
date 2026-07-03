@@ -13,6 +13,7 @@ import {
 } from "../../src/nlp/entityExtractor.js";
 import { extractIsbnFromSpeech } from "../../src/utils/productSearchNormalize.js";
 import type { LlmToolExecutionRecord } from "../../src/adapters/llmToolExecutor.js";
+import { ORDER_NOT_FOUND_STRICT_SPOKEN } from "../../src/constants/systemMessages.js";
 
 function lastAssistantAsked(messages: LlmAgentTurnInput["messages"], pattern: RegExp): boolean {
   const last = [...messages].reverse().find((m) => m.role === "assistant");
@@ -83,7 +84,7 @@ export async function defaultTestLlmAgentTurn(
     const speech =
       exec.ok && exec.data && "orderNumber" in exec.data
         ? buildOrderStatusTts(exec.data).text
-        : "I couldn't find an order with that number. Could you double-check it for me?";
+        : ORDER_NOT_FOUND_STRICT_SPOKEN;
     return {
       speech,
       toolExecutions,

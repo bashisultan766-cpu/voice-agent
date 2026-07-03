@@ -30,6 +30,10 @@ import {
   validateShopifyExecutionGate,
 } from "../nlp/entityExtractor.js";
 import {
+  ORDER_NOT_FOUND_STRICT_SPOKEN,
+  SYSTEM_MAINTENANCE_SPOKEN,
+} from "../constants/systemMessages.js";
+import {
   fulfillmentStatusPhrase,
   speakCardLast4,
   speakMoney,
@@ -233,14 +237,22 @@ function buildOrderFallbackTts(result: OrderStatusResult): TtsPayload {
   }
   if (result.status === "throttled" || result.status === "api_error" || result.status === "system_maintenance") {
     return {
-      text: "I'm having trouble reaching our order system right now. Please try again in a moment.",
+      text: SYSTEM_MAINTENANCE_SPOKEN,
       awaitingSlot: "order_number",
     };
   }
   return {
-    text: "I couldn't find an order with that number. Could you double-check the order number and try again?",
+    text: ORDER_NOT_FOUND_STRICT_SPOKEN,
     awaitingSlot: "order_number",
   };
+}
+
+/** Deterministic order speech — never use LLM paraphrase for Shopify order facts. */
+export function groundedOrderSpeech(result: OrderStatusResult): string {
+  if (result.status === "found" && result.orderNumber) {
+    return buildOrderStatusTts(result).text;
+  }
+  return buildOrderFallbackTts(result).text;
 }
 
 function buildBookFallbackTts(

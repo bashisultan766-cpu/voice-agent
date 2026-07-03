@@ -11,6 +11,12 @@ import {
   type LlmToolExecutionRecord,
   type LlmToolName,
 } from "./llmToolExecutor.js";
+import { groundedOrderSpeech } from "../agents/fulfillmentHandlers.js";
+import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
+import {
+  ORDER_NOT_FOUND_STRICT_SPOKEN,
+  SYSTEM_MAINTENANCE_SPOKEN,
+} from "../constants/systemMessages.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -199,6 +205,55 @@ function buildOpenAiMessages(
   ];
 }
 
+function lastAssistantAskedForOrder(messages: LlmChatMessage[]): boolean {
+  const last = [...messages].reverse().find((m) => m.role === "assistant");
+  return Boolean(last && /order number/i.test(last.content));
+}
+
+function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | null {
+  const awaitingSlot = lastAssistantAskedForOrder(input.messages);
+  const orderNumber = extractOrderNumberFromStt(input.userMessage, { awaitingSlot });
+  if (!orderNumber) return null;
+
+  const lower = input.userMessage.toLowerCase();
+  const hasOrderIntent =
+    awaitingSlot ||
+    /\b(order|track|status|number|lookup)\b/i.test(lower) ||
+    /^\d{4,10}(-[a-z0-9]{1,6})?$/i.test(input.userMessage.trim());
+
+  return hasOrderIntent ? orderNumber : null;
+}
+
+function groundedSpeechFromOrderToolRecord(record: LlmToolExecutionRecord): string {
+  if (record.status === "blocked") {
+    return record.errorMessage ?? "What's your order number?";
+  }
+  if (
+    record.status === "system_maintenance" ||
+    record.status === "api_error" ||
+    record.status === "throttled"
+  ) {
+    return SYSTEM_MAINTENANCE_SPOKEN;
+  }
+  if (record.data && "orderNumber" in record.data) {
+    return groundedOrderSpeech(record.data);
+  }
+  return ORDER_NOT_FOUND_STRICT_SPOKEN;
+}
+
+function resultFromOrderToolExecution(
+  record: LlmToolExecutionRecord,
+  toolExecutions: LlmToolExecutionRecord[],
+): LlmAgentTurnResult {
+  const speech = groundedSpeechFromOrderToolRecord(record);
+  return {
+    speech,
+    toolExecutions,
+    responseType: inferResponseType(speech, toolExecutions),
+    ...extractRecordMeta(toolExecutions),
+  };
+}
+
 /**
  * Run one caller turn with tool-pending events for system-level filler injection.
  */
@@ -214,6 +269,21 @@ export async function* runLlmAgentTurnEvents(
       };
     }
     yield { type: "result", result };
+    return;
+  }
+
+  const forcedOrderNumber = detectOrderNumberForForcedLookup(input);
+  if (forcedOrderNumber) {
+    yield { type: "tool_pending", tools: ["get_shopify_order_status"] };
+    const record = await executeLlmTool(
+      "get_shopify_order_status",
+      { orderNumber: forcedOrderNumber },
+      input.callSid,
+    );
+    yield {
+      type: "result",
+      result: resultFromOrderToolExecution(record, [record]),
+    };
     return;
   }
 
@@ -277,6 +347,17 @@ export async function* runLlmAgentTurnEvents(
             tool_call_id: call.id,
             content: toolResultForLlm(record),
           });
+        }
+
+        const lastOrderExec = [...toolExecutions]
+          .reverse()
+          .find((exec) => exec.tool === "get_shopify_order_status");
+        if (lastOrderExec) {
+          yield {
+            type: "result",
+            result: resultFromOrderToolExecution(lastOrderExec, toolExecutions),
+          };
+          return;
         }
 
         continue;

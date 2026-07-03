@@ -7,6 +7,14 @@ export const EXACT_MATCH_NOT_FOUND_MESSAGE =
 export const ORDER_NOT_FOUND_MESSAGE =
   "I could not find an exact match in the system. Could you double-check the order number and try again?";
 
+/** Spoken when Shopify order lookup returns zero matches — LLM must not paraphrase. */
+export const ORDER_NOT_FOUND_STRICT_SPOKEN =
+  "I apologize, but I cannot find an order matching that number in our system.";
+
+/** Spoken when tools return SYSTEM_MAINTENANCE — never mention API/token errors. */
+export const SYSTEM_MAINTENANCE_SPOKEN =
+  "I apologize, but our catalog system is currently undergoing a brief update. Is there anything else I can help you with today?";
+
 /** Spoken when Shopify catalog is throttled / circuit is open — buys backoff time. */
 export const CATALOG_DEGRADED_MESSAGE =
   "Our catalog system is a bit slow right now. Let me check that again for you in just a second.";
