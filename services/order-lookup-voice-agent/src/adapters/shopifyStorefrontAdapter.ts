@@ -36,13 +36,9 @@ import {
   buildTitleTruthQueries,
 } from "../tools/shopifyTruthSearch.js";
 import {
-  extractPaymentMethod,
-  extractRefundAmount,
-  extractRefundNotificationDate,
-  extractRefundNotificationEmail,
-  extractRefundReason,
-  extractTimelineRefundReason,
-} from "./orderFieldExtractors.js";
+  parseDeepOrderData,
+  type DeepOrderGraphqlNode,
+} from "../utils/orderDataParser.js";
 
 // Re-export formatter validation for order numbers (canonical source).
 export { isValidOrderNumberFormat } from "../utils/formatter.js";
@@ -66,6 +62,8 @@ export interface OrderStatusResult {
   estimatedDeliveryDays?: number;
   estimatedDeliveryDate?: string;
   customerName?: string;
+  /** Registered Shopify customer / order contact email — never the refund notification email. */
+  customerEmail?: string;
   financialStatus?: string;
   refundStatus?: string;
   refundReason?: string;
@@ -123,59 +121,7 @@ interface GqlFulfillmentNode {
   }>;
 }
 
-interface GqlOrderNode {
-  id: string;
-  name: string;
-  createdAt?: string;
-  processedAt?: string | null;
-  updatedAt?: string;
-  email?: string | null;
-  note?: string | null;
-  displayFulfillmentStatus?: string;
-  displayFinancialStatus?: string;
-  customer?: {
-    firstName?: string;
-    lastName?: string;
-    email?: string | null;
-  } | null;
-  subtotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
-  totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
-  totalShippingPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
-  customAttributes?: Array<{ key?: string; value?: string }>;
-  paymentGatewayNames?: string[];
-  events?: {
-    edges?: Array<{
-      node?: {
-        message?: string | null;
-        action?: string | null;
-        createdAt?: string | null;
-      };
-    }>;
-  };
-  lineItems?: {
-    edges?: Array<{ node?: { title?: string; quantity?: number } }>;
-  };
-  refunds?: Array<{
-    note?: string | null;
-    totalRefundedSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
-    transactions?: Array<{
-      gateway?: string;
-      formattedGateway?: string;
-      paymentDetails?: { company?: string; number?: string };
-    }>;
-  }>;
-  transactions?: Array<{
-    kind?: string;
-    status?: string;
-    gateway?: string;
-    formattedGateway?: string;
-    paymentDetails?: {
-      company?: string;
-      number?: string;
-    };
-  }>;
-  fulfillments?: GqlFulfillmentNode[];
-}
+interface GqlOrderNode extends DeepOrderGraphqlNode {}
 
 const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first: Int!) {
   orders(first: $first, query: $query) {
@@ -195,6 +141,12 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
           lastName
           email
         }
+        currentSubtotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
         subtotalPriceSet {
           shopMoney {
             amount
@@ -213,7 +165,7 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
             currencyCode
           }
         }
-        lineItems(first: 15) {
+        lineItems(first: 50) {
           edges {
             node {
               title
@@ -226,7 +178,7 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
           value
         }
         paymentGatewayNames
-        events(first: 25) {
+        events(first: 50) {
           edges {
             node {
               ... on BasicEvent {
@@ -303,6 +255,12 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
           lastName
           email
         }
+        currentSubtotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
         subtotalPriceSet {
           shopMoney {
             amount
@@ -321,7 +279,7 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             currencyCode
           }
         }
-        lineItems(first: 15) {
+        lineItems(first: 50) {
           edges {
             node {
               title
@@ -451,87 +409,26 @@ function estimateDeliveryDays(
   return DEFAULT_UNFULFILLED_SHIP_DAYS;
 }
 
-function timelineEvents(node: GqlOrderNode) {
-  return (node.events?.edges ?? [])
-    .map((e) => e.node)
-    .filter(
-      (n): n is { message?: string | null; action?: string | null; createdAt?: string | null } =>
-        Boolean(n),
-    );
-}
-
-function formatMoneyAmount(
-  money?: { amount?: string; currencyCode?: string },
-): string | undefined {
-  if (!money?.amount) return undefined;
-  const code = money.currencyCode ?? "USD";
-  return `${money.amount} ${code}`;
-}
-
-function customerDisplayName(
-  customer?: { firstName?: string; lastName?: string } | null,
-): string | undefined {
-  if (!customer) return undefined;
-  const name = [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim();
-  return name || undefined;
-}
-
-function refundEmailFromOrder(node: GqlOrderNode, isRefunded: boolean): string | undefined {
-  if (!isRefunded) return undefined;
-  return extractRefundNotificationEmail(timelineEvents(node), node.customAttributes);
-}
-
 /** @internal Exported for unit tests — maps a GraphQL order node to voice fields. */
 export function mapGqlOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   return mapOrderNode(node);
 }
 
 function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
+  const parsed = parseDeepOrderData(node);
   const fulfillment = pickPrimaryFulfillment(node.fulfillments);
   const tracking = fulfillment?.trackingInfo?.find((t) => t.url || t.number);
   const fulfillmentStatus =
     fulfillment?.displayStatus ??
     fulfillment?.status ??
-    node.displayFulfillmentStatus ??
+    parsed.fulfillmentStatus ??
     "unfulfilled";
 
   const estimatedDeliveryDays = estimateDeliveryDays(fulfillmentStatus, fulfillment);
 
-  const lineItems =
-    node.lineItems?.edges
-      ?.map((e) => {
-        const title = e.node?.title?.trim();
-        if (!title) return null;
-        return {
-          title,
-          quantity: e.node?.quantity ?? 1,
-        };
-      })
-      .filter((li): li is { title: string; quantity: number } => li !== null) ?? [];
-
-  const itemCount = lineItems.reduce((sum, li) => sum + li.quantity, 0);
-
-  const financialStatus = node.displayFinancialStatus ?? "";
-  const isRefunded = /refund/i.test(financialStatus) || Boolean(node.refunds?.length);
-  const events = timelineEvents(node);
-  const timelineRefundReason = extractTimelineRefundReason(events);
-  const refundReason =
-    timelineRefundReason ??
-    extractRefundReason(isRefunded, node.refunds, node.customAttributes, events);
-  const refundNotificationEmail = refundEmailFromOrder(node, isRefunded);
-  const refundAmount = isRefunded ? extractRefundAmount(node.refunds) : undefined;
-  const refundDate = isRefunded
-    ? extractRefundNotificationDate(events, {
-        processedAt: node.processedAt,
-        updatedAt: node.updatedAt,
-        isRefunded,
-      })
-    : undefined;
-  const payment = extractPaymentMethod(node.transactions, node.paymentGatewayNames);
-
   const mapped: Omit<OrderStatusResult, "status"> = {
-    orderNumber: node.name,
-    orderPlacedAt: node.createdAt,
+    orderNumber: parsed.orderNumber,
+    orderPlacedAt: parsed.orderPlacedAt,
     fulfillmentStatus,
     trackingUrl: tracking?.url,
     trackingStatus: tracking?.company
@@ -539,28 +436,30 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
       : undefined,
     estimatedDeliveryDays,
     estimatedDeliveryDate: fulfillment?.estimatedDeliveryAt ?? undefined,
-    customerName: customerDisplayName(node.customer),
-    financialStatus,
-    refundStatus: isRefunded ? financialStatus : undefined,
-    refundReason,
-    refundAmount,
-    refundDate,
-    refundNotificationEmail,
-    refundEmail: refundNotificationEmail,
-    subtotalAmount: formatMoneyAmount(node.subtotalPriceSet?.shopMoney),
-    totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
-    shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
-    itemCount: itemCount || lineItems.length || undefined,
-    lineItems: lineItems.length ? lineItems : undefined,
+    customerName: parsed.customerName,
+    customerEmail: parsed.customerEmail,
+    financialStatus: parsed.financialStatus,
+    refundStatus: parsed.isRefunded ? parsed.financialStatus : undefined,
+    refundReason: parsed.refundReason,
+    refundAmount: parsed.refundAmount,
+    refundDate: parsed.refundDate,
+    refundNotificationEmail: parsed.refundNotificationEmail,
+    refundEmail: parsed.refundNotificationEmail,
+    subtotalAmount: parsed.subtotalAmount,
+    totalAmount: parsed.totalAmount,
+    shippingFee: parsed.shippingFee,
+    itemCount: parsed.itemCount || undefined,
+    lineItems: parsed.lineItems.length ? parsed.lineItems : undefined,
     orderNote: node.note?.trim() || undefined,
-    cardLast4: payment.cardLast4,
-    cardBrand: payment.cardBrand,
-    paymentGateway: payment.paymentGateway,
+    cardLast4: parsed.cardLast4,
+    cardBrand: parsed.cardBrand,
+    paymentGateway: parsed.paymentGateway,
   };
 
   logger.info("shopify_order_mapped_for_tts", {
     orderNumber: mapped.orderNumber,
     orderPlacedAt: mapped.orderPlacedAt,
+    customerEmail: mapped.customerEmail,
     refundDate: mapped.refundDate,
     refundReason: mapped.refundReason,
     refundNotificationEmail: mapped.refundNotificationEmail,

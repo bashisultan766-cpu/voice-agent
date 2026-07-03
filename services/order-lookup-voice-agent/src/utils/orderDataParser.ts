@@ -1,0 +1,339 @@
+/**
+ * Strict order data parser — maps Shopify GraphQL nodes to typed fields
+ * and builds the proactive fluent-English order summary for TTS.
+ */
+import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
+import {
+  extractPaymentMethod,
+  extractRefundAmount,
+  extractRefundNotificationDate,
+  extractRefundNotificationEmail,
+  extractRefundReason,
+  extractTimelineRefundReason,
+  type OrderCustomAttribute,
+  type OrderRefundNode,
+  type OrderTimelineEvent,
+  type OrderTransactionNode,
+} from "../adapters/orderFieldExtractors.js";
+import { fulfillmentStatusPhrase, speakMoney } from "./formatter.js";
+
+export interface DeepOrderGraphqlNode {
+  id: string;
+  name: string;
+  createdAt?: string;
+  processedAt?: string | null;
+  updatedAt?: string;
+  email?: string | null;
+  note?: string | null;
+  displayFulfillmentStatus?: string;
+  displayFinancialStatus?: string;
+  customer?: {
+    firstName?: string;
+    lastName?: string;
+    email?: string | null;
+  } | null;
+  currentSubtotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  subtotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  totalShippingPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  customAttributes?: OrderCustomAttribute[];
+  paymentGatewayNames?: string[];
+  events?: {
+    edges?: Array<{
+      node?: OrderTimelineEvent;
+    }>;
+  };
+  lineItems?: {
+    edges?: Array<{ node?: { title?: string; quantity?: number } }>;
+  };
+  refunds?: OrderRefundNode[];
+  transactions?: OrderTransactionNode[];
+  fulfillments?: Array<{
+    status?: string;
+    displayStatus?: string;
+    estimatedDeliveryAt?: string | null;
+    deliveredAt?: string | null;
+    trackingInfo?: Array<{ company?: string; number?: string; url?: string }>;
+  }>;
+}
+
+/** Strict typed order context — no field may be silently dropped at parse time. */
+export interface ParsedOrderData {
+  orderNumber: string;
+  customerName?: string;
+  customerEmail?: string;
+  orderPlacedAt?: string;
+  orderPlacedAtSpoken?: string;
+  subtotalAmount?: string;
+  shippingFee?: string;
+  totalAmount?: string;
+  itemCount: number;
+  lineItems: Array<{ title: string; quantity: number }>;
+  isRefunded: boolean;
+  refundReason?: string;
+  refundNotificationEmail?: string;
+  refundDate?: string;
+  refundAmount?: string;
+  fulfillmentStatus?: string;
+  trackingStatus?: string;
+  estimatedDeliveryDays?: number;
+  cardLast4?: string;
+  cardBrand?: string;
+  paymentGateway?: string;
+  financialStatus?: string;
+}
+
+function ordinalSuffix(day: number): string {
+  if (day >= 11 && day <= 13) return "th";
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+/** Human-readable English date — e.g. "May 27th, 2022". */
+export function formatOrderDateEnglish(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return trimmed;
+  if (!/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed;
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return trimmed;
+
+  const month = parsed.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+  const day = parsed.getUTCDate();
+  const year = parsed.getUTCFullYear();
+  return `${month} ${day}${ordinalSuffix(day)}, ${year}`;
+}
+
+function formatMoneyAmount(
+  money?: { amount?: string; currencyCode?: string },
+): string | undefined {
+  if (!money?.amount) return undefined;
+  const code = money.currencyCode ?? "USD";
+  return `${money.amount} ${code}`;
+}
+
+function customerDisplayName(
+  customer?: { firstName?: string; lastName?: string } | null,
+): string | undefined {
+  if (!customer) return undefined;
+  const name = [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim();
+  return name || undefined;
+}
+
+function customerRegisteredEmail(node: DeepOrderGraphqlNode): string | undefined {
+  const fromCustomer = node.customer?.email?.trim();
+  if (fromCustomer) return fromCustomer;
+  const fromOrder = node.email?.trim();
+  return fromOrder || undefined;
+}
+
+function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
+  return (node.events?.edges ?? [])
+    .map((e) => e.node)
+    .filter((n): n is OrderTimelineEvent => Boolean(n));
+}
+
+function parseLineItems(node: DeepOrderGraphqlNode): Array<{ title: string; quantity: number }> {
+  return (
+    node.lineItems?.edges
+      ?.map((e) => {
+        const title = e.node?.title?.trim();
+        if (!title) return null;
+        return { title, quantity: e.node?.quantity ?? 1 };
+      })
+      .filter((li): li is { title: string; quantity: number } => li !== null) ?? []
+  );
+}
+
+function subtotalFromNode(node: DeepOrderGraphqlNode): string | undefined {
+  return (
+    formatMoneyAmount(node.currentSubtotalPriceSet?.shopMoney) ??
+    formatMoneyAmount(node.subtotalPriceSet?.shopMoney)
+  );
+}
+
+/**
+ * Map a deep-fetch GraphQL order node into a strictly typed object.
+ * Guarantees customer email, placement date, financials, items, and timeline fields.
+ */
+export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData {
+  const lineItems = parseLineItems(node);
+  const itemCount = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+  const events = timelineEvents(node);
+  const financialStatus = node.displayFinancialStatus ?? "";
+  const isRefunded = /refund/i.test(financialStatus) || Boolean(node.refunds?.length);
+  const timelineRefundReason = extractTimelineRefundReason(events);
+  const refundReason =
+    timelineRefundReason ??
+    extractRefundReason(isRefunded, node.refunds, node.customAttributes, events);
+  const refundNotificationEmail = isRefunded
+    ? extractRefundNotificationEmail(events, node.customAttributes)
+    : undefined;
+  const refundAmount = isRefunded ? extractRefundAmount(node.refunds) : undefined;
+  const refundDate = isRefunded
+    ? extractRefundNotificationDate(events, {
+        processedAt: node.processedAt,
+        updatedAt: node.updatedAt,
+        isRefunded,
+      })
+    : undefined;
+  const payment = extractPaymentMethod(node.transactions, node.paymentGatewayNames);
+  const orderPlacedAt = node.createdAt;
+
+  return {
+    orderNumber: node.name,
+    customerName: customerDisplayName(node.customer),
+    customerEmail: customerRegisteredEmail(node),
+    orderPlacedAt,
+    orderPlacedAtSpoken: orderPlacedAt ? formatOrderDateEnglish(orderPlacedAt) : undefined,
+    subtotalAmount: subtotalFromNode(node),
+    shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
+    totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
+    itemCount: itemCount || lineItems.length,
+    lineItems,
+    isRefunded,
+    refundReason,
+    refundNotificationEmail,
+    refundDate,
+    refundAmount,
+    fulfillmentStatus: node.displayFulfillmentStatus,
+    cardLast4: payment.cardLast4,
+    cardBrand: payment.cardBrand,
+    paymentGateway: payment.paymentGateway,
+    financialStatus,
+  };
+}
+
+/** Build ParsedOrderData from an adapter OrderStatusResult. */
+export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrderData {
+  const lineItems = result.lineItems ?? [];
+  const itemCount = result.itemCount ?? lineItems.reduce((sum, li) => sum + li.quantity, 0);
+
+  return {
+    orderNumber: result.orderNumber ?? "",
+    customerName: result.customerName,
+    customerEmail: result.customerEmail,
+    orderPlacedAt: result.orderPlacedAt,
+    orderPlacedAtSpoken: result.orderPlacedAt
+      ? formatOrderDateEnglish(result.orderPlacedAt)
+      : undefined,
+    subtotalAmount: result.subtotalAmount,
+    shippingFee: result.shippingFee,
+    totalAmount: result.totalAmount,
+    itemCount,
+    lineItems,
+    isRefunded: Boolean(result.refundStatus && /refund/i.test(result.refundStatus)),
+    refundReason: result.refundReason,
+    refundNotificationEmail: result.refundNotificationEmail ?? result.refundEmail,
+    refundDate: result.refundDate,
+    refundAmount: result.refundAmount,
+    fulfillmentStatus: result.fulfillmentStatus,
+    trackingStatus: result.trackingStatus,
+    estimatedDeliveryDays: result.estimatedDeliveryDays,
+    cardLast4: result.cardLast4,
+    cardBrand: result.cardBrand,
+    paymentGateway: result.paymentGateway,
+    financialStatus: result.financialStatus,
+  };
+}
+
+/**
+ * Proactive fluent-English order summary — delivered automatically once verified.
+ *
+ * Template:
+ * "I found the order for [Customer Name], placed on [Order Date].
+ *  The email associated with this account is [Customer Email].
+ *  Your order contains [Total Items] items.
+ *  The books cost [Subtotal Amount] and shipping was [Shipping Fee], making the total [Total Amount].
+ *  [IF REFUNDED: This order was refunded because [Refund Reason].
+ *   A refund confirmation email was sent to [Refund Email]]."
+ */
+export function buildProactiveOrderSummarySpeech(data: ParsedOrderData): string {
+  const segments: string[] = [];
+
+  let introduction = "I found the order";
+  if (data.customerName?.trim()) {
+    introduction += ` for ${data.customerName.trim()}`;
+  }
+  if (data.orderPlacedAtSpoken?.trim()) {
+    introduction += `, placed on ${data.orderPlacedAtSpoken.trim()}`;
+  }
+  introduction += ".";
+  segments.push(introduction);
+
+  if (data.customerEmail?.trim()) {
+    segments.push(
+      `The email associated with this account is ${data.customerEmail.trim()}.`,
+    );
+  }
+
+  if (data.itemCount > 0) {
+    segments.push(
+      data.itemCount === 1
+        ? "Your order contains 1 item."
+        : `Your order contains ${data.itemCount} items.`,
+    );
+  }
+
+  const subtotal = data.subtotalAmount?.trim();
+  const shipping = data.shippingFee?.trim();
+  const total = data.totalAmount?.trim();
+
+  if (subtotal && shipping && total) {
+    segments.push(
+      `The books cost ${speakMoney(subtotal)} and shipping was ${speakMoney(shipping)}, making the total ${speakMoney(total)}.`,
+    );
+  } else if (subtotal && total) {
+    segments.push(
+      `The books cost ${speakMoney(subtotal)}, making the total ${speakMoney(total)}.`,
+    );
+  } else if (total) {
+    segments.push(`The total is ${speakMoney(total)}.`);
+  }
+
+  if (data.isRefunded) {
+    const refundParts: string[] = [];
+    if (data.refundReason?.trim()) {
+      refundParts.push(`This order was refunded because ${data.refundReason.trim()}.`);
+    } else {
+      refundParts.push("This order was refunded.");
+    }
+    if (data.refundNotificationEmail?.trim()) {
+      refundParts.push(
+        `A refund confirmation email was sent to ${data.refundNotificationEmail.trim()}.`,
+      );
+    }
+    segments.push(refundParts.join(" "));
+  } else if (data.fulfillmentStatus?.trim()) {
+    const statusParts: string[] = [
+      `The order status is ${fulfillmentStatusPhrase(data.fulfillmentStatus)}.`,
+    ];
+    if (data.trackingStatus?.trim()) {
+      statusParts.push(`Tracking shows ${data.trackingStatus.trim()}.`);
+    }
+    if (data.estimatedDeliveryDays !== undefined) {
+      const days = data.estimatedDeliveryDays;
+      const eta =
+        days === 0
+          ? "today or it may have already shipped"
+          : days === 1
+            ? "1 day"
+            : `${days} days`;
+      const inTransit = /transit|shipped|deliver/i.test(data.fulfillmentStatus);
+      statusParts.push(
+        inTransit ? `Expected delivery is in ${eta}.` : `Expected to ship in ${eta}.`,
+      );
+    }
+    segments.push(statusParts.join(" "));
+  }
+
+  return segments.join(" ");
+}

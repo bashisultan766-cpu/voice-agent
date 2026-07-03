@@ -12,6 +12,8 @@ export interface SpeechChunk {
   kind: SpeechChunkKind;
   /** Natural micro-pause before this chunk is spoken (ms). Keep low for latency. */
   pauseMs?: number;
+  /** When true, TTS prosody preserves the full text (no sentence truncation). */
+  preserveFull?: boolean;
 }
 
 export interface SpeechPlan {

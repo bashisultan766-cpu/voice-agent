@@ -7,6 +7,12 @@ import type { SpeechChunk, SpeechChunkKind } from "../types/order.js";
 const PAUSE_MIN_MS = 80;
 const PAUSE_MAX_MS = 150;
 const MAX_WORDS_PER_CHUNK = 14;
+const DEFAULT_MAX_SENTENCES = 4;
+
+export interface SmoothForVoiceOptions {
+  /** Keep every sentence — required for full proactive order summaries. */
+  preserveFull?: boolean;
+}
 
 const CONVERSATIONAL_REPLACEMENTS: Array<[RegExp, string]> = [
   [/^I found your order\.?/i, "Great — I found your order."],
@@ -56,7 +62,7 @@ export function conversationalize(text: string): string {
 }
 
 /** Full text cleanup before TTS — one idea per sentence, natural phrasing. */
-export function smoothForVoice(text: string): string {
+export function smoothForVoice(text: string, options?: SmoothForVoiceOptions): string {
   if (!text?.trim()) return "";
 
   let cleaned = text.trim();
@@ -69,9 +75,15 @@ export function smoothForVoice(text: string): string {
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
     .filter(Boolean)
-    .map((s) => (s.length > 120 ? `${s.slice(0, 117).trim()}...` : s));
+    .map((s) =>
+      options?.preserveFull || s.length <= 120 ? s : `${s.slice(0, 117).trim()}...`,
+    );
 
-  return sentences.slice(0, 4).join(" ");
+  if (options?.preserveFull) {
+    return sentences.join(" ");
+  }
+
+  return sentences.slice(0, DEFAULT_MAX_SENTENCES).join(" ");
 }
 
 function pauseForChunk(index: number, total: number): number {
@@ -92,8 +104,11 @@ function splitLongSentence(sentence: string): string[] {
 }
 
 /** Short sentence chunks with controlled micro-pauses for ConversationRelay. */
-export function splitIntoSmoothedChunks(text: string): Array<{ text: string; pauseMs: number }> {
-  const smooth = smoothForVoice(text);
+export function splitIntoSmoothedChunks(
+  text: string,
+  options?: SmoothForVoiceOptions,
+): Array<{ text: string; pauseMs: number }> {
+  const smooth = smoothForVoice(text, options);
   if (!smooth) return [];
 
   const sentences = smooth
@@ -101,7 +116,9 @@ export function splitIntoSmoothedChunks(text: string): Array<{ text: string; pau
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const pieces = sentences.flatMap(splitLongSentence);
+  const pieces = options?.preserveFull
+    ? sentences
+    : sentences.flatMap(splitLongSentence);
   return pieces.map((piece, index) => ({
     text: piece,
     pauseMs: pauseForChunk(index, pieces.length),
@@ -111,10 +128,12 @@ export function splitIntoSmoothedChunks(text: string): Array<{ text: string; pau
 export function speechChunksFromText(
   text: string,
   kind: SpeechChunkKind = "summary",
+  options?: SmoothForVoiceOptions,
 ): SpeechChunk[] {
-  return splitIntoSmoothedChunks(text).map((chunk) => ({
+  return splitIntoSmoothedChunks(text, options).map((chunk) => ({
     text: chunk.text,
     kind,
     pauseMs: chunk.pauseMs,
+    preserveFull: options?.preserveFull,
   }));
 }

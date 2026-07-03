@@ -37,6 +37,7 @@ describe("order #22406 deep timeline extraction", () => {
     const mapped = mapGqlOrderNode(ORDER_22406_GQL_NODE);
     expect(mapped.orderNumber).toBe(ORDER_22406_EXPECTED.orderNumber);
     expect(mapped.customerName).toBe(ORDER_22406_EXPECTED.customerName);
+    expect(mapped.customerEmail).toBe(ORDER_22406_EXPECTED.customerEmail);
     expect(mapped.orderPlacedAt).toBe(ORDER_22406_EXPECTED.orderPlacedAt);
     expect(mapped.refundReason).toBe(ORDER_22406_EXPECTED.refundReason);
     expect(mapped.refundNotificationEmail).toBe(
@@ -51,16 +52,15 @@ describe("order #22406 deep timeline extraction", () => {
     const tts = buildOrderStatusTts({ status: "found", ...mapped });
 
     expect(tts.text).toContain("Blake Penfield");
-    expect(tts.text).toMatch(/placed on/i);
-    expect(tts.text).toContain("Prison Ramen: Recipes and Stories");
-    expect(tts.text).toMatch(/subtotal was/i);
-    expect(tts.text).toMatch(/shipping/i);
-    expect(tts.text).toMatch(/total/i);
-    expect(tts.text).toContain("PayPal Express Checkout");
+    expect(tts.text).toMatch(/placed on May 15th, 2025/i);
+    expect(tts.text).toContain("blake.penfield@example.com");
+    expect(tts.text).toContain("Your order contains 1 item");
+    expect(tts.text).toMatch(/The books cost/i);
+    expect(tts.text).toMatch(/shipping was/i);
+    expect(tts.text).toMatch(/making the total/i);
     expect(tts.text).toContain("OUT OF STOCK - ISSUE REFUND VIA PAYPAL");
     expect(tts.text).toContain("btazp@yahoo.com");
-    expect(tts.text).toMatch(/May 28/i);
-    expect(tts.text).not.toContain("blake.penfield@example.com");
+    expect(tts.text).not.toMatch(/refund confirmation email was sent to blake\.penfield@example\.com/i);
     expect(tts.text).not.toMatch(/\bfake\b/i);
   });
 });

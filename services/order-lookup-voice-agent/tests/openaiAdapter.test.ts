@@ -34,6 +34,8 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
         status: "found",
         orderNumber: "#21698-F1",
         customerName: "Joel Moore",
+        customerEmail: "joel.moore@gmail.com",
+        itemCount: 1,
         lineItems: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
         totalAmount: "96.00 USD",
         orderPlacedAt: "2025-04-01T10:00:00Z",
@@ -61,9 +63,11 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
       "CA_GROUND",
     );
     expect(speech).toContain("Joel Moore");
+    expect(speech).toContain("joel.moore@gmail.com");
     expect(speech).toContain("zzyxx2002@yahoo.com");
-    expect(speech).toContain("subtotal was");
-    expect(speech).toMatch(/shipping/i);
+    expect(speech).toMatch(/The books cost/i);
+    expect(speech).toMatch(/shipping was/i);
+    expect(speech).toMatch(/making the total/i);
     expect(speech).not.toMatch(/\bfake\b/i);
   });
 

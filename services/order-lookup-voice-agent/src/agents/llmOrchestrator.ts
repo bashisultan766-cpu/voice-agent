@@ -11,7 +11,7 @@ import type { LlmToolExecutionRecord } from "../adapters/llmToolExecutor.js";
 import type { LlmAgentTurnResult } from "../adapters/openaiAdapter.js";
 import { orderStatusToStructuredOrder } from "./fulfillmentHandlers.js";
 import { planInstantFiller } from "./responsePlanner.js";
-import { smoothForVoice } from "../services/voiceSmoothingEngine.js";
+import { speechChunksFromText } from "../services/voiceSmoothingEngine.js";
 import { getOrCreateCallState } from "../memory/callStateStore.js";
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { logFinalResponseType } from "../runtime/turnObservability.js";
@@ -23,17 +23,20 @@ function mapToolToGateIntent(tool: LlmToolExecutionRecord["tool"]): GateIntent {
   return "product";
 }
 
-function chunkEvent(text: string): AgentStreamEvent {
-  return { type: "chunk", chunk: { text, kind: "summary", pauseMs: 0 } };
+function chunkEvent(text: string, preserveFull = false): AgentStreamEvent {
+  return {
+    type: "chunk",
+    chunk: { text, kind: "summary", pauseMs: 0, preserveFull },
+  };
 }
 
 function doneEvent(phase: CallSession["phase"]): AgentStreamEvent {
   return { type: "done", phase };
 }
 
-function* yieldSpeech(text: string): Generator<AgentStreamEvent> {
-  for (const sentence of text.split(/(?<=[.!?])\s+/).filter(Boolean)) {
-    yield chunkEvent(sentence);
+function* yieldSpeech(text: string, preserveFull = false): Generator<AgentStreamEvent> {
+  for (const chunk of speechChunksFromText(text, "summary", { preserveFull })) {
+    yield { type: "chunk", chunk };
   }
 }
 
@@ -164,7 +167,8 @@ export async function* runLlmOrchestratorTurn(
     });
   }
 
-  const speech = smoothForVoice(result.speech);
+  const preserveFullSpeech = result.responseType === "order_found";
+  const speech = result.speech.trim();
   const finalizeToolExecution = result.toolExecutions.some((t) => t.ok);
 
   syncDeterministicAssistantSpeech(session.callSid, speech, {
@@ -184,7 +188,7 @@ export async function* runLlmOrchestratorTurn(
   applySessionPhaseAfterTurn(session, result.responseType);
   persistOrderContext(session, result);
 
-  yield* yieldSpeech(speech);
+  yield* yieldSpeech(speech, preserveFullSpeech);
   syncSessionFromCallState(session, getOrCreateCallState(session.callSid));
   yield doneEvent(session.phase);
 }

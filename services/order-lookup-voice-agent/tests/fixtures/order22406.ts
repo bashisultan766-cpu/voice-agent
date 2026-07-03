@@ -78,6 +78,7 @@ export const ORDER_22406_GQL_NODE = {
 export const ORDER_22406_EXPECTED = {
   orderNumber: "#22406",
   customerName: "Blake Penfield",
+  customerEmail: "blake.penfield@example.com",
   orderPlacedAt: "2025-05-15T14:22:00Z",
   subtotalAmount: "42.00 USD",
   totalAmount: "47.00 USD",

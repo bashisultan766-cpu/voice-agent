@@ -52,12 +52,13 @@ describe("buildBookFoundTts", () => {
 });
 
 describe("buildOrderStatusTts", () => {
-  it("includes rich order summary with customer, line items, subtotal, shipping, and card", () => {
+  it("includes rich order summary with customer email, items, and financials", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
       orderPlacedAt: "2025-03-10T12:00:00Z",
       customerName: "Jane Doe",
+      customerEmail: "jane.doe@example.com",
       fulfillmentStatus: "In transit",
       estimatedDeliveryDays: 3,
       trackingStatus: "USPS 9400",
@@ -70,16 +71,15 @@ describe("buildOrderStatusTts", () => {
       cardBrand: "Visa",
     });
     expect(tts.text).toContain("Jane Doe");
-    expect(tts.text).toMatch(/placed on/i);
-    expect(tts.text).toContain("Harry Potter");
-    expect(tts.text).toContain("contains 2 of");
-    expect(tts.text).toMatch(/subtotal was/i);
-    expect(tts.text).toMatch(/shipping/i);
-    expect(tts.text).toMatch(/total/i);
+    expect(tts.text).toMatch(/placed on March 10th, 2025/i);
+    expect(tts.text).toContain("jane.doe@example.com");
+    expect(tts.text).toContain("Your order contains 2 items");
+    expect(tts.text).toMatch(/The books cost/i);
+    expect(tts.text).toMatch(/shipping was/i);
+    expect(tts.text).toMatch(/making the total/i);
     expect(tts.text).toContain("in transit");
     expect(tts.text).toContain("3 days");
     expect(tts.text).toContain("USPS 9400");
-    expect(tts.text).toMatch(/4242|four.*two/i);
     expect(tts.text).not.toContain("Customer");
     expect(tts.text).not.toContain("your card");
   });
@@ -92,14 +92,14 @@ describe("buildOrderStatusTts", () => {
     });
 
     expect(tts.text).toContain("Joel Moore");
-    expect(tts.text).toMatch(/placed on/i);
-    expect(tts.text).toContain("The Holy Bible - King James Version");
-    expect(tts.text).toMatch(/subtotal was/i);
-    expect(tts.text).toMatch(/shipping/i);
+    expect(tts.text).toMatch(/placed on April 1st, 2025/i);
+    expect(tts.text).toContain("joel.moore@gmail.com");
+    expect(tts.text).toContain("Your order contains 1 item");
+    expect(tts.text).toMatch(/The books cost/i);
+    expect(tts.text).toMatch(/shipping was/i);
     expect(tts.text).toContain("OUT OF STOCK");
     expect(tts.text).toContain("zzyxx2002@yahoo.com");
-    expect(tts.text).toContain("PayPal Express Checkout");
-    expect(tts.text).not.toContain("gmail.com");
+    expect(tts.text).not.toMatch(/refund confirmation email was sent to joel\.moore@gmail\.com/i);
     expect(tts.text).not.toContain("Customer");
     expect(tts.text).not.toMatch(/\bfake\b/i);
   });

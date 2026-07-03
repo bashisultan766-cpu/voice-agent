@@ -264,6 +264,7 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
   return {
     order_number: data.orderNumber ?? null,
     customer_name: data.customerName ?? null,
+    customer_email: data.customerEmail ?? null,
     items: data.lineItems ?? null,
     total_amount: data.totalAmount ?? null,
     shipping_amount: data.shippingFee ?? null,

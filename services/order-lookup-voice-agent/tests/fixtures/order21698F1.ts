@@ -5,6 +5,9 @@
 export const ORDER_21698_F1_GQL_NODE = {
   id: "gid://shopify/Order/21698",
   name: "#21698-F1",
+  createdAt: "2025-04-01T10:00:00Z",
+  processedAt: "2025-04-05T10:00:00Z",
+  updatedAt: "2025-04-05T10:00:00Z",
   email: "joel.moore@gmail.com",
   note: null,
   displayFulfillmentStatus: "UNFULFILLED",
@@ -66,6 +69,8 @@ export const ORDER_21698_F1_GQL_NODE = {
 export const ORDER_21698_F1_EXPECTED = {
   orderNumber: "#21698-F1",
   customerName: "Joel Moore",
+  customerEmail: "joel.moore@gmail.com",
+  orderPlacedAt: "2025-04-01T10:00:00Z",
   totalAmount: "96.00 USD",
   shippingFee: "5.00 USD",
   subtotalAmount: "91.00 USD",

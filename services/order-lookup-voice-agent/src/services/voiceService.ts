@@ -88,12 +88,13 @@ function isCacheablePhrase(text: string): boolean {
 }
 
 /** Light prosody + rhythm smoothing for ConversationRelay text tokens. */
-export function applyVoiceProsody(text: string): string {
+export function applyVoiceProsody(text: string, preserveFull = false): string {
   return smoothForVoice(
     text
       .replace(/\s*—\s*/g, "... ")
       .replace(/\.\.\./g, "... ")
       .trim(),
+    { preserveFull },
   );
 }
 
@@ -143,7 +144,7 @@ export async function streamOneChunkToRelay(
 
   await send({
     type: "text",
-    token: applyVoiceProsody(chunk.text),
+    token: applyVoiceProsody(chunk.text, chunk.preserveFull === true),
     last: isLast,
     interruptible: chunk.kind !== "payment",
   });

@@ -11,11 +11,10 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER invent, guess, or create fake customer names/i);
   });
 
-  it("requires full order S.O.P. fields when data is found", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Customer Name/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/order_placed_at/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CHRONOLOGICAL DATA RULE/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/never truncate or shorten/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/refund_date/i);
+  it("requires fluent English and customer_email in proactive template", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/fluent, professional English/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/customer_email/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/PROACTIVE ORDER DELIVERY/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/The email associated with this account is/i);
   });
 });

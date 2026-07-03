@@ -34,12 +34,11 @@ import {
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
 import {
-  fulfillmentStatusPhrase,
-  speakCardLast4,
-  speakMoney,
-} from "../utils/formatter.js";
+  buildProactiveOrderSummarySpeech,
+  parsedDataFromOrderResult,
+} from "../utils/orderDataParser.js";
+import { speakMoney } from "../utils/formatter.js";
 import { logger } from "../utils/logger.js";
-import type { StructuredOrder } from "../types/order.js";
 
 export interface TtsPayload {
   text: string;
@@ -78,13 +77,6 @@ function stockPhrase(inStock: boolean, quantity?: number): string {
   return "it is currently in stock";
 }
 
-function deliveryPhrase(days: number | undefined): string {
-  if (days === undefined) return "soon";
-  if (days === 0) return "today or it may have already shipped";
-  if (days === 1) return "1 day";
-  return `${days} days`;
-}
-
 function gateAwaitingSlot(
   reason: ReturnType<typeof validateShopifyExecutionGate>["reason"],
 ): TtsPayload["awaitingSlot"] {
@@ -119,82 +111,15 @@ export function buildBookFoundTts(result: BookAvailabilityResult): TtsPayload {
   };
 }
 
-function speakLineItems(lineItems: Array<{ title: string; quantity: number }>): string {
-  const parts = lineItems.map((item) =>
-    item.quantity > 1 ? `${item.quantity} copies of ${item.title}` : item.title,
-  );
-  if (parts.length === 1) return parts[0]!;
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
-}
-
-function totalItemCount(lineItems: Array<{ title: string; quantity: number }>): number {
-  return lineItems.reduce((sum, item) => sum + item.quantity, 0);
-}
+import type { StructuredOrder } from "../types/order.js";
 
 function isRefundedOrder(result: OrderStatusResult): boolean {
   return Boolean(result.refundStatus && /refund/i.test(result.refundStatus));
 }
 
-function speakOrderDate(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return trimmed;
-  if (!/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed;
-  const parsed = new Date(trimmed);
-  if (Number.isNaN(parsed.getTime())) return trimmed;
-  return parsed.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function speakPaymentClause(result: OrderStatusResult): string | undefined {
-  if (result.cardLast4?.trim()) {
-    const brand = result.cardBrand?.trim();
-    const last4 = speakCardLast4(result.cardLast4);
-    if (brand && brand.toLowerCase() !== "card") {
-      return `${brand} ending in ${last4}`;
-    }
-    return `a card ending in ${last4}`;
-  }
-  if (result.paymentGateway?.trim()) {
-    return result.paymentGateway.trim();
-  }
-  return undefined;
-}
-
-function buildFinancialsSentence(result: OrderStatusResult): string | undefined {
-  const subtotal = result.subtotalAmount?.trim();
-  const shipping = result.shippingFee?.trim();
-  const total = result.totalAmount?.trim();
-  const payment = speakPaymentClause(result);
-
-  if (!subtotal && !shipping && !total && !payment) return undefined;
-
-  const parts: string[] = [];
-  if (subtotal) {
-    parts.push(`The subtotal was ${speakMoney(subtotal)}`);
-  }
-  if (shipping) {
-    parts.push(`plus ${speakMoney(shipping)} for shipping`);
-  }
-  if (total) {
-    parts.push(`making the total ${speakMoney(total)}`);
-  }
-  if (payment) {
-    parts.push(`paid via ${payment}`);
-  }
-
-  if (parts.length === 1) return `${parts[0]}.`;
-  if (parts.length === 2) return `${parts[0]}, ${parts[1]}.`;
-  if (parts.length === 3) return `${parts[0]}, ${parts[1]}, ${parts[2]}.`;
-  return `${parts[0]}, ${parts[1]}, ${parts[2]}, ${parts[3]}.`;
-}
-
 /**
- * Build TTS for order status — chronological story from Shopify fields only.
- * Omits any phrase when the source field is absent; never invents placeholders.
+ * Build proactive fluent-English order summary — delivered automatically once verified.
+ * Uses the strict template from orderDataParser; never waits for the caller to ask.
  */
 export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
   if (result.status !== "found" || !result.orderNumber) {
@@ -203,83 +128,15 @@ export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
 
   logger.info("raw_data_passed_to_tts_builder", { orderData: result });
 
-  const segments: string[] = [];
+  const parsed = parsedDataFromOrderResult(result);
+  parsed.trackingStatus = result.trackingStatus;
+  parsed.estimatedDeliveryDays = result.estimatedDeliveryDays;
+  parsed.fulfillmentStatus = result.fulfillmentStatus;
 
-  let introduction = "I found the order";
-  if (result.customerName?.trim()) {
-    introduction += ` for ${result.customerName.trim()}`;
-  }
-  if (result.orderPlacedAt?.trim()) {
-    introduction += `, placed on ${speakOrderDate(result.orderPlacedAt)}`;
-  }
-  introduction += ".";
-  segments.push(introduction);
-
-  if (result.lineItems?.length) {
-    for (const item of result.lineItems) {
-      segments.push(
-        item.quantity === 1
-          ? `The order contains 1 of ${item.title}.`
-          : `The order contains ${item.quantity} of ${item.title}.`,
-      );
-    }
-  } else if (result.itemCount !== undefined && result.itemCount > 0) {
-    segments.push(
-      result.itemCount === 1
-        ? "The order contains 1 item."
-        : `The order contains ${result.itemCount} items.`,
-    );
-  }
-
-  const financials = buildFinancialsSentence(result);
-  if (financials) segments.push(financials);
-
-  if (isRefundedOrder(result)) {
-    const refundParts: string[] = [];
-    if (result.refundDate?.trim()) {
-      refundParts.push(`On ${speakOrderDate(result.refundDate)}, this order was refunded.`);
-    } else {
-      refundParts.push("This order was refunded.");
-    }
-    if (result.refundReason?.trim()) {
-      refundParts.push(`The reason provided was: ${result.refundReason.trim()}.`);
-    }
-    const refundEmail =
-      result.refundNotificationEmail?.trim() ?? result.refundEmail?.trim();
-    if (refundEmail) {
-      refundParts.push(`A confirmation email was sent to ${refundEmail}.`);
-    }
-    if (result.refundAmount?.trim()) {
-      refundParts.push(`The refund amount was ${speakMoney(result.refundAmount)}.`);
-    }
-    segments.push(refundParts.join(" "));
-  } else {
-    const statusParts: string[] = [];
-    if (result.fulfillmentStatus?.trim()) {
-      statusParts.push(
-        `The order status is ${fulfillmentStatusPhrase(result.fulfillmentStatus)}.`,
-      );
-    }
-    if (result.trackingStatus?.trim()) {
-      statusParts.push(`Tracking shows ${result.trackingStatus.trim()}.`);
-    }
-    if (result.estimatedDeliveryDays !== undefined) {
-      const eta = deliveryPhrase(result.estimatedDeliveryDays);
-      const inTransit = /transit|shipped|deliver/i.test(result.fulfillmentStatus ?? "");
-      statusParts.push(
-        inTransit
-          ? `Expected delivery is in ${eta}.`
-          : `Expected to ship in ${eta}.`,
-      );
-    }
-    if (statusParts.length) segments.push(statusParts.join(" "));
-  }
-
-  if (segments.length === 1 && segments[0] === introduction) {
-    segments.push(`Order number ${result.orderNumber}.`);
-  }
-
-  return { text: segments.join(" "), awaitingSlot: null };
+  return {
+    text: buildProactiveOrderSummarySpeech(parsed),
+    awaitingSlot: null,
+  };
 }
 
 /** Map adapter order result into session StructuredOrder for follow-up context. */
