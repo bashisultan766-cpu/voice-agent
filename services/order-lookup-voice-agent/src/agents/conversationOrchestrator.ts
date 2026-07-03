@@ -4,6 +4,12 @@
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
+import { sanitizeForSpeech } from "../utils/security.js";
+import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
+import { runWithToolAuthorizationAsync } from "../guards/toolAccessGuard.js";
+import { clearCallMemory } from "../memory/callMemoryStore.js";
+import { clearCallState } from "../memory/callStateStore.js";
+import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
 import { runInPhase2, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { orderLookupTool } from "../tools/orderLookupTool.js";
@@ -59,6 +65,77 @@ import type {
 } from "../types/order.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
+
+/** Fixed greeting spoken at call start (TwiML welcomeGreeting). */
+export const BRAIN_GREETING =
+  "Hi, I'm the SureShot Books Assistant. How can I help you today?";
+
+/** Create a new call session — voice layer must not mutate slots/intent/phase. */
+export function createCallSession(callSid: string, from: string, to: string): CallSession {
+  return {
+    callSid,
+    from,
+    to,
+    phase: "greeting",
+    orderNumberAttempts: 0,
+    createdAt: Date.now(),
+    awaitingInput: null,
+    greetedThisCall: false,
+    productSlots: undefined,
+  };
+}
+
+/** Tear down all per-call resources when the relay socket closes. */
+export function endCallSession(callSid: string): void {
+  clearCallMemory(callSid);
+  clearCallExecutionPhase(callSid);
+  clearCallState(callSid);
+  clearCustomerMemory(callSid);
+}
+
+/**
+ * Sole runtime entry point for user turns.
+ * streamHandler → process → gate → tools
+ */
+export async function* process(
+  callSid: string,
+  userInput: string,
+  session: CallSession,
+): AsyncGenerator<AgentStreamEvent> {
+  if (session.callSid !== callSid) {
+    throw new Error(`Session callSid mismatch: ${session.callSid} !== ${callSid}`);
+  }
+
+  const text = sanitizeForSpeech((userInput ?? "").trim());
+  const state = getOrCreateCallState(callSid);
+
+  console.log({
+    stage: "orchestrator",
+    action: "turn_start",
+    callSid: callSid.slice(0, 8),
+    intent: state.intent,
+    phase: state.phase,
+    awaitingInput: state.awaitingInput,
+    slots: state.slots,
+  });
+
+  try {
+    yield* runOrchestratorTurn(session, text);
+  } catch (err) {
+    logger.error("orchestrator_turn_failed", {
+      callSid: callSid.slice(0, 8),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    yield {
+      type: "chunk",
+      chunk: {
+        text: "Sorry, something went wrong on my end. Could you try that once more?",
+        kind: "error",
+      },
+    };
+    yield { type: "done", phase: session.phase };
+  }
+}
 
 /** @deprecated Use BrainIntent */
 export type OrchestratorIntent = BrainIntent | "product_purchase_intent" | "greeting";
@@ -256,6 +333,16 @@ async function* runGateControlledTurn(
     decision = "ASK_QUESTION";
   }
 
+  console.log({
+    stage: "tool_gate",
+    callSid: session.callSid.slice(0, 8),
+    decision,
+    rawDecision,
+    toolAllowed,
+    validationReady: turn.validation.ready,
+    validationReason: turn.validation.reason,
+  });
+
   console.log("STATE BEFORE TOOL:", turn.state);
   console.log("VALIDATION RESULT:", turn.validation);
   console.log("TOOL EXECUTION ALLOWED:", toolAllowed);
@@ -375,8 +462,10 @@ async function* phase2ProductFlow(session: CallSession): AsyncGenerator<AgentStr
     wantsRecommendations: Boolean(slots.wantsRecommendations),
   });
 
-  const result = await runInPhase2(session.callSid, () =>
-    executeProductSearch(slots, session.callSid, memory.lastProductId),
+  const result = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
+    runInPhase2(session.callSid, () =>
+      executeProductSearch(slots, session.callSid, memory.lastProductId),
+    ),
   );
   const speech = formatProductResults(
     result.products,
@@ -466,7 +555,9 @@ async function* runOrderLookup(
 
   yield chunkEvent(planInstantFiller());
 
-  const lookupPromise = runInPhase2(session.callSid, () => orderLookupTool(orderNumber));
+  const lookupPromise = runWithToolAuthorizationAsync("conversationOrchestrator", () =>
+    runInPhase2(session.callSid, () => orderLookupTool(orderNumber)),
+  );
   void preAnalyzeOrderIntent(orderNumber);
   const lookup = await lookupPromise;
   const lookupMs = Date.now() - started;

@@ -1,4 +1,5 @@
 import { logger } from "../utils/logger.js";
+import { assertToolAccessAuthorized } from "../guards/toolAccessGuard.js";
 import { assertToolExecutionAllowed } from "../guards/toolExecutionGuard.js";
 import { extractIsbnFromSpeech, scoreTitleMatch, tagOverlapScore } from "../utils/productSearchNormalize.js";
 import { resetShopifyScopeCheck, ensureShopifyProductScopes } from "./shopifyScopeCheck.js";
@@ -55,6 +56,7 @@ function toSearchResult(
 
 /** Live Shopify title search — truth engine only, no embeddings. */
 export async function searchProductByTitle(query: string): Promise<ProductSearchResult> {
+  assertToolAccessAuthorized("searchProductByTitle");
   assertToolExecutionAllowed("searchProductByTitle");
   const q = query.trim();
   if (!q) {
@@ -75,6 +77,7 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
 
 /** Live ISBN lookup — truth engine only. */
 export async function searchProductByISBN(isbn: string): Promise<ProductSearchResult> {
+  assertToolAccessAuthorized("searchProductByISBN");
   assertToolExecutionAllowed("searchProductByISBN");
   try {
     await ensureShopifyProductScopes();

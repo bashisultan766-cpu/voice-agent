@@ -41,6 +41,21 @@ export function computeMissingSlots(
 
 /** Deterministic tool execution decision — uses persisted state. */
 export function decideToolExecution(state: ToolDecisionState): ToolAction {
+  const decision = decideToolExecutionCore(state);
+  console.log({
+    stage: "tool_gate",
+    action: "decide",
+    intent: state.intent,
+    phase: state.phase,
+    awaitingInput: state.awaitingInput,
+    slots: state.slots,
+    slotsCollected: state.slotsCollected,
+    decision,
+  });
+  return decision;
+}
+
+function decideToolExecutionCore(state: ToolDecisionState): ToolAction {
   if (state.intent === "general" || state.intent === "unknown") {
     return "conversationOnly";
   }

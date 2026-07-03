@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleProductBrainTurn } from "../src/agents/productBrainAgent.js";
 import { clearAllCustomerMemories } from "../src/memory/customerMemoryStore.js";
 import { clearProductCache, STORE_NOT_FOUND_MESSAGE } from "../src/tools/shopifyProductTools.js";
+import { enableToolAccessForTests, resetToolAccessGuard } from "../src/guards/toolAccessGuard.js";
+import { enableToolExecutionForTests, resetToolExecutionGuard } from "../src/guards/toolExecutionGuard.js";
 import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
 
 vi.mock("openai", () => {
@@ -21,10 +23,18 @@ describe("productBrainAgent", () => {
   beforeEach(() => {
     clearAllCustomerMemories();
     clearProductCache();
+    resetToolExecutionGuard();
+    resetToolAccessGuard();
+    enableToolExecutionForTests(true);
+    enableToolAccessForTests(true);
     vi.unstubAllGlobals();
   });
 
   afterEach(() => {
+    enableToolExecutionForTests(false);
+    enableToolAccessForTests(false);
+    resetToolExecutionGuard();
+    resetToolAccessGuard();
     vi.unstubAllGlobals();
   });
 

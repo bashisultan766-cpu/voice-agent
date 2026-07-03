@@ -1,10 +1,10 @@
 import type { WebSocket } from "ws";
 import { logger } from "../utils/logger.js";
-import { createCallSession, streamBrainTurn } from "../agents/conversationBrain.js";
-import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
-import { clearCallMemory } from "../memory/callMemoryStore.js";
-import { clearCallState } from "../memory/callStateStore.js";
-import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
+import {
+  createCallSession,
+  endCallSession,
+  process,
+} from "../agents/conversationOrchestrator.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
 
@@ -65,10 +65,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     closed = true;
     turnAbort?.abort();
     if (session?.callSid) {
-      clearCallMemory(session.callSid);
-      clearCallExecutionPhase(session.callSid);
-      clearCallState(session.callSid);
-      clearCustomerMemory(session.callSid);
+      endCallSession(session.callSid);
     }
     logger.info("relay_closed", { callSid: session?.callSid?.slice(0, 8) });
   });
@@ -92,8 +89,14 @@ async function runStreamingTurn(
   let chunkCount = 0;
   let firstChunkMs: number | null = null;
 
+  console.log({
+    stage: "streamHandler",
+    action: "forwarding_to_orchestrator",
+    callSid: session.callSid.slice(0, 8),
+  });
+
   try {
-    for await (const event of streamBrainTurn(session, callerText)) {
+    for await (const event of process(session.callSid, callerText, session)) {
       if (abort.signal.aborted) {
         logger.debug("relay_turn_aborted", { callSid: session.callSid.slice(0, 8) });
         break;
@@ -135,7 +138,6 @@ async function runStreamingTurn(
 
   if (endCall && !abort.signal.aborted) {
     await send({ type: "end", handoffData: JSON.stringify({ reason: "caller_done" }) });
-    session.phase = "ended";
   }
 }
 
@@ -166,7 +168,6 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
         message.from ?? message.customParameters?.from ?? "unknown",
         message.to ?? message.customParameters?.to ?? "unknown",
       );
-      session.phase = "awaiting_order_number";
       ctx.setSession(session);
       logger.info("relay_setup", { callSid: session.callSid.slice(0, 8) });
 

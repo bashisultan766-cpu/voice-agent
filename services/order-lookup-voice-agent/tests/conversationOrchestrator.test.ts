@@ -10,6 +10,7 @@ import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
 import type { StructuredProduct } from "../src/types/product.js";
 import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
 import { resetToolExecutionGuard } from "../src/guards/toolExecutionGuard.js";
+import { resetToolAccessGuard } from "../src/guards/toolAccessGuard.js";
 import * as shopifyProductTools from "../src/tools/shopifyProductTools.js";
 
 const mockCatalog: StructuredProduct[] = [
@@ -82,6 +83,7 @@ describe("conversationOrchestrator flows", () => {
     clearAllCallStates();
     resetShopifyScopeCheck();
     resetToolExecutionGuard();
+    resetToolAccessGuard();
     vi.unstubAllGlobals();
     mockLiveShopifyFetch(mockCatalog);
   });
