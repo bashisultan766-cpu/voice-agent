@@ -9,6 +9,7 @@ import {
   isSlotCollectedThisTurn,
   mergeSlotsCumulative,
   mergeTurnIntoCallState,
+  resolveStickyIntent,
   saveCallState,
   validateProductSlotState,
 } from "../src/memory/callStateStore.js";
@@ -108,7 +109,7 @@ describe("callStateStore", () => {
     expect(turn.validation.ready).toBe(true);
   });
 
-  it("resets state after tool execution", () => {
+  it("resets phase after tool execution but preserves session memory", () => {
     let state = getOrCreateCallState("CA_3");
     state = {
       ...state,
@@ -122,10 +123,10 @@ describe("callStateStore", () => {
 
     const reset = finalizeAfterToolExecution(getOrCreateCallState("CA_3"));
     expect(reset.phase).toBe("PHASE_1");
-    expect(reset.slots).toEqual({});
-    expect(reset.slotFlags.isbnCollected).toBe(false);
+    expect(reset.slots.isbn).toBe("9783161484100");
+    expect(reset.slotFlags.isbnCollected).toBe(true);
+    expect(reset.intent).toBe("product");
     expect(reset.awaitingInput).toBe("none");
-    expect(reset.intent).toBe("unknown");
   });
 
   it("validateProductSlotState blocks missing slots", () => {
@@ -176,6 +177,38 @@ describe("callStateStore", () => {
 
     const merged = mergeSlotsCumulative({}, { parsedIsbn: "978-3-16-148410-0" });
     expect(merged.isbn).toBe("9783161484100");
+  });
+
+  it("does not downgrade a complete ISBN with partial speech", () => {
+    const merged = mergeSlotsCumulative(
+      { isbn: "9783161484100" },
+      { isbn: "978" },
+    );
+    expect(merged.isbn).toBe("9783161484100");
+  });
+
+  it("keeps product intent sticky across unrelated utterances", () => {
+    const base = {
+      ...getOrCreateCallState("CA_STICKY"),
+      intent: "product" as const,
+      awaitingInput: "none" as const,
+      slots: { isbn: "9783161484100" },
+      slotFlags: {
+        isbnCollected: true,
+        titleCollected: false,
+        recommendationsCollected: false,
+      },
+    };
+    saveCallState(base);
+
+    const merged = mergeTurnIntoCallState(base, {
+      intent: "unknown",
+      incomingSlots: {},
+      userMessage: "okay thanks",
+    });
+
+    expect(merged.intent).toBe("product");
+    expect(resolveStickyIntent(base, "unknown", "okay thanks")).toBe("product");
   });
 
   it("accumulates ISBN digits across multiple voice turns", () => {

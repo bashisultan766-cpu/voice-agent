@@ -180,9 +180,26 @@ describe("conversationOrchestrator flows", () => {
     expect(searchSpeech).toMatch(/Azkaban|found/i);
 
     const stateAfterSearch = getOrCreateCallState(session.callSid);
-    expect(stateAfterSearch.slots).toEqual({});
+    expect(stateAfterSearch.slots.isbn).toBe("9783161484100");
+    expect(stateAfterSearch.slotFlags.isbnCollected).toBe(true);
+    expect(stateAfterSearch.intent).toBe("product");
     expect(stateAfterSearch.awaitingInput).toBe("none");
     expect(stateAfterSearch.phase).toBe("PHASE_1");
+  });
+
+  it("reuses stored ISBN for a follow-up product search without re-asking", async () => {
+    const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
+
+    const session = createCallSession("CA_FOLLOW", "+1", "+2");
+    await collectSpeech(session, "I need a book");
+    await collectSpeech(session, "I have an ISBN");
+    await collectSpeech(session, "9783161484100");
+    isbnSpy.mockClear();
+
+    const speech = await collectSpeech(session, "look up that book again");
+    expect(isbnSpy).toHaveBeenCalledWith("9783161484100");
+    expect(speech).toMatch(/Azkaban/i);
+    expect(getOrCreateCallState(session.callSid).slots.isbn).toBe("9783161484100");
   });
 
   it('Phase 1: "I want to buy books" asks title, ISBN, or recommendations', async () => {

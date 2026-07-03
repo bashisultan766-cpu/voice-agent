@@ -137,7 +137,7 @@ function partialIsbnDigits(value: string | undefined): string {
   return value.replace(/\D/g, "");
 }
 
-/** Merge slot deltas into persisted slots — never drop existing values. */
+/** Merge slot deltas into persisted slots — never drop or weaken existing values. */
 export function mergeSlotsCumulative(
   existing: CallStateSlots,
   delta: IncomingProductSlots,
@@ -146,17 +146,33 @@ export function mergeSlotsCumulative(
   const merged: CallStateSlots = { ...existing };
 
   if (incoming.isbn !== undefined && incoming.isbn !== "") {
-    const existingPartial = partialIsbnDigits(merged.isbn);
-    const incomingComplete = isCompleteIsbnValue(incoming.isbn);
     const existingComplete = merged.isbn ? isCompleteIsbnValue(merged.isbn) : false;
+    const incomingComplete = isCompleteIsbnValue(incoming.isbn);
+    const normalizedIncoming = incomingComplete ? normalizeIsbn(incoming.isbn) : incoming.isbn;
 
-    if (!merged.isbn || incomingComplete || incoming.isbn.length > existingPartial.length) {
-      merged.isbn = incomingComplete ? normalizeIsbn(incoming.isbn) : incoming.isbn;
+    if (!merged.isbn) {
+      merged.isbn = normalizedIncoming;
+    } else if (existingComplete && !incomingComplete) {
+      // Keep stored complete ISBN — never replace with partial or weaker data.
+    } else if (incomingComplete && existingComplete) {
+      if (normalizeIsbn(merged.isbn) !== normalizedIncoming) {
+        merged.isbn = normalizedIncoming;
+      }
+    } else if (incomingComplete) {
+      merged.isbn = normalizedIncoming;
+    } else if (!existingComplete) {
+      const existingPartial = partialIsbnDigits(merged.isbn);
+      if (normalizedIncoming.length > existingPartial.length) {
+        merged.isbn = normalizedIncoming;
+      }
     }
   }
 
   if (incoming.title !== undefined && incoming.title !== "") {
-    merged.title = incoming.title;
+    const nextTitle = incoming.title.trim();
+    if (!merged.title || nextTitle.length >= merged.title.trim().length) {
+      merged.title = nextTitle;
+    }
   }
 
   if (delta.wantsRecommendations !== undefined) {
@@ -231,6 +247,66 @@ function applySlotCollectionFlags(
   }
 
   return next;
+}
+
+/** Promote collection flags when session memory already holds usable slot values. */
+export function ensurePersistentSlotFlags(
+  flags: CallStateSlotFlags,
+  slots: CallStateSlots,
+): CallStateSlotFlags {
+  return {
+    isbnCollected:
+      flags.isbnCollected || Boolean(slots.isbn && isCompleteIsbnValue(slots.isbn)),
+    titleCollected: flags.titleCollected,
+    recommendationsCollected:
+      flags.recommendationsCollected || Boolean(slots.wantsRecommendations),
+  };
+}
+
+function isExplicitTopicChange(
+  current: CallStateIntent,
+  incoming: GateIntent,
+  message: string,
+): boolean {
+  if (incoming === "unknown" || incoming === current) return false;
+
+  if (current === "product" && incoming === "order") {
+    return /\b(order|tracking|track|shipment|refund|where is my)\b/i.test(message);
+  }
+  if (current === "order" && incoming === "product") {
+    return /\b(book|books|isbn|title|buy|purchase|catalog|magazine)\b/i.test(message);
+  }
+  if (incoming === "general" && /\b(never mind|forget that|stop|cancel)\b/i.test(message)) {
+    return true;
+  }
+  return false;
+}
+
+/** Keep session intent sticky unless the caller explicitly changes topic. */
+export function resolveStickyIntent(
+  state: CallState,
+  incoming: GateIntent,
+  userMessage: string,
+): CallStateIntent {
+  const current = state.intent;
+
+  if (state.awaitingInput !== "none" && (current === "product" || current === "order")) {
+    return current;
+  }
+
+  if (incoming === "unknown") {
+    return current;
+  }
+
+  if (current === "unknown" || current === "general") {
+    return incoming;
+  }
+
+  if (incoming !== current && isExplicitTopicChange(current, incoming, userMessage)) {
+    return incoming;
+  }
+
+  return current;
 }
 
 /** Deterministic awaiting — never re-ask for collected slots. */
@@ -328,14 +404,12 @@ export function mergeTurnIntoCallState(
     slots = applyIsbnAwaitingMerge(state, input.userMessage, slots);
   }
 
-  const slotFlags = applySlotCollectionFlags(wasAwaiting, slots, state.slotFlags);
+  const slotFlags = ensurePersistentSlotFlags(
+    applySlotCollectionFlags(wasAwaiting, slots, state.slotFlags),
+    slots,
+  );
 
-  let intent = state.intent;
-  if (state.awaitingInput !== "none" && (state.intent === "product" || state.intent === "order")) {
-    intent = state.intent;
-  } else if (input.intent !== "unknown") {
-    intent = input.intent;
-  }
+  const intent = resolveStickyIntent(state, input.intent, input.userMessage ?? "");
 
   const productIntent = intent === "product" || input.intent === "product";
   const draft = { ...state, slots, slotFlags, intent };
@@ -374,6 +448,7 @@ export function isSlotAnswerComplete(
 function resolveAwaitingAfterAsk(state: CallState): CallStateAwaitingInput {
   const { slots, slotFlags, awaitingInput } = state;
 
+  if (slots.isbn && isCompleteIsbnValue(slots.isbn) && slotFlags.isbnCollected) return "none";
   if (slotFlags.isbnCollected && slots.isbn) return "none";
   if (slotFlags.titleCollected && slots.title) return "none";
 
@@ -387,7 +462,7 @@ function resolveAwaitingAfterAsk(state: CallState): CallStateAwaitingInput {
     !slotFlags.isbnCollected &&
     !slotFlags.titleCollected &&
     !slotFlags.recommendationsCollected &&
-    !slots.isbn &&
+    !(slots.isbn && isCompleteIsbnValue(slots.isbn)) &&
     !slots.title &&
     !slots.wantsRecommendations;
 
@@ -421,12 +496,11 @@ export function applyDecisionToCallState(
 }
 
 export function finalizeAfterToolExecution(state: CallState): CallState {
+  const slotFlags = ensurePersistentSlotFlags(state.slotFlags, state.slots);
   return {
     ...state,
     phase: "PHASE_1",
-    intent: "unknown",
-    slots: {},
-    slotFlags: { ...EMPTY_SLOT_FLAGS },
+    slotFlags,
     awaitingInput: "none",
     updatedAt: Date.now(),
   };
