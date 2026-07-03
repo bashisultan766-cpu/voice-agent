@@ -5,7 +5,8 @@ import {
   clearAllCallStates,
   finalizeAfterToolExecution,
   getOrCreateCallState,
-  isSlotAnswerComplete,
+  isSlotCollectedThisTurn,
+  mergeSlotsCumulative,
   mergeTurnIntoCallState,
   saveCallState,
   validateProductSlotState,
@@ -19,51 +20,91 @@ describe("callStateStore", () => {
     enablePipelineGuardForTests(true);
   });
 
-  it("persists slots across turns", () => {
-    const state = getOrCreateCallState("CA_1");
-    const merged = mergeTurnIntoCallState(state, {
+  it("persists slots across turns via cumulative merge", () => {
+    saveCallState({
+      ...getOrCreateCallState("CA_1"),
       intent: "product",
-      incomingSlots: { isbn: "9783161484100" },
+      awaitingInput: "isbn",
+      slots: { isbn: "9783161484100" },
     });
-    saveCallState(merged);
 
-    const reloaded = getOrCreateCallState("CA_1");
-    expect(reloaded.slots.isbn).toBe("9783161484100");
-    expect(reloaded.intent).toBe("product");
+    const turn = atomicMergeTurnState("CA_1", {
+      intent: "unknown",
+      incomingSlots: {},
+      userMessage: "one moment",
+    });
+
+    expect(turn.state.slots.isbn).toBe("9783161484100");
+  });
+
+  it("mergeSlotsCumulative normalizes ISBN and never drops existing slots", () => {
+    const merged = mergeSlotsCumulative(
+      { isbn: "9783161484100" },
+      { title: "Harry Potter" },
+    );
+    expect(merged.isbn).toBe("9783161484100");
+    expect(merged.title).toBe("Harry Potter");
+
+    const unchanged = mergeSlotsCumulative(merged, {});
+    expect(unchanged.isbn).toBe("9783161484100");
+    expect(unchanged.title).toBe("Harry Potter");
   });
 
   it("keeps product intent while awaiting slot answer", () => {
     let state = getOrCreateCallState("CA_2");
-    state = applyDecisionToCallState(
-      { ...state, intent: "product" },
-      "ASK_QUESTION",
-    );
+    state = applyDecisionToCallState({ ...state, intent: "product" }, "ASK_QUESTION");
     saveCallState(state);
 
     const merged = mergeTurnIntoCallState(getOrCreateCallState("CA_2"), {
       intent: "unknown",
       incomingSlots: { isbn: "9783161484100" },
+      userMessage: "9783161484100",
     });
     expect(merged.intent).toBe("product");
     expect(merged.slots.isbn).toBe("9783161484100");
   });
 
-  it("marks ISBN answer complete only when awaiting isbn", () => {
-    expect(isSlotAnswerComplete("none", { isbn: "9783161484100" })).toBe(false);
-    expect(isSlotAnswerComplete("isbn", { isbn: "9783161484100" })).toBe(true);
-    expect(isSlotAnswerComplete("none", { title: "Harry Potter" })).toBe(false);
+  it("marks ISBN collected only when awaiting isbn", () => {
+    const seeded = getOrCreateCallState("CA_ISBN_FLAG");
+    saveCallState({ ...seeded, intent: "product", awaitingInput: "isbn" });
+
+    const turn = atomicMergeTurnState("CA_ISBN_FLAG", {
+      intent: "product",
+      incomingSlots: { isbn: "9783161484100" },
+      userMessage: "9783161484100",
+    });
+
+    expect(turn.state.slotFlags.isbnCollected).toBe(true);
+    expect(turn.state.awaitingInput).toBe("none");
+    expect(isSlotCollectedThisTurn("isbn", turn.state)).toBe(true);
+  });
+
+  it("does not reset awaiting to isbn after ISBN is collected", () => {
+    let state = getOrCreateCallState("CA_NO_REASK");
+    state = mergeTurnIntoCallState(
+      { ...state, intent: "product", awaitingInput: "isbn" },
+      { intent: "product", incomingSlots: { isbn: "9783161484100" }, userMessage: "9783161484100" },
+    );
+    saveCallState(state);
+
+    const afterAsk = applyDecisionToCallState(getOrCreateCallState("CA_NO_REASK"), "ASK_QUESTION");
+    expect(afterAsk.awaitingInput).not.toBe("isbn");
+    expect(afterAsk.slots.isbn).toBe("9783161484100");
+    expect(afterAsk.slotFlags.isbnCollected).toBe(true);
   });
 
   it("marks title answer complete only after awaiting title", () => {
-    expect(
-      isSlotAnswerComplete("isbn_or_title", { title: "Harry Potter" }),
-    ).toBe(false);
-    expect(
-      isSlotAnswerComplete("title", { title: "Harry Potter" }),
-    ).toBe(true);
-    expect(
-      isSlotAnswerComplete("none", { title: "Harry Potter" }),
-    ).toBe(false);
+    const seeded = getOrCreateCallState("CA_TITLE");
+    saveCallState({ ...seeded, intent: "product", awaitingInput: "title" });
+
+    const turn = atomicMergeTurnState("CA_TITLE", {
+      intent: "product",
+      incomingSlots: { title: "Harry Potter" },
+      userMessage: "Harry Potter",
+    });
+
+    expect(turn.state.slotFlags.titleCollected).toBe(true);
+    expect(turn.validation.ready).toBe(true);
   });
 
   it("resets state after tool execution", () => {
@@ -73,6 +114,7 @@ describe("callStateStore", () => {
       phase: "PHASE_2",
       intent: "product",
       slots: { isbn: "9783161484100" },
+      slotFlags: { isbnCollected: true, titleCollected: false, recommendationsCollected: false },
       awaitingInput: "none",
     };
     saveCallState(state);
@@ -80,6 +122,7 @@ describe("callStateStore", () => {
     const reset = finalizeAfterToolExecution(getOrCreateCallState("CA_3"));
     expect(reset.phase).toBe("PHASE_1");
     expect(reset.slots).toEqual({});
+    expect(reset.slotFlags.isbnCollected).toBe(false);
     expect(reset.awaitingInput).toBe("none");
     expect(reset.intent).toBe("unknown");
   });
@@ -89,26 +132,30 @@ describe("callStateStore", () => {
     state.intent = "product";
     saveCallState(state);
 
-    const result = validateProductSlotState(getOrCreateCallState("CA_VAL"), false);
+    const result = validateProductSlotState(getOrCreateCallState("CA_VAL"));
     expect(result.ready).toBe(false);
     expect(result.reason).toBe("missing_slots");
   });
 
-  it("validateProductSlotState allows ISBN when collected after awaiting isbn", () => {
+  it("validateProductSlotState allows ISBN when isbnCollected flag is set", () => {
     const state = getOrCreateCallState("CA_ISBN");
     saveCallState(
       mergeTurnIntoCallState(
         { ...state, intent: "product", awaitingInput: "isbn" },
-        { intent: "product", incomingSlots: { isbn: "9783161484100" } },
+        {
+          intent: "product",
+          incomingSlots: { isbn: "9783161484100" },
+          userMessage: "9783161484100",
+        },
       ),
     );
 
-    const result = validateProductSlotState(getOrCreateCallState("CA_ISBN"), true);
+    const result = validateProductSlotState(getOrCreateCallState("CA_ISBN"));
     expect(result.ready).toBe(true);
   });
 
-  it("validateProductSlotState blocks title without prior collection", () => {
-    const state = getOrCreateCallState("CA_TITLE");
+  it("validateProductSlotState blocks title without titleCollected flag", () => {
+    const state = getOrCreateCallState("CA_TITLE_BLOCK");
     saveCallState(
       mergeTurnIntoCallState(
         { ...state, intent: "product" },
@@ -116,21 +163,23 @@ describe("callStateStore", () => {
       ),
     );
 
-    const result = validateProductSlotState(getOrCreateCallState("CA_TITLE"), false);
+    const result = validateProductSlotState(getOrCreateCallState("CA_TITLE_BLOCK"));
     expect(result.ready).toBe(false);
     expect(result.reason).toBe("title_needs_confirmation");
   });
 
-  it("atomicMergeTurnState persists before validation when awaiting isbn", () => {
+  it("atomicMergeTurnState persists ISBN before validation when awaiting isbn", () => {
     const seeded = getOrCreateCallState("CA_ATOMIC");
     saveCallState({ ...seeded, intent: "product", awaitingInput: "isbn" });
 
     const turn = atomicMergeTurnState("CA_ATOMIC", {
       intent: "product",
       incomingSlots: { isbn: "9783161484100" },
+      userMessage: "9783161484100",
     });
 
     expect(turn.validation.ready).toBe(true);
     expect(getOrCreateCallState("CA_ATOMIC").slots.isbn).toBe("9783161484100");
+    expect(getOrCreateCallState("CA_ATOMIC").slotFlags.isbnCollected).toBe(true);
   });
 });

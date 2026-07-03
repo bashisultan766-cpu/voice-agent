@@ -350,7 +350,7 @@ async function* runGateControlledTurn(
 
   const turn = atomicMergeTurnState(session.callSid, {
     intent: analysis.intent,
-    incomingSlots: analysis.slots,
+    incomingSlots: analysis.deltaSlots,
     userMessage: text,
   });
 
@@ -412,6 +412,8 @@ async function* runGateControlledTurn(
     awaitingInput: nextState.awaitingInput,
     wasAwaiting: turn.wasAwaiting,
     slotsCollected: turn.slotsCollected,
+    isbnCollected: turn.state.slotFlags.isbnCollected,
+    titleCollected: turn.state.slotFlags.titleCollected,
     validationReady: turn.validation.ready,
     validationReason: turn.validation.reason,
     rawDecision,
@@ -423,7 +425,7 @@ async function* runGateControlledTurn(
     confidence: analysis.confidence,
   });
 
-  yield* executeGateDecision(session, analysis, decision, nextState, turn.validation, turn.slotsCollected);
+  yield* executeGateDecision(session, analysis, decision, nextState, turn.validation);
 }
 
 async function* executeGateDecision(
@@ -432,7 +434,6 @@ async function* executeGateDecision(
   decision: ToolAction,
   callState: ReturnType<typeof getOrCreateCallState>,
   validation: ProductSlotValidation,
-  slotsCollected: boolean,
 ): AsyncGenerator<AgentStreamEvent> {
   if (isExecutableToolAction(decision) && !validation.ready) {
     yield* handleGateAskQuestion(session, analysis);
@@ -442,15 +443,15 @@ async function* executeGateDecision(
   switch (decision) {
     case "searchProductByISBN":
       session.productSlots = { isbn: callState.slots.isbn };
-      yield* phase2ProductFlow(session, callState, slotsCollected);
+      yield* phase2ProductFlow(session, callState);
       return;
     case "searchProductByTitle":
       session.productSlots = { title: callState.slots.title };
-      yield* phase2ProductFlow(session, callState, slotsCollected);
+      yield* phase2ProductFlow(session, callState);
       return;
     case "getSimilarProducts":
       session.productSlots = { wantsRecommendations: true };
-      yield* phase2ProductFlow(session, callState, slotsCollected);
+      yield* phase2ProductFlow(session, callState);
       return;
     case "orderLookupTool":
       if (analysis.orderNumber) {
@@ -495,7 +496,11 @@ async function* handleGateAskQuestion(
   yield* yieldSpeech(
     recordAssistant(
       session.callSid,
-      pickProductSlotQuestionForAwaiting(callState.awaitingInput, analysis.slots),
+      pickProductSlotQuestionForAwaiting(
+        callState.awaitingInput,
+        callState.slots,
+        callState.slotFlags,
+      ),
     ),
   );
   yield doneEvent(session.phase);
@@ -505,14 +510,13 @@ async function* handleGateAskQuestion(
 async function* phase2ProductFlow(
   session: CallSession,
   callState: CallState,
-  slotsCollected: boolean,
 ): AsyncGenerator<AgentStreamEvent> {
-  const slots: ProductSearchSlots = { ...session.productSlots };
+  const slots: ProductSearchSlots = { ...callState.slots };
   const memory = getOrCreateMemory(session.callSid);
   session.productSlots = undefined;
   session.awaitingInput = null;
 
-  assertProductSearchAllowed(callState, slots, slotsCollected);
+  assertProductSearchAllowed(callState, slots);
 
   setSlotValidationReady(session.callSid, true);
   setToolExecutionPhase(session.callSid, "PHASE_2");
@@ -739,11 +743,7 @@ function doneEvent(
   return { type: "done", phase, endCall, lookupMs };
 }
 
-function assertProductSearchAllowed(
-  callState: CallState,
-  slots: ProductSearchSlots,
-  slotsCollected: boolean,
-): void {
+function assertProductSearchAllowed(callState: CallState, slots: ProductSearchSlots): void {
   if (callState.intent !== "product") {
     throw new Error("PRODUCT_SEARCH_BLOCKED: intent_not_product");
   }
@@ -751,20 +751,21 @@ function assertProductSearchAllowed(
   const hasIsbn = Boolean(slots.isbn);
   const hasTitle = Boolean(slots.title);
   const wantsRec = Boolean(slots.wantsRecommendations);
+  const { slotFlags } = callState;
 
   if (!hasIsbn && !hasTitle && !wantsRec) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: missing_isbn_or_title");
   }
 
-  if (hasIsbn && !slotsCollected) {
+  if (hasIsbn && !slotFlags.isbnCollected) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: isbn_needs_slot_collection");
   }
 
-  if (hasTitle && !hasIsbn && !slotsCollected) {
+  if (hasTitle && !hasIsbn && !slotFlags.titleCollected) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: title_needs_slot_collection");
   }
 
-  if (wantsRec && !hasIsbn && !hasTitle && !slotsCollected) {
+  if (wantsRec && !hasIsbn && !hasTitle && !slotFlags.recommendationsCollected) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: recommendations_needs_slot_collection");
   }
 }

@@ -4,6 +4,7 @@
 import type { GateIntent } from "../agents/toolDecisionGate.js";
 import { advanceProductAwaiting } from "../agents/productSlotPhase.js";
 import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
+import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
 export type CallStatePhase = "PHASE_1" | "PHASE_2";
@@ -21,14 +22,27 @@ export interface CallStateSlots {
   wantsRecommendations?: boolean;
 }
 
+export interface CallStateSlotFlags {
+  isbnCollected: boolean;
+  titleCollected: boolean;
+  recommendationsCollected: boolean;
+}
+
 export interface CallState {
   callSid: string;
   phase: CallStatePhase;
   intent: CallStateIntent;
   slots: CallStateSlots;
+  slotFlags: CallStateSlotFlags;
   awaitingInput: CallStateAwaitingInput;
   updatedAt: number;
 }
+
+const EMPTY_SLOT_FLAGS: CallStateSlotFlags = {
+  isbnCollected: false,
+  titleCollected: false,
+  recommendationsCollected: false,
+};
 
 const TTL_MS = 60 * 60 * 1000;
 const states = new Map<string, CallState>();
@@ -48,6 +62,7 @@ export function createInitialCallState(callSid: string): CallState {
     phase: "PHASE_1",
     intent: "unknown",
     slots: {},
+    slotFlags: { ...EMPTY_SLOT_FLAGS },
     awaitingInput: "none",
     updatedAt: Date.now(),
   };
@@ -85,40 +100,68 @@ export interface AtomicTurnResult {
   validation: ProductSlotValidation;
 }
 
+function normalizeIncomingIsbn(value: string | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  const normalized = normalizeIsbn(value.trim());
+  return normalized.length >= 10 ? normalized : undefined;
+}
+
+/** Merge slot deltas into persisted slots — never drop existing values. */
+export function mergeSlotsCumulative(
+  existing: CallStateSlots,
+  delta: ProductSearchSlots,
+): CallStateSlots {
+  const merged: CallStateSlots = { ...existing };
+
+  if (delta.isbn !== undefined && delta.isbn !== "") {
+    const normalized = normalizeIncomingIsbn(delta.isbn);
+    if (normalized) merged.isbn = normalized;
+  }
+
+  if (delta.title !== undefined && delta.title !== "") {
+    merged.title = delta.title.trim();
+  }
+
+  if (delta.wantsRecommendations !== undefined) {
+    merged.wantsRecommendations = delta.wantsRecommendations;
+  }
+
+  return merged;
+}
+
 /**
  * Validates product slots before any Shopify tool may run.
- * Search requires explicit slot collection — no cold-start ISBN auto-search.
+ * Uses persistent slotFlags — not transient turn signals.
  */
-export function validateProductSlotState(
-  state: CallState,
-  slotsCollected: boolean,
-): ProductSlotValidation {
+export function validateProductSlotState(state: CallState): ProductSlotValidation {
   if (state.intent !== "product") {
     return { ready: true };
   }
 
-  const hasIsbn = Boolean(state.slots.isbn);
-  const hasTitle = Boolean(state.slots.title);
-  const wantsRec = Boolean(state.slots.wantsRecommendations);
+  const { slots, slotFlags } = state;
 
-  if (!hasIsbn && !hasTitle && !wantsRec) {
-    return { ready: false, reason: "missing_slots" };
+  if (slots.isbn && slotFlags.isbnCollected) {
+    return { ready: true };
   }
 
-  if (hasIsbn && !slotsCollected) {
+  if (slots.title && slotFlags.titleCollected) {
+    return { ready: true };
+  }
+
+  if (slots.wantsRecommendations && slotFlags.recommendationsCollected) {
+    return { ready: true };
+  }
+
+  if (slots.isbn && !slotFlags.isbnCollected) {
     return { ready: false, reason: "isbn_needs_confirmation" };
   }
 
-  if (hasTitle && !slotsCollected) {
+  if (slots.title && !slotFlags.titleCollected) {
     return { ready: false, reason: "title_needs_confirmation" };
   }
 
-  if (wantsRec && !slotsCollected) {
+  if (slots.wantsRecommendations && !slotFlags.recommendationsCollected) {
     return { ready: false, reason: "recommendations_needs_confirmation" };
-  }
-
-  if ((hasIsbn || hasTitle || wantsRec) && slotsCollected) {
-    return { ready: true };
   }
 
   return { ready: false, reason: "missing_slots" };
@@ -132,8 +175,53 @@ export function isProductToolAction(decision: string): boolean {
   );
 }
 
+function applySlotCollectionFlags(
+  wasAwaiting: CallStateAwaitingInput,
+  slots: CallStateSlots,
+  flags: CallStateSlotFlags,
+): CallStateSlotFlags {
+  const next = { ...flags };
+
+  if (wasAwaiting === "isbn" && slots.isbn) {
+    next.isbnCollected = true;
+  }
+  if (wasAwaiting === "title" && slots.title) {
+    next.titleCollected = true;
+  }
+  if (wasAwaiting === "isbn_or_title" && slots.wantsRecommendations) {
+    next.recommendationsCollected = true;
+  }
+
+  return next;
+}
+
+/** Deterministic awaiting — never re-ask for collected slots. */
+export function resolveProductAwaiting(
+  state: Pick<CallState, "awaitingInput" | "slots" | "slotFlags">,
+  speech: string,
+): CallStateAwaitingInput {
+  const { slots, slotFlags } = state;
+
+  if (slotFlags.isbnCollected && slots.isbn) {
+    if (state.awaitingInput === "title" && !slotFlags.titleCollected) {
+      return "title";
+    }
+    return "none";
+  }
+
+  if (slotFlags.titleCollected && slots.title) {
+    return "none";
+  }
+
+  if (slotFlags.recommendationsCollected && slots.wantsRecommendations) {
+    return "none";
+  }
+
+  return advanceProductAwaiting(state.awaitingInput, speech, slots, slotFlags);
+}
+
 /**
- * Atomic turn update: read → merge → validate → persist. No partial writes.
+ * Atomic turn update: read → merge deltas → validate → persist. No partial writes.
  */
 export function atomicMergeTurnState(
   callSid: string,
@@ -147,8 +235,8 @@ export function atomicMergeTurnState(
   const previous = getOrCreateCallState(callSid);
   const wasAwaiting = previous.awaitingInput;
   const merged = mergeTurnIntoCallState(previous, input);
-  const slotsCollected = isSlotAnswerComplete(wasAwaiting, merged.slots);
-  const validation = validateProductSlotState(merged, slotsCollected);
+  const slotsCollected = isSlotCollectedThisTurn(wasAwaiting, merged);
+  const validation = validateProductSlotState(merged);
 
   saveCallState(merged);
 
@@ -168,12 +256,9 @@ export function mergeTurnIntoCallState(
     userMessage?: string;
   },
 ): CallState {
-  const slots: CallStateSlots = {
-    isbn: input.incomingSlots.isbn ?? state.slots.isbn,
-    title: input.incomingSlots.title ?? state.slots.title,
-    wantsRecommendations:
-      input.incomingSlots.wantsRecommendations ?? state.slots.wantsRecommendations,
-  };
+  const wasAwaiting = state.awaitingInput;
+  const slots = mergeSlotsCumulative(state.slots, input.incomingSlots);
+  const slotFlags = applySlotCollectionFlags(wasAwaiting, slots, state.slotFlags);
 
   let intent = state.intent;
   if (state.awaitingInput !== "none" && (state.intent === "product" || state.intent === "order")) {
@@ -183,31 +268,54 @@ export function mergeTurnIntoCallState(
   }
 
   const productIntent = intent === "product" || input.intent === "product";
+  const draft = { ...state, slots, slotFlags, intent };
   const awaitingInput = productIntent
-    ? advanceProductAwaiting(state.awaitingInput, input.userMessage ?? "", slots)
+    ? resolveProductAwaiting(draft, input.userMessage ?? "")
     : state.awaitingInput;
 
   return {
-    ...state,
-    intent,
-    slots,
+    ...draft,
     awaitingInput,
     updatedAt: Date.now(),
   };
 }
 
+export function isSlotCollectedThisTurn(
+  wasAwaiting: CallStateAwaitingInput,
+  state: CallState,
+): boolean {
+  if (wasAwaiting === "isbn") return state.slotFlags.isbnCollected;
+  if (wasAwaiting === "title") return state.slotFlags.titleCollected;
+  if (wasAwaiting === "isbn_or_title") return state.slotFlags.recommendationsCollected;
+  return false;
+}
+
+/** @deprecated Use isSlotCollectedThisTurn + slotFlags */
 export function isSlotAnswerComplete(
   wasAwaiting: CallStateAwaitingInput,
   slots: CallStateSlots,
 ): boolean {
   if (wasAwaiting === "isbn") return Boolean(slots.isbn);
   if (wasAwaiting === "title") return Boolean(slots.title);
-
-  if (wasAwaiting === "isbn_or_title") {
-    return Boolean(slots.wantsRecommendations);
-  }
-
+  if (wasAwaiting === "isbn_or_title") return Boolean(slots.wantsRecommendations);
   return false;
+}
+
+function resolveAwaitingAfterAsk(state: CallState): CallStateAwaitingInput {
+  const resolved = resolveProductAwaiting(state, "");
+  const { slots, slotFlags } = state;
+
+  if (resolved !== "none") return resolved;
+
+  const needsSlot =
+    !slotFlags.isbnCollected &&
+    !slotFlags.titleCollected &&
+    !slotFlags.recommendationsCollected &&
+    !slots.isbn &&
+    !slots.title &&
+    !slots.wantsRecommendations;
+
+  return needsSlot ? "isbn_or_title" : "none";
 }
 
 export function applyDecisionToCallState(
@@ -218,10 +326,7 @@ export function applyDecisionToCallState(
   switch (decision) {
     case "ASK_QUESTION":
       if (state.intent === "product") {
-        if (state.awaitingInput === "isbn" || state.awaitingInput === "title") {
-          return { ...state, phase: "PHASE_1" };
-        }
-        return { ...state, phase: "PHASE_1", awaitingInput: "isbn_or_title" };
+        return { ...state, phase: "PHASE_1", awaitingInput: resolveAwaitingAfterAsk(state) };
       }
       if (state.intent === "order") {
         return { ...state, phase: "PHASE_1", awaitingInput: "order_number" };
@@ -245,6 +350,7 @@ export function finalizeAfterToolExecution(state: CallState): CallState {
     phase: "PHASE_1",
     intent: "unknown",
     slots: {},
+    slotFlags: { ...EMPTY_SLOT_FLAGS },
     awaitingInput: "none",
     updatedAt: Date.now(),
   };

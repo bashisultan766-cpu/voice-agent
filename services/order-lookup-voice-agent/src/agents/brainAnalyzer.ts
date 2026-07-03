@@ -21,11 +21,13 @@ import type { CallSession, ProductSearchSlots } from "../types/order.js";
 export interface BrainAnalysis {
   intent: GateIntent;
   missingSlots: Array<"isbn" | "title">;
+  /** Merged view for prompts/logging only — not written to CallState directly. */
   slots: ProductSearchSlots;
+  /** Delta extracted this turn — sole input to CallState merge. */
+  deltaSlots: ProductSearchSlots;
   orderNumber: string | null;
   userMessage: string;
   confidence: number;
-  slotsCollected: boolean;
   source: "regex" | "openai" | "default";
 }
 
@@ -61,9 +63,6 @@ export async function analyzeBrainTurn(
     parsed,
   );
   const orderNumber = extractOrderNumberFromSpeech(text);
-  const slotsCollected = callState
-    ? callState.awaitingInput !== "none"
-    : session.awaitingInput === "product_slot";
 
   const regex = classifyIntentRegex(text);
   if (regex) {
@@ -71,10 +70,10 @@ export async function analyzeBrainTurn(
       intent: regex.intent,
       missingSlots: computeMissingSlots(slots),
       slots,
+      deltaSlots: parsed,
       orderNumber,
       userMessage: text,
       confidence: regex.confidence,
-      slotsCollected,
       source: "regex",
     };
   }
@@ -85,10 +84,10 @@ export async function analyzeBrainTurn(
       intent: llm.intent,
       missingSlots: computeMissingSlots(slots),
       slots,
+      deltaSlots: parsed,
       orderNumber,
       userMessage: text,
       confidence: llm.confidence,
-      slotsCollected,
       source: "openai",
     };
   }
@@ -97,10 +96,10 @@ export async function analyzeBrainTurn(
     intent: "unknown",
     missingSlots: computeMissingSlots(slots),
     slots,
+    deltaSlots: parsed,
     orderNumber,
     userMessage: text,
     confidence: 0.35,
-    slotsCollected,
     source: "default",
   };
 }

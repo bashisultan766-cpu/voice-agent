@@ -2,7 +2,7 @@
  * Phase 1 slot parsing — conversation only, no Shopify calls.
  */
 import type { CallStateAwaitingInput } from "../memory/callStateStore.js";
-import { extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
+import { extractIsbnFromSpeech, normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { CallSession, ProductSearchSlots } from "../types/order.js";
 
 const GENERIC_TITLE_RE =
@@ -73,9 +73,9 @@ export function parseProductSlotsFromSpeech(
 
   if (awaiting === "isbn") {
     const isbn = extractIsbnFromSpeech(text);
-    if (isbn) slots.isbn = isbn;
+    if (isbn) slots.isbn = normalizeIsbn(isbn);
     else if (/^\d[\dXx-]{8,17}[\dXx]?$/.test(text.replace(/\s/g, ""))) {
-      const normalized = extractIsbnFromSpeech(text) ?? text.replace(/[\s-]/g, "");
+      const normalized = normalizeIsbn(text);
       if (normalized.length >= 10) slots.isbn = normalized;
     }
   }
@@ -102,8 +102,9 @@ export function mergeProductSlots(
   existing: ProductSearchSlots | undefined,
   incoming: ProductSearchSlots,
 ): ProductSearchSlots {
+  const isbn = incoming.isbn ?? existing?.isbn;
   return {
-    isbn: incoming.isbn ?? existing?.isbn,
+    isbn: isbn ? normalizeIsbn(isbn) : undefined,
     title: incoming.title ?? existing?.title,
     category: incoming.category ?? existing?.category,
     wantsRecommendations: incoming.wantsRecommendations ?? existing?.wantsRecommendations,
@@ -115,20 +116,28 @@ export function advanceProductAwaiting(
   wasAwaiting: CallStateAwaitingInput,
   speech: string,
   slots: Pick<ProductSearchSlots, "isbn" | "title" | "wantsRecommendations">,
+  slotFlags?: { isbnCollected?: boolean; titleCollected?: boolean },
 ): CallStateAwaitingInput {
+  if (slotFlags?.isbnCollected && slots.isbn) {
+    if (wasAwaiting === "isbn") return "none";
+  }
+  if (slotFlags?.titleCollected && slots.title) {
+    if (wasAwaiting === "title") return "none";
+  }
+
   if (wasAwaiting === "isbn" && slots.isbn) return "none";
   if (wasAwaiting === "title" && slots.title) return "none";
 
   const choice = detectSlotTypeChoice(speech);
 
   if (wasAwaiting === "isbn_or_title") {
-    if (choice === "isbn" && !slots.isbn) return "isbn";
-    if (choice === "title" && !slots.title) return "title";
+    if (choice === "isbn" && !slots.isbn && !slotFlags?.isbnCollected) return "isbn";
+    if (choice === "title" && !slots.title && !slotFlags?.titleCollected) return "title";
     return "isbn_or_title";
   }
 
-  if (wasAwaiting === "isbn" && !slots.isbn) return "isbn";
-  if (wasAwaiting === "title" && !slots.title) return "title";
+  if (wasAwaiting === "isbn" && !slots.isbn && !slotFlags?.isbnCollected) return "isbn";
+  if (wasAwaiting === "title" && !slots.title && !slotFlags?.titleCollected) return "title";
 
   return wasAwaiting;
 }
@@ -149,7 +158,14 @@ export type ProductSlotPromptKind = "isbn" | "title" | "both" | "category";
 export function pickProductSlotQuestionForAwaiting(
   awaiting: CallStateAwaitingInput,
   slots?: ProductSearchSlots,
+  slotFlags?: { isbnCollected?: boolean; titleCollected?: boolean },
 ): string {
+  if (slotFlags?.isbnCollected && slots?.isbn) {
+    return pickVariedSlotPrompt(TITLE_VALUE_PROMPTS);
+  }
+  if (slotFlags?.titleCollected && slots?.title) {
+    return pickProductSlotQuestion(slots ?? {}, "both");
+  }
   if (awaiting === "isbn") {
     return pickVariedSlotPrompt(ISBN_VALUE_PROMPTS);
   }
