@@ -168,18 +168,28 @@ describe("callStateStore", () => {
     expect(result.reason).toBe("title_needs_confirmation");
   });
 
-  it("atomicMergeTurnState persists ISBN before validation when awaiting isbn", () => {
-    const seeded = getOrCreateCallState("CA_ATOMIC");
-    saveCallState({ ...seeded, intent: "product", awaitingInput: "isbn" });
-
-    const turn = atomicMergeTurnState("CA_ATOMIC", {
+  it("accumulates ISBN digits across multiple voice turns", () => {
+    const callSid = "CA_MULTI";
+    saveCallState({
+      ...getOrCreateCallState(callSid),
       intent: "product",
-      incomingSlots: { isbn: "9783161484100" },
-      userMessage: "9783161484100",
+      awaitingInput: "isbn",
     });
 
+    atomicMergeTurnState(callSid, {
+      intent: "product",
+      incomingSlots: {},
+      userMessage: "nine seven eight",
+    });
+
+    const turn = atomicMergeTurnState(callSid, {
+      intent: "product",
+      incomingSlots: {},
+      userMessage: "three one six one four eight four one zero zero",
+    });
+
+    expect(turn.state.slots.isbn).toBe("9783161484100");
+    expect(turn.state.slotFlags.isbnCollected).toBe(true);
     expect(turn.validation.ready).toBe(true);
-    expect(getOrCreateCallState("CA_ATOMIC").slots.isbn).toBe("9783161484100");
-    expect(getOrCreateCallState("CA_ATOMIC").slotFlags.isbnCollected).toBe(true);
   });
 });

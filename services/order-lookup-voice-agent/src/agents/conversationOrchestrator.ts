@@ -55,7 +55,7 @@ import {
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { softFallback } from "./conversationBrainAgent.js";
 import { formatProductResults } from "./productResponseFormatter.js";
-import { extractIsbnFromSpeech, scoreTitleMatch } from "../utils/productSearchNormalize.js";
+import { digitizeSpeechForIsbn, extractIsbnFromSpeech, scoreTitleMatch } from "../utils/productSearchNormalize.js";
 import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
@@ -353,6 +353,18 @@ async function* runGateControlledTurn(
     incomingSlots: analysis.deltaSlots,
     userMessage: text,
   });
+
+  if (turn.wasAwaiting === "isbn") {
+    logger.info("isbn_slot_parse_attempt", {
+      callSid: session.callSid.slice(0, 8),
+      transcript: text,
+      digitized: digitizeSpeechForIsbn(text),
+      isbnDraft: turn.state.slots.isbnDraft,
+      parsedIsbn: turn.state.slots.isbn,
+      isbnCollected: turn.state.slotFlags.isbnCollected,
+      validationReady: turn.validation.ready,
+    });
+  }
 
   const rawDecision = decideToolExecution(
     buildToolDecisionState({

@@ -4,7 +4,12 @@
 import type { GateIntent } from "../agents/toolDecisionGate.js";
 import { advanceProductAwaiting } from "../agents/productSlotPhase.js";
 import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
-import { normalizeIsbn } from "../utils/productSearchNormalize.js";
+import {
+  digitizeSpeechForIsbn,
+  extractIsbnFromAwaitingSpeech,
+  isCompleteIsbnValue,
+  normalizeIsbn,
+} from "../utils/productSearchNormalize.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
 export type CallStatePhase = "PHASE_1" | "PHASE_2";
@@ -18,6 +23,8 @@ export type CallStateAwaitingInput =
 
 export interface CallStateSlots {
   isbn?: string;
+  /** Partial ISBN digits accumulated across voice turns before collection completes. */
+  isbnDraft?: string;
   title?: string;
   wantsRecommendations?: boolean;
 }
@@ -115,7 +122,14 @@ export function mergeSlotsCumulative(
 
   if (delta.isbn !== undefined && delta.isbn !== "") {
     const normalized = normalizeIncomingIsbn(delta.isbn);
-    if (normalized) merged.isbn = normalized;
+    if (normalized) {
+      merged.isbn = normalized;
+      merged.isbnDraft = undefined;
+    }
+  }
+
+  if (delta.isbnDraft !== undefined && delta.isbnDraft !== "") {
+    merged.isbnDraft = delta.isbnDraft;
   }
 
   if (delta.title !== undefined && delta.title !== "") {
@@ -182,8 +196,9 @@ function applySlotCollectionFlags(
 ): CallStateSlotFlags {
   const next = { ...flags };
 
-  if (wasAwaiting === "isbn" && slots.isbn) {
+  if (wasAwaiting === "isbn" && slots.isbn && isCompleteIsbnValue(slots.isbn)) {
     next.isbnCollected = true;
+    slots.isbnDraft = undefined;
   }
   if (wasAwaiting === "title" && slots.title) {
     next.titleCollected = true;
@@ -248,6 +263,29 @@ export function atomicMergeTurnState(
   };
 }
 
+function applyIsbnAwaitingMerge(
+  state: CallState,
+  userMessage: string,
+  slots: CallStateSlots,
+): CallStateSlots {
+  if (slots.isbn && isCompleteIsbnValue(slots.isbn)) {
+    return { ...slots, isbnDraft: undefined };
+  }
+
+  const priorDraft = state.slots.isbnDraft ?? "";
+  const complete = extractIsbnFromAwaitingSpeech(userMessage, priorDraft);
+
+  if (complete && isCompleteIsbnValue(complete)) {
+    return { ...slots, isbn: complete, isbnDraft: undefined };
+  }
+
+  const chunk = digitizeSpeechForIsbn(userMessage);
+  if (!chunk) return slots;
+
+  const draft = `${priorDraft}${chunk}`.slice(0, 17);
+  return { ...slots, isbnDraft: draft };
+}
+
 export function mergeTurnIntoCallState(
   state: CallState,
   input: {
@@ -257,7 +295,12 @@ export function mergeTurnIntoCallState(
   },
 ): CallState {
   const wasAwaiting = state.awaitingInput;
-  const slots = mergeSlotsCumulative(state.slots, input.incomingSlots);
+  let slots = mergeSlotsCumulative(state.slots, input.incomingSlots);
+
+  if (wasAwaiting === "isbn" && input.userMessage) {
+    slots = applyIsbnAwaitingMerge(state, input.userMessage, slots);
+  }
+
   const slotFlags = applySlotCollectionFlags(wasAwaiting, slots, state.slotFlags);
 
   let intent = state.intent;

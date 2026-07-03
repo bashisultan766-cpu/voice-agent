@@ -2,7 +2,7 @@
  * Phase 1 slot parsing — conversation only, no Shopify calls.
  */
 import type { CallStateAwaitingInput } from "../memory/callStateStore.js";
-import { extractIsbnFromSpeech, normalizeIsbn } from "../utils/productSearchNormalize.js";
+import { extractIsbnFromAwaitingSpeech, normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { CallSession, ProductSearchSlots } from "../types/order.js";
 
 const GENERIC_TITLE_RE =
@@ -72,7 +72,7 @@ export function parseProductSlotsFromSpeech(
   const text = speech.trim();
 
   if (awaiting === "isbn") {
-    const isbn = extractIsbnFromSpeech(text);
+    const isbn = extractIsbnFromAwaitingSpeech(text);
     if (isbn) slots.isbn = isbn;
   }
 

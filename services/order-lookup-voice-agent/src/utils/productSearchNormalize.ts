@@ -109,13 +109,20 @@ const SPOKEN_DIGIT_WORDS: Record<string, string> = {
   oh: "0",
   o: "0",
   one: "1",
+  won: "1",
   two: "2",
+  to: "2",
+  too: "2",
   three: "3",
+  tree: "3",
   four: "4",
+  for: "4",
+  fore: "4",
   five: "5",
   six: "6",
   seven: "7",
   eight: "8",
+  ate: "8",
   nine: "9",
 };
 
@@ -196,6 +203,56 @@ export function extractIsbnFromSpeech(text: string): string | null {
 
   const packedDigits = text.replace(/\D/g, "");
   return pickValidIsbnFromDigitString(packedDigits);
+}
+
+/** Relaxed pick when caller is clearly reading an ISBN (awaiting slot). */
+export function pickRelaxedIsbnCandidate(digits: string): string | null {
+  if (!digits || digits.length < 10) return null;
+
+  if (digits.length === 13 && /^97[89]\d{10}$/.test(digits)) {
+    return normalizeIsbn(digits);
+  }
+  if (digits.length === 10) {
+    return normalizeIsbn(digits);
+  }
+
+  const m13 = digits.match(/97[89]\d{10}/);
+  if (m13) return normalizeIsbn(m13[0]);
+
+  if (digits.length > 13) {
+    const tail13 = digits.slice(-13);
+    if (/^97[89]\d{10}$/.test(tail13)) return normalizeIsbn(tail13);
+    return normalizeIsbn(digits.slice(-10));
+  }
+
+  if (digits.length > 10 && digits.length < 13) {
+    return normalizeIsbn(digits.slice(0, 10));
+  }
+
+  return null;
+}
+
+/** Aggressive ISBN parse for the awaiting-isbn slot (voice / multi-chunk). */
+export function extractIsbnFromAwaitingSpeech(text: string, priorDraft = ""): string | null {
+  const chunk = digitizeSpeechForIsbn(text);
+  const combined = priorDraft ? `${priorDraft}${chunk}` : chunk;
+
+  if (combined.length >= 10) {
+    const fromCombined =
+      pickValidIsbnFromDigitString(combined) ?? pickRelaxedIsbnCandidate(combined);
+    if (fromCombined) return fromCombined;
+  }
+
+  if (!priorDraft) {
+    return extractIsbnFromSpeech(text);
+  }
+
+  return null;
+}
+
+export function isCompleteIsbnValue(isbn: string): boolean {
+  const n = normalizeIsbn(isbn);
+  return n.length === 10 || n.length === 13;
 }
 
 export function tagOverlapScore(tagsA: string[], tagsB: string[]): number {
