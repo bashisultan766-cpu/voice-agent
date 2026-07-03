@@ -18,6 +18,7 @@ import {
   normalizeIsbn,
   rankBySearchScore,
   rankLiveProducts,
+  scoreTitleMatch,
 } from "../utils/productSearchNormalize.js";
 import {
   isValidOrderNumberFormat,
@@ -53,6 +54,17 @@ export interface OrderStatusResult {
   /** Days until estimated delivery (0 = delivered or shipping today). */
   estimatedDeliveryDays?: number;
   estimatedDeliveryDate?: string;
+  customerName?: string;
+  financialStatus?: string;
+  refundStatus?: string;
+  refundReason?: string;
+  totalAmount?: string;
+  shippingFee?: string;
+  itemCount?: number;
+  lineItems?: Array<{ title: string; quantity: number }>;
+  orderNote?: string;
+  cardLast4?: string;
+  cardBrand?: string;
   message?: string;
 }
 
@@ -63,6 +75,9 @@ export interface BookAvailabilityResult {
   inStock?: boolean;
   quantity?: number;
   productId?: string;
+  /** False when the match is fuzzy rather than an exact title hit. */
+  exactMatch?: boolean;
+  queriedTitle?: string;
   message?: string;
 }
 
@@ -81,7 +96,23 @@ interface GqlFulfillmentNode {
 interface GqlOrderNode {
   id: string;
   name: string;
+  note?: string | null;
   displayFulfillmentStatus?: string;
+  displayFinancialStatus?: string;
+  customer?: { firstName?: string; lastName?: string } | null;
+  totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  totalShippingPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  lineItems?: {
+    edges?: Array<{ node?: { title?: string; quantity?: number } }>;
+  };
+  refunds?: Array<{ note?: string | null }>;
+  transactions?: Array<{
+    gateway?: string;
+    paymentDetails?: {
+      company?: string;
+      number?: string;
+    };
+  }>;
   fulfillments?: GqlFulfillmentNode[];
 }
 
@@ -91,7 +122,45 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
       node {
         id
         name
+        note
         displayFulfillmentStatus
+        displayFinancialStatus
+        customer {
+          firstName
+          lastName
+        }
+        totalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        totalShippingPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        lineItems(first: 15) {
+          edges {
+            node {
+              title
+              quantity
+            }
+          }
+        }
+        refunds(first: 3) {
+          note
+        }
+        transactions(first: 5) {
+          gateway
+          paymentDetails {
+            ... on CardPaymentDetails {
+              company
+              number
+            }
+          }
+        }
         fulfillments(first: 5) {
           status
           displayStatus
@@ -149,6 +218,28 @@ function estimateDeliveryDays(
   return DEFAULT_UNFULFILLED_SHIP_DAYS;
 }
 
+function extractCardLast4(paymentNumber?: string): string | undefined {
+  if (!paymentNumber) return undefined;
+  const digits = paymentNumber.replace(/\D/g, "");
+  return digits.length >= 4 ? digits.slice(-4) : undefined;
+}
+
+function formatMoneyAmount(
+  money?: { amount?: string; currencyCode?: string },
+): string | undefined {
+  if (!money?.amount) return undefined;
+  const code = money.currencyCode ?? "USD";
+  return `${money.amount} ${code}`;
+}
+
+function customerDisplayName(
+  customer?: { firstName?: string; lastName?: string } | null,
+): string | undefined {
+  if (!customer) return undefined;
+  const name = [customer.firstName, customer.lastName].filter(Boolean).join(" ").trim();
+  return name || undefined;
+}
+
 function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   const fulfillment = pickPrimaryFulfillment(node.fulfillments);
   const tracking = fulfillment?.trackingInfo?.find((t) => t.url || t.number);
@@ -160,6 +251,25 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
 
   const estimatedDeliveryDays = estimateDeliveryDays(fulfillmentStatus, fulfillment);
 
+  const lineItems =
+    node.lineItems?.edges
+      ?.map((e) => ({
+        title: e.node?.title ?? "Item",
+        quantity: e.node?.quantity ?? 1,
+      }))
+      .filter((li) => li.title) ?? [];
+
+  const itemCount = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+
+  const financialStatus = node.displayFinancialStatus ?? "";
+  const refundNote = node.refunds?.find((r) => r.note)?.note ?? undefined;
+  const isRefunded = /refund/i.test(financialStatus);
+
+  const cardTxn = node.transactions?.find(
+    (t) => t.paymentDetails?.number || t.paymentDetails?.company,
+  );
+  const cardLast4 = extractCardLast4(cardTxn?.paymentDetails?.number);
+
   return {
     orderNumber: node.name,
     fulfillmentStatus,
@@ -169,6 +279,17 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
       : undefined,
     estimatedDeliveryDays,
     estimatedDeliveryDate: fulfillment?.estimatedDeliveryAt ?? undefined,
+    customerName: customerDisplayName(node.customer),
+    financialStatus,
+    refundStatus: isRefunded ? financialStatus : undefined,
+    refundReason: isRefunded ? refundNote : undefined,
+    totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
+    shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
+    itemCount: itemCount || lineItems.length || undefined,
+    lineItems: lineItems.length ? lineItems : undefined,
+    orderNote: node.note?.trim() || undefined,
+    cardLast4,
+    cardBrand: cardTxn?.paymentDetails?.company ?? cardTxn?.gateway,
   };
 }
 
@@ -230,6 +351,7 @@ async function graphqlProductsForQueries(
 function toBookResult(
   product: ReturnType<typeof mapGqlProduct>,
   status: AdapterStatus = "found",
+  meta?: { exactMatch?: boolean; queriedTitle?: string },
 ): BookAvailabilityResult {
   const primaryVariant = product.variants[0];
   const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
@@ -242,7 +364,13 @@ function toBookResult(
     inStock,
     quantity,
     productId: product.id,
+    exactMatch: meta?.exactMatch,
+    queriedTitle: meta?.queriedTitle,
   };
+}
+
+function isExactTitleMatch(title: string, query: string): boolean {
+  return scoreTitleMatch(title, query) >= 10;
 }
 
 /**
@@ -373,7 +501,8 @@ export async function searchByTitle(
         return { status: "not_found" as const };
       }
 
-      return toBookResult(top);
+      const exactMatch = isExactTitleMatch(top.title, q);
+      return toBookResult(top, "found", { exactMatch, queriedTitle: q });
     });
 
     return result;

@@ -131,10 +131,12 @@ import {
 } from "./productRetrievalPolicy.js";
 import { digitizeSpeechForIsbn, extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import {
+  detectMultiIntentAgenda,
   extractEntities,
   type EntityExtractionResult,
   type FulfillmentIntent,
 } from "../nlp/entityExtractor.js";
+import { clearDialogueState } from "./dialogueManager.js";
 import { handleFulfillmentTurn } from "./fulfillmentHandlers.js";
 import type { AgentState } from "../platform/agentState.js";
 import {
@@ -185,6 +187,7 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
 /** Tear down all per-call resources when the relay socket closes. */
 export function endCallSession(callSid: string): void {
   markCallSessionClosed(callSid);
+  clearDialogueState(callSid);
   clearCallMemory(callSid);
   clearCallExecutionPhase(callSid);
   clearCallState(callSid);
@@ -540,6 +543,11 @@ function shouldUseFulfillmentPath(
 ): boolean {
   if (isLegacyProductSlotCollection(callState, session)) return false;
   if (fulfillmentAwaiting) return true;
+
+  const agenda = detectMultiIntentAgenda(text);
+  if (agenda.includes("order_status") && agenda.includes("product_search")) {
+    return true;
+  }
 
   if (extraction.intent === "order_status") return true;
 

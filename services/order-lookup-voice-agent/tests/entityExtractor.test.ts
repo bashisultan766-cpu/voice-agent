@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectMultiIntentAgenda,
   extractEntities,
   extractIsbnFromStt,
   extractOrderNumberFromStt,
@@ -7,6 +8,7 @@ import {
   normalizeAlphanumericOrderId,
   normalizeIsbnFromStt,
   normalizeSpokenNumericSequence,
+  validateShopifyExecutionGate,
 } from "../src/nlp/entityExtractor.js";
 
 describe("normalizeSpokenNumericSequence", () => {
@@ -56,8 +58,14 @@ describe("extractOrderNumberFromStt", () => {
     expect(extractOrderNumberFromStt("my order number is 12345")).toBe("#12345");
   });
 
-  it("extracts spoken order number", () => {
-    expect(extractOrderNumberFromStt("one two three four five")).toBe("#12345");
+  it("does not extract bare spoken digits without order context", () => {
+    expect(extractOrderNumberFromStt("one two three four five")).toBeNull();
+  });
+
+  it("extracts spoken order number when awaiting slot", () => {
+    expect(
+      extractOrderNumberFromStt("one two three four five", { awaitingSlot: true }),
+    ).toBe("#12345");
   });
 
   it("extracts inline digit run", () => {
@@ -109,5 +117,23 @@ describe("extractEntities intent routing", () => {
     });
     expect(result.orderNumber).toBe("#12345");
     expect(result.slotType).toBe("order_number");
+  });
+
+  it("detects multi-intent agenda for order then product", () => {
+    const agenda = detectMultiIntentAgenda(
+      "Hi, first check my order status, then I want to buy a book",
+    );
+    expect(agenda).toContain("order_status");
+    expect(agenda).toContain("product_search");
+  });
+
+  it("blocks Shopify gate when order intent lacks order number", () => {
+    const gate = validateShopifyExecutionGate("order_status", {
+      intent: "order_status",
+      slotType: "none",
+      confidence: 0.6,
+    });
+    expect(gate.allowed).toBe(false);
+    expect(gate.clarificationText).toContain("order number");
   });
 });

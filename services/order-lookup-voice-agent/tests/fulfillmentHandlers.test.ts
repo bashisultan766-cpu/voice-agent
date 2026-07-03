@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   buildBookFoundTts,
   buildOrderStatusTts,
   handleFulfillmentTurn,
 } from "../src/agents/fulfillmentHandlers.js";
+import { clearAllDialogueStates } from "../src/agents/dialogueManager.js";
 
 vi.mock("../src/adapters/shopifyStorefrontAdapter.js", () => ({
   getOrderStatus: vi.fn(),
@@ -47,22 +48,36 @@ describe("buildBookFoundTts", () => {
 });
 
 describe("buildOrderStatusTts", () => {
-  it("includes order number, status, and delivery window", () => {
+  it("includes rich order summary with customer, total, and card", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
+      customerName: "Jane Doe",
       fulfillmentStatus: "In transit",
       estimatedDeliveryDays: 3,
       trackingStatus: "USPS 9400",
+      totalAmount: "45.99 USD",
+      shippingFee: "5.99 USD",
+      itemCount: 2,
+      cardLast4: "4242",
+      cardBrand: "Visa",
     });
-    expect(tts.text).toContain("#12345");
+    expect(tts.text).toContain("Jane Doe");
     expect(tts.text).toContain("in transit");
     expect(tts.text).toContain("3 days");
     expect(tts.text).toContain("USPS 9400");
+    expect(tts.text).toContain("45");
+    expect(tts.text).toContain("shipping");
+    expect(tts.text).toMatch(/4242|four.*two/i);
   });
 });
 
 describe("handleFulfillmentTurn", () => {
+  afterEach(() => {
+    clearAllDialogueStates();
+    vi.clearAllMocks();
+  });
+
   it("returns ISBN fallback when book not found", async () => {
     vi.mocked(searchByISBN).mockResolvedValue({ status: "not_found" });
 
@@ -102,5 +117,31 @@ describe("handleFulfillmentTurn", () => {
 
     expect(result.tts.text).toContain("couldn't find a book matching that title");
     expect(result.tts.awaitingSlot).toBe("isbn");
+  });
+
+  it("announces multi-intent plan without calling Shopify", async () => {
+    const result = await handleFulfillmentTurn({
+      speech:
+        "Hi, first I want to check my order status, and then I want to buy a book",
+      callSid: "CA_MULTI",
+    });
+
+    expect(result.tts.text).toContain("both");
+    expect(result.tts.awaitingSlot).toBe("order_number");
+    expect(getOrderStatus).not.toHaveBeenCalled();
+    expect(searchByTitle).not.toHaveBeenCalled();
+  });
+
+  it("uses fuzzy title phrasing when exactMatch is false", () => {
+    const tts = buildBookFoundTts({
+      status: "found",
+      bookName: "Harry Potter and the Sorcerer's Stone",
+      price: "12.50",
+      inStock: true,
+      exactMatch: false,
+      queriedTitle: "Harry Potter Sorcerer",
+    });
+    expect(tts.text).toContain("couldn't find that exact title");
+    expect(tts.text).toContain("Harry Potter");
   });
 });

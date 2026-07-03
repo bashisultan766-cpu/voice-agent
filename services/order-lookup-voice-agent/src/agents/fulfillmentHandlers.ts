@@ -13,9 +13,27 @@ import {
   searchByISBN,
   searchByTitle,
 } from "../adapters/shopifyStorefrontAdapter.js";
+import {
+  activeAgendaAwaitingSlot,
+  buildAgendaPlanTts,
+  buildAgendaTransitionTts,
+  completeCurrentAgendaItem,
+  getCurrentAgendaItem,
+  getDialogueState,
+  markPlanAnnounced,
+  shouldAnnouncePlan,
+  updateAgendaFromSpeech,
+} from "./dialogueManager.js";
 import type { EntityExtractionResult, FulfillmentIntent } from "../nlp/entityExtractor.js";
-import { extractEntities } from "../nlp/entityExtractor.js";
-import { fulfillmentStatusPhrase, speakMoney } from "../utils/formatter.js";
+import {
+  extractEntities,
+  validateShopifyExecutionGate,
+} from "../nlp/entityExtractor.js";
+import {
+  fulfillmentStatusPhrase,
+  speakCardLast4,
+  speakMoney,
+} from "../utils/formatter.js";
 
 export interface TtsPayload {
   text: string;
@@ -61,38 +79,107 @@ function deliveryPhrase(days: number | undefined): string {
   return `${days} days`;
 }
 
+function gateAwaitingSlot(
+  reason: ReturnType<typeof validateShopifyExecutionGate>["reason"],
+): TtsPayload["awaitingSlot"] {
+  switch (reason) {
+    case "missing_order_number":
+      return "order_number";
+    case "missing_isbn":
+      return "isbn";
+    case "missing_title":
+    case "vague_title":
+      return "title";
+    default:
+      return null;
+  }
+}
+
 /** Build TTS for a successful ISBN / title book match. */
 export function buildBookFoundTts(result: BookAvailabilityResult): TtsPayload {
   const name = result.bookName ?? "that book";
   const price = formatVoicePrice(result.price ?? "0");
   const stock = stockPhrase(result.inStock ?? false, result.quantity);
 
+  const lead =
+    result.exactMatch === false
+      ? `I couldn't find that exact title, but I found ${name}.`
+      : `I found ${name}.`;
+
   return {
-    text: `I found ${name}. The price is ${price}, and ${stock}. Would you like to add this to your cart?`,
+    text: `${lead} The price is ${price}, and ${stock}. Would you like to add this to your cart?`,
     offerAddToCart: result.inStock ?? false,
     awaitingSlot: null,
   };
 }
 
-/** Build TTS for order status lookup. */
+/** Build TTS for order status lookup — rich proactive summary from Shopify data. */
 export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
   if (result.status !== "found" || !result.orderNumber) {
     return buildOrderFallbackTts(result);
   }
 
+  const parts: string[] = [];
+
+  if (result.customerName) {
+    parts.push(`I found your order under the name ${result.customerName}.`);
+  } else {
+    parts.push(`I found your order ${result.orderNumber}.`);
+  }
+
+  if (result.itemCount !== undefined) {
+    parts.push(
+      result.itemCount === 1
+        ? "It has one item."
+        : `It has ${result.itemCount} items.`,
+    );
+  }
+
+  if (result.totalAmount) {
+    const total = speakMoney(result.totalAmount);
+    if (result.shippingFee) {
+      const shipping = speakMoney(result.shippingFee);
+      parts.push(`The total was ${total} including ${shipping} shipping.`);
+    } else {
+      parts.push(`The total was ${total}.`);
+    }
+  }
+
   const status = fulfillmentStatusPhrase(result.fulfillmentStatus ?? "unfulfilled");
+  parts.push(`It is currently ${status}.`);
+
+  if (result.refundStatus) {
+    parts.push("This order has been refunded.");
+    if (result.refundReason) {
+      parts.push(`The reason on file is ${result.refundReason}.`);
+    }
+  }
+
+  if (result.trackingStatus) {
+    parts.push(`Tracking shows ${result.trackingStatus}.`);
+  }
+
   const days = deliveryPhrase(result.estimatedDeliveryDays);
   const inTransit = /transit|shipped|deliver/i.test(result.fulfillmentStatus ?? "");
-
-  let text = `Your order ${result.orderNumber} is currently ${status}.`;
-  if (result.trackingStatus) {
-    text += ` Tracking shows ${result.trackingStatus}.`;
+  if (inTransit) {
+    parts.push(`It is expected to arrive in ${days}.`);
+  } else if (result.estimatedDeliveryDays !== undefined) {
+    parts.push(`It is expected to ship in ${days}.`);
   }
-  text += inTransit
-    ? ` It is expected to arrive in ${days}.`
-    : ` It is expected to ship in ${days}.`;
 
-  return { text, awaitingSlot: null };
+  if (result.cardLast4) {
+    const brand =
+      result.cardBrand && result.cardBrand !== "card" ? result.cardBrand : "your card";
+    parts.push(
+      `Payment was on ${brand} ending in ${speakCardLast4(result.cardLast4)}.`,
+    );
+  }
+
+  if (result.orderNote) {
+    parts.push(`There is a note on the order: ${result.orderNote}.`);
+  }
+
+  return { text: parts.join(" "), awaitingSlot: null };
 }
 
 function buildIsbnNotFoundTts(): TtsPayload {
@@ -155,28 +242,51 @@ function buildBookFallbackTts(
 }
 
 function buildMissingSlotTts(extraction: EntityExtractionResult): TtsPayload {
-  switch (extraction.intent) {
-    case "order_status":
-      return {
-        text: "Please provide your order number so I can check the status.",
-        awaitingSlot: "order_number",
-      };
-    case "isbn_search":
-      return {
-        text: "Please read the 10 or 13 digit ISBN from the back of the book.",
-        awaitingSlot: "isbn",
-      };
-    case "title_search":
-      return {
-        text: "What is the title of the book you're looking for?",
-        awaitingSlot: "title",
-      };
-    default:
-      return {
-        text: "I can help with order status, book titles, or ISBN lookups. What would you like to do?",
-        awaitingSlot: null,
-      };
+  const gate = validateShopifyExecutionGate(extraction.intent, extraction);
+  if (!gate.allowed) {
+    return {
+      text: gate.clarificationText,
+      awaitingSlot: gateAwaitingSlot(gate.reason),
+    };
   }
+
+  return {
+    text: "I can help with order status, book titles, or ISBN lookups. What would you like to do?",
+    awaitingSlot: null,
+  };
+}
+
+function resolveActiveIntent(
+  extraction: EntityExtractionResult,
+  agendaItem: ReturnType<typeof getCurrentAgendaItem>,
+): FulfillmentIntent {
+  if (agendaItem === "order_status") {
+    return "order_status";
+  }
+  if (agendaItem === "product_search") {
+    if (extraction.intent === "isbn_search") return "isbn_search";
+    if (extraction.intent === "title_search") return "title_search";
+    return "title_search";
+  }
+  return extraction.intent;
+}
+
+function appendAgendaTransition(
+  tts: TtsPayload,
+  callSid: string,
+  orderSucceeded: boolean,
+): TtsPayload {
+  if (!orderSucceeded) return tts;
+
+  const nextItem = completeCurrentAgendaItem(callSid);
+  if (!nextItem) return tts;
+
+  const bridge = buildAgendaTransitionTts(nextItem);
+  return {
+    ...tts,
+    text: `${tts.text} ${bridge}`,
+    awaitingSlot: nextItem === "product_search" ? null : "order_number",
+  };
 }
 
 /**
@@ -186,45 +296,87 @@ export async function handleFulfillmentTurn(
   input: FulfillmentHandlerInput,
 ): Promise<FulfillmentHandlerResult> {
   const callSid = input.callSid ?? "fulfillment";
-  const extraction = extractEntities(input.speech, {
-    awaitingSlot: input.awaitingSlot ?? undefined,
-    isbnDraft: input.isbnDraft,
-  });
+  const useDialogue = callSid !== "fulfillment";
 
-  if (extraction.slotType === "none" || extraction.confidence < 0.5) {
+  if (useDialogue) {
+    updateAgendaFromSpeech(callSid, input.speech);
+  }
+
+  if (useDialogue && shouldAnnouncePlan(callSid, input.speech)) {
+    const state = getDialogueState(callSid);
+    markPlanAnnounced(callSid);
+    const extraction = extractEntities(input.speech, {
+      awaitingSlot: input.awaitingSlot ?? undefined,
+      isbnDraft: input.isbnDraft,
+    });
     return {
       extraction,
-      tts: buildMissingSlotTts(extraction),
+      tts: {
+        text: buildAgendaPlanTts(state.agenda),
+        awaitingSlot: "order_number",
+      },
     };
   }
 
-  if (extraction.intent === "order_status" && extraction.orderNumber) {
-    const data = await getOrderStatus(extraction.orderNumber, callSid);
-    const tts =
-      data.status === "found" ? buildOrderStatusTts(data) : buildOrderFallbackTts(data);
-    return { extraction, tts, data };
+  const agendaItem = useDialogue ? getCurrentAgendaItem(callSid) : null;
+  const agendaAwaiting = activeAgendaAwaitingSlot(agendaItem);
+  const effectiveAwaiting =
+    input.awaitingSlot ?? agendaAwaiting ?? undefined;
+
+  const extraction = extractEntities(input.speech, {
+    awaitingSlot: effectiveAwaiting,
+    isbnDraft: input.isbnDraft,
+  });
+
+  const activeIntent = resolveActiveIntent(extraction, agendaItem);
+  const enrichedExtraction: EntityExtractionResult = {
+    ...extraction,
+    intent: activeIntent,
+  };
+
+  const gate = validateShopifyExecutionGate(activeIntent, enrichedExtraction);
+  if (!gate.allowed) {
+    return {
+      extraction: enrichedExtraction,
+      tts: {
+        text: gate.clarificationText,
+        awaitingSlot: gateAwaitingSlot(gate.reason),
+      },
+    };
   }
 
-  if (extraction.intent === "isbn_search" && extraction.isbn) {
-    const data = await searchByISBN(extraction.isbn, callSid);
+  if (activeIntent === "order_status" && enrichedExtraction.orderNumber) {
+    const data = await getOrderStatus(enrichedExtraction.orderNumber, callSid);
+    let tts =
+      data.status === "found" ? buildOrderStatusTts(data) : buildOrderFallbackTts(data);
+
+    if (useDialogue && data.status === "found") {
+      tts = appendAgendaTransition(tts, callSid, true);
+    }
+
+    return { extraction: enrichedExtraction, tts, data };
+  }
+
+  if (activeIntent === "isbn_search" && enrichedExtraction.isbn) {
+    const data = await searchByISBN(enrichedExtraction.isbn, callSid);
     const tts =
       data.status === "found"
         ? buildBookFoundTts(data)
         : buildBookFallbackTts(data, "isbn_search");
-    return { extraction, tts, data };
+    return { extraction: enrichedExtraction, tts, data };
   }
 
-  if (extraction.intent === "title_search" && extraction.title) {
-    const data = await searchByTitle(extraction.title, callSid);
+  if (activeIntent === "title_search" && enrichedExtraction.title) {
+    const data = await searchByTitle(enrichedExtraction.title, callSid);
     const tts =
       data.status === "found"
         ? buildBookFoundTts(data)
         : buildBookFallbackTts(data, "title_search");
-    return { extraction, tts, data };
+    return { extraction: enrichedExtraction, tts, data };
   }
 
   return {
-    extraction,
-    tts: buildMissingSlotTts(extraction),
+    extraction: enrichedExtraction,
+    tts: buildMissingSlotTts(enrichedExtraction),
   };
 }

@@ -88,6 +88,34 @@ const ISBN_COMPACT_RE = /\b97[89]\d{9}[\dXx]\b|\b\d{9}[\dXx]\b/;
 const VAGUE_TITLE_RE =
   /^(i\s+)?(need|want|looking\s+for)\s+(a\s+)?(book|books|magazine|magazines)?\.?$/i;
 
+const MULTI_INTENT_ORDER_RE =
+  /\b(order\s+status|check\s+my\s+order|track(ing)?\s+(my\s+)?order|where\s+is\s+my\s+order)\b/i;
+const MULTI_INTENT_PRODUCT_RE =
+  /\b((and\s+)?then\s+)?(i\s+want\s+to\s+)?(buy|purchase|look\s+for\s+(a\s+)?book|search\s+for\s+(a\s+)?book|get\s+(a\s+)?book)\b/i;
+
+/** Agenda items for multi-intent dialogue sequencing. */
+export type DialogueAgendaItem = "order_status" | "product_search";
+
+export type ShopifyGateBlockReason =
+  | "missing_order_number"
+  | "missing_isbn"
+  | "missing_title"
+  | "vague_title";
+
+export interface ShopifyExecutionGate {
+  allowed: boolean;
+  reason?: ShopifyGateBlockReason;
+  clarificationText: string;
+}
+
+export const CLARIFICATION_BY_REASON: Record<ShopifyGateBlockReason, string> = {
+  missing_order_number: "Could you please provide your order number?",
+  missing_isbn:
+    "Could you please read the 10 or 13 digit ISBN from the back of the book?",
+  missing_title: "What is the title of the book you're looking for?",
+  vague_title: "Could you tell me the specific title of the book?",
+};
+
 function isVagueTitleCandidate(title: string): boolean {
   const t = title.trim();
   return !t || t.length < 3 || VAGUE_TITLE_RE.test(t);
@@ -177,8 +205,23 @@ export function normalizeIsbnFromStt(text: string): string {
   return normalizeIsbn(candidate);
 }
 
-/** Extract a Shopify order number from voice transcript. */
-export function extractOrderNumberFromStt(text: string): string | null {
+export interface OrderNumberExtractOptions {
+  /** When true, allow bare spoken digits (multi-turn slot collection). */
+  awaitingSlot?: boolean;
+}
+
+/**
+ * Extract a Shopify order number from voice transcript.
+ * Strict by default: bare digit runs are only accepted with order context
+ * or when explicitly awaiting the order_number slot (prevents hallucination).
+ */
+export function extractOrderNumberFromStt(
+  text: string,
+  options: OrderNumberExtractOptions = {},
+): string | null {
+  const hasOrderContext = ORDER_CONTEXT_RE.test(text);
+  const allowLoose = Boolean(options.awaitingSlot);
+
   const labeled = text.match(
     /(?:order\s*(?:number|#)?|number)\s*#?\s*([A-Za-z0-9]{4,12})/i,
   );
@@ -187,20 +230,24 @@ export function extractOrderNumberFromStt(text: string): string | null {
     if (isValidOrderNumberFormat(normalized)) return normalized;
   }
 
-  const inline = text.match(/\b#?(\d{4,10})\b/);
-  if (inline?.[1]) {
-    const candidate = normalizeOrderNumber(`#${inline[1]}`);
-    if (isValidOrderNumberFormat(candidate)) return candidate;
+  if (hasOrderContext || allowLoose) {
+    const inline = text.match(/\b#?(\d{4,10})\b/);
+    if (inline?.[1]) {
+      const candidate = normalizeOrderNumber(`#${inline[1]}`);
+      if (isValidOrderNumberFormat(candidate)) return candidate;
+    }
   }
 
-  const spoken = normalizeSpokenNumericSequence(text);
-  if (spoken.length >= 4 && spoken.length <= 10) {
-    const candidate = normalizeOrderNumber(`#${spoken}`);
-    if (isValidOrderNumberFormat(candidate)) return candidate;
-  }
+  if (allowLoose) {
+    const spoken = normalizeSpokenNumericSequence(text);
+    if (spoken.length >= 4 && spoken.length <= 10) {
+      const candidate = normalizeOrderNumber(`#${spoken}`);
+      if (isValidOrderNumberFormat(candidate)) return candidate;
+    }
 
-  const alnum = normalizeAlphanumericOrderId(text);
-  if (alnum && isValidOrderNumberFormat(alnum)) return alnum;
+    const alnum = normalizeAlphanumericOrderId(text);
+    if (alnum && isValidOrderNumberFormat(alnum)) return alnum;
+  }
 
   return null;
 }
@@ -269,13 +316,85 @@ function classifyIntent(text: string): FulfillmentIntent {
   if (ISBN_CONTEXT_RE.test(text) || ISBN_COMPACT_RE.test(text)) {
     return "isbn_search";
   }
-  if (ORDER_CONTEXT_RE.test(text) || ORDER_NUMBER_INLINE_RE.test(text)) {
+  if (ORDER_CONTEXT_RE.test(text)) {
     return "order_status";
   }
   if (TITLE_CONTEXT_RE.test(text)) {
     return "title_search";
   }
   return "unknown";
+}
+
+/** Detect multiple caller intents for agenda-based dialogue (order then product, etc.). */
+export function detectMultiIntentAgenda(text: string): DialogueAgendaItem[] {
+  const agenda: DialogueAgendaItem[] = [];
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) return agenda;
+
+  const wantsOrder =
+    MULTI_INTENT_ORDER_RE.test(trimmed) || ORDER_CONTEXT_RE.test(trimmed);
+  const wantsProduct =
+    MULTI_INTENT_PRODUCT_RE.test(trimmed) ||
+    (wantsOrder &&
+      /\b(and\s+then|then\s+i|also\s+want\s+to)\b/i.test(trimmed) &&
+      /\b(book|buy|purchase|isbn|title)\b/i.test(trimmed));
+
+  if (wantsOrder) agenda.push("order_status");
+  if (wantsProduct) agenda.push("product_search");
+  return agenda;
+}
+
+/**
+ * Block Shopify API calls unless a valid slot was explicitly extracted from STT.
+ */
+export function validateShopifyExecutionGate(
+  intent: FulfillmentIntent,
+  extraction: EntityExtractionResult,
+): ShopifyExecutionGate {
+  switch (intent) {
+    case "order_status":
+      if (!extraction.orderNumber) {
+        return {
+          allowed: false,
+          reason: "missing_order_number",
+          clarificationText: CLARIFICATION_BY_REASON.missing_order_number,
+        };
+      }
+      break;
+    case "isbn_search":
+      if (!extraction.isbn) {
+        return {
+          allowed: false,
+          reason: "missing_isbn",
+          clarificationText: CLARIFICATION_BY_REASON.missing_isbn,
+        };
+      }
+      break;
+    case "title_search":
+      if (!extraction.title) {
+        return {
+          allowed: false,
+          reason: "missing_title",
+          clarificationText: CLARIFICATION_BY_REASON.missing_title,
+        };
+      }
+      if (isVagueTitleCandidate(extraction.title)) {
+        return {
+          allowed: false,
+          reason: "vague_title",
+          clarificationText: CLARIFICATION_BY_REASON.vague_title,
+        };
+      }
+      break;
+    default:
+      return {
+        allowed: false,
+        reason: "missing_title",
+        clarificationText:
+          "I can help with order status, book titles, or ISBN lookups. What would you like to do?",
+      };
+  }
+  return { allowed: true, clarificationText: "" };
 }
 
 /**
@@ -314,7 +433,7 @@ export function extractEntities(
       intent: "order_status",
       slotType: "order_number",
       orderNumber,
-      confidence: ORDER_CONTEXT_RE.test(text) ? 0.95 : 0.85,
+      confidence: ORDER_CONTEXT_RE.test(text) ? 0.95 : 0.7,
       normalizedValue: orderNumber,
     };
   }
@@ -354,7 +473,7 @@ function extractForAwaitingSlot(
   }
 
   if (slot === "order_number") {
-    const orderNumber = extractOrderNumberFromStt(text);
+    const orderNumber = extractOrderNumberFromStt(text, { awaitingSlot: true });
     if (orderNumber) {
       return {
         intent: "order_status",
