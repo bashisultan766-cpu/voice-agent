@@ -151,8 +151,10 @@ function fallbackProductReply(input: {
  * Core product intelligence agent — title, ISBN, category browse, similar items.
  * All product data is grounded in live Shopify GraphQL fetches.
  */
-export async function handleProductBrainTurn(input: ProductBrainInput): Promise<ProductBrainResult> {
-  return runInPhase2(input.callSid, () => handleProductBrainTurnCore(input));
+export async function handleProductBrainTurn(_input: ProductBrainInput): Promise<ProductBrainResult> {
+  throw new Error(
+    "ILLEGAL_TOOL_EXECUTION_BYPASS: productBrainAgent is deprecated; use conversationOrchestrator.process",
+  );
 }
 
 async function handleProductBrainTurnCore(input: ProductBrainInput): Promise<ProductBrainResult> {

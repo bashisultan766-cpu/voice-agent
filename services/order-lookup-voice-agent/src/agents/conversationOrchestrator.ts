@@ -1,18 +1,26 @@
 /**
- * Conversation Orchestrator — Phase 1 only: intent + slot filling.
- * Shopify product APIs run exclusively via productToolPhase (Phase 2).
+ * Conversation Orchestrator — sole decision layer and Shopify execution owner.
+ * streamHandler → process → gate → tools
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { sanitizeForSpeech } from "../utils/security.js";
+import { pipelineTrace } from "../utils/pipelineTrace.js";
 import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { runWithToolAuthorizationAsync } from "../guards/toolAccessGuard.js";
+import { beginOrchestratorTurn, endOrchestratorTurn, getActivePipelineCallSid } from "../guards/pipelineGuard.js";
 import { clearCallMemory } from "../memory/callMemoryStore.js";
-import { clearCallState } from "../memory/callStateStore.js";
+import { clearCallState, type CallState } from "../memory/callStateStore.js";
 import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
 import { runInPhase2, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { orderLookupTool } from "../tools/orderLookupTool.js";
+import {
+  getSimilarProducts,
+  searchProductByCategory,
+  searchProductByISBN,
+  searchProductByTitle,
+} from "../tools/shopifyProductTools.js";
 import { classifyFollowUpIntent, preAnalyzeOrderIntent } from "../services/llmService.js";
 import { analyzeBrainTurn } from "./brainAnalyzer.js";
 import {
@@ -47,14 +55,14 @@ import {
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { softFallback } from "./conversationBrainAgent.js";
 import { formatProductResults } from "./productResponseFormatter.js";
-import { extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
+import { extractIsbnFromSpeech, scoreTitleMatch } from "../utils/productSearchNormalize.js";
 import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
   pickProductSlotQuestion,
 } from "./productSlotPhase.js";
-import { executeProductSearch } from "./productToolPhase.js";
 import { smoothForVoice, speechChunksFromText } from "../services/voiceSmoothingEngine.js";
+import type { StructuredProduct } from "../types/product.js";
 import type {
   AgentStreamEvent,
   CallSession,
@@ -109,14 +117,18 @@ export async function* process(
   const text = sanitizeForSpeech((userInput ?? "").trim());
   const state = getOrCreateCallState(callSid);
 
-  console.log({
-    stage: "orchestrator",
+  beginOrchestratorTurn(callSid);
+  pipelineTrace({
+    layer: "orchestrator",
+    file: "conversationOrchestrator.ts",
+    callSid,
     action: "turn_start",
-    callSid: callSid.slice(0, 8),
-    intent: state.intent,
-    phase: state.phase,
-    awaitingInput: state.awaitingInput,
-    slots: state.slots,
+    state: {
+      intent: state.intent,
+      phase: state.phase,
+      awaitingInput: state.awaitingInput,
+      slots: state.slots,
+    },
   });
 
   try {
@@ -134,6 +146,8 @@ export async function* process(
       },
     };
     yield { type: "done", phase: session.phase };
+  } finally {
+    endOrchestratorTurn();
   }
 }
 
@@ -258,6 +272,24 @@ export async function* runOrchestratorTurn(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  const pipelineNested = getActivePipelineCallSid() === session.callSid;
+  if (!pipelineNested) {
+    beginOrchestratorTurn(session.callSid);
+  }
+
+  try {
+    yield* runOrchestratorTurnCore(session, callerText);
+  } finally {
+    if (!pipelineNested) {
+      endOrchestratorTurn();
+    }
+  }
+}
+
+async function* runOrchestratorTurnCore(
+  session: CallSession,
+  callerText: string,
+): AsyncGenerator<AgentStreamEvent> {
   setToolExecutionPhase(session.callSid, "PHASE_1");
   const text = (callerText ?? "").trim();
   const memory = getOrCreateMemory(session.callSid);
@@ -333,19 +365,20 @@ async function* runGateControlledTurn(
     decision = "ASK_QUESTION";
   }
 
-  console.log({
-    stage: "tool_gate",
-    callSid: session.callSid.slice(0, 8),
-    decision,
-    rawDecision,
-    toolAllowed,
-    validationReady: turn.validation.ready,
-    validationReason: turn.validation.reason,
+  pipelineTrace({
+    layer: "orchestrator",
+    file: "conversationOrchestrator.ts",
+    callSid: session.callSid,
+    action: "gate_decision",
+    state: {
+      intent: turn.state.intent,
+      decision,
+      rawDecision,
+      toolAllowed,
+      validation: turn.validation,
+      slots: turn.state.slots,
+    },
   });
-
-  console.log("STATE BEFORE TOOL:", turn.state);
-  console.log("VALIDATION RESULT:", turn.validation);
-  console.log("TOOL EXECUTION ALLOWED:", toolAllowed);
 
   let nextState = applyDecisionToCallState(turn.state, decision);
   saveCallState(nextState);
@@ -392,15 +425,15 @@ async function* executeGateDecision(
   switch (decision) {
     case "searchProductByISBN":
       session.productSlots = { isbn: callState.slots.isbn };
-      yield* phase2ProductFlow(session);
+      yield* phase2ProductFlow(session, callState, slotsCollected);
       return;
     case "searchProductByTitle":
       session.productSlots = { title: callState.slots.title };
-      yield* phase2ProductFlow(session);
+      yield* phase2ProductFlow(session, callState, slotsCollected);
       return;
     case "getSimilarProducts":
       session.productSlots = { wantsRecommendations: true };
-      yield* phase2ProductFlow(session);
+      yield* phase2ProductFlow(session, callState, slotsCollected);
       return;
     case "orderLookupTool":
       if (analysis.orderNumber) {
@@ -447,24 +480,30 @@ async function* handleGateAskQuestion(
   yield doneEvent(session.phase);
 }
 
-/** Phase 2 — Shopify tool execution after gate approval only. */
-async function* phase2ProductFlow(session: CallSession): AsyncGenerator<AgentStreamEvent> {
+/** Phase 2 — Shopify tool execution after gate approval only (orchestrator-owned). */
+async function* phase2ProductFlow(
+  session: CallSession,
+  callState: CallState,
+  slotsCollected: boolean,
+): AsyncGenerator<AgentStreamEvent> {
   const slots: ProductSearchSlots = { ...session.productSlots };
   const memory = getOrCreateMemory(session.callSid);
   session.productSlots = undefined;
   session.awaitingInput = null;
 
-  logger.info("orchestrator_route", {
-    callSid: session.callSid.slice(0, 8),
-    conversationPhase: "tool_execute",
-    hasIsbn: Boolean(slots.isbn),
-    hasTitle: Boolean(slots.title),
-    wantsRecommendations: Boolean(slots.wantsRecommendations),
+  assertProductSearchAllowed(callState, slots, slotsCollected);
+
+  pipelineTrace({
+    layer: "tool",
+    file: "conversationOrchestrator.ts",
+    callSid: session.callSid,
+    action: "product_search_execute",
+    state: { slots, intent: callState.intent },
   });
 
   const result = await runWithToolAuthorizationAsync("conversationOrchestrator", () =>
     runInPhase2(session.callSid, () =>
-      executeProductSearch(slots, session.callSid, memory.lastProductId),
+      orchestratorExecuteProductSearch(slots, session.callSid, memory.lastProductId),
     ),
   );
   const speech = formatProductResults(
@@ -667,6 +706,162 @@ function doneEvent(
   lookupMs?: number,
 ): AgentStreamEvent {
   return { type: "done", phase, endCall, lookupMs };
+}
+
+function assertProductSearchAllowed(
+  callState: CallState,
+  slots: ProductSearchSlots,
+  slotsCollected: boolean,
+): void {
+  if (callState.intent !== "product") {
+    throw new Error("PRODUCT_SEARCH_BLOCKED: intent_not_product");
+  }
+
+  const hasIsbn = Boolean(slots.isbn);
+  const hasTitle = Boolean(slots.title);
+  const wantsRec = Boolean(slots.wantsRecommendations);
+
+  if (!hasIsbn && !hasTitle && !wantsRec) {
+    throw new Error("PRODUCT_SEARCH_BLOCKED: missing_isbn_or_title");
+  }
+
+  if (hasTitle && !hasIsbn && !slotsCollected) {
+    throw new Error("PRODUCT_SEARCH_BLOCKED: title_needs_slot_collection");
+  }
+
+  if (wantsRec && !hasIsbn && !hasTitle && !slotsCollected) {
+    throw new Error("PRODUCT_SEARCH_BLOCKED: recommendations_needs_slot_collection");
+  }
+}
+
+const STRONG_TITLE_MATCH_SCORE = 2;
+
+interface OrchestratorProductResult {
+  products: StructuredProduct[];
+  usedAlternatives: boolean;
+  searchKind: "isbn" | "title" | "recommendations";
+}
+
+function isStrongTitleMatch(product: StructuredProduct, queryTitle: string): boolean {
+  return scoreTitleMatch(product.title, queryTitle) >= STRONG_TITLE_MATCH_SCORE;
+}
+
+/** Shopify product search — ONLY callable from this orchestrator file. */
+async function orchestratorExecuteProductSearch(
+  slots: ProductSearchSlots,
+  callSid: string,
+  lastProductId?: string,
+): Promise<OrchestratorProductResult> {
+  const started = Date.now();
+
+  if (slots.wantsRecommendations) {
+    return orchestratorExecuteRecommendations(callSid, started, lastProductId);
+  }
+
+  if (slots.isbn) {
+    const result = await searchProductByISBN(slots.isbn);
+    if (result.products.length > 0) {
+      logger.info("product_tool_isbn_hit", {
+        callSid: callSid.slice(0, 8),
+        isbn: slots.isbn,
+        count: result.products.length,
+        elapsedMs: Date.now() - started,
+      });
+      return { products: result.products, usedAlternatives: false, searchKind: "isbn" };
+    }
+    const fallback = await orchestratorFetchSimilarFallback(
+      slots.title,
+      lastProductId,
+    );
+    return { ...fallback, searchKind: "isbn" };
+  }
+
+  if (slots.title) {
+    const result = await searchProductByTitle(slots.title);
+    const top = result.products[0];
+    if (top && isStrongTitleMatch(top, slots.title)) {
+      logger.info("product_tool_title_hit", {
+        callSid: callSid.slice(0, 8),
+        title: slots.title,
+        count: result.products.length,
+        elapsedMs: Date.now() - started,
+      });
+      return { products: result.products, usedAlternatives: false, searchKind: "title" };
+    }
+    const fallback = await orchestratorFetchSimilarFallback(
+      slots.title,
+      lastProductId,
+      top?.id,
+    );
+    return { ...fallback, searchKind: "title" };
+  }
+
+  return { products: [], usedAlternatives: false, searchKind: "recommendations" };
+}
+
+async function orchestratorFetchSimilarFallback(
+  anchorTitle?: string,
+  lastProductId?: string,
+  weakCandidateId?: string,
+): Promise<Omit<OrchestratorProductResult, "searchKind">> {
+  if (lastProductId) {
+    const similar = await getSimilarProducts(lastProductId);
+    if (similar.products.length > 0) {
+      return { products: similar.products.slice(0, 3), usedAlternatives: true };
+    }
+  }
+
+  if (weakCandidateId) {
+    const similar = await getSimilarProducts(weakCandidateId);
+    if (similar.products.length > 0) {
+      return { products: similar.products.slice(0, 3), usedAlternatives: true };
+    }
+  }
+
+  if (anchorTitle) {
+    const loose = await searchProductByTitle(anchorTitle.split(" ")[0] ?? anchorTitle);
+    if (loose.products[0]) {
+      const similar = await getSimilarProducts(loose.products[0].id);
+      if (similar.products.length > 0) {
+        return { products: similar.products.slice(0, 3), usedAlternatives: true };
+      }
+    }
+  }
+
+  const browse = await searchProductByCategory("books inmates");
+  if (browse.products[0]) {
+    const similar = await getSimilarProducts(browse.products[0].id);
+    if (similar.products.length > 0) {
+      return { products: similar.products.slice(0, 3), usedAlternatives: true };
+    }
+    return { products: browse.products.slice(0, 3), usedAlternatives: true };
+  }
+
+  return { products: [], usedAlternatives: false };
+}
+
+async function orchestratorExecuteRecommendations(
+  callSid: string,
+  started: number,
+  lastProductId?: string,
+): Promise<OrchestratorProductResult> {
+  if (lastProductId) {
+    const similar = await getSimilarProducts(lastProductId);
+    if (similar.products.length > 0) {
+      return {
+        products: similar.products.slice(0, 3),
+        usedAlternatives: false,
+        searchKind: "recommendations",
+      };
+    }
+  }
+
+  const popular = await searchProductByCategory("books inmates");
+  return {
+    products: popular.products.slice(0, 3),
+    usedAlternatives: false,
+    searchKind: "recommendations",
+  };
 }
 
 // Re-export slot helpers and gate for tests

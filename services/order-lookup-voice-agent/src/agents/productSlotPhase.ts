@@ -25,14 +25,13 @@ export function isMeaningfulTitle(title: string): boolean {
   return true;
 }
 
-/** Title is actionable when the caller gave a real title or answered a slot prompt. */
+/** Title search requires prior slot collection — never on first utterance alone. */
 export function isTitleReadyForSearch(
   title: string | undefined,
   slotsCollected: boolean,
 ): boolean {
   if (!title?.trim()) return false;
-  if (slotsCollected) return true;
-  return isMeaningfulTitle(title);
+  return slotsCollected;
 }
 
 export function parseProductSlotsFromSpeech(speech: string): ProductSearchSlots {

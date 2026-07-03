@@ -1,5 +1,6 @@
 import type { WebSocket } from "ws";
 import { logger } from "../utils/logger.js";
+import { pipelineTrace } from "../utils/pipelineTrace.js";
 import {
   createCallSession,
   endCallSession,
@@ -89,10 +90,11 @@ async function runStreamingTurn(
   let chunkCount = 0;
   let firstChunkMs: number | null = null;
 
-  console.log({
-    stage: "streamHandler",
+  pipelineTrace({
+    layer: "streamHandler",
+    file: "streamHandler.ts",
+    callSid: session.callSid,
     action: "forwarding_to_orchestrator",
-    callSid: session.callSid.slice(0, 8),
   });
 
   try {

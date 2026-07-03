@@ -1,12 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildToolDecisionState,
   decideToolExecution,
 } from "../src/agents/toolDecisionGate.js";
+import { enablePipelineGuardForTests, resetPipelineGuard } from "../src/guards/pipelineGuard.js";
 
 const phase1 = { phase: "PHASE_1" as const, awaitingInput: "none" as const };
 
 describe("toolDecisionGate", () => {
+  beforeEach(() => {
+    resetPipelineGuard();
+    enablePipelineGuardForTests(true);
+  });
   it('returns ASK_QUESTION when product intent has no slots', () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
@@ -31,24 +36,12 @@ describe("toolDecisionGate", () => {
     expect(decision).toBe("searchProductByISBN");
   });
 
-  it("returns searchProductByTitle when a meaningful title is provided", () => {
+  it("returns ASK_QUESTION for title on first turn without slot collection", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         ...phase1,
         slots: { title: "Harry Potter" },
-        slotsCollected: false,
-      }),
-    );
-    expect(decision).toBe("searchProductByTitle");
-  });
-
-  it("returns ASK_QUESTION for generic title-only intent", () => {
-    const decision = decideToolExecution(
-      buildToolDecisionState({
-        intent: "product",
-        ...phase1,
-        slots: { title: "books" },
         slotsCollected: false,
       }),
     );

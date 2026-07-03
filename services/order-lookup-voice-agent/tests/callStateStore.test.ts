@@ -10,10 +10,13 @@ import {
   saveCallState,
   validateProductSlotState,
 } from "../src/memory/callStateStore.js";
+import { enablePipelineGuardForTests, resetPipelineGuard } from "../src/guards/pipelineGuard.js";
 
 describe("callStateStore", () => {
   beforeEach(() => {
     clearAllCallStates();
+    resetPipelineGuard();
+    enablePipelineGuardForTests(true);
   });
 
   it("persists slots across turns", () => {
@@ -102,7 +105,7 @@ describe("callStateStore", () => {
     expect(result.ready).toBe(true);
   });
 
-  it("validateProductSlotState allows meaningful title when provided", () => {
+  it("validateProductSlotState blocks title without prior collection", () => {
     const state = getOrCreateCallState("CA_TITLE");
     saveCallState(
       mergeTurnIntoCallState(
@@ -112,19 +115,6 @@ describe("callStateStore", () => {
     );
 
     const result = validateProductSlotState(getOrCreateCallState("CA_TITLE"), false);
-    expect(result.ready).toBe(true);
-  });
-
-  it("validateProductSlotState blocks generic title without collection", () => {
-    const state = getOrCreateCallState("CA_GENERIC");
-    saveCallState(
-      mergeTurnIntoCallState(
-        { ...state, intent: "product" },
-        { intent: "product", incomingSlots: { title: "books" } },
-      ),
-    );
-
-    const result = validateProductSlotState(getOrCreateCallState("CA_GENERIC"), false);
     expect(result.ready).toBe(false);
     expect(result.reason).toBe("title_needs_confirmation");
   });

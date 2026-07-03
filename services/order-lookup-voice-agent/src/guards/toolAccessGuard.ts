@@ -1,7 +1,8 @@
 /**
  * Hard caller firewall — Shopify/order tools may only run from conversationOrchestrator.
  */
-const AUTHORIZED_CALLER = "conversationOrchestrator";
+import { pipelineTrace } from "../utils/pipelineTrace.js";
+import { getActivePipelineCallSid, ORCHESTRATOR_OWNER } from "./pipelineGuard.js";
 
 let activeCaller: string | null = null;
 let testBypassEnabled = false;
@@ -29,14 +30,22 @@ export async function runWithToolAuthorizationAsync<T>(
   }
 }
 
-export function assertToolAccessAuthorized(tool: string): void {
+export function assertToolAccessAuthorized(tool: string, sourceFile: string): void {
   if (testBypassEnabled) return;
-  if (activeCaller !== AUTHORIZED_CALLER) {
-    throw new Error(`TOOL ACCESS VIOLATION: ${tool}`);
+  if (activeCaller !== ORCHESTRATOR_OWNER) {
+    const stack = new Error().stack ?? "";
+    const callSid = getActivePipelineCallSid();
+    pipelineTrace({
+      layer: "tool",
+      file: sourceFile,
+      callSid,
+      action: "ILLEGAL_TOOL_EXECUTION_BYPASS",
+      extra: { tool, caller: activeCaller, stack: stack.split("\n").slice(0, 8).join("\n") },
+    });
+    throw new Error(`ILLEGAL_TOOL_EXECUTION_BYPASS: ${tool}`);
   }
 }
 
-/** Enable/disable caller bypass for isolated tool unit tests. */
 export function enableToolAccessForTests(enabled = true): void {
   testBypassEnabled = enabled;
 }

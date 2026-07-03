@@ -56,7 +56,7 @@ function toSearchResult(
 
 /** Live Shopify title search — truth engine only, no embeddings. */
 export async function searchProductByTitle(query: string): Promise<ProductSearchResult> {
-  assertToolAccessAuthorized("searchProductByTitle");
+  assertToolAccessAuthorized("searchProductByTitle", "shopifyProductTools.ts");
   assertToolExecutionAllowed("searchProductByTitle");
   const q = query.trim();
   if (!q) {
@@ -77,7 +77,7 @@ export async function searchProductByTitle(query: string): Promise<ProductSearch
 
 /** Live ISBN lookup — truth engine only. */
 export async function searchProductByISBN(isbn: string): Promise<ProductSearchResult> {
-  assertToolAccessAuthorized("searchProductByISBN");
+  assertToolAccessAuthorized("searchProductByISBN", "shopifyProductTools.ts");
   assertToolExecutionAllowed("searchProductByISBN");
   try {
     await ensureShopifyProductScopes();
@@ -107,6 +107,7 @@ function scoreSimilarity(source: StructuredProduct, candidate: StructuredProduct
 
 /** Similar products from live Shopify catalog only. */
 export async function getSimilarProducts(productId: string): Promise<ProductSearchResult> {
+  assertToolAccessAuthorized("getSimilarProducts", "shopifyProductTools.ts");
   assertToolExecutionAllowed("getSimilarProducts");
   try {
     const source = await liveFetchProductById(productId);
@@ -159,6 +160,7 @@ export async function getSimilarProducts(productId: string): Promise<ProductSear
 
 /** Category browse via live Shopify truth search. */
 export async function searchProductByCategory(categoryQuery: string): Promise<ProductSearchResult> {
+  assertToolAccessAuthorized("searchProductByCategory", "shopifyProductTools.ts");
   assertToolExecutionAllowed("searchProductByCategory");
   const q = categoryQuery.trim();
   if (!q) {

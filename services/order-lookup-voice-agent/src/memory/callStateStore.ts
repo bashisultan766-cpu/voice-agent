@@ -2,7 +2,7 @@
  * Per-call state machine — single source of truth for slots, phase, and intent.
  */
 import type { GateIntent } from "../agents/toolDecisionGate.js";
-import { isTitleReadyForSearch } from "../agents/productSlotPhase.js";
+import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
 export type CallStatePhase = "PHASE_1" | "PHASE_2";
@@ -63,6 +63,7 @@ export function getOrCreateCallState(callSid: string): CallState {
 }
 
 export function saveCallState(state: CallState): void {
+  assertOrchestratorOnly("saveCallState", "callStateStore.ts");
   state.updatedAt = Date.now();
   states.set(state.callSid, state);
 }
@@ -103,7 +104,7 @@ export function validateProductSlotState(
     return { ready: true };
   }
 
-  if (hasTitle && !isTitleReadyForSearch(state.slots.title, slotsCollected)) {
+  if (hasTitle && !slotsCollected) {
     return { ready: false, reason: "title_needs_confirmation" };
   }
 
@@ -132,6 +133,7 @@ export function atomicMergeTurnState(
     incomingSlots: ProductSearchSlots;
   },
 ): AtomicTurnResult {
+  assertOrchestratorOnly("atomicMergeTurnState", "callStateStore.ts");
   const previous = getOrCreateCallState(callSid);
   const wasAwaiting = previous.awaitingInput;
   const merged = mergeTurnIntoCallState(previous, input);
@@ -196,6 +198,7 @@ export function applyDecisionToCallState(
   state: CallState,
   decision: string,
 ): CallState {
+  assertOrchestratorOnly("applyDecisionToCallState", "callStateStore.ts");
   switch (decision) {
     case "ASK_QUESTION":
       if (state.intent === "product") {

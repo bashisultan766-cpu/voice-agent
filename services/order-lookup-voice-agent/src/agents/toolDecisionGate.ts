@@ -7,7 +7,8 @@ import type {
   CallStatePhase,
   CallStateSlots,
 } from "../memory/callStateStore.js";
-import { isTitleReadyForSearch } from "./productSlotPhase.js";
+import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
+import { pipelineTrace } from "../utils/pipelineTrace.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
 export type GateIntent = "order" | "product" | "general" | "unknown";
@@ -40,18 +41,22 @@ export function computeMissingSlots(
   return missing;
 }
 
-/** Deterministic tool execution decision — uses persisted state. */
+/** Deterministic tool execution decision — orchestrator only. */
 export function decideToolExecution(state: ToolDecisionState): ToolAction {
+  assertOrchestratorOnly("decideToolExecution", "toolDecisionGate.ts");
   const decision = decideToolExecutionCore(state);
-  console.log({
-    stage: "tool_gate",
+  pipelineTrace({
+    layer: "gate",
+    file: "toolDecisionGate.ts",
     action: "decide",
-    intent: state.intent,
-    phase: state.phase,
-    awaitingInput: state.awaitingInput,
-    slots: state.slots,
-    slotsCollected: state.slotsCollected,
-    decision,
+    state: {
+      intent: state.intent,
+      phase: state.phase,
+      awaitingInput: state.awaitingInput,
+      slots: state.slots,
+      slotsCollected: state.slotsCollected,
+      decision,
+    },
   });
   return decision;
 }
@@ -79,7 +84,7 @@ function decideToolExecutionCore(state: ToolDecisionState): ToolAction {
       return "searchProductByISBN";
     }
 
-    if (hasTitle && isTitleReadyForSearch(state.slots.title, state.slotsCollected)) {
+    if (hasTitle && state.slotsCollected) {
       return "searchProductByTitle";
     }
 

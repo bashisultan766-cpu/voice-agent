@@ -7,7 +7,7 @@ import { lookupOrder } from "../services/shopifyService.js";
 import type { OrderLookupResult } from "../types/order.js";
 
 export async function orderLookupTool(orderNumber: string): Promise<OrderLookupResult> {
-  assertToolAccessAuthorized("orderLookupTool");
+  assertToolAccessAuthorized("orderLookupTool", "orderLookupTool.ts");
   assertToolExecutionAllowed("orderLookupTool");
   return lookupOrder(orderNumber);
 }
