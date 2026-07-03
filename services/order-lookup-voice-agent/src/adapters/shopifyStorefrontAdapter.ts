@@ -474,11 +474,15 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
 
   const lineItems =
     node.lineItems?.edges
-      ?.map((e) => ({
-        title: e.node?.title ?? "Item",
-        quantity: e.node?.quantity ?? 1,
-      }))
-      .filter((li) => li.title) ?? [];
+      ?.map((e) => {
+        const title = e.node?.title?.trim();
+        if (!title) return null;
+        return {
+          title,
+          quantity: e.node?.quantity ?? 1,
+        };
+      })
+      .filter((li): li is { title: string; quantity: number } => li !== null) ?? [];
 
   const itemCount = lineItems.reduce((sum, li) => sum + li.quantity, 0);
 

@@ -17,6 +17,8 @@ import {
   ORDER_NOT_FOUND_STRICT_SPOKEN,
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
+import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
+import { orderNumbersMatch } from "../utils/formatter.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -215,6 +217,14 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
   const orderNumber = extractOrderNumberFromStt(input.userMessage, { awaitingSlot });
   if (!orderNumber) return null;
 
+  const agentState = getAgentState(input.callSid);
+  if (
+    agentState.lastOrderNumber &&
+    orderNumbersMatch(agentState.lastOrderNumber, orderNumber)
+  ) {
+    return null;
+  }
+
   const lower = input.userMessage.toLowerCase();
   const hasOrderIntent =
     awaitingSlot ||
@@ -252,6 +262,43 @@ function resultFromOrderToolExecution(
     responseType: inferResponseType(speech, toolExecutions),
     ...extractRecordMeta(toolExecutions),
   };
+}
+
+/**
+ * Record deterministic assistant speech in LLM conversation history.
+ * Required when TTS is built outside the LLM so the next turn retains context.
+ */
+export function syncDeterministicAssistantSpeech(
+  callSid: string,
+  assistantSpeech: string,
+  meta: {
+    responseType: FinalResponseType;
+    recordOrderNumber?: string;
+    recordProduct?: { id: string; title: string };
+    finalizeToolExecution?: boolean;
+  },
+): void {
+  const speech = assistantSpeech.trim();
+  if (!speech) return;
+
+  dispatchAgentEvent(callSid, {
+    type: "RESPONSE_SENT",
+    payload: {
+      responseType: meta.responseType,
+      speech,
+      speechLength: speech.length,
+      recordOrderNumber: meta.recordOrderNumber,
+      recordProduct: meta.recordProduct,
+      finalizeToolExecution: meta.finalizeToolExecution === true,
+      fulfillmentFlow: true,
+    },
+  });
+
+  logger.info("llm_assistant_turn_synced", {
+    callSid: callSid.slice(0, 8),
+    responseType: meta.responseType,
+    speechLength: speech.length,
+  });
 }
 
 /**

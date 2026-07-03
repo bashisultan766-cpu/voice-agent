@@ -38,6 +38,8 @@ import {
   speakCardLast4,
   speakMoney,
 } from "../utils/formatter.js";
+import { logger } from "../utils/logger.js";
+import type { StructuredOrder } from "../types/order.js";
 
 export interface TtsPayload {
   text: string;
@@ -126,92 +128,136 @@ function speakLineItems(lineItems: Array<{ title: string; quantity: number }>): 
   return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
 }
 
-/** Build TTS for order status lookup — rich proactive summary from Shopify data. */
+function totalItemCount(lineItems: Array<{ title: string; quantity: number }>): number {
+  return lineItems.reduce((sum, item) => sum + item.quantity, 0);
+}
+
+function isRefundedOrder(result: OrderStatusResult): boolean {
+  return Boolean(result.refundStatus && /refund/i.test(result.refundStatus));
+}
+
+/**
+ * Build TTS for order status — strict template from Shopify fields only.
+ * Omits any segment when the source field is absent; never invents placeholders.
+ */
 export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
   if (result.status !== "found" || !result.orderNumber) {
     return buildOrderFallbackTts(result);
   }
 
-  const parts: string[] = [];
+  logger.info("raw_data_passed_to_tts_builder", { orderData: result });
 
-  if (result.customerName) {
-    parts.push(`I found your order under the name ${result.customerName}.`);
-  } else {
-    parts.push(`I found your order ${result.orderNumber}.`);
+  const segments: string[] = [];
+
+  if (result.customerName?.trim()) {
+    segments.push(`I found the order for ${result.customerName.trim()}.`);
   }
 
   if (result.lineItems?.length) {
-    parts.push(`You ordered ${speakLineItems(result.lineItems)}.`);
-  } else if (result.itemCount !== undefined) {
-    parts.push(
+    const count = totalItemCount(result.lineItems);
+    const itemsPhrase = speakLineItems(result.lineItems);
+    segments.push(
+      count === 1
+        ? `You ordered ${itemsPhrase}.`
+        : `You ordered ${count} items: ${itemsPhrase}.`,
+    );
+  } else if (result.itemCount !== undefined && result.itemCount > 0) {
+    segments.push(
       result.itemCount === 1
-        ? "It has one item."
-        : `It has ${result.itemCount} items.`,
+        ? "The order contains 1 item."
+        : `The order contains ${result.itemCount} items.`,
     );
   }
 
-  if (result.subtotalAmount) {
-    const subtotal = speakMoney(result.subtotalAmount);
-    if (result.shippingFee) {
-      const shipping = speakMoney(result.shippingFee);
-      parts.push(`The books cost ${subtotal}, plus ${shipping} for shipping.`);
-    } else {
-      parts.push(`The books cost ${subtotal}.`);
-    }
-  } else if (result.totalAmount) {
-    const total = speakMoney(result.totalAmount);
-    if (result.shippingFee) {
-      const shipping = speakMoney(result.shippingFee);
-      parts.push(`The total was ${total}, including ${shipping} shipping.`);
-    } else {
-      parts.push(`The total was ${total}.`);
-    }
+  if (result.subtotalAmount?.trim()) {
+    segments.push(`The subtotal is ${speakMoney(result.subtotalAmount)}.`);
+  }
+  if (result.shippingFee?.trim()) {
+    segments.push(`Shipping is ${speakMoney(result.shippingFee)}.`);
   }
 
-  if (result.refundStatus) {
-    parts.push("This order has been refunded.");
-    if (result.refundAmount) {
-      parts.push(`The refund amount was ${speakMoney(result.refundAmount)}.`);
+  if (result.cardLast4?.trim()) {
+    const brand = result.cardBrand?.trim();
+    const last4 = speakCardLast4(result.cardLast4);
+    if (brand && brand.toLowerCase() !== "card") {
+      segments.push(`Payment was on ${brand} ending in ${last4}.`);
+    } else {
+      segments.push(`Payment was on a card ending in ${last4}.`);
     }
-    if (result.refundReason) {
-      parts.push(`This was refunded because ${result.refundReason}.`);
+  } else if (result.paymentGateway?.trim()) {
+    segments.push(`Payment was via ${result.paymentGateway.trim()}.`);
+  }
+
+  if (isRefundedOrder(result)) {
+    if (result.refundReason?.trim()) {
+      segments.push(`This order was refunded because ${result.refundReason.trim()}.`);
     }
-    const notifyEmail = result.refundNotificationEmail ?? result.refundEmail;
-    if (notifyEmail) {
-      parts.push(`A notification was sent to ${notifyEmail}.`);
+    const refundEmail = result.refundNotificationEmail?.trim() ?? result.refundEmail?.trim();
+    if (refundEmail) {
+      segments.push(`The refund notification was sent to ${refundEmail}.`);
+    }
+    if (result.refundAmount?.trim()) {
+      segments.push(`The refund amount was ${speakMoney(result.refundAmount)}.`);
     }
   } else {
-    const status = fulfillmentStatusPhrase(result.fulfillmentStatus ?? "unfulfilled");
-    parts.push(`Right now it is ${status}.`);
-
-    if (result.trackingStatus) {
-      parts.push(`Tracking shows ${result.trackingStatus}.`);
+    if (result.fulfillmentStatus?.trim()) {
+      segments.push(
+        `The order status is ${fulfillmentStatusPhrase(result.fulfillmentStatus)}.`,
+      );
     }
-
-    const days = deliveryPhrase(result.estimatedDeliveryDays);
-    const inTransit = /transit|shipped|deliver/i.test(result.fulfillmentStatus ?? "");
-    if (inTransit) {
-      parts.push(`It is expected to arrive in ${days}.`);
-    } else if (result.estimatedDeliveryDays !== undefined) {
-      parts.push(`It is expected to ship in ${days}.`);
+    if (result.trackingStatus?.trim()) {
+      segments.push(`Tracking shows ${result.trackingStatus.trim()}.`);
+    }
+    if (result.estimatedDeliveryDays !== undefined) {
+      const eta = deliveryPhrase(result.estimatedDeliveryDays);
+      const inTransit = /transit|shipped|deliver/i.test(result.fulfillmentStatus ?? "");
+      segments.push(
+        inTransit
+          ? `Expected delivery is in ${eta}.`
+          : `Expected to ship in ${eta}.`,
+      );
     }
   }
 
-  if (result.cardLast4) {
-    const brand =
-      result.cardBrand && result.cardBrand !== "card" ? result.cardBrand : "your card";
-    parts.push(
-      `Payment was on ${brand} ending in ${speakCardLast4(result.cardLast4)}.`,
-    );
-  } else if (result.paymentGateway) {
-    parts.push(`Payment was via ${result.paymentGateway}.`);
+  if (segments.length === 0) {
+    segments.push(`I found order ${result.orderNumber}.`);
   }
 
-  if (result.orderNote) {
-    parts.push(`There is a note on the order: ${result.orderNote}.`);
-  }
+  return { text: segments.join(" "), awaitingSlot: null };
+}
 
-  return { text: parts.join(" "), awaitingSlot: null };
+/** Map adapter order result into session StructuredOrder for follow-up context. */
+export function orderStatusToStructuredOrder(
+  result: OrderStatusResult,
+): StructuredOrder | undefined {
+  if (result.status !== "found" || !result.orderNumber) return undefined;
+
+  const products = (result.lineItems ?? []).map((item) => ({
+    name: item.title,
+    quantity: item.quantity,
+  }));
+
+  return {
+    orderNumber: result.orderNumber,
+    customerName: result.customerName ?? "",
+    productCount:
+      result.itemCount ?? products.reduce((sum, item) => sum + item.quantity, 0),
+    products,
+    totalAmount: result.totalAmount ?? "",
+    shippingFee: result.shippingFee ?? "",
+    fulfillmentStatus: result.fulfillmentStatus ?? "",
+    financialStatus: result.financialStatus ?? "",
+    refund: {
+      refunded: isRefundedOrder(result),
+      reason: result.refundReason,
+      refundEmail: result.refundNotificationEmail ?? result.refundEmail,
+      refundAmount: result.refundAmount,
+    },
+    payment: {
+      cardLast4: result.cardLast4,
+      cardBrand: result.cardBrand,
+    },
+  };
 }
 
 function buildIsbnNotFoundTts(): TtsPayload {

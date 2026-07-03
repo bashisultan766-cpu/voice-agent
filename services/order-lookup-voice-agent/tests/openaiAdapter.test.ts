@@ -1,6 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { runLlmAgentTurnEvents } from "../src/adapters/openaiAdapter.js";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import {
+  runLlmAgentTurnEvents,
+  syncDeterministicAssistantSpeech,
+} from "../src/adapters/openaiAdapter.js";
 import { ORDER_NOT_FOUND_STRICT_SPOKEN } from "../src/constants/systemMessages.js";
+import { clearAllAgentStates, getAgentState } from "../src/platform/stateProjection.js";
+import { markCallSessionActive, clearAllCallSessionLocks } from "../src/voice/callSessionLock.js";
 
 vi.mock("../src/adapters/llmToolExecutor.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/adapters/llmToolExecutor.js")>();
@@ -15,6 +20,7 @@ import { executeLlmTool } from "../src/adapters/llmToolExecutor.js";
 describe("runLlmAgentTurnEvents grounded order speech", () => {
   beforeEach(() => {
     vi.mocked(executeLlmTool).mockReset();
+    clearAllAgentStates();
   });
 
   it("forces Shopify lookup and speaks only deterministic order TTS", async () => {
@@ -30,6 +36,7 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
         customerName: "Joel Moore",
         lineItems: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
         totalAmount: "96.00 USD",
+        subtotalAmount: "91.00 USD",
         shippingFee: "5.00 USD",
         paymentGateway: "PayPal Express Checkout",
         refundStatus: "REFUNDED",
@@ -54,6 +61,8 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
     );
     expect(speech).toContain("Joel Moore");
     expect(speech).toContain("zzyxx2002@yahoo.com");
+    expect(speech).toContain("subtotal");
+    expect(speech).toContain("Shipping");
     expect(speech).not.toMatch(/\bfake\b/i);
   });
 
@@ -84,5 +93,30 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
 
     expect(speech).toBe(ORDER_NOT_FOUND_STRICT_SPOKEN);
     expect(speech).not.toMatch(/Joel|Moore|dollars|yahoo|gmail/i);
+  });
+});
+
+describe("syncDeterministicAssistantSpeech", () => {
+  beforeEach(() => {
+    clearAllAgentStates();
+    clearAllCallSessionLocks();
+    markCallSessionActive("CA_SYNC");
+  });
+
+  afterEach(() => {
+    clearAllCallSessionLocks();
+  });
+
+  it("appends assistant speech to LLM message history for next-turn context", () => {
+    syncDeterministicAssistantSpeech("CA_SYNC", "I found the order for Joel Moore.", {
+      responseType: "order_found",
+      recordOrderNumber: "#21698-F1",
+      finalizeToolExecution: true,
+    });
+
+    const state = getAgentState("CA_SYNC");
+    const assistant = state.messages.filter((m) => m.role === "assistant");
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]?.content).toContain("Joel Moore");
   });
 });

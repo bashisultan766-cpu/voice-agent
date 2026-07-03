@@ -6,6 +6,7 @@ import {
 } from "../src/agents/fulfillmentHandlers.js";
 import { clearAllDialogueStates } from "../src/agents/dialogueManager.js";
 import { useLlmAgentMock } from "./helpers/registerLlmMock.js";
+import { ORDER_21698_F1_EXPECTED } from "./fixtures/order21698F1.js";
 
 useLlmAgentMock();
 
@@ -51,7 +52,7 @@ describe("buildBookFoundTts", () => {
 });
 
 describe("buildOrderStatusTts", () => {
-  it("includes rich order summary with customer, line items, subtotal, and card", () => {
+  it("includes rich order summary with customer, line items, subtotal, shipping, and card", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
@@ -68,33 +69,36 @@ describe("buildOrderStatusTts", () => {
     });
     expect(tts.text).toContain("Jane Doe");
     expect(tts.text).toContain("Harry Potter");
+    expect(tts.text).toContain("2 items");
+    expect(tts.text).toContain("subtotal");
+    expect(tts.text).toContain("Shipping");
     expect(tts.text).toContain("in transit");
     expect(tts.text).toContain("3 days");
     expect(tts.text).toContain("USPS 9400");
-    expect(tts.text).toContain("40");
-    expect(tts.text).toContain("shipping");
+    expect(tts.text).toContain("Visa");
     expect(tts.text).toMatch(/4242|four.*two/i);
+    expect(tts.text).not.toContain("Customer");
+    expect(tts.text).not.toContain("your card");
   });
 
-  it("includes PayPal gateway and timeline refund email for refunded orders", () => {
+  it("reads exact Shopify fields for #21698-F1 without invented fallbacks", () => {
     const tts = buildOrderStatusTts({
       status: "found",
-      orderNumber: "#21698-F1",
-      customerName: "Joel Moore",
-      refundStatus: "REFUNDED",
-      refundReason: "OUT OF STOCK",
-      refundAmount: "96.00 USD",
-      refundNotificationEmail: "zzyxx2002@yahoo.com",
-      paymentGateway: "PayPal Express Checkout",
-      lineItems: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
-      totalAmount: "96.00 USD",
-      shippingFee: "5.00 USD",
+      ...ORDER_21698_F1_EXPECTED,
     });
+
     expect(tts.text).toContain("Joel Moore");
+    expect(tts.text).toContain("The Holy Bible - King James Version");
+    expect(tts.text).toContain("subtotal");
+    expect(tts.text).toContain("91");
+    expect(tts.text).toContain("Shipping");
+    expect(tts.text).toContain("5");
     expect(tts.text).toContain("OUT OF STOCK");
     expect(tts.text).toContain("zzyxx2002@yahoo.com");
     expect(tts.text).toContain("PayPal Express Checkout");
     expect(tts.text).not.toContain("gmail.com");
+    expect(tts.text).not.toContain("Customer");
+    expect(tts.text).not.toMatch(/\bfake\b/i);
   });
 });
 
@@ -129,7 +133,6 @@ describe("handleFulfillmentTurn", () => {
       callSid: "CA_TEST",
     });
 
-    expect(result.tts.text).toContain("#54321");
     expect(result.tts.text).toContain("shipped");
   });
 
