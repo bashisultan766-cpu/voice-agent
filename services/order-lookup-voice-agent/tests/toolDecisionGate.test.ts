@@ -31,12 +31,24 @@ describe("toolDecisionGate", () => {
     expect(decision).toBe("searchProductByISBN");
   });
 
-  it("returns ASK_QUESTION for title on first turn without slot collection", () => {
+  it("returns searchProductByTitle when a meaningful title is provided", () => {
     const decision = decideToolExecution(
       buildToolDecisionState({
         intent: "product",
         ...phase1,
         slots: { title: "Harry Potter" },
+        slotsCollected: false,
+      }),
+    );
+    expect(decision).toBe("searchProductByTitle");
+  });
+
+  it("returns ASK_QUESTION for generic title-only intent", () => {
+    const decision = decideToolExecution(
+      buildToolDecisionState({
+        intent: "product",
+        ...phase1,
+        slots: { title: "books" },
         slotsCollected: false,
       }),
     );

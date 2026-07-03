@@ -7,6 +7,7 @@ import type {
   CallStatePhase,
   CallStateSlots,
 } from "../memory/callStateStore.js";
+import { isTitleReadyForSearch } from "./productSlotPhase.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
 export type GateIntent = "order" | "product" | "general" | "unknown";
@@ -78,7 +79,7 @@ function decideToolExecutionCore(state: ToolDecisionState): ToolAction {
       return "searchProductByISBN";
     }
 
-    if (hasTitle && state.slotsCollected) {
+    if (hasTitle && isTitleReadyForSearch(state.slots.title, state.slotsCollected)) {
       return "searchProductByTitle";
     }
 

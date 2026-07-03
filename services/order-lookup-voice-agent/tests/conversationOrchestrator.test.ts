@@ -115,15 +115,14 @@ describe("conversationOrchestrator flows", () => {
     expect(titleSpy).not.toHaveBeenCalled();
   });
 
-  it('Phase 1: "Harry Potter book" asks before any Shopify call', async () => {
+  it('searches when customer provides a title upfront ("Harry Potter book")', async () => {
     const titleSpy = vi.spyOn(shopifyProductTools, "searchProductByTitle");
 
     const session = createCallSession("CA_HP", "+1", "+2");
     const speech = await collectSpeech(session, "I want Harry Potter book");
 
-    expect(speech).toMatch(/ISBN|title|recommend/i);
-    expect(session.awaitingInput).toBe("product_slot");
-    expect(titleSpy).not.toHaveBeenCalled();
+    expect(speech).toMatch(/Harry Potter|Azkaban|found/i);
+    expect(titleSpy).toHaveBeenCalled();
   });
 
   it("Phase 2: searches Harry Potter after slot confirmation", async () => {
@@ -189,7 +188,7 @@ describe("conversationOrchestrator flows", () => {
     await collectSpeech(session, "I want a book");
     const speech = await collectSpeech(session, "Imaginary Title XYZ");
 
-    expect(speech).toMatch(/couldn't find that exact book|similar options/i);
+    expect(speech).toMatch(/don't have that exact book|similar options/i);
     expect(similarSpy).toHaveBeenCalled();
   });
 });

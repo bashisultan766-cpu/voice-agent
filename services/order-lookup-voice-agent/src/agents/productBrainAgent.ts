@@ -1,3 +1,7 @@
+/**
+ * @deprecated Legacy parallel product path — NOT used in production voice flow.
+ * All live calls use conversationOrchestrator → productToolPhase only.
+ */
 import OpenAI from "openai";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";

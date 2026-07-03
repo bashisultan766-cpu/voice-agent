@@ -4,6 +4,7 @@
  */
 import { logger } from "../utils/logger.js";
 import { assertToolExecutionAllowed } from "../guards/toolExecutionGuard.js";
+import { scoreTitleMatch } from "../utils/productSearchNormalize.js";
 import {
   getSimilarProducts,
   searchProductByCategory,
@@ -13,10 +14,17 @@ import {
 import type { ProductSearchSlots } from "../types/order.js";
 import type { StructuredProduct } from "../types/product.js";
 
+/** Minimum title score to treat Shopify result as the requested book (not a fuzzy hit). */
+const STRONG_TITLE_MATCH_SCORE = 2;
+
 export interface ToolProductResult {
   products: StructuredProduct[];
   usedAlternatives: boolean;
   searchKind: "isbn" | "title" | "recommendations";
+}
+
+function isStrongTitleMatch(product: StructuredProduct, queryTitle: string): boolean {
+  return scoreTitleMatch(product.title, queryTitle) >= STRONG_TITLE_MATCH_SCORE;
 }
 
 /** Execute Shopify product search — Phase 2 only. */
@@ -55,7 +63,8 @@ export async function executeProductSearch(
 
   if (slots.title) {
     const result = await searchProductByTitle(slots.title);
-    if (result.products.length > 0) {
+    const top = result.products[0];
+    if (top && isStrongTitleMatch(top, slots.title)) {
       logger.info("product_tool_title_hit", {
         callSid: callSid.slice(0, 8),
         title: slots.title,
@@ -64,10 +73,17 @@ export async function executeProductSearch(
       });
       return { products: result.products, usedAlternatives: false, searchKind: "title" };
     }
-    const fallback = await fetchSimilarFallback(callSid, slots.title, lastProductId);
+
+    const fallback = await fetchSimilarFallback(
+      callSid,
+      slots.title,
+      lastProductId,
+      top?.id,
+    );
     logger.info("product_tool_title_fallback", {
       callSid: callSid.slice(0, 8),
       title: slots.title,
+      weakCandidate: top?.title,
       altCount: fallback.products.length,
       elapsedMs: Date.now() - started,
     });
@@ -81,9 +97,20 @@ async function fetchSimilarFallback(
   callSid: string,
   anchorTitle?: string,
   lastProductId?: string,
+  weakCandidateId?: string,
 ): Promise<Omit<ToolProductResult, "searchKind">> {
   if (lastProductId) {
     const similar = await getSimilarProducts(lastProductId);
+    if (similar.products.length > 0) {
+      return {
+        products: similar.products.slice(0, 3),
+        usedAlternatives: true,
+      };
+    }
+  }
+
+  if (weakCandidateId) {
+    const similar = await getSimilarProducts(weakCandidateId);
     if (similar.products.length > 0) {
       return {
         products: similar.products.slice(0, 3),

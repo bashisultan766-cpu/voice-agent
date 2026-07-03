@@ -25,8 +25,13 @@ export function formatProductResults(
   }
 
   if (usedAlternatives) {
-    const similar = products.slice(0, 3).map(formatOneProduct);
-    return `${STORE_NOT_FOUND_MESSAGE} Here are a few similar options: ${similar.join(". ")}.`;
+    const picks = products.slice(0, 3).map(formatOneProduct);
+    if (picks.length === 0) {
+      return STORE_NOT_FOUND_MESSAGE;
+    }
+    const countLabel =
+      picks.length === 1 ? "one option" : picks.length === 2 ? "two options" : "three options";
+    return `I don't have that exact book, but here are ${countLabel}: ${picks.join(". ")}.`;
   }
 
   const top = products[0];

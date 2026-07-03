@@ -2,6 +2,7 @@
  * Per-call state machine — single source of truth for slots, phase, and intent.
  */
 import type { GateIntent } from "../agents/toolDecisionGate.js";
+import { isTitleReadyForSearch } from "../agents/productSlotPhase.js";
 import type { ProductSearchSlots } from "../types/order.js";
 
 export type CallStatePhase = "PHASE_1" | "PHASE_2";
@@ -102,7 +103,7 @@ export function validateProductSlotState(
     return { ready: true };
   }
 
-  if (hasTitle && !slotsCollected) {
+  if (hasTitle && !isTitleReadyForSearch(state.slots.title, slotsCollected)) {
     return { ready: false, reason: "title_needs_confirmation" };
   }
 
