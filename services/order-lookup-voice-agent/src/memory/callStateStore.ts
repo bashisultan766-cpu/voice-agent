@@ -10,7 +10,7 @@ import {
   isCompleteIsbnValue,
   normalizeIsbn,
 } from "../utils/productSearchNormalize.js";
-import type { ProductSearchSlots } from "../types/order.js";
+import type { IncomingProductSlots, ProductSearchSlots } from "../types/order.js";
 
 export type CallStatePhase = "PHASE_1" | "PHASE_2";
 export type CallStateIntent = GateIntent;
@@ -21,11 +21,7 @@ export type CallStateAwaitingInput =
   | "isbn_or_title"
   | "order_number";
 
-export interface CallStateSlots {
-  isbn?: string;
-  /** Partial ISBN digits accumulated across voice turns before collection completes. */
-  isbnDraft?: string;
-  title?: string;
+export interface CallStateSlots extends ProductSearchSlots {
   wantsRecommendations?: boolean;
 }
 
@@ -107,33 +103,60 @@ export interface AtomicTurnResult {
   validation: ProductSlotValidation;
 }
 
-function normalizeIncomingIsbn(value: string | undefined): string | undefined {
+function normalizeIncomingIsbn(value: string): string | undefined {
   if (!value?.trim()) return undefined;
   const normalized = normalizeIsbn(value.trim());
   return normalized.length >= 10 ? normalized : undefined;
 }
 
+function storeIsbnValue(raw: string): string {
+  const complete = normalizeIncomingIsbn(raw);
+  if (complete) return complete;
+  return raw.replace(/\D/g, "").slice(0, 17);
+}
+
+/** Map extractor output (including parsedIsbn alias) to canonical ProductSearchSlots. */
+export function ingestIncomingSlots(delta: IncomingProductSlots): ProductSearchSlots {
+  const rawIsbn = delta.isbn ?? delta.parsedIsbn;
+  const ingested: ProductSearchSlots = {};
+
+  if (delta.title?.trim()) {
+    ingested.title = delta.title.trim();
+  }
+
+  if (rawIsbn?.trim()) {
+    ingested.isbn = storeIsbnValue(rawIsbn.trim());
+  }
+
+  return ingested;
+}
+
+function partialIsbnDigits(value: string | undefined): string {
+  if (!value) return "";
+  if (isCompleteIsbnValue(value)) return "";
+  return value.replace(/\D/g, "");
+}
+
 /** Merge slot deltas into persisted slots — never drop existing values. */
 export function mergeSlotsCumulative(
   existing: CallStateSlots,
-  delta: ProductSearchSlots,
+  delta: IncomingProductSlots,
 ): CallStateSlots {
+  const incoming = ingestIncomingSlots(delta);
   const merged: CallStateSlots = { ...existing };
 
-  if (delta.isbn !== undefined && delta.isbn !== "") {
-    const normalized = normalizeIncomingIsbn(delta.isbn);
-    if (normalized) {
-      merged.isbn = normalized;
-      merged.isbnDraft = undefined;
+  if (incoming.isbn !== undefined && incoming.isbn !== "") {
+    const existingPartial = partialIsbnDigits(merged.isbn);
+    const incomingComplete = isCompleteIsbnValue(incoming.isbn);
+    const existingComplete = merged.isbn ? isCompleteIsbnValue(merged.isbn) : false;
+
+    if (!merged.isbn || incomingComplete || incoming.isbn.length > existingPartial.length) {
+      merged.isbn = incomingComplete ? normalizeIsbn(incoming.isbn) : incoming.isbn;
     }
   }
 
-  if (delta.isbnDraft !== undefined && delta.isbnDraft !== "") {
-    merged.isbnDraft = delta.isbnDraft;
-  }
-
-  if (delta.title !== undefined && delta.title !== "") {
-    merged.title = delta.title.trim();
+  if (incoming.title !== undefined && incoming.title !== "") {
+    merged.title = incoming.title;
   }
 
   if (delta.wantsRecommendations !== undefined) {
@@ -198,7 +221,7 @@ function applySlotCollectionFlags(
 
   if (wasAwaiting === "isbn" && slots.isbn && isCompleteIsbnValue(slots.isbn)) {
     next.isbnCollected = true;
-    slots.isbnDraft = undefined;
+    slots.isbn = normalizeIsbn(slots.isbn);
   }
   if (wasAwaiting === "title" && slots.title) {
     next.titleCollected = true;
@@ -242,7 +265,7 @@ export function atomicMergeTurnState(
   callSid: string,
   input: {
     intent: GateIntent;
-    incomingSlots: ProductSearchSlots;
+    incomingSlots: IncomingProductSlots;
     userMessage?: string;
   },
 ): AtomicTurnResult {
@@ -263,34 +286,38 @@ export function atomicMergeTurnState(
   };
 }
 
+function resolvePriorPartialIsbn(state: CallState, slots: CallStateSlots): string {
+  return partialIsbnDigits(slots.isbn) || partialIsbnDigits(state.slots.isbn);
+}
+
 function applyIsbnAwaitingMerge(
   state: CallState,
   userMessage: string,
   slots: CallStateSlots,
 ): CallStateSlots {
   if (slots.isbn && isCompleteIsbnValue(slots.isbn)) {
-    return { ...slots, isbnDraft: undefined };
+    return { ...slots, isbn: normalizeIsbn(slots.isbn) };
   }
 
-  const priorDraft = state.slots.isbnDraft ?? "";
-  const complete = extractIsbnFromAwaitingSpeech(userMessage, priorDraft);
+  const priorPartial = resolvePriorPartialIsbn(state, slots);
+  const complete = extractIsbnFromAwaitingSpeech(userMessage, priorPartial);
 
   if (complete && isCompleteIsbnValue(complete)) {
-    return { ...slots, isbn: complete, isbnDraft: undefined };
+    return { ...slots, isbn: normalizeIsbn(complete) };
   }
 
   const chunk = digitizeSpeechForIsbn(userMessage);
   if (!chunk) return slots;
 
-  const draft = `${priorDraft}${chunk}`.slice(0, 17);
-  return { ...slots, isbnDraft: draft };
+  const partial = `${priorPartial}${chunk}`.slice(0, 17);
+  return { ...slots, isbn: partial };
 }
 
 export function mergeTurnIntoCallState(
   state: CallState,
   input: {
     intent: GateIntent;
-    incomingSlots: ProductSearchSlots;
+    incomingSlots: IncomingProductSlots;
     userMessage?: string;
   },
 ): CallState {
@@ -338,7 +365,7 @@ export function isSlotAnswerComplete(
   wasAwaiting: CallStateAwaitingInput,
   slots: CallStateSlots,
 ): boolean {
-  if (wasAwaiting === "isbn") return Boolean(slots.isbn);
+  if (wasAwaiting === "isbn") return Boolean(slots.isbn && isCompleteIsbnValue(slots.isbn));
   if (wasAwaiting === "title") return Boolean(slots.title);
   if (wasAwaiting === "isbn_or_title") return Boolean(slots.wantsRecommendations);
   return false;

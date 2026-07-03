@@ -25,7 +25,7 @@ export interface ToolDecisionState {
   intent: GateIntent;
   phase: CallStatePhase;
   awaitingInput: CallStateAwaitingInput;
-  slots: Pick<ProductSearchSlots, "isbn" | "title" | "wantsRecommendations">;
+  slots: Pick<CallStateSlots, "isbn" | "title" | "wantsRecommendations">;
   missingSlots: Array<"isbn" | "title">;
   /** Caller answered a prior slot question this turn. */
   slotsCollected: boolean;

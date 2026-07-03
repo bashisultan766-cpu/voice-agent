@@ -16,7 +16,7 @@ import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
 } from "./productSlotPhase.js";
-import type { CallSession, ProductSearchSlots } from "../types/order.js";
+import type { CallSession, IncomingProductSlots, ProductSearchSlots } from "../types/order.js";
 
 export interface BrainAnalysis {
   intent: GateIntent;
@@ -24,7 +24,7 @@ export interface BrainAnalysis {
   /** Merged view for prompts/logging only — not written to CallState directly. */
   slots: ProductSearchSlots;
   /** Delta extracted this turn — sole input to CallState merge. */
-  deltaSlots: ProductSearchSlots;
+  deltaSlots: IncomingProductSlots;
   orderNumber: string | null;
   userMessage: string;
   confidence: number;
@@ -55,9 +55,11 @@ export async function analyzeBrainTurn(
     ? {
         isbn: callState.slots.isbn,
         title: callState.slots.title,
-        wantsRecommendations: callState.slots.wantsRecommendations,
       }
-    : session.productSlots ?? {};
+    : {
+        isbn: session.productSlots?.isbn,
+        title: session.productSlots?.title,
+      };
   const slots = mergeProductSlots(
     mergeProductSlots(session.productSlots, persistedSlots),
     parsed,

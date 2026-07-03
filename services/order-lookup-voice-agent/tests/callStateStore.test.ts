@@ -5,6 +5,7 @@ import {
   clearAllCallStates,
   finalizeAfterToolExecution,
   getOrCreateCallState,
+  ingestIncomingSlots,
   isSlotCollectedThisTurn,
   mergeSlotsCumulative,
   mergeTurnIntoCallState,
@@ -166,6 +167,15 @@ describe("callStateStore", () => {
     const result = validateProductSlotState(getOrCreateCallState("CA_TITLE_BLOCK"));
     expect(result.ready).toBe(false);
     expect(result.reason).toBe("title_needs_confirmation");
+  });
+
+  it("maps parsedIsbn alias to canonical isbn at ingress", () => {
+    expect(ingestIncomingSlots({ parsedIsbn: "978-3-16-148410-0" })).toEqual({
+      isbn: "9783161484100",
+    });
+
+    const merged = mergeSlotsCumulative({}, { parsedIsbn: "978-3-16-148410-0" });
+    expect(merged.isbn).toBe("9783161484100");
   });
 
   it("accumulates ISBN digits across multiple voice turns", () => {

@@ -9,7 +9,7 @@ import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { runWithToolAuthorizationAsync } from "../guards/toolAccessGuard.js";
 import { beginOrchestratorTurn, endOrchestratorTurn, getActivePipelineCallSid } from "../guards/pipelineGuard.js";
 import { clearCallMemory } from "../memory/callMemoryStore.js";
-import { clearCallState, type CallState } from "../memory/callStateStore.js";
+import { clearCallState, type CallState, type CallStateSlots } from "../memory/callStateStore.js";
 import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
 import { runInPhase2, setSlotValidationReady, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
@@ -67,7 +67,6 @@ import type {
   AgentStreamEvent,
   CallSession,
   OrderLookupResult,
-  ProductSearchSlots,
   SpeechChunk,
   StructuredOrder,
 } from "../types/order.js";
@@ -358,8 +357,7 @@ async function* runGateControlledTurn(
       callSid: session.callSid.slice(0, 8),
       transcript: text,
       digitized: digitizeSpeechForIsbn(text),
-      isbnDraft: turn.state.slots.isbnDraft,
-      parsedIsbn: turn.state.slots.isbn,
+      isbn: turn.state.slots.isbn,
       isbnCollected: turn.state.slotFlags.isbnCollected,
       validationReady: turn.validation.ready,
     });
@@ -522,7 +520,7 @@ async function* phase2ProductFlow(
   session: CallSession,
   callState: CallState,
 ): AsyncGenerator<AgentStreamEvent> {
-  const slots: ProductSearchSlots = { ...callState.slots };
+  const slots: CallStateSlots = { ...callState.slots };
   const memory = getOrCreateMemory(session.callSid);
   session.productSlots = undefined;
   session.awaitingInput = null;
@@ -754,7 +752,7 @@ function doneEvent(
   return { type: "done", phase, endCall, lookupMs };
 }
 
-function assertProductSearchAllowed(callState: CallState, slots: ProductSearchSlots): void {
+function assertProductSearchAllowed(callState: CallState, slots: CallStateSlots): void {
   if (callState.intent !== "product") {
     throw new Error("PRODUCT_SEARCH_BLOCKED: intent_not_product");
   }
@@ -795,7 +793,7 @@ function isStrongTitleMatch(product: StructuredProduct, queryTitle: string): boo
 
 /** Shopify product search — ONLY callable from this orchestrator file. */
 async function orchestratorExecuteProductSearch(
-  slots: ProductSearchSlots,
+  slots: CallStateSlots,
   callSid: string,
   lastProductId?: string,
 ): Promise<OrchestratorProductResult> {

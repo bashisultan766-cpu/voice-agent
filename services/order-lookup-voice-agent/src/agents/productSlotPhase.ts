@@ -2,8 +2,8 @@
  * Phase 1 slot parsing — conversation only, no Shopify calls.
  */
 import type { CallStateAwaitingInput } from "../memory/callStateStore.js";
-import { extractIsbnFromAwaitingSpeech, normalizeIsbn } from "../utils/productSearchNormalize.js";
-import type { CallSession, ProductSearchSlots } from "../types/order.js";
+import { extractIsbnFromAwaitingSpeech, isCompleteIsbnValue, normalizeIsbn } from "../utils/productSearchNormalize.js";
+import type { CallSession, IncomingProductSlots, ProductSearchSlots } from "../types/order.js";
 
 const GENERIC_TITLE_RE =
   /^(a |the )?(book|books|magazine|magazines|newspaper|newspapers|something|anything)$/i;
@@ -67,8 +67,8 @@ export function detectSlotTypeChoice(
 export function parseProductSlotsFromSpeech(
   speech: string,
   awaiting: CallStateAwaitingInput = "none",
-): ProductSearchSlots {
-  const slots: ProductSearchSlots = {};
+): IncomingProductSlots {
+  const slots: IncomingProductSlots = {};
   const text = speech.trim();
 
   if (awaiting === "isbn") {
@@ -82,10 +82,6 @@ export function parseProductSlotsFromSpeech(
       slots.title = titleCandidate;
     }
   }
-
-  if (/\b(magazine|magazines)\b/i.test(text)) slots.category = "magazine";
-  else if (/\b(newspaper|newspapers)\b/i.test(text)) slots.category = "newspaper";
-  else if (/\b(book|books)\b/i.test(text)) slots.category = "book";
 
   if (detectSlotTypeChoice(text) === "recommendations") {
     slots.wantsRecommendations = true;
@@ -102,8 +98,6 @@ export function mergeProductSlots(
   return {
     isbn: isbn ? normalizeIsbn(isbn) : undefined,
     title: incoming.title ?? existing?.title,
-    category: incoming.category ?? existing?.category,
-    wantsRecommendations: incoming.wantsRecommendations ?? existing?.wantsRecommendations,
   };
 }
 
@@ -111,7 +105,7 @@ export function mergeProductSlots(
 export function advanceProductAwaiting(
   wasAwaiting: CallStateAwaitingInput,
   speech: string,
-  slots: Pick<ProductSearchSlots, "isbn" | "title" | "wantsRecommendations">,
+  slots: ProductSearchSlots & { wantsRecommendations?: boolean },
   slotFlags?: { isbnCollected?: boolean; titleCollected?: boolean },
 ): CallStateAwaitingInput {
   if (slotFlags?.isbnCollected && slots.isbn) {
@@ -121,28 +115,40 @@ export function advanceProductAwaiting(
     if (wasAwaiting === "title") return "none";
   }
 
-  if (wasAwaiting === "isbn" && slots.isbn) return "none";
+  if (wasAwaiting === "isbn" && slots.isbn && isCompleteIsbnValue(slots.isbn)) return "none";
   if (wasAwaiting === "title" && slots.title) return "none";
 
   const choice = detectSlotTypeChoice(speech);
 
   if (wasAwaiting === "isbn_or_title") {
-    if (choice === "isbn" && !slots.isbn && !slotFlags?.isbnCollected) return "isbn";
+    if (
+      choice === "isbn" &&
+      (!slots.isbn || !isCompleteIsbnValue(slots.isbn)) &&
+      !slotFlags?.isbnCollected
+    ) {
+      return "isbn";
+    }
     if (choice === "title" && !slots.title && !slotFlags?.titleCollected) return "title";
     return "isbn_or_title";
   }
 
-  if (wasAwaiting === "isbn" && !slots.isbn && !slotFlags?.isbnCollected) return "isbn";
+  if (
+    wasAwaiting === "isbn" &&
+    (!slots.isbn || !isCompleteIsbnValue(slots.isbn)) &&
+    !slotFlags?.isbnCollected
+  ) {
+    return "isbn";
+  }
   if (wasAwaiting === "title" && !slots.title && !slotFlags?.titleCollected) return "title";
 
   return wasAwaiting;
 }
 
 export function isPhase2Ready(
-  slots: ProductSearchSlots,
+  slots: ProductSearchSlots & { wantsRecommendations?: boolean },
   session?: Pick<CallSession, "awaitingInput">,
 ): boolean {
-  if (slots.isbn) return true;
+  if (slots.isbn && isCompleteIsbnValue(slots.isbn)) return true;
   if (slots.wantsRecommendations) return true;
   if (slots.title && session?.awaitingInput === "product_slot") return true;
   return false;
@@ -181,7 +187,7 @@ export function pickProductSlotQuestion(
   if (kind === "category") {
     return pickVariedSlotPrompt(CATEGORY_PROMPTS);
   }
-  if (slots.isbn && !slots.title) {
+  if (slots.isbn && isCompleteIsbnValue(slots.isbn) && !slots.title) {
     return pickVariedSlotPrompt(ISBN_VALUE_PROMPTS);
   }
   if (slots.title && !slots.isbn && kind !== "both") {
@@ -200,9 +206,7 @@ export function pickProductSlotQuestion(
 }
 
 function isGenericBookIntent(slots: ProductSearchSlots): boolean {
-  return Boolean(
-    slots.category === "book" && !slots.isbn && !slots.title && !slots.wantsRecommendations,
-  );
+  return !slots.isbn && !slots.title;
 }
 
 const CATEGORY_PROMPTS = [

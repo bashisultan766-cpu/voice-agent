@@ -67,12 +67,17 @@ export type CallPhase =
   | "follow_up"
   | "ended";
 
+/** Canonical product slot fields — extractor, store, and tools share this shape. */
 export interface ProductSearchSlots {
   isbn?: string;
   title?: string;
-  category?: string;
-  wantsRecommendations?: boolean;
 }
+
+/** Ingress boundary: maps extractor aliases into canonical slots before CallState merge. */
+export type IncomingProductSlots = ProductSearchSlots & {
+  parsedIsbn?: string;
+  wantsRecommendations?: boolean;
+};
 
 export interface CallSession {
   callSid: string;
@@ -83,7 +88,7 @@ export interface CallSession {
   currentOrder?: StructuredOrder;
   createdAt: number;
   /** Phase 1 slots — filled before any Shopify product API call. */
-  productSlots?: ProductSearchSlots;
+  productSlots?: IncomingProductSlots;
   /** Orchestrator: what we're waiting for from the caller. */
   awaitingInput?:
     | "order_number"
