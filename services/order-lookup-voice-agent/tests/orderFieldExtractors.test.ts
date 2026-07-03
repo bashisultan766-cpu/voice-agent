@@ -27,7 +27,7 @@ describe("orderFieldExtractors", () => {
     ).toBeUndefined();
   });
 
-  it("extracts OUT OF STOCK refund reason from custom attributes", () => {
+  it("extracts OUT OF STOCK refund reason from custom attributes when no timeline Reason line", () => {
     const reason = extractRefundReason(
       true,
       ORDER_21698_F1_GQL_NODE.refunds,

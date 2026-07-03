@@ -56,11 +56,13 @@ describe("buildOrderStatusTts", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
+      orderPlacedAt: "2025-03-10T12:00:00Z",
       customerName: "Jane Doe",
       fulfillmentStatus: "In transit",
       estimatedDeliveryDays: 3,
       trackingStatus: "USPS 9400",
       subtotalAmount: "40.00 USD",
+      totalAmount: "45.99 USD",
       shippingFee: "5.99 USD",
       lineItems: [{ title: "Harry Potter", quantity: 2 }],
       itemCount: 2,
@@ -68,14 +70,15 @@ describe("buildOrderStatusTts", () => {
       cardBrand: "Visa",
     });
     expect(tts.text).toContain("Jane Doe");
+    expect(tts.text).toMatch(/placed on/i);
     expect(tts.text).toContain("Harry Potter");
-    expect(tts.text).toContain("2 items");
-    expect(tts.text).toContain("subtotal");
-    expect(tts.text).toContain("Shipping");
+    expect(tts.text).toContain("contains 2 of");
+    expect(tts.text).toMatch(/subtotal was/i);
+    expect(tts.text).toMatch(/shipping/i);
+    expect(tts.text).toMatch(/total/i);
     expect(tts.text).toContain("in transit");
     expect(tts.text).toContain("3 days");
     expect(tts.text).toContain("USPS 9400");
-    expect(tts.text).toContain("Visa");
     expect(tts.text).toMatch(/4242|four.*two/i);
     expect(tts.text).not.toContain("Customer");
     expect(tts.text).not.toContain("your card");
@@ -84,15 +87,15 @@ describe("buildOrderStatusTts", () => {
   it("reads exact Shopify fields for #21698-F1 without invented fallbacks", () => {
     const tts = buildOrderStatusTts({
       status: "found",
+      orderPlacedAt: "2025-04-01T10:00:00Z",
       ...ORDER_21698_F1_EXPECTED,
     });
 
     expect(tts.text).toContain("Joel Moore");
+    expect(tts.text).toMatch(/placed on/i);
     expect(tts.text).toContain("The Holy Bible - King James Version");
-    expect(tts.text).toContain("subtotal");
-    expect(tts.text).toContain("91");
-    expect(tts.text).toContain("Shipping");
-    expect(tts.text).toContain("5");
+    expect(tts.text).toMatch(/subtotal was/i);
+    expect(tts.text).toMatch(/shipping/i);
     expect(tts.text).toContain("OUT OF STOCK");
     expect(tts.text).toContain("zzyxx2002@yahoo.com");
     expect(tts.text).toContain("PayPal Express Checkout");

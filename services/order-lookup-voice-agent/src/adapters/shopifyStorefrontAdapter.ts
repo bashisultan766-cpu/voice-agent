@@ -38,8 +38,10 @@ import {
 import {
   extractPaymentMethod,
   extractRefundAmount,
+  extractRefundNotificationDate,
   extractRefundNotificationEmail,
   extractRefundReason,
+  extractTimelineRefundReason,
 } from "./orderFieldExtractors.js";
 
 // Re-export formatter validation for order numbers (canonical source).
@@ -87,6 +89,10 @@ export interface OrderStatusResult {
   refundEmail?: string;
   /** Exact email the refund notification was sent to — never the order billing email. */
   refundNotificationEmail?: string;
+  /** ISO timestamp when the order was placed. */
+  orderPlacedAt?: string;
+  /** Refund / notification date (ISO or timeline phrase e.g. "May 28"). */
+  refundDate?: string;
   message?: string;
   /** Set when Shopify returns zero matching orders. */
   error?: string;
@@ -120,6 +126,9 @@ interface GqlFulfillmentNode {
 interface GqlOrderNode {
   id: string;
   name: string;
+  createdAt?: string;
+  processedAt?: string | null;
+  updatedAt?: string;
   email?: string | null;
   note?: string | null;
   displayFulfillmentStatus?: string;
@@ -135,7 +144,13 @@ interface GqlOrderNode {
   customAttributes?: Array<{ key?: string; value?: string }>;
   paymentGatewayNames?: string[];
   events?: {
-    edges?: Array<{ node?: { message?: string | null; action?: string | null } }>;
+    edges?: Array<{
+      node?: {
+        message?: string | null;
+        action?: string | null;
+        createdAt?: string | null;
+      };
+    }>;
   };
   lineItems?: {
     edges?: Array<{ node?: { title?: string; quantity?: number } }>;
@@ -168,6 +183,9 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
       node {
         id
         name
+        createdAt
+        processedAt
+        updatedAt
         note
         displayFulfillmentStatus
         displayFinancialStatus
@@ -214,6 +232,7 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
               ... on BasicEvent {
                 message
                 action
+                createdAt
               }
             }
           }
@@ -272,6 +291,9 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
       node {
         id
         name
+        createdAt
+        processedAt
+        updatedAt
         note
         displayFulfillmentStatus
         displayFinancialStatus
@@ -432,7 +454,10 @@ function estimateDeliveryDays(
 function timelineEvents(node: GqlOrderNode) {
   return (node.events?.edges ?? [])
     .map((e) => e.node)
-    .filter((n): n is { message?: string | null; action?: string | null } => Boolean(n));
+    .filter(
+      (n): n is { message?: string | null; action?: string | null; createdAt?: string | null } =>
+        Boolean(n),
+    );
 }
 
 function formatMoneyAmount(
@@ -489,13 +514,24 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   const financialStatus = node.displayFinancialStatus ?? "";
   const isRefunded = /refund/i.test(financialStatus) || Boolean(node.refunds?.length);
   const events = timelineEvents(node);
-  const refundReason = extractRefundReason(isRefunded, node.refunds, node.customAttributes, events);
+  const timelineRefundReason = extractTimelineRefundReason(events);
+  const refundReason =
+    timelineRefundReason ??
+    extractRefundReason(isRefunded, node.refunds, node.customAttributes, events);
   const refundNotificationEmail = refundEmailFromOrder(node, isRefunded);
   const refundAmount = isRefunded ? extractRefundAmount(node.refunds) : undefined;
+  const refundDate = isRefunded
+    ? extractRefundNotificationDate(events, {
+        processedAt: node.processedAt,
+        updatedAt: node.updatedAt,
+        isRefunded,
+      })
+    : undefined;
   const payment = extractPaymentMethod(node.transactions, node.paymentGatewayNames);
 
-  return {
+  const mapped: Omit<OrderStatusResult, "status"> = {
     orderNumber: node.name,
+    orderPlacedAt: node.createdAt,
     fulfillmentStatus,
     trackingUrl: tracking?.url,
     trackingStatus: tracking?.company
@@ -508,6 +544,7 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     refundStatus: isRefunded ? financialStatus : undefined,
     refundReason,
     refundAmount,
+    refundDate,
     refundNotificationEmail,
     refundEmail: refundNotificationEmail,
     subtotalAmount: formatMoneyAmount(node.subtotalPriceSet?.shopMoney),
@@ -520,6 +557,17 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     cardBrand: payment.cardBrand,
     paymentGateway: payment.paymentGateway,
   };
+
+  logger.info("shopify_order_mapped_for_tts", {
+    orderNumber: mapped.orderNumber,
+    orderPlacedAt: mapped.orderPlacedAt,
+    refundDate: mapped.refundDate,
+    refundReason: mapped.refundReason,
+    refundNotificationEmail: mapped.refundNotificationEmail,
+    itemCount: mapped.itemCount,
+  });
+
+  return mapped;
 }
 
 function adapterFailureFromError(

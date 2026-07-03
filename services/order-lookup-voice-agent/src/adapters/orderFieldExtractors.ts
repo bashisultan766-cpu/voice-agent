@@ -5,6 +5,7 @@
 export interface OrderTimelineEvent {
   message?: string | null;
   action?: string | null;
+  createdAt?: string | null;
 }
 
 export interface OrderCustomAttribute {
@@ -38,6 +39,16 @@ const REFUND_NOTIFICATION_SENT_RE =
 /** Parenthetical email — e.g. "sent to Joel Moore (zzyxx2002@yahoo.com)". */
 const SENT_TO_PAREN_EMAIL_RE = /sent\s+to\s+[^(]*\(([^)]+@[^)]+)\)/i;
 
+/** Staff timeline — "sent a refund notification email to Blake Penfield (btazp@yahoo.com)". */
+const REFUND_NOTIFICATION_EMAIL_PAREN_RE =
+  /refund\s+notification\s+email\s+to\s+[^(]*\(([^)]+@[^)]+)\)/i;
+
+/** Staff timeline — "Reason: OUT OF STOCK - ISSUE REFUND VIA PAYPAL". */
+const TIMELINE_REASON_LINE_RE = /Reason:\s*(.+?)(?:\.|$)/i;
+
+/** Spoken date tail — "on May 28" or "on May 28, 2025". */
+const REFUND_ON_DATE_RE = /\bon\s+([A-Za-z]+\s+\d{1,2}(?:,?\s+\d{4})?)\b/i;
+
 export function formatGatewayLabel(raw?: string): string | undefined {
   if (!raw?.trim()) return undefined;
   const trimmed = raw.trim();
@@ -68,6 +79,9 @@ export function extractRefundNotificationEmail(
     const message = (event.message ?? "").trim();
     if (!message || !/refund/i.test(message)) continue;
 
+    const notificationParen = message.match(REFUND_NOTIFICATION_EMAIL_PAREN_RE);
+    if (notificationParen?.[1]) return notificationParen[1].trim();
+
     const explicit = message.match(REFUND_NOTIFICATION_SENT_RE);
     if (explicit?.[1]) return explicit[1].trim();
 
@@ -91,6 +105,54 @@ export function extractRefundNotificationEmail(
   return undefined;
 }
 
+/** Exact staff timeline reason — e.g. "OUT OF STOCK - ISSUE REFUND VIA PAYPAL". */
+export function extractTimelineRefundReason(
+  events: OrderTimelineEvent[],
+): string | undefined {
+  for (const event of events) {
+    const message = (event.message ?? "").trim();
+    if (!message) continue;
+    const reasonLine = message.match(TIMELINE_REASON_LINE_RE);
+    if (reasonLine?.[1]?.trim()) return reasonLine[1].trim();
+  }
+  return undefined;
+}
+
+/**
+ * Refund / notification date from timeline text ("on May 28") or event timestamp.
+ * Falls back to processedAt / updatedAt when refunded.
+ */
+export function extractRefundNotificationDate(
+  events: OrderTimelineEvent[],
+  options?: { processedAt?: string | null; updatedAt?: string | null; isRefunded?: boolean },
+): string | undefined {
+  for (const event of events) {
+    const message = (event.message ?? "").trim();
+    if (!message || !/refund/i.test(message)) continue;
+
+    const spokenDate = message.match(REFUND_ON_DATE_RE);
+    if (spokenDate?.[1]?.trim()) return spokenDate[1].trim();
+  }
+
+  for (const event of [...events].reverse()) {
+    const message = (event.message ?? "").trim();
+    if (
+      event.createdAt &&
+      (/refund|mail_sent|notification/i.test(message) ||
+        /refund|mail_sent/i.test(event.action ?? ""))
+    ) {
+      return event.createdAt;
+    }
+  }
+
+  if (options?.isRefunded) {
+    if (options.processedAt) return options.processedAt;
+    if (options.updatedAt) return options.updatedAt;
+  }
+
+  return undefined;
+}
+
 export function extractRefundReason(
   isRefunded: boolean,
   refunds?: OrderRefundNode[],
@@ -98,6 +160,9 @@ export function extractRefundReason(
   events?: OrderTimelineEvent[],
 ): string | undefined {
   if (!isRefunded) return undefined;
+
+  const timelineReason = extractTimelineRefundReason(events ?? []);
+  if (timelineReason) return timelineReason;
 
   for (const attr of customAttributes ?? []) {
     const key = (attr.key ?? "").toLowerCase();

@@ -36,6 +36,7 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
         customerName: "Joel Moore",
         lineItems: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
         totalAmount: "96.00 USD",
+        orderPlacedAt: "2025-04-01T10:00:00Z",
         subtotalAmount: "91.00 USD",
         shippingFee: "5.00 USD",
         paymentGateway: "PayPal Express Checkout",
@@ -61,8 +62,8 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
     );
     expect(speech).toContain("Joel Moore");
     expect(speech).toContain("zzyxx2002@yahoo.com");
-    expect(speech).toContain("subtotal");
-    expect(speech).toContain("Shipping");
+    expect(speech).toContain("subtotal was");
+    expect(speech).toMatch(/shipping/i);
     expect(speech).not.toMatch(/\bfake\b/i);
   });
 

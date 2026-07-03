@@ -13,9 +13,9 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
 
   it("requires full order S.O.P. fields when data is found", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Customer Name/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Items\/Quantities/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Total amount \+ Shipping Fee/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Payment method/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Refund status\/email OR delivery ETA/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/order_placed_at/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CHRONOLOGICAL DATA RULE/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/never truncate or shorten/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/refund_date/i);
   });
 });

@@ -275,6 +275,8 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
     refund_reason: data.refundReason ?? null,
     refund_amount: data.refundAmount ?? null,
     refund_notification_email: data.refundNotificationEmail ?? data.refundEmail ?? null,
+    order_placed_at: data.orderPlacedAt ?? null,
+    refund_date: data.refundDate ?? null,
     fulfillment_status: data.fulfillmentStatus ?? null,
     estimated_delivery_days: data.estimatedDeliveryDays ?? null,
     tracking_status: data.trackingStatus ?? null,
