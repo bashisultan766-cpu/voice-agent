@@ -13,7 +13,7 @@ import { clearCallMemory } from "../memory/callMemoryStore.js";
 import { clearCallState, type CallState } from "../memory/callStateStore.js";
 import { clearCustomerMemory } from "../memory/customerMemoryStore.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
-import { runInPhase2, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
+import { runInPhase2, setSlotValidationReady, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { orderLookupTool } from "../tools/orderLookupTool.js";
 import {
   getSimilarProducts,
@@ -50,7 +50,7 @@ import {
   getOrCreateCallState,
   isProductToolAction,
   saveCallState,
-  validateProductSlotState,
+  type ProductSlotValidation,
 } from "../memory/callStateStore.js";
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { softFallback } from "./conversationBrainAgent.js";
@@ -292,6 +292,7 @@ async function* runOrchestratorTurnCore(
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
   setToolExecutionPhase(session.callSid, "PHASE_1");
+  setSlotValidationReady(session.callSid, false);
   const text = (callerText ?? "").trim();
   const memory = getOrCreateMemory(session.callSid);
   appendUserMessage(memory, text);
@@ -336,6 +337,10 @@ async function* runOrchestratorTurnCore(
   yield* runGateControlledTurn(session, text, memory);
 }
 
+function isExecutableToolAction(decision: string): boolean {
+  return isProductToolAction(decision) || decision === "orderLookupTool";
+}
+
 async function* runGateControlledTurn(
   session: CallSession,
   text: string,
@@ -361,9 +366,11 @@ async function* runGateControlledTurn(
   );
 
   const productToolRequested = isProductToolAction(rawDecision);
-  const toolAllowed = !productToolRequested || turn.validation.ready;
+  const validationReady = turn.validation.ready;
+  const toolExecutionAllowed = validationReady;
+
   let decision = rawDecision;
-  if (productToolRequested && !turn.validation.ready) {
+  if (!validationReady && isExecutableToolAction(rawDecision)) {
     decision = "ASK_QUESTION";
   }
 
@@ -376,7 +383,7 @@ async function* runGateControlledTurn(
       intent: turn.state.intent,
       decision,
       rawDecision,
-      toolAllowed,
+      toolExecutionAllowed,
       validation: turn.validation,
       slots: turn.state.slots,
     },
@@ -385,8 +392,20 @@ async function* runGateControlledTurn(
   let nextState = applyDecisionToCallState(turn.state, decision);
   saveCallState(nextState);
   syncSessionFromCallState(session, nextState);
-  setToolExecutionPhase(session.callSid, nextState.phase);
+
+  setSlotValidationReady(session.callSid, validationReady);
+  setToolExecutionPhase(
+    session.callSid,
+    validationReady && isExecutableToolAction(decision) ? "PHASE_2" : "PHASE_1",
+  );
   memory.inferredIntent = turn.state.intent;
+
+  console.log({
+    validationReady,
+    toolExecutionAllowed,
+    decision,
+    FINAL_DECISION: validationReady ? "ALLOW_TOOL" : "BLOCK_TOOL",
+  });
 
   logger.info("tool_decision_gate", {
     callSid: session.callSid.slice(0, 8),
@@ -399,14 +418,14 @@ async function* runGateControlledTurn(
     validationReady: turn.validation.ready,
     validationReason: turn.validation.reason,
     rawDecision,
-    toolExecutionAllowed: toolAllowed,
+    toolExecutionAllowed,
     persistedIsbn: Boolean(nextState.slots.isbn),
     persistedTitle: Boolean(nextState.slots.title),
     source: analysis.source,
     confidence: analysis.confidence,
   });
 
-  yield* executeGateDecision(session, analysis, decision, nextState, turn.slotsCollected);
+  yield* executeGateDecision(session, analysis, decision, nextState, turn.validation, turn.slotsCollected);
 }
 
 async function* executeGateDecision(
@@ -414,14 +433,12 @@ async function* executeGateDecision(
   analysis: Awaited<ReturnType<typeof analyzeBrainTurn>>,
   decision: ToolAction,
   callState: ReturnType<typeof getOrCreateCallState>,
+  validation: ProductSlotValidation,
   slotsCollected: boolean,
 ): AsyncGenerator<AgentStreamEvent> {
-  if (isProductToolAction(decision)) {
-    const validation = validateProductSlotState(callState, slotsCollected);
-    if (!validation.ready) {
-      yield* handleGateAskQuestion(session, analysis);
-      return;
-    }
+  if (isExecutableToolAction(decision) && !validation.ready) {
+    yield* handleGateAskQuestion(session, analysis);
+    return;
   }
 
   switch (decision) {
@@ -498,6 +515,9 @@ async function* phase2ProductFlow(
   session.awaitingInput = null;
 
   assertProductSearchAllowed(callState, slots, slotsCollected);
+
+  setSlotValidationReady(session.callSid, true);
+  setToolExecutionPhase(session.callSid, "PHASE_2");
 
   pipelineTrace({
     layer: "tool",
@@ -599,6 +619,9 @@ async function* runOrderLookup(
   const started = Date.now();
 
   yield chunkEvent(planInstantFiller());
+
+  setSlotValidationReady(session.callSid, true);
+  setToolExecutionPhase(session.callSid, "PHASE_2");
 
   const lookupPromise = runWithToolAuthorizationAsync("conversationOrchestrator", () =>
     runInPhase2(session.callSid, () => orderLookupTool(orderNumber)),

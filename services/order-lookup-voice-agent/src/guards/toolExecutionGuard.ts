@@ -11,10 +11,24 @@ export interface ToolExecutionState {
 }
 
 const callPhase = new Map<string, ExecutionPhase>();
+const callValidationReady = new Map<string, boolean>();
 let activeCallSid: string | undefined;
 
 /** Test-only bypass for direct tool unit tests (never enabled in production). */
 let testBypassEnabled = false;
+
+/** Set per-turn slot validation — tools require validation.ready === true. */
+export function setSlotValidationReady(callSid: string, ready: boolean): void {
+  callValidationReady.set(callSid, ready);
+  activeCallSid = callSid;
+}
+
+export function getSlotValidationReady(callSid?: string): boolean {
+  if (testBypassEnabled) return true;
+  const sid = callSid ?? activeCallSid;
+  if (!sid) return false;
+  return callValidationReady.get(sid) === true;
+}
 
 export function setToolExecutionPhase(callSid: string, phase: ExecutionPhase): void {
   callPhase.set(callSid, phase);
@@ -23,10 +37,13 @@ export function setToolExecutionPhase(callSid: string, phase: ExecutionPhase): v
 
 export function canExecuteTool(state?: ToolExecutionState | null): boolean {
   if (testBypassEnabled) return true;
+
+  const callSid = state?.callSid ?? activeCallSid;
+  if (!getSlotValidationReady(callSid)) return false;
+
   if (state?.phase === "PHASE_2") return true;
   if (state?.phase === "PHASE_1") return false;
 
-  const callSid = state?.callSid ?? activeCallSid;
   if (!callSid) return false;
   return callPhase.get(callSid) === "PHASE_2";
 }
@@ -53,6 +70,19 @@ export function logToolCallAttempt(tool: string): void {
 
 export function assertToolExecutionAllowed(tool: string): void {
   logToolCallAttempt(tool);
+  const callSid = activeCallSid;
+  if (!getSlotValidationReady(callSid)) {
+    console.log("BLOCKED: INVALID SLOT STATE", {
+      tool,
+      callSid: callSid?.slice(0, 8),
+      validationReady: false,
+    });
+    logger.warn("tool_blocked_invalid_slot_state", {
+      tool,
+      callSid: callSid?.slice(0, 8),
+    });
+    throw new Error("TOOL_BLOCKED_INVALID_SLOT_STATE");
+  }
   if (!canExecuteTool()) {
     throw new Error("TOOL_BLOCKED_PHASE_1");
   }
@@ -76,10 +106,12 @@ export function enableToolExecutionForTests(enabled = true): void {
 export function resetToolExecutionGuard(): void {
   testBypassEnabled = false;
   callPhase.clear();
+  callValidationReady.clear();
   activeCallSid = undefined;
 }
 
 export function clearCallExecutionPhase(callSid: string): void {
   callPhase.delete(callSid);
+  callValidationReady.delete(callSid);
   if (activeCallSid === callSid) activeCallSid = undefined;
 }
