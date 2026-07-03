@@ -153,7 +153,7 @@ function fallbackProductReply(input: {
  */
 export async function handleProductBrainTurn(_input: ProductBrainInput): Promise<ProductBrainResult> {
   throw new Error(
-    "ILLEGAL_TOOL_EXECUTION_BYPASS: productBrainAgent is deprecated; use conversationOrchestrator.process",
+    "DIRECT_TOOL_EXECUTION_FORBIDDEN: productBrainAgent is deprecated; use conversationOrchestrator.process",
   );
 }
 

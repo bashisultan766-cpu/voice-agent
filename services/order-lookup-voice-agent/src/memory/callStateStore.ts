@@ -71,7 +71,11 @@ export function saveCallState(state: CallState): void {
 
 export interface ProductSlotValidation {
   ready: boolean;
-  reason?: "missing_slots" | "title_needs_confirmation" | "recommendations_needs_confirmation";
+  reason?:
+    | "missing_slots"
+    | "isbn_needs_confirmation"
+    | "title_needs_confirmation"
+    | "recommendations_needs_confirmation";
 }
 
 export interface AtomicTurnResult {
@@ -83,7 +87,7 @@ export interface AtomicTurnResult {
 
 /**
  * Validates product slots before any Shopify tool may run.
- * ISBN may proceed immediately; title/recommendations require prior slot collection.
+ * Search requires explicit slot collection — no cold-start ISBN auto-search.
  */
 export function validateProductSlotState(
   state: CallState,
@@ -101,12 +105,8 @@ export function validateProductSlotState(
     return { ready: false, reason: "missing_slots" };
   }
 
-  if (hasIsbn && slotsCollected) {
-    return { ready: true };
-  }
-
-  if (hasTitle && slotsCollected) {
-    return { ready: true };
+  if (hasIsbn && !slotsCollected) {
+    return { ready: false, reason: "isbn_needs_confirmation" };
   }
 
   if (hasTitle && !slotsCollected) {
@@ -117,7 +117,11 @@ export function validateProductSlotState(
     return { ready: false, reason: "recommendations_needs_confirmation" };
   }
 
-  return { ready: true };
+  if ((hasIsbn || hasTitle || wantsRec) && slotsCollected) {
+    return { ready: true };
+  }
+
+  return { ready: false, reason: "missing_slots" };
 }
 
 export function isProductToolAction(decision: string): boolean {
@@ -200,13 +204,7 @@ export function isSlotAnswerComplete(
   if (wasAwaiting === "title") return Boolean(slots.title);
 
   if (wasAwaiting === "isbn_or_title") {
-    if (slots.isbn) return true;
-    if (slots.wantsRecommendations) return true;
-    return false;
-  }
-
-  if (wasAwaiting === "none") {
-    return Boolean(slots.isbn);
+    return Boolean(slots.wantsRecommendations);
   }
 
   return false;

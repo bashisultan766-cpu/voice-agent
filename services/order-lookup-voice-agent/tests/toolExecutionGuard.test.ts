@@ -59,7 +59,7 @@ describe("toolExecutionGuard", () => {
   it("blocks searchProductByISBN without orchestrator authorization", async () => {
     setToolExecutionPhase("CA_GUARD", "PHASE_2");
     await expect(searchProductByISBN("9783161484100")).rejects.toThrow(
-      "ILLEGAL_TOOL_EXECUTION_BYPASS",
+      "DIRECT_TOOL_EXECUTION_FORBIDDEN",
     );
   });
 

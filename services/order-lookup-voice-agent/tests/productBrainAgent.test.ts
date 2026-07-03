@@ -12,6 +12,6 @@ describe("productBrainAgent", () => {
         callSid: "CA_BRAIN",
         userMessage: "Harry Potter book",
       }),
-    ).rejects.toThrow("ILLEGAL_TOOL_EXECUTION_BYPASS");
+    ).rejects.toThrow("DIRECT_TOOL_EXECUTION_FORBIDDEN");
   });
 });

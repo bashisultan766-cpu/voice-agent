@@ -68,14 +68,25 @@ describe("pipeline acceptance", () => {
     expect(titleSpy).not.toHaveBeenCalled();
   });
 
-  it('2 — ISBN provided triggers product search', async () => {
+  it('2 — cold-start ISBN utterance does NOT search (must collect slot first)', async () => {
     const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
 
     const session = createCallSession("ACC_2", "+1", "+2");
     const speech = await collectSpeech(session, "I have ISBN 9783161484100");
 
-    expect(isbnSpy).toHaveBeenCalled();
-    expect(speech).toMatch(/Azkaban|found/i);
+    expect(isbnSpy).not.toHaveBeenCalled();
+    expect(speech).toMatch(/ISBN|title/i);
+  });
+
+  it('2b — "I have ISBN" stores intent only, no search', async () => {
+    const isbnSpy = vi.spyOn(shopifyProductTools, "searchProductByISBN");
+
+    const session = createCallSession("ACC_2B", "+1", "+2");
+    await collectSpeech(session, "I want a book");
+    const speech = await collectSpeech(session, "I have an ISBN");
+
+    expect(isbnSpy).not.toHaveBeenCalled();
+    expect(speech).toMatch(/give me.*ISBN|share.*ISBN/i);
   });
 
   it('3 — "Harry Potter book" asks clarification first', async () => {

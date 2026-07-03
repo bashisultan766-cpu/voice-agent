@@ -61,7 +61,8 @@ export function detectSlotTypeChoice(
 }
 
 /**
- * Parse slots from speech — context-aware so titles are NOT grabbed on intent-only turns.
+ * Parse slots from speech — ISBN/title ONLY when orchestrator is awaiting that value.
+ * Never auto-extract ISBN from intent-only or declaration-only turns.
  */
 export function parseProductSlotsFromSpeech(
   speech: string,
@@ -70,20 +71,16 @@ export function parseProductSlotsFromSpeech(
   const slots: ProductSearchSlots = {};
   const text = speech.trim();
 
-  const shouldParseIsbn =
-    awaiting === "isbn" ||
-    awaiting === "isbn_or_title" ||
-    (awaiting === "none" && /\bisbn\b/i.test(text)) ||
-    extractIsbnFromSpeech(text) !== null;
-
-  const shouldParseTitle = awaiting === "title";
-
-  if (shouldParseIsbn) {
+  if (awaiting === "isbn") {
     const isbn = extractIsbnFromSpeech(text);
     if (isbn) slots.isbn = isbn;
+    else if (/^\d[\dXx-]{8,17}[\dXx]?$/.test(text.replace(/\s/g, ""))) {
+      const normalized = extractIsbnFromSpeech(text) ?? text.replace(/[\s-]/g, "");
+      if (normalized.length >= 10) slots.isbn = normalized;
+    }
   }
 
-  if (shouldParseTitle) {
+  if (awaiting === "title") {
     const titleCandidate = extractTitleCandidate(text);
     if (isMeaningfulTitle(titleCandidate)) {
       slots.title = titleCandidate;
@@ -121,7 +118,6 @@ export function advanceProductAwaiting(
 ): CallStateAwaitingInput {
   if (wasAwaiting === "isbn" && slots.isbn) return "none";
   if (wasAwaiting === "title" && slots.title) return "none";
-  if (wasAwaiting === "isbn_or_title" && slots.isbn) return "none";
 
   const choice = detectSlotTypeChoice(speech);
 

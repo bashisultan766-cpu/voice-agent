@@ -731,6 +731,10 @@ function assertProductSearchAllowed(
     throw new Error("PRODUCT_SEARCH_BLOCKED: missing_isbn_or_title");
   }
 
+  if (hasIsbn && !slotsCollected) {
+    throw new Error("PRODUCT_SEARCH_BLOCKED: isbn_needs_slot_collection");
+  }
+
   if (hasTitle && !hasIsbn && !slotsCollected) {
     throw new Error("PRODUCT_SEARCH_BLOCKED: title_needs_slot_collection");
   }

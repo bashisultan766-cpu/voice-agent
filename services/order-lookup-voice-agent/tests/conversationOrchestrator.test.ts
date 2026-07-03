@@ -138,10 +138,12 @@ describe("conversationOrchestrator flows", () => {
     expect(speech).not.toMatch(/let me search|I will check/i);
   });
 
-  it("Phase 2: looks up ISBN directly", async () => {
+  it("Phase 2: looks up ISBN after slot collection", async () => {
     const session = createCallSession("CA_ISBN", "+1", "+2");
-    const speech = await collectSpeech(session, "I have ISBN 9783161484100");
-    expect(speech).toMatch(/Azkaban|found/i);
+    await collectSpeech(session, "I need a book");
+    await collectSpeech(session, "I have an ISBN");
+    const speech = await collectSpeech(session, "9783161484100");
+    expect(speech).toMatch(/Azkaban/i);
     expect(speech).not.toMatch(/let me search|I will check/i);
   });
 
@@ -155,7 +157,8 @@ describe("conversationOrchestrator flows", () => {
     expect(stateAfterAsk.awaitingInput).toBe("isbn_or_title");
     expect(stateAfterAsk.phase).toBe("PHASE_1");
 
-    const searchSpeech = await collectSpeech(session, "I have ISBN 9783161484100");
+    await collectSpeech(session, "I have an ISBN");
+    const searchSpeech = await collectSpeech(session, "9783161484100");
     expect(searchSpeech).toMatch(/Azkaban|found/i);
 
     const stateAfterSearch = getOrCreateCallState(session.callSid);

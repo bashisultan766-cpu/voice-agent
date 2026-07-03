@@ -39,10 +39,10 @@ export function assertToolAccessAuthorized(tool: string, sourceFile: string): vo
       layer: "tool",
       file: sourceFile,
       callSid,
-      action: "ILLEGAL_TOOL_EXECUTION_BYPASS",
+      action: "DIRECT_TOOL_EXECUTION_FORBIDDEN",
       extra: { tool, caller: activeCaller, stack: stack.split("\n").slice(0, 8).join("\n") },
     });
-    throw new Error(`ILLEGAL_TOOL_EXECUTION_BYPASS: ${tool}`);
+    throw new Error(`DIRECT_TOOL_EXECUTION_FORBIDDEN: ${tool}`);
   }
 }
 
