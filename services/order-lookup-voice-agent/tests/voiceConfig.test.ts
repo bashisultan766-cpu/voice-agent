@@ -69,14 +69,14 @@ describe("conversationRelayVoice", () => {
       VOICE_ID: "voice123",
       VOICE_MODEL: "flash_v2_5",
       VOICE_TUNING_ENABLED: "true",
-      VOICE_SPEED: "0.96",
-      VOICE_STABILITY: "0.42",
-      VOICE_SIMILARITY: "0.78",
     };
+    delete process.env.VOICE_SPEED;
+    delete process.env.VOICE_STABILITY;
+    delete process.env.VOICE_SIMILARITY;
 
     const { resetConfigCacheForTests, conversationRelayVoice: voice } = await import("../src/config.js");
     resetConfigCacheForTests();
-    expect(voice()).toBe("voice123-flash_v2_5-0.96_0.42_0.78");
+    expect(voice()).toBe("voice123-flash_v2_5-0.92_0.65_0.85");
   });
 
   it("skips tuning suffix when VOICE_TUNING_ENABLED=false", async () => {

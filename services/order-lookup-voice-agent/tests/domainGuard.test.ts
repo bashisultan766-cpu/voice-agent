@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPolitePivotSpeech,
+  extractPivotTopic,
   isOutOfDomainQuestion,
 } from "../src/utils/domainGuard.js";
 import { runLlmAgentTurnEvents } from "../src/adapters/openaiAdapter.js";
@@ -21,7 +22,29 @@ describe("isOutOfDomainQuestion", () => {
   });
 });
 
+describe("extractPivotTopic", () => {
+  it("extracts cricket and football independently", () => {
+    expect(extractPivotTopic("How do I watch cricket?")).toBe("cricket");
+    expect(extractPivotTopic("How do I watch live football streaming?")).toBe("football");
+  });
+});
+
 describe("buildPolitePivotSpeech", () => {
+  it("uses dynamic topic injection for streaming questions", () => {
+    const cricket = buildPolitePivotSpeech("How do I watch cricket?");
+    const football = buildPolitePivotSpeech("How do I watch live football streaming?");
+
+    expect(cricket).toContain("cricket");
+    expect(cricket).not.toContain("football");
+    expect(football).toContain("football");
+    expect(football).not.toMatch(/\bcricket\b/i);
+    expect(football).toMatch(/watching football/i);
+  });
+
+  it("accepts an explicit topic override", () => {
+    const speech = buildPolitePivotSpeech("Tell me something random", "astronomy");
+    expect(speech).toContain("astronomy");
+  });
   it("refuses president question and offers history books", () => {
     const speech = buildPolitePivotSpeech("Who is the president of the USA?");
     expect(speech).toMatch(/sorry|apologize/i);

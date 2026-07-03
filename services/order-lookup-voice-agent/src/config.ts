@@ -32,9 +32,9 @@ const envSchema = z.object({
   /** Twilio ConversationRelay model slug (e.g. flash_v2_5). ElevenLabs API prefixes (eleven_*) are stripped automatically. */
   VOICE_MODEL: z.string().default("flash_v2_5"),
   /** Twilio ConversationRelay tuning — speed 0.7–1.2, stability/similarity 0.0–1.0 */
-  VOICE_SPEED: z.coerce.number().min(0.7).max(1.2).default(0.96),
-  VOICE_STABILITY: z.coerce.number().min(0).max(1).default(0.42),
-  VOICE_SIMILARITY: z.coerce.number().min(0).max(1).default(0.78),
+  VOICE_SPEED: z.coerce.number().min(0.7).max(1.2).default(0.92),
+  VOICE_STABILITY: z.coerce.number().min(0).max(1).default(0.65),
+  VOICE_SIMILARITY: z.coerce.number().min(0).max(1).default(0.85),
   VOICE_TUNING_ENABLED: z
     .enum(["true", "false"])
     .default("true")

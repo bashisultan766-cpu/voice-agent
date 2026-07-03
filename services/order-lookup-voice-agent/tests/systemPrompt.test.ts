@@ -19,6 +19,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/not a general AI assistant/i);
   });
 
+  it("requires dynamic topic Polite Pivot instruction", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MUST dynamically use the user's specific requested topic/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT literally repeat the "football" example/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/how to watch cricket/i);
+  });
+
   it("requires Polite Pivot for out-of-domain questions", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CRITICAL RULE — OUT OF DOMAIN/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Polite Pivot/i);
