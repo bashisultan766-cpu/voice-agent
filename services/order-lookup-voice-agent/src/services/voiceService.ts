@@ -1,82 +1,27 @@
 import { getConfig, conversationRelayVoice } from "../config.js";
+import { synthesizeSpeech, type VoiceSynthesisResult } from "../adapters/ttsAdapter.js";
 import { smoothForVoice } from "./voiceSmoothingEngine.js";
-import { logger } from "../utils/logger.js";
 import { getCachedPhrase } from "../utils/phraseCache.js";
 import type { SpeechChunk } from "../types/order.js";
 
-export interface VoiceSynthesisResult {
-  audio: Buffer;
-  contentType: string;
-}
+export type { VoiceSynthesisResult };
 
-const ELEVENLABS_VOICE_SETTINGS = {
-  stability: 0.42,
-  similarity_boost: 0.78,
-  style: 0.22,
-  use_speaker_boost: true,
-};
+const chunkAudioCache = new Map<string, VoiceSynthesisResult>();
 
 /**
- * Direct ElevenLabs TTS — one sentence per request for lowest latency.
+ * Direct TTS synthesis — one sentence per request for cache prewarm.
  * Primary live path uses Twilio ConversationRelay text tokens.
  */
 export async function synthesizeSpeechChunk(text: string): Promise<VoiceSynthesisResult | null> {
-  const apiKey = getConfig().ELEVENLABS_API_KEY;
-  if (!apiKey) return null;
-
   const cached = chunkAudioCache.get(text);
   if (cached) return cached;
 
-  const voiceId = (getConfig().VOICE_ID || getConfig().ELEVENLABS_VOICE_ID || "").trim();
-  if (!voiceId) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          "Content-Type": "application/json",
-          Accept: "audio/mpeg",
-        },
-        body: JSON.stringify({
-          text: applyVoiceProsody(text),
-          model_id: "eleven_turbo_v2_5",
-          voice_settings: ELEVENLABS_VOICE_SETTINGS,
-        }),
-        signal: controller.signal,
-      },
-    );
-
-    if (!res.ok) {
-      const body = await res.text();
-      logger.warn("elevenlabs_chunk_tts_failed", { status: res.status, body: body.slice(0, 80) });
-      return null;
-    }
-
-    const arrayBuffer = await res.arrayBuffer();
-    const result: VoiceSynthesisResult = {
-      audio: Buffer.from(arrayBuffer),
-      contentType: res.headers.get("content-type") ?? "audio/mpeg",
-    };
-    if (isCacheablePhrase(text)) {
-      chunkAudioCache.set(text, result);
-    }
-    return result;
-  } catch (err) {
-    logger.warn("elevenlabs_chunk_tts_error", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
-  } finally {
-    clearTimeout(timer);
+  const result = await synthesizeSpeech(text);
+  if (result && isCacheablePhrase(text)) {
+    chunkAudioCache.set(text, result);
   }
+  return result;
 }
-
-const chunkAudioCache = new Map<string, VoiceSynthesisResult>();
 
 function isCacheablePhrase(text: string): boolean {
   const normalized = text.trim().toLowerCase();
@@ -142,9 +87,11 @@ export async function streamOneChunkToRelay(
 
   if (options?.abortSignal?.aborted) return;
 
+  const token = applyVoiceProsody(chunk.text, chunk.preserveFull === true);
+
   await send({
     type: "text",
-    token: applyVoiceProsody(chunk.text, chunk.preserveFull === true),
+    token,
     last: isLast,
     interruptible: chunk.kind !== "payment",
   });

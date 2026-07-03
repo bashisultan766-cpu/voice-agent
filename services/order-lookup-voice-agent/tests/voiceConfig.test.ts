@@ -76,7 +76,7 @@ describe("conversationRelayVoice", () => {
 
     const { resetConfigCacheForTests, conversationRelayVoice: voice } = await import("../src/config.js");
     resetConfigCacheForTests();
-    expect(voice()).toBe("voice123-flash_v2_5-0.92_0.65_0.85");
+    expect(voice()).toBe("voice123-flash_v2_5-0.92_0.8_0.8");
   });
 
   it("skips tuning suffix when VOICE_TUNING_ENABLED=false", async () => {

@@ -13,6 +13,7 @@ import {
   takeFinalTranscript,
 } from "../runtime/streamTurnBarrier.js";
 import { logEventIngestion } from "../runtime/turnObservability.js";
+import { logTtsEngineSelection } from "../adapters/ttsAdapter.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 import { isNoiseTranscript } from "../utils/noiseGate.js";
 import {
@@ -111,6 +112,8 @@ async function runStreamingTurn(
     callSid: session.callSid,
     action: "forwarding_to_orchestrator",
   });
+
+  logTtsEngineSelection();
 
   try {
     for await (const event of process(session.callSid, callerText, session)) {

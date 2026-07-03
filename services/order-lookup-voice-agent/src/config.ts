@@ -31,10 +31,16 @@ const envSchema = z.object({
   VOICE_ID: z.string().optional(),
   /** Twilio ConversationRelay model slug (e.g. flash_v2_5). ElevenLabs API prefixes (eleven_*) are stripped automatically. */
   VOICE_MODEL: z.string().default("flash_v2_5"),
-  /** Twilio ConversationRelay tuning — speed 0.7–1.2, stability/similarity 0.0–1.0 */
+  /** Twilio ConversationRelay tuning — speed 0.7–1.2, stability/similarity/style 0.0–1.0 */
   VOICE_SPEED: z.coerce.number().min(0.7).max(1.2).default(0.92),
-  VOICE_STABILITY: z.coerce.number().min(0).max(1).default(0.65),
-  VOICE_SIMILARITY: z.coerce.number().min(0).max(1).default(0.85),
+  /** Studio-quality default — high stability prevents wavering / distant tone. */
+  VOICE_STABILITY: z.coerce.number().min(0).max(1).default(0.8),
+  /** Studio-quality default — clear, artifact-free voice fidelity. */
+  VOICE_SIMILARITY: z.coerce.number().min(0).max(1).default(0.8),
+  /** ElevenLabs direct API only — keep low to avoid odd inflections. */
+  VOICE_STYLE: z.coerce.number().min(0).max(1).default(0.05),
+  /** Native telephony format for direct TTS streams (Twilio mulaw 8 kHz). */
+  TTS_AUDIO_FORMAT: z.enum(["ulaw_8000", "pcm_16000", "mp3_44100_128"]).default("ulaw_8000"),
   VOICE_TUNING_ENABLED: z
     .enum(["true", "false"])
     .default("true")
