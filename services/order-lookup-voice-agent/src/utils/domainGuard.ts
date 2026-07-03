@@ -36,12 +36,21 @@ export function buildPolitePivotSpeech(message: string): string {
     return "I apologize, but I don't have access to recipes. I can, however, help you find a fantastic cookbook! Do you have a specific type of cooking in mind?";
   }
 
-  if (/football|stream|watch\s+live|how\s+do\s+i\s+watch/.test(lower)) {
+  if (/cricket/.test(lower)) {
+    return "I'm sorry, but as the Shoshan bookstore assistant, I can't help with watching cricket. I can, however, search our catalog for books about cricket. Would you like me to do that?";
+  }
+
+  if (/football/.test(lower) && /stream|watch|how\s+do\s+i\s+watch|live/.test(lower)) {
     return "I'm sorry, but as the Shoshan bookstore assistant, I can't give you information on live streaming. However, if you are interested in football, I can certainly search our catalog for some great books about football. Would you like me to do that?";
   }
 
-  if (/cricket/.test(lower)) {
-    return "I'm sorry, but as the Shoshan bookstore assistant, I can't help with watching cricket. I can, however, search our catalog for books about cricket. Would you like me to do that?";
+  if (/stream|watch\s+live|how\s+do\s+i\s+watch|live\s+stream/.test(lower)) {
+    const topic = inferPivotBookTopic(message);
+    return `I'm sorry, but as the Shoshan bookstore assistant, I can't give you information on live streaming. I can, however, search our catalog for books about ${topic}. Would you like me to do that?`;
+  }
+
+  if (/football/.test(lower)) {
+    return "I'm sorry, but as the Shoshan bookstore assistant, I can't help with that. I can, however, search our catalog for books about football. Would you like me to do that?";
   }
 
   if (/president|who\s+is\s+the/.test(lower)) {
