@@ -94,7 +94,7 @@ export async function defaultTestLlmAgentTurn(
 
   if (/\b(where is my order|order status|track my order|my order)\b/i.test(lower) && !orderNumber) {
     return {
-      speech: "Sure — what's your order number? I can pull that up for you.",
+      speech: "Sure — what's your order number?",
       toolExecutions: [],
       responseType: "clarification_question",
     };

@@ -58,6 +58,8 @@ export interface OrderStatusResult {
   financialStatus?: string;
   refundStatus?: string;
   refundReason?: string;
+  /** Product subtotal before shipping (books only). */
+  subtotalAmount?: string;
   totalAmount?: string;
   shippingFee?: string;
   itemCount?: number;
@@ -65,6 +67,8 @@ export interface OrderStatusResult {
   orderNote?: string;
   cardLast4?: string;
   cardBrand?: string;
+  /** Email where refund confirmation was sent (refunded orders only). */
+  refundEmail?: string;
   message?: string;
 }
 
@@ -96,12 +100,19 @@ interface GqlFulfillmentNode {
 interface GqlOrderNode {
   id: string;
   name: string;
+  email?: string | null;
   note?: string | null;
   displayFulfillmentStatus?: string;
   displayFinancialStatus?: string;
-  customer?: { firstName?: string; lastName?: string } | null;
+  customer?: {
+    firstName?: string;
+    lastName?: string;
+    email?: string | null;
+  } | null;
+  subtotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   totalShippingPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  customAttributes?: Array<{ key?: string; value?: string }>;
   lineItems?: {
     edges?: Array<{ node?: { title?: string; quantity?: number } }>;
   };
@@ -125,9 +136,17 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
         note
         displayFulfillmentStatus
         displayFinancialStatus
+        email
         customer {
           firstName
           lastName
+          email
+        }
+        subtotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
         }
         totalPriceSet {
           shopMoney {
@@ -148,6 +167,10 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
               quantity
             }
           }
+        }
+        customAttributes {
+          key
+          value
         }
         refunds(first: 3) {
           note
@@ -240,6 +263,25 @@ function customerDisplayName(
   return name || undefined;
 }
 
+function refundEmailFromOrder(
+  node: GqlOrderNode,
+  isRefunded: boolean,
+): string | undefined {
+  if (!isRefunded) return undefined;
+
+  for (const attr of node.customAttributes ?? []) {
+    const key = (attr.key ?? "").toLowerCase();
+    if ((key.includes("refund") && key.includes("email")) || key === "refund_email") {
+      const value = (attr.value ?? "").trim();
+      if (value) return value;
+    }
+  }
+
+  return (
+    (node.email ?? node.customer?.email ?? "").trim() || undefined
+  );
+}
+
 function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   const fulfillment = pickPrimaryFulfillment(node.fulfillments);
   const tracking = fulfillment?.trackingInfo?.find((t) => t.url || t.number);
@@ -283,6 +325,8 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     financialStatus,
     refundStatus: isRefunded ? financialStatus : undefined,
     refundReason: isRefunded ? refundNote : undefined,
+    refundEmail: refundEmailFromOrder(node, isRefunded),
+    subtotalAmount: formatMoneyAmount(node.subtotalPriceSet?.shopMoney),
     totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
     shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
     itemCount: itemCount || lineItems.length || undefined,

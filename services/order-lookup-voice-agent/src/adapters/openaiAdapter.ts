@@ -19,7 +19,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "get_shopify_order_status",
       description:
-        "Fetch real order details from Shopify: customer name, items, total, shipping, status, refunds, tracking, card last four.",
+        "Fetch real order details from Shopify: customer name, line items with quantities, subtotal, shipping fee, status, ETA, refund reason, refund email, and card last four.",
       parameters: {
         type: "object",
         properties: {
@@ -90,6 +90,10 @@ export interface LlmAgentTurnResult {
   recordOrderNumber?: string;
   recordProduct?: { id: string; title: string };
 }
+
+export type LlmAgentTurnEvent =
+  | { type: "tool_pending"; tools: LlmToolName[] }
+  | { type: "result"; result: LlmAgentTurnResult };
 
 type TurnOverride = (input: LlmAgentTurnInput) => Promise<LlmAgentTurnResult>;
 
@@ -184,13 +188,21 @@ function buildOpenAiMessages(
 }
 
 /**
- * Run one caller turn: LLM may issue tool calls, receive Shopify JSON, then synthesize TTS.
+ * Run one caller turn with tool-pending events for system-level filler injection.
  */
-export async function runLlmAgentTurn(
+export async function* runLlmAgentTurnEvents(
   input: LlmAgentTurnInput,
-): Promise<LlmAgentTurnResult> {
+): AsyncGenerator<LlmAgentTurnEvent> {
   if (turnOverride) {
-    return turnOverride(input);
+    const result = await turnOverride(input);
+    if (result.toolExecutions.length > 0) {
+      yield {
+        type: "tool_pending",
+        tools: result.toolExecutions.map((exec) => exec.tool),
+      };
+    }
+    yield { type: "result", result };
+    return;
   }
 
   const toolExecutions: LlmToolExecutionRecord[] = [];
@@ -201,22 +213,34 @@ export async function runLlmAgentTurn(
       const response = await getClient().chat.completions.create({
         model: getConfig().CONVERSATION_BRAIN_MODEL,
         temperature: 0.65,
-        max_tokens: 350,
+        max_tokens: 450,
         tools: SHOPIFY_LLM_TOOLS,
         tool_choice: "auto",
         messages,
       });
 
-      const choice = response.choices[0]?.message;
-      if (!choice) break;
+      const choice = response.choices[0];
+      const message = choice?.message;
+      if (!message) break;
 
-      const toolCalls = choice.tool_calls ?? [];
-      if (toolCalls.length > 0) {
+      const toolCalls = message.tool_calls ?? [];
+      const finishReason = choice.finish_reason;
+
+      if (toolCalls.length > 0 && finishReason === "tool_calls") {
+        yield {
+          type: "tool_pending",
+          tools: toolCalls
+            .filter((c): c is OpenAI.Chat.ChatCompletionMessageToolCall & { type: "function" } =>
+              c.type === "function" && isToolName(c.function.name),
+            )
+            .map((c) => c.function.name as LlmToolName),
+        };
+
         messages = [
           ...messages,
           {
             role: "assistant",
-            content: choice.content ?? "",
+            content: message.content ?? "",
             tool_calls: toolCalls,
           },
         ];
@@ -246,15 +270,19 @@ export async function runLlmAgentTurn(
         continue;
       }
 
-      const speech = (choice.content ?? "").trim();
+      const speech = (message.content ?? "").trim();
       if (speech) {
         const responseType = inferResponseType(speech, toolExecutions);
-        return {
-          speech,
-          toolExecutions,
-          responseType,
-          ...extractRecordMeta(toolExecutions),
+        yield {
+          type: "result",
+          result: {
+            speech,
+            toolExecutions,
+            responseType,
+            ...extractRecordMeta(toolExecutions),
+          },
         };
+        return;
       }
 
       break;
@@ -266,10 +294,36 @@ export async function runLlmAgentTurn(
     });
   }
 
-  return {
-    speech:
-      "I'm here to help with book orders and lookups. What would you like to do today?",
-    toolExecutions,
-    responseType: "general_help",
+  yield {
+    type: "result",
+    result: {
+      speech:
+        "I'm here to help with book orders and lookups. What would you like to do today?",
+      toolExecutions,
+      responseType: "general_help",
+    },
   };
+}
+
+/**
+ * Run one caller turn: LLM may issue tool calls, receive Shopify JSON, then synthesize TTS.
+ */
+export async function runLlmAgentTurn(
+  input: LlmAgentTurnInput,
+): Promise<LlmAgentTurnResult> {
+  let last: LlmAgentTurnResult | undefined;
+  for await (const event of runLlmAgentTurnEvents(input)) {
+    if (event.type === "result") {
+      last = event.result;
+    }
+  }
+
+  return (
+    last ?? {
+      speech:
+        "I'm here to help with book orders and lookups. What would you like to do today?",
+      toolExecutions: [],
+      responseType: "general_help",
+    }
+  );
 }

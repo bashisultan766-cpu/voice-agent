@@ -51,7 +51,7 @@ describe("buildBookFoundTts", () => {
 });
 
 describe("buildOrderStatusTts", () => {
-  it("includes rich order summary with customer, total, and card", () => {
+  it("includes rich order summary with customer, line items, subtotal, and card", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
@@ -59,19 +59,38 @@ describe("buildOrderStatusTts", () => {
       fulfillmentStatus: "In transit",
       estimatedDeliveryDays: 3,
       trackingStatus: "USPS 9400",
-      totalAmount: "45.99 USD",
+      subtotalAmount: "40.00 USD",
       shippingFee: "5.99 USD",
+      lineItems: [{ title: "Harry Potter", quantity: 2 }],
       itemCount: 2,
       cardLast4: "4242",
       cardBrand: "Visa",
     });
     expect(tts.text).toContain("Jane Doe");
+    expect(tts.text).toContain("Harry Potter");
     expect(tts.text).toContain("in transit");
     expect(tts.text).toContain("3 days");
     expect(tts.text).toContain("USPS 9400");
-    expect(tts.text).toContain("45");
+    expect(tts.text).toContain("40");
     expect(tts.text).toContain("shipping");
     expect(tts.text).toMatch(/4242|four.*two/i);
+  });
+
+  it("includes refund reason and email for refunded orders", () => {
+    const tts = buildOrderStatusTts({
+      status: "found",
+      orderNumber: "#99999",
+      customerName: "Maria Lopez",
+      refundStatus: "REFUNDED",
+      refundReason: "Duplicate order",
+      refundEmail: "maria@example.com",
+      lineItems: [{ title: "Bible Study", quantity: 1 }],
+      subtotalAmount: "12.00 USD",
+      shippingFee: "4.00 USD",
+    });
+    expect(tts.text).toContain("refunded");
+    expect(tts.text).toContain("Duplicate order");
+    expect(tts.text).toContain("maria@example.com");
   });
 });
 

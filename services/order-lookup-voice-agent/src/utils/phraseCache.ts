@@ -1,5 +1,5 @@
 const PHRASES = {
-  checking: "Let me check that for you.",
+  checking: "Let me check that in our system.",
   found_order: "I found your order.",
   closing_question: "Is there anything else I can help with on this order?",
   follow_up: "Happy to help with anything else on this order.",

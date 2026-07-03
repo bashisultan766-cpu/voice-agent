@@ -113,6 +113,15 @@ export function buildBookFoundTts(result: BookAvailabilityResult): TtsPayload {
   };
 }
 
+function speakLineItems(lineItems: Array<{ title: string; quantity: number }>): string {
+  const parts = lineItems.map((item) =>
+    item.quantity > 1 ? `${item.quantity} copies of ${item.title}` : item.title,
+  );
+  if (parts.length === 1) return parts[0]!;
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+}
+
 /** Build TTS for order status lookup — rich proactive summary from Shopify data. */
 export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
   if (result.status !== "found" || !result.orderNumber) {
@@ -127,7 +136,9 @@ export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
     parts.push(`I found your order ${result.orderNumber}.`);
   }
 
-  if (result.itemCount !== undefined) {
+  if (result.lineItems?.length) {
+    parts.push(`You ordered ${speakLineItems(result.lineItems)}.`);
+  } else if (result.itemCount !== undefined) {
     parts.push(
       result.itemCount === 1
         ? "It has one item."
@@ -135,36 +146,47 @@ export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
     );
   }
 
-  if (result.totalAmount) {
+  if (result.subtotalAmount) {
+    const subtotal = speakMoney(result.subtotalAmount);
+    if (result.shippingFee) {
+      const shipping = speakMoney(result.shippingFee);
+      parts.push(`The books cost ${subtotal}, plus ${shipping} for shipping.`);
+    } else {
+      parts.push(`The books cost ${subtotal}.`);
+    }
+  } else if (result.totalAmount) {
     const total = speakMoney(result.totalAmount);
     if (result.shippingFee) {
       const shipping = speakMoney(result.shippingFee);
-      parts.push(`The total was ${total} including ${shipping} shipping.`);
+      parts.push(`The total was ${total}, including ${shipping} shipping.`);
     } else {
       parts.push(`The total was ${total}.`);
     }
   }
-
-  const status = fulfillmentStatusPhrase(result.fulfillmentStatus ?? "unfulfilled");
-  parts.push(`It is currently ${status}.`);
 
   if (result.refundStatus) {
     parts.push("This order has been refunded.");
     if (result.refundReason) {
       parts.push(`The reason on file is ${result.refundReason}.`);
     }
-  }
+    if (result.refundEmail) {
+      parts.push(`The refund confirmation was sent to ${result.refundEmail}.`);
+    }
+  } else {
+    const status = fulfillmentStatusPhrase(result.fulfillmentStatus ?? "unfulfilled");
+    parts.push(`Right now it is ${status}.`);
 
-  if (result.trackingStatus) {
-    parts.push(`Tracking shows ${result.trackingStatus}.`);
-  }
+    if (result.trackingStatus) {
+      parts.push(`Tracking shows ${result.trackingStatus}.`);
+    }
 
-  const days = deliveryPhrase(result.estimatedDeliveryDays);
-  const inTransit = /transit|shipped|deliver/i.test(result.fulfillmentStatus ?? "");
-  if (inTransit) {
-    parts.push(`It is expected to arrive in ${days}.`);
-  } else if (result.estimatedDeliveryDays !== undefined) {
-    parts.push(`It is expected to ship in ${days}.`);
+    const days = deliveryPhrase(result.estimatedDeliveryDays);
+    const inTransit = /transit|shipped|deliver/i.test(result.fulfillmentStatus ?? "");
+    if (inTransit) {
+      parts.push(`It is expected to arrive in ${days}.`);
+    } else if (result.estimatedDeliveryDays !== undefined) {
+      parts.push(`It is expected to ship in ${days}.`);
+    }
   }
 
   if (result.cardLast4) {

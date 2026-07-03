@@ -104,7 +104,7 @@ describe("getOrderStatus", () => {
     expect(shopifyGraphql).not.toHaveBeenCalled();
   });
 
-  it("returns found with fulfillment and delivery estimate", async () => {
+  it("returns found with fulfillment, pricing, payment, and delivery estimate", async () => {
     vi.mocked(shopifyGraphql).mockResolvedValue({
       orders: {
         edges: [
@@ -112,7 +112,24 @@ describe("getOrderStatus", () => {
             node: {
               id: "gid://shopify/Order/1",
               name: "#12345",
+              email: "jane@example.com",
               displayFulfillmentStatus: "FULFILLED",
+              displayFinancialStatus: "PAID",
+              customer: { firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
+              subtotalPriceSet: { shopMoney: { amount: "40.00", currencyCode: "USD" } },
+              totalPriceSet: { shopMoney: { amount: "45.99", currencyCode: "USD" } },
+              totalShippingPriceSet: { shopMoney: { amount: "5.99", currencyCode: "USD" } },
+              lineItems: {
+                edges: [{ node: { title: "Sample Book", quantity: 2 } }],
+              },
+              customAttributes: [],
+              refunds: [],
+              transactions: [
+                {
+                  gateway: "shopify_payments",
+                  paymentDetails: { company: "Visa", number: "•••• 4242" },
+                },
+              ],
               fulfillments: [
                 {
                   status: "SUCCESS",
@@ -131,9 +148,41 @@ describe("getOrderStatus", () => {
     const result = await getOrderStatus("12345");
     expect(result.status).toBe("found");
     expect(result.orderNumber).toBe("#12345");
+    expect(result.customerName).toBe("Jane Doe");
+    expect(result.subtotalAmount).toBe("40.00 USD");
+    expect(result.shippingFee).toBe("5.99 USD");
+    expect(result.lineItems).toEqual([{ title: "Sample Book", quantity: 2 }]);
+    expect(result.cardLast4).toBe("4242");
     expect(result.fulfillmentStatus).toBe("Delivered");
     expect(result.trackingUrl).toBe("https://track.example/9400");
     expect(result.estimatedDeliveryDays).toBeGreaterThanOrEqual(0);
+  });
+
+  it("returns refund email from custom attributes when refunded", async () => {
+    vi.mocked(shopifyGraphql).mockResolvedValue({
+      orders: {
+        edges: [
+          {
+            node: {
+              id: "gid://shopify/Order/2",
+              name: "#54321",
+              email: "caller@example.com",
+              displayFinancialStatus: "REFUNDED",
+              customAttributes: [{ key: "refund_email", value: "refunds@example.com" }],
+              refunds: [{ note: "Customer requested cancellation" }],
+              lineItems: { edges: [] },
+              fulfillments: [],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await getOrderStatus("54321");
+    expect(result.status).toBe("found");
+    expect(result.refundStatus).toBe("REFUNDED");
+    expect(result.refundReason).toBe("Customer requested cancellation");
+    expect(result.refundEmail).toBe("refunds@example.com");
   });
 
   it("returns not_found when Shopify has no match", async () => {

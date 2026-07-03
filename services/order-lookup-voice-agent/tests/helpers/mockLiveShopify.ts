@@ -176,7 +176,9 @@ export function mockLiveShopifyFetch(catalog: StructuredProduct[]): void {
                         note: null,
                         displayFulfillmentStatus: "FULFILLED",
                         displayFinancialStatus: "PAID",
-                        customer: { firstName: "Jane", lastName: "Doe" },
+                        email: "jane@example.com",
+                        customer: { firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
+                        subtotalPriceSet: { shopMoney: { amount: "40.00", currencyCode: "USD" } },
                         totalPriceSet: { shopMoney: { amount: "45.99", currencyCode: "USD" } },
                         totalShippingPriceSet: { shopMoney: { amount: "5.99", currencyCode: "USD" } },
                         lineItems: {

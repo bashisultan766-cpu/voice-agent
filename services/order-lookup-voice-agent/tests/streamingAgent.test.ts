@@ -1,8 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { streamAgentTurn, createCallSession } from "../src/agents/orderAgent.js";
+import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
+import { useLlmAgentMock } from "./helpers/registerLlmMock.js";
+import type { StructuredProduct } from "../src/types/product.js";
+
+const mockCatalog: StructuredProduct[] = [
+  {
+    id: "1",
+    title: "Sample Book",
+    handle: "sample-book",
+    productType: "Book",
+    vendor: "Test",
+    tags: [],
+    variants: [{ id: "v1", price: "14.99", inventoryQuantity: 5 }],
+  },
+];
+
+useLlmAgentMock();
 
 describe("streaming agent", () => {
   it("yields filler before lookup completes for order number input", async () => {
+    mockLiveShopifyFetch(mockCatalog);
     const session = createCallSession("CA555", "+1", "+2");
     session.phase = "awaiting_order_number";
 
