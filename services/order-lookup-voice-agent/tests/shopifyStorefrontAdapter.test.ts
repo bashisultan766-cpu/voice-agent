@@ -5,7 +5,8 @@ import {
   searchByISBN,
   searchByTitle,
 } from "../src/adapters/shopifyStorefrontAdapter.js";
-import { ShopifyThrottledError } from "../src/platform/shopifyErrors.js";
+import { shopifyGraphql } from "../src/tools/shopifyLiveSearch.js";
+import { resetShopifyCircuitBreaker } from "../src/platform/circuitBreaker.js";
 
 vi.mock("../src/tools/shopifyLiveSearch.js", () => ({
   shopifyGraphql: vi.fn(),
@@ -36,13 +37,17 @@ vi.mock("../src/tools/shopifyLiveSearch.js", () => ({
   })),
 }));
 
-vi.mock("../src/platform/circuitBreaker.js", () => ({
-  withShopifyCircuitBreaker: vi.fn(
-    async (_callSid: string, _op: string, work: () => Promise<unknown>) => work(),
-  ),
-}));
+vi.mock("../src/platform/circuitBreaker.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/platform/circuitBreaker.js")>();
+  return {
+    ...actual,
+    withShopifyCircuitBreaker: vi.fn(
+      async (_callSid: string, _op: string, work: () => Promise<unknown>) => work(),
+    ),
+  };
+});
 
-import { shopifyGraphql } from "../src/tools/shopifyLiveSearch.js";
+import { ShopifyThrottledError } from "../src/platform/shopifyErrors.js";
 
 const SAMPLE_ISBN = "9783161484100";
 
@@ -86,6 +91,7 @@ describe("parseGraphqlThrottle", () => {
 describe("getOrderStatus", () => {
   beforeEach(() => {
     vi.mocked(shopifyGraphql).mockReset();
+    resetShopifyCircuitBreaker();
   });
 
   afterEach(() => {
@@ -155,6 +161,7 @@ describe("getOrderStatus", () => {
 describe("searchByISBN", () => {
   beforeEach(() => {
     vi.mocked(shopifyGraphql).mockReset();
+    resetShopifyCircuitBreaker();
   });
 
   it("returns invalid_format for bad ISBN", async () => {
@@ -193,6 +200,7 @@ describe("searchByISBN", () => {
 describe("searchByTitle", () => {
   beforeEach(() => {
     vi.mocked(shopifyGraphql).mockReset();
+    resetShopifyCircuitBreaker();
   });
 
   it("returns invalid_format for empty title", async () => {

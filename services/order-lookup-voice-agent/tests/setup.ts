@@ -6,3 +6,10 @@ process.env.SHOPIFY_SHOP_DOMAIN ??= "test.myshopify.com";
 process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ??= "shpat_test";
 process.env.VALIDATE_TWILIO_SIGNATURES ??= "false";
 process.env.OPENAI_TIMEOUT_MS ??= "2000";
+
+import { afterEach } from "vitest";
+import { resetShopifyCircuitBreaker } from "../src/platform/circuitBreaker.js";
+
+afterEach(() => {
+  resetShopifyCircuitBreaker();
+});

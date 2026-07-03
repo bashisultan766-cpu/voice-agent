@@ -5,6 +5,9 @@ import {
   handleFulfillmentTurn,
 } from "../src/agents/fulfillmentHandlers.js";
 import { clearAllDialogueStates } from "../src/agents/dialogueManager.js";
+import { useLlmAgentMock } from "./helpers/registerLlmMock.js";
+
+useLlmAgentMock();
 
 vi.mock("../src/adapters/shopifyStorefrontAdapter.js", () => ({
   getOrderStatus: vi.fn(),

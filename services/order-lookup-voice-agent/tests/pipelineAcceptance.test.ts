@@ -8,8 +8,10 @@ import { resetToolAccessGuard } from "../src/guards/toolAccessGuard.js";
 import { resetToolExecutionGuard } from "../src/guards/toolExecutionGuard.js";
 import { resetShopifyScopeCheck } from "../src/tools/shopifyScopeCheck.js";
 import { mockLiveShopifyFetch } from "./helpers/mockLiveShopify.js";
+import { useLlmAgentMock } from "./helpers/registerLlmMock.js";
 import type { StructuredProduct } from "../src/types/product.js";
-import * as shopifyProductAdapter from "../src/tools/shopifyProductAdapter.js";
+import { resetShopifyCircuitBreaker } from "../src/platform/circuitBreaker.js";
+import * as shopifyStorefrontAdapter from "../src/adapters/shopifyStorefrontAdapter.js";
 import { clearAllTurnQueues } from "../src/runtime/turnExecutionQueue.js";
 import { clearAllStreamBarriers } from "../src/runtime/streamTurnBarrier.js";
 import { clearAllTurnHealth } from "../src/runtime/turnHealthMonitor.js";
@@ -48,6 +50,8 @@ async function collectSpeech(
   return parts.join(" ");
 }
 
+useLlmAgentMock();
+
 describe("pipeline acceptance", () => {
   beforeEach(() => {
     clearAllCallMemories();
@@ -60,13 +64,14 @@ describe("pipeline acceptance", () => {
     resetToolExecutionGuard();
     resetToolAccessGuard();
     resetPipelineGuard();
+    resetShopifyCircuitBreaker();
     vi.unstubAllGlobals();
     mockLiveShopifyFetch(mockCatalog);
   });
 
   it('1 — "I want a book" asks for ISBN/title, no Shopify', async () => {
-    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
-    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
+    const isbnSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByISBN");
+    const titleSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByTitle");
 
     const session = createCallSession("ACC_1", "+1", "+2");
     const speech = await collectSpeech(session, "I want a book");
@@ -77,7 +82,7 @@ describe("pipeline acceptance", () => {
   });
 
   it('2 — cold-start ISBN utterance does NOT search (must collect slot first)', async () => {
-    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
+    const isbnSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByISBN");
 
     const session = createCallSession("ACC_2", "+1", "+2");
     const speech = await collectSpeech(session, "I have ISBN 9783161484100");
@@ -87,7 +92,7 @@ describe("pipeline acceptance", () => {
   });
 
   it('2b — "I have ISBN" stores intent only, no search', async () => {
-    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
+    const isbnSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByISBN");
 
     const session = createCallSession("ACC_2B", "+1", "+2");
     await collectSpeech(session, "I want a book");
@@ -98,7 +103,7 @@ describe("pipeline acceptance", () => {
   });
 
   it('3 — "Harry Potter book" asks clarification first', async () => {
-    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
+    const titleSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByTitle");
 
     const session = createCallSession("ACC_3", "+1", "+2");
     const speech = await collectSpeech(session, "Harry Potter book");
@@ -108,8 +113,8 @@ describe("pipeline acceptance", () => {
   });
 
   it('4 — "where is my order" uses order flow only', async () => {
-    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
-    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
+    const isbnSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByISBN");
+    const titleSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByTitle");
 
     const session = createCallSession("ACC_4", "+1", "+2");
     const speech = await collectSpeech(session, "where is my order");
@@ -120,7 +125,7 @@ describe("pipeline acceptance", () => {
   });
 
   it('5 — three-step title flow: intent → declare title → provide title → search', async () => {
-    const titleSpy = vi.spyOn(shopifyProductAdapter, "searchProductByTitleIsolated");
+    const titleSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByTitle");
 
     const session = createCallSession("ACC_5", "+1", "+2");
     const ask1 = await collectSpeech(session, "I want to buy a book");
@@ -137,7 +142,7 @@ describe("pipeline acceptance", () => {
   });
 
   it('6b — spoken-digit ISBN triggers Shopify search after three-step flow', async () => {
-    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
+    const isbnSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByISBN");
 
     const session = createCallSession("ACC_6B", "+1", "+2");
     await collectSpeech(session, "I need a book");
@@ -151,7 +156,7 @@ describe("pipeline acceptance", () => {
   });
 
   it('6 — three-step ISBN flow: intent → declare ISBN → provide ISBN → search', async () => {
-    const isbnSpy = vi.spyOn(shopifyProductAdapter, "searchProductByISBNIsolated");
+    const isbnSpy = vi.spyOn(shopifyStorefrontAdapter, "searchByISBN");
 
     const session = createCallSession("ACC_6", "+1", "+2");
     await collectSpeech(session, "I need a book");

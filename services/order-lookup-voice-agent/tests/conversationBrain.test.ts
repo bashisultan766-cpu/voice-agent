@@ -5,6 +5,9 @@ import {
   handleBrainTurn,
 } from "../src/agents/conversationBrain.js";
 import { clearAllCallMemories } from "../src/memory/callMemoryStore.js";
+import { useLlmAgentMock } from "./helpers/registerLlmMock.js";
+
+useLlmAgentMock();
 
 describe("conversationBrain", () => {
   beforeEach(() => {
@@ -28,6 +31,6 @@ describe("conversationBrain", () => {
     const session = createCallSession("CA_ORD", "+1", "+2");
     const result = await handleBrainTurn(session, "where is my order");
     expect(result.speech).toMatch(/order number/i);
-    expect(session.awaitingInput).toBe("order_number");
+    expect(session.awaitingInput).toBeNull();
   });
 });

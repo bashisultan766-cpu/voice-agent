@@ -157,6 +157,60 @@ export function mockLiveShopifyFetch(catalog: StructuredProduct[]): void {
         };
       }
 
+      if (query.includes("FulfillmentOrderLookup") || query.includes("orders(first:")) {
+        const shopifyQuery = String(variables.query ?? "");
+        const orderMatch = shopifyQuery.match(/#?(\d{4,10})/);
+        const orderNum = orderMatch?.[1];
+        if (orderNum) {
+          const product = catalog[0];
+          return {
+            ok: true,
+            json: async () => ({
+              data: {
+                orders: {
+                  edges: [
+                    {
+                      node: {
+                        id: "gid://shopify/Order/1",
+                        name: `#${orderNum}`,
+                        note: null,
+                        displayFulfillmentStatus: "FULFILLED",
+                        displayFinancialStatus: "PAID",
+                        customer: { firstName: "Jane", lastName: "Doe" },
+                        totalPriceSet: { shopMoney: { amount: "45.99", currencyCode: "USD" } },
+                        totalShippingPriceSet: { shopMoney: { amount: "5.99", currencyCode: "USD" } },
+                        lineItems: {
+                          edges: product
+                            ? [{ node: { title: product.title, quantity: 1 } }]
+                            : [],
+                        },
+                        refunds: [],
+                        transactions: [
+                          {
+                            gateway: "shopify_payments",
+                            paymentDetails: { company: "Visa", number: "•••• 4242" },
+                          },
+                        ],
+                        fulfillments: [
+                          {
+                            status: "SUCCESS",
+                            displayStatus: "Delivered",
+                            estimatedDeliveryAt: new Date(Date.now() + 2 * 86400000).toISOString(),
+                            deliveredAt: null,
+                            trackingInfo: [{ company: "USPS", number: "9400", url: "https://track.example/9400" }],
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            }),
+          };
+        }
+        return { ok: true, json: async () => ({ data: { orders: { edges: [] } } }) };
+      }
+
       return { ok: true, json: async () => ({ data: {} }) };
     }),
   );
