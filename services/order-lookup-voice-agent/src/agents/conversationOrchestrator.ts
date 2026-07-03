@@ -4,7 +4,6 @@
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { sanitizeForSpeech } from "../utils/security.js";
 import { pipelineTrace } from "../utils/pipelineTrace.js";
 import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { runWithToolAuthorizationAsync } from "../guards/toolAccessGuard.js";
@@ -115,7 +114,7 @@ export async function* process(
     throw new Error(`Session callSid mismatch: ${session.callSid} !== ${callSid}`);
   }
 
-  const text = sanitizeForSpeech((userInput ?? "").trim());
+  const text = (userInput ?? "").trim();
   const state = getOrCreateCallState(callSid);
 
   beginOrchestratorTurn(callSid);

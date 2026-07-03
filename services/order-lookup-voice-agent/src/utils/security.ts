@@ -3,9 +3,21 @@ import type { StructuredOrder } from "../types/order.js";
 const CARD_RE = /\b(?:\d[ -]*?){13,19}\b/g;
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
+function isLikelyBookIsbn(digitRun: string): boolean {
+  if (digitRun.length === 13 && /^97[89]/.test(digitRun)) return true;
+  if (digitRun.length === 10 && /^\d{9}[\dX]$/i.test(digitRun)) return true;
+  return false;
+}
+
+function redactCardNumbers(text: string): string {
+  return text.replace(CARD_RE, (match) => {
+    const digits = match.replace(/\D/g, "");
+    return isLikelyBookIsbn(digits) ? match : "[card redacted]";
+  });
+}
+
 export function sanitizeForSpeech(text: string): string {
-  return text
-    .replace(CARD_RE, "[card redacted]")
+  return redactCardNumbers(text)
     .replace(/\b\d{3}-\d{2}-\d{4}\b/g, "[ssn redacted]")
     .trim();
 }

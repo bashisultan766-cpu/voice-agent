@@ -217,9 +217,9 @@ const BOOK_INTENT_PROMPTS = [
 ];
 
 const ISBN_VALUE_PROMPTS = [
-  "Great — please give me your ISBN number.",
-  "Sure — go ahead and tell me the ISBN number.",
-  "Please share the ISBN and I'll look it up in our store.",
+  "Great — please give me your ISBN number. You can say it or enter it on your phone keypad.",
+  "Sure — go ahead and tell me the ISBN number, or type it on your keypad.",
+  "Please share the ISBN and I'll look it up in our store. Keypad entry works too.",
 ];
 
 const TITLE_VALUE_PROMPTS = [

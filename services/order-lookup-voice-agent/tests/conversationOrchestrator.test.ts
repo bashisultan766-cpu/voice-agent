@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   classifyOrchestratorIntent,
+  process,
   runOrchestratorTurn,
 } from "../src/agents/conversationOrchestrator.js";
 import { createCallSession } from "../src/agents/orderAgent.js";
@@ -145,6 +146,23 @@ describe("conversationOrchestrator flows", () => {
     const speech = await collectSpeech(session, "9783161484100");
     expect(speech).toMatch(/Azkaban/i);
     expect(speech).not.toMatch(/let me search|I will check/i);
+  });
+
+  it("process() parses ISBN from natural speech without card redaction", async () => {
+    const session = createCallSession("CA_PROC", "+1", "+2");
+    const collectViaProcess = async (text: string) => {
+      const parts: string[] = [];
+      for await (const event of process(session.callSid, text, session)) {
+        if (event.type === "chunk") parts.push(event.chunk.text);
+      }
+      return parts.join(" ");
+    };
+
+    await collectViaProcess("I need a book");
+    await collectViaProcess("I have an ISBN");
+    const speech = await collectViaProcess("The ISBN number is 9783161484100");
+    expect(speech).toMatch(/Azkaban/i);
+    expect(getOrCreateCallState(session.callSid).awaitingInput).toBe("none");
   });
 
   it("persists call state: book ask then ISBN search", async () => {
