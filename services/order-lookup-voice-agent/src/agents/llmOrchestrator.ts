@@ -120,6 +120,7 @@ export async function* runLlmOrchestratorTurn(
   for await (const event of runLlmAgentTurnEvents({
     callSid: session.callSid,
     userMessage: text,
+    session,
     messages: agentState.messages.map((m) => ({
       role: m.role,
       content: m.content,

@@ -58,6 +58,11 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
+
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.string().email().optional(),
+  RESEND_FROM_NAME: z.string().default("SureShot Books"),
+  SUPPORT_EMAIL: z.string().email().default("jessica@sureshotbooks.com"),
 });
 
 function trimStrings<T extends Record<string, unknown>>(obj: T): T {

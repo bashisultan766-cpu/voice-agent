@@ -19,6 +19,7 @@ import {
 } from "../runtime/dictationLock.js";
 import { logEventIngestion } from "../runtime/turnObservability.js";
 import { logTtsEngineSelection, getElevenLabsVoiceSettings } from "../adapters/ttsAdapter.js";
+import { clearShoppingCart } from "../agents/cartManager.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 import { conversationRelayVoice } from "../config.js";
 import { isNoiseTranscript } from "../utils/noiseGate.js";
@@ -81,6 +82,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     turnAbort?.abort();
     if (session?.callSid) {
       markCallSessionClosed(session.callSid);
+      clearShoppingCart(session);
       clearDictationLock(session.callSid);
       clearStreamBarrier(session.callSid);
       endCallSession(session.callSid);

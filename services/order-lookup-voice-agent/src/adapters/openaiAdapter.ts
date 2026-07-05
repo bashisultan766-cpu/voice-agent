@@ -23,6 +23,8 @@ import { orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
 import { buildActiveOrderContextSystemMessage } from "../agents/sessionManager.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
+import { buildCartContextSystemMessage } from "../agents/cartManager.js";
+import type { CallSession } from "../types/order.js";
 import {
   buildRefundEmailFollowUpSpeech,
   isRefundNotificationEmailQuestion,
@@ -86,6 +88,113 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "add_to_cart",
+      description:
+        "Add one or more books to the caller's persistent shopping cart. Use variant_id from search results when available.",
+      parameters: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                variant_id: { type: "string" },
+                product_id: { type: "string" },
+                isbn: { type: "string" },
+                quantity: { type: "number" },
+              },
+              required: ["title"],
+            },
+          },
+        },
+        required: ["items"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remove_from_cart",
+      description: "Remove items or reduce quantities in the caller's shopping cart.",
+      parameters: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                variant_id: { type: "string" },
+                quantity: { type: "number" },
+              },
+            },
+          },
+        },
+        required: ["items"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_cart_summary",
+      description: "Return the caller's current shopping cart contents.",
+      parameters: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_checkout_email",
+      description:
+        "After email verification, create a Shopify draft order and email the secure checkout link to the customer.",
+      parameters: {
+        type: "object",
+        properties: {
+          customerEmail: {
+            type: "string",
+            description: "Verified customer email — any valid domain.",
+          },
+          customerName: { type: "string", description: "Customer full name." },
+        },
+        required: ["customerEmail", "customerName"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_support_escalation",
+      description:
+        "Email the support team when a book is out of stock or the issue cannot be resolved on the call.",
+      parameters: {
+        type: "object",
+        properties: {
+          customerName: { type: "string" },
+          customerEmail: { type: "string" },
+          issueSummary: {
+            type: "string",
+            description: "Concise summary of the unresolved issue for support.",
+          },
+        },
+        required: ["issueSummary"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 export interface LlmChatMessage {
@@ -97,6 +206,7 @@ export interface LlmAgentTurnInput {
   callSid: string;
   userMessage: string;
   messages: LlmChatMessage[];
+  session?: CallSession;
   /** Injected on follow-up turns — full order JSON not spoken during progressive disclosure. */
   activeOrderContext?: ActiveOrderContextData;
 }
@@ -143,7 +253,12 @@ function isToolName(name: string): name is LlmToolName {
   return (
     name === "get_shopify_order_status" ||
     name === "search_shopify_book_by_isbn" ||
-    name === "search_shopify_book_by_title"
+    name === "search_shopify_book_by_title" ||
+    name === "add_to_cart" ||
+    name === "remove_from_cart" ||
+    name === "get_cart_summary" ||
+    name === "send_checkout_email" ||
+    name === "send_support_escalation"
   );
 }
 
@@ -218,6 +333,13 @@ function buildOpenAiMessages(
     systemMessages.push({
       role: "system",
       content: buildActiveOrderContextSystemMessage(input.activeOrderContext),
+    });
+  }
+
+  if (input.session) {
+    systemMessages.push({
+      role: "system",
+      content: buildCartContextSystemMessage(input.session),
     });
   }
 
@@ -444,7 +566,12 @@ export async function* runLlmAgentTurnEvents(
             parsedArgs = {};
           }
 
-          const record = await executeLlmTool(call.function.name, parsedArgs, input.callSid);
+          const record = await executeLlmTool(
+            call.function.name,
+            parsedArgs,
+            input.callSid,
+            input.session,
+          );
           toolExecutions.push(record);
 
           messages.push({

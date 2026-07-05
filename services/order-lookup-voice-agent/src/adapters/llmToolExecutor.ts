@@ -5,9 +5,22 @@ import {
   getOrderStatus,
   searchByISBN,
   searchByTitle,
+  createShopifyDraftOrder,
   type BookAvailabilityResult,
   type OrderStatusResult,
 } from "./shopifyStorefrontAdapter.js";
+import {
+  addToCart,
+  getCartSummary,
+  removeFromCart,
+} from "../agents/cartManager.js";
+import type { CallSession } from "../types/order.js";
+import {
+  isResendAvailable,
+  isValidCustomerEmail,
+  sendCheckoutEmail,
+  sendSupportEscalation,
+} from "../utils/resendEmailService.js";
 import {
   validateShopifyExecutionGate,
   type EntityExtractionResult,
@@ -29,7 +42,37 @@ import {
 export type LlmToolName =
   | "get_shopify_order_status"
   | "search_shopify_book_by_isbn"
-  | "search_shopify_book_by_title";
+  | "search_shopify_book_by_title"
+  | "add_to_cart"
+  | "remove_from_cart"
+  | "get_cart_summary"
+  | "send_checkout_email"
+  | "send_support_escalation";
+
+export interface CartToolResult {
+  status: "ok" | "empty" | "error";
+  items?: Array<{
+    title: string;
+    quantity: number;
+    variant_id?: string;
+    product_id?: string;
+    price?: string;
+  }>;
+  total_units?: number;
+  message?: string;
+}
+
+export interface CheckoutEmailToolResult {
+  status: "sent" | "error" | "blocked";
+  invoice_url?: string;
+  draft_order_name?: string;
+  message?: string;
+}
+
+export interface SupportEscalationToolResult {
+  status: "sent" | "error" | "blocked";
+  message?: string;
+}
 
 export interface LlmToolExecutionRecord {
   tool: LlmToolName;
@@ -42,8 +85,17 @@ export interface LlmToolExecutionRecord {
     | "api_error"
     | "system_maintenance"
     | "throttled"
-    | "blocked";
-  data?: OrderStatusResult | BookAvailabilityResult;
+    | "blocked"
+    | "ok"
+    | "empty"
+    | "sent"
+    | "error";
+  data?:
+    | OrderStatusResult
+    | BookAvailabilityResult
+    | CartToolResult
+    | CheckoutEmailToolResult
+    | SupportEscalationToolResult;
   errorMessage?: string;
   elapsedMs: number;
 }
@@ -106,11 +158,262 @@ export async function executeLlmTool(
   tool: LlmToolName,
   rawArgs: Record<string, unknown>,
   callSid: string,
+  session?: CallSession,
 ): Promise<LlmToolExecutionRecord> {
   const started = Date.now();
   const args = Object.fromEntries(
     Object.entries(rawArgs).map(([k, v]) => [k, String(v ?? "").trim()]),
   );
+
+  if (!session && (
+    tool === "add_to_cart" ||
+    tool === "remove_from_cart" ||
+    tool === "get_cart_summary" ||
+    tool === "send_checkout_email" ||
+    tool === "send_support_escalation"
+  )) {
+    return {
+      tool,
+      args,
+      ok: false,
+      status: "blocked",
+      errorMessage: "Session unavailable for cart operation.",
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  if (tool === "add_to_cart" && session) {
+    try {
+      const items = parseCartItemsArg(rawArgs.items);
+      if (!items.length) {
+        return {
+          tool,
+          args,
+          ok: false,
+          status: "blocked",
+          errorMessage: "Provide at least one item with title or variant_id.",
+          elapsedMs: Date.now() - started,
+        };
+      }
+      const cart = addToCart(session, items);
+      const data: CartToolResult = {
+        status: "ok",
+        items: cart.map((line) => ({
+          title: line.title,
+          quantity: line.quantity,
+          variant_id: line.variantId,
+          product_id: line.productId,
+          price: line.price,
+        })),
+        total_units: cart.reduce((sum, line) => sum + line.quantity, 0),
+      };
+      return { tool, args, ok: true, status: "ok", data, elapsedMs: Date.now() - started };
+    } catch {
+      return cartErrorRecord(tool, args, started);
+    }
+  }
+
+  if (tool === "remove_from_cart" && session) {
+    try {
+      const items = parseCartItemsArg(rawArgs.items);
+      const cart = removeFromCart(session, items);
+      const data: CartToolResult = {
+        status: cart.length ? "ok" : "empty",
+        items: cart.map((line) => ({
+          title: line.title,
+          quantity: line.quantity,
+          variant_id: line.variantId,
+          product_id: line.productId,
+        })),
+        total_units: cart.reduce((sum, line) => sum + line.quantity, 0),
+      };
+      return { tool, args, ok: true, status: cart.length ? "ok" : "empty", data, elapsedMs: Date.now() - started };
+    } catch {
+      return cartErrorRecord(tool, args, started);
+    }
+  }
+
+  if (tool === "get_cart_summary" && session) {
+    const summary = getCartSummary(session);
+    const data: CartToolResult = {
+      status: summary.isEmpty ? "empty" : "ok",
+      items: summary.items.map((line) => ({
+        title: line.title,
+        quantity: line.quantity,
+        variant_id: line.variantId,
+        product_id: line.productId,
+        price: line.price,
+      })),
+      total_units: summary.totalUnits,
+      message: summary.isEmpty ? "Cart is empty." : undefined,
+    };
+    return {
+      tool,
+      args,
+      ok: !summary.isEmpty,
+      status: summary.isEmpty ? "empty" : "ok",
+      data,
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  if (tool === "send_checkout_email" && session) {
+    const customerEmail = (args.customerEmail ?? args.email ?? "").trim();
+    const customerName = (args.customerName ?? args.name ?? "").trim();
+
+    if (!isValidCustomerEmail(customerEmail)) {
+      return {
+        tool,
+        args: { customerEmail, customerName },
+        ok: false,
+        status: "blocked",
+        errorMessage: "Valid customer email required before sending checkout link.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const summary = getCartSummary(session);
+    if (summary.isEmpty) {
+      return {
+        tool,
+        args: { customerEmail, customerName },
+        ok: false,
+        status: "empty",
+        errorMessage: "Cart is empty — add books before checkout.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    if (!isResendAvailable()) {
+      return {
+        tool,
+        args: { customerEmail, customerName },
+        ok: false,
+        status: "error",
+        errorMessage: "Email service is not configured.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    try {
+      const draft = await createShopifyDraftOrder(
+        summary.items
+          .filter((line) => line.variantId && !line.variantId.startsWith("title:"))
+          .map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
+        customerEmail,
+        customerName,
+        callSid,
+      );
+
+      if (draft.status !== "found" || !draft.invoiceUrl) {
+        return {
+          tool,
+          args: { customerEmail, customerName },
+          ok: false,
+          status: draft.status === "throttled" ? "throttled" : "api_error",
+          errorMessage: draft.message ?? "Could not create checkout link.",
+          elapsedMs: Date.now() - started,
+        };
+      }
+
+      session.pendingInvoiceUrl = draft.invoiceUrl;
+      session.pendingDraftOrderName = draft.draftOrderName;
+
+      const emailResult = await sendCheckoutEmail(
+        customerEmail,
+        customerName,
+        draft.invoiceUrl,
+        summary.items,
+      );
+
+      const data: CheckoutEmailToolResult = {
+        status: emailResult.ok ? "sent" : "error",
+        invoice_url: draft.invoiceUrl,
+        draft_order_name: draft.draftOrderName,
+        message: emailResult.ok
+          ? "Checkout email sent successfully."
+          : emailResult.error ?? "Could not send checkout email.",
+      };
+
+      return {
+        tool,
+        args: { customerEmail, customerName },
+        ok: emailResult.ok,
+        status: emailResult.ok ? "sent" : "error",
+        data,
+        elapsedMs: Date.now() - started,
+      };
+    } catch {
+      return {
+        tool,
+        args: { customerEmail, customerName },
+        ok: false,
+        status: "api_error",
+        errorMessage: "Checkout failed. Please try again.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+  }
+
+  if (tool === "send_support_escalation" && session) {
+    const customerName = (args.customerName ?? args.name ?? "").trim();
+    const customerEmail = (args.customerEmail ?? args.email ?? "").trim();
+    const issueSummary = (args.issueSummary ?? args.summary ?? "").trim();
+
+    if (!issueSummary) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        errorMessage: "Provide a concise issue summary for support.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    if (!isResendAvailable()) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "error",
+        errorMessage: "Email service is not configured.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    try {
+      const emailResult = await sendSupportEscalation(
+        customerName,
+        customerEmail,
+        session.from,
+        issueSummary,
+      );
+      const data: SupportEscalationToolResult = {
+        status: emailResult.ok ? "sent" : "error",
+        message: emailResult.ok
+          ? "Support team notified."
+          : emailResult.error ?? "Could not notify support.",
+      };
+      return {
+        tool,
+        args: { customerName, customerEmail, issueSummary },
+        ok: emailResult.ok,
+        status: emailResult.ok ? "sent" : "error",
+        data,
+        elapsedMs: Date.now() - started,
+      };
+    } catch {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "api_error",
+        errorMessage: "Escalation failed. Please try again.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+  }
 
   if (tool === "get_shopify_order_status") {
     const rawInput = args.orderNumber ?? "";
@@ -249,6 +552,44 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     return JSON.stringify({ status: record.status, found: false });
   }
 
+  if (
+    record.tool === "add_to_cart" ||
+    record.tool === "remove_from_cart" ||
+    record.tool === "get_cart_summary"
+  ) {
+    return JSON.stringify({
+      status: record.status,
+      ok: record.ok,
+      cart: record.data,
+      instructions:
+        record.tool === "get_cart_summary"
+          ? "Summarize the cart naturally for the caller."
+          : "Confirm the cart change warmly and ask if they want anything else.",
+    });
+  }
+
+  if (record.tool === "send_checkout_email") {
+    return JSON.stringify({
+      status: record.status,
+      ok: record.ok,
+      checkout: record.data,
+      instructions: record.ok
+        ? "Tell the caller their secure payment link was emailed and they should complete facility/inmate details on checkout."
+        : "Apologize briefly and offer to retry or read the issue back.",
+    });
+  }
+
+  if (record.tool === "send_support_escalation") {
+    return JSON.stringify({
+      status: record.status,
+      ok: record.ok,
+      escalation: record.data,
+      instructions: record.ok
+        ? "Reassure the caller that support will reach out soon."
+        : "Apologize and offer to try again or take their callback number.",
+    });
+  }
+
   if (record.tool === "get_shopify_order_status" && "orderNumber" in record.data) {
     if (record.data.status !== "found") {
       const searchedNumber = record.args.orderNumber ?? record.data.searchedNumber ?? "";
@@ -275,10 +616,66 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
   }
 
   return JSON.stringify({
-    status: record.data.status,
-    found: record.data.status === "found",
+    status: "status" in record.data ? record.data.status : record.status,
+    found: "status" in record.data ? record.data.status === "found" : record.ok,
     data: record.data,
+    variant_id: "variantId" in record.data ? record.data.variantId : undefined,
+    instructions:
+      record.tool === "search_shopify_book_by_isbn" || record.tool === "search_shopify_book_by_title"
+        ? "If in stock, offer to add to cart using variant_id from this response. If out of stock, follow GRACEFUL ESCALATION."
+        : undefined,
   });
+}
+
+function parseCartItemsArg(raw: unknown): Array<{
+  variant_id?: string;
+  product_id?: string;
+  title?: string;
+  isbn?: string;
+  quantity?: number;
+}> {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((item) => {
+      if (typeof item !== "object" || item === null) return {};
+      const obj = item as Record<string, unknown>;
+      return {
+        variant_id: String(obj.variant_id ?? obj.variantId ?? ""),
+        product_id: String(obj.product_id ?? obj.productId ?? ""),
+        title: String(obj.title ?? ""),
+        isbn: String(obj.isbn ?? ""),
+        quantity: Number(obj.quantity ?? 1),
+      };
+    });
+  }
+  if (typeof raw === "object" && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    return [
+      {
+        variant_id: String(obj.variant_id ?? obj.variantId ?? ""),
+        product_id: String(obj.product_id ?? obj.productId ?? ""),
+        title: String(obj.title ?? ""),
+        isbn: String(obj.isbn ?? ""),
+        quantity: Number(obj.quantity ?? 1),
+      },
+    ];
+  }
+  return [];
+}
+
+function cartErrorRecord(
+  tool: LlmToolName,
+  args: Record<string, string>,
+  started: number,
+): LlmToolExecutionRecord {
+  return {
+    tool,
+    args,
+    ok: false,
+    status: "api_error",
+    errorMessage: "Cart update failed. Please try again.",
+    elapsedMs: Date.now() - started,
+  };
 }
 
 /** Keys that must always exist on session.currentOrderData / LLM payloads (null allowed). */

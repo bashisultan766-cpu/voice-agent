@@ -113,9 +113,24 @@ export interface BookAvailabilityResult {
   inStock?: boolean;
   quantity?: number;
   productId?: string;
+  /** Shopify ProductVariant GID — required for draft order checkout. */
+  variantId?: string;
+  isbn?: string;
   /** False when the match is fuzzy rather than an exact title hit. */
   exactMatch?: boolean;
   queriedTitle?: string;
+  message?: string;
+}
+
+export interface DraftOrderLineInput {
+  variantId: string;
+  quantity: number;
+}
+
+export interface DraftOrderResult {
+  status: AdapterStatus;
+  invoiceUrl?: string;
+  draftOrderName?: string;
   message?: string;
 }
 
@@ -621,6 +636,7 @@ function toBookResult(
   const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
   const inStock = product.variants.some((v) => v.inStock);
 
+  const variantNumericId = primaryVariant?.id ?? "";
   return {
     status,
     bookName: product.title,
@@ -628,9 +644,98 @@ function toBookResult(
     inStock,
     quantity,
     productId: product.id,
+    variantId: variantNumericId
+      ? `gid://shopify/ProductVariant/${variantNumericId}`
+      : undefined,
+    isbn: product.isbns?.[0],
     exactMatch: meta?.exactMatch,
     queriedTitle: meta?.queriedTitle,
   };
+}
+
+const CREATE_DRAFT_ORDER_MUTATION = `
+mutation CreateDraftOrder($input: DraftOrderInput!) {
+  draftOrderCreate(input: $input) {
+    draftOrder {
+      id
+      name
+      invoiceUrl
+      status
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}`;
+
+/**
+ * Create a Shopify Admin draft order and return the secure invoice checkout URL.
+ */
+export async function createShopifyDraftOrder(
+  cartItems: DraftOrderLineInput[],
+  customerEmail: string,
+  customerName: string,
+  callSid = "checkout",
+): Promise<DraftOrderResult> {
+  const lineItems = cartItems.filter((item) => item.variantId && item.quantity > 0);
+  if (!lineItems.length) {
+    return { status: "invalid_format", message: "Cart is empty." };
+  }
+
+  const email = customerEmail.trim();
+  if (!email) {
+    return { status: "invalid_format", message: "Customer email is required." };
+  }
+
+  try {
+    return await runWithGuard(callSid, "draft_order_create", async () => {
+      const data = await shopifyGraphql<{
+        draftOrderCreate: {
+          draftOrder: { id: string; name: string; invoiceUrl: string; status: string } | null;
+          userErrors: Array<{ field: string[]; message: string }>;
+        };
+      }>(CREATE_DRAFT_ORDER_MUTATION, {
+        input: {
+          lineItems: lineItems.map((item) => ({
+            variantId: item.variantId.startsWith("gid://")
+              ? item.variantId
+              : `gid://shopify/ProductVariant/${item.variantId}`,
+            quantity: item.quantity,
+          })),
+          email,
+          note: customerName.trim()
+            ? `Voice order for ${customerName.trim()}`
+            : "Voice agent checkout",
+        },
+      });
+
+      const errors = data.draftOrderCreate?.userErrors ?? [];
+      if (errors.length > 0) {
+        const message = errors.map((e) => e.message).join("; ");
+        logger.warn("shopify_draft_order_user_errors", { message });
+        return { status: "api_error", message };
+      }
+
+      const draft = data.draftOrderCreate?.draftOrder;
+      if (!draft?.invoiceUrl) {
+        return { status: "api_error", message: "Draft order created without invoice URL." };
+      }
+
+      return {
+        status: "found",
+        invoiceUrl: draft.invoiceUrl,
+        draftOrderName: draft.name,
+      };
+    });
+  } catch (err) {
+    if (isShopifyThrottleError(err)) {
+      return { status: "throttled", message: "Shopify is busy. Please try again shortly." };
+    }
+    return adapterFailureFromError(err, "shopify_draft_order_failed", {
+      callSid: callSid.slice(0, 8),
+    });
+  }
 }
 
 function isExactTitleMatch(title: string, query: string): boolean {

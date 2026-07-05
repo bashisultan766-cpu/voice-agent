@@ -82,6 +82,16 @@ export type IncomingProductSlots = ProductSearchSlots & {
   wantsRecommendations?: boolean;
 };
 
+export interface ShoppingCartLineItem {
+  /** Shopify ProductVariant GID for draft order line items. */
+  variantId: string;
+  productId: string;
+  title: string;
+  quantity: number;
+  price?: string;
+  isbn?: string;
+}
+
 export interface CallSession {
   callSid: string;
   from: string;
@@ -91,6 +101,11 @@ export interface CallSession {
   currentOrder?: StructuredOrder;
   /** Full sanitized Shopify order JSON for invisible LLM follow-up context. */
   currentOrderData?: Record<string, unknown>;
+  /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
+  shoppingCart?: ShoppingCartLineItem[];
+  /** Last generated Shopify invoice URL for checkout email. */
+  pendingInvoiceUrl?: string;
+  pendingDraftOrderName?: string;
   createdAt: number;
   /** Phase 1 slots — filled before any Shopify product API call. */
   productSlots?: IncomingProductSlots;
