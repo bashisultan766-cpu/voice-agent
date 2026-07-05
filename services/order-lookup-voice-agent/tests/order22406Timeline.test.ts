@@ -47,20 +47,16 @@ describe("order #22406 deep timeline extraction", () => {
     expect(mapped.shippingFee).toBe(ORDER_22406_EXPECTED.shippingFee);
   });
 
-  it("buildOrderStatusTts recites full chronological story without hallucination", () => {
+  it("buildOrderStatusTts gives concise initial response without data dump", () => {
     const mapped = mapGqlOrderNode(ORDER_22406_GQL_NODE);
     const tts = buildOrderStatusTts({ status: "found", ...mapped });
 
-    expect(tts.text).toContain("Blake Penfield");
-    expect(tts.text).toMatch(/placed on May 15th, 2025/i);
-    expect(tts.text).toContain("blake.penfield@example.com");
-    expect(tts.text).toContain("Your order contains 1 item");
-    expect(tts.text).toMatch(/The books cost/i);
-    expect(tts.text).toMatch(/shipping was/i);
-    expect(tts.text).toMatch(/making the total/i);
-    expect(tts.text).toContain("OUT OF STOCK - ISSUE REFUND VIA PAYPAL");
-    expect(tts.text).toContain("btazp@yahoo.com");
-    expect(tts.text).not.toMatch(/refund confirmation email was sent to blake\.penfield@example\.com/i);
+    expect(tts.text).toContain("I found your order");
+    expect(tts.text).toMatch(/Your order status is Refunded/i);
+    expect(tts.text).toContain("Do you need any more information about your order");
+    expect(tts.text).not.toContain("Blake Penfield");
+    expect(tts.text).not.toContain("Your order contains");
+    expect(tts.text).not.toContain("OUT OF STOCK");
     expect(tts.text).not.toMatch(/\bfake\b/i);
   });
 });

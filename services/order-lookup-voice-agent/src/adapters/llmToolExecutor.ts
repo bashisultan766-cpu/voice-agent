@@ -18,6 +18,7 @@ import {
   normalizeOrderNumber,
 } from "../utils/formatter.js";
 import { logger } from "../utils/logger.js";
+import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
 
 export type LlmToolName =
   | "get_shopify_order_status"
@@ -243,7 +244,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       found: true,
       data: shapeOrderStatusForLlm(record.data),
       instructions:
-        "Use ONLY non-null fields below. If refund_notification_email, payment_method_last4, or payment_gateway is null, omit that detail — never invent a replacement.",
+        "Deep-fetch data is for internal memory only. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If refund_notification_email, payment_method_last4, or payment_gateway is null, omit that detail — never invent a replacement.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -261,6 +262,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
 
 /** Snake_case order payload — matches system prompt field names exactly. */
 function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown> {
+  const trackingNumber = data.trackingNumber ?? null;
   return {
     order_number: data.orderNumber ?? null,
     customer_name: data.customerName ?? null,
@@ -280,6 +282,11 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
     refund_date: data.refundDate ?? null,
     fulfillment_status: data.fulfillmentStatus ?? null,
     estimated_delivery_days: data.estimatedDeliveryDays ?? null,
+    tracking_number: trackingNumber,
+    tracking_company: data.trackingCompany ?? null,
+    tracking_number_for_tts: trackingNumber
+      ? formatTrackingNumberForTTS(trackingNumber)
+      : null,
     tracking_status: data.trackingStatus ?? null,
   };
 }

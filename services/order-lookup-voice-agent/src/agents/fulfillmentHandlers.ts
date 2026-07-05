@@ -34,7 +34,7 @@ import {
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
 import {
-  buildProactiveOrderSummarySpeech,
+  buildProgressiveDisclosureOrderSpeech,
   parsedDataFromOrderResult,
 } from "../utils/orderDataParser.js";
 import { speakMoney } from "../utils/formatter.js";
@@ -118,8 +118,8 @@ function isRefundedOrder(result: OrderStatusResult): boolean {
 }
 
 /**
- * Build proactive fluent-English order summary — delivered automatically once verified.
- * Uses the strict template from orderDataParser; never waits for the caller to ask.
+ * Build concise initial order response — progressive disclosure (status only).
+ * Full deep-fetch data stays in LLM/session memory for follow-up questions.
  */
 export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
   if (result.status !== "found" || !result.orderNumber) {
@@ -134,7 +134,7 @@ export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
   parsed.fulfillmentStatus = result.fulfillmentStatus;
 
   return {
-    text: buildProactiveOrderSummarySpeech(parsed),
+    text: buildProgressiveDisclosureOrderSpeech(parsed),
     awaitingSlot: null,
   };
 }

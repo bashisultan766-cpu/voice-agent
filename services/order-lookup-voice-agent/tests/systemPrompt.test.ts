@@ -33,10 +33,13 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/strictly forbidden from answering general knowledge/i);
   });
 
-  it("requires fluent English and customer_email in proactive template", () => {
+  it("requires progressive disclosure for initial order lookup", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/fluent, professional English/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/customer_email/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/PROACTIVE ORDER DELIVERY/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/The email associated with this account is/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ORDER LOOKUP S\.O\.P\./i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I found your order/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and a notepad ready/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);
   });
 });

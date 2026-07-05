@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mapGqlOrderNode } from "../src/adapters/shopifyStorefrontAdapter.js";
 import { buildOrderStatusTts } from "../src/agents/fulfillmentHandlers.js";
 import {
+  buildProgressiveDisclosureOrderSpeech,
   buildProactiveOrderSummarySpeech,
   formatOrderDateEnglish,
   parseDeepOrderData,
@@ -60,6 +61,18 @@ describe("parseDeepOrderData", () => {
   });
 });
 
+describe("buildProgressiveDisclosureOrderSpeech", () => {
+  it("returns concise status-only initial response for refunded orders", () => {
+    const parsed = parseDeepOrderData(DEEP_FETCH_GQL_NODE);
+    const speech = buildProgressiveDisclosureOrderSpeech(parsed);
+    expect(speech).toBe(
+      "I found your order. Your order status is Refunded. Do you need any more information about your order?",
+    );
+    expect(speech).not.toContain("Sarah Chen");
+    expect(speech).not.toContain("items");
+  });
+});
+
 describe("buildProactiveOrderSummarySpeech", () => {
   it("matches the exact fluent English proactive template", () => {
     const parsed = parseDeepOrderData(DEEP_FETCH_GQL_NODE);
@@ -67,9 +80,11 @@ describe("buildProactiveOrderSummarySpeech", () => {
     expect(speech).toBe(DEEP_FETCH_EXPECTED_TTS);
   });
 
-  it("buildOrderStatusTts produces the same proactive summary end-to-end", () => {
+  it("buildOrderStatusTts produces progressive disclosure summary end-to-end", () => {
     const mapped = mapGqlOrderNode(DEEP_FETCH_GQL_NODE);
     const tts = buildOrderStatusTts({ status: "found", ...mapped });
-    expect(tts.text).toBe(DEEP_FETCH_EXPECTED_TTS);
+    expect(tts.text).toBe(
+      "I found your order. Your order status is Refunded. Do you need any more information about your order?",
+    );
   });
 });

@@ -160,6 +160,8 @@ describe("getOrderStatus", () => {
     expect(result.cardLast4).toBe("4242");
     expect(result.fulfillmentStatus).toBe("Delivered");
     expect(result.trackingUrl).toBe("https://track.example/9400");
+    expect(result.trackingNumber).toBe("9400");
+    expect(result.trackingCompany).toBe("USPS");
     expect(result.estimatedDeliveryDays).toBeGreaterThanOrEqual(0);
   });
 

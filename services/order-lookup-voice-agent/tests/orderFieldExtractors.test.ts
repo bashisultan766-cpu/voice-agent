@@ -3,6 +3,7 @@ import {
   extractRefundNotificationEmail,
   extractRefundReason,
   extractPaymentMethod,
+  extractTrackingInfo,
   formatGatewayLabel,
 } from "../src/adapters/orderFieldExtractors.js";
 import {
@@ -48,6 +49,17 @@ describe("orderFieldExtractors", () => {
 
   it("formats paypal gateway slug to human label", () => {
     expect(formatGatewayLabel("paypal")).toBe("PayPal Express Checkout");
+  });
+
+  it("extracts tracking number and carrier from fulfillments", () => {
+    const tracking = extractTrackingInfo([
+      {
+        trackingInfo: [{ company: "USPS", number: "940011189922", url: "https://track.example" }],
+      },
+    ]);
+    expect(tracking.trackingNumber).toBe("940011189922");
+    expect(tracking.trackingCompany).toBe("USPS");
+    expect(tracking.trackingUrl).toBe("https://track.example");
   });
 });
 

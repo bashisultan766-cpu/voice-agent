@@ -62,12 +62,13 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
       expect.objectContaining({ orderNumber: expect.any(String) }),
       "CA_GROUND",
     );
-    expect(speech).toContain("Joel Moore");
-    expect(speech).toContain("joel.moore@gmail.com");
-    expect(speech).toContain("zzyxx2002@yahoo.com");
-    expect(speech).toMatch(/The books cost/i);
-    expect(speech).toMatch(/shipping was/i);
-    expect(speech).toMatch(/making the total/i);
+    expect(speech).toContain("I found your order");
+    expect(speech).toMatch(/Your order status is Refunded/i);
+    expect(speech).toContain("Do you need any more information about your order");
+    expect(speech).not.toContain("Joel Moore");
+    expect(speech).not.toContain("joel.moore@gmail.com");
+    expect(speech).not.toContain("zzyxx2002@yahoo.com");
+    expect(speech).not.toMatch(/The books cost/i);
     expect(speech).not.toMatch(/\bfake\b/i);
   });
 

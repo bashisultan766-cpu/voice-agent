@@ -39,6 +39,7 @@ import {
   parseDeepOrderData,
   type DeepOrderGraphqlNode,
 } from "../utils/orderDataParser.js";
+import { extractTrackingInfo } from "./orderFieldExtractors.js";
 
 // Re-export formatter validation for order numbers (canonical source).
 export { isValidOrderNumberFormat } from "../utils/formatter.js";
@@ -57,6 +58,8 @@ export interface OrderStatusResult {
   orderNumber?: string;
   fulfillmentStatus?: string;
   trackingUrl?: string;
+  trackingNumber?: string;
+  trackingCompany?: string;
   trackingStatus?: string;
   /** Days until estimated delivery (0 = delivered or shipping today). */
   estimatedDeliveryDays?: number;
@@ -417,7 +420,7 @@ export function mapGqlOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "st
 function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   const parsed = parseDeepOrderData(node);
   const fulfillment = pickPrimaryFulfillment(node.fulfillments);
-  const tracking = fulfillment?.trackingInfo?.find((t) => t.url || t.number);
+  const trackingExtract = extractTrackingInfo(node.fulfillments);
   const fulfillmentStatus =
     fulfillment?.displayStatus ??
     fulfillment?.status ??
@@ -426,14 +429,20 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
 
   const estimatedDeliveryDays = estimateDeliveryDays(fulfillmentStatus, fulfillment);
 
+  const trackingNumber = trackingExtract.trackingNumber;
+  const trackingCompany = trackingExtract.trackingCompany;
+  const trackingStatus = trackingCompany
+    ? `${trackingCompany}${trackingNumber ? ` ${trackingNumber}` : ""}`.trim()
+    : trackingNumber;
+
   const mapped: Omit<OrderStatusResult, "status"> = {
     orderNumber: parsed.orderNumber,
     orderPlacedAt: parsed.orderPlacedAt,
     fulfillmentStatus,
-    trackingUrl: tracking?.url,
-    trackingStatus: tracking?.company
-      ? `${tracking.company}${tracking.number ? ` ${tracking.number}` : ""}`.trim()
-      : undefined,
+    trackingUrl: trackingExtract.trackingUrl,
+    trackingNumber,
+    trackingCompany,
+    trackingStatus,
     estimatedDeliveryDays,
     estimatedDeliveryDate: fulfillment?.estimatedDeliveryAt ?? undefined,
     customerName: parsed.customerName,

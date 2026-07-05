@@ -52,7 +52,7 @@ describe("buildBookFoundTts", () => {
 });
 
 describe("buildOrderStatusTts", () => {
-  it("includes rich order summary with customer email, items, and financials", () => {
+  it("returns concise progressive-disclosure summary on initial lookup", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
@@ -62,6 +62,8 @@ describe("buildOrderStatusTts", () => {
       fulfillmentStatus: "In transit",
       estimatedDeliveryDays: 3,
       trackingStatus: "USPS 9400",
+      trackingNumber: "9400",
+      trackingCompany: "USPS",
       subtotalAmount: "40.00 USD",
       totalAmount: "45.99 USD",
       shippingFee: "5.99 USD",
@@ -70,38 +72,28 @@ describe("buildOrderStatusTts", () => {
       cardLast4: "4242",
       cardBrand: "Visa",
     });
-    expect(tts.text).toContain("Jane Doe");
-    expect(tts.text).toMatch(/placed on March 10th, 2025/i);
-    expect(tts.text).toContain("jane.doe@example.com");
-    expect(tts.text).toContain("Your order contains 2 items");
-    expect(tts.text).toMatch(/The books cost/i);
-    expect(tts.text).toMatch(/shipping was/i);
-    expect(tts.text).toMatch(/making the total/i);
-    expect(tts.text).toContain("in transit");
-    expect(tts.text).toContain("3 days");
-    expect(tts.text).toContain("USPS 9400");
-    expect(tts.text).not.toContain("Customer");
-    expect(tts.text).not.toContain("your card");
+    expect(tts.text).toContain("I found your order");
+    expect(tts.text).toMatch(/Your order status is/i);
+    expect(tts.text).toContain("Do you need any more information about your order");
+    expect(tts.text).not.toContain("Jane Doe");
+    expect(tts.text).not.toContain("jane.doe@example.com");
+    expect(tts.text).not.toContain("Your order contains");
+    expect(tts.text).not.toMatch(/The books cost/i);
+    expect(tts.text).not.toContain("Harry Potter");
   });
 
-  it("reads exact Shopify fields for #21698-F1 without invented fallbacks", () => {
+  it("uses Refunded status for refunded orders without item dump", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderPlacedAt: "2025-04-01T10:00:00Z",
       ...ORDER_21698_F1_EXPECTED,
     });
 
-    expect(tts.text).toContain("Joel Moore");
-    expect(tts.text).toMatch(/placed on April 1st, 2025/i);
-    expect(tts.text).toContain("joel.moore@gmail.com");
-    expect(tts.text).toContain("Your order contains 1 item");
-    expect(tts.text).toMatch(/The books cost/i);
-    expect(tts.text).toMatch(/shipping was/i);
-    expect(tts.text).toContain("OUT OF STOCK");
-    expect(tts.text).toContain("zzyxx2002@yahoo.com");
-    expect(tts.text).not.toMatch(/refund confirmation email was sent to joel\.moore@gmail\.com/i);
-    expect(tts.text).not.toContain("Customer");
-    expect(tts.text).not.toMatch(/\bfake\b/i);
+    expect(tts.text).toContain("I found your order");
+    expect(tts.text).toMatch(/Your order status is Refunded/i);
+    expect(tts.text).not.toContain("Joel Moore");
+    expect(tts.text).not.toContain("OUT OF STOCK");
+    expect(tts.text).not.toContain("zzyxx2002@yahoo.com");
   });
 });
 
@@ -136,7 +128,8 @@ describe("handleFulfillmentTurn", () => {
       callSid: "CA_TEST",
     });
 
-    expect(result.tts.text).toContain("shipped");
+    expect(result.tts.text).toContain("I found your order");
+    expect(result.tts.text).toMatch(/Your order status is/i);
   });
 
   it("returns title search fallback on not found", async () => {

@@ -197,6 +197,35 @@ export function extractRefundAmount(refunds?: OrderRefundNode[]): string | undef
   return undefined;
 }
 
+export interface FulfillmentTrackingInfo {
+  company?: string;
+  number?: string;
+  url?: string;
+}
+
+export interface FulfillmentNode {
+  trackingInfo?: FulfillmentTrackingInfo[];
+}
+
+/** Primary tracking number and carrier from Shopify fulfillments. */
+export function extractTrackingInfo(
+  fulfillments?: FulfillmentNode[],
+): { trackingNumber?: string; trackingCompany?: string; trackingUrl?: string } {
+  if (!fulfillments?.length) return {};
+
+  const withTracking = fulfillments.find((f) =>
+    f.trackingInfo?.some((t) => t.number?.trim() || t.url?.trim()),
+  );
+  const fulfillment = withTracking ?? fulfillments[0];
+  const tracking = fulfillment?.trackingInfo?.find((t) => t.number?.trim() || t.url?.trim());
+
+  return {
+    trackingNumber: tracking?.number?.trim() || undefined,
+    trackingCompany: tracking?.company?.trim() || undefined,
+    trackingUrl: tracking?.url?.trim() || undefined,
+  };
+}
+
 export function extractPaymentMethod(
   transactions: OrderTransactionNode[] | undefined,
   paymentGatewayNames: string[] | undefined,

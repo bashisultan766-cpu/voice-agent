@@ -47,9 +47,34 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.refund_notification_email).toBe("zzyxx2002@yahoo.com");
     expect(parsed.data.payment_gateway).toBe("PayPal Express Checkout");
     expect(parsed.data.payment_method_last4).toBeNull();
-    expect(parsed.instructions).toMatch(/never invent/i);
+    expect(parsed.instructions).toMatch(/progressive disclosure|ORDER LOOKUP S\.O\.P/i);
     expect(parsed.status).toBe("FOUND");
     expect(parsed.found).toBe(true);
+  });
+
+  it("includes tracking_number and tracking_number_for_tts in order payload", () => {
+    const record: LlmToolExecutionRecord = {
+      tool: "get_shopify_order_status",
+      args: { orderNumber: "12345" },
+      ok: true,
+      status: "found",
+      elapsedMs: 10,
+      data: {
+        status: "found",
+        orderNumber: "#12345",
+        trackingNumber: "1Z999999999",
+        trackingCompany: "UPS",
+        fulfillmentStatus: "In transit",
+      },
+    };
+
+    const parsed = JSON.parse(toolResultForLlm(record)) as {
+      data: Record<string, unknown>;
+    };
+
+    expect(parsed.data.tracking_number).toBe("1Z999999999");
+    expect(parsed.data.tracking_company).toBe("UPS");
+    expect(String(parsed.data.tracking_number_for_tts)).toContain("<break time=\"500ms\"/>");
   });
 
   it("returns strict NOT_FOUND payload with zero order fields for hallucination lock", () => {

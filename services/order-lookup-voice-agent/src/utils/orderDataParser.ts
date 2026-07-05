@@ -337,3 +337,20 @@ export function buildProactiveOrderSummarySpeech(data: ParsedOrderData): string 
 
   return segments.join(" ");
 }
+
+/**
+ * Concise initial order response — progressive disclosure (status only).
+ * Template: "I found your order. Your order status is [Status/Refunded]. Do you need any more information about your order?"
+ */
+export function buildProgressiveDisclosureOrderSpeech(data: ParsedOrderData): string {
+  let statusPhrase: string;
+  if (data.isRefunded) {
+    statusPhrase = "Refunded";
+  } else if (data.fulfillmentStatus?.trim()) {
+    statusPhrase = fulfillmentStatusPhrase(data.fulfillmentStatus);
+  } else {
+    statusPhrase = "being processed";
+  }
+
+  return `I found your order. Your order status is ${statusPhrase}. Do you need any more information about your order?`;
+}
