@@ -187,12 +187,18 @@ export function mockLiveShopifyFetch(catalog: StructuredProduct[]): void {
                             : [],
                         },
                         refunds: [],
-                        transactions: [
-                          {
-                            gateway: "shopify_payments",
-                            paymentDetails: { company: "Visa", number: "•••• 4242" },
-                          },
-                        ],
+                        transactions: {
+                          edges: [
+                            {
+                              node: {
+                                kind: "SALE",
+                                status: "SUCCESS",
+                                gateway: "shopify_payments",
+                                paymentDetails: { company: "Visa", number: "•••• 4242" },
+                              },
+                            },
+                          ],
+                        },
                         fulfillments: [
                           {
                             status: "SUCCESS",

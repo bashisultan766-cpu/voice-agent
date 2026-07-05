@@ -129,12 +129,18 @@ describe("getOrderStatus", () => {
               },
               customAttributes: [],
               refunds: [],
-              transactions: [
-                {
-                  gateway: "shopify_payments",
-                  paymentDetails: { company: "Visa", number: "•••• 4242" },
-                },
-              ],
+              transactions: {
+                edges: [
+                  {
+                    node: {
+                      kind: "SALE",
+                      status: "SUCCESS",
+                      gateway: "shopify_payments",
+                      paymentDetails: { company: "Visa", number: "•••• 4242" },
+                    },
+                  },
+                ],
+              },
               fulfillments: [
                 {
                   status: "SUCCESS",
@@ -158,6 +164,7 @@ describe("getOrderStatus", () => {
     expect(result.shippingFee).toBe("5.99 USD");
     expect(result.lineItems).toEqual([{ title: "Sample Book", quantity: 2 }]);
     expect(result.cardLast4).toBe("4242");
+    expect(result.paymentGateway).toBe("Shopify Payments");
     expect(result.fulfillmentStatus).toBe("Delivered");
     expect(result.trackingUrl).toBe("https://track.example/9400");
     expect(result.trackingNumber).toBe("9400");

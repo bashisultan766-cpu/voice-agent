@@ -213,7 +213,7 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
               currencyCode
             }
           }
-          transactions(first: 3) {
+          transactions {
             gateway
             formattedGateway
             paymentDetails {
@@ -224,15 +224,19 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
             }
           }
         }
-        transactions(first: 5) {
-          kind
-          status
-          gateway
-          formattedGateway
-          paymentDetails {
-            ... on CardPaymentDetails {
-              company
-              number
+        transactions(first: 10) {
+          edges {
+            node {
+              kind
+              status
+              gateway
+              formattedGateway
+              paymentDetails {
+                ... on CardPaymentDetails {
+                  company
+                  number
+                }
+              }
             }
           }
         }
@@ -312,14 +316,19 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             }
           }
         }
-        transactions(first: 5) {
-          kind
-          status
-          gateway
-          paymentDetails {
-            ... on CardPaymentDetails {
-              company
-              number
+        transactions(first: 10) {
+          edges {
+            node {
+              kind
+              status
+              gateway
+              formattedGateway
+              paymentDetails {
+                ... on CardPaymentDetails {
+                  company
+                  number
+                }
+              }
             }
           }
         }

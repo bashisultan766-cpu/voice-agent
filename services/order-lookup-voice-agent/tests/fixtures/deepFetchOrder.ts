@@ -55,15 +55,19 @@ export const DEEP_FETCH_GQL_NODE: DeepOrderGraphqlNode = {
       totalRefundedSet: { shopMoney: { amount: "33.50", currencyCode: "USD" } },
     },
   ],
-  transactions: [
-    {
-      kind: "SALE",
-      status: "SUCCESS",
-      gateway: "shopify_payments",
-      formattedGateway: "Shopify Payments",
-      paymentDetails: { company: "Visa", number: "•••• 4242" },
-    },
-  ],
+  transactions: {
+    edges: [
+      {
+        node: {
+          kind: "SALE",
+          status: "SUCCESS",
+          gateway: "shopify_payments",
+          formattedGateway: "Shopify Payments",
+          paymentDetails: { company: "Visa", number: "•••• 4242" },
+        },
+      },
+    ],
+  },
   fulfillments: [],
 };
 

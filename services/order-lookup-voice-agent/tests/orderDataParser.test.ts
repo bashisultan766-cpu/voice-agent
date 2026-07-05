@@ -43,6 +43,31 @@ describe("parseDeepOrderData", () => {
     expect(parsed.isRefunded).toBe(true);
     expect(parsed.refundReason).toBe("CUSTOMER REQUESTED CANCELLATION");
     expect(parsed.refundNotificationEmail).toBe("sarah.refund@yahoo.com");
+    expect(parsed.paymentGateway).toBe("Shopify Payments");
+    expect(parsed.cardLast4).toBe("4242");
+  });
+
+  it("reads payment gateway from transactions.edges[].node.gateway", () => {
+    const node = {
+      ...DEEP_FETCH_GQL_NODE,
+      paymentGatewayNames: undefined,
+      transactions: {
+        edges: [
+          {
+            node: {
+              kind: "SALE",
+              status: "SUCCESS",
+              gateway: "paypal",
+              formattedGateway: "PayPal Express Checkout",
+              paymentDetails: {},
+            },
+          },
+        ],
+      },
+    };
+    const parsed = parseDeepOrderData(node);
+    expect(parsed.paymentGateway).toBe("PayPal Express Checkout");
+    expect(parsed.cardLast4).toBeUndefined();
   });
 
   it("prefers currentSubtotalPriceSet over subtotalPriceSet", () => {

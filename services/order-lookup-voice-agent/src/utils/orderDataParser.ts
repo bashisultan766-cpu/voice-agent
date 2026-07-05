@@ -49,7 +49,12 @@ export interface DeepOrderGraphqlNode {
     edges?: Array<{ node?: { title?: string; quantity?: number } }>;
   };
   refunds?: OrderRefundNode[];
-  transactions?: OrderTransactionNode[];
+  /** Order.transactions is an OrderTransactionConnection — always edges → node. */
+  transactions?: {
+    edges?: Array<{
+      node?: OrderTransactionNode;
+    }>;
+  };
   fulfillments?: Array<{
     status?: string;
     displayStatus?: string;
@@ -165,6 +170,16 @@ function subtotalFromNode(node: DeepOrderGraphqlNode): string | undefined {
   );
 }
 
+/** Flatten OrderTransactionConnection edges → node (gateway lives on the node, not the connection). */
+function transactionNodesFromConnection(
+  transactions: DeepOrderGraphqlNode["transactions"],
+): OrderTransactionNode[] | undefined {
+  const nodes = transactions?.edges
+    ?.map((edge) => edge.node)
+    .filter((node): node is OrderTransactionNode => node != null);
+  return nodes?.length ? nodes : undefined;
+}
+
 /**
  * Map a deep-fetch GraphQL order node into a strictly typed object.
  * Guarantees customer email, placement date, financials, items, and timeline fields.
@@ -192,7 +207,10 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
         isRefunded,
       })
     : undefined;
-  const payment = extractPaymentMethod(node.transactions, node.paymentGatewayNames);
+  const payment = extractPaymentMethod(
+    transactionNodesFromConnection(node.transactions),
+    node.paymentGatewayNames,
+  );
   const orderPlacedAt = node.createdAt;
 
   return {
