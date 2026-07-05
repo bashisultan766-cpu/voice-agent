@@ -265,7 +265,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       found: true,
       data: shapeOrderStatusForLlm(record.data),
       instructions:
-        "Deep-fetch data is for internal memory only, including the full timeline events array (internal — never read verbatim; no staff names). On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Keys always present: customer_name, payment_method_last4, card_brand, refund_notification_email, order_confirmation_email (null when absent — never invent). For spoken refund notification email, use refund_notification_email_for_tts (full speakable address, e.g. jamaicathompson87 at gmail dot com). If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If a field is null, state clearly that the detail is not on file — never invent a replacement.",
+        "Deep-fetch data is for internal memory only, including the full timeline events array (internal — never read verbatim; no staff names). On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Keys always present: customer_name, customer_email, customer_email_for_tts, order_placed_at, payment_method_last4, card_brand, refund_notification_email, order_confirmation_email (null when absent — never invent). For spoken refund notification email, use refund_notification_email_for_tts (full speakable address, e.g. jamaicathompson87 at gmail dot com). If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK from INTERNATIONAL PROTOCOL using order_placed_at and customer_email_for_tts — never say not on file for archived orders with customer_email on file. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If a field is null on a recent order (within 1 year), state clearly that the detail is not on file — never invent a replacement.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -316,6 +316,7 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
     order_number: data.orderNumber ?? null,
     customer_name: data.customerName ?? null,
     customer_email: data.customerEmail ?? null,
+    customer_email_for_tts: formatEmailForTTS(data.customerEmail ?? null),
     items: data.lineItems ?? null,
     total_amount: data.totalAmount ?? null,
     shipping_amount: data.shippingFee ?? null,

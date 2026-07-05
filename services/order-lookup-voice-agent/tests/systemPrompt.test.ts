@@ -73,6 +73,13 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /I checked the official system logs for this order, but that specific detail is not on file/i,
     );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/LEGACY ORDER FALLBACK/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/securely archived by Shopify/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/customer_email_for_tts/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/order_placed_at/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /NEVER use customer_email as a substitute for refund_notification_email on recent orders/i,
+    );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /Never say the information is not on file if the JSON context contains these fields/i,
     );
