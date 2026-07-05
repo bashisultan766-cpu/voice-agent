@@ -99,27 +99,39 @@ export function extractCardLast4(paymentNumber?: string): string | undefined {
   return digits.length >= 4 ? digits.slice(-4) : undefined;
 }
 
-/** Timeline keyword gate — refund OR notification (case-insensitive) plus email regex. */
-function isRefundNotificationTimelineMessage(message: string): boolean {
-  return /refund|notification/i.test(message);
+/** Timeline keyword gate — refund notification phrases (Shopify staff timeline copy). */
+const REFUND_NOTIFICATION_PHRASE_RE =
+  /refund(?:ed)?\s+notification|notification\s+(?:email\s+)?(?:was\s+)?sent|sent\s+a\s+refund\s+notification|refund\s+notification\s+email/i;
+
+function emailFromTimelineMessage(message: string): string | undefined {
+  const found = message.match(EMAIL_RE);
+  return found?.[1]?.trim();
 }
 
 /**
  * Omni-Extractor: refund notification email.
- * Loops all timeline messages — no exact-sentence matching.
- * Any event containing "refund" or "notification" (case-insensitive) plus a
- * standard email address is accepted immediately on first hit.
- * NEVER falls back to the order's billing email (prevents Gmail hallucination).
+ * Scans timeline newest-first — Shopify logs refund notification on staff timeline events.
+ * Requires "refund" in the message OR an explicit refund-notification phrase plus email.
+ * NEVER falls back to the order billing email (prevents Gmail hallucination).
  */
 export function extractRefundNotificationEmail(
   events: OrderTimelineEvent[],
   customAttributes?: OrderCustomAttribute[],
 ): string | undefined {
-  for (const event of events) {
+  for (const event of [...events].reverse()) {
     const message = (event.message ?? "").trim();
-    if (!message || !isRefundNotificationTimelineMessage(message)) continue;
-    const found = message.match(EMAIL_RE);
-    if (found?.[1]) return found[1].trim();
+    if (!message) continue;
+    if (!/refund/i.test(message) && !REFUND_NOTIFICATION_PHRASE_RE.test(message)) continue;
+    const email = emailFromTimelineMessage(message);
+    if (email) return email;
+  }
+
+  for (const event of [...events].reverse()) {
+    const message = (event.message ?? "").trim();
+    if (!message || !/notification/i.test(message) || /confirm/i.test(message)) continue;
+    if (!/refund|refunded|mail_sent/i.test(`${message} ${event.action ?? ""}`)) continue;
+    const email = emailFromTimelineMessage(message);
+    if (email) return email;
   }
 
   for (const attr of customAttributes ?? []) {

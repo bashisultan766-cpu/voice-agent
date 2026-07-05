@@ -187,7 +187,7 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
           value
         }
         paymentGatewayNames
-        events(first: 30) {
+        events(first: 50) {
           edges {
             node {
               message
@@ -313,7 +313,7 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             }
           }
         }
-        events(first: 30) {
+        events(first: 50) {
           edges {
             node {
               message

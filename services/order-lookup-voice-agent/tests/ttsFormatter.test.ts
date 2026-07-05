@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampSsmlBreakTime,
+  formatEmailForTTS,
   formatEmailHandleForTTS,
   formatTrackingNumberForTTS,
   parseSsmlBreakTimeMs,
@@ -18,6 +19,15 @@ describe("formatEmailHandleForTTS", () => {
   it("returns null for missing email", () => {
     expect(formatEmailHandleForTTS(null)).toBeNull();
     expect(formatEmailHandleForTTS("")).toBeNull();
+  });
+});
+
+describe("formatEmailForTTS", () => {
+  it("speaks full email for refund notification readout", () => {
+    expect(formatEmailForTTS("jamaicathompson87@gmail.com")).toBe(
+      "jamaicathompson87 at gmail dot com",
+    );
+    expect(formatEmailForTTS("btazp@yahoo.com")).toBe("btazp at yahoo dot com");
   });
 });
 

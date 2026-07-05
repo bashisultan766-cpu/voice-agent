@@ -46,7 +46,7 @@ describe("toolResultForLlm order shaping", () => {
 
     expect(parsed.data.customer_name).toBe("Joel Moore");
     expect(parsed.data.refund_notification_email).toBe("zzyxx2002@yahoo.com");
-    expect(parsed.data.refund_notification_email_for_tts).toBe("zzyxx");
+    expect(parsed.data.refund_notification_email_for_tts).toBe("zzyxx2002 at yahoo dot com");
     expect(parsed.data.payment_gateway).toBe("PayPal Express Checkout");
     expect(parsed.data.payment_method_last4).toBeNull();
     expect(parsed.data.card_brand).toBeNull();
@@ -91,7 +91,9 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.payment_method_last4).toBe("4242");
     expect(parsed.data.card_brand).toBe("Visa");
     expect(parsed.data.refund_notification_email).toBe("jamaicathompson87@gmail.com");
-    expect(parsed.data.refund_notification_email_for_tts).toBe("jamaicathompson");
+    expect(parsed.data.refund_notification_email_for_tts).toBe(
+      "jamaicathompson87 at gmail dot com",
+    );
 
     const sessionPayload = buildActiveOrderContextPayload(record.data);
     expect(sessionPayload.customer_name).toBe("Jamaica Thompson");

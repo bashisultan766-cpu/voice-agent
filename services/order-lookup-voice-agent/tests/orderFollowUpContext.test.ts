@@ -87,7 +87,7 @@ describe("multi-turn order follow-up context injection", () => {
       choices: [
         {
           message: {
-            content: "The refund notification was sent to btazp@yahoo.com.",
+            content: "SHOULD NOT BE CALLED",
           },
           finish_reason: "stop",
         },
@@ -101,17 +101,10 @@ describe("multi-turn order follow-up context injection", () => {
     );
 
     expect(executeLlmTool).toHaveBeenCalledTimes(1);
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(turn2Speech).toContain("btazp@yahoo.com");
-
-    const messages = mockCreate.mock.calls[0]?.[0]?.messages as Array<{
-      role: string;
-      content: string;
-    }>;
-    const injected = messages.find(
-      (m) => m.role === "system" && m.content.startsWith("ACTIVE ORDER CONTEXT:"),
-    );
-    expect(injected?.content).toContain("btazp@yahoo.com");
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(turn2Speech.toLowerCase()).toMatch(/btazp.*yahoo/);
+    expect(turn2Speech).toMatch(/inbox and spam folder/i);
+    expect(session.currentOrderData?.refund_notification_email).toBe("btazp@yahoo.com");
   });
 
   it("buildLlmTurnMessagesForTest injects active order context as hidden system message", () => {

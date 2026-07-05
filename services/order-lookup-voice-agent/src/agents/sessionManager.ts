@@ -83,7 +83,7 @@ export function buildActiveOrderContextSystemMessage(
     "card_brand, refund_notification_email, refund_notification_email_for_tts, " +
     "order_confirmation_email, and refund_reason — " +
     "never read timeline text verbatim or speak internal staff names (e.g. Darren Herrington). " +
-    "For refund/confirmation email questions, use refund_notification_email_for_tts (email handle only). " +
+    "For refund/confirmation email questions, use refund_notification_email_for_tts (full speakable email from Shopify timeline). " +
     "Never claim you lack access or say information is not on file when those fields are non-null. " +
     "For refund status, notification, or payment method questions, follow INTERNATIONAL PROTOCOL. " +
     "Do not call get_shopify_order_status again unless the user provides a different order number. " +

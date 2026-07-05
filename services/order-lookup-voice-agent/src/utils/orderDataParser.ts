@@ -204,13 +204,15 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   const eventMessages = timelineEventMessages(events);
   const financialStatus = node.displayFinancialStatus ?? "";
   const isRefunded = /refund/i.test(financialStatus) || Boolean(node.refunds?.length);
+  const hasRefundTimeline = events.some((e) => /refund/i.test(e.message ?? ""));
   const timelineRefundReason = extractTimelineRefundReason(events);
   const refundReason =
     timelineRefundReason ??
     extractRefundReason(isRefunded, node.refunds, node.customAttributes, events);
-  const refundNotificationEmail = isRefunded
-    ? extractRefundNotificationEmail(events, node.customAttributes)
-    : undefined;
+  const refundNotificationEmail =
+    isRefunded || hasRefundTimeline
+      ? extractRefundNotificationEmail(events, node.customAttributes)
+      : undefined;
   const orderConfirmationEmail = extractOrderConfirmationEmail(events);
   const refundAmount = isRefunded ? extractRefundAmount(node.refunds) : undefined;
   const refundDate = isRefunded

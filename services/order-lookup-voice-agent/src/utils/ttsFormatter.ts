@@ -17,6 +17,20 @@ export function formatEmailHandleForTTS(
   return local.replace(/\d+$/, "") || local;
 }
 
+/**
+ * Full speakable email for phone readout — never includes staff timeline names.
+ * e.g. jamaicathompson87@gmail.com → "jamaicathompson87 at gmail dot com"
+ */
+export function formatEmailForTTS(email: string | null | undefined): string | null {
+  if (!email?.trim()) return null;
+  const trimmed = email.trim();
+  const at = trimmed.indexOf("@");
+  if (at <= 0) return trimmed;
+  const local = trimmed.slice(0, at);
+  const domain = trimmed.slice(at + 1).replace(/\./g, " dot ");
+  return `${local} at ${domain}`;
+}
+
 /** Hard ceiling for SSML break tags — ElevenLabs/OpenAI drop connections above ~1s. */
 export const SSML_BREAK_MAX_MS = 1000;
 

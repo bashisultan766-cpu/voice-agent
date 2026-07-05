@@ -23,6 +23,10 @@ import { orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
 import { buildActiveOrderContextSystemMessage } from "../agents/sessionManager.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
+import {
+  buildRefundNotificationEmailSpeech,
+  isRefundNotificationEmailQuestion,
+} from "../agents/orderFollowUpSpeech.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -360,6 +364,23 @@ export async function* runLlmAgentTurnEvents(
 
   if (isOutOfDomainQuestion(input.userMessage)) {
     const speech = buildPolitePivotSpeech(input.userMessage);
+    yield {
+      type: "result",
+      result: {
+        speech,
+        toolExecutions: [],
+        responseType: "general_help",
+      },
+    };
+    return;
+  }
+
+  if (
+    input.activeOrderContext &&
+    Object.keys(input.activeOrderContext).length > 0 &&
+    isRefundNotificationEmailQuestion(input.userMessage)
+  ) {
+    const speech = buildRefundNotificationEmailSpeech(input.activeOrderContext);
     yield {
       type: "result",
       result: {
