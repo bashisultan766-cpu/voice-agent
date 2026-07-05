@@ -47,7 +47,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I found your order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ACTIVE ORDER CONTEXT/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I don't have that specific detail on file/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I don't have that specific detail on file|that specific detail is not on file/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and a notepad ready/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);
@@ -55,15 +55,23 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);
   });
 
-  it("enforces INTERNATIONAL REFUND PROTOCOL verification & guidance", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/INTERNATIONAL REFUND PROTOCOL/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Verification & Guidance/i);
+  it("enforces INTERNATIONAL PROTOCOL verification & guidance", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/INTERNATIONAL PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ANTI-HALLUCINATION LOCK/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Verification Framework/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I can confirm that the order for \[Customer Name\] was refunded/i,
+      /I can confirm that the order for \[customer_name\] was successfully refunded/i,
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/card ending in \[Last 4 Digits\]/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/card ending in \[payment_method_last4\]/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /A refund notification was sent to \[Refund Email\]/i,
+      /The refund notification was sent to \[refund_notification_email_for_tts\]/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER mention internal staff names/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Darren Herrington/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/refund_notification_email_for_tts/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/check your inbox and spam folder/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I checked the official system logs for this order, but that specific detail is not on file/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /Never say the information is not on file if the JSON context contains these fields/i,

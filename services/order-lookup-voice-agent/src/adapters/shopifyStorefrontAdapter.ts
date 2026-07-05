@@ -187,12 +187,12 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
           value
         }
         paymentGatewayNames
-        events(first: 50) {
+        events(first: 30) {
           edges {
             node {
               message
-              action
               createdAt
+              action
               ... on BasicEvent {
                 message
                 action
@@ -222,6 +222,10 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
                 company
                 number
               }
+              ... on CreditCardPaymentDetails {
+                last4
+                brand
+              }
             }
           }
         }
@@ -237,6 +241,10 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
                 ... on CardPaymentDetails {
                   company
                   number
+                }
+                ... on CreditCardPaymentDetails {
+                  last4
+                  brand
                 }
               }
             }
@@ -309,12 +317,12 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             }
           }
         }
-        events(first: 50) {
+        events(first: 30) {
           edges {
             node {
               message
-              action
               createdAt
+              action
               ... on BasicEvent {
                 message
                 action
@@ -336,16 +344,24 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             }
           }
         }
-        transactions {
-          kind
-          status
-          gateway
-          formattedGateway
-          receiptJson
-          paymentDetails {
-            ... on CardPaymentDetails {
-              company
-              number
+        transactions(first: 10) {
+          edges {
+            node {
+              kind
+              status
+              gateway
+              formattedGateway
+              receiptJson
+              paymentDetails {
+                ... on CardPaymentDetails {
+                  company
+                  number
+                }
+                ... on CreditCardPaymentDetails {
+                  last4
+                  brand
+                }
+              }
             }
           }
         }

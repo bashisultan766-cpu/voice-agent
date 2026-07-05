@@ -95,6 +95,7 @@ describe("order #21796 deep timeline extraction", () => {
     expect(llmPayload.data.refund_notification_email).toBe(
       "jamaicathompson87@gmail.com",
     );
+    expect(llmPayload.data.refund_notification_email_for_tts).toBe("jamaicathompson");
     expect(llmPayload.data.order_confirmation_email).toBe(
       "jamaicathompson87@gmail.com",
     );
@@ -137,8 +138,9 @@ describe("order #21796 deep timeline extraction", () => {
     );
 
     const injected = buildActiveOrderContextSystemMessage(sessionPayload);
-    expect(injected).toContain("jamaicathompson87@gmail.com");
+    expect(injected).toContain("jamaicathompson");
+    expect(injected).toContain("refund_notification_email_for_tts");
     expect(injected).toContain("Customer Cancel Order");
-    expect(injected).toMatch(/never claim you lack access/i);
+    expect(injected).toMatch(/never read timeline text verbatim/i);
   });
 });

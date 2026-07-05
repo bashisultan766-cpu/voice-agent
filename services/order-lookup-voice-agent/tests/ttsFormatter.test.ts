@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampSsmlBreakTime,
+  formatEmailHandleForTTS,
   formatTrackingNumberForTTS,
   parseSsmlBreakTimeMs,
   sanitizeSsmlForTTS,
@@ -8,6 +9,17 @@ import {
   SSML_BREAK_MAX_MS,
   SSML_BREAK_SAFE_MS,
 } from "../src/utils/ttsFormatter.js";
+
+describe("formatEmailHandleForTTS", () => {
+  it("returns voice-friendly handle without domain or trailing digits", () => {
+    expect(formatEmailHandleForTTS("jamaicathompson87@gmail.com")).toBe("jamaicathompson");
+  });
+
+  it("returns null for missing email", () => {
+    expect(formatEmailHandleForTTS(null)).toBeNull();
+    expect(formatEmailHandleForTTS("")).toBeNull();
+  });
+});
 
 describe("formatTrackingNumberForTTS", () => {
   it("inserts safe SSML pauses between every character for slow ElevenLabs dictation", () => {

@@ -26,6 +26,15 @@ describe("orderFieldExtractors", () => {
     expect(extractRefundEmail([{ message }], [])).toBe("jamaicathompson87@gmail.com");
   });
 
+  it("extracts jamaicathompson87@gmail.com from Darren Herrington refund notification timeline", () => {
+    const message =
+      "Darren Herrington sent a refund notification email to jamaicathompson87@gmail.com";
+    expect(extractRefundNotificationEmail([{ message }], [])).toBe(
+      "jamaicathompson87@gmail.com",
+    );
+    expect(extractRefundEmail([{ message }], [])).toBe("jamaicathompson87@gmail.com");
+  });
+
   it("extracts test@example.com from Darren Herrington refund notification timeline", () => {
     const message =
       "Darren Herrington sent a refund notification email to test@example.com";

@@ -3,6 +3,20 @@
  */
 import { getConfig } from "../config.js";
 
+/**
+ * Voice-friendly email handle for refund/confirmation readout.
+ * Returns the local part before @ with trailing digits stripped
+ * (e.g. jamaicathompson87@gmail.com → "jamaicathompson").
+ */
+export function formatEmailHandleForTTS(
+  email: string | null | undefined,
+): string | null {
+  if (!email?.trim()) return null;
+  const local = email.trim().match(/^([^@]+)@/)?.[1]?.toLowerCase();
+  if (!local) return null;
+  return local.replace(/\d+$/, "") || local;
+}
+
 /** Hard ceiling for SSML break tags — ElevenLabs/OpenAI drop connections above ~1s. */
 export const SSML_BREAK_MAX_MS = 1000;
 

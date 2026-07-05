@@ -80,9 +80,12 @@ export function buildActiveOrderContextSystemMessage(
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +
     "You have the full order timeline in events plus customer_name, payment_method_last4, " +
-    "card_brand, refund_notification_email, order_confirmation_email, and refund_reason — " +
-    "never claim you lack access or say information is not on file when those fields are non-null. " +
-    "For refund status, notification, or payment method questions, follow INTERNATIONAL REFUND PROTOCOL. " +
+    "card_brand, refund_notification_email, refund_notification_email_for_tts, " +
+    "order_confirmation_email, and refund_reason — " +
+    "never read timeline text verbatim or speak internal staff names (e.g. Darren Herrington). " +
+    "For refund/confirmation email questions, use refund_notification_email_for_tts (email handle only). " +
+    "Never claim you lack access or say information is not on file when those fields are non-null. " +
+    "For refund status, notification, or payment method questions, follow INTERNATIONAL PROTOCOL. " +
     "Do not call get_shopify_order_status again unless the user provides a different order number. " +
     `JSON: ${JSON.stringify(data)}`
   );

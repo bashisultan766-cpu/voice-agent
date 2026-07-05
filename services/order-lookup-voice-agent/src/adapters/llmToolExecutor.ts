@@ -18,7 +18,10 @@ import {
 } from "../utils/formatter.js";
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import { logger } from "../utils/logger.js";
-import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
+import {
+  formatEmailHandleForTTS,
+  formatTrackingNumberForTTS,
+} from "../utils/ttsFormatter.js";
 
 export type LlmToolName =
   | "get_shopify_order_status"
@@ -259,7 +262,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       found: true,
       data: shapeOrderStatusForLlm(record.data),
       instructions:
-        "Deep-fetch data is for internal memory only, including the full timeline events array. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Keys always present: customer_name, payment_method_last4, card_brand, refund_notification_email. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL REFUND PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If a field is null, omit that detail — never invent a replacement.",
+        "Deep-fetch data is for internal memory only, including the full timeline events array (internal — never read verbatim; no staff names). On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Keys always present: customer_name, payment_method_last4, card_brand, refund_notification_email, order_confirmation_email (null when absent — never invent). For spoken refund/confirmation email, use refund_notification_email_for_tts / order_confirmation_email_for_tts (handle only, e.g. jamaicathompson). If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If a field is null, state clearly that the detail is not on file — never invent a replacement.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -281,6 +284,7 @@ export const OMNI_EXTRACTOR_PAYLOAD_KEYS = [
   "payment_method_last4",
   "card_brand",
   "refund_notification_email",
+  "order_confirmation_email",
 ] as const;
 
 /** Sanitized snake_case order fields for session memory and LLM follow-up context. */
@@ -297,6 +301,9 @@ export function buildActiveOrderContextPayload(
  */
 function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown> {
   const trackingNumber = data.trackingNumber ?? null;
+  const refundNotificationEmail =
+    data.refundNotificationEmail ?? data.refundEmail ?? null;
+  const orderConfirmationEmail = data.orderConfirmationEmail ?? null;
   const payload: Record<string, unknown> = {
     order_number: data.orderNumber ?? null,
     customer_name: data.customerName ?? null,
@@ -311,8 +318,10 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
     refund_status: data.refundStatus ?? null,
     refund_reason: data.refundReason ?? null,
     refund_amount: data.refundAmount ?? null,
-    refund_notification_email: data.refundNotificationEmail ?? data.refundEmail ?? null,
-    order_confirmation_email: data.orderConfirmationEmail ?? null,
+    refund_notification_email: refundNotificationEmail,
+    refund_notification_email_for_tts: formatEmailHandleForTTS(refundNotificationEmail),
+    order_confirmation_email: orderConfirmationEmail,
+    order_confirmation_email_for_tts: formatEmailHandleForTTS(orderConfirmationEmail),
     events: data.events ?? [],
     order_placed_at: data.orderPlacedAt ?? null,
     refund_date: data.refundDate ?? null,

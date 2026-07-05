@@ -100,19 +100,25 @@ export function extractCardLast4(paymentNumber?: string): string | undefined {
   return digits.length >= 4 ? digits.slice(-4) : undefined;
 }
 
+/** Timeline keyword gate — refund OR notification (case-insensitive) plus email regex. */
+function isRefundNotificationTimelineMessage(message: string): boolean {
+  return /refund|notification/i.test(message);
+}
+
 /**
  * Omni-Extractor: refund notification email.
- * Any timeline event containing "refund" (case-insensitive) plus a standard email
- * address is accepted — do not rely on exact Shopify sentence structures.
+ * Loops all timeline messages — no exact-sentence matching.
+ * Any event containing "refund" or "notification" (case-insensitive) plus a
+ * standard email address is accepted immediately on first hit.
  * NEVER falls back to the order's billing email (prevents Gmail hallucination).
  */
 export function extractRefundNotificationEmail(
   events: OrderTimelineEvent[],
   customAttributes?: OrderCustomAttribute[],
 ): string | undefined {
-  for (const event of [...events].reverse()) {
+  for (const event of events) {
     const message = (event.message ?? "").trim();
-    if (!message || !/refund/i.test(message)) continue;
+    if (!message || !isRefundNotificationTimelineMessage(message)) continue;
     const found = message.match(EMAIL_RE);
     if (found?.[1]) return found[1].trim();
   }

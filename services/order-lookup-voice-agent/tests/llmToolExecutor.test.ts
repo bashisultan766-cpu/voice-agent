@@ -46,6 +46,7 @@ describe("toolResultForLlm order shaping", () => {
 
     expect(parsed.data.customer_name).toBe("Joel Moore");
     expect(parsed.data.refund_notification_email).toBe("zzyxx2002@yahoo.com");
+    expect(parsed.data.refund_notification_email_for_tts).toBe("zzyxx");
     expect(parsed.data.payment_gateway).toBe("PayPal Express Checkout");
     expect(parsed.data.payment_method_last4).toBeNull();
     expect(parsed.data.card_brand).toBeNull();
@@ -55,11 +56,12 @@ describe("toolResultForLlm order shaping", () => {
       "payment_method_last4",
       "card_brand",
       "refund_notification_email",
+      "order_confirmation_email",
     ]) {
       expect(key in parsed.data).toBe(true);
     }
     expect(parsed.instructions).toMatch(/progressive disclosure|ORDER LOOKUP S\.O\.P/i);
-    expect(parsed.instructions).toMatch(/INTERNATIONAL REFUND PROTOCOL/i);
+    expect(parsed.instructions).toMatch(/INTERNATIONAL PROTOCOL/i);
     expect(parsed.status).toBe("FOUND");
     expect(parsed.found).toBe(true);
   });
@@ -89,6 +91,7 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.payment_method_last4).toBe("4242");
     expect(parsed.data.card_brand).toBe("Visa");
     expect(parsed.data.refund_notification_email).toBe("jamaicathompson87@gmail.com");
+    expect(parsed.data.refund_notification_email_for_tts).toBe("jamaicathompson");
 
     const sessionPayload = buildActiveOrderContextPayload(record.data);
     expect(sessionPayload.customer_name).toBe("Jamaica Thompson");
