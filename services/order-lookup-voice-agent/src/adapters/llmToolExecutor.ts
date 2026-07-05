@@ -259,7 +259,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       found: true,
       data: shapeOrderStatusForLlm(record.data),
       instructions:
-        "Deep-fetch data is for internal memory only. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If refund_notification_email, payment_method_last4, or payment_gateway is null, omit that detail — never invent a replacement.",
+        "Deep-fetch data is for internal memory only, including the full timeline events array. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. If the caller asks which email a notification or refund was sent to, read refund_notification_email or order_confirmation_email from this JSON — never say you lack access when those fields are present. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If refund_notification_email, order_confirmation_email, payment_method_last4, or payment_gateway is null, omit that detail — never invent a replacement.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -300,6 +300,8 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
     refund_reason: data.refundReason ?? null,
     refund_amount: data.refundAmount ?? null,
     refund_notification_email: data.refundNotificationEmail ?? data.refundEmail ?? null,
+    order_confirmation_email: data.orderConfirmationEmail ?? null,
+    events: data.events ?? [],
     order_placed_at: data.orderPlacedAt ?? null,
     refund_date: data.refundDate ?? null,
     fulfillment_status: data.fulfillmentStatus ?? null,

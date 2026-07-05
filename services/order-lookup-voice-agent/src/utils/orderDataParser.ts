@@ -4,12 +4,14 @@
  */
 import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import {
+  extractOrderConfirmationEmail,
   extractPaymentMethod,
   extractRefundAmount,
   extractRefundNotificationDate,
   extractRefundNotificationEmail,
   extractRefundReason,
   extractTimelineRefundReason,
+  timelineEventMessages,
   type OrderCustomAttribute,
   type OrderRefundNode,
   type OrderTimelineEvent,
@@ -72,6 +74,9 @@ export interface ParsedOrderData {
   isRefunded: boolean;
   refundReason?: string;
   refundNotificationEmail?: string;
+  orderConfirmationEmail?: string;
+  /** Raw timeline messages — injected into LLM session memory for follow-ups. */
+  events: string[];
   refundDate?: string;
   refundAmount?: string;
   fulfillmentStatus?: string;
@@ -168,6 +173,7 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   const lineItems = parseLineItems(node);
   const itemCount = lineItems.reduce((sum, li) => sum + li.quantity, 0);
   const events = timelineEvents(node);
+  const eventMessages = timelineEventMessages(events);
   const financialStatus = node.displayFinancialStatus ?? "";
   const isRefunded = /refund/i.test(financialStatus) || Boolean(node.refunds?.length);
   const timelineRefundReason = extractTimelineRefundReason(events);
@@ -177,6 +183,7 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   const refundNotificationEmail = isRefunded
     ? extractRefundNotificationEmail(events, node.customAttributes)
     : undefined;
+  const orderConfirmationEmail = extractOrderConfirmationEmail(events);
   const refundAmount = isRefunded ? extractRefundAmount(node.refunds) : undefined;
   const refundDate = isRefunded
     ? extractRefundNotificationDate(events, {
@@ -202,6 +209,8 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     isRefunded,
     refundReason,
     refundNotificationEmail,
+    orderConfirmationEmail,
+    events: eventMessages,
     refundDate,
     refundAmount,
     fulfillmentStatus: node.displayFulfillmentStatus,
@@ -233,6 +242,8 @@ export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrde
     isRefunded: Boolean(result.refundStatus && /refund/i.test(result.refundStatus)),
     refundReason: result.refundReason,
     refundNotificationEmail: result.refundNotificationEmail ?? result.refundEmail,
+    orderConfirmationEmail: result.orderConfirmationEmail,
+    events: result.events ?? [],
     refundDate: result.refundDate,
     refundAmount: result.refundAmount,
     fulfillmentStatus: result.fulfillmentStatus,

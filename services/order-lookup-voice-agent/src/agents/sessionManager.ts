@@ -79,6 +79,8 @@ export function buildActiveOrderContextSystemMessage(
   return (
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +
+    "You have the full order timeline in events plus refund_notification_email, " +
+    "order_confirmation_email, and refund_reason — never claim you lack access when those fields are present. " +
     "Do not call get_shopify_order_status again unless the user provides a different order number. " +
     `JSON: ${JSON.stringify(data)}`
   );

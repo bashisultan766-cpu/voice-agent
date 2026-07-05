@@ -39,15 +39,50 @@ const REFUND_NOTIFICATION_SENT_RE =
 /** Parenthetical email — e.g. "sent to Joel Moore (zzyxx2002@yahoo.com)". */
 const SENT_TO_PAREN_EMAIL_RE = /sent\s+to\s+[^(]*\(([^)]+@[^)]+)\)/i;
 
-/** Staff timeline — "sent a refund notification email to Blake Penfield (btazp@yahoo.com)". */
+/**
+ * Staff timeline — "Darren Herrington sent a refund notification email to Jamaica Thompson (jamaicathompson87@gmail.com)".
+ * Also matches "sent a refund notification email to Blake Penfield (btazp@yahoo.com)".
+ */
 const REFUND_NOTIFICATION_EMAIL_PAREN_RE =
-  /refund\s+notification\s+email\s+to\s+[^(]*\(([^)]+@[^)]+)\)/i;
+  /refund\s+notification\s+email\s+(?:was\s+)?(?:sent\s+)?to\s+[^(]*\(([^)]+@[^)]+)\)/i;
 
-/** Staff timeline — "Reason: OUT OF STOCK - ISSUE REFUND VIA PAYPAL". */
-const TIMELINE_REASON_LINE_RE = /Reason:\s*(.+?)(?:\.|$)/i;
+/**
+ * Order confirmation — "confirmation email was sent to Jamaica Thompson (jamaicathompson87@gmail.com)".
+ */
+const ORDER_CONFIRMATION_EMAIL_PAREN_RE =
+  /(?:order\s+)?confirmation\s+email\s+(?:was\s+)?(?:sent\s+)?to\s+[^(]*\(([^)]+@[^)]+)\)/i;
+
+const ORDER_CONFIRMATION_SENT_RE =
+  /(?:order\s+)?confirmation\s+(?:email\s+)?(?:was\s+)?sent\s+to\s+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i;
+
+/**
+ * Staff timeline — "Reason: OUT OF STOCK - ISSUE REFUND VIA PAYPAL"
+ * or smart-quoted "Reason: "Customer Cancel Order"".
+ */
+const TIMELINE_REASON_LINE_RE =
+  /Reason:\s*[“"']?(.+?)[”"']?(?:\s*[.!]?\s*$|\s*\.(?:\s|$))/i;
+
+/** Bare cancel phrases that appear as timeline/refund notes without a Reason: prefix. */
+const CUSTOMER_CANCEL_ORDER_RE = /\bCustomer\s+Cancel(?:led)?\s+Order\b/i;
 
 /** Spoken date tail — "on May 28" or "on May 28, 2025". */
 const REFUND_ON_DATE_RE = /\bon\s+([A-Za-z]+\s+\d{1,2}(?:,?\s+\d{4})?)\b/i;
+
+/** Strip wrapping straight/smart quotes from a captured reason. */
+function stripReasonQuotes(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[“"']+/, "")
+    .replace(/[”"']+$/, "")
+    .trim();
+}
+
+/** Flatten timeline nodes to non-empty message strings for LLM memory. */
+export function timelineEventMessages(events: OrderTimelineEvent[]): string[] {
+  return events
+    .map((event) => (event.message ?? "").trim())
+    .filter((message) => message.length > 0);
+}
 
 export function formatGatewayLabel(raw?: string): string | undefined {
   if (!raw?.trim()) return undefined;
@@ -113,7 +148,39 @@ export function extractTimelineRefundReason(
     const message = (event.message ?? "").trim();
     if (!message) continue;
     const reasonLine = message.match(TIMELINE_REASON_LINE_RE);
-    if (reasonLine?.[1]?.trim()) return reasonLine[1].trim();
+    if (reasonLine?.[1]) {
+      const cleaned = stripReasonQuotes(reasonLine[1]);
+      if (cleaned) return cleaned;
+    }
+    const cancelMatch = message.match(CUSTOMER_CANCEL_ORDER_RE);
+    if (cancelMatch?.[0]) return cancelMatch[0].trim();
+  }
+  return undefined;
+}
+
+/**
+ * Order confirmation email — timeline only.
+ * NEVER falls back to the order's billing email.
+ */
+export function extractOrderConfirmationEmail(
+  events: OrderTimelineEvent[],
+): string | undefined {
+  for (const event of [...events].reverse()) {
+    const message = (event.message ?? "").trim();
+    if (!message || !/confirmation/i.test(message)) continue;
+    if (/refund/i.test(message)) continue;
+
+    const paren = message.match(ORDER_CONFIRMATION_EMAIL_PAREN_RE);
+    if (paren?.[1]) return paren[1].trim();
+
+    const explicit = message.match(ORDER_CONFIRMATION_SENT_RE);
+    if (explicit?.[1]) return explicit[1].trim();
+
+    const sentParen = message.match(SENT_TO_PAREN_EMAIL_RE);
+    if (sentParen?.[1]) return sentParen[1].trim();
+
+    const found = message.match(EMAIL_RE);
+    if (found?.[1]) return found[1].trim();
   }
   return undefined;
 }
@@ -173,14 +240,17 @@ export function extractRefundReason(
 
   for (const refund of refunds ?? []) {
     const note = (refund.note ?? "").trim();
-    if (note && !/processing fee/i.test(note)) return note;
+    if (!note || /processing fee/i.test(note)) continue;
+    const cancelMatch = note.match(CUSTOMER_CANCEL_ORDER_RE);
+    if (cancelMatch?.[0]) return cancelMatch[0].trim();
+    return stripReasonQuotes(note);
   }
 
   for (const event of events ?? []) {
     const message = (event.message ?? "").trim();
     if (!message || !/refund/i.test(message)) continue;
-    const because = message.match(/(?:because|reason:?)\s+(.+?)(?:\.|$)/i);
-    if (because?.[1]?.trim()) return because[1].trim();
+    const because = message.match(/(?:because|reason:?)\s*[“"']?(.+?)[”"']?(?:\.|$)/i);
+    if (because?.[1]?.trim()) return stripReasonQuotes(because[1]);
   }
 
   return undefined;

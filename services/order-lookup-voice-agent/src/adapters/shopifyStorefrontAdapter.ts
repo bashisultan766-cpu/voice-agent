@@ -90,6 +90,10 @@ export interface OrderStatusResult {
   refundEmail?: string;
   /** Exact email the refund notification was sent to — never the order billing email. */
   refundNotificationEmail?: string;
+  /** Exact email the order confirmation was sent to (timeline only). */
+  orderConfirmationEmail?: string;
+  /** Raw timeline event messages for LLM follow-up context. */
+  events?: string[];
   /** ISO timestamp when the order was placed. */
   orderPlacedAt?: string;
   /** Refund / notification date (ISO or timeline phrase e.g. "May 28"). */
@@ -186,9 +190,16 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
         events(first: 50) {
           edges {
             node {
+              message
+              action
+              createdAt
               ... on BasicEvent {
                 message
                 action
+                createdAt
+              }
+              ... on CommentEvent {
+                message
                 createdAt
               }
             }
@@ -456,6 +467,8 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     refundDate: parsed.refundDate,
     refundNotificationEmail: parsed.refundNotificationEmail,
     refundEmail: parsed.refundNotificationEmail,
+    orderConfirmationEmail: parsed.orderConfirmationEmail,
+    events: parsed.events.length ? parsed.events : undefined,
     subtotalAmount: parsed.subtotalAmount,
     totalAmount: parsed.totalAmount,
     shippingFee: parsed.shippingFee,
@@ -474,6 +487,8 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     refundDate: mapped.refundDate,
     refundReason: mapped.refundReason,
     refundNotificationEmail: mapped.refundNotificationEmail,
+    orderConfirmationEmail: mapped.orderConfirmationEmail,
+    timelineEventCount: mapped.events?.length ?? 0,
     itemCount: mapped.itemCount,
   });
 
