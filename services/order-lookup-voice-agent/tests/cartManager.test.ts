@@ -59,13 +59,26 @@ describe("cartManager", () => {
         title: "The Great Gatsby",
         variant_id: "9780692089705",
         isbn: "9780692089705",
-        price: "12.99",
+        unit_price: "12.99",
         quantity: 1,
       },
     ]);
 
     const summary = getCartSummary(session);
     expect(summary.items[0].variantId).toBe("custom:the great gatsby");
+    expect(summary.items[0].unitPrice).toBe("12.99");
     expect(summary.items[0].price).toBe("12.99");
+  });
+
+  it("calculates merchandise total from unit prices and quantities", () => {
+    const session = makeSession();
+    addToCart(session, [
+      { title: "Bulk Title", unit_price: "10.00", quantity: 50 },
+      { title: "Single Copy", unit_price: "9.99", quantity: 1 },
+    ]);
+
+    const summary = getCartSummary(session);
+    expect(summary.merchandiseTotal).toBe("509.99");
+    expect(summary.totalUnits).toBe(51);
   });
 });

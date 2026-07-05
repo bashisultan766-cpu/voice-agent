@@ -42,6 +42,7 @@ import {
 import { extractTrackingInfo } from "./orderFieldExtractors.js";
 import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
 import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
+import { normalizeShopifyUnitPrice } from "../utils/shopifyMoney.js";
 
 // Re-export formatter validation for order numbers (canonical source).
 export { isValidOrderNumberFormat } from "../utils/formatter.js";
@@ -142,6 +143,7 @@ export interface DraftOrderResult {
 /** Build a Shopify DraftOrder line — variant GID when valid, otherwise custom line item. */
 export function buildDraftOrderLinePayload(item: DraftOrderLineInput): Record<string, unknown> {
   const quantity = Math.max(1, item.quantity || 1);
+  const unitPrice = normalizeShopifyUnitPrice(item.originalUnitPrice);
   const variantGid = item.variantId ? parseVariantGid(item.variantId) : null;
 
   if (variantGid) {
@@ -151,7 +153,7 @@ export function buildDraftOrderLinePayload(item: DraftOrderLineInput): Record<st
   return {
     title: (item.title ?? "Book").trim() || "Book",
     quantity,
-    originalUnitPrice: item.originalUnitPrice?.trim() || "0.00",
+    originalUnitPrice: unitPrice,
   };
 }
 

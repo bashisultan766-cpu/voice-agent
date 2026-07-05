@@ -88,6 +88,9 @@ export interface ShoppingCartLineItem {
   productId: string;
   title: string;
   quantity: number;
+  /** Per-unit catalog price — required for custom draft-order line items. */
+  unitPrice?: string;
+  /** @deprecated Use unitPrice — kept for backward compatibility. */
   price?: string;
   isbn?: string;
 }

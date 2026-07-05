@@ -93,7 +93,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "add_to_cart",
       description:
-        "Add one or more books to the caller's persistent shopping cart. Use variant_id from search results when available.",
+        "Add one or more books to the caller's persistent shopping cart. Always pass unit_price from search results alongside variant_id when available.",
       parameters: {
         type: "object",
         properties: {
@@ -106,9 +106,10 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
                 variant_id: { type: "string" },
                 product_id: { type: "string" },
                 isbn: { type: "string" },
+                unit_price: { type: "string", description: "Per-unit catalog price from search (e.g. 12.99)" },
                 quantity: { type: "number" },
               },
-              required: ["title"],
+              required: ["title", "unit_price"],
             },
           },
         },

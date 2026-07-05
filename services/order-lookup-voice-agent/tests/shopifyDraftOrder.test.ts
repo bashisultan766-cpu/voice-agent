@@ -62,6 +62,20 @@ describe("buildDraftOrderLinePayload", () => {
       originalUnitPrice: "12.99",
     });
   });
+
+  it("normalizes currency strings for custom line items", () => {
+    expect(
+      buildDraftOrderLinePayload({
+        quantity: 50,
+        title: "Bulk Order Book",
+        originalUnitPrice: "$10",
+      }),
+    ).toEqual({
+      title: "Bulk Order Book",
+      quantity: 50,
+      originalUnitPrice: "10.00",
+    });
+  });
 });
 
 describe("createShopifyDraftOrder", () => {

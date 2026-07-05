@@ -56,6 +56,7 @@ export interface CartToolResult {
     quantity: number;
     variant_id?: string;
     product_id?: string;
+    unit_price?: string;
     price?: string;
   }>;
   total_units?: number;
@@ -205,7 +206,8 @@ export async function executeLlmTool(
           quantity: line.quantity,
           variant_id: line.variantId,
           product_id: line.productId,
-          price: line.price,
+          unit_price: line.unitPrice ?? line.price,
+          price: line.unitPrice ?? line.price,
         })),
         total_units: cart.reduce((sum, line) => sum + line.quantity, 0),
       };
@@ -244,7 +246,8 @@ export async function executeLlmTool(
         quantity: line.quantity,
         variant_id: line.variantId,
         product_id: line.productId,
-        price: line.price,
+        unit_price: line.unitPrice ?? line.price,
+        price: line.unitPrice ?? line.price,
       })),
       total_units: summary.totalUnits,
       message: summary.isEmpty ? "Cart is empty." : undefined,
@@ -303,7 +306,7 @@ export async function executeLlmTool(
           quantity: line.quantity,
           variantId: line.variantId.startsWith("custom:") ? undefined : line.variantId,
           title: line.title,
-          originalUnitPrice: line.price,
+          originalUnitPrice: line.unitPrice ?? line.price,
         })),
         customerEmail,
         customerName,
@@ -644,7 +647,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     variant_id: "variantId" in record.data ? record.data.variantId : undefined,
     instructions:
       record.tool === "search_shopify_book_by_isbn" || record.tool === "search_shopify_book_by_title"
-        ? "If in stock, offer to add to cart using variant_id from this response. If out of stock, follow GRACEFUL ESCALATION."
+        ? "If in stock, offer to add to cart using variant_id and unit_price (from the price field) from this response. If out of stock, follow GRACEFUL ESCALATION."
         : undefined,
   });
 }
@@ -654,6 +657,7 @@ function parseCartItemsArg(raw: unknown): Array<{
   product_id?: string;
   title?: string;
   isbn?: string;
+  unit_price?: string;
   price?: string;
   quantity?: number;
 }> {
@@ -662,25 +666,29 @@ function parseCartItemsArg(raw: unknown): Array<{
     return raw.map((item) => {
       if (typeof item !== "object" || item === null) return {};
       const obj = item as Record<string, unknown>;
+      const unitPrice = String(obj.unit_price ?? obj.unitPrice ?? obj.price ?? "");
       return {
         variant_id: String(obj.variant_id ?? obj.variantId ?? ""),
         product_id: String(obj.product_id ?? obj.productId ?? ""),
         title: String(obj.title ?? ""),
         isbn: String(obj.isbn ?? ""),
-        price: String(obj.price ?? ""),
+        unit_price: unitPrice,
+        price: unitPrice,
         quantity: Number(obj.quantity ?? 1),
       };
     });
   }
   if (typeof raw === "object" && raw !== null) {
     const obj = raw as Record<string, unknown>;
+    const unitPrice = String(obj.unit_price ?? obj.unitPrice ?? obj.price ?? "");
     return [
       {
         variant_id: String(obj.variant_id ?? obj.variantId ?? ""),
         product_id: String(obj.product_id ?? obj.productId ?? ""),
         title: String(obj.title ?? ""),
         isbn: String(obj.isbn ?? ""),
-        price: String(obj.price ?? ""),
+        unit_price: unitPrice,
+        price: unitPrice,
         quantity: Number(obj.quantity ?? 1),
       },
     ];
