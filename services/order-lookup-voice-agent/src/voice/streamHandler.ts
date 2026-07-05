@@ -12,6 +12,11 @@ import {
   enqueueStreamTurn,
   takeFinalTranscript,
 } from "../runtime/streamTurnBarrier.js";
+import {
+  clearDictationLock,
+  enterDictationLock,
+  isDictationLocked,
+} from "../runtime/dictationLock.js";
 import { logEventIngestion } from "../runtime/turnObservability.js";
 import { logTtsEngineSelection } from "../adapters/ttsAdapter.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
@@ -75,6 +80,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     turnAbort?.abort();
     if (session?.callSid) {
       markCallSessionClosed(session.callSid);
+      clearDictationLock(session.callSid);
       clearStreamBarrier(session.callSid);
       endCallSession(session.callSid);
     }
@@ -126,6 +132,9 @@ async function runStreamingTurn(
         if (firstChunkMs === null) {
           firstChunkMs = Date.now() - started;
         }
+        if (event.chunk.kind === "dictation") {
+          enterDictationLock(session.callSid);
+        }
         await streamOneChunkToRelay(event.chunk, send, false, { abortSignal: abort.signal });
         chunkCount++;
       }
@@ -135,6 +144,7 @@ async function runStreamingTurn(
         if (!abort.signal.aborted) {
           await finalizeRelayStream(send);
         }
+        clearDictationLock(session.callSid);
         logger.info("relay_turn_complete", {
           callSid: session.callSid.slice(0, 8),
           phase: event.phase,
@@ -195,6 +205,29 @@ interface RelayMessageContext {
   isClosed: () => boolean;
 }
 
+/** Apply Twilio barge-in — suppressed while tracking dictation lock is held. */
+export function applyRelayInterrupt(ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">): {
+  action: "suppressed" | "aborted" | "ignored";
+} {
+  const callSid = ctx.getSession()?.callSid;
+  if (callSid && isDictationLocked(callSid)) {
+    logger.debug("relay_interrupt_suppressed_dictation", {
+      callSid: callSid.slice(0, 8),
+    });
+    return { action: "suppressed" };
+  }
+
+  const abort = ctx.getTurnAbort();
+  if (!abort) {
+    logger.debug("relay_interrupt", { callSid: callSid?.slice(0, 8) });
+    return { action: "ignored" };
+  }
+
+  logger.debug("relay_interrupt", { callSid: callSid?.slice(0, 8) });
+  abort.abort();
+  return { action: "aborted" };
+}
+
 async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageContext): Promise<void> {
   let message: TwilioRelayInboundMessage;
   try {
@@ -253,10 +286,10 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
       break;
     }
 
-    case "interrupt":
-      logger.debug("relay_interrupt", { callSid: ctx.getSession()?.callSid?.slice(0, 8) });
-      ctx.getTurnAbort()?.abort();
+    case "interrupt": {
+      applyRelayInterrupt(ctx);
       break;
+    }
 
     case "dtmf": {
       const session = ctx.getSession();

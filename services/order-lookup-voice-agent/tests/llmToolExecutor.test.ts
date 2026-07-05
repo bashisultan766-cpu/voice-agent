@@ -74,7 +74,7 @@ describe("toolResultForLlm order shaping", () => {
 
     expect(parsed.data.tracking_number).toBe("1Z999999999");
     expect(parsed.data.tracking_company).toBe("UPS");
-    expect(String(parsed.data.tracking_number_for_tts)).toContain("<break time=\"500ms\"/>");
+    expect(String(parsed.data.tracking_number_for_tts)).toContain('<break time="800ms"/>');
   });
 
   it("returns strict NOT_FOUND payload with zero order fields for hallucination lock", () => {

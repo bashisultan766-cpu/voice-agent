@@ -40,6 +40,8 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and a notepad ready/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT invent your own spacing, dashes, ellipses, or SSML/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);
   });
 });

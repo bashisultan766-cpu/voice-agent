@@ -130,6 +130,12 @@ export function speechChunksFromText(
   kind: SpeechChunkKind = "summary",
   options?: SmoothForVoiceOptions,
 ): SpeechChunk[] {
+  if (kind === "dictation") {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+    return [{ text: trimmed, kind: "dictation", pauseMs: 0, preserveFull: true }];
+  }
+
   return splitIntoSmoothedChunks(text, options).map((chunk) => ({
     text: chunk.text,
     kind,

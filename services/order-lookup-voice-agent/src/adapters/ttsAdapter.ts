@@ -5,6 +5,11 @@
 import OpenAI from "openai";
 import { getConfig, normalizeTwilioElevenLabsModel } from "../config.js";
 import { logger } from "../utils/logger.js";
+import { sanitizeTextForTTS } from "../utils/ttsFormatter.js";
+
+export const TTS_STREAM_CRASH_LOG = "TTS_STREAM_CRASH_DETECTED";
+export const TTS_STREAM_FALLBACK_PREFIX =
+  "I'm sorry, my audio disconnected. The number is";
 
 export type TtsEngineName =
   | "ElevenLabs"
@@ -87,6 +92,51 @@ export function normalizeAudioChunks(buffer: Buffer): Buffer {
   return Buffer.concat(chunks);
 }
 
+function stripSsmlForFallbackSpeech(text: string): string {
+  return text
+    .replace(/<break[^>]*\/?>/gi, ", ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildTtsFallbackSpeech(text: string): string {
+  const spoken = stripSsmlForFallbackSpeech(text);
+  return spoken ? `${TTS_STREAM_FALLBACK_PREFIX} ${spoken}` : TTS_STREAM_FALLBACK_PREFIX;
+}
+
+async function synthesizeViaElevenLabsStream(
+  text: string,
+  signal?: AbortSignal,
+): Promise<Response | null> {
+  const cfg = getConfig();
+  const apiKey = cfg.ELEVENLABS_API_KEY;
+  const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
+  if (!apiKey || !voiceId) return null;
+
+  const outputFormat = cfg.TTS_AUDIO_FORMAT;
+  logTtsEngineSelection("ElevenLabs");
+
+  const url = new URL(
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`,
+  );
+  url.searchParams.set("output_format", outputFormat);
+
+  return fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+      Accept: contentTypeForFormat(outputFormat),
+    },
+    body: JSON.stringify({
+      text,
+      model_id: elevenLabsModelId(),
+      voice_settings: getElevenLabsVoiceSettings(),
+    }),
+    signal,
+  });
+}
+
 async function synthesizeViaElevenLabs(text: string): Promise<VoiceSynthesisResult | null> {
   const cfg = getConfig();
   const apiKey = cfg.ELEVENLABS_API_KEY;
@@ -100,25 +150,8 @@ async function synthesizeViaElevenLabs(text: string): Promise<VoiceSynthesisResu
   const timer = setTimeout(() => controller.abort(), 8000);
 
   try {
-    const url = new URL(
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`,
-    );
-    url.searchParams.set("output_format", outputFormat);
-
-    const res = await fetch(url.toString(), {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-        "Content-Type": "application/json",
-        Accept: contentTypeForFormat(outputFormat),
-      },
-      body: JSON.stringify({
-        text,
-        model_id: elevenLabsModelId(),
-        voice_settings: getElevenLabsVoiceSettings(),
-      }),
-      signal: controller.signal,
-    });
+    const res = await synthesizeViaElevenLabsStream(text, controller.signal);
+    if (!res) return null;
 
     if (!res.ok) {
       const body = await res.text();
@@ -178,12 +211,87 @@ async function synthesizeViaOpenAI(text: string): Promise<VoiceSynthesisResult |
  * Primary live path is Twilio ConversationRelay text tokens (see streamHandler).
  */
 export async function synthesizeSpeech(text: string): Promise<VoiceSynthesisResult | null> {
-  const trimmed = text.trim();
+  const trimmed = sanitizeTextForTTS(text);
   if (!trimmed) return null;
 
-  const eleven = await synthesizeViaElevenLabs(trimmed);
-  if (eleven) return eleven;
+  try {
+    const eleven = await synthesizeViaElevenLabs(trimmed);
+    if (eleven) return eleven;
 
-  logger.warn("tts_fallback", { from: "ElevenLabs", to: "OpenAI tts-1-hd" });
-  return synthesizeViaOpenAI(trimmed);
+    logger.warn("tts_fallback", { from: "ElevenLabs", to: "OpenAI tts-1-hd" });
+    return synthesizeViaOpenAI(trimmed);
+  } catch (err) {
+    logger.error(TTS_STREAM_CRASH_LOG, {
+      error: err instanceof Error ? err.message : String(err),
+      stage: "synthesizeSpeech",
+    });
+    return synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
+  }
+}
+
+export interface TtsStreamChunk {
+  audio: Buffer;
+  engine: TtsEngineName;
+  isFallback?: boolean;
+}
+
+/**
+ * Stream TTS audio with mid-stream error boundary — yields fallback speech on crash
+ * so callers never hear dead silence after invalid SSML or connection drops.
+ */
+export async function* synthesizeSpeechStream(
+  text: string,
+): AsyncGenerator<TtsStreamChunk, void, unknown> {
+  const trimmed = sanitizeTextForTTS(text);
+  if (!trimmed) return;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const res = await synthesizeViaElevenLabsStream(trimmed, controller.signal);
+    if (!res?.ok || !res.body) {
+      const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
+      if (fallback) {
+        yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+      }
+      return;
+    }
+
+    const reader = res.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value?.byteLength) {
+          yield {
+            audio: normalizeAudioChunks(Buffer.from(value)),
+            engine: "ElevenLabs",
+          };
+        }
+      }
+    } catch (streamErr) {
+      logger.error(TTS_STREAM_CRASH_LOG, {
+        error: streamErr instanceof Error ? streamErr.message : String(streamErr),
+        stage: "elevenlabs_stream_read",
+      });
+      const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
+      if (fallback) {
+        yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } catch (err) {
+    logger.error(TTS_STREAM_CRASH_LOG, {
+      error: err instanceof Error ? err.message : String(err),
+      stage: "elevenlabs_stream_open",
+    });
+    const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
+    if (fallback) {
+      yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 }

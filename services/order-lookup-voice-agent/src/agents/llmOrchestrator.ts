@@ -12,6 +12,7 @@ import type { LlmAgentTurnResult } from "../adapters/openaiAdapter.js";
 import { orderStatusToStructuredOrder } from "./fulfillmentHandlers.js";
 import { planInstantFiller } from "./responsePlanner.js";
 import { speechChunksFromText } from "../services/voiceSmoothingEngine.js";
+import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import { getOrCreateCallState } from "../memory/callStateStore.js";
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { logFinalResponseType } from "../runtime/turnObservability.js";
@@ -37,7 +38,10 @@ function doneEvent(phase: CallSession["phase"]): AgentStreamEvent {
 }
 
 function* yieldSpeech(text: string, preserveFull = false): Generator<AgentStreamEvent> {
-  for (const chunk of speechChunksFromText(text, "summary", { preserveFull })) {
+  const sanitized = sanitizeTextForTTS(text);
+  const isDictation = isTrackingDictationText(sanitized);
+  const kind = isDictation ? ("dictation" as const) : ("summary" as const);
+  for (const chunk of speechChunksFromText(sanitized, kind, { preserveFull: preserveFull || isDictation })) {
     yield { type: "chunk", chunk };
   }
 }

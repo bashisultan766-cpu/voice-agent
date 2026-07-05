@@ -1,6 +1,7 @@
 import { getConfig, conversationRelayVoice } from "../config.js";
 import { synthesizeSpeech, type VoiceSynthesisResult } from "../adapters/ttsAdapter.js";
 import { smoothForVoice } from "./voiceSmoothingEngine.js";
+import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import { getCachedPhrase } from "../utils/phraseCache.js";
 import type { SpeechChunk } from "../types/order.js";
 
@@ -34,13 +35,16 @@ function isCacheablePhrase(text: string): boolean {
 
 /** Light prosody + rhythm smoothing for ConversationRelay text tokens. */
 export function applyVoiceProsody(text: string, preserveFull = false): string {
-  return smoothForVoice(
-    text
-      .replace(/\s*—\s*/g, "... ")
-      .replace(/\.\.\./g, "... ")
-      .trim(),
-    { preserveFull },
-  );
+  const trimmed = text
+    .replace(/\s*—\s*/g, "... ")
+    .replace(/\.\.\./g, "... ")
+    .trim();
+
+  if (isTrackingDictationText(trimmed) || /<break\s+time=/i.test(trimmed)) {
+    return sanitizeTextForTTS(trimmed);
+  }
+
+  return smoothForVoice(trimmed, { preserveFull });
 }
 
 export { getCachedPhrase } from "../utils/phraseCache.js";
@@ -93,7 +97,7 @@ export async function streamOneChunkToRelay(
     type: "text",
     token,
     last: isLast,
-    interruptible: chunk.kind !== "payment",
+    interruptible: chunk.kind !== "payment" && chunk.kind !== "dictation",
   });
 }
 

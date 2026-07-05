@@ -4,6 +4,7 @@ export type SpeechChunkKind =
   | "summary"
   | "refund"
   | "payment"
+  | "dictation"
   | "closing"
   | "error";
 

@@ -140,6 +140,7 @@ import {
   pickProductSlotQuestionForAwaiting,
 } from "./productSlotPhase.js";
 import { smoothForVoice, speechChunksFromText } from "../services/voiceSmoothingEngine.js";
+import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import type { StructuredProduct } from "../types/product.js";
 import type {
   AgentStreamEvent,
@@ -1214,7 +1215,11 @@ async function* streamOrderSummary(order: StructuredOrder): AsyncGenerator<Agent
 }
 
 function* yieldSpeech(text: string, kind: SpeechChunk["kind"] = "summary"): Generator<AgentStreamEvent> {
-  for (const chunk of speechChunksFromText(text, kind)) {
+  const sanitized = sanitizeTextForTTS(text);
+  const resolvedKind = isTrackingDictationText(sanitized) ? ("dictation" as const) : kind;
+  for (const chunk of speechChunksFromText(sanitized, resolvedKind, {
+    preserveFull: resolvedKind === "dictation",
+  })) {
     yield { type: "chunk", chunk };
   }
 }
