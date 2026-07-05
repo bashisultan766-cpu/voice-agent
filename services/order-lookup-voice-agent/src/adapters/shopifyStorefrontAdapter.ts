@@ -40,6 +40,7 @@ import {
   type DeepOrderGraphqlNode,
 } from "../utils/orderDataParser.js";
 import { extractTrackingInfo } from "./orderFieldExtractors.js";
+import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
 
 // Re-export formatter validation for order numbers (canonical source).
 export { isValidOrderNumberFormat } from "../utils/formatter.js";
@@ -526,11 +527,12 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     itemCount: mapped.itemCount,
   });
 
-  if (mapped.events?.length && !mapped.refundNotificationEmail && parsed.isRefunded) {
+  if (!mapped.refundNotificationEmail && parsed.isRefunded) {
     logger.warn("shopify_refund_notification_email_missing_from_timeline", {
       orderNumber: mapped.orderNumber,
-      timelineEventCount: mapped.events.length,
-      timelineMessages: mapped.events,
+      timelineEventCount: mapped.events?.length ?? 0,
+      timelineMessages: mapped.events ?? [],
+      customerEmail: mapped.customerEmail,
     });
   }
 
@@ -659,7 +661,8 @@ export async function getOrderStatus(
         const node = findMatchingOrderNode(edges, normalized);
 
         if (node) {
-          return { status: "found" as const, ...mapOrderNode(node) };
+          const enriched = await enrichOrderNodeTimeline(node);
+          return { status: "found" as const, ...mapOrderNode(enriched) };
         }
       }
       return {
