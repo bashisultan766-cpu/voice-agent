@@ -522,8 +522,17 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     refundNotificationEmail: mapped.refundNotificationEmail,
     orderConfirmationEmail: mapped.orderConfirmationEmail,
     timelineEventCount: mapped.events?.length ?? 0,
+    timelineSample: mapped.events?.slice(0, 2),
     itemCount: mapped.itemCount,
   });
+
+  if (mapped.events?.length && !mapped.refundNotificationEmail && parsed.isRefunded) {
+    logger.warn("shopify_refund_notification_email_missing_from_timeline", {
+      orderNumber: mapped.orderNumber,
+      timelineEventCount: mapped.events.length,
+      timelineMessages: mapped.events,
+    });
+  }
 
   return mapped;
 }

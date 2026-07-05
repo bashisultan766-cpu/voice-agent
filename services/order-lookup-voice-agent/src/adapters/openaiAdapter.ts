@@ -24,7 +24,7 @@ import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGu
 import { buildActiveOrderContextSystemMessage } from "../agents/sessionManager.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import {
-  buildRefundNotificationEmailSpeech,
+  buildRefundEmailFollowUpSpeech,
   isRefundNotificationEmailQuestion,
 } from "../agents/orderFollowUpSpeech.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
@@ -380,7 +380,7 @@ export async function* runLlmAgentTurnEvents(
     Object.keys(input.activeOrderContext).length > 0 &&
     isRefundNotificationEmailQuestion(input.userMessage)
   ) {
-    const speech = buildRefundNotificationEmailSpeech(input.activeOrderContext);
+    const speech = buildRefundEmailFollowUpSpeech(input.activeOrderContext, input.userMessage);
     yield {
       type: "result",
       result: {

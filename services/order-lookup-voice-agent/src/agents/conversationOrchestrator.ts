@@ -132,6 +132,11 @@ import {
 import { digitizeSpeechForIsbn, extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import { clearDialogueState } from "./dialogueManager.js";
 import { runLlmOrchestratorTurn } from "./llmOrchestrator.js";
+import { syncDeterministicAssistantSpeech } from "../adapters/openaiAdapter.js";
+import {
+  buildRefundEmailFollowUpSpeech,
+  isRefundNotificationEmailQuestion,
+} from "./orderFollowUpSpeech.js";
 import type { AgentState } from "../platform/agentState.js";
 import {
   mergeProductSlots,
@@ -1203,7 +1208,23 @@ async function* handleFollowUpPhase(
     return;
   }
 
-  session.phase = "awaiting_order_number";
+  if (
+    session.currentOrderData &&
+    Object.keys(session.currentOrderData).length > 0 &&
+    isRefundNotificationEmailQuestion(callerText)
+  ) {
+    const speech = buildRefundEmailFollowUpSpeech(session.currentOrderData, callerText);
+    session.phase = "follow_up";
+    session.awaitingInput = null;
+    syncDeterministicAssistantSpeech(session.callSid, speech, {
+      responseType: "general_help",
+    });
+    yield* yieldSpeech(speech);
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  session.phase = "follow_up";
   yield* runLlmOrchestratorTurn(session, callerText, emitResponseSent);
 }
 

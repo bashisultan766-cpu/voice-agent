@@ -148,6 +148,14 @@ export function extractRefundNotificationEmail(
 /** @deprecated Alias — prefer extractRefundNotificationEmail. */
 export const extractRefundEmail = extractRefundNotificationEmail;
 
+/** Re-parse refund notification email from flat timeline message strings (session follow-up). */
+export function extractRefundNotificationEmailFromMessages(
+  messages: string[],
+): string | undefined {
+  const events = messages.map((message) => ({ message }));
+  return extractRefundNotificationEmail(events, []);
+}
+
 /** Exact staff timeline reason — e.g. "OUT OF STOCK - ISSUE REFUND VIA PAYPAL". */
 export function extractTimelineRefundReason(
   events: OrderTimelineEvent[],

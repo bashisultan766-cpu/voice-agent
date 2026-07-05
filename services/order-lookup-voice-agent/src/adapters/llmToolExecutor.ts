@@ -19,6 +19,9 @@ import {
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import { logger } from "../utils/logger.js";
 import {
+  extractRefundNotificationEmailFromMessages,
+} from "./orderFieldExtractors.js";
+import {
   formatEmailForTTS,
   formatTrackingNumberForTTS,
 } from "../utils/ttsFormatter.js";
@@ -302,7 +305,12 @@ export function buildActiveOrderContextPayload(
 function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown> {
   const trackingNumber = data.trackingNumber ?? null;
   const refundNotificationEmail =
-    data.refundNotificationEmail ?? data.refundEmail ?? null;
+    data.refundNotificationEmail ??
+    data.refundEmail ??
+    extractRefundNotificationEmailFromMessages(
+      Array.isArray(data.events) ? data.events.map(String) : [],
+    ) ??
+    null;
   const orderConfirmationEmail = data.orderConfirmationEmail ?? null;
   const payload: Record<string, unknown> = {
     order_number: data.orderNumber ?? null,
