@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   executeLlmTool,
-  ORDER_NOT_FOUND_LLM_PAYLOAD,
+  buildOrderNotFoundLlmPayload,
   SYSTEM_MAINTENANCE_LLM_PAYLOAD,
   toolResultForLlm,
 } from "../src/adapters/llmToolExecutor.js";
@@ -77,24 +77,26 @@ describe("toolResultForLlm order shaping", () => {
     expect(String(parsed.data.tracking_number_for_tts)).toContain('<break time="800ms"/>');
   });
 
-  it("returns strict NOT_FOUND payload with zero order fields for hallucination lock", () => {
+  it("returns strict NOT_FOUND payload with searched_number for hallucination lock", () => {
     const record: LlmToolExecutionRecord = {
       tool: "get_shopify_order_status",
-      args: { orderNumber: "21698" },
+      args: { orderNumber: "#21698" },
       ok: false,
       status: "not_found",
       elapsedMs: 8,
       data: {
         status: "not_found",
-        error: "Order not found in database.",
+        searchedNumber: "#21698",
+        error: "No exact match found in Shopify.",
       },
     };
 
     const parsed = JSON.parse(toolResultForLlm(record)) as Record<string, unknown>;
 
-    expect(parsed).toEqual(ORDER_NOT_FOUND_LLM_PAYLOAD);
+    expect(parsed).toEqual(buildOrderNotFoundLlmPayload("#21698"));
     expect(parsed.status).toBe("NOT_FOUND");
-    expect(parsed.error).toBe("Order not found in database.");
+    expect(parsed.searched_number).toBe("21698");
+    expect(parsed.error).toBe("No exact match found in Shopify.");
     expect(parsed).not.toHaveProperty("data");
     expect(parsed).not.toHaveProperty("customer_name");
     expect(parsed).not.toHaveProperty("items");
@@ -151,5 +153,21 @@ describe("executeLlmTool error boundary", () => {
     const payload = toolResultForLlm(record);
     expect(payload).not.toMatch(/401|unauthorized|invalid token/i);
     expect(JSON.parse(payload)).toEqual(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
+  });
+
+  it("normalizes spoken order numbers before Shopify lookup", async () => {
+    vi.mocked(getOrderStatus).mockResolvedValue({
+      status: "not_found",
+      searchedNumber: "#21698",
+      error: "No exact match found in Shopify.",
+    });
+
+    await executeLlmTool(
+      "get_shopify_order_status",
+      { orderNumber: "two one six nine eight" },
+      "CA_NORM",
+    );
+
+    expect(getOrderStatus).toHaveBeenCalledWith("#21698", "CA_NORM");
   });
 });

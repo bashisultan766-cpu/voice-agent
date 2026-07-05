@@ -1,21 +1,11 @@
 import type { StructuredOrder } from "../types/order.js";
 import { planInstantConfirmation, planOrderLookupResponse } from "../agents/responsePlanner.js";
 
+import { normalizeOrderNumber } from "./inputNormalizer.js";
+
+export { normalizeOrderNumber };
+
 const ORDER_NUMBER_RE = /^#?\d{4,10}(?:-[A-Za-z0-9]{1,6})?$/;
-
-/** Normalize Shopify order name — supports numeric (#21698) and suffix (#21698-F1). */
-export function normalizeOrderNumber(raw: string): string {
-  const trimmed = raw.trim().replace(/\s+/g, "").toUpperCase();
-  const suffixMatch = trimmed.match(/^#?(\d{4,10})-([A-Z0-9]{1,6})$/);
-  if (suffixMatch) {
-    return `#${suffixMatch[1]}-${suffixMatch[2]}`;
-  }
-
-  const digits = trimmed.replace(/[^\d#]/g, "");
-  if (digits.startsWith("#")) return digits;
-  const onlyDigits = digits.replace(/\D/g, "");
-  return onlyDigits ? `#${onlyDigits}` : "";
-}
 
 export function isValidOrderNumberFormat(orderNumber: string): boolean {
   return ORDER_NUMBER_RE.test(orderNumber);
@@ -48,37 +38,8 @@ export function extractOrderNumberFromSpeech(text: string): string | null {
   return null;
 }
 
-const WORD_TO_DIGIT: Record<string, string> = {
-  zero: "0",
-  oh: "0",
-  o: "0",
-  one: "1",
-  two: "2",
-  three: "3",
-  four: "4",
-  five: "5",
-  six: "6",
-  seven: "7",
-  eight: "8",
-  nine: "9",
-};
-
 function parseSpokenDigits(text: string): string {
-  const tokens = text
-    .replace(/[^a-z0-9\s]/gi, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-
-  let out = "";
-  for (const token of tokens) {
-    if (/^\d+$/.test(token)) {
-      out += token;
-      continue;
-    }
-    const digit = WORD_TO_DIGIT[token];
-    if (digit !== undefined) out += digit;
-  }
-  return out;
+  return normalizeOrderNumber(text).replace(/^#/, "").replace(/-.*$/, "");
 }
 
 export function speakCardLast4(last4: string): string {

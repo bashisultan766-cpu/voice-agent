@@ -15,8 +15,8 @@ import {
 import { normalizeIsbn, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 import {
   isValidOrderNumberFormat,
-  normalizeOrderNumber,
 } from "../utils/formatter.js";
+import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import { logger } from "../utils/logger.js";
 import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
 
@@ -50,10 +50,13 @@ export const SYSTEM_MAINTENANCE_LLM_PAYLOAD = {
 };
 
 /** Strict NOT_FOUND payload — LLM must not invent order fields when this is returned. */
-export const ORDER_NOT_FOUND_LLM_PAYLOAD = {
-  status: "NOT_FOUND" as const,
-  error: "Order not found in database.",
-};
+export function buildOrderNotFoundLlmPayload(searchedNumber: string) {
+  return {
+    status: "NOT_FOUND" as const,
+    searched_number: searchedNumber.replace(/^#/, ""),
+    error: "No exact match found in Shopify.",
+  };
+}
 
 function isMaintenanceToolStatus(status: LlmToolExecutionRecord["status"]): boolean {
   return (
@@ -104,7 +107,8 @@ export async function executeLlmTool(
   );
 
   if (tool === "get_shopify_order_status") {
-    const orderNumber = normalizeOrderNumber(args.orderNumber ?? "");
+    const rawInput = args.orderNumber ?? "";
+    const orderNumber = normalizeOrderNumber(rawInput);
     const gate = validateShopifyExecutionGate(
       "order_status",
       gateExtraction("order_status", { orderNumber, slotType: "order_number" }),
@@ -112,13 +116,18 @@ export async function executeLlmTool(
     if (!gate.allowed || !orderNumber || !isValidOrderNumberFormat(orderNumber)) {
       return {
         tool,
-        args: { orderNumber: args.orderNumber ?? "" },
+        args: { orderNumber: rawInput },
         ok: false,
         status: "blocked",
         errorMessage: gate.clarificationText,
         elapsedMs: Date.now() - started,
       };
     }
+
+    logger.info("Executing Shopify Lookup for Normalized Order Number: ", {
+      original: rawInput,
+      normalized: orderNumber,
+    });
 
     try {
       const data = await getOrderStatus(orderNumber, callSid);
@@ -217,7 +226,12 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
   }
 
   if (record.tool === "get_shopify_order_status" && record.status === "not_found") {
-    const payload = ORDER_NOT_FOUND_LLM_PAYLOAD;
+    const searchedNumber =
+      record.args.orderNumber ??
+      (record.data && "searchedNumber" in record.data
+        ? String(record.data.searchedNumber ?? "")
+        : "");
+    const payload = buildOrderNotFoundLlmPayload(searchedNumber);
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
       output: payload,
@@ -231,7 +245,8 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
 
   if (record.tool === "get_shopify_order_status" && "orderNumber" in record.data) {
     if (record.data.status !== "found") {
-      const payload = ORDER_NOT_FOUND_LLM_PAYLOAD;
+      const searchedNumber = record.args.orderNumber ?? record.data.searchedNumber ?? "";
+      const payload = buildOrderNotFoundLlmPayload(String(searchedNumber));
       logger.info("tool_output_to_llm", {
         tool: "get_shopify_order_status",
         output: payload,

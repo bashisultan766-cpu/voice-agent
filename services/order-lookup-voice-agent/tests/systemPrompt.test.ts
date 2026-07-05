@@ -6,9 +6,17 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CRITICAL ANTI-HALLUCINATION RULE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/"status": "NOT_FOUND"/);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I apologize, but I cannot find an order matching that number in our system/i,
+      /I checked for order number \[searched_number\], but I could not find a match/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER invent, guess, or create fake customer names/i);
+  });
+
+  it("requires repeating order number when caller asks for verification", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/VERIFICATION PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /The order number I heard is \[Number\]\. Is that correct\?/,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do not claim you are unable to provide it/i);
   });
 
   it("locks Shoshan identity at the top of the prompt", () => {

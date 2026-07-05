@@ -23,9 +23,9 @@ import {
 } from "../utils/productSearchNormalize.js";
 import {
   isValidOrderNumberFormat,
-  normalizeOrderNumber,
   orderNumbersMatch,
 } from "../utils/formatter.js";
+import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import {
   mapGqlProduct,
   shopifyGraphql,
@@ -97,6 +97,8 @@ export interface OrderStatusResult {
   message?: string;
   /** Set when Shopify returns zero matching orders. */
   error?: string;
+  /** Normalized order number used in the lookup (NOT_FOUND responses). */
+  searchedNumber?: string;
 }
 
 export interface BookAvailabilityResult {
@@ -605,7 +607,8 @@ export async function getOrderStatus(
       }
       return {
         status: "not_found" as const,
-        error: "Order not found in database.",
+        searchedNumber: normalized,
+        error: "No exact match found in Shopify.",
       };
     });
 

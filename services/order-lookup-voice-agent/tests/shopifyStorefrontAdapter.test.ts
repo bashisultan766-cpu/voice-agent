@@ -261,7 +261,8 @@ describe("getOrderStatus", () => {
 
     const result = await getOrderStatus("99999");
     expect(result.status).toBe("not_found");
-    expect(result.error).toBe("Order not found in database.");
+    expect(result.searchedNumber).toBe("#99999");
+    expect(result.error).toBe("No exact match found in Shopify.");
   });
 
   it("uses wildcard name query for flexible order number lookup", async () => {
