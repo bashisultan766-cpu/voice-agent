@@ -309,6 +309,24 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             }
           }
         }
+        events(first: 50) {
+          edges {
+            node {
+              message
+              action
+              createdAt
+              ... on BasicEvent {
+                message
+                action
+                createdAt
+              }
+              ... on CommentEvent {
+                message
+                createdAt
+              }
+            }
+          }
+        }
         refunds(first: 5) {
           note
           totalRefundedSet {

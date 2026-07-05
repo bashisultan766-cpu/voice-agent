@@ -26,6 +26,12 @@ describe("orderFieldExtractors", () => {
     expect(extractRefundEmail([{ message }], [])).toBe("jamaicathompson87@gmail.com");
   });
 
+  it("extracts test@example.com from Darren Herrington refund notification timeline", () => {
+    const message =
+      "Darren Herrington sent a refund notification email to test@example.com";
+    expect(extractRefundNotificationEmail([{ message }], [])).toBe("test@example.com");
+  });
+
   it("extracts refund notification email from timeline — not billing email", () => {
     const events = ORDER_21698_F1_GQL_NODE.events.edges.map((e) => e.node);
     const email = extractRefundNotificationEmail(events, ORDER_21698_F1_GQL_NODE.customAttributes);
