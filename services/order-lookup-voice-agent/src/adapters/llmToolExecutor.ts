@@ -275,6 +275,13 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
   });
 }
 
+/** Sanitized snake_case order fields for session memory and LLM follow-up context. */
+export function buildActiveOrderContextPayload(
+  data: OrderStatusResult,
+): Record<string, unknown> {
+  return shapeOrderStatusForLlm(data);
+}
+
 /** Snake_case order payload — matches system prompt field names exactly. */
 function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown> {
   const trackingNumber = data.trackingNumber ?? null;

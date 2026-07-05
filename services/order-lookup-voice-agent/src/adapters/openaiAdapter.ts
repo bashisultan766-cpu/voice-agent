@@ -21,6 +21,8 @@ import {
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
 import { orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
+import { buildActiveOrderContextSystemMessage } from "../agents/sessionManager.js";
+import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -91,6 +93,8 @@ export interface LlmAgentTurnInput {
   callSid: string;
   userMessage: string;
   messages: LlmChatMessage[];
+  /** Injected on follow-up turns — full order JSON not spoken during progressive disclosure. */
+  activeOrderContext?: ActiveOrderContextData;
 }
 
 export interface LlmAgentTurnResult {
@@ -202,11 +206,29 @@ function buildOpenAiMessages(
     content: m.content,
   }));
 
-  return [
+  const systemMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: "system", content: SHOSHAN_SYSTEM_PROMPT },
+  ];
+
+  if (input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) {
+    systemMessages.push({
+      role: "system",
+      content: buildActiveOrderContextSystemMessage(input.activeOrderContext),
+    });
+  }
+
+  return [
+    ...systemMessages,
     ...history,
     { role: "user", content: input.userMessage },
   ];
+}
+
+/** @internal Exported for unit tests — verifies invisible order context injection. */
+export function buildLlmTurnMessagesForTest(
+  input: LlmAgentTurnInput,
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  return buildOpenAiMessages(input);
 }
 
 function lastAssistantAskedForOrder(messages: LlmChatMessage[]): boolean {

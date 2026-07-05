@@ -89,6 +89,8 @@ export interface CallSession {
   phase: CallPhase;
   orderNumberAttempts: number;
   currentOrder?: StructuredOrder;
+  /** Full sanitized Shopify order JSON for invisible LLM follow-up context. */
+  currentOrderData?: Record<string, unknown>;
   createdAt: number;
   /** Phase 1 slots — filled before any Shopify product API call. */
   productSlots?: IncomingProductSlots;

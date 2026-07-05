@@ -46,6 +46,8 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ORDER LOOKUP S\.O\.P\./i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I found your order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ACTIVE ORDER CONTEXT/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I don't have that specific detail on file/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and a notepad ready/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);

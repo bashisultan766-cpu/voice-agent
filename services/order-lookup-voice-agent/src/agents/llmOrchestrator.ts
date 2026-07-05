@@ -10,6 +10,11 @@ import {
 import type { LlmToolExecutionRecord } from "../adapters/llmToolExecutor.js";
 import type { LlmAgentTurnResult } from "../adapters/openaiAdapter.js";
 import { orderStatusToStructuredOrder } from "./fulfillmentHandlers.js";
+import {
+  buildActiveOrderContextFromToolRecord,
+  clearActiveOrderContext,
+  saveActiveOrderContext,
+} from "./sessionManager.js";
 import { planInstantFiller } from "./responsePlanner.js";
 import { speechChunksFromText } from "../services/voiceSmoothingEngine.js";
 import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
@@ -76,9 +81,21 @@ function persistOrderContext(
 ): void {
   const orderExec = [...result.toolExecutions]
     .reverse()
-    .find((exec) => exec.tool === "get_shopify_order_status" && exec.ok && exec.data);
+    .find((exec) => exec.tool === "get_shopify_order_status");
 
-  if (!orderExec?.data || !("orderNumber" in orderExec.data)) return;
+  if (!orderExec) return;
+
+  if (!orderExec.ok || orderExec.data?.status !== "found") {
+    clearActiveOrderContext(session);
+    return;
+  }
+
+  const payload = buildActiveOrderContextFromToolRecord(orderExec);
+  if (payload) {
+    saveActiveOrderContext(session, payload);
+  }
+
+  if (!orderExec.data || !("orderNumber" in orderExec.data)) return;
 
   const structured = orderStatusToStructuredOrder(orderExec.data);
   if (structured) {
@@ -107,6 +124,7 @@ export async function* runLlmOrchestratorTurn(
       role: m.role,
       content: m.content,
     })),
+    activeOrderContext: session.currentOrderData,
   })) {
     if (event.type === "tool_pending") {
       yield { type: "chunk", chunk: planInstantFiller() };
