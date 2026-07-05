@@ -6,6 +6,7 @@ import {
   buildProactiveOrderSummarySpeech,
   formatOrderDateEnglish,
   parseDeepOrderData,
+  transactionNodesFromConnection,
 } from "../src/utils/orderDataParser.js";
 import {
   DEEP_FETCH_EXPECTED_TTS,
@@ -47,7 +48,7 @@ describe("parseDeepOrderData", () => {
     expect(parsed.cardLast4).toBe("4242");
   });
 
-  it("reads payment gateway from transactions.edges[].node.gateway", () => {
+  it("reads payment gateway from deep-fetch Connection shape (edges[].node)", () => {
     const node = {
       ...DEEP_FETCH_GQL_NODE,
       paymentGatewayNames: undefined,
@@ -70,6 +71,37 @@ describe("parseDeepOrderData", () => {
     expect(parsed.cardLast4).toBeUndefined();
   });
 
+  it("reads payment gateway from minimal-query flat array shape", () => {
+    const node = {
+      ...DEEP_FETCH_GQL_NODE,
+      paymentGatewayNames: undefined,
+      events: undefined,
+      customAttributes: undefined,
+      transactions: [
+        {
+          kind: "SALE",
+          status: "SUCCESS",
+          gateway: "paypal",
+          formattedGateway: "PayPal Express Checkout",
+          paymentDetails: {},
+        },
+      ],
+    };
+    const parsed = parseDeepOrderData(node);
+    expect(parsed.paymentGateway).toBe("PayPal Express Checkout");
+    expect(parsed.cardLast4).toBeUndefined();
+  });
+
+  it("returns empty transactions when transactions is missing", () => {
+    const node = {
+      ...DEEP_FETCH_GQL_NODE,
+      paymentGatewayNames: ["Shopify Payments"],
+      transactions: undefined,
+    };
+    const parsed = parseDeepOrderData(node);
+    expect(parsed.paymentGateway).toBe("Shopify Payments");
+  });
+
   it("prefers currentSubtotalPriceSet over subtotalPriceSet", () => {
     const node = {
       ...DEEP_FETCH_GQL_NODE,
@@ -83,6 +115,22 @@ describe("parseDeepOrderData", () => {
     const mapped = mapGqlOrderNode(ORDER_22406_GQL_NODE);
     expect(mapped.customerEmail).toBe("blake.penfield@example.com");
     expect(mapped.orderPlacedAt).toBe("2025-05-15T14:22:00Z");
+  });
+});
+
+describe("transactionNodesFromConnection", () => {
+  it("normalizes Connection, array, and missing shapes", () => {
+    expect(transactionNodesFromConnection(undefined)).toEqual([]);
+    expect(
+      transactionNodesFromConnection([
+        { gateway: "paypal", kind: "SALE", status: "SUCCESS" },
+      ]),
+    ).toEqual([{ gateway: "paypal", kind: "SALE", status: "SUCCESS" }]);
+    expect(
+      transactionNodesFromConnection({
+        edges: [{ node: { gateway: "shopify_payments", kind: "SALE", status: "SUCCESS" } }],
+      }),
+    ).toEqual([{ gateway: "shopify_payments", kind: "SALE", status: "SUCCESS" }]);
   });
 });
 

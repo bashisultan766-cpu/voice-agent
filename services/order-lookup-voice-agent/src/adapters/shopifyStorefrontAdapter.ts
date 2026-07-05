@@ -316,19 +316,15 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             }
           }
         }
-        transactions(first: 10) {
-          edges {
-            node {
-              kind
-              status
-              gateway
-              formattedGateway
-              paymentDetails {
-                ... on CardPaymentDetails {
-                  company
-                  number
-                }
-              }
+        transactions {
+          kind
+          status
+          gateway
+          formattedGateway
+          paymentDetails {
+            ... on CardPaymentDetails {
+              company
+              number
             }
           }
         }

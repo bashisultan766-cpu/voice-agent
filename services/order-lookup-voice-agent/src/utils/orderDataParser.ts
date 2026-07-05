@@ -49,12 +49,17 @@ export interface DeepOrderGraphqlNode {
     edges?: Array<{ node?: { title?: string; quantity?: number } }>;
   };
   refunds?: OrderRefundNode[];
-  /** Order.transactions is an OrderTransactionConnection — always edges → node. */
-  transactions?: {
-    edges?: Array<{
-      node?: OrderTransactionNode;
-    }>;
-  };
+  /**
+   * Polymorphic: deep fetch returns OrderTransactionConnection (`edges`/`node`),
+   * minimal fallback returns a flat `[OrderTransaction]` array.
+   */
+  transactions?:
+    | OrderTransactionNode[]
+    | {
+        edges?: Array<{
+          node?: OrderTransactionNode;
+        }>;
+      };
   fulfillments?: Array<{
     status?: string;
     displayStatus?: string;
@@ -170,14 +175,22 @@ function subtotalFromNode(node: DeepOrderGraphqlNode): string | undefined {
   );
 }
 
-/** Flatten OrderTransactionConnection edges → node (gateway lives on the node, not the connection). */
-function transactionNodesFromConnection(
-  transactions: DeepOrderGraphqlNode["transactions"],
-): OrderTransactionNode[] | undefined {
-  const nodes = transactions?.edges
-    ?.map((edge) => edge.node)
-    .filter((node): node is OrderTransactionNode => node != null);
-  return nodes?.length ? nodes : undefined;
+/**
+ * Normalize transactions from either GraphQL shape:
+ * - Connection: `{ edges: [{ node: { gateway, ... } }] }` (deep fetch)
+ * - Flat array: `[{ gateway, ... }]` (minimal fallback)
+ */
+export function transactionNodesFromConnection(
+  transactionsData: DeepOrderGraphqlNode["transactions"],
+): OrderTransactionNode[] {
+  if (!transactionsData) return [];
+  if (Array.isArray(transactionsData)) return transactionsData;
+  if (transactionsData.edges) {
+    return transactionsData.edges
+      .map((edge) => edge.node)
+      .filter((node): node is OrderTransactionNode => node != null);
+  }
+  return [];
 }
 
 /**

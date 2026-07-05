@@ -49,6 +49,7 @@ vi.mock("../src/platform/circuitBreaker.js", async (importOriginal) => {
 });
 
 import { ShopifyThrottledError } from "../src/platform/shopifyErrors.js";
+import { buildOrderStatusTts } from "../src/agents/fulfillmentHandlers.js";
 import {
   ORDER_21698_F1_EXPECTED,
   ORDER_21698_F1_GQL_NODE,
@@ -303,6 +304,71 @@ describe("getOrderStatus", () => {
 
     const result = await getOrderStatus("12345");
     expect(result.status).toBe("system_maintenance");
+  });
+
+  it("falls back to minimal query flat transactions and still maps paymentGateway", async () => {
+    const minimalNode = {
+      id: "gid://shopify/Order/1",
+      name: "#12345",
+      email: "jane@example.com",
+      displayFulfillmentStatus: "FULFILLED",
+      displayFinancialStatus: "PAID",
+      customer: { firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
+      subtotalPriceSet: { shopMoney: { amount: "40.00", currencyCode: "USD" } },
+      totalPriceSet: { shopMoney: { amount: "45.99", currencyCode: "USD" } },
+      totalShippingPriceSet: { shopMoney: { amount: "5.99", currencyCode: "USD" } },
+      lineItems: {
+        edges: [{ node: { title: "Sample Book", quantity: 1 } }],
+      },
+      refunds: [],
+      // Minimal query returns a flat [OrderTransaction] array — not a Connection.
+      transactions: [
+        {
+          kind: "SALE",
+          status: "SUCCESS",
+          gateway: "shopify_payments",
+          formattedGateway: "Shopify Payments",
+          paymentDetails: { company: "Visa", number: "•••• 4242" },
+        },
+      ],
+      fulfillments: [
+        {
+          status: "SUCCESS",
+          displayStatus: "Delivered",
+          estimatedDeliveryAt: null,
+          deliveredAt: "2025-01-01T00:00:00Z",
+          trackingInfo: [{ company: "USPS", number: "9400", url: "https://track.example/9400" }],
+        },
+      ],
+    };
+
+    vi.mocked(shopifyGraphql).mockImplementation(async (query: string) => {
+      if (String(query).includes("FulfillmentOrderLookupMinimal")) {
+        return { orders: { edges: [{ node: minimalNode }] } };
+      }
+      throw new Error(
+        'shopify_graphql_error:[{"message":"Field \'gateway\' doesn\'t exist on type \'OrderTransactionConnection\'"}]',
+      );
+    });
+
+    const result = await getOrderStatus("12345");
+    expect(result.status).toBe("found");
+    expect(result.paymentGateway).toBe("Shopify Payments");
+    expect(result.cardLast4).toBe("4242");
+    expect(result.orderNumber).toBe("#12345");
+
+    const deepCalls = vi.mocked(shopifyGraphql).mock.calls.filter(
+      (call) => String(call[0]).includes("FulfillmentOrderLookup") && !String(call[0]).includes("Minimal"),
+    );
+    const minimalCalls = vi.mocked(shopifyGraphql).mock.calls.filter((call) =>
+      String(call[0]).includes("FulfillmentOrderLookupMinimal"),
+    );
+    expect(deepCalls.length).toBeGreaterThan(0);
+    expect(minimalCalls.length).toBeGreaterThan(0);
+
+    const tts = buildOrderStatusTts(result);
+    expect(tts.text.length).toBeGreaterThan(0);
+    expect(tts.text.toLowerCase()).toContain("order");
   });
 });
 
