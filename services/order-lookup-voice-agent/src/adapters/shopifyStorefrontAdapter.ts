@@ -213,18 +213,18 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
               currencyCode
             }
           }
-          transactions {
-            gateway
-            formattedGateway
-            receiptJson
-            paymentDetails {
-              ... on CardPaymentDetails {
-                company
-                number
-              }
-              ... on CreditCardPaymentDetails {
-                last4
-                brand
+          transactions(first: 5) {
+            edges {
+              node {
+                gateway
+                formattedGateway
+                receiptJson
+                paymentDetails {
+                  ... on CardPaymentDetails {
+                    company
+                    number
+                  }
+                }
               }
             }
           }
@@ -241,10 +241,6 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
                 ... on CardPaymentDetails {
                   company
                   number
-                }
-                ... on CreditCardPaymentDetails {
-                  last4
-                  brand
                 }
               }
             }
@@ -344,24 +340,16 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             }
           }
         }
-        transactions(first: 10) {
-          edges {
-            node {
-              kind
-              status
-              gateway
-              formattedGateway
-              receiptJson
-              paymentDetails {
-                ... on CardPaymentDetails {
-                  company
-                  number
-                }
-                ... on CreditCardPaymentDetails {
-                  last4
-                  brand
-                }
-              }
+        transactions {
+          kind
+          status
+          gateway
+          formattedGateway
+          receiptJson
+          paymentDetails {
+            ... on CardPaymentDetails {
+              company
+              number
             }
           }
         }

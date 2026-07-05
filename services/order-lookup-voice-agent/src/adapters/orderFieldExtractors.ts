@@ -29,13 +29,12 @@ export interface OrderPaymentDetails {
 export interface OrderRefundNode {
   note?: string | null;
   totalRefundedSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
-  transactions?: Array<{
-    gateway?: string;
-    formattedGateway?: string;
-    paymentDetails?: OrderPaymentDetails;
-    receiptJson?: string | null;
-    receipt?: string | Record<string, unknown> | null;
-  }>;
+  /** Flat array (REST/minimal) or GraphQL connection (deep fetch). */
+  transactions?:
+    | OrderTransactionNode[]
+    | {
+        edges?: Array<{ node?: OrderTransactionNode }>;
+      };
 }
 
 export interface OrderTransactionNode {
@@ -359,6 +358,15 @@ function cardFromTransaction(txn: OrderTransactionNode): {
   };
 }
 
+function refundTransactionNodes(refund: OrderRefundNode): OrderTransactionNode[] {
+  const raw = refund.transactions;
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  return (raw.edges ?? [])
+    .map((edge) => edge.node)
+    .filter((node): node is OrderTransactionNode => node != null);
+}
+
 /**
  * Omni-Extractor: payment_method_last4 + card_brand.
  * Scans sale/capture transactions, then any success txn, then refund transactions.
@@ -372,7 +380,7 @@ export function extractPaymentMethod(
   const gateways = (paymentGatewayNames ?? []).map(formatGatewayLabel).filter(Boolean) as string[];
   const displayFromNames = gateways.length ? gateways.join(", ") : undefined;
 
-  const refundTxns = (refunds ?? []).flatMap((r) => r.transactions ?? []);
+  const refundTxns = (refunds ?? []).flatMap((refund) => refundTransactionNodes(refund));
   const allTxns: OrderTransactionNode[] = [...(transactions ?? []), ...refundTxns];
 
   const preferred =

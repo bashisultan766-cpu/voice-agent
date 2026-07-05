@@ -155,6 +155,29 @@ describe("orderFieldExtractors", () => {
     expect(payment.cardBrand).toBe("Visa");
   });
 
+  it("reads refund transactions from GraphQL connection shape", () => {
+    const payment = extractPaymentMethod(
+      [],
+      ["Shopify Payments"],
+      [
+        {
+          transactions: {
+            edges: [
+              {
+                node: {
+                  gateway: "shopify_payments",
+                  paymentDetails: { company: "Visa", number: "9999" },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    );
+    expect(payment.cardLast4).toBe("9999");
+    expect(payment.cardBrand).toBe("Visa");
+  });
+
   it("formats paypal gateway slug to human label", () => {
     expect(formatGatewayLabel("paypal")).toBe("PayPal Express Checkout");
   });
