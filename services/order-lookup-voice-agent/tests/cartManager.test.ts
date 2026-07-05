@@ -51,4 +51,21 @@ describe("cartManager", () => {
     const session = makeSession();
     expect(getCartSummary(session).isEmpty).toBe(true);
   });
+
+  it("does not treat ISBN as a Shopify variant GID", () => {
+    const session = makeSession();
+    addToCart(session, [
+      {
+        title: "The Great Gatsby",
+        variant_id: "9780692089705",
+        isbn: "9780692089705",
+        price: "12.99",
+        quantity: 1,
+      },
+    ]);
+
+    const summary = getCartSummary(session);
+    expect(summary.items[0].variantId).toBe("custom:the great gatsby");
+    expect(summary.items[0].price).toBe("12.99");
+  });
 });

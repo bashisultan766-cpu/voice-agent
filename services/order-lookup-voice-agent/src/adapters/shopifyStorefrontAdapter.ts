@@ -41,6 +41,7 @@ import {
 } from "../utils/orderDataParser.js";
 import { extractTrackingInfo } from "./orderFieldExtractors.js";
 import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
+import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
 
 // Re-export formatter validation for order numbers (canonical source).
 export { isValidOrderNumberFormat } from "../utils/formatter.js";
@@ -123,15 +124,35 @@ export interface BookAvailabilityResult {
 }
 
 export interface DraftOrderLineInput {
-  variantId: string;
   quantity: number;
+  variantId?: string;
+  title?: string;
+  originalUnitPrice?: string;
 }
 
 export interface DraftOrderResult {
-  status: AdapterStatus;
+  success: boolean;
+  status: AdapterStatus | "failed";
   invoiceUrl?: string;
   draftOrderName?: string;
+  error?: string;
   message?: string;
+}
+
+/** Build a Shopify DraftOrder line — variant GID when valid, otherwise custom line item. */
+export function buildDraftOrderLinePayload(item: DraftOrderLineInput): Record<string, unknown> {
+  const quantity = Math.max(1, item.quantity || 1);
+  const variantGid = item.variantId ? parseVariantGid(item.variantId) : null;
+
+  if (variantGid) {
+    return { variantId: variantGid, quantity };
+  }
+
+  return {
+    title: (item.title ?? "Book").trim() || "Book",
+    quantity,
+    originalUnitPrice: item.originalUnitPrice?.trim() || "0.00",
+  };
 }
 
 interface GqlFulfillmentNode {
@@ -636,17 +657,18 @@ function toBookResult(
   const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
   const inStock = product.variants.some((v) => v.inStock);
 
-  const variantNumericId = primaryVariant?.id ?? "";
+  const variantGid =
+    parseVariantGid(primaryVariant?.id ?? "") ??
+    undefined;
+
   return {
     status,
     bookName: product.title,
     price: primaryVariant?.price ?? "0",
     inStock,
     quantity,
-    productId: product.id,
-    variantId: variantNumericId
-      ? `gid://shopify/ProductVariant/${variantNumericId}`
-      : undefined,
+    productId: toProductGid(product.id),
+    variantId: variantGid,
     isbn: product.isbns?.[0],
     exactMatch: meta?.exactMatch,
     queriedTitle: meta?.queriedTitle,
@@ -678,14 +700,27 @@ export async function createShopifyDraftOrder(
   customerName: string,
   callSid = "checkout",
 ): Promise<DraftOrderResult> {
-  const lineItems = cartItems.filter((item) => item.variantId && item.quantity > 0);
+  const lineItems = cartItems
+    .filter((item) => item.quantity > 0 && (item.variantId || item.title))
+    .map((item) => buildDraftOrderLinePayload(item));
+
   if (!lineItems.length) {
-    return { status: "invalid_format", message: "Cart is empty." };
+    return {
+      success: false,
+      status: "invalid_format",
+      error: "Cart is empty.",
+      message: "Cart is empty.",
+    };
   }
 
   const email = customerEmail.trim();
   if (!email) {
-    return { status: "invalid_format", message: "Customer email is required." };
+    return {
+      success: false,
+      status: "invalid_format",
+      error: "Customer email is required.",
+      message: "Customer email is required.",
+    };
   }
 
   try {
@@ -697,12 +732,7 @@ export async function createShopifyDraftOrder(
         };
       }>(CREATE_DRAFT_ORDER_MUTATION, {
         input: {
-          lineItems: lineItems.map((item) => ({
-            variantId: item.variantId.startsWith("gid://")
-              ? item.variantId
-              : `gid://shopify/ProductVariant/${item.variantId}`,
-            quantity: item.quantity,
-          })),
+          lineItems,
           email,
           note: customerName.trim()
             ? `Voice order for ${customerName.trim()}`
@@ -712,17 +742,29 @@ export async function createShopifyDraftOrder(
 
       const errors = data.draftOrderCreate?.userErrors ?? [];
       if (errors.length > 0) {
-        const message = errors.map((e) => e.message).join("; ");
-        logger.warn("shopify_draft_order_user_errors", { message });
-        return { status: "api_error", message };
+        const errorMessage = errors[0]?.message ?? "Could not create checkout link.";
+        logger.warn("shopify_draft_order_user_errors", { message: errorMessage });
+        return {
+          success: false,
+          status: "failed",
+          error: errorMessage,
+          message: errorMessage,
+        };
       }
 
       const draft = data.draftOrderCreate?.draftOrder;
       if (!draft?.invoiceUrl) {
-        return { status: "api_error", message: "Draft order created without invoice URL." };
+        const errorMessage = "Draft order created without invoice URL.";
+        return {
+          success: false,
+          status: "failed",
+          error: errorMessage,
+          message: errorMessage,
+        };
       }
 
       return {
+        success: true,
         status: "found",
         invoiceUrl: draft.invoiceUrl,
         draftOrderName: draft.name,
@@ -730,11 +772,22 @@ export async function createShopifyDraftOrder(
     });
   } catch (err) {
     if (isShopifyThrottleError(err)) {
-      return { status: "throttled", message: "Shopify is busy. Please try again shortly." };
+      return {
+        success: false,
+        status: "throttled",
+        error: "Shopify is busy. Please try again shortly.",
+        message: "Shopify is busy. Please try again shortly.",
+      };
     }
-    return adapterFailureFromError(err, "shopify_draft_order_failed", {
+    const failure = adapterFailureFromError(err, "shopify_draft_order_failed", {
       callSid: callSid.slice(0, 8),
     });
+    return {
+      success: false,
+      status: failure.status,
+      error: failure.message,
+      message: failure.message,
+    };
   }
 }
 

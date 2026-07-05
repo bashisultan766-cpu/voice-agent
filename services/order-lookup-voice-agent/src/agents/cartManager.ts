@@ -3,26 +3,16 @@
  */
 import type { CallSession, ShoppingCartLineItem } from "../types/order.js";
 import { logger } from "../utils/logger.js";
+import { parseVariantGid } from "../utils/shopifyGid.js";
 
 export interface CartItemInput {
   variant_id?: string;
   product_id?: string;
   title?: string;
   isbn?: string;
+  price?: string;
   quantity?: number;
 }
-
-function normalizeVariantId(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-  if (trimmed.startsWith("gid://shopify/ProductVariant/")) return trimmed;
-  return `gid://shopify/ProductVariant/${trimmed.replace(/\D/g, "") || trimmed}`;
-}
-
-function cartKey(item: Pick<ShoppingCartLineItem, "variantId" | "title">): string {
-  return item.variantId || item.title.toLowerCase();
-}
-
 export function ensureShoppingCart(session: CallSession): ShoppingCartLineItem[] {
   if (!session.shoppingCart) {
     session.shoppingCart = [];
@@ -34,34 +24,37 @@ export function addToCart(session: CallSession, items: CartItemInput[]): Shoppin
   const cart = ensureShoppingCart(session);
 
   for (const raw of items) {
-    const variantId = normalizeVariantId(raw.variant_id ?? "");
+    const variantGid = parseVariantGid(raw.variant_id ?? "");
     const title = (raw.title ?? "").trim();
     const quantity = Math.max(1, Number(raw.quantity ?? 1) || 1);
+    const price = (raw.price ?? "").trim() || undefined;
 
-    if (!variantId && !title) continue;
+    if (!variantGid && !title) continue;
 
+    const lineKey = variantGid ?? `custom:${title.toLowerCase()}`;
     const existing = cart.find(
       (line) =>
-        (variantId && line.variantId === variantId) ||
-        (title && line.title.toLowerCase() === title.toLowerCase()),
+        (variantGid && line.variantId === variantGid) ||
+        (!variantGid && title && line.title.toLowerCase() === title.toLowerCase()),
     );
 
     if (existing) {
       existing.quantity += quantity;
       if (raw.isbn) existing.isbn = raw.isbn;
       if (raw.product_id) existing.productId = raw.product_id;
+      if (price) existing.price = price;
       continue;
     }
 
     cart.push({
-      variantId: variantId || `title:${title.toLowerCase()}`,
+      variantId: variantGid ?? lineKey,
       productId: (raw.product_id ?? "").trim(),
       title: title || "Book",
       quantity,
+      price,
       isbn: raw.isbn?.trim(),
     });
   }
-
   logger.info("cart_updated", {
     callSid: session.callSid.slice(0, 8),
     itemCount: cart.length,
@@ -75,16 +68,14 @@ export function removeFromCart(session: CallSession, items: CartItemInput[]): Sh
   const cart = ensureShoppingCart(session);
 
   for (const raw of items) {
-    const variantId = normalizeVariantId(raw.variant_id ?? "");
-    const title = (raw.title ?? "").trim().toLowerCase();
-    const removeQty = Math.max(1, Number(raw.quantity ?? 1) || 1);
+    const variantGid = parseVariantGid(raw.variant_id ?? "");
+    const title = (raw.title ?? "").trim().toLowerCase();    const removeQty = Math.max(1, Number(raw.quantity ?? 1) || 1);
 
     const index = cart.findIndex(
       (line) =>
-        (variantId && line.variantId === variantId) ||
+        (variantGid && line.variantId === variantGid) ||
         (title && line.title.toLowerCase() === title),
-    );
-    if (index < 0) continue;
+    );    if (index < 0) continue;
 
     const line = cart[index];
     if (line.quantity > removeQty) {
@@ -133,7 +124,8 @@ export function buildCartContextSystemMessage(session: CallSession): string {
 
   return (
     "ACTIVE SHOPPING CART: The caller's current cart is persisted for this call. " +
-    "Use add_to_cart / remove_from_cart / get_cart_summary to manage it. " +
+    "Use add_to_cart with variant_id from search results (full gid://shopify/ProductVariant/...), " +
+    "or remove_from_cart / get_cart_summary to manage it. " +
     `JSON: ${JSON.stringify(summary.items)}`
   );
 }

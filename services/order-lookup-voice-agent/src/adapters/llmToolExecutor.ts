@@ -63,9 +63,10 @@ export interface CartToolResult {
 }
 
 export interface CheckoutEmailToolResult {
-  status: "sent" | "error" | "blocked";
+  status: "sent" | "failed" | "error" | "blocked";
   invoice_url?: string;
   draft_order_name?: string;
+  reason?: string;
   message?: string;
 }
 
@@ -89,7 +90,8 @@ export interface LlmToolExecutionRecord {
     | "ok"
     | "empty"
     | "sent"
-    | "error";
+    | "error"
+    | "failed";
   data?:
     | OrderStatusResult
     | BookAvailabilityResult
@@ -297,21 +299,31 @@ export async function executeLlmTool(
 
     try {
       const draft = await createShopifyDraftOrder(
-        summary.items
-          .filter((line) => line.variantId && !line.variantId.startsWith("title:"))
-          .map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
+        summary.items.map((line) => ({
+          quantity: line.quantity,
+          variantId: line.variantId.startsWith("custom:") ? undefined : line.variantId,
+          title: line.title,
+          originalUnitPrice: line.price,
+        })),
         customerEmail,
         customerName,
         callSid,
       );
 
-      if (draft.status !== "found" || !draft.invoiceUrl) {
+      if (!draft.success || !draft.invoiceUrl) {
+        const reason = draft.error ?? draft.message ?? "Could not create checkout link.";
+        const data: CheckoutEmailToolResult = {
+          status: "failed",
+          reason,
+          message: reason,
+        };
         return {
           tool,
           args: { customerEmail, customerName },
           ok: false,
-          status: draft.status === "throttled" ? "throttled" : "api_error",
-          errorMessage: draft.message ?? "Could not create checkout link.",
+          status: draft.status === "throttled" ? "throttled" : "failed",
+          errorMessage: reason,
+          data,
           elapsedMs: Date.now() - started,
         };
       }
@@ -569,13 +581,23 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
   }
 
   if (record.tool === "send_checkout_email") {
+    if (!record.ok) {
+      const checkout = record.data as CheckoutEmailToolResult | undefined;
+      const reason = checkout?.reason ?? record.errorMessage ?? "Checkout failed.";
+      return JSON.stringify({
+        status: "failed",
+        reason,
+        checkout,
+        instructions:
+          "Do NOT say the system is undergoing updates. Apologize to the customer, state exactly which book caused the problem using the reason field, and immediately call send_support_escalation with a concise issueSummary.",
+      });
+    }
     return JSON.stringify({
       status: record.status,
       ok: record.ok,
       checkout: record.data,
-      instructions: record.ok
-        ? "Tell the caller their secure payment link was emailed and they should complete facility/inmate details on checkout."
-        : "Apologize briefly and offer to retry or read the issue back.",
+      instructions:
+        "Tell the caller their secure payment link was emailed and they should complete facility/inmate details on checkout.",
     });
   }
 
@@ -632,6 +654,7 @@ function parseCartItemsArg(raw: unknown): Array<{
   product_id?: string;
   title?: string;
   isbn?: string;
+  price?: string;
   quantity?: number;
 }> {
   if (!raw) return [];
@@ -644,6 +667,7 @@ function parseCartItemsArg(raw: unknown): Array<{
         product_id: String(obj.product_id ?? obj.productId ?? ""),
         title: String(obj.title ?? ""),
         isbn: String(obj.isbn ?? ""),
+        price: String(obj.price ?? ""),
         quantity: Number(obj.quantity ?? 1),
       };
     });
@@ -656,6 +680,7 @@ function parseCartItemsArg(raw: unknown): Array<{
         product_id: String(obj.product_id ?? obj.productId ?? ""),
         title: String(obj.title ?? ""),
         isbn: String(obj.isbn ?? ""),
+        price: String(obj.price ?? ""),
         quantity: Number(obj.quantity ?? 1),
       },
     ];
