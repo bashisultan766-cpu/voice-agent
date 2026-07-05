@@ -71,6 +71,32 @@ describe("parseDeepOrderData", () => {
     expect(parsed.cardLast4).toBeUndefined();
   });
 
+  it("maps payment_method_last4 from receiptJson on transactions", () => {
+    const node = {
+      ...DEEP_FETCH_GQL_NODE,
+      transactions: {
+        edges: [
+          {
+            node: {
+              kind: "SALE",
+              status: "SUCCESS",
+              gateway: "shopify_payments",
+              formattedGateway: "Shopify Payments",
+              paymentDetails: {},
+              receiptJson: JSON.stringify({
+                payment_method_details: { card: { last4: "4242", brand: "Visa" } },
+              }),
+            },
+          },
+        ],
+      },
+      refunds: [],
+    };
+    const parsed = parseDeepOrderData(node);
+    expect(parsed.cardLast4).toBe("4242");
+    expect(parsed.cardBrand).toBe("Visa");
+  });
+
   it("reads payment gateway from minimal-query flat array shape", () => {
     const node = {
       ...DEEP_FETCH_GQL_NODE,

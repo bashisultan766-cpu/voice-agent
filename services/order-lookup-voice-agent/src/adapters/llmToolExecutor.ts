@@ -259,7 +259,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       found: true,
       data: shapeOrderStatusForLlm(record.data),
       instructions:
-        "Deep-fetch data is for internal memory only, including the full timeline events array. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. If the caller asks which email a notification or refund was sent to, read refund_notification_email or order_confirmation_email from this JSON — never say you lack access when those fields are present. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If refund_notification_email, order_confirmation_email, payment_method_last4, or payment_gateway is null, omit that detail — never invent a replacement.",
+        "Deep-fetch data is for internal memory only, including the full timeline events array. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Keys always present: customer_name, payment_method_last4, card_brand, refund_notification_email. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL REFUND PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If a field is null, omit that detail — never invent a replacement.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -275,6 +275,14 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
   });
 }
 
+/** Keys that must always exist on session.currentOrderData / LLM payloads (null allowed). */
+export const OMNI_EXTRACTOR_PAYLOAD_KEYS = [
+  "customer_name",
+  "payment_method_last4",
+  "card_brand",
+  "refund_notification_email",
+] as const;
+
 /** Sanitized snake_case order fields for session memory and LLM follow-up context. */
 export function buildActiveOrderContextPayload(
   data: OrderStatusResult,
@@ -282,10 +290,14 @@ export function buildActiveOrderContextPayload(
   return shapeOrderStatusForLlm(data);
 }
 
-/** Snake_case order payload — matches system prompt field names exactly. */
+/**
+ * Snake_case order payload — matches system prompt field names exactly.
+ * Omni-Extractor keys (customer_name, payment_method_last4, card_brand,
+ * refund_notification_email) are always present — never dropped or sanitized out.
+ */
 function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown> {
   const trackingNumber = data.trackingNumber ?? null;
-  return {
+  const payload: Record<string, unknown> = {
     order_number: data.orderNumber ?? null,
     customer_name: data.customerName ?? null,
     customer_email: data.customerEmail ?? null,
@@ -313,4 +325,13 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
       : null,
     tracking_status: data.trackingStatus ?? null,
   };
+
+  // Payload synchronization guard — these keys must never be omitted.
+  for (const key of OMNI_EXTRACTOR_PAYLOAD_KEYS) {
+    if (!(key in payload)) {
+      payload[key] = null;
+    }
+  }
+
+  return payload;
 }

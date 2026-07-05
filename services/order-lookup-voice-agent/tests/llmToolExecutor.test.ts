@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   executeLlmTool,
+  buildActiveOrderContextPayload,
   buildOrderNotFoundLlmPayload,
   SYSTEM_MAINTENANCE_LLM_PAYLOAD,
   toolResultForLlm,
@@ -47,9 +48,55 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.refund_notification_email).toBe("zzyxx2002@yahoo.com");
     expect(parsed.data.payment_gateway).toBe("PayPal Express Checkout");
     expect(parsed.data.payment_method_last4).toBeNull();
+    expect(parsed.data.card_brand).toBeNull();
+    // Omni-Extractor payload keys must always be present (null allowed).
+    for (const key of [
+      "customer_name",
+      "payment_method_last4",
+      "card_brand",
+      "refund_notification_email",
+    ]) {
+      expect(key in parsed.data).toBe(true);
+    }
     expect(parsed.instructions).toMatch(/progressive disclosure|ORDER LOOKUP S\.O\.P/i);
+    expect(parsed.instructions).toMatch(/INTERNATIONAL REFUND PROTOCOL/i);
     expect(parsed.status).toBe("FOUND");
     expect(parsed.found).toBe(true);
+  });
+
+  it("preserves payment_method_last4 and card_brand in LLM and session payloads", () => {
+    const record: LlmToolExecutionRecord = {
+      tool: "get_shopify_order_status",
+      args: { orderNumber: "21796" },
+      ok: true,
+      status: "found",
+      elapsedMs: 10,
+      data: {
+        status: "found",
+        orderNumber: "#21796",
+        customerName: "Jamaica Thompson",
+        cardLast4: "4242",
+        cardBrand: "Visa",
+        refundStatus: "REFUNDED",
+        refundNotificationEmail: "jamaicathompson87@gmail.com",
+      },
+    };
+
+    const parsed = JSON.parse(toolResultForLlm(record)) as {
+      data: Record<string, unknown>;
+    };
+    expect(parsed.data.customer_name).toBe("Jamaica Thompson");
+    expect(parsed.data.payment_method_last4).toBe("4242");
+    expect(parsed.data.card_brand).toBe("Visa");
+    expect(parsed.data.refund_notification_email).toBe("jamaicathompson87@gmail.com");
+
+    const sessionPayload = buildActiveOrderContextPayload(record.data);
+    expect(sessionPayload.customer_name).toBe("Jamaica Thompson");
+    expect(sessionPayload.payment_method_last4).toBe("4242");
+    expect(sessionPayload.card_brand).toBe("Visa");
+    expect(sessionPayload.refund_notification_email).toBe(
+      "jamaicathompson87@gmail.com",
+    );
   });
 
   it("includes tracking_number and tracking_number_for_tts in order payload", () => {

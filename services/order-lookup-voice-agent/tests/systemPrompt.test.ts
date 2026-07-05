@@ -54,4 +54,19 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT invent your own spacing, dashes, ellipses, or SSML/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);
   });
+
+  it("enforces INTERNATIONAL REFUND PROTOCOL verification & guidance", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/INTERNATIONAL REFUND PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Verification & Guidance/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I can confirm that the order for \[Customer Name\] was refunded/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/card ending in \[Last 4 Digits\]/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /A refund notification was sent to \[Refund Email\]/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /Never say the information is not on file if the JSON context contains these fields/i,
+    );
+  });
 });

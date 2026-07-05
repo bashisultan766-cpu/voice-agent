@@ -1,5 +1,6 @@
 /**
  * Pure extractors for Shopify order fields — timeline-first, zero-hallucination.
+ * Omni-Extractor: aggressive timeline email + polymorphic payment card mapping.
  */
 
 export interface OrderTimelineEvent {
@@ -13,13 +14,27 @@ export interface OrderCustomAttribute {
   value?: string;
 }
 
+/** Polymorphic payment details — CardPaymentDetails, receipt aliases, REST shapes. */
+export interface OrderPaymentDetails {
+  company?: string;
+  number?: string;
+  /** CreditCardPaymentDetails / receipt alias for last four digits. */
+  last4?: string;
+  /** CreditCardPaymentDetails / receipt alias for card brand. */
+  brand?: string;
+  credit_card_number?: string;
+  credit_card_company?: string;
+}
+
 export interface OrderRefundNode {
   note?: string | null;
   totalRefundedSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   transactions?: Array<{
     gateway?: string;
     formattedGateway?: string;
-    paymentDetails?: { company?: string; number?: string };
+    paymentDetails?: OrderPaymentDetails;
+    receiptJson?: string | null;
+    receipt?: string | Record<string, unknown> | null;
   }>;
 }
 
@@ -28,32 +43,15 @@ export interface OrderTransactionNode {
   status?: string;
   gateway?: string;
   formattedGateway?: string;
-  paymentDetails?: { company?: string; number?: string };
+  paymentDetails?: OrderPaymentDetails;
+  /** Shopify Admin GraphQL receipt blob (JSON string). */
+  receiptJson?: string | null;
+  /** REST-style receipt object or JSON string. */
+  receipt?: string | Record<string, unknown> | null;
 }
 
-const EMAIL_RE = /\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/;
-
-const REFUND_NOTIFICATION_SENT_RE =
-  /refund\s+notification\s+(?:was\s+)?sent\s+to\s+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i;
-
-/** Parenthetical email — e.g. "sent to Joel Moore (zzyxx2002@yahoo.com)". */
-const SENT_TO_PAREN_EMAIL_RE = /sent\s+to\s+[^(]*\(([^)]+@[^)]+)\)/i;
-
-/**
- * Staff timeline — "Darren Herrington sent a refund notification email to Jamaica Thompson (jamaicathompson87@gmail.com)".
- * Also matches "sent a refund notification email to Blake Penfield (btazp@yahoo.com)".
- */
-const REFUND_NOTIFICATION_EMAIL_PAREN_RE =
-  /refund\s+notification\s+email\s+(?:was\s+)?(?:sent\s+)?to\s+[^(]*\(([^)]+@[^)]+)\)/i;
-
-/**
- * Order confirmation — "confirmation email was sent to Jamaica Thompson (jamaicathompson87@gmail.com)".
- */
-const ORDER_CONFIRMATION_EMAIL_PAREN_RE =
-  /(?:order\s+)?confirmation\s+email\s+(?:was\s+)?(?:sent\s+)?to\s+[^(]*\(([^)]+@[^)]+)\)/i;
-
-const ORDER_CONFIRMATION_SENT_RE =
-  /(?:order\s+)?confirmation\s+(?:email\s+)?(?:was\s+)?sent\s+to\s+([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i;
+/** Standard email — intentionally loose; Shopify timeline copy changes often. */
+const EMAIL_RE = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/;
 
 /**
  * Staff timeline — "Reason: OUT OF STOCK - ISSUE REFUND VIA PAYPAL"
@@ -103,7 +101,9 @@ export function extractCardLast4(paymentNumber?: string): string | undefined {
 }
 
 /**
- * Refund notification email — timeline/events first, then custom attributes.
+ * Omni-Extractor: refund notification email.
+ * Any timeline event containing "refund" (case-insensitive) plus a standard email
+ * address is accepted — do not rely on exact Shopify sentence structures.
  * NEVER falls back to the order's billing email (prevents Gmail hallucination).
  */
 export function extractRefundNotificationEmail(
@@ -113,32 +113,23 @@ export function extractRefundNotificationEmail(
   for (const event of [...events].reverse()) {
     const message = (event.message ?? "").trim();
     if (!message || !/refund/i.test(message)) continue;
-
-    const notificationParen = message.match(REFUND_NOTIFICATION_EMAIL_PAREN_RE);
-    if (notificationParen?.[1]) return notificationParen[1].trim();
-
-    const explicit = message.match(REFUND_NOTIFICATION_SENT_RE);
-    if (explicit?.[1]) return explicit[1].trim();
-
-    const paren = message.match(SENT_TO_PAREN_EMAIL_RE);
-    if (paren?.[1]) return paren[1].trim();
-
-    if (/mail_sent|notification|sent to/i.test(message) || event.action === "mail_sent") {
-      const found = message.match(EMAIL_RE);
-      if (found?.[1]) return found[1].trim();
-    }
+    const found = message.match(EMAIL_RE);
+    if (found?.[1]) return found[1].trim();
   }
 
   for (const attr of customAttributes ?? []) {
     const key = (attr.key ?? "").toLowerCase();
     if ((key.includes("refund") && key.includes("email")) || key === "refund_email") {
       const value = (attr.value ?? "").trim();
-      if (value && EMAIL_RE.test(value)) return value;
+      if (value && EMAIL_RE.test(value)) return value.match(EMAIL_RE)?.[1]?.trim() ?? value;
     }
   }
 
   return undefined;
 }
+
+/** @deprecated Alias — prefer extractRefundNotificationEmail. */
+export const extractRefundEmail = extractRefundNotificationEmail;
 
 /** Exact staff timeline reason — e.g. "OUT OF STOCK - ISSUE REFUND VIA PAYPAL". */
 export function extractTimelineRefundReason(
@@ -159,7 +150,9 @@ export function extractTimelineRefundReason(
 }
 
 /**
- * Order confirmation email — timeline only.
+ * Omni-Extractor: order confirmation email.
+ * Any timeline event containing "confirm" or "placed" (case-insensitive) plus a
+ * standard email address is accepted — do not rely on exact Shopify sentence structures.
  * NEVER falls back to the order's billing email.
  */
 export function extractOrderConfirmationEmail(
@@ -167,23 +160,17 @@ export function extractOrderConfirmationEmail(
 ): string | undefined {
   for (const event of [...events].reverse()) {
     const message = (event.message ?? "").trim();
-    if (!message || !/confirmation/i.test(message)) continue;
+    if (!message) continue;
+    if (!/confirm|placed/i.test(message)) continue;
     if (/refund/i.test(message)) continue;
-
-    const paren = message.match(ORDER_CONFIRMATION_EMAIL_PAREN_RE);
-    if (paren?.[1]) return paren[1].trim();
-
-    const explicit = message.match(ORDER_CONFIRMATION_SENT_RE);
-    if (explicit?.[1]) return explicit[1].trim();
-
-    const sentParen = message.match(SENT_TO_PAREN_EMAIL_RE);
-    if (sentParen?.[1]) return sentParen[1].trim();
-
     const found = message.match(EMAIL_RE);
     if (found?.[1]) return found[1].trim();
   }
   return undefined;
 }
+
+/** @deprecated Alias — prefer extractOrderConfirmationEmail. */
+export const extractConfirmationEmail = extractOrderConfirmationEmail;
 
 /**
  * Refund / notification date from timeline text ("on May 28") or event timestamp.
@@ -296,28 +283,125 @@ export function extractTrackingInfo(
   };
 }
 
+/** Parse receiptJson / receipt for payment_method_details.card.{last4,brand}. */
+export function extractCardFromReceipt(
+  receipt: string | Record<string, unknown> | null | undefined,
+): { cardLast4?: string; cardBrand?: string } {
+  if (receipt == null) return {};
+
+  let obj: Record<string, unknown>;
+  if (typeof receipt === "string") {
+    const trimmed = receipt.trim();
+    if (!trimmed) return {};
+    try {
+      obj = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  } else {
+    obj = receipt;
+  }
+
+  const paymentMethodDetails = obj.payment_method_details as
+    | Record<string, unknown>
+    | undefined;
+  const card = (paymentMethodDetails?.card ?? obj.card) as
+    | Record<string, unknown>
+    | undefined;
+
+  const cardLast4 =
+    extractCardLast4(typeof card?.last4 === "string" ? card.last4 : undefined) ??
+    extractCardLast4(
+      typeof obj.credit_card_number === "string" ? obj.credit_card_number : undefined,
+    );
+  const cardBrand =
+    (typeof card?.brand === "string" ? card.brand : undefined) ??
+    (typeof card?.company === "string" ? card.company : undefined) ??
+    (typeof obj.credit_card_company === "string" ? obj.credit_card_company : undefined);
+
+  return { cardLast4, cardBrand };
+}
+
+/** Map polymorphic paymentDetails (number/last4, company/brand) to voice fields. */
+export function extractCardFromPaymentDetails(
+  paymentDetails?: OrderPaymentDetails | null,
+): { cardLast4?: string; cardBrand?: string } {
+  if (!paymentDetails) return {};
+  const cardLast4 =
+    extractCardLast4(paymentDetails.last4) ??
+    extractCardLast4(paymentDetails.number) ??
+    extractCardLast4(paymentDetails.credit_card_number);
+  const cardBrand =
+    paymentDetails.brand ??
+    paymentDetails.company ??
+    paymentDetails.credit_card_company;
+  return {
+    cardLast4,
+    cardBrand: cardBrand?.trim() || undefined,
+  };
+}
+
+function cardFromTransaction(txn: OrderTransactionNode): {
+  cardLast4?: string;
+  cardBrand?: string;
+} {
+  const fromDetails = extractCardFromPaymentDetails(txn.paymentDetails);
+  const fromReceipt = extractCardFromReceipt(txn.receiptJson ?? txn.receipt);
+  return {
+    cardLast4: fromDetails.cardLast4 ?? fromReceipt.cardLast4,
+    cardBrand: fromDetails.cardBrand ?? fromReceipt.cardBrand,
+  };
+}
+
+/**
+ * Omni-Extractor: payment_method_last4 + card_brand.
+ * Scans sale/capture transactions, then any success txn, then refund transactions.
+ * Reads paymentDetails (number/last4, company/brand) and receipt / receiptJson.
+ */
 export function extractPaymentMethod(
   transactions: OrderTransactionNode[] | undefined,
   paymentGatewayNames: string[] | undefined,
+  refunds?: OrderRefundNode[],
 ): { cardLast4?: string; cardBrand?: string; paymentGateway?: string } {
   const gateways = (paymentGatewayNames ?? []).map(formatGatewayLabel).filter(Boolean) as string[];
   const displayFromNames = gateways.length ? gateways.join(", ") : undefined;
 
-  const saleTxn =
-    transactions?.find(
+  const refundTxns = (refunds ?? []).flatMap((r) => r.transactions ?? []);
+  const allTxns: OrderTransactionNode[] = [...(transactions ?? []), ...refundTxns];
+
+  const preferred =
+    allTxns.find(
       (t) =>
         t.status?.toUpperCase() === "SUCCESS" &&
         (t.kind?.toUpperCase() === "SALE" || t.kind?.toUpperCase() === "CAPTURE"),
-    ) ?? transactions?.find((t) => t.status?.toUpperCase() === "SUCCESS") ?? transactions?.[0];
+    ) ??
+    allTxns.find((t) => t.status?.toUpperCase() === "SUCCESS") ??
+    allTxns[0];
 
-  const cardLast4 = extractCardLast4(saleTxn?.paymentDetails?.number);
-  const cardBrand = saleTxn?.paymentDetails?.company;
+  let cardLast4: string | undefined;
+  let cardBrand: string | undefined;
+
+  const scanOrder = preferred
+    ? [preferred, ...allTxns.filter((t) => t !== preferred)]
+    : allTxns;
+
+  for (const txn of scanOrder) {
+    const card = cardFromTransaction(txn);
+    if (card.cardLast4) {
+      cardLast4 = card.cardLast4;
+      cardBrand = card.cardBrand ?? cardBrand;
+      break;
+    }
+    if (!cardBrand && card.cardBrand) cardBrand = card.cardBrand;
+  }
+
   const txnGateway =
-    formatGatewayLabel(saleTxn?.formattedGateway) ?? formatGatewayLabel(saleTxn?.gateway);
+    formatGatewayLabel(preferred?.formattedGateway) ??
+    formatGatewayLabel(preferred?.gateway);
 
   return {
     cardLast4,
     cardBrand,
-    paymentGateway: cardLast4 ? txnGateway ?? displayFromNames : txnGateway ?? displayFromNames,
+    paymentGateway: txnGateway ?? displayFromNames,
   };
 }

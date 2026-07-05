@@ -223,6 +223,7 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   const payment = extractPaymentMethod(
     transactionNodesFromConnection(node.transactions),
     node.paymentGatewayNames,
+    node.refunds,
   );
   const orderPlacedAt = node.createdAt;
 

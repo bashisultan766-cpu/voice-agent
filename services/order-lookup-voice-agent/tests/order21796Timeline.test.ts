@@ -98,6 +98,9 @@ describe("order #21796 deep timeline extraction", () => {
     expect(llmPayload.data.order_confirmation_email).toBe(
       "jamaicathompson87@gmail.com",
     );
+    expect(llmPayload.data.customer_name).toBe("Jamaica Thompson");
+    expect(llmPayload.data.payment_method_last4).toBe("4242");
+    expect(llmPayload.data.card_brand).toBe("Visa");
     expect(llmPayload.data.refund_reason).toBe("Customer Cancel Order");
     expect(llmPayload.data.events).toEqual(
       expect.arrayContaining([
@@ -111,6 +114,9 @@ describe("order #21796 deep timeline extraction", () => {
     expect(sessionPayload.refund_notification_email).toBe(
       "jamaicathompson87@gmail.com",
     );
+    expect(sessionPayload.customer_name).toBe("Jamaica Thompson");
+    expect(sessionPayload.payment_method_last4).toBe("4242");
+    expect(sessionPayload.card_brand).toBe("Visa");
     expect(sessionPayload.refund_reason).toBe("Customer Cancel Order");
     expect(sessionPayload.events).toEqual(expect.any(Array));
     expect((sessionPayload.events as string[]).length).toBeGreaterThan(0);
@@ -120,6 +126,9 @@ describe("order #21796 deep timeline extraction", () => {
     expect(session.currentOrderData?.refund_notification_email).toBe(
       "jamaicathompson87@gmail.com",
     );
+    expect(session.currentOrderData?.customer_name).toBe("Jamaica Thompson");
+    expect(session.currentOrderData?.payment_method_last4).toBe("4242");
+    expect(session.currentOrderData?.card_brand).toBe("Visa");
     expect(session.currentOrderData?.refund_reason).toBe("Customer Cancel Order");
     expect(session.currentOrderData?.events).toEqual(
       expect.arrayContaining([

@@ -216,6 +216,7 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
           transactions {
             gateway
             formattedGateway
+            receiptJson
             paymentDetails {
               ... on CardPaymentDetails {
                 company
@@ -231,6 +232,7 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
               status
               gateway
               formattedGateway
+              receiptJson
               paymentDetails {
                 ... on CardPaymentDetails {
                   company
@@ -321,6 +323,7 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
           status
           gateway
           formattedGateway
+          receiptJson
           paymentDetails {
             ... on CardPaymentDetails {
               company
@@ -489,6 +492,9 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     orderNumber: mapped.orderNumber,
     orderPlacedAt: mapped.orderPlacedAt,
     customerEmail: mapped.customerEmail,
+    customerName: mapped.customerName,
+    cardLast4: mapped.cardLast4,
+    cardBrand: mapped.cardBrand,
     refundDate: mapped.refundDate,
     refundReason: mapped.refundReason,
     refundNotificationEmail: mapped.refundNotificationEmail,
