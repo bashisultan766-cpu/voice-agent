@@ -17,8 +17,13 @@ export type TtsEngineName =
   | "Twilio ConversationRelay (ElevenLabs)"
   | "Twilio ConversationRelay (Google fallback)";
 
-/** Minimum mulaw/pcm chunk size — ~40 ms at 8 kHz; avoids micro-stutter on stream playback. */
-export const MIN_AUDIO_CHUNK_BYTES = 320;
+/** Telephony-native output formats only — never MP3 on the Twilio path. */
+export type TelephonyAudioFormat = "ulaw_8000" | "pcm_16000";
+
+/** ~20 ms of ulaw @ 8 kHz — lower bound for smooth stream playback. */
+export const MIN_AUDIO_CHUNK_BYTES = 160;
+/** ~50 ms of ulaw @ 8 kHz — upper bound to limit mouth-to-ear delay. */
+export const MAX_AUDIO_CHUNK_BYTES = 400;
 
 export interface VoiceSynthesisResult {
   audio: Buffer;
@@ -66,30 +71,78 @@ function elevenLabsModelId(): string {
   return normalized ? `eleven_${normalized}` : "eleven_turbo_v2_5";
 }
 
-function contentTypeForFormat(format: string): string {
-  if (format === "ulaw_8000") return "audio/basic";
-  if (format.startsWith("pcm")) return "audio/L16";
-  return "audio/mpeg";
+/** Coerce to Twilio-native telephony format — MP3 causes double-encoding artifacts on phone lines. */
+export function resolveTelephonyOutputFormat(): TelephonyAudioFormat {
+  const format = getConfig().TTS_AUDIO_FORMAT;
+  if (format === "mp3_44100_128") {
+    logger.warn("tts_format_coerced", { from: format, to: "ulaw_8000" });
+    return "ulaw_8000";
+  }
+  return format;
 }
 
-/** Re-chunk raw audio so no frame is smaller than MIN_AUDIO_CHUNK_BYTES (except the tail). */
-export function normalizeAudioChunks(buffer: Buffer): Buffer {
-  if (buffer.length <= MIN_AUDIO_CHUNK_BYTES) return buffer;
+export function telephonyChunkBounds(format: TelephonyAudioFormat): {
+  minBytes: number;
+  maxBytes: number;
+} {
+  if (format === "pcm_16000") {
+    return { minBytes: 640, maxBytes: 1600 };
+  }
+  return { minBytes: MIN_AUDIO_CHUNK_BYTES, maxBytes: MAX_AUDIO_CHUNK_BYTES };
+}
 
-  const chunks: Buffer[] = [];
-  let offset = 0;
+function contentTypeForFormat(format: TelephonyAudioFormat): string {
+  if (format === "ulaw_8000") return "audio/basic";
+  return "audio/L16";
+}
 
-  while (offset < buffer.length) {
-    const remaining = buffer.length - offset;
-    if (remaining <= MIN_AUDIO_CHUNK_BYTES * 1.5) {
-      chunks.push(buffer.subarray(offset));
+/**
+ * Buffers variable-size ElevenLabs stream frames into 20–50 ms telephony chunks
+ * before base64 / relay emission — prevents micro-stutter from tiny HTTP reads.
+ */
+export class AudioChunkAccumulator {
+  private pending = Buffer.alloc(0);
+
+  constructor(
+    private readonly minBytes: number,
+    private readonly maxBytes: number,
+  ) {}
+
+  ingest(chunk: Buffer): Buffer[] {
+    if (!chunk.length) return [];
+    this.pending = Buffer.concat([this.pending, chunk]);
+    const ready: Buffer[] = [];
+
+    while (this.pending.length >= this.maxBytes) {
+      ready.push(this.pending.subarray(0, this.maxBytes));
+      this.pending = this.pending.subarray(this.maxBytes);
+    }
+
+    while (this.pending.length >= this.minBytes && this.pending.length < this.maxBytes) {
+      ready.push(this.pending);
+      this.pending = Buffer.alloc(0);
       break;
     }
-    chunks.push(buffer.subarray(offset, offset + MIN_AUDIO_CHUNK_BYTES));
-    offset += MIN_AUDIO_CHUNK_BYTES;
+
+    return ready;
   }
 
-  return Buffer.concat(chunks);
+  drain(): Buffer[] {
+    if (!this.pending.length) return [];
+    const tail = this.pending;
+    this.pending = Buffer.alloc(0);
+    return [tail];
+  }
+}
+
+/** Re-chunk a complete buffer into telephony-aligned frames (20–50 ms). */
+export function normalizeAudioChunks(buffer: Buffer, format?: TelephonyAudioFormat): Buffer {
+  const { minBytes, maxBytes } = telephonyChunkBounds(format ?? resolveTelephonyOutputFormat());
+  if (buffer.length <= minBytes) return buffer;
+
+  const acc = new AudioChunkAccumulator(minBytes, maxBytes);
+  const parts = acc.ingest(buffer).concat(acc.drain());
+  return parts.length === 1 ? parts[0] : Buffer.concat(parts);
 }
 
 function stripSsmlForFallbackSpeech(text: string): string {
@@ -113,7 +166,7 @@ async function synthesizeViaElevenLabsStream(
   const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
   if (!apiKey || !voiceId) return null;
 
-  const outputFormat = cfg.TTS_AUDIO_FORMAT;
+  const outputFormat = resolveTelephonyOutputFormat();
   logTtsEngineSelection("ElevenLabs");
 
   const url = new URL(
@@ -132,6 +185,7 @@ async function synthesizeViaElevenLabsStream(
       text,
       model_id: elevenLabsModelId(),
       voice_settings: getElevenLabsVoiceSettings(),
+      optimize_streaming_latency: 2,
     }),
     signal,
   });
@@ -143,7 +197,7 @@ async function synthesizeViaElevenLabs(text: string): Promise<VoiceSynthesisResu
   const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
   if (!apiKey || !voiceId) return null;
 
-  const outputFormat = cfg.TTS_AUDIO_FORMAT;
+  const outputFormat = resolveTelephonyOutputFormat();
   logTtsEngineSelection("ElevenLabs");
 
   const controller = new AbortController();
@@ -162,7 +216,7 @@ async function synthesizeViaElevenLabs(text: string): Promise<VoiceSynthesisResu
     const arrayBuffer = await res.arrayBuffer();
     const raw = Buffer.from(arrayBuffer);
     return {
-      audio: normalizeAudioChunks(raw),
+      audio: raw,
       contentType: res.headers.get("content-type") ?? contentTypeForFormat(outputFormat),
       engine: "ElevenLabs",
     };
@@ -194,7 +248,7 @@ async function synthesizeViaOpenAI(text: string): Promise<VoiceSynthesisResult |
     const arrayBuffer = await response.arrayBuffer();
     const raw = Buffer.from(arrayBuffer);
     return {
-      audio: normalizeAudioChunks(raw),
+      audio: raw,
       contentType: "audio/L16",
       engine: "OpenAI tts-1-hd",
     };
@@ -259,16 +313,27 @@ export async function* synthesizeSpeechStream(
     }
 
     const reader = res.body.getReader();
+    const { minBytes, maxBytes } = telephonyChunkBounds(resolveTelephonyOutputFormat());
+    const accumulator = new AudioChunkAccumulator(minBytes, maxBytes);
+
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (value?.byteLength) {
-          yield {
-            audio: normalizeAudioChunks(Buffer.from(value)),
-            engine: "ElevenLabs",
-          };
+          for (const frame of accumulator.ingest(Buffer.from(value))) {
+            yield {
+              audio: frame,
+              engine: "ElevenLabs",
+            };
+          }
         }
+      }
+      for (const frame of accumulator.drain()) {
+        yield {
+          audio: frame,
+          engine: "ElevenLabs",
+        };
       }
     } catch (streamErr) {
       logger.error(TTS_STREAM_CRASH_LOG, {

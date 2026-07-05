@@ -18,8 +18,9 @@ import {
   isDictationLocked,
 } from "../runtime/dictationLock.js";
 import { logEventIngestion } from "../runtime/turnObservability.js";
-import { logTtsEngineSelection } from "../adapters/ttsAdapter.js";
+import { logTtsEngineSelection, getElevenLabsVoiceSettings } from "../adapters/ttsAdapter.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
+import { conversationRelayVoice } from "../config.js";
 import { isNoiseTranscript } from "../utils/noiseGate.js";
 import {
   isCallSessionActive,
@@ -120,6 +121,11 @@ async function runStreamingTurn(
   });
 
   logTtsEngineSelection();
+  logger.debug("relay_voice_profile", {
+    callSid: session.callSid.slice(0, 8),
+    voice: conversationRelayVoice(),
+    settings: getElevenLabsVoiceSettings(),
+  });
 
   try {
     for await (const event of process(session.callSid, callerText, session)) {

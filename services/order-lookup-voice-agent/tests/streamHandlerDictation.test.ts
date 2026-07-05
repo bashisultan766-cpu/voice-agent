@@ -92,6 +92,12 @@ vi.mock("../src/services/voiceService.js", () => ({
 
 vi.mock("../src/adapters/ttsAdapter.js", () => ({
   logTtsEngineSelection: vi.fn(),
+  getElevenLabsVoiceSettings: vi.fn(() => ({
+    stability: 0.7,
+    similarity_boost: 0.85,
+    style: 0,
+    use_speaker_boost: true,
+  })),
 }));
 
 class MockRelaySocket extends EventEmitter {

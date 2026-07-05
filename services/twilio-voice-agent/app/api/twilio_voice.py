@@ -69,6 +69,9 @@ def _conversation_relay_twiml(
     if s.VOICE_TTS_PROVIDER.lower() == "elevenlabs":
         voice_attrs["ttsProvider"] = "ElevenLabs"
         voice_attrs["voice"] = s.build_conversation_relay_voice()
+        normalization = (s.ELEVENLABS_TEXT_NORMALIZATION or "on").strip()
+        if normalization:
+            voice_attrs["elevenlabsTextNormalization"] = normalization
     else:
         voice_attrs["voice"] = s.build_conversation_relay_voice()
 

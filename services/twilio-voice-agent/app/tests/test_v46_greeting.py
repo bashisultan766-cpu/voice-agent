@@ -107,6 +107,7 @@ class TestInboundTwimlGreeting:
             VOICE_TTS_PROVIDER="ElevenLabs",
             VOICE_ID="voice123",
             VOICE_MODEL="flash_v2_5",
+            VOICE_TUNING_ENABLED=False,
         )
         xml = _conversation_relay_twiml(
             ws_url="wss://test.example.com/ws",

@@ -218,13 +218,25 @@ class Settings(BaseSettings):
     # ── v4.6: ElevenLabs voice via Twilio ConversationRelay ───────────────────
     VOICE_TTS_PROVIDER: str = "ElevenLabs"
     VOICE_ID: str = ""
+    ELEVENLABS_VOICE_ID: str = ""
     # eleven_turbo_v2_5 — natural conversational pacing (Twilio ConversationRelay).
     VOICE_MODEL: str = "eleven_turbo_v2_5"
-    VOICE_SPEED: float = 0.96
-    VOICE_STABILITY: float = 0.42
-    VOICE_SIMILARITY: float = 0.78
+    # Twilio ConversationRelay tuning — speed 0.7–1.2, stability/similarity/style 0.0–1.0
+    VOICE_SPEED: float = 0.92
+    # Studio-quality defaults — prevents wavering / distant tone on phone lines.
+    VOICE_STABILITY: float = 0.70
+    # Studio-quality defaults — strict cloned-voice fidelity.
+    VOICE_SIMILARITY: float = 0.85
+    # ElevenLabs direct API only — keep at 0 for consistent telephony clarity.
+    VOICE_STYLE: float = 0.0
+    VOICE_TUNING_ENABLED: bool = True
+    # Native telephony format for direct TTS streams (Twilio mulaw 8 kHz).
+    TTS_AUDIO_FORMAT: str = "ulaw_8000"
+    # Twilio ConversationRelay — improves pronunciation (slight latency tradeoff).
+    ELEVENLABS_TEXT_NORMALIZATION: str = "on"
     VOICE_LANGUAGE: str = "en-US"
-    # Optional — not used in live Twilio path yet; do not log.
+    VOICE_CHUNK_MAX_PAUSE_MS: int = 120
+    # Optional — direct ElevenLabs API (cache prewarm); do not log.
     ELEVENLABS_API_KEY: str = ""
 
     # ── v4.14.6: Commerce demo hardening ─────────────────────────────────────
@@ -278,11 +290,31 @@ class Settings(BaseSettings):
         """
         Voice string for Twilio ConversationRelay.
 
-        ElevenLabs: {VOICE_ID}-{VOICE_MODEL} or Google fallback when not configured.
+        ElevenLabs: {voiceId}-{model}[-{speed}_{stability}_{similarity}]
+        or Google fallback when not configured.
         """
-        if self.VOICE_TTS_PROVIDER.lower() == "elevenlabs" and self.VOICE_ID:
-            return f"{self.VOICE_ID}-{self.VOICE_MODEL}"
-        return "Google.en-US-Neural2-J"
+        from .voice.voice_config import (
+            format_twilio_voice_tuning,
+            normalize_twilio_elevenlabs_model,
+        )
+
+        voice_id = (self.VOICE_ID or self.ELEVENLABS_VOICE_ID or "").strip()
+        if self.VOICE_TTS_PROVIDER.lower() != "elevenlabs" or not voice_id:
+            return "Google.en-US-Neural2-J"
+
+        model = normalize_twilio_elevenlabs_model(self.VOICE_MODEL)
+        if not model:
+            return voice_id
+
+        if not self.VOICE_TUNING_ENABLED:
+            return f"{voice_id}-{model}"
+
+        tuning = format_twilio_voice_tuning(
+            self.VOICE_SPEED,
+            self.VOICE_STABILITY,
+            self.VOICE_SIMILARITY,
+        )
+        return f"{voice_id}-{model}-{tuning}"
 
     def validate_production(self) -> None:
         """Fail fast on missing required secrets when not in DEBUG mode."""
