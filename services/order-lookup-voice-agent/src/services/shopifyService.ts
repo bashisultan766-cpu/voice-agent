@@ -26,7 +26,7 @@ function cacheSet(key: string, value: OrderLookupResult): void {
   cache.set(key, { value, expiresAt: Date.now() + ttl });
 }
 
-function mapFoundOrder(data: OrderStatusResult & { status: "found" }): StructuredOrder {
+function mapFoundOrder(data: OrderStatusResult): StructuredOrder {
   const refunded =
     Boolean(data.refundReason) ||
     (data.financialStatus ?? "").toUpperCase().includes("REFUND") ||
@@ -60,7 +60,7 @@ function mapFoundOrder(data: OrderStatusResult & { status: "found" }): Structure
 function mapLookupResult(data: OrderStatusResult): OrderLookupResult {
   switch (data.status) {
     case "found":
-      return { status: "found", order: mapFoundOrder(data) };
+      return { status: "found" as const, order: mapFoundOrder(data) };
     case "not_found":
       return { status: "not_found" };
     case "invalid_format":
