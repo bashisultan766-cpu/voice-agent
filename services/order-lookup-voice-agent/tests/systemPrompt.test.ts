@@ -72,6 +72,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/backend Twilio integration/i);
   });
 
+  it("requires VIP order history month drill-down for verified callers", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/VIP ORDER HISTORY DRILL-DOWN S\.O\.P\./i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Which month would you like to hear about/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/monthYear/i);
+  });
+
   it("requires dynamic topic Polite Pivot instruction", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MUST dynamically use the user's specific requested topic/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT literally repeat the "football" example/i);

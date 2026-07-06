@@ -58,7 +58,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "get_customer_history",
       description:
-        "Fetch the caller's recent Shopify order history (last 15 orders). ONLY for verified callers after a successful order lookup.",
+        "Fetch the caller's compressed recent order history (up to 15 orders: orderNumber, monthYear, totalAmount, status, items). ONLY for verified callers after a successful order lookup. Use VIP ORDER HISTORY DRILL-DOWN S.O.P. when speaking results.",
       parameters: {
         type: "object",
         properties: {

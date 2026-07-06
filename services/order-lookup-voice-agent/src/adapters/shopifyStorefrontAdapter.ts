@@ -150,15 +150,18 @@ export interface BookAvailabilityResult {
 
 export interface CustomerHistoryOrderSummary {
   orderNumber: string;
-  placedAt: string;
+  monthYear: string;
   totalAmount: string;
-  items: Array<{ title: string; quantity: number; unitPrice?: string }>;
+  status: string;
+  /** Comma-separated book titles only — no SKUs or variant IDs. */
+  items: string;
 }
 
 export interface CustomerHistoryResult {
   status: AdapterStatus;
   customerId?: string;
   orders?: CustomerHistoryOrderSummary[];
+  orderCount?: number;
   message?: string;
   error?: string;
 }
@@ -911,6 +914,8 @@ const CUSTOMER_HISTORY_QUERY = `query CustomerOrderHistory($id: ID!, $first: Int
           id
           name
           createdAt
+          displayFulfillmentStatus
+          displayFinancialStatus
           totalPriceSet {
             shopMoney {
               amount
@@ -922,12 +927,6 @@ const CUSTOMER_HISTORY_QUERY = `query CustomerOrderHistory($id: ID!, $first: Int
               node {
                 title
                 quantity
-                originalUnitPriceSet {
-                  shopMoney {
-                    amount
-                    currencyCode
-                  }
-                }
               }
             }
           }
@@ -936,6 +935,68 @@ const CUSTOMER_HISTORY_QUERY = `query CustomerOrderHistory($id: ID!, $first: Int
     }
   }
 }`;
+
+/** Readable month/year for VIP order-history narration (e.g. "April 2026"). */
+export function formatOrderMonthYear(isoDate: string): string {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return "Unknown";
+  return d.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+export function mapHistoryOrderStatus(
+  displayFinancialStatus?: string,
+  displayFulfillmentStatus?: string,
+): string {
+  const financial = (displayFinancialStatus ?? "").toUpperCase();
+  if (financial.includes("REFUND")) return "Refunded";
+  const fulfillment = displayFulfillmentStatus?.trim();
+  if (fulfillment) return fulfillment;
+  return "Unknown";
+}
+
+export function compressHistoryLineItems(
+  lineItemEdges?: Array<{ node?: { title?: string; quantity?: number } }>,
+): string {
+  const titles: string[] = [];
+  for (const edge of lineItemEdges ?? []) {
+    const title = edge.node?.title?.trim();
+    if (!title) continue;
+    const qty = edge.node?.quantity ?? 1;
+    titles.push(qty > 1 ? `${title} x${qty}` : title);
+  }
+  return titles.join(", ");
+}
+
+export interface RawCustomerHistoryOrderNode {
+  name?: string;
+  createdAt?: string;
+  displayFulfillmentStatus?: string;
+  displayFinancialStatus?: string;
+  totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  lineItems?: {
+    edges?: Array<{ node?: { title?: string; quantity?: number } }>;
+  };
+}
+
+/** Compress Shopify order edges into a token-light timeline for the LLM. */
+export function minifyCustomerHistoryOrders(
+  edges: Array<{ node?: RawCustomerHistoryOrderNode }> | undefined,
+): CustomerHistoryOrderSummary[] {
+  const orders: CustomerHistoryOrderSummary[] = [];
+  for (const edge of edges ?? []) {
+    const node = edge.node;
+    if (!node?.name || !node.createdAt) continue;
+
+    orders.push({
+      orderNumber: node.name.startsWith("#") ? node.name : `#${node.name}`,
+      monthYear: formatOrderMonthYear(node.createdAt),
+      totalAmount: formatHistoryMoney(node.totalPriceSet?.shopMoney),
+      status: mapHistoryOrderStatus(node.displayFinancialStatus, node.displayFulfillmentStatus),
+      items: compressHistoryLineItems(node.lineItems?.edges),
+    });
+  }
+  return orders;
+}
 
 function isCustomerGid(value: string): boolean {
   return /^gid:\/\/shopify\/Customer\/\d+$/i.test(value.trim());
@@ -1001,34 +1062,12 @@ export async function getCustomerHistory(
         };
       }
 
-      const orders: CustomerHistoryOrderSummary[] = [];
-      for (const edge of customer.orders?.edges ?? []) {
-        const node = edge.node;
-        if (!node?.name || !node.createdAt) continue;
-
-        const items: CustomerHistoryOrderSummary["items"] = [];
-        for (const itemEdge of node.lineItems?.edges ?? []) {
-          const item = itemEdge.node;
-          const title = item?.title?.trim();
-          if (!title) continue;
-          items.push({
-            title,
-            quantity: item?.quantity ?? 1,
-            unitPrice: item?.originalUnitPriceSet?.shopMoney?.amount,
-          });
-        }
-
-        orders.push({
-          orderNumber: node.name,
-          placedAt: node.createdAt,
-          totalAmount: formatHistoryMoney(node.totalPriceSet?.shopMoney),
-          items,
-        });
-      }
+      const orders = minifyCustomerHistoryOrders(customer.orders?.edges);
 
       return {
         status: "found" as const,
         customerId: customer.id,
+        orderCount: customer.numberOfOrders ?? orders.length,
         orders,
       };
     });

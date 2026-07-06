@@ -722,6 +722,25 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     });
   }
 
+  if (record.tool === "get_customer_history") {
+    const data = record.data as CustomerHistoryResult;
+    if (data.status !== "found") {
+      return JSON.stringify({
+        status: data.status,
+        ok: false,
+        message: data.message ?? data.error,
+      });
+    }
+    return JSON.stringify({
+      status: "FOUND",
+      ok: true,
+      orderCount: data.orderCount ?? data.orders?.length ?? 0,
+      orders: data.orders ?? [],
+      instructions:
+        "Follow VIP ORDER HISTORY DRILL-DOWN S.O.P.: first summarize unique monthYear values only and ask which month to explore. After the caller picks a month, read items, totalAmount, status, and orderNumber for that month only. Never dump all orders at once.",
+    });
+  }
+
   if (record.tool === "get_shopify_order_status" && "orderNumber" in record.data) {
     if (record.data.status !== "found") {
       const searchedNumber = record.args.orderNumber ?? record.data.searchedNumber ?? "";
