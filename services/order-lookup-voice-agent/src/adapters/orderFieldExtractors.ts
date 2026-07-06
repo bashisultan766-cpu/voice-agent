@@ -334,23 +334,49 @@ export interface FulfillmentNode {
   trackingInfo?: FulfillmentTrackingInfo[];
 }
 
+const INVALID_TRACKING_WORD_RE =
+  /\b(refund|refunded|none|n\/a|na|tbd|pending|cancelled|canceled|unknown|test|shipped|delivered)\b/i;
+
+/** Reject staff placeholder text and accept real carrier tracking IDs. */
+export function isValidTrackingNumber(tracking: string | null | undefined): boolean {
+  const raw = tracking?.trim();
+  if (!raw) return false;
+  if (raw.length < 8) return false;
+  if (INVALID_TRACKING_WORD_RE.test(raw)) return false;
+
+  const compact = raw.replace(/[\s\-_.]/g, "");
+  if (compact.length < 8) return false;
+
+  const digits = (compact.match(/\d/g) ?? []).length;
+  if (/^1Z[A-Z0-9]{6,}$/i.test(compact)) return true;
+  if (digits < 6) return false;
+
+  const alphaNum = compact.replace(/[^A-Za-z0-9]/g, "");
+  if (alphaNum.length < 8) return false;
+
+  return digits / alphaNum.length >= 0.5;
+}
+
 /** Primary tracking number and carrier from Shopify fulfillments. */
 export function extractTrackingInfo(
   fulfillments?: FulfillmentNode[],
 ): { trackingNumber?: string; trackingCompany?: string; trackingUrl?: string } {
   if (!fulfillments?.length) return {};
 
-  const withTracking = fulfillments.find((f) =>
-    f.trackingInfo?.some((t) => t.number?.trim() || t.url?.trim()),
-  );
-  const fulfillment = withTracking ?? fulfillments[0];
-  const tracking = fulfillment?.trackingInfo?.find((t) => t.number?.trim() || t.url?.trim());
+  for (const fulfillment of fulfillments) {
+    for (const tracking of fulfillment.trackingInfo ?? []) {
+      const number = tracking.number?.trim();
+      if (!number || !isValidTrackingNumber(number)) continue;
 
-  return {
-    trackingNumber: tracking?.number?.trim() || undefined,
-    trackingCompany: tracking?.company?.trim() || undefined,
-    trackingUrl: tracking?.url?.trim() || undefined,
-  };
+      return {
+        trackingNumber: number,
+        trackingCompany: tracking.company?.trim() || undefined,
+        trackingUrl: tracking.url?.trim() || undefined,
+      };
+    }
+  }
+
+  return {};
 }
 
 /** Parse receiptJson / receipt for payment_method_details.card.{last4,brand}. */

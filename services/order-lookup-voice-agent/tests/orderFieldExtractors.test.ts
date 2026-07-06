@@ -9,6 +9,7 @@ import {
   extractCardFromReceipt,
   extractCardFromPaymentDetails,
   extractTrackingInfo,
+  isValidTrackingNumber,
   formatGatewayLabel,
   formatPaymentMethodLabel,
 } from "../src/adapters/orderFieldExtractors.js";
@@ -186,12 +187,46 @@ describe("orderFieldExtractors", () => {
   it("extracts tracking number and carrier from fulfillments", () => {
     const tracking = extractTrackingInfo([
       {
-        trackingInfo: [{ company: "USPS", number: "940011189922", url: "https://track.example" }],
+        trackingInfo: [{ company: "USPS", number: "9400111899223197422222", url: "https://track.example" }],
       },
     ]);
-    expect(tracking.trackingNumber).toBe("940011189922");
+    expect(tracking.trackingNumber).toBe("9400111899223197422222");
     expect(tracking.trackingCompany).toBe("USPS");
     expect(tracking.trackingUrl).toBe("https://track.example");
+  });
+
+  it("rejects placeholder tracking strings like Refund or N/A", () => {
+    expect(isValidTrackingNumber("Refund")).toBe(false);
+    expect(isValidTrackingNumber("N/A")).toBe(false);
+    expect(isValidTrackingNumber("None")).toBe(false);
+    expect(isValidTrackingNumber("Pending")).toBe(false);
+    expect(isValidTrackingNumber("9400111899223197422222")).toBe(true);
+    expect(isValidTrackingNumber("1Z999AA10123456784")).toBe(true);
+  });
+
+  it("scans all fulfillments and skips invalid tracking on newer fulfillment", () => {
+    const tracking = extractTrackingInfo([
+      {
+        trackingInfo: [{ company: "USPS", number: "Refund" }],
+      },
+      {
+        trackingInfo: [{ company: "USPS", number: "9400111899223197422222" }],
+      },
+    ]);
+    expect(tracking.trackingNumber).toBe("9400111899223197422222");
+    expect(tracking.trackingCompany).toBe("USPS");
+  });
+
+  it("returns empty tracking when only placeholder values exist", () => {
+    const tracking = extractTrackingInfo([
+      {
+        trackingInfo: [{ company: "USPS", number: "Refund" }],
+      },
+      {
+        trackingInfo: [{ company: "UPS", number: "TBD" }],
+      },
+    ]);
+    expect(tracking.trackingNumber).toBeUndefined();
   });
 
   it("formats spoken payment_method labels for cards and PayPal", () => {

@@ -40,7 +40,7 @@ import {
   type DeepOrderGraphqlNode,
 } from "../utils/orderDataParser.js";
 import { isPhysicalBookLineItem } from "../utils/productLineItems.js";
-import { extractTrackingInfo } from "./orderFieldExtractors.js";
+import { extractTrackingInfo, isValidTrackingNumber } from "./orderFieldExtractors.js";
 import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
 import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
 import { normalizeShopifyUnitPrice } from "../utils/shopifyMoney.js";
@@ -553,6 +553,15 @@ function daysUntil(isoDate: string): number {
 
 function pickPrimaryFulfillment(fulfillments: GqlFulfillmentNode[] | undefined): GqlFulfillmentNode | null {
   if (!fulfillments?.length) return null;
+
+  for (const fulfillment of fulfillments) {
+    for (const tracking of fulfillment.trackingInfo ?? []) {
+      if (tracking.number && isValidTrackingNumber(tracking.number)) {
+        return fulfillment;
+      }
+    }
+  }
+
   const withTracking = fulfillments.find((f) => f.trackingInfo?.some((t) => t.url || t.number));
   return withTracking ?? fulfillments[0] ?? null;
 }

@@ -148,7 +148,7 @@ describe("getOrderStatus", () => {
                   displayStatus: "Delivered",
                   estimatedDeliveryAt: new Date(Date.now() + 2 * 86400000).toISOString(),
                   deliveredAt: null,
-                  trackingInfo: [{ company: "USPS", number: "9400", url: "https://track.example/9400" }],
+                  trackingInfo: [{ company: "USPS", number: "9400111899223197422222", url: "https://track.example/9400111899223197422222" }],
                 },
               ],
             },
@@ -167,8 +167,8 @@ describe("getOrderStatus", () => {
     expect(result.cardLast4).toBe("4242");
     expect(result.paymentGateway).toBe("Shopify Payments");
     expect(result.fulfillmentStatus).toBe("Delivered");
-    expect(result.trackingUrl).toBe("https://track.example/9400");
-    expect(result.trackingNumber).toBe("9400");
+    expect(result.trackingUrl).toBe("https://track.example/9400111899223197422222");
+    expect(result.trackingNumber).toBe("9400111899223197422222");
     expect(result.trackingCompany).toBe("USPS");
     expect(result.estimatedDeliveryDays).toBeGreaterThanOrEqual(0);
   });
@@ -337,7 +337,7 @@ describe("getOrderStatus", () => {
           displayStatus: "Delivered",
           estimatedDeliveryAt: null,
           deliveredAt: "2025-01-01T00:00:00Z",
-          trackingInfo: [{ company: "USPS", number: "9400", url: "https://track.example/9400" }],
+          trackingInfo: [{ company: "USPS", number: "9400111899223197422222", url: "https://track.example/9400111899223197422222" }],
         },
       ],
     };

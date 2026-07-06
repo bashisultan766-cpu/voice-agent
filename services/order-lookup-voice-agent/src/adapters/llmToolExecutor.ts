@@ -37,6 +37,7 @@ import { logger } from "../utils/logger.js";
 import {
   extractRefundNotificationEmailFromMessages,
   formatPaymentMethodLabel,
+  isValidTrackingNumber,
 } from "./orderFieldExtractors.js";
 import {
   formatEmailForTTS,
@@ -867,7 +868,10 @@ function shapeOrderStatusForLlm(
   data: OrderStatusResult,
   session?: CallSession,
 ): Record<string, unknown> {
-  const trackingNumber = data.trackingNumber ?? null;
+  const trackingNumber =
+    data.trackingNumber && isValidTrackingNumber(data.trackingNumber)
+      ? data.trackingNumber
+      : null;
   const refundNotificationEmail =
     data.refundNotificationEmail ??
     data.refundEmail ??
