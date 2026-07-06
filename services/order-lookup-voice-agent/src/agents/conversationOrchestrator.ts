@@ -92,7 +92,7 @@ import {
   searchProductByTitleIsolated,
   processShopifySearchResults,
 } from "../tools/shopifyProductAdapter.js";
-import { classifyFollowUpIntent, preAnalyzeOrderIntent } from "../services/llmService.js";
+import { classifyFollowUpIntent, preAnalyzeOrderIntent, ensureUniqueSpokenResponse } from "../services/llmService.js";
 import { analyzeBrainTurn } from "./brainAnalyzer.js";
 import {
   buildToolDecisionState,
@@ -1248,10 +1248,11 @@ async function* handleFollowUpPhase(
     const speech = buildRefundEmailFollowUpSpeech(session.currentOrderData, callerText);
     session.phase = "follow_up";
     session.awaitingInput = null;
-    syncDeterministicAssistantSpeech(session.callSid, speech, {
+    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, callerText);
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
       responseType: "general_help",
     });
-    yield* yieldSpeech(speech);
+    yield* yieldSpeech(uniqueSpeech);
     yield doneEvent(session.phase);
     return;
   }

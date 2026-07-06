@@ -32,15 +32,18 @@ describe("formatEmailForTTS", () => {
 });
 
 describe("formatTrackingNumberForTTS", () => {
-  it("uses comma-space acoustic pacing by default for ElevenLabs dictation", () => {
+  it("uses phonetic word-form pacing with periods for hyper-slow dictation", () => {
     const formatted = formatTrackingNumberForTTS("9250");
-    expect(formatted).toBe("9, 2, 5, 0,");
+    expect(formatted).toBe("Nine. Two. Five. Zero.");
   });
 
-  it("comma-paces every character in long alphanumeric tracking IDs", () => {
+  it("phonetically paces every character in long alphanumeric tracking IDs", () => {
     const formatted = formatTrackingNumberForTTS("1Z999999999", "slow");
-    expect(formatted).toBe("1, Z, 9, 9, 9, 9, 9, 9, 9, 9, 9,");
+    expect(formatted).toBe(
+      "One. Z. Nine. Nine. Nine. Nine. Nine. Nine. Nine. Nine. Nine.",
+    );
     expect(formatted).not.toContain("<break");
+    expect(formatted).not.toContain(",");
   });
 
   it("supports legacy SSML opt-in when explicitly requested", () => {
@@ -50,7 +53,7 @@ describe("formatTrackingNumberForTTS", () => {
 
   it("normalizes to uppercase and trims whitespace", () => {
     const formatted = formatTrackingNumberForTTS("  ab-12  ", "slow");
-    expect(formatted).toBe("A, B, -, 1, 2,");
+    expect(formatted).toBe("A. B. Dash. One. Two.");
   });
 
   it("returns empty string for blank input", () => {

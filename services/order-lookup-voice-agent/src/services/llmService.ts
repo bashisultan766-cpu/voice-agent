@@ -4,6 +4,11 @@
 import OpenAI from "openai";
 import { getConfig } from "../config.js";
 import type { StructuredOrder } from "../types/order.js";
+import type { CallSession } from "../types/order.js";
+import {
+  isLockedFlowState,
+  isPaymentLinkActionUtterance,
+} from "../agents/lockedFlowState.js";
 
 let client: OpenAI | null = null;
 
@@ -14,11 +19,11 @@ function getClient(): OpenAI {
   return client;
 }
 
-/** Explicit farewell only — bare "no" must NOT end the call unless closing the conversation. */
+/** Explicit farewell only — bare "no" or "thank you" must NOT end the call unless closing the conversation. */
 export function isExplicitGoodbyeUtterance(callerText: string): boolean {
   const text = callerText.toLowerCase().trim();
   if (!text) return false;
-  return /\b(goodbye|good bye|bye|see you|see ya|hang up|hangup|that'?s all|that is all|nothing else|i'?m done|im done|end call|end the call)\b/i.test(
+  return /\b(goodbye|good bye|bye|see you|see ya|hang up|hangup|end call|end the call|finished|i'?m finished|we'?re done|all done|that'?s all|that is all|nothing else|i'?m done|im done)\b/i.test(
     text,
   );
 }
@@ -80,10 +85,23 @@ export function shouldBlockPrematureEndCall(input: {
   userMessage: string;
   messages?: Array<{ role: string; content: string }>;
   toolExecutions?: Array<{ tool: string }>;
+  session?: CallSession;
 }): boolean {
   if (isCartModificationUtterance(input.userMessage)) return true;
+  if (isPaymentLinkActionUtterance(input.userMessage)) return true;
 
-  return !isExplicitEndCallIntent(input.userMessage, input.messages ?? []);
+  const explicitClose = isExplicitEndCallIntent(input.userMessage, input.messages ?? []);
+  if (input.session && isLockedFlowState(input.session) && !explicitClose) return true;
+
+  return !explicitClose;
+}
+
+/** True when end_call may appear in the LLM tool list for this turn. */
+export function shouldOfferEndCallTool(input: {
+  userMessage: string;
+  messages?: Array<{ role: string; content: string }>;
+}): boolean {
+  return isExplicitEndCallIntent(input.userMessage, input.messages ?? []);
 }
 
 /** Thank-you / closing turns that should trigger graceful hangup. */
@@ -97,7 +115,7 @@ export function isClosingConversationUtterance(
   if (isExplicitGoodbyeUtterance(callerText)) return true;
 
   const text = callerText.toLowerCase().trim();
-  if (/^(thank you|thanks|thank you so much|okay bye|ok bye|okay, bye|ok, bye)\b/.test(text)) {
+  if (/^(okay bye|ok bye|okay, bye|ok, bye)\b/.test(text)) {
     return true;
   }
 
@@ -137,6 +155,93 @@ export async function classifyFollowUpIntent(
     return "repeat_order";
   }
   return "other";
+}
+
+const lastSpokenByCall = new Map<string, string>();
+
+/** Normalize speech for duplicate detection. */
+export function normalizeSpeechForDedup(speech: string): string {
+  return speech.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+export function isDuplicateSpokenSentence(callSid: string, speech: string): boolean {
+  const last = lastSpokenByCall.get(callSid);
+  if (!last) return false;
+  return normalizeSpeechForDedup(last) === normalizeSpeechForDedup(speech);
+}
+
+export function recordLastSpokenSentence(callSid: string, speech: string): void {
+  const trimmed = speech.trim();
+  if (!trimmed) return;
+  lastSpokenByCall.set(callSid, trimmed);
+}
+
+export function clearLastSpokenSentence(callSid: string): void {
+  lastSpokenByCall.delete(callSid);
+}
+
+/** Rewrite a verbatim repeat so the caller does not hear the same line twice. */
+export async function rewriteDuplicateSpokenResponse(
+  duplicateSpeech: string,
+  userMessage: string,
+): Promise<string> {
+  if (process.env.VITEST === "true") {
+    return "Sure — what else can I help you with today?";
+  }
+
+  const apiKey = getConfig().OPENAI_API_KEY;
+  if (!apiKey) {
+    return "Sure — what else can I help you with today?";
+  }
+
+  try {
+    const response = await getClient().chat.completions.create({
+      model: getConfig().OPENAI_MODEL,
+      max_tokens: 120,
+      temperature: 0.7,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Rewrite the bookstore voice agent line so it keeps the same meaning but uses different words. One or two short phone-friendly sentences. Never repeat the prior sentence verbatim.",
+        },
+        {
+          role: "user",
+          content: `Caller said: "${userMessage}"\nRepeated line to avoid: "${duplicateSpeech}"\nRewrite:`,
+        },
+      ],
+    });
+    const rewritten = response.choices[0]?.message?.content?.trim();
+    if (
+      rewritten &&
+      normalizeSpeechForDedup(rewritten) !== normalizeSpeechForDedup(duplicateSpeech)
+    ) {
+      return rewritten;
+    }
+  } catch {
+    // Fall through to safe fallback.
+  }
+
+  return "Sure — what else can I help you with today?";
+}
+
+/** Drop or rewrite speech that exactly matches the prior spoken sentence. */
+export async function ensureUniqueSpokenResponse(
+  callSid: string,
+  speech: string,
+  userMessage = "",
+): Promise<string> {
+  const trimmed = speech.trim();
+  if (!trimmed) return trimmed;
+
+  if (!isDuplicateSpokenSentence(callSid, trimmed)) {
+    recordLastSpokenSentence(callSid, trimmed);
+    return trimmed;
+  }
+
+  const rewritten = await rewriteDuplicateSpokenResponse(trimmed, userMessage);
+  recordLastSpokenSentence(callSid, rewritten);
+  return rewritten;
 }
 
 /** Background LLM note — runs in parallel with Shopify, never blocks first spoken chunk. */

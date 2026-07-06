@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyFollowUpIntent,
+  clearLastSpokenSentence,
+  ensureUniqueSpokenResponse,
   isCartModificationUtterance,
   isClosingConversationUtterance,
   isExplicitEndCallIntent,
@@ -28,9 +30,14 @@ describe("isExplicitGoodbyeUtterance", () => {
 });
 
 describe("isClosingConversationUtterance", () => {
-  it("treats thank you and explicit goodbye as conversation end", () => {
-    expect(isClosingConversationUtterance("thank you")).toBe(true);
+  it("treats explicit goodbye and okay bye as conversation end", () => {
+    expect(isClosingConversationUtterance("goodbye")).toBe(true);
     expect(isClosingConversationUtterance("okay bye")).toBe(true);
+  });
+
+  it("does not treat bare thank you as conversation end", () => {
+    expect(isClosingConversationUtterance("thank you")).toBe(false);
+    expect(isClosingConversationUtterance("thanks")).toBe(false);
   });
 
   it("does not treat cart math or mind-changes as conversation end", () => {
@@ -81,6 +88,29 @@ describe("shouldBlockPrematureEndCall", () => {
     ).toBe(true);
   });
 
+  it("blocks end_call during payment link confirmations", () => {
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "Yes, send me the payment link",
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks end_call during locked cart flow unless caller explicitly closes", () => {
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "sounds good",
+        session: { shoppingCart: [{ title: "Book", quantity: 1, unitPrice: "10" }] } as never,
+      }),
+    ).toBe(true);
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "goodbye",
+        session: { shoppingCart: [{ title: "Book", quantity: 1, unitPrice: "10" }] } as never,
+      }),
+    ).toBe(false);
+  });
+
   it("blocks end_call during order corrections and vague acknowledgments", () => {
     expect(
       shouldBlockPrematureEndCall({
@@ -122,6 +152,21 @@ describe("isExplicitEndCallIntent", () => {
     expect(isExplicitEndCallIntent("no thank you")).toBe(true);
     expect(isExplicitEndCallIntent("bye")).toBe(true);
     expect(isExplicitEndCallIntent("that's wrong")).toBe(false);
+  });
+});
+
+describe("ensureUniqueSpokenResponse", () => {
+  it("rewrites verbatim duplicate speech", async () => {
+    clearLastSpokenSentence("CA_DEDUP");
+    const first = await ensureUniqueSpokenResponse("CA_DEDUP", "Your order is on the way.");
+    expect(first).toBe("Your order is on the way.");
+    const second = await ensureUniqueSpokenResponse(
+      "CA_DEDUP",
+      "Your order is on the way.",
+      "repeat that",
+    );
+    expect(second).not.toBe(first);
+    clearLastSpokenSentence("CA_DEDUP");
   });
 });
 

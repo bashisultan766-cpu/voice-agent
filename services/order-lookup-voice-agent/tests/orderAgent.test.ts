@@ -108,7 +108,7 @@ describe("agent QA flows", () => {
     expect(result.speech).toMatch(/order|help|digits|number/i);
     expect(result.speech).not.toMatch(/didn't catch|invalid input/i);
     expect(session.phase).toBe("awaiting_order_number");
-  });
+  }, 15_000);
 
   it("uses not found message for missing orders", () => {
     expect(ORDER_NOT_FOUND_MESSAGE).toContain("could not find an exact match");

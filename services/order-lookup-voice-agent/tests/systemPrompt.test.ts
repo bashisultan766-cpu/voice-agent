@@ -33,6 +33,8 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
 
   it("requires explicit goodbye before ending the call", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/EXPLICIT GOODBYE \/ HANGUP/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/OPEN-ENDED FLOW/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I am sending the payment link to your email now/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Thank you for choosing SureShot Books/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/end_call/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONVERSATIONAL WARMTH & TRANSITIONS/i);

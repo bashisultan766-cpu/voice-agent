@@ -49,11 +49,33 @@ export interface FormatTrackingNumberOptions {
 const SSML_BREAK_TAG_RE = /<break\s+time=["']([^"']+)["']\s*\/?>/gi;
 
 const TRACKING_DICTATION_SSML_RE = /<break\s+time=/i;
+const TRACKING_DICTATION_PHONETIC_RE =
+  /\b(Zero|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Dash|Ay|Bee|Cee|Dee|Eee|Ef|Gee|Aitch|Eye|Jay|Kay|El|Em|En|Oh|Pea|Cue|Ar|Ess|Tee|You|Vee|Double-you|Ex|Why|Zee)\./i;
 const TRACKING_DICTATION_COMMA_RE = /[A-Z0-9],\s+[A-Z0-9]/i;
 
-function formatCommaAcousticPacing(chars: string[]): string {
+const DIGIT_PHONETIC: Record<string, string> = {
+  "0": "Zero",
+  "1": "One",
+  "2": "Two",
+  "3": "Three",
+  "4": "Four",
+  "5": "Five",
+  "6": "Six",
+  "7": "Seven",
+  "8": "Eight",
+  "9": "Nine",
+};
+
+function charToPhoneticPacing(char: string): string {
+  if (DIGIT_PHONETIC[char]) return `${DIGIT_PHONETIC[char]}.`;
+  if (/[A-Z]/.test(char)) return `${char}.`;
+  if (char === "-") return "Dash.";
+  return `${char}.`;
+}
+
+function formatPhoneticAcousticPacing(chars: string[]): string {
   if (!chars.length) return "";
-  return `${chars.join(", ")},`;
+  return chars.map(charToPhoneticPacing).join(" ");
 }
 
 /** Parse an SSML break duration string (e.g. "500ms", "2s", "1.5s") into milliseconds. */
@@ -108,7 +130,11 @@ export function sanitizeTextForTTS(text: string): string {
 /** True when speech contains intentional tracking-number dictation formatting. */
 export function isTrackingDictationText(text: string): boolean {
   if (!text?.trim()) return false;
-  return TRACKING_DICTATION_SSML_RE.test(text) || TRACKING_DICTATION_COMMA_RE.test(text);
+  return (
+    TRACKING_DICTATION_SSML_RE.test(text) ||
+    TRACKING_DICTATION_PHONETIC_RE.test(text) ||
+    TRACKING_DICTATION_COMMA_RE.test(text)
+  );
 }
 
 function pauseMsForSpeed(speed: TrackingDictationSpeed): number {
@@ -117,7 +143,7 @@ function pauseMsForSpeed(speed: TrackingDictationSpeed): number {
 
 /**
  * Format a tracking ID for extremely slow, clear TTS dictation.
- * Uses comma-space acoustic pacing (e.g. "9, 2, 5, 0,") so ElevenLabs pauses naturally.
+ * Uses phonetic word-form pacing with periods (e.g. "Nine. Two. Five. Zero.") for deliberate pauses.
  * SSML breaks are opt-in only — they are often stripped or ignored on voice relays.
  */
 export function formatTrackingNumberForTTS(
@@ -135,5 +161,5 @@ export function formatTrackingNumberForTTS(
     return chars.map((char) => `${char}<break time="${breakTime}"/>`).join("");
   }
 
-  return formatCommaAcousticPacing(chars);
+  return formatPhoneticAcousticPacing(chars);
 }

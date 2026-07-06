@@ -25,6 +25,7 @@ import { logFinalResponseType } from "../runtime/turnObservability.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 import type { GateIntent } from "./toolDecisionGate.js";
 import { clearCallerMemory } from "../utils/callerMemory.js";
+import { clearLastSpokenSentence } from "../services/llmService.js";
 
 export { LLM_ORCHESTRATOR_TEMPERATURE } from "./llmConfig.js";
 
@@ -223,6 +224,7 @@ export async function* runLlmOrchestratorTurn(
   if (result.endCall) {
     session.phase = "ended";
     clearCallerMemory(session.callerPhone ?? session.from);
+    clearLastSpokenSentence(session.callSid);
   }
 
   yield* yieldSpeech(speech, preserveFullSpeech);

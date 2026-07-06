@@ -38,7 +38,10 @@ import {
 import {
   isClosingConversationUtterance,
   shouldBlockPrematureEndCall,
+  shouldOfferEndCallTool,
+  ensureUniqueSpokenResponse,
 } from "../services/llmService.js";
+import { buildLockedFlowSystemMessage } from "../agents/lockedFlowState.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -410,6 +413,11 @@ function buildOpenAiMessages(
       role: "system",
       content: buildCartContextSystemMessage(input.session),
     });
+
+    const lockedFlowMessage = buildLockedFlowSystemMessage(input.session);
+    if (lockedFlowMessage) {
+      systemMessages.push({ role: "system", content: lockedFlowMessage });
+    }
   }
 
   return [
@@ -424,6 +432,13 @@ export function buildLlmTurnMessagesForTest(
   input: LlmAgentTurnInput,
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
   return buildOpenAiMessages(input);
+}
+
+function resolveToolsForTurn(input: LlmAgentTurnInput): OpenAI.Chat.ChatCompletionTool[] {
+  if (!shouldOfferEndCallTool(input)) {
+    return SHOPIFY_LLM_TOOLS.filter((tool) => tool.function?.name !== "end_call");
+  }
+  return SHOPIFY_LLM_TOOLS;
 }
 
 function lastAssistantAskedForOrder(messages: LlmChatMessage[]): boolean {
@@ -613,7 +628,7 @@ export async function* runLlmAgentTurnEvents(
         model: getConfig().CONVERSATION_BRAIN_MODEL,
         temperature: LLM_ORCHESTRATOR_TEMPERATURE,
         max_tokens: 450,
-        tools: SHOPIFY_LLM_TOOLS,
+        tools: resolveToolsForTurn(input),
         tool_choice: "auto",
         messages,
       });
@@ -671,6 +686,7 @@ export async function* runLlmAgentTurnEvents(
                 userMessage: input.userMessage,
                 messages: input.messages,
                 toolExecutions,
+                session: input.session,
               })
             ) {
               toolExecutions.push({
@@ -747,8 +763,9 @@ export async function* runLlmAgentTurnEvents(
         continue;
       }
 
-      const speech = (message.content ?? "").trim();
+      let speech = (message.content ?? "").trim();
       if (speech) {
+        speech = await ensureUniqueSpokenResponse(input.callSid, speech, input.userMessage);
         const responseType = inferResponseType(speech, toolExecutions);
         const endCall = toolExecutions.some((t) => t.tool === "end_call" && t.ok);
         yield {
