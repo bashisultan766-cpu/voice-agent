@@ -148,20 +148,21 @@ const AUDIT_ORDER_QUERY = `query AuditOrderPayload($query: String!, $first: Int!
           totalRefundedSet {
             shopMoney { amount currencyCode }
           }
-          transactions {
-            id
-            kind
-            gateway
-            formattedGateway
-            status
-            processedAt
-            receiptJson
-            paymentDetails {
-              ... on CardPaymentDetails {
-                company
-                number
-                name
-                wallet
+          transactions(first: 10) {
+            edges {
+              node {
+                id
+                kind
+                status
+                gateway
+                formattedGateway
+                processedAt
+                paymentDetails {
+                  ... on CardPaymentDetails {
+                    company
+                    number
+                  }
+                }
               }
             }
           }
