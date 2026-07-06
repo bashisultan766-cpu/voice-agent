@@ -39,6 +39,7 @@ import {
   formatPaymentMethodLabel,
   isValidTrackingNumber,
 } from "./orderFieldExtractors.js";
+import { physicalItemCount, splitLineItems } from "../utils/productLineItems.js";
 import {
   formatEmailForTTS,
   formatTrackingNumberForTTS,
@@ -760,7 +761,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       found: true,
       data: shapeOrderStatusForLlm(record.data),
       instructions:
-        "Deep-fetch data is for internal memory only, including the full timeline events array (internal — never read verbatim; no staff names). On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Keys always present: customer_name, customer_email, customer_email_for_tts, order_placed_at, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). Use payment_method for spoken payment summaries (e.g. Visa ending in 1302 or PayPal). Use cancel_reason or refund_reason when explaining why an order was refunded or cancelled — always speak the reason when the caller asks about refunds. For spoken refund notification email, use refund_notification_email_for_tts (full speakable address, e.g. jamaicathompson87 at gmail dot com). If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK from INTERNATIONAL PROTOCOL using order_placed_at and customer_email_for_tts — never say not on file for archived orders with customer_email on file. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID DICTATION PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. If a field is null on a recent order (within 1 year), state clearly that the detail is not on file — never invent a replacement.",
+        "Deep-fetch data is for internal memory only, including the full timeline events array (internal — never read verbatim; no staff names). On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. physical_items and item_count are BOOKS ONLY — never count or speak fee_items, processing_fees, shipping_fees, or handling_fees as books. Use shipping_amount for order shipping cost; use fee line arrays only when the caller explicitly asks about surcharges. Keys always present: customer_name, customer_email, customer_email_for_tts, order_placed_at, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). Use payment_method for spoken payment summaries (e.g. Visa ending in 1302 or PayPal). Use cancel_reason or refund_reason when explaining why an order was refunded or cancelled — always speak the reason when the caller asks about refunds. For spoken refund notification email, use refund_notification_email_for_tts (full speakable address, e.g. jamaicathompson87 at gmail dot com). If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK from INTERNATIONAL PROTOCOL using order_placed_at and customer_email_for_tts — never say not on file for archived orders with customer_email on file. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID DICTATION PROTOCOL and use tracking_number_for_tts verbatim in Phase 2. For repeat requests, follow THE ISOLATION RULE and HUMAN SPATIAL DICTATION — never data-vomit the full order. If a field is null on a recent order (within 1 year), state clearly that the detail is not on file — never invent a replacement.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -884,6 +885,11 @@ function shapeOrderStatusForLlm(
   const paymentMethod =
     formatPaymentMethodLabel(data.cardBrand, data.cardLast4, data.paymentGateway) ?? null;
   const cancelReason = data.cancelReason ?? data.refundReason ?? null;
+  const { physicalItems, feeItems } = splitLineItems(data.lineItems ?? []);
+  const itemCount = physicalItemCount(data.lineItems ?? []);
+  const processingFees = feeItems.filter((line) => /\bfee\b/i.test(line.title));
+  const shippingFees = feeItems.filter((line) => /\bshipping\b/i.test(line.title));
+  const handlingFees = feeItems.filter((line) => /\bhandling\b/i.test(line.title));
   const payload: Record<string, unknown> = {
     order_number: data.orderNumber ?? null,
     customer_name: data.customerName ?? null,
@@ -892,7 +898,13 @@ function shapeOrderStatusForLlm(
     is_verified_caller: verified,
     total_order_count: data.totalOrderCount ?? session?.totalOrderCount ?? null,
     shipping_address: verified ? (data.shippingAddress ?? null) : null,
-    items: data.lineItems ?? null,
+    physical_items: physicalItems.length ? physicalItems : null,
+    fee_items: feeItems.length ? feeItems : null,
+    item_count: itemCount,
+    items: physicalItems.length ? physicalItems : null,
+    processing_fees: processingFees.length ? processingFees : null,
+    shipping_fees: shippingFees.length ? shippingFees : null,
+    handling_fees: handlingFees.length ? handlingFees : null,
     total_amount: data.totalAmount ?? null,
     shipping_amount: data.shippingFee ?? null,
     subtotal_amount: data.subtotalAmount ?? null,

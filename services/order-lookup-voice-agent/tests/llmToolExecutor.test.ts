@@ -135,6 +135,35 @@ describe("toolResultForLlm order shaping", () => {
     expect(String(parsed.data.tracking_number_for_tts)).toContain('<break time="800ms"/>');
   });
 
+  it("separates physical books from fee line items in order payload", () => {
+    const record: LlmToolExecutionRecord = {
+      tool: "get_shopify_order_status",
+      args: { orderNumber: "48065" },
+      ok: true,
+      status: "found",
+      elapsedMs: 10,
+      data: {
+        status: "found",
+        orderNumber: "#48065",
+        lineItems: [
+          { title: "The Holy Bible", quantity: 1 },
+          { title: "Processing Fee", quantity: 1 },
+          { title: "Shipping", quantity: 1 },
+        ],
+      },
+    };
+
+    const parsed = JSON.parse(toolResultForLlm(record)) as {
+      data: Record<string, unknown>;
+    };
+
+    expect(parsed.data.item_count).toBe(1);
+    expect(parsed.data.physical_items).toEqual([{ title: "The Holy Bible", quantity: 1 }]);
+    expect(parsed.data.items).toEqual([{ title: "The Holy Bible", quantity: 1 }]);
+    expect(parsed.data.processing_fees).toEqual([{ title: "Processing Fee", quantity: 1 }]);
+    expect(parsed.data.shipping_fees).toEqual([{ title: "Shipping", quantity: 1 }]);
+  });
+
   it("returns strict NOT_FOUND payload with searched_number for hallucination lock", () => {
     const record: LlmToolExecutionRecord = {
       tool: "get_shopify_order_status",

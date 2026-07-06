@@ -70,6 +70,15 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Dad to boy/i);
   });
 
+  it("requires isolation rule and spatial dictation protocols", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE ISOLATION RULE/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NO DATA VOMITING/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/HUMAN SPATIAL DICTATION/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/After the 9, it is/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/physical_items/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/processing_fees/i);
+  });
+
   it("requires volume alternative suggestions for title search", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TITLE & VOLUME SEARCH S\.O\.P\./i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/similarMatches/i);

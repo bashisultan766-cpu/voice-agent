@@ -18,7 +18,7 @@ import {
   type OrderTimelineEvent,
   type OrderTransactionNode,
 } from "../adapters/orderFieldExtractors.js";
-import { filterPhysicalLineItems } from "./productLineItems.js";
+import { physicalItemCount, splitLineItems } from "./productLineItems.js";
 import { fulfillmentStatusPhrase, speakMoney } from "./formatter.js";
 
 export interface DeepOrderGraphqlNode {
@@ -102,6 +102,7 @@ export interface ParsedOrderData {
   totalAmount?: string;
   itemCount: number;
   lineItems: Array<{ title: string; quantity: number }>;
+  feeLineItems: Array<{ title: string; quantity: number }>;
   isRefunded: boolean;
   refundReason?: string;
   /** Shopify cancelReason enum or timeline-derived cancellation cause. */
@@ -219,16 +220,20 @@ function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
     .filter((n): n is OrderTimelineEvent => Boolean(n));
 }
 
-function parseLineItems(node: DeepOrderGraphqlNode): Array<{ title: string; quantity: number }> {
-  const raw =
+function parseRawLineItems(node: DeepOrderGraphqlNode): Array<{ title: string; quantity: number }> {
+  return (
     node.lineItems?.edges
       ?.map((e) => {
         const title = e.node?.title?.trim();
         if (!title) return null;
         return { title, quantity: e.node?.quantity ?? 1 };
       })
-      .filter((li): li is { title: string; quantity: number } => li !== null) ?? [];
-  return filterPhysicalLineItems(raw);
+      .filter((li): li is { title: string; quantity: number } => li !== null) ?? []
+  );
+}
+
+function parseLineItems(node: DeepOrderGraphqlNode): Array<{ title: string; quantity: number }> {
+  return splitLineItems(parseRawLineItems(node)).physicalItems;
 }
 
 function subtotalFromNode(node: DeepOrderGraphqlNode): string | undefined {
@@ -261,8 +266,9 @@ export function transactionNodesFromConnection(
  * Guarantees customer email, placement date, financials, items, and timeline fields.
  */
 export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData {
-  const lineItems = parseLineItems(node);
-  const itemCount = lineItems.reduce((sum, li) => sum + li.quantity, 0);
+  const rawLineItems = parseRawLineItems(node);
+  const { physicalItems, feeItems } = splitLineItems(rawLineItems);
+  const itemCount = physicalItemCount(rawLineItems);
   const events = timelineEvents(node);
   const eventMessages = timelineEventMessages(events);
   const financialStatus = node.displayFinancialStatus ?? "";
@@ -304,8 +310,9 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     subtotalAmount: subtotalFromNode(node),
     shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
     totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
-    itemCount: itemCount || lineItems.length,
-    lineItems,
+    itemCount: itemCount || physicalItems.length,
+    lineItems: physicalItems,
+    feeLineItems: feeItems,
     isRefunded,
     refundReason,
     cancelReason,
@@ -330,8 +337,9 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
 
 /** Build ParsedOrderData from an adapter OrderStatusResult. */
 export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrderData {
-  const lineItems = result.lineItems ?? [];
-  const itemCount = result.itemCount ?? lineItems.reduce((sum, li) => sum + li.quantity, 0);
+  const rawLineItems = result.lineItems ?? [];
+  const { physicalItems, feeItems } = splitLineItems(rawLineItems);
+  const itemCount = physicalItemCount(rawLineItems);
 
   return {
     orderNumber: result.orderNumber ?? "",
@@ -345,7 +353,8 @@ export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrde
     shippingFee: result.shippingFee,
     totalAmount: result.totalAmount,
     itemCount,
-    lineItems,
+    lineItems: physicalItems,
+    feeLineItems: feeItems,
     isRefunded: Boolean(result.refundStatus && /refund/i.test(result.refundStatus)),
     refundReason: result.refundReason,
     cancelReason: result.cancelReason ?? result.refundReason,
