@@ -311,6 +311,14 @@ function isToolName(name: string): name is LlmToolName {
   );
 }
 
+function toToolArgsRecord(rawArgs: Record<string, unknown>): Record<string, string> {
+  const safeArgs: Record<string, string> = {};
+  for (const [key, value] of Object.entries(rawArgs)) {
+    safeArgs[key] = String(value ?? "").trim();
+  }
+  return safeArgs;
+}
+
 function inferResponseType(
   speech: string,
   executions: LlmToolExecutionRecord[],
@@ -667,7 +675,7 @@ export async function* runLlmAgentTurnEvents(
             ) {
               toolExecutions.push({
                 tool: "end_call",
-                args: parsedArgs,
+                args: toToolArgsRecord(parsedArgs),
                 ok: false,
                 status: "blocked",
                 elapsedMs: 0,
