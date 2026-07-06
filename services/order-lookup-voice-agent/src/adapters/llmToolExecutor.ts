@@ -3,10 +3,12 @@
  */
 import {
   getOrderStatus,
+  getCustomerHistory,
   searchByISBN,
   searchByTitle,
   createShopifyDraftOrder,
   type BookAvailabilityResult,
+  type CustomerHistoryResult,
   type OrderStatusResult,
 } from "./shopifyStorefrontAdapter.js";
 import {
@@ -14,6 +16,7 @@ import {
   getCartSummary,
   removeFromCart,
 } from "../agents/cartManager.js";
+import { applyCallerVerificationFromOrder } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
 import {
   isResendAvailable,
@@ -41,6 +44,7 @@ import {
 
 export type LlmToolName =
   | "get_shopify_order_status"
+  | "get_customer_history"
   | "search_shopify_book_by_isbn"
   | "search_shopify_book_by_title"
   | "add_to_cart"
@@ -95,6 +99,7 @@ export interface LlmToolExecutionRecord {
     | "failed";
   data?:
     | OrderStatusResult
+    | CustomerHistoryResult
     | BookAvailabilityResult
     | CartToolResult
     | CheckoutEmailToolResult
@@ -455,6 +460,9 @@ export async function executeLlmTool(
 
     try {
       const data = await getOrderStatus(orderNumber, callSid);
+      if (session && data.status === "found") {
+        applyCallerVerificationFromOrder(session, data);
+      }
       return {
         tool,
         args: { orderNumber },
@@ -465,6 +473,61 @@ export async function executeLlmTool(
       };
     } catch {
       return maintenanceRecord(tool, { orderNumber }, started);
+    }
+  }
+
+  if (tool === "get_customer_history") {
+    if (!session) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        errorMessage: "Session unavailable for customer history.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    if (!session.isVerifiedCaller) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        errorMessage: "UNAUTHORIZED: You cannot fetch history details for unverified callers.",
+        data: {
+          status: "api_error",
+          message: "UNAUTHORIZED: You cannot fetch history details for unverified callers.",
+          error: "UNAUTHORIZED: You cannot fetch history details for unverified callers.",
+        },
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const customerId = (args.customerId ?? session.shopifyCustomerId ?? "").trim();
+    if (!customerId) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        errorMessage: "Customer ID unavailable — complete an order lookup first.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    try {
+      const data = await getCustomerHistory(customerId, callSid);
+      return {
+        tool,
+        args: { customerId },
+        ok: data.status === "found",
+        status: data.status,
+        data,
+        elapsedMs: Date.now() - started,
+      };
+    } catch {
+      return maintenanceRecord(tool, { customerId }, started);
     }
   }
 
@@ -723,8 +786,9 @@ export const OMNI_EXTRACTOR_PAYLOAD_KEYS = [
 /** Sanitized snake_case order fields for session memory and LLM follow-up context. */
 export function buildActiveOrderContextPayload(
   data: OrderStatusResult,
+  session?: CallSession,
 ): Record<string, unknown> {
-  return shapeOrderStatusForLlm(data);
+  return shapeOrderStatusForLlm(data, session);
 }
 
 /**
@@ -732,7 +796,10 @@ export function buildActiveOrderContextPayload(
  * Omni-Extractor keys (customer_name, payment_method_last4, card_brand,
  * refund_notification_email) are always present — never dropped or sanitized out.
  */
-function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown> {
+function shapeOrderStatusForLlm(
+  data: OrderStatusResult,
+  session?: CallSession,
+): Record<string, unknown> {
   const trackingNumber = data.trackingNumber ?? null;
   const refundNotificationEmail =
     data.refundNotificationEmail ??
@@ -742,11 +809,15 @@ function shapeOrderStatusForLlm(data: OrderStatusResult): Record<string, unknown
     ) ??
     null;
   const orderConfirmationEmail = data.orderConfirmationEmail ?? null;
+  const verified = session?.isVerifiedCaller === true;
   const payload: Record<string, unknown> = {
     order_number: data.orderNumber ?? null,
     customer_name: data.customerName ?? null,
     customer_email: data.customerEmail ?? null,
     customer_email_for_tts: formatEmailForTTS(data.customerEmail ?? null),
+    is_verified_caller: verified,
+    total_order_count: data.totalOrderCount ?? session?.totalOrderCount ?? null,
+    shipping_address: verified ? (data.shippingAddress ?? null) : null,
     items: data.lineItems ?? null,
     total_amount: data.totalAmount ?? null,
     shipping_amount: data.shippingFee ?? null,

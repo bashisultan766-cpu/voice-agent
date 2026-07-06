@@ -99,6 +99,16 @@ export interface CallSession {
   callSid: string;
   from: string;
   to: string;
+  /** Twilio Caller ID (From) — used for cryptographic identity verification. */
+  callerPhone?: string;
+  /** True when callerPhone matches the Shopify customer's registered phone. */
+  isVerifiedCaller?: boolean;
+  /** Shopify customer phone from the current order lookup. */
+  shopifyCustomerPhone?: string;
+  /** Shopify Customer GID from the current order lookup. */
+  shopifyCustomerId?: string;
+  /** Lifetime order count for the Shopify customer on the current order. */
+  totalOrderCount?: number;
   phase: CallPhase;
   orderNumberAttempts: number;
   currentOrder?: StructuredOrder;

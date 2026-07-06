@@ -14,13 +14,15 @@ export type ActiveOrderContextData = Record<string, unknown>;
 
 export function buildActiveOrderContextFromResult(
   result: OrderStatusResult,
+  session?: CallSession,
 ): ActiveOrderContextData | null {
   if (result.status !== "found" || !result.orderNumber) return null;
-  return buildActiveOrderContextPayload(result);
+  return buildActiveOrderContextPayload(result, session);
 }
 
 export function buildActiveOrderContextFromToolRecord(
   record: LlmToolExecutionRecord,
+  session?: CallSession,
 ): ActiveOrderContextData | null {
   if (
     record.tool !== "get_shopify_order_status" ||
@@ -31,7 +33,7 @@ export function buildActiveOrderContextFromToolRecord(
   ) {
     return null;
   }
-  return buildActiveOrderContextFromResult(record.data);
+  return buildActiveOrderContextFromResult(record.data, session);
 }
 
 export function saveActiveOrderContext(

@@ -175,6 +175,8 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
     callSid,
     from,
     to,
+    callerPhone: from,
+    isVerifiedCaller: false,
     phase: "greeting",
     orderNumberAttempts: 0,
     createdAt: Date.now(),

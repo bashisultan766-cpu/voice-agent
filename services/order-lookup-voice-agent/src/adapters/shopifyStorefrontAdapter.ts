@@ -106,6 +106,18 @@ export interface OrderStatusResult {
   error?: string;
   /** Normalized order number used in the lookup (NOT_FOUND responses). */
   searchedNumber?: string;
+  /** Registered Shopify customer phone — used for caller-ID verification. */
+  customerPhone?: string;
+  /** Shipping address phone on the order — secondary verification field. */
+  shippingPhone?: string;
+  /** Billing address phone on the order — tertiary verification field. */
+  billingPhone?: string;
+  /** Shopify Customer GID — required for order history tool. */
+  customerId?: string;
+  /** Formatted shipping address on the order. */
+  shippingAddress?: string;
+  /** Lifetime order count for the Shopify customer. */
+  totalOrderCount?: number;
 }
 
 export interface BookAvailabilityResult {
@@ -122,6 +134,21 @@ export interface BookAvailabilityResult {
   exactMatch?: boolean;
   queriedTitle?: string;
   message?: string;
+}
+
+export interface CustomerHistoryOrderSummary {
+  orderNumber: string;
+  placedAt: string;
+  totalAmount: string;
+  items: Array<{ title: string; quantity: number; unitPrice?: string }>;
+}
+
+export interface CustomerHistoryResult {
+  status: AdapterStatus;
+  customerId?: string;
+  orders?: CustomerHistoryOrderSummary[];
+  message?: string;
+  error?: string;
 }
 
 export interface DraftOrderLineInput {
@@ -184,10 +211,27 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
         displayFulfillmentStatus
         displayFinancialStatus
         email
+        phone
+        shippingAddress {
+          name
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          country
+          phone
+        }
+        billingAddress {
+          phone
+        }
         customer {
+          id
           firstName
           lastName
           email
+          phone
+          numberOfOrders
         }
         currentSubtotalPriceSet {
           shopMoney {
@@ -315,10 +359,27 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
         displayFulfillmentStatus
         displayFinancialStatus
         email
+        phone
+        shippingAddress {
+          name
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          country
+          phone
+        }
+        billingAddress {
+          phone
+        }
         customer {
+          id
           firstName
           lastName
           email
+          phone
+          numberOfOrders
         }
         currentSubtotalPriceSet {
           shopMoney {
@@ -547,6 +608,12 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     cardLast4: parsed.cardLast4,
     cardBrand: parsed.cardBrand,
     paymentGateway: parsed.paymentGateway,
+    customerPhone: parsed.customerPhone,
+    shippingPhone: parsed.shippingPhone,
+    billingPhone: parsed.billingPhone,
+    customerId: parsed.customerId,
+    shippingAddress: parsed.shippingAddress,
+    totalOrderCount: parsed.totalOrderCount,
   };
 
   logger.info("shopify_order_mapped_for_tts", {
@@ -795,6 +862,146 @@ export async function createShopifyDraftOrder(
 
 function isExactTitleMatch(title: string, query: string): boolean {
   return scoreTitleMatch(title, query) >= 10;
+}
+
+const CUSTOMER_HISTORY_QUERY = `query CustomerOrderHistory($id: ID!, $first: Int!) {
+  customer(id: $id) {
+    id
+    numberOfOrders
+    orders(first: $first, sortKey: CREATED_AT, reverse: true) {
+      edges {
+        node {
+          id
+          name
+          createdAt
+          totalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+          lineItems(first: 15) {
+            edges {
+              node {
+                title
+                quantity
+                originalUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+function isCustomerGid(value: string): boolean {
+  return /^gid:\/\/shopify\/Customer\/\d+$/i.test(value.trim());
+}
+
+function formatHistoryMoney(money?: { amount?: string; currencyCode?: string }): string {
+  if (!money?.amount) return "0.00 USD";
+  return `${money.amount} ${money.currencyCode ?? "USD"}`;
+}
+
+/**
+ * Fetch recent order history for a verified Shopify customer.
+ */
+export async function getCustomerHistory(
+  customerId: string,
+  callSid = "fulfillment",
+  limit = 15,
+): Promise<CustomerHistoryResult> {
+  const gid = customerId.trim();
+  if (!gid || !isCustomerGid(gid)) {
+    return {
+      status: "invalid_format",
+      message: "A valid Shopify customer ID is required.",
+    };
+  }
+
+  const first = Math.min(Math.max(1, limit), 15);
+
+  try {
+    const result = await runWithGuard(callSid, "customer_history", async () => {
+      const data = await shopifyGraphql<{
+        customer?: {
+          id?: string;
+          numberOfOrders?: number;
+          orders?: {
+            edges?: Array<{
+              node?: {
+                name?: string;
+                createdAt?: string;
+                totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+                lineItems?: {
+                  edges?: Array<{
+                    node?: {
+                      title?: string;
+                      quantity?: number;
+                      originalUnitPriceSet?: {
+                        shopMoney?: { amount?: string; currencyCode?: string };
+                      };
+                    };
+                  }>;
+                };
+              };
+            }>;
+          };
+        };
+      }>(CUSTOMER_HISTORY_QUERY, { id: gid, first });
+
+      const customer = data.customer;
+      if (!customer?.id) {
+        return {
+          status: "not_found" as const,
+          message: "Customer not found in Shopify.",
+        };
+      }
+
+      const orders: CustomerHistoryOrderSummary[] = [];
+      for (const edge of customer.orders?.edges ?? []) {
+        const node = edge.node;
+        if (!node?.name || !node.createdAt) continue;
+
+        const items: CustomerHistoryOrderSummary["items"] = [];
+        for (const itemEdge of node.lineItems?.edges ?? []) {
+          const item = itemEdge.node;
+          const title = item?.title?.trim();
+          if (!title) continue;
+          items.push({
+            title,
+            quantity: item?.quantity ?? 1,
+            unitPrice: item?.originalUnitPriceSet?.shopMoney?.amount,
+          });
+        }
+
+        orders.push({
+          orderNumber: node.name,
+          placedAt: node.createdAt,
+          totalAmount: formatHistoryMoney(node.totalPriceSet?.shopMoney),
+          items,
+        });
+      }
+
+      return {
+        status: "found" as const,
+        customerId: customer.id,
+        orders,
+      };
+    });
+
+    return result;
+  } catch (err) {
+    return adapterFailureFromError(err, "shopify_customer_history_failed", {
+      customerId: gid,
+    });
+  }
 }
 
 /**

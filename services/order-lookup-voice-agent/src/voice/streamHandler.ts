@@ -247,11 +247,10 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
   switch (message.type) {
     case "setup": {
-      const session = createCallSession(
-        message.callSid ?? "unknown",
-        message.from ?? message.customParameters?.from ?? "unknown",
-        message.to ?? message.customParameters?.to ?? "unknown",
-      );
+      const from = message.from ?? message.customParameters?.from ?? "unknown";
+      const to = message.to ?? message.customParameters?.to ?? "unknown";
+      const session = createCallSession(message.callSid ?? "unknown", from, to);
+      session.callerPhone = from;
       ctx.setSession(session);
       logger.info("relay_setup", { callSid: session.callSid.slice(0, 8) });
 

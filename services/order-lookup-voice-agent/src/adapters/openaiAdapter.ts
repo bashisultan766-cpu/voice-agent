@@ -24,6 +24,7 @@ import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGu
 import { buildActiveOrderContextSystemMessage } from "../agents/sessionManager.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { buildCartContextSystemMessage } from "../agents/cartManager.js";
+import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
 import {
   buildRefundEmailFollowUpSpeech,
@@ -48,6 +49,25 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
           },
         },
         required: ["orderNumber"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_customer_history",
+      description:
+        "Fetch the caller's recent Shopify order history (last 15 orders). ONLY for verified callers after a successful order lookup.",
+      parameters: {
+        type: "object",
+        properties: {
+          customerId: {
+            type: "string",
+            description:
+              "Shopify Customer GID from the current order context (gid://shopify/Customer/...). Optional when already on session.",
+          },
+        },
         additionalProperties: false,
       },
     },
@@ -253,6 +273,7 @@ const MAX_TOOL_ROUNDS = 4;
 function isToolName(name: string): name is LlmToolName {
   return (
     name === "get_shopify_order_status" ||
+    name === "get_customer_history" ||
     name === "search_shopify_book_by_isbn" ||
     name === "search_shopify_book_by_title" ||
     name === "add_to_cart" ||
@@ -338,6 +359,11 @@ function buildOpenAiMessages(
   }
 
   if (input.session) {
+    const vaultMessage = buildVaultSecuritySystemMessage(input.session);
+    if (vaultMessage) {
+      systemMessages.push({ role: "system", content: vaultMessage });
+    }
+
     systemMessages.push({
       role: "system",
       content: buildCartContextSystemMessage(input.session),

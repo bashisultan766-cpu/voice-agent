@@ -11,10 +11,11 @@ import type { LlmToolExecutionRecord } from "../adapters/llmToolExecutor.js";
 import type { LlmAgentTurnResult } from "../adapters/openaiAdapter.js";
 import { orderStatusToStructuredOrder } from "./fulfillmentHandlers.js";
 import {
-  buildActiveOrderContextFromToolRecord,
+  buildActiveOrderContextFromResult,
   clearActiveOrderContext,
   saveActiveOrderContext,
 } from "./sessionManager.js";
+import { applyCallerVerificationFromOrder } from "./callerVerification.js";
 import { planInstantFiller } from "./responsePlanner.js";
 import { speechChunksFromText } from "../services/voiceSmoothingEngine.js";
 import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
@@ -87,10 +88,15 @@ function persistOrderContext(
 
   if (!orderExec.ok || orderExec.data?.status !== "found") {
     clearActiveOrderContext(session);
+    session.isVerifiedCaller = false;
     return;
   }
 
-  const payload = buildActiveOrderContextFromToolRecord(orderExec);
+  if (orderExec.data && "orderNumber" in orderExec.data) {
+    applyCallerVerificationFromOrder(session, orderExec.data);
+  }
+
+  const payload = buildActiveOrderContextFromResult(orderExec.data, session);
   if (payload) {
     saveActiveOrderContext(session, payload);
   }

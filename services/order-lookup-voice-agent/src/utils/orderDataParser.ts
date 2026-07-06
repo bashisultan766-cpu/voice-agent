@@ -26,13 +26,30 @@ export interface DeepOrderGraphqlNode {
   processedAt?: string | null;
   updatedAt?: string;
   email?: string | null;
+  phone?: string | null;
   note?: string | null;
   displayFulfillmentStatus?: string;
   displayFinancialStatus?: string;
+  shippingAddress?: {
+    name?: string | null;
+    address1?: string | null;
+    address2?: string | null;
+    city?: string | null;
+    provinceCode?: string | null;
+    zip?: string | null;
+    country?: string | null;
+    phone?: string | null;
+  } | null;
+  billingAddress?: {
+    phone?: string | null;
+  } | null;
   customer?: {
+    id?: string;
     firstName?: string;
     lastName?: string;
     email?: string | null;
+    phone?: string | null;
+    numberOfOrders?: number;
   } | null;
   currentSubtotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   subtotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
@@ -96,6 +113,12 @@ export interface ParsedOrderData {
   cardBrand?: string;
   paymentGateway?: string;
   financialStatus?: string;
+  customerPhone?: string;
+  shippingPhone?: string;
+  billingPhone?: string;
+  customerId?: string;
+  shippingAddress?: string;
+  totalOrderCount?: number;
 }
 
 function ordinalSuffix(day: number): string {
@@ -148,6 +171,40 @@ function customerRegisteredEmail(node: DeepOrderGraphqlNode): string | undefined
   if (fromCustomer) return fromCustomer;
   const fromOrder = node.email?.trim();
   return fromOrder || undefined;
+}
+
+function customerRegisteredPhone(node: DeepOrderGraphqlNode): string | undefined {
+  const fromCustomer = node.customer?.phone?.trim();
+  if (fromCustomer) return fromCustomer;
+  const fromOrder = node.phone?.trim();
+  return fromOrder || undefined;
+}
+
+function shippingAddressPhone(node: DeepOrderGraphqlNode): string | undefined {
+  return node.shippingAddress?.phone?.trim() || undefined;
+}
+
+function billingAddressPhone(node: DeepOrderGraphqlNode): string | undefined {
+  return node.billingAddress?.phone?.trim() || undefined;
+}
+
+function formatShippingAddress(
+  address: DeepOrderGraphqlNode["shippingAddress"],
+): string | undefined {
+  if (!address) return undefined;
+  const cityLine = [address.city, address.provinceCode, address.zip]
+    .filter(Boolean)
+    .join(", ");
+  const parts = [
+    address.name,
+    address.address1,
+    address.address2,
+    cityLine,
+    address.country,
+  ]
+    .map((part) => (part ?? "").trim())
+    .filter(Boolean);
+  return parts.length ? parts.join(", ") : undefined;
 }
 
 function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
@@ -252,6 +309,12 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     cardBrand: payment.cardBrand,
     paymentGateway: payment.paymentGateway,
     financialStatus,
+    customerPhone: customerRegisteredPhone(node),
+    shippingPhone: shippingAddressPhone(node),
+    billingPhone: billingAddressPhone(node),
+    customerId: node.customer?.id,
+    shippingAddress: formatShippingAddress(node.shippingAddress),
+    totalOrderCount: node.customer?.numberOfOrders,
   };
 }
 
