@@ -23,11 +23,46 @@ export function isExplicitGoodbyeUtterance(callerText: string): boolean {
   );
 }
 
+/** Rapid cart quantity/title changes — must not trigger hangup. */
+export function isCartModificationUtterance(callerText: string): boolean {
+  const text = callerText.toLowerCase().trim();
+  if (!text) return false;
+
+  const cartVerb =
+    /\b(add|remove|delete|subtract|minus|take off|take out|take away|drop|reduce|increase|change|make it|update|put in|copies?|quantity|more of|less of|in my cart|from (the )?cart)\b/i.test(
+      text,
+    );
+  const mindChange =
+    /\b(no,? (make it|wait|change|actually)|instead|scratch that|never\s*mind)\b/i.test(text);
+  const quantityWithAction = /\b\d+\b/.test(text) && cartVerb;
+
+  return cartVerb || mindChange || quantityWithAction;
+}
+
+const CART_TOOL_NAMES = new Set(["add_to_cart", "remove_from_cart", "get_cart_summary"]);
+
+/** Block end_call when the turn is clearly still about cart math or cart tools ran. */
+export function shouldBlockPrematureEndCall(input: {
+  userMessage: string;
+  messages?: Array<{ role: string; content: string }>;
+  toolExecutions?: Array<{ tool: string }>;
+}): boolean {
+  if (isCartModificationUtterance(input.userMessage)) return true;
+
+  if (input.toolExecutions?.some((exec) => CART_TOOL_NAMES.has(exec.tool))) {
+    return true;
+  }
+
+  return false;
+}
+
 /** Thank-you / closing turns that should trigger graceful hangup. */
 export function isClosingConversationUtterance(
   callerText: string,
   messages: Array<{ role: string; content: string }> = [],
 ): boolean {
+  if (isCartModificationUtterance(callerText)) return false;
+
   if (isExplicitGoodbyeUtterance(callerText)) return true;
 
   const text = callerText.toLowerCase().trim();

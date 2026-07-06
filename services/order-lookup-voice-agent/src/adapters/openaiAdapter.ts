@@ -35,7 +35,10 @@ import {
   buildCallerWelcomeBackSystemMessage,
   SURESHOT_GOODBYE_SPEECH,
 } from "../utils/callerMemory.js";
-import { isClosingConversationUtterance } from "../services/llmService.js";
+import {
+  isClosingConversationUtterance,
+  shouldBlockPrematureEndCall,
+} from "../services/llmService.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -230,7 +233,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "end_call",
       description:
-        "Invoke when the caller is done: explicit goodbye, thank you, okay bye, or 'no' after you asked if they need anything else. Say the SureShot goodbye line first, then call this tool. Never use while a lookup is still needed.",
+        "Invoke ONLY when the caller is explicitly done: goodbye, thank you, okay bye, or 'no' after you asked if they need anything else. NEVER use during cart modifications, quantity changes, or partial-title shopping. Say the SureShot goodbye line first, then call this tool.",
       parameters: {
         type: "object",
         properties: {},
@@ -645,6 +648,45 @@ export async function* runLlmAgentTurnEvents(
             parsedArgs = {};
           }
 
+          const batchHasCartTools = toolCalls.some(
+            (candidate) =>
+              candidate.type === "function" &&
+              (candidate.function.name === "add_to_cart" ||
+                candidate.function.name === "remove_from_cart" ||
+                candidate.function.name === "get_cart_summary"),
+          );
+
+          if (call.function.name === "end_call") {
+            if (
+              batchHasCartTools ||
+              shouldBlockPrematureEndCall({
+                userMessage: input.userMessage,
+                messages: input.messages,
+                toolExecutions,
+              })
+            ) {
+              toolExecutions.push({
+                tool: "end_call",
+                args: parsedArgs,
+                ok: false,
+                status: "blocked",
+                elapsedMs: 0,
+                errorMessage:
+                  "NEVER end_call during cart modifications. Execute the caller's final cart intent with add_to_cart or remove_from_cart.",
+              });
+              messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: JSON.stringify({
+                  status: "blocked",
+                  error:
+                    "NEVER end_call during cart modifications. Continue cart math — use add_to_cart or remove_from_cart for the caller's final intent.",
+                }),
+              });
+              continue;
+            }
+          }
+
           const record = await executeLlmTool(
             call.function.name,
             parsedArgs,
@@ -685,6 +727,13 @@ export async function* runLlmAgentTurnEvents(
             },
           };
           return;
+        }
+
+        const blockedEndCall = toolExecutions.some(
+          (exec) => exec.tool === "end_call" && exec.status === "blocked",
+        );
+        if (blockedEndCall) {
+          continue;
         }
 
         continue;

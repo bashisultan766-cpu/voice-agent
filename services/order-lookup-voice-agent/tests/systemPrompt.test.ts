@@ -44,8 +44,30 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
       /I have sent your request to the support team\. They will contact you shortly/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I will forward your details to our support team so they can reach out to you directly and securely/i,
+      /securely verify you and reach out/i,
     );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/backup warehouse/i);
+  });
+
+  it("requires extreme conciseness and direct-answer protocol", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/EXTREME CONCISENESS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /The status is \[X\], you have \[Y\] items, and shipping is \[Z\]/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/repeat ONLY shipping/i);
+  });
+
+  it("requires strict unverified caller denial naming the verified customer", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I am sorry, but for security reasons, I can only share that information with the verified account holder/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NO HALF-ANSWERS/i);
+  });
+
+  it("requires dynamic cart math and hangup prevention during shopping", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DYNAMIC CART MATH PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER END THE CALL DURING CART MODIFICATIONS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Dad to boy/i);
   });
 
   it("requires volume alternative suggestions for title search", () => {
