@@ -27,9 +27,10 @@ export async function synthesizeSpeechChunk(text: string): Promise<VoiceSynthesi
 function isCacheablePhrase(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return [
-    getCachedPhrase("checking").toLowerCase(),
     getCachedPhrase("found_order").toLowerCase(),
     getCachedPhrase("closing_question").toLowerCase(),
+    getCachedPhrase("follow_up").toLowerCase(),
+    getCachedPhrase("goodbye").toLowerCase(),
   ].includes(normalized);
 }
 
@@ -178,9 +179,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 export async function prewarmVoiceCache(): Promise<void> {
   const phrases = [
-    getCachedPhrase("checking"),
     getCachedPhrase("found_order"),
     getCachedPhrase("closing_question"),
+    getCachedPhrase("follow_up"),
+    getCachedPhrase("goodbye"),
   ];
   await Promise.all(phrases.map((p) => synthesizeSpeechChunk(p)));
 }

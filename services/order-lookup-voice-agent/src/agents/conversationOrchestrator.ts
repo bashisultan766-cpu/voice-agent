@@ -20,6 +20,7 @@ import {
   getCallerMemory,
   saveCallerMemory,
 } from "../utils/callerMemory.js";
+import { logger } from "../utils/logger.js";
 import { pipelineTrace } from "../utils/pipelineTrace.js";
 import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { runWithToolAuthorizationAsync } from "../guards/toolAccessGuard.js";
