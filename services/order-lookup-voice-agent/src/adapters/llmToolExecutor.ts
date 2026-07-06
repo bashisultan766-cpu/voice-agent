@@ -51,7 +51,8 @@ export type LlmToolName =
   | "remove_from_cart"
   | "get_cart_summary"
   | "send_checkout_email"
-  | "send_support_escalation";
+  | "send_support_escalation"
+  | "end_call";
 
 export interface CartToolResult {
   status: "ok" | "empty" | "error";
@@ -172,6 +173,17 @@ export async function executeLlmTool(
   const args = Object.fromEntries(
     Object.entries(rawArgs).map(([k, v]) => [k, String(v ?? "").trim()]),
   );
+
+  if (tool === "end_call") {
+    return {
+      tool,
+      args,
+      ok: true,
+      status: "ok",
+      data: { ended: true },
+      elapsedMs: Date.now() - started,
+    };
+  }
 
   if (!session && (
     tool === "add_to_cart" ||
@@ -673,8 +685,41 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       ok: record.ok,
       escalation: record.data,
       instructions: record.ok
-        ? "Reassure the caller that support will reach out soon."
+        ? 'Say exactly: "I have sent your request to the support team. They will contact you shortly."'
         : "Apologize and offer to try again or take their callback number.",
+    });
+  }
+
+  if (record.tool === "end_call") {
+    return JSON.stringify({
+      status: "ok",
+      ok: true,
+      instructions: "Say a brief warm goodbye. The call will end after you speak.",
+    });
+  }
+
+  if (record.tool === "search_shopify_book_by_title") {
+    const data = record.data as BookAvailabilityResult;
+    if (data.status === "not_found") {
+      return JSON.stringify({
+        status: "NOT_FOUND",
+        queriedTitle: data.queriedTitle,
+        instructions:
+          "Follow OMNI-CHANNEL ESCALATION S.O.P.: ask for email, verify letter-by-letter, call send_support_escalation, then say: I have sent your request to the support team. They will contact you shortly.",
+      });
+    }
+    const similar = data.similarMatches ?? [];
+    const volumeHint =
+      data.exactMatch === false && similar.length > 1
+        ? "You could not find the EXACT volume. Read the top 2 or 3 entries from similarMatches aloud (bookName, inStock, price) and ask if they want one. Use variant_id and price from the chosen match for add_to_cart."
+        : "If in stock, offer to add to cart using variant_id and unit_price from this response. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
+    return JSON.stringify({
+      status: data.status,
+      found: data.status === "found",
+      data,
+      variant_id: data.variantId,
+      similarMatches: similar,
+      instructions: volumeHint,
     });
   }
 

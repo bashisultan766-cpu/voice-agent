@@ -1,5 +1,5 @@
 /**
- * Shopify GraphQL fulfillment adapter for Shoshan voice agent.
+ * Shopify GraphQL fulfillment adapter for SureShot Bookstore voice agent.
  *
  * Exposes three core operations: order status, ISBN lookup, and title search.
  * Uses Shopify Admin GraphQL (same transport as catalog search) with enterprise
@@ -120,6 +120,16 @@ export interface OrderStatusResult {
   totalOrderCount?: number;
 }
 
+export interface BookCatalogMatch {
+  bookName: string;
+  price: string;
+  inStock: boolean;
+  quantity: number;
+  productId?: string;
+  variantId?: string;
+  exactMatch: boolean;
+}
+
 export interface BookAvailabilityResult {
   status: AdapterStatus;
   bookName?: string;
@@ -133,6 +143,8 @@ export interface BookAvailabilityResult {
   /** False when the match is fuzzy rather than an exact title hit. */
   exactMatch?: boolean;
   queriedTitle?: string;
+  /** Up to 5 ranked title matches (volumes/variants) for fuzzy catalog search. */
+  similarMatches?: BookCatalogMatch[];
   message?: string;
 }
 
@@ -717,10 +729,34 @@ async function graphqlProductsForQueries(
   return { nodes, hadErrors };
 }
 
+function productToCatalogMatch(
+  product: ReturnType<typeof mapGqlProduct>,
+  exactMatch: boolean,
+): BookCatalogMatch {
+  const primaryVariant = product.variants[0];
+  const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
+  const inStock = product.variants.some((v) => v.inStock);
+  const variantGid = parseVariantGid(primaryVariant?.id ?? "") ?? undefined;
+
+  return {
+    bookName: product.title,
+    price: primaryVariant?.price ?? "0",
+    inStock,
+    quantity,
+    productId: toProductGid(product.id),
+    variantId: variantGid,
+    exactMatch,
+  };
+}
+
 function toBookResult(
   product: ReturnType<typeof mapGqlProduct>,
   status: AdapterStatus = "found",
-  meta?: { exactMatch?: boolean; queriedTitle?: string },
+  meta?: {
+    exactMatch?: boolean;
+    queriedTitle?: string;
+    similarMatches?: BookCatalogMatch[];
+  },
 ): BookAvailabilityResult {
   const primaryVariant = product.variants[0];
   const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
@@ -741,6 +777,7 @@ function toBookResult(
     isbn: product.isbns?.[0],
     exactMatch: meta?.exactMatch,
     queriedTitle: meta?.queriedTitle,
+    similarMatches: meta?.similarMatches,
   };
 }
 
@@ -1115,13 +1152,19 @@ export async function searchByTitle(
       const products = nodes.map((n) => mapGqlProduct(n));
 
       const ranked = rankBySearchScore(products, q, 0.5);
-      const top = ranked[0] ?? rankLiveProducts(products, q)[0];
+      const rankedList = ranked.length ? ranked : rankLiveProducts(products, q);
+      const top = rankedList[0];
       if (!top) {
-        return { status: "not_found" as const };
+        return { status: "not_found" as const, queriedTitle: q };
       }
 
       const exactMatch = isExactTitleMatch(top.title, q);
-      return toBookResult(top, "found", { exactMatch, queriedTitle: q });
+      const similarMatches = rankedList
+        .slice(0, 5)
+        .map((product) =>
+          productToCatalogMatch(product, isExactTitleMatch(product.title, q)),
+        );
+      return toBookResult(top, "found", { exactMatch, queriedTitle: q, similarMatches });
     });
 
     return result;

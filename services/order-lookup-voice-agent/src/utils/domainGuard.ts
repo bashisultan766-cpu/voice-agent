@@ -4,7 +4,7 @@
  */
 
 const BOOKSTORE_INTENT_RE =
-  /\b(order|orders|book|books|isbn|title|catalog|shoshan|refund|track(?:ing)?|ship(?:ping)?|buy|purchase|cart|inmate|prison|magazine|newspaper|availability|stock|price|number\s*#?\d)\b/i;
+  /\b(order|orders|book|books|isbn|title|catalog|sureshot|refund|track(?:ing)?|ship(?:ping)?|buy|purchase|cart|inmate|prison|magazine|newspaper|availability|stock|price|number\s*#?\d)\b/i;
 
 const OUT_OF_DOMAIN_RE =
   /\b(recipe|recipes|cook(?!book)|stream(?:ing)?|live\s+stream|how\s+do\s+i\s+watch|watch\s+live|football|cricket|basketball|sports?\s+score|president|prime\s+minister|weather|capital\s+of|stock\s+market|crypto|bitcoin|medical\s+advice|legal\s+advice|life\s+advice|who\s+is\s+the|what\s+is\s+the\s+capital)\b/i;
@@ -12,7 +12,7 @@ const OUT_OF_DOMAIN_RE =
 const SPORT_TOPIC_RE =
   /\b(cricket|football|basketball|soccer|baseball|tennis|golf|rugby|hockey|volleyball)\b/i;
 
-/** True when the utterance is clearly outside Shoshan's bookstore scope. */
+/** True when the utterance is clearly outside SureShot Bookstore scope. */
 export function isOutOfDomainQuestion(message: string): boolean {
   const text = message.trim();
   if (!text) return false;
@@ -62,15 +62,15 @@ export function buildPolitePivotSpeech(message: string, topic?: string): string 
   }
 
   if (isGeneralKnowledgeQuestion(lower)) {
-    return "I'm sorry, but as the Shoshan bookstore assistant, I can't answer general knowledge questions like that. I can, however, search our catalog for books about American history or politics. Would you like me to do that?";
+    return "I'm sorry, but as the SureShot Bookstore assistant, I can't answer general knowledge questions like that. I can, however, search our catalog for books about American history or politics. Would you like me to do that?";
   }
 
   if (isStreamingQuestion(lower)) {
     if (SPORT_TOPIC_RE.test(lower)) {
-      return `I'm sorry, but as the Shoshan bookstore assistant, I can't help with watching ${pivotTopic}. I can, however, search our catalog for books about ${pivotTopic}. Would you like me to do that?`;
+      return `I'm sorry, but as the SureShot Bookstore assistant, I can't help with watching ${pivotTopic}. I can, however, search our catalog for books about ${pivotTopic}. Would you like me to do that?`;
     }
-    return `I'm sorry, but as the Shoshan bookstore assistant, I can't give you information on live streaming. I can, however, search our catalog for books about ${pivotTopic}. Would you like me to do that?`;
+    return `I'm sorry, but as the SureShot Bookstore assistant, I can't give you information on live streaming. I can, however, search our catalog for books about ${pivotTopic}. Would you like me to do that?`;
   }
 
-  return `I'm sorry, but as the Shoshan bookstore assistant, I can't help with that. I can, however, search our catalog for books about ${pivotTopic}. Would you like me to do that?`;
+  return `I'm sorry, but as the SureShot Bookstore assistant, I can't help with that. I can, however, search our catalog for books about ${pivotTopic}. Would you like me to do that?`;
 }

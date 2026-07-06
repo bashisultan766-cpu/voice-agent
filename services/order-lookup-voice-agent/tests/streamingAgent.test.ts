@@ -45,7 +45,7 @@ describe("streaming agent", () => {
       if (event.type === "chunk") chunks.push(event.chunk.text);
     }
 
-    expect(chunks.join(" ")).toMatch(/hey|help|order/i);
+    expect(chunks.join(" ")).toMatch(/assist|help|order|SureShot/i);
     expect(chunks.join(" ")).not.toMatch(/valid order number|didn't catch/i);
     expect(session.phase).toBe("awaiting_order_number");
   });

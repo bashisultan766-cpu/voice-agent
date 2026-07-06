@@ -76,7 +76,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "search_shopify_book_by_isbn",
-      description: "Search the Shoshan catalog by ISBN-10 or ISBN-13.",
+      description: "Search the SureShot Books catalog by ISBN-10 or ISBN-13.",
       parameters: {
         type: "object",
         properties: {
@@ -94,7 +94,8 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "search_shopify_book_by_title",
-      description: "Search the Shoshan catalog by book title.",
+      description:
+        "Search the SureShot Books catalog by book title. Returns up to 5 similar volume/variant matches.",
       parameters: {
         type: "object",
         properties: {
@@ -200,7 +201,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "send_support_escalation",
       description:
-        "Email the support team when a book is out of stock or the issue cannot be resolved on the call.",
+        "Email jessica@sureshotbooks.com after letter-by-letter email verification when a book cannot be found, is out of stock, an unverified caller needs account help, or the issue cannot be resolved on the call.",
       parameters: {
         type: "object",
         properties: {
@@ -212,6 +213,19 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
           },
         },
         required: ["issueSummary"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "end_call",
+      description:
+        "ONLY invoke this tool if the user explicitly says 'goodbye', 'bye', 'see you', or 'hang up'. Never use for a bare 'no' or declining an offer.",
+      parameters: {
+        type: "object",
+        properties: {},
         additionalProperties: false,
       },
     },
@@ -238,6 +252,7 @@ export interface LlmAgentTurnResult {
   responseType: FinalResponseType;
   recordOrderNumber?: string;
   recordProduct?: { id: string; title: string };
+  endCall?: boolean;
 }
 
 export type LlmAgentTurnEvent =
@@ -280,7 +295,8 @@ function isToolName(name: string): name is LlmToolName {
     name === "remove_from_cart" ||
     name === "get_cart_summary" ||
     name === "send_checkout_email" ||
-    name === "send_support_escalation"
+    name === "send_support_escalation" ||
+    name === "end_call"
   );
 }
 
@@ -625,12 +641,14 @@ export async function* runLlmAgentTurnEvents(
       const speech = (message.content ?? "").trim();
       if (speech) {
         const responseType = inferResponseType(speech, toolExecutions);
+        const endCall = toolExecutions.some((t) => t.tool === "end_call" && t.ok);
         yield {
           type: "result",
           result: {
             speech,
             toolExecutions,
             responseType,
+            endCall,
             ...extractRecordMeta(toolExecutions),
           },
         };

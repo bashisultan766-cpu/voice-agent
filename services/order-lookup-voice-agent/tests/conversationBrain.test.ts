@@ -15,7 +15,8 @@ describe("conversationBrain", () => {
   });
 
   it("exposes the canonical call-start greeting", () => {
-    expect(BRAIN_GREETING).toMatch(/SureShot Books Assistant/i);
+    expect(BRAIN_GREETING).toMatch(/SureShot Bookstore/i);
+    expect(BRAIN_GREETING).toMatch(/How can I assist you today/i);
     expect(BRAIN_GREETING).not.toMatch(/order number|ISBN/i);
   });
 

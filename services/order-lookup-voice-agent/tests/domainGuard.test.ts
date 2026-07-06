@@ -48,7 +48,7 @@ describe("buildPolitePivotSpeech", () => {
   it("refuses president question and offers history books", () => {
     const speech = buildPolitePivotSpeech("Who is the president of the USA?");
     expect(speech).toMatch(/sorry|apologize/i);
-    expect(speech).toMatch(/Shoshan bookstore assistant/i);
+    expect(speech).toMatch(/SureShot Bookstore assistant/i);
     expect(speech).toMatch(/general knowledge/i);
     expect(speech).toMatch(/book/i);
     expect(speech).not.toMatch(/\bBiden\b|\bTrump\b|\bObama\b/i);

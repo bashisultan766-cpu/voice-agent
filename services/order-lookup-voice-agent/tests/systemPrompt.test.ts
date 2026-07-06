@@ -19,12 +19,36 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do not claim you are unable to provide it/i);
   });
 
-  it("locks Shoshan identity at the top of the prompt", () => {
+  it("locks SureShot Bookstore identity at the top of the prompt", () => {
     expect(SHOSHAN_SYSTEM_PROMPT.indexOf("YOUR IDENTITY")).toBeLessThan(
       SHOSHAN_SYSTEM_PROMPT.indexOf("CRITICAL — NO CONVERSATIONAL FILLERS"),
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/official AI Assistant for "Shoshan"/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/official AI Assistant for SureShot Bookstore/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/Shoshan/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/not a general AI assistant/i);
+  });
+
+  it("requires explicit goodbye before ending the call", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER END THE CALL PREMATURELY/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Is there anything else I can help you with today/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/end_call/i);
+  });
+
+  it("requires omni-channel support escalation with email verification", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/OMNI-CHANNEL ESCALATION S\.O\.P\./i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/jessica@sureshotbooks\.com/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I have sent your request to the support team\. They will contact you shortly/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I will forward your details to our support team so they can reach out to you directly and securely/i,
+    );
+  });
+
+  it("requires volume alternative suggestions for title search", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TITLE & VOLUME SEARCH S\.O\.P\./i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/similarMatches/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Volume 3 and Volume 4/i);
   });
 
   it("requires dynamic topic Polite Pivot instruction", () => {

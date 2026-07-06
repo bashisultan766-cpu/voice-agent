@@ -39,8 +39,8 @@ function chunkEvent(text: string, preserveFull = false): AgentStreamEvent {
   };
 }
 
-function doneEvent(phase: CallSession["phase"]): AgentStreamEvent {
-  return { type: "done", phase };
+function doneEvent(phase: CallSession["phase"], endCall = false): AgentStreamEvent {
+  return { type: "done", phase, endCall };
 }
 
 function* yieldSpeech(text: string, preserveFull = false): Generator<AgentStreamEvent> {
@@ -219,7 +219,11 @@ export async function* runLlmOrchestratorTurn(
   applySessionPhaseAfterTurn(session, result.responseType);
   persistOrderContext(session, result);
 
+  if (result.endCall) {
+    session.phase = "ended";
+  }
+
   yield* yieldSpeech(speech, preserveFullSpeech);
   syncSessionFromCallState(session, getOrCreateCallState(session.callSid));
-  yield doneEvent(session.phase);
+  yield doneEvent(session.phase, result.endCall ?? false);
 }
