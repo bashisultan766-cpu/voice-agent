@@ -44,6 +44,11 @@ describe("shopifyTruthSearch query builders", () => {
     const queries = buildTitleTruthQueries("Harry Potter");
     expect(queries.some((q) => /title:\*harry\*.*OR.*title:\*potter\*/i.test(q))).toBe(true);
   });
+
+  it("builds AND queries for multi-token precision", () => {
+    const queries = buildTitleTruthQueries("Rich Dad Poor Dad");
+    expect(queries.some((q) => /title:\*rich\* AND title:\*dad\*/i.test(q))).toBe(true);
+  });
 });
 
 describe("shopifyTruthSearch live", () => {

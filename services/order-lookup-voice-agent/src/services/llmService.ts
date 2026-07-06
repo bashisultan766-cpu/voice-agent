@@ -24,6 +24,16 @@ export function isExplicitGoodbyeUtterance(callerText: string): boolean {
 }
 
 /** Rapid cart quantity/title changes — must not trigger hangup. */
+const NO_CART_CORRECTION_KEYWORDS =
+  /\b(make it|wait|change|actually|add|minus|remove|delete|copies?|quantity|instead|scratch that|more of|less of|\d+)\b/i;
+
+/** "No" followed by cart math — correction, not goodbye (e.g. "No, make it 10 copies"). */
+export function isNoWithCartCorrection(callerText: string): boolean {
+  const text = callerText.toLowerCase().trim();
+  if (!/\bno\b/.test(text)) return false;
+  return NO_CART_CORRECTION_KEYWORDS.test(text);
+}
+
 export function isCartModificationUtterance(callerText: string): boolean {
   const text = callerText.toLowerCase().trim();
   if (!text) return false;
@@ -82,6 +92,7 @@ export function isClosingConversationUtterance(
   messages: Array<{ role: string; content: string }> = [],
 ): boolean {
   if (isCartModificationUtterance(callerText)) return false;
+  if (isNoWithCartCorrection(callerText)) return false;
 
   if (isExplicitGoodbyeUtterance(callerText)) return true;
 
@@ -92,6 +103,8 @@ export function isClosingConversationUtterance(
 
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
   if (lastAssistant && /anything else/i.test(lastAssistant.content)) {
+    if (isNoWithCartCorrection(text)) return false;
+    if (/\b(copies?|make it|add|minus|remove|\d+)\b/.test(text)) return false;
     if (/^(no|nope|nothing|that'?s all|that is all|that'?s it|i'?m good|all set)\b/.test(text)) {
       return true;
     }

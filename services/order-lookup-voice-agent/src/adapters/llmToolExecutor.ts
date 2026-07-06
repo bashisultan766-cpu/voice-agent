@@ -713,9 +713,11 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     }
     const similar = data.similarMatches ?? [];
     const volumeHint =
-      data.exactMatch === false && similar.length > 1
-        ? "You could not find the EXACT volume. Read the top 2 or 3 entries from similarMatches aloud (bookName, inStock, price) and ask if they want one. Use variant_id and price from the chosen match for add_to_cart."
-        : "If in stock, offer to add to cart using variant_id and unit_price from this response. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
+      data.exactMatch === true
+        ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask how many copies before add_to_cart unless the caller already stated a quantity."
+        : data.exactMatch === false && similar.length > 1
+          ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before add_to_cart."
+          : "If in stock, offer to add to cart using variant_id and unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
     return JSON.stringify({
       status: data.status,
       found: data.status === "found",

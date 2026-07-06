@@ -439,6 +439,27 @@ describe("searchByTitle", () => {
     expect(result.inStock).toBe(true);
   });
 
+  it("flags near-exact title match for Rich Dad Poor Dad style queries", async () => {
+    vi.mocked(shopifyGraphql).mockResolvedValue({
+      products: {
+        edges: [
+          {
+            node: {
+              ...SAMPLE_PRODUCT_NODE,
+              title: "Rich Dad Poor Dad: What the Rich Teach Their Kids About Money",
+            },
+          },
+          { node: { ...SAMPLE_PRODUCT_NODE, id: "gid://shopify/Product/1002", title: "Other Finance Book" } },
+        ],
+      },
+    });
+
+    const result = await searchByTitle("Rich Dad Poor Dad");
+    expect(result.status).toBe("found");
+    expect(result.exactMatch).toBe(true);
+    expect(result.bookName).toMatch(/Rich Dad Poor Dad/i);
+  });
+
   it("returns not_found when no products match", async () => {
     vi.mocked(shopifyGraphql).mockResolvedValue({ products: { edges: [] } });
 

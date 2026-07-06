@@ -5,6 +5,7 @@ import {
   isClosingConversationUtterance,
   isExplicitEndCallIntent,
   isExplicitGoodbyeUtterance,
+  isNoWithCartCorrection,
   shouldBlockPrematureEndCall,
 } from "../src/services/llmService.js";
 
@@ -35,12 +36,27 @@ describe("isClosingConversationUtterance", () => {
   it("does not treat cart math or mind-changes as conversation end", () => {
     expect(isClosingConversationUtterance("no make it 20")).toBe(false);
     expect(isClosingConversationUtterance("add 10, minus 5")).toBe(false);
+    expect(isClosingConversationUtterance("No, make it 10 copies")).toBe(false);
+    expect(
+      isClosingConversationUtterance("No, make it 10", [
+        { role: "assistant", content: "Is there anything else I can help you with today?" },
+      ]),
+    ).toBe(false);
     expect(
       isClosingConversationUtterance("no", [
         { role: "assistant", content: "Is there anything else I can help you with today?" },
       ]),
     ).toBe(true);
     expect(isClosingConversationUtterance("no, I don't need more copies")).toBe(false);
+  });
+});
+
+describe("isNoWithCartCorrection", () => {
+  it("detects no followed by cart correction keywords", () => {
+    expect(isNoWithCartCorrection("No, make it 10")).toBe(true);
+    expect(isNoWithCartCorrection("no wait change that to 5 copies")).toBe(true);
+    expect(isNoWithCartCorrection("no")).toBe(false);
+    expect(isNoWithCartCorrection("no thank you")).toBe(false);
   });
 });
 

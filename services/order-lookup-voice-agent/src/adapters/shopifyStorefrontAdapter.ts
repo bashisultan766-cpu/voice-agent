@@ -17,9 +17,11 @@ import { withShopifyCircuitBreaker } from "../platform/circuitBreaker.js";
 import {
   isValidIsbnFormat,
   normalizeIsbn,
+  normalizeSearchText,
   rankBySearchScore,
   rankLiveProducts,
   scoreTitleMatch,
+  tokenize,
 } from "../utils/productSearchNormalize.js";
 import {
   isValidOrderNumberFormat,
@@ -33,6 +35,7 @@ import {
 } from "../tools/shopifyLiveSearch.js";
 import {
   buildIsbnTruthQueries,
+  buildTitleExpansionQueries,
   buildTitleTruthQueries,
 } from "../tools/shopifyTruthSearch.js";
 import {
@@ -929,8 +932,33 @@ export async function createShopifyDraftOrder(
   }
 }
 
+function dedupeGqlProductNodes(nodes: GqlProductNode[]): GqlProductNode[] {
+  const seen = new Set<string>();
+  const out: GqlProductNode[] = [];
+  for (const node of nodes) {
+    if (!node.id || seen.has(node.id)) continue;
+    seen.add(node.id);
+    out.push(node);
+  }
+  return out;
+}
+
 function isExactTitleMatch(title: string, query: string): boolean {
-  return scoreTitleMatch(title, query) >= 10;
+  if (scoreTitleMatch(title, query) >= 10) return true;
+
+  const normalizedTitle = normalizeSearchText(title);
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return false;
+
+  if (normalizedTitle.includes(normalizedQuery)) return true;
+
+  const queryTokens = tokenize(query);
+  if (queryTokens.length >= 2) {
+    const allTokensPresent = queryTokens.every((token) => normalizedTitle.includes(token));
+    if (allTokensPresent && scoreTitleMatch(title, query) >= 3) return true;
+  }
+
+  return false;
 }
 
 const CUSTOMER_HISTORY_QUERY = `query CustomerOrderHistory($id: ID!, $first: Int!) {
@@ -1212,15 +1240,29 @@ export async function searchByTitle(
 
   try {
     const result = await runWithGuard(callSid, "title_search", async () => {
-      const queries = buildTitleTruthQueries(q);
-      const { nodes, hadErrors } = await graphqlProductsForQueries(queries);
+      const primaryQueries = buildTitleTruthQueries(q);
+      let { nodes, hadErrors } = await graphqlProductsForQueries(primaryQueries);
+
+      if (nodes.length < 5) {
+        const expanded = await graphqlProductsForQueries(buildTitleExpansionQueries(q));
+        nodes = dedupeGqlProductNodes([...nodes, ...expanded.nodes]);
+        hadErrors = hadErrors || expanded.hadErrors;
+      }
+
       if (hadErrors && nodes.length === 0) {
         return { status: "system_maintenance" as const, message: "Catalog temporarily unavailable" };
       }
       const products = nodes.map((n) => mapGqlProduct(n));
 
       const ranked = rankBySearchScore(products, q, 0.5);
-      const rankedList = ranked.length ? ranked : rankLiveProducts(products, q);
+      const rankedList = (ranked.length ? ranked : rankLiveProducts(products, q)).sort(
+        (a, b) => {
+          const aExact = isExactTitleMatch(a.title, q) ? 1 : 0;
+          const bExact = isExactTitleMatch(b.title, q) ? 1 : 0;
+          if (bExact !== aExact) return bExact - aExact;
+          return scoreTitleMatch(b.title, q) - scoreTitleMatch(a.title, q);
+        },
+      );
       const top = rankedList[0];
       if (!top) {
         return { status: "not_found" as const, queriedTitle: q };

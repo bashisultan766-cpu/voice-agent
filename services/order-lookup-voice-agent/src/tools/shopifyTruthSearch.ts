@@ -55,7 +55,7 @@ export function buildIsbnTruthQueries(isbn: string): string[] {
   return [...queries];
 }
 
-/** Title: token OR query — required Shopify query syntax. */
+/** Title: token OR / AND queries — required Shopify query syntax. */
 export function buildTitleTruthQueries(query: string): string[] {
   const q = query.trim();
   if (!q) return [];
@@ -65,6 +65,7 @@ export function buildTitleTruthQueries(query: string): string[] {
 
   if (tokens.length >= 2) {
     queries.add(tokens.map((t) => `title:*${t}*`).join(" OR "));
+    queries.add(tokens.map((t) => `title:*${t}*`).join(" AND "));
   }
   if (tokens.length === 1) {
     queries.add(`title:*${tokens[0]}*`);
@@ -72,6 +73,11 @@ export function buildTitleTruthQueries(query: string): string[] {
 
   queries.add(`title:*${q}*`);
   queries.add(q);
+
+  const normalized = normalizeSearchText(q);
+  if (normalized && tokens.length >= 2) {
+    queries.add(`title:*${tokens.join("*")}*`);
+  }
 
   return [...queries];
 }

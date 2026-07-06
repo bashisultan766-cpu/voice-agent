@@ -82,6 +82,13 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/each physical_items\[\]\.price/i);
   });
 
+  it("requires exact match search protocol and zero assumption quantity", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/EXACT MATCH SEARCH PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I found exactly what you are looking for/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ZERO ASSUMPTION QUANTITY/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/How many copies of \[Book Title\] would you like to add/i);
+  });
+
   it("requires isolation rule, repeat-it pronoun rule, and spatial dictation protocols", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE ISOLATION RULE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NO DATA VOMITING/i);
