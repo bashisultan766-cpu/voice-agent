@@ -77,8 +77,9 @@ export interface DeepOrderGraphqlNode {
   };
   refunds?: OrderRefundNode[];
   /**
-   * Polymorphic: deep fetch returns OrderTransactionConnection (`edges`/`node`),
-   * minimal fallback returns a flat `[OrderTransaction]` array.
+   * 2026-01 Admin API: Order.transactions is `[OrderTransaction!]!` (not a Connection).
+   * Refund.transactions remains OrderTransactionConnection — normalized in refundTransactionNodes.
+   * Legacy connection-shaped order payloads are still accepted for tests.
    */
   transactions?:
     | OrderTransactionNode[]
@@ -261,9 +262,9 @@ function subtotalFromNode(node: DeepOrderGraphqlNode): string | undefined {
 }
 
 /**
- * Normalize transactions from either GraphQL shape:
- * - Connection: `{ edges: [{ node: { gateway, ... } }] }` (deep fetch)
- * - Flat array: `[{ gateway, ... }]` (minimal fallback)
+ * Normalize order-level transactions from GraphQL:
+ * - Array: `[{ gateway, ... }]` (2026-01 Order.transactions)
+ * - Legacy connection: `{ edges: [{ node: { gateway, ... } }] }`
  */
 export function transactionNodesFromConnection(
   transactionsData: DeepOrderGraphqlNode["transactions"],

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   getOrderStatus,
   mapGqlOrderNode,
@@ -130,18 +133,14 @@ describe("getOrderStatus", () => {
               },
               customAttributes: [],
               refunds: [],
-              transactions: {
-                edges: [
-                  {
-                    node: {
-                      kind: "SALE",
-                      status: "SUCCESS",
-                      gateway: "shopify_payments",
-                      paymentDetails: { company: "Visa", number: "•••• 4242" },
-                    },
-                  },
-                ],
-              },
+              transactions: [
+                {
+                  kind: "SALE",
+                  status: "SUCCESS",
+                  gateway: "shopify_payments",
+                  paymentDetails: { company: "Visa", number: "•••• 4242" },
+                },
+              ],
               fulfillments: [
                 {
                   status: "SUCCESS",
@@ -347,7 +346,7 @@ describe("getOrderStatus", () => {
         return { orders: { edges: [{ node: minimalNode }] } };
       }
       throw new Error(
-        'shopify_graphql_error:[{"message":"Field \'gateway\' doesn\'t exist on type \'OrderTransactionConnection\'"}]',
+        'shopify_graphql_error:[{"message":"Field \'customAttributes\' doesn\'t exist on type \'Order\'"}]',
       );
     });
 
@@ -369,6 +368,21 @@ describe("getOrderStatus", () => {
     const tts = buildOrderStatusTts(result);
     expect(tts.text.length).toBeGreaterThan(0);
     expect(tts.text.toLowerCase()).toContain("order");
+  });
+
+  it("queries Order.transactions as a flat list per 2026-01 Admin API schema", () => {
+    const src = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/adapters/shopifyStorefrontAdapter.ts"),
+      "utf8",
+    );
+    const deepQueryMatch = src.match(/const LOOKUP_ORDER_QUERY = `([\s\S]*?)`;/);
+    expect(deepQueryMatch).toBeTruthy();
+    const deepQuery = deepQueryMatch![1];
+    const orderTxnBlock = deepQuery.match(/^\s+transactions\(first: 10\) \{([\s\S]*?)\n\s+\}/m);
+    expect(orderTxnBlock).toBeTruthy();
+    expect(orderTxnBlock![1]).not.toContain("edges");
+    expect(orderTxnBlock![1]).toContain("kind");
+    expect(deepQuery).toMatch(/refunds\(first: 5\)[\s\S]*transactions\(first: 5\) \{\s*edges/);
   });
 });
 

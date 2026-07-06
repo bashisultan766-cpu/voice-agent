@@ -73,19 +73,15 @@ export const ORDER_21796_GQL_NODE = {
       ],
     },
   ],
-  transactions: {
-    edges: [
-      {
-        node: {
-          kind: "SALE",
-          status: "SUCCESS",
-          gateway: "shopify_payments",
-          formattedGateway: "Shopify Payments",
-          paymentDetails: { company: "Visa", number: "4242" },
-        },
-      },
-    ],
-  },
+  transactions: [
+    {
+      kind: "SALE",
+      status: "SUCCESS",
+      gateway: "shopify_payments",
+      formattedGateway: "Shopify Payments",
+      paymentDetails: { company: "Visa", number: "4242" },
+    },
+  ],
   fulfillments: [],
 } as const;
 

@@ -54,19 +54,15 @@ export const ORDER_21698_F1_GQL_NODE = {
       ],
     },
   ],
-  transactions: {
-    edges: [
-      {
-        node: {
-          kind: "SALE",
-          status: "SUCCESS",
-          gateway: "paypal",
-          formattedGateway: "PayPal Express Checkout",
-          paymentDetails: {},
-        },
-      },
-    ],
-  },
+  transactions: [
+    {
+      kind: "SALE",
+      status: "SUCCESS",
+      gateway: "paypal",
+      formattedGateway: "PayPal Express Checkout",
+      paymentDetails: {},
+    },
+  ],
   fulfillments: [],
 } as const;
 

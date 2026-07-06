@@ -50,7 +50,7 @@ describe("parseDeepOrderData", () => {
     expect(parsed.cardLast4).toBe("4242");
   });
 
-  it("reads payment gateway from deep-fetch Connection shape (edges[].node)", () => {
+  it("reads payment gateway from legacy connection-shaped order transactions", () => {
     const node = {
       ...DEEP_FETCH_GQL_NODE,
       paymentGatewayNames: undefined,

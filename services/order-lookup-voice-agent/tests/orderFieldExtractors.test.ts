@@ -87,7 +87,7 @@ describe("orderFieldExtractors", () => {
 
   it("maps PayPal Express Checkout gateway when no card last4", () => {
     const payment = extractPaymentMethod(
-      ORDER_21698_F1_GQL_NODE.transactions.edges.map((e) => e.node),
+      ORDER_21698_F1_GQL_NODE.transactions,
       ORDER_21698_F1_GQL_NODE.paymentGatewayNames,
     );
     expect(payment.cardLast4).toBeUndefined();
