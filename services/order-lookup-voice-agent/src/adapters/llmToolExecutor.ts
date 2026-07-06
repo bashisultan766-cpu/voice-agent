@@ -180,7 +180,6 @@ export async function executeLlmTool(
       args,
       ok: true,
       status: "ok",
-      data: { ended: true },
       elapsedMs: Date.now() - started,
     };
   }
@@ -754,7 +753,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     data: record.data,
     variant_id: "variantId" in record.data ? record.data.variantId : undefined,
     instructions:
-      record.tool === "search_shopify_book_by_isbn" || record.tool === "search_shopify_book_by_title"
+      record.tool === "search_shopify_book_by_isbn"
         ? "If in stock, offer to add to cart using variant_id and unit_price (from the price field) from this response. If out of stock, follow GRACEFUL ESCALATION."
         : undefined,
   });

@@ -51,6 +51,27 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Volume 3 and Volume 4/i);
   });
 
+  it("requires real-world chaos protocols for multilingual, phonetic, and rambling callers", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MULTILINGUAL PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/silently translate their search query into English/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/PHONETIC STT PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/B as in Boy, A, S as in Sam, H/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/INTERRUPTION & RAMBLING PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/LAST stated intention/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/What is your Order Number/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/FUZZY SEARCH KEYWORD EXTRACTION/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Harry Potter please/i);
+  });
+
+  it("forbids asking for phone number and mandates silent isVerifiedCaller verification", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CRITICAL IDENTITY RULE/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY FORBIDDEN from asking the customer for their phone number/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Can I get your phone number to verify your account/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/isVerifiedCaller/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ONLY need the Order Number/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/backend Twilio integration/i);
+  });
+
   it("requires dynamic topic Polite Pivot instruction", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MUST dynamically use the user's specific requested topic/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT literally repeat the "football" example/i);
@@ -66,7 +87,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
   });
 
   it("requires progressive disclosure for initial order lookup", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/fluent, professional English/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MULTILINGUAL PROTOCOL|Match the caller's language/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ORDER LOOKUP S\.O\.P\./i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I found your order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);

@@ -38,14 +38,14 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "get_shopify_order_status",
       description:
-        "Fetch real order details from Shopify: customer name, line items with quantities, subtotal, shipping fee, status, ETA, refund reason, refund email, and card last four.",
+        "Fetch real order details from Shopify. Pass ONLY the digit sequence the caller stated — strip filler words and hesitation. Translate non-English order references to English digits before calling.",
       parameters: {
         type: "object",
         properties: {
           orderNumber: {
             type: "string",
             description:
-              "Order number the caller explicitly stated (e.g. 21698 or 21698-F1). Never guess.",
+              "Order digits only (e.g. 21698 or 21698-F1). Extract from rambling speech — never pass 'uhh', 'please', or full sentences. Translate non-English number words to digits first. Never guess.",
           },
         },
         required: ["orderNumber"],
@@ -76,13 +76,15 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "search_shopify_book_by_isbn",
-      description: "Search the SureShot Books catalog by ISBN-10 or ISBN-13.",
+      description:
+        "Search the SureShot Books catalog by ISBN. Pass ONLY digit characters — strip filler and phonetic noise from spoken ISBN.",
       parameters: {
         type: "object",
         properties: {
           isbn: {
             type: "string",
-            description: "ISBN digits the caller explicitly read (10 or 13 digits).",
+            description:
+              "ISBN digits only (10 or 13). Extract from spoken input — ignore 'uhh', 'the number is', and phonetic letter qualifiers. Never pass conversational filler.",
           },
         },
         required: ["isbn"],
@@ -95,13 +97,14 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "search_shopify_book_by_title",
       description:
-        "Search the SureShot Books catalog by book title. Returns up to 5 similar volume/variant matches.",
+        "Search the SureShot Books catalog by book title. Returns up to 5 similar volume/variant matches. Never pass conversational filler — extract ONLY core title keywords (e.g. 'Harry Potter' not 'uhh I want a book called Harry Potter please'). Translate non-English titles to English before calling.",
       parameters: {
         type: "object",
         properties: {
           title: {
             type: "string",
-            description: "Book title the caller explicitly provided.",
+            description:
+              "Core book title keywords only — no filler, punctuation, or full sentences. Example: caller says 'Uhh I am looking for a book called Harry Potter please' → pass 'Harry Potter'.",
           },
         },
         required: ["title"],
