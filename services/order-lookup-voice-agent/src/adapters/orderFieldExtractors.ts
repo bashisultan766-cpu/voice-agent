@@ -93,6 +93,51 @@ export function formatGatewayLabel(raw?: string): string | undefined {
   return trimmed;
 }
 
+/** Human-readable Shopify OrderCancelReason enum (or timeline text). */
+export function humanizeShopifyCancelReason(raw?: string | null): string | undefined {
+  if (!raw?.trim()) return undefined;
+  const trimmed = raw.trim();
+  const key = trimmed.toUpperCase().replace(/\s+/g, "_");
+  const labels: Record<string, string> = {
+    CUSTOMER: "Customer requested cancellation",
+    INVENTORY: "Out of stock",
+    FRAUD: "Fraud review",
+    DECLINED: "Payment declined",
+    STAFF: "Staff cancellation",
+    OTHER: "Other reason",
+  };
+  if (labels[key]) return labels[key];
+  if (/[a-z]/.test(trimmed) && trimmed.includes(" ")) return trimmed;
+  return trimmed
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Spoken payment label for LLM + voice — e.g. "Visa ending in 1302" or "PayPal".
+ */
+export function formatPaymentMethodLabel(
+  cardBrand?: string,
+  cardLast4?: string,
+  paymentGateway?: string,
+): string | null {
+  const brand = cardBrand?.trim();
+  const last4 = cardLast4?.trim();
+  const gateway = paymentGateway?.trim();
+
+  if (brand && last4) return `${brand} ending in ${last4}`;
+  if (last4 && gateway) {
+    const shortGateway = gateway.toLowerCase().includes("paypal") ? "PayPal" : gateway;
+    return `${shortGateway} ending in ${last4}`;
+  }
+  if (gateway) {
+    return gateway.toLowerCase().includes("paypal") ? "PayPal" : gateway;
+  }
+  if (brand) return brand;
+  return null;
+}
+
 export function extractCardLast4(paymentNumber?: string): string | undefined {
   if (!paymentNumber) return undefined;
   const digits = paymentNumber.replace(/\D/g, "");

@@ -76,6 +76,15 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/VIP ORDER HISTORY DRILL-DOWN S\.O\.P\./i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Which month would you like to hear about/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/monthYear/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/inmate numbers or facility details/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method/i);
+  });
+
+  it("authorizes unverified callers for payment method and refund reason", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — PRIVACY SHIELD/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Payment Method/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/cancel_reason or refund_reason/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Visa ending in 1234/i);
   });
 
   it("requires dynamic topic Polite Pivot instruction", () => {
@@ -99,8 +108,10 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ACTIVE ORDER CONTEXT/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I don't have that specific detail on file|that specific detail is not on file/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID DICTATION PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and a notepad ready/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Did you get all of that/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Were you able to write that down/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT invent your own spacing, dashes, ellipses, or SSML/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);

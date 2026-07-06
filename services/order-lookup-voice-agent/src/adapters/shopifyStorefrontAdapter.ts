@@ -73,6 +73,8 @@ export interface OrderStatusResult {
   financialStatus?: string;
   refundStatus?: string;
   refundReason?: string;
+  /** Cancellation cause from Shopify cancelReason or refund timeline. */
+  cancelReason?: string;
   /** Product subtotal before shipping (books only). */
   subtotalAmount?: string;
   totalAmount?: string;
@@ -225,6 +227,8 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
         note
         displayFulfillmentStatus
         displayFinancialStatus
+        cancelledAt
+        cancelReason
         email
         phone
         shippingAddress {
@@ -373,6 +377,8 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
         note
         displayFulfillmentStatus
         displayFinancialStatus
+        cancelledAt
+        cancelReason
         email
         phone
         shippingAddress {
@@ -608,6 +614,7 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     financialStatus: parsed.financialStatus,
     refundStatus: parsed.isRefunded ? parsed.financialStatus : undefined,
     refundReason: parsed.refundReason,
+    cancelReason: parsed.cancelReason,
     refundAmount: parsed.refundAmount,
     refundDate: parsed.refundDate,
     refundNotificationEmail: parsed.refundNotificationEmail,

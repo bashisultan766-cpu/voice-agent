@@ -33,6 +33,7 @@ describe("toolResultForLlm order shaping", () => {
         shippingFee: "5.00 USD",
         refundStatus: "REFUNDED",
         refundReason: "OUT OF STOCK",
+        cancelReason: "Out of stock",
         refundNotificationEmail: "zzyxx2002@yahoo.com",
         paymentGateway: "PayPal Express Checkout",
         lineItems: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
@@ -45,16 +46,20 @@ describe("toolResultForLlm order shaping", () => {
     };
 
     expect(parsed.data.customer_name).toBe("Joel Moore");
+    expect(parsed.data.cancel_reason).toBe("Out of stock");
     expect(parsed.data.refund_notification_email).toBe("zzyxx2002@yahoo.com");
     expect(parsed.data.refund_notification_email_for_tts).toBe("zzyxx2002 at yahoo dot com");
     expect(parsed.data.payment_gateway).toBe("PayPal Express Checkout");
+    expect(parsed.data.payment_method).toBe("PayPal");
     expect(parsed.data.payment_method_last4).toBeNull();
     expect(parsed.data.card_brand).toBeNull();
     // Omni-Extractor payload keys must always be present (null allowed).
     for (const key of [
       "customer_name",
+      "payment_method",
       "payment_method_last4",
       "card_brand",
+      "cancel_reason",
       "refund_notification_email",
       "order_confirmation_email",
     ]) {
@@ -88,6 +93,7 @@ describe("toolResultForLlm order shaping", () => {
       data: Record<string, unknown>;
     };
     expect(parsed.data.customer_name).toBe("Jamaica Thompson");
+    expect(parsed.data.payment_method).toBe("Visa ending in 4242");
     expect(parsed.data.payment_method_last4).toBe("4242");
     expect(parsed.data.card_brand).toBe("Visa");
     expect(parsed.data.refund_notification_email).toBe("jamaicathompson87@gmail.com");

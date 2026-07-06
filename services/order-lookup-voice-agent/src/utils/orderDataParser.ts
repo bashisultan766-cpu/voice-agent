@@ -6,6 +6,7 @@ import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js"
 import {
   extractOrderConfirmationEmail,
   extractPaymentMethod,
+  humanizeShopifyCancelReason,
   extractRefundAmount,
   extractRefundNotificationDate,
   extractRefundNotificationEmail,
@@ -30,6 +31,8 @@ export interface DeepOrderGraphqlNode {
   note?: string | null;
   displayFulfillmentStatus?: string;
   displayFinancialStatus?: string;
+  cancelledAt?: string | null;
+  cancelReason?: string | null;
   shippingAddress?: {
     name?: string | null;
     address1?: string | null;
@@ -100,6 +103,8 @@ export interface ParsedOrderData {
   lineItems: Array<{ title: string; quantity: number }>;
   isRefunded: boolean;
   refundReason?: string;
+  /** Shopify cancelReason enum or timeline-derived cancellation cause. */
+  cancelReason?: string;
   refundNotificationEmail?: string;
   orderConfirmationEmail?: string;
   /** Raw timeline messages — injected into LLM session memory for follow-ups. */
@@ -266,6 +271,9 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   const refundReason =
     timelineRefundReason ??
     extractRefundReason(isRefunded, node.refunds, node.customAttributes, events);
+  const cancelReason =
+    humanizeShopifyCancelReason(node.cancelReason) ??
+    (isRefunded || node.cancelledAt ? refundReason : undefined);
   const refundNotificationEmail =
     isRefunded || hasRefundTimeline
       ? extractRefundNotificationEmail(events, node.customAttributes)
@@ -299,6 +307,7 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     lineItems,
     isRefunded,
     refundReason,
+    cancelReason,
     refundNotificationEmail,
     orderConfirmationEmail,
     events: eventMessages,
@@ -338,6 +347,7 @@ export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrde
     lineItems,
     isRefunded: Boolean(result.refundStatus && /refund/i.test(result.refundStatus)),
     refundReason: result.refundReason,
+    cancelReason: result.cancelReason ?? result.refundReason,
     refundNotificationEmail: result.refundNotificationEmail ?? result.refundEmail,
     orderConfirmationEmail: result.orderConfirmationEmail,
     events: result.events ?? [],

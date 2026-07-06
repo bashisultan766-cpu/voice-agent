@@ -81,8 +81,8 @@ export function buildActiveOrderContextSystemMessage(
   return (
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +
-    "You have the full order timeline in events plus order_placed_at, customer_email, customer_email_for_tts, customer_name, payment_method_last4, " +
-    "card_brand, refund_notification_email, refund_notification_email_for_tts, " +
+    "You have the full order timeline in events plus order_placed_at, customer_email, customer_email_for_tts, customer_name, payment_method, payment_method_last4, " +
+    "card_brand, cancel_reason, refund_reason, refund_notification_email, refund_notification_email_for_tts, " +
     "order_confirmation_email, and refund_reason — " +
     "never read timeline text verbatim or speak internal staff names (e.g. Darren Herrington). " +
     "For refund/confirmation email questions, use refund_notification_email_for_tts when present. " +

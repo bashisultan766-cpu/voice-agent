@@ -10,6 +10,7 @@ import {
   extractCardFromPaymentDetails,
   extractTrackingInfo,
   formatGatewayLabel,
+  formatPaymentMethodLabel,
 } from "../src/adapters/orderFieldExtractors.js";
 import {
   ORDER_21698_F1_EXPECTED,
@@ -191,6 +192,16 @@ describe("orderFieldExtractors", () => {
     expect(tracking.trackingNumber).toBe("940011189922");
     expect(tracking.trackingCompany).toBe("USPS");
     expect(tracking.trackingUrl).toBe("https://track.example");
+  });
+
+  it("formats spoken payment_method labels for cards and PayPal", () => {
+    expect(formatPaymentMethodLabel("Visa", "1302", "Shopify Payments")).toBe(
+      "Visa ending in 1302",
+    );
+    expect(formatPaymentMethodLabel(undefined, undefined, "PayPal Express Checkout")).toBe(
+      "PayPal",
+    );
+    expect(formatPaymentMethodLabel(undefined, undefined, undefined)).toBeNull();
   });
 });
 
