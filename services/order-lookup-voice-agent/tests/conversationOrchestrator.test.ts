@@ -108,7 +108,7 @@ describe("conversationOrchestrator flows", () => {
   it('greets naturally on "hello" without order-number demand', async () => {
     const session = createCallSession("CA_ORCH", "+1", "+2");
     const speech = await collectSpeech(session, "hello");
-    expect(speech).toMatch(/SureShot Bookstore|assist you today/i);
+    expect(speech).toMatch(/SureShot Books|virtual assistant|help you today/i);
     expect(speech).not.toMatch(/valid order number|didn't catch/i);
   });
 

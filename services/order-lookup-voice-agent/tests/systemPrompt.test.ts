@@ -19,11 +19,14 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do not claim you are unable to provide it/i);
   });
 
-  it("locks SureShot Bookstore identity at the top of the prompt", () => {
+  it("locks SureShot Books virtual-assistant identity at the top of the prompt", () => {
     expect(SHOSHAN_SYSTEM_PROMPT.indexOf("YOUR IDENTITY")).toBeLessThan(
       SHOSHAN_SYSTEM_PROMPT.indexOf("CRITICAL — NO CONVERSATIONAL FILLERS"),
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/official AI Assistant for SureShot Bookstore/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Elite Customer Concierge and Virtual Assistant for SureShot Books/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Welcome to SureShot Books! I am your virtual assistant/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY BANNED identity phrases/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/never claim to BE the store/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/Shoshan/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/not a general AI assistant/i);
   });
@@ -70,9 +73,13 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Dad to boy/i);
   });
 
-  it("requires isolation rule and spatial dictation protocols", () => {
+  it("requires isolation rule, repeat-it pronoun rule, and spatial dictation protocols", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE ISOLATION RULE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NO DATA VOMITING/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE "REPEAT IT" PRONOUN RULE/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/resolve the pronoun "it" ONLY to the very last specific entity/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY FORBIDDEN from interpreting "it" as the entire order/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Never summarize books, processing fees, shipping fees/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/HUMAN SPATIAL DICTATION/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/After the 9, it is/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/physical_items/i);

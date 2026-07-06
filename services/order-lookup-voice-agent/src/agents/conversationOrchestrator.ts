@@ -171,7 +171,7 @@ export type BrainIntent = "order_status" | "product_search" | "general_help" | "
 
 /** Fixed greeting spoken at call start (TwiML welcomeGreeting). */
 export const BRAIN_GREETING =
-  "Hi, I am from SureShot Bookstore. How can I assist you today?";
+  "Welcome to SureShot Books! I am your virtual assistant. How can I help you today?";
 
 /** Create a new call session — voice layer must not mutate slots/intent/phase. */
 export function createCallSession(callSid: string, from: string, to: string): CallSession {
@@ -312,10 +312,10 @@ const HOW_ARE_YOU_RESPONSES = [
 ];
 
 const GREETING_VARIANTS = [
-  "Hi, I am from SureShot Bookstore. How can I assist you today?",
-  "Hello from SureShot Bookstore — how can I assist you today?",
-  "Thanks for calling SureShot Bookstore. Are you looking for a book or checking an order?",
-  "Good to hear from you. I'm here from SureShot Bookstore to help with books and orders — what do you need?",
+  "Welcome to SureShot Books! I am your virtual assistant. How can I help you today?",
+  "Thanks for calling SureShot Books — I'm your virtual assistant. How can I help you today?",
+  "Welcome to SureShot Books. I'm your virtual assistant — are you looking for a book or checking an order?",
+  "Good to hear from you. I'm your SureShot Books assistant — what can I help you with today?",
 ];
 
 const ORDER_NUMBER_PROMPT = "Sure — please tell me your order number.";

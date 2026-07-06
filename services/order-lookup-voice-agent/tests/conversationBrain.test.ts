@@ -15,9 +15,11 @@ describe("conversationBrain", () => {
   });
 
   it("exposes the canonical call-start greeting", () => {
-    expect(BRAIN_GREETING).toMatch(/SureShot Bookstore/i);
-    expect(BRAIN_GREETING).toMatch(/How can I assist you today/i);
+    expect(BRAIN_GREETING).toMatch(/Welcome to SureShot Books/i);
+    expect(BRAIN_GREETING).toMatch(/virtual assistant/i);
+    expect(BRAIN_GREETING).toMatch(/How can I help you today/i);
     expect(BRAIN_GREETING).not.toMatch(/order number|ISBN/i);
+    expect(BRAIN_GREETING).not.toMatch(/I am SureShot Bookstore/i);
   });
 
   it('responds naturally to "hello" without demanding order number', async () => {

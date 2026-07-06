@@ -51,7 +51,7 @@ export async function defaultTestLlmAgentTurn(
 
   if (/^(hi|hello|hey)\b/i.test(lower)) {
     return {
-      speech: "Hi, I am from SureShot Bookstore. How can I assist you today?",
+      speech: "Welcome to SureShot Books! I am your virtual assistant. How can I help you today?",
       toolExecutions: [],
       responseType: "general_help",
     };
