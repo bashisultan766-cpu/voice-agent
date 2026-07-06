@@ -32,28 +32,25 @@ describe("formatEmailForTTS", () => {
 });
 
 describe("formatTrackingNumberForTTS", () => {
-  it("inserts safe SSML pauses between every character for slow ElevenLabs dictation", () => {
-    const formatted = formatTrackingNumberForTTS("1Z999999999", "slow", { useSsml: true });
-    expect(formatted).toBe(
-      `1<break time="${SSML_BREAK_SAFE_MS}ms"/>Z<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>9<break time="${SSML_BREAK_SAFE_MS}ms"/>`,
-    );
+  it("uses comma-space acoustic pacing by default for ElevenLabs dictation", () => {
+    const formatted = formatTrackingNumberForTTS("9250");
+    expect(formatted).toBe("9, 2, 5, 0,");
   });
 
-  it("uses shorter pauses for normal speed", () => {
+  it("comma-paces every character in long alphanumeric tracking IDs", () => {
+    const formatted = formatTrackingNumberForTTS("1Z999999999", "slow");
+    expect(formatted).toBe("1, Z, 9, 9, 9, 9, 9, 9, 9, 9, 9,");
+    expect(formatted).not.toContain("<break");
+  });
+
+  it("supports legacy SSML opt-in when explicitly requested", () => {
     const formatted = formatTrackingNumberForTTS("ABC", "normal", { useSsml: true });
     expect(formatted).toBe('A<break time="500ms"/>B<break time="500ms"/>C<break time="500ms"/>');
   });
 
-  it("uses phonetic punctuation spacing for non-SSML engines", () => {
-    const formatted = formatTrackingNumberForTTS("ABC123", "slow", { useSsml: false });
-    expect(formatted).toBe("A. , B. , C. , 1. , 2. , 3. ,");
-  });
-
   it("normalizes to uppercase and trims whitespace", () => {
-    const formatted = formatTrackingNumberForTTS("  ab-12  ", "slow", { useSsml: true });
-    expect(formatted).toContain("A<break");
-    expect(formatted).toContain("B<break");
-    expect(formatted).not.toContain("  ");
+    const formatted = formatTrackingNumberForTTS("  ab-12  ", "slow");
+    expect(formatted).toBe("A, B, -, 1, 2,");
   });
 
   it("returns empty string for blank input", () => {

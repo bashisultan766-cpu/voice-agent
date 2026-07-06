@@ -1,7 +1,6 @@
 /**
  * TTS formatting helpers — slow dictation for alphanumeric IDs on voice calls.
  */
-import { getConfig } from "../config.js";
 
 /**
  * Voice-friendly email handle for refund/confirmation readout.
@@ -43,14 +42,19 @@ export const TRACKING_CHAR_PAUSE_NORMAL_MS = 500;
 export type TrackingDictationSpeed = "slow" | "normal";
 
 export interface FormatTrackingNumberOptions {
-  /** Override config — SSML breaks for ElevenLabs; comma spacing otherwise. */
+  /** Legacy opt-in — SSML breaks are often stripped on voice relays; comma pacing is default. */
   useSsml?: boolean;
 }
 
 const SSML_BREAK_TAG_RE = /<break\s+time=["']([^"']+)["']\s*\/?>/gi;
 
 const TRACKING_DICTATION_SSML_RE = /<break\s+time=/i;
-const TRACKING_DICTATION_PUNCT_RE = /\b[A-Z0-9]\s*,\s*\.\s*,/i;
+const TRACKING_DICTATION_COMMA_RE = /[A-Z0-9],\s+[A-Z0-9]/i;
+
+function formatCommaAcousticPacing(chars: string[]): string {
+  if (!chars.length) return "";
+  return `${chars.join(", ")},`;
+}
 
 /** Parse an SSML break duration string (e.g. "500ms", "2s", "1.5s") into milliseconds. */
 export function parseSsmlBreakTimeMs(raw: string): number {
@@ -104,41 +108,32 @@ export function sanitizeTextForTTS(text: string): string {
 /** True when speech contains intentional tracking-number dictation formatting. */
 export function isTrackingDictationText(text: string): boolean {
   if (!text?.trim()) return false;
-  return TRACKING_DICTATION_SSML_RE.test(text) || TRACKING_DICTATION_PUNCT_RE.test(text);
+  return TRACKING_DICTATION_SSML_RE.test(text) || TRACKING_DICTATION_COMMA_RE.test(text);
 }
 
 function pauseMsForSpeed(speed: TrackingDictationSpeed): number {
   return speed === "slow" ? TRACKING_CHAR_PAUSE_SLOW_MS : TRACKING_CHAR_PAUSE_NORMAL_MS;
 }
 
-function formatPhoneticDictation(chars: string[], speed: TrackingDictationSpeed): string {
-  const pauseToken = speed === "slow" ? ". ," : " ,";
-  return chars.map((char) => `${char}${pauseToken}`).join(" ");
-}
-
 /**
  * Format a tracking ID for extremely slow, clear TTS dictation.
- * ElevenLabs / Twilio ConversationRelay: SSML pause between every character (≤800ms).
- * Other engines: phonetic spelling with safe punctuation pauses.
+ * Uses comma-space acoustic pacing (e.g. "9, 2, 5, 0,") so ElevenLabs pauses naturally.
+ * SSML breaks are opt-in only — they are often stripped or ignored on voice relays.
  */
 export function formatTrackingNumberForTTS(
   trackingId: string,
-  speed: TrackingDictationSpeed = "slow",
+  _speed: TrackingDictationSpeed = "slow",
   options?: FormatTrackingNumberOptions,
 ): string {
   const normalized = trackingId.trim().toUpperCase();
   if (!normalized) return "";
 
   const chars = [...normalized];
-  const pauseMs = pauseMsForSpeed(speed);
-  const useSsml =
-    options?.useSsml ??
-    getConfig().VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs";
 
-  if (useSsml) {
-    const breakTime = formatSsmlBreakTime(pauseMs);
+  if (options?.useSsml === true) {
+    const breakTime = formatSsmlBreakTime(pauseMsForSpeed(_speed));
     return chars.map((char) => `${char}<break time="${breakTime}"/>`).join("");
   }
 
-  return formatPhoneticDictation(chars, speed);
+  return formatCommaAcousticPacing(chars);
 }

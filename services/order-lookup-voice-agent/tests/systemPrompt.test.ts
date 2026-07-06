@@ -172,7 +172,9 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Did you get all of that/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Were you able to write that down/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT invent your own spacing, dashes, ellipses, or SSML/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CRITICAL GAG ORDER FOR TRACKING IDs/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOWLY OVERRIDE/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/tracking_number_for_tts verbatim/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);
   });
 
