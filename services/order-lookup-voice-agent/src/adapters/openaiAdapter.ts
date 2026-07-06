@@ -680,7 +680,7 @@ export async function* runLlmAgentTurnEvents(
                 status: "blocked",
                 elapsedMs: 0,
                 errorMessage:
-                  "NEVER end_call during cart modifications. Execute the caller's final cart intent with add_to_cart or remove_from_cart.",
+                  "GLOBAL ANTI-HANGUP: end_call blocked. Continue helping the caller — never hang up from confusion, missing data, or frustration. Only end_call after an explicit goodbye or when they clearly decline further help.",
               });
               messages.push({
                 role: "tool",
@@ -688,7 +688,7 @@ export async function* runLlmAgentTurnEvents(
                 content: JSON.stringify({
                   status: "blocked",
                   error:
-                    "NEVER end_call during cart modifications. Continue cart math — use add_to_cart or remove_from_cart for the caller's final intent.",
+                    "GLOBAL ANTI-HANGUP: end_call blocked. Continue helping the caller unless they explicitly said goodbye, no thank you, or declined further help after you asked if they need anything else.",
                 }),
               });
               continue;

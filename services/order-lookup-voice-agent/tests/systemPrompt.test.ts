@@ -70,7 +70,16 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
   it("requires dynamic cart math and hangup prevention during shopping", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DYNAMIC CART MATH PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER END THE CALL DURING CART MODIFICATIONS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/GLOBAL ANTI-HANGUP DIRECTIVE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Dad to boy/i);
+  });
+
+  it("requires ordinal mapping and missing-data graceful fallback", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ORDINAL MAPPING/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/physical_items array/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MISSING DATA GRACEFUL FALLBACK/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/my system doesn't show that specific detail/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/each physical_items\[\]\.price/i);
   });
 
   it("requires isolation rule, repeat-it pronoun rule, and spatial dictation protocols", () => {

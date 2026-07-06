@@ -146,9 +146,9 @@ describe("toolResultForLlm order shaping", () => {
         status: "found",
         orderNumber: "#48065",
         lineItems: [
-          { title: "The Holy Bible", quantity: 1 },
-          { title: "Processing Fee", quantity: 1 },
-          { title: "Shipping", quantity: 1 },
+          { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
+          { title: "Processing Fee", quantity: 1, price: "3.00 USD" },
+          { title: "Shipping", quantity: 1, price: "5.50 USD" },
         ],
       },
     };
@@ -158,10 +158,18 @@ describe("toolResultForLlm order shaping", () => {
     };
 
     expect(parsed.data.item_count).toBe(1);
-    expect(parsed.data.physical_items).toEqual([{ title: "The Holy Bible", quantity: 1 }]);
-    expect(parsed.data.items).toEqual([{ title: "The Holy Bible", quantity: 1 }]);
-    expect(parsed.data.processing_fees).toEqual([{ title: "Processing Fee", quantity: 1 }]);
-    expect(parsed.data.shipping_fees).toEqual([{ title: "Shipping", quantity: 1 }]);
+    expect(parsed.data.physical_items).toEqual([
+      { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
+    ]);
+    expect(parsed.data.items).toEqual([
+      { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
+    ]);
+    expect(parsed.data.processing_fees).toEqual([
+      { title: "Processing Fee", quantity: 1, price: "3.00 USD" },
+    ]);
+    expect(parsed.data.shipping_fees).toEqual([
+      { title: "Shipping", quantity: 1, price: "5.50 USD" },
+    ]);
   });
 
   it("returns strict NOT_FOUND payload with searched_number for hallucination lock", () => {

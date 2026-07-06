@@ -39,9 +39,33 @@ export function isCartModificationUtterance(callerText: string): boolean {
   return cartVerb || mindChange || quantityWithAction;
 }
 
-const CART_TOOL_NAMES = new Set(["add_to_cart", "remove_from_cart", "get_cart_summary"]);
 
-/** Block end_call when the turn is clearly still about cart math or cart tools ran. */
+/** Caller explicitly wants to end the call — the only cases where end_call may proceed. */
+export function isExplicitEndCallIntent(
+  callerText: string,
+  messages: Array<{ role: string; content: string }> = [],
+): boolean {
+  if (isCartModificationUtterance(callerText)) return false;
+
+  if (isClosingConversationUtterance(callerText, messages)) return true;
+
+  const text = callerText.toLowerCase().trim();
+  if (/^no,? thank(s| you)\b/i.test(text)) return true;
+  if (
+    /\b(i don'?t need anything else|don'?t need anything else|nothing else|that'?s all i need)\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Global anti-hangup guard — block end_call unless the caller explicitly closes the
+ * conversation (goodbye, no thank you, or declining further help after "anything else?").
+ */
 export function shouldBlockPrematureEndCall(input: {
   userMessage: string;
   messages?: Array<{ role: string; content: string }>;
@@ -49,11 +73,7 @@ export function shouldBlockPrematureEndCall(input: {
 }): boolean {
   if (isCartModificationUtterance(input.userMessage)) return true;
 
-  if (input.toolExecutions?.some((exec) => CART_TOOL_NAMES.has(exec.tool))) {
-    return true;
-  }
-
-  return false;
+  return !isExplicitEndCallIntent(input.userMessage, input.messages ?? []);
 }
 
 /** Thank-you / closing turns that should trigger graceful hangup. */

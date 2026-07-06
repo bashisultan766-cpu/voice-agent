@@ -24,8 +24,20 @@ export const DEEP_FETCH_GQL_NODE: DeepOrderGraphqlNode = {
   totalShippingPriceSet: { shopMoney: { amount: "5.50", currencyCode: "USD" } },
   lineItems: {
     edges: [
-      { node: { title: "The Autobiography of Malcolm X", quantity: 1 } },
-      { node: { title: "Native Son", quantity: 1 } },
+      {
+        node: {
+          title: "The Autobiography of Malcolm X",
+          quantity: 1,
+          originalUnitPriceSet: { shopMoney: { amount: "14.00", currencyCode: "USD" } },
+        },
+      },
+      {
+        node: {
+          title: "Native Son",
+          quantity: 1,
+          originalUnitPriceSet: { shopMoney: { amount: "14.00", currencyCode: "USD" } },
+        },
+      },
     ],
   },
   customAttributes: [],

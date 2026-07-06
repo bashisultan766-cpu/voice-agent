@@ -81,7 +81,7 @@ export interface OrderStatusResult {
   totalAmount?: string;
   shippingFee?: string;
   itemCount?: number;
-  lineItems?: Array<{ title: string; quantity: number }>;
+  lineItems?: Array<{ title: string; quantity: number; price?: string }>;
   orderNote?: string;
   cardLast4?: string;
   cardBrand?: string;
@@ -282,6 +282,12 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
             node {
               title
               quantity
+              originalUnitPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
             }
           }
         }
@@ -432,6 +438,12 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
             node {
               title
               quantity
+              originalUnitPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
             }
           }
         }

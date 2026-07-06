@@ -67,7 +67,13 @@ export interface DeepOrderGraphqlNode {
     }>;
   };
   lineItems?: {
-    edges?: Array<{ node?: { title?: string; quantity?: number } }>;
+    edges?: Array<{
+      node?: {
+        title?: string;
+        quantity?: number;
+        originalUnitPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+      };
+    }>;
   };
   refunds?: OrderRefundNode[];
   /**
@@ -101,8 +107,8 @@ export interface ParsedOrderData {
   shippingFee?: string;
   totalAmount?: string;
   itemCount: number;
-  lineItems: Array<{ title: string; quantity: number }>;
-  feeLineItems: Array<{ title: string; quantity: number }>;
+  lineItems: Array<{ title: string; quantity: number; price?: string }>;
+  feeLineItems: Array<{ title: string; quantity: number; price?: string }>;
   isRefunded: boolean;
   refundReason?: string;
   /** Shopify cancelReason enum or timeline-derived cancellation cause. */
@@ -220,19 +226,30 @@ function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
     .filter((n): n is OrderTimelineEvent => Boolean(n));
 }
 
-function parseRawLineItems(node: DeepOrderGraphqlNode): Array<{ title: string; quantity: number }> {
+function parseRawLineItems(
+  node: DeepOrderGraphqlNode,
+): Array<{ title: string; quantity: number; price?: string }> {
   return (
     node.lineItems?.edges
       ?.map((e) => {
         const title = e.node?.title?.trim();
         if (!title) return null;
-        return { title, quantity: e.node?.quantity ?? 1 };
+        const price = formatMoneyAmount(e.node?.originalUnitPriceSet?.shopMoney);
+        return {
+          title,
+          quantity: e.node?.quantity ?? 1,
+          ...(price ? { price } : {}),
+        };
       })
-      .filter((li): li is { title: string; quantity: number } => li !== null) ?? []
+      .filter(
+        (li): li is { title: string; quantity: number; price?: string } => li !== null,
+      ) ?? []
   );
 }
 
-function parseLineItems(node: DeepOrderGraphqlNode): Array<{ title: string; quantity: number }> {
+function parseLineItems(
+  node: DeepOrderGraphqlNode,
+): Array<{ title: string; quantity: number; price?: string }> {
   return splitLineItems(parseRawLineItems(node)).physicalItems;
 }
 

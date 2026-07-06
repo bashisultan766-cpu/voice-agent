@@ -3,6 +3,7 @@ import {
   classifyFollowUpIntent,
   isCartModificationUtterance,
   isClosingConversationUtterance,
+  isExplicitEndCallIntent,
   isExplicitGoodbyeUtterance,
   shouldBlockPrematureEndCall,
 } from "../src/services/llmService.js";
@@ -56,13 +57,55 @@ describe("isCartModificationUtterance", () => {
 });
 
 describe("shouldBlockPrematureEndCall", () => {
-  it("blocks when cart tools ran in the same turn", () => {
+  it("blocks end_call during cart modifications", () => {
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "no make it 20",
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks end_call during order corrections and vague acknowledgments", () => {
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "that's wrong, the third item wasn't that price",
+      }),
+    ).toBe(true);
     expect(
       shouldBlockPrematureEndCall({
         userMessage: "sounds good",
-        toolExecutions: [{ tool: "add_to_cart" }],
+        toolExecutions: [{ tool: "get_shopify_order_status" }],
       }),
     ).toBe(true);
+  });
+
+  it("allows end_call only on explicit closing intent", () => {
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "goodbye",
+      }),
+    ).toBe(false);
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "no thank you",
+      }),
+    ).toBe(false);
+    expect(
+      shouldBlockPrematureEndCall({
+        userMessage: "no",
+        messages: [
+          { role: "assistant", content: "Is there anything else I can help you with today?" },
+        ],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isExplicitEndCallIntent", () => {
+  it("detects no thank you and explicit goodbyes", () => {
+    expect(isExplicitEndCallIntent("no thank you")).toBe(true);
+    expect(isExplicitEndCallIntent("bye")).toBe(true);
+    expect(isExplicitEndCallIntent("that's wrong")).toBe(false);
   });
 });
 

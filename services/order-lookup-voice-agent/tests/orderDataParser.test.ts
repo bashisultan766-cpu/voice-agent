@@ -41,6 +41,8 @@ describe("parseDeepOrderData", () => {
     expect(parsed.totalAmount).toBe("33.50 USD");
     expect(parsed.itemCount).toBe(2);
     expect(parsed.lineItems).toHaveLength(2);
+    expect(parsed.lineItems[0]?.price).toBe("14.00 USD");
+    expect(parsed.lineItems[1]?.price).toBe("14.00 USD");
     expect(parsed.isRefunded).toBe(true);
     expect(parsed.refundReason).toBe("CUSTOMER REQUESTED CANCELLATION");
     expect(parsed.refundNotificationEmail).toBe("sarah.refund@yahoo.com");
