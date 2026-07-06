@@ -14,13 +14,35 @@ function getClient(): OpenAI {
   return client;
 }
 
-/** Explicit farewell only — bare "no" must NOT end the call. */
+/** Explicit farewell only — bare "no" must NOT end the call unless closing the conversation. */
 export function isExplicitGoodbyeUtterance(callerText: string): boolean {
   const text = callerText.toLowerCase().trim();
   if (!text) return false;
   return /\b(goodbye|good bye|bye|see you|see ya|hang up|hangup|that'?s all|that is all|nothing else|i'?m done|im done|end call|end the call)\b/i.test(
     text,
   );
+}
+
+/** Thank-you / closing turns that should trigger graceful hangup. */
+export function isClosingConversationUtterance(
+  callerText: string,
+  messages: Array<{ role: string; content: string }> = [],
+): boolean {
+  if (isExplicitGoodbyeUtterance(callerText)) return true;
+
+  const text = callerText.toLowerCase().trim();
+  if (/^(thank you|thanks|thank you so much|okay bye|ok bye|okay, bye|ok, bye)\b/.test(text)) {
+    return true;
+  }
+
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+  if (lastAssistant && /anything else/i.test(lastAssistant.content)) {
+    if (/^(no|nope|nothing|that'?s all|that is all|that'?s it|i'?m good|all set)\b/.test(text)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function orderSummaryLooksComplete(

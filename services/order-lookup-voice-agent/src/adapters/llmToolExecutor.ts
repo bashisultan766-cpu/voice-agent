@@ -42,6 +42,7 @@ import {
   formatEmailForTTS,
   formatTrackingNumberForTTS,
 } from "../utils/ttsFormatter.js";
+import { SURESHOT_GOODBYE_SPEECH } from "../utils/callerMemory.js";
 
 export type LlmToolName =
   | "get_shopify_order_status"
@@ -694,7 +695,7 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
     return JSON.stringify({
       status: "ok",
       ok: true,
-      instructions: "Say a brief warm goodbye. The call will end after you speak.",
+      instructions: `Say exactly: "${SURESHOT_GOODBYE_SPEECH}" The call will end immediately after you speak.`,
     });
   }
 

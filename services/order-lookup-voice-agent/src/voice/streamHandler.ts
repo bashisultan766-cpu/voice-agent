@@ -85,7 +85,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
       clearShoppingCart(session);
       clearDictationLock(session.callSid);
       clearStreamBarrier(session.callSid);
-      endCallSession(session.callSid);
+      endCallSession(session.callSid, session);
     }
     logger.info("relay_closed", { callSid: session?.callSid?.slice(0, 8) });
   });

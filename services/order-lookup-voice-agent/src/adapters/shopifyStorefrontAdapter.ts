@@ -39,6 +39,7 @@ import {
   parseDeepOrderData,
   type DeepOrderGraphqlNode,
 } from "../utils/orderDataParser.js";
+import { isPhysicalBookLineItem } from "../utils/productLineItems.js";
 import { extractTrackingInfo } from "./orderFieldExtractors.js";
 import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
 import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
@@ -967,7 +968,7 @@ export function compressHistoryLineItems(
   const titles: string[] = [];
   for (const edge of lineItemEdges ?? []) {
     const title = edge.node?.title?.trim();
-    if (!title) continue;
+    if (!title || !isPhysicalBookLineItem(title)) continue;
     const qty = edge.node?.quantity ?? 1;
     titles.push(qty > 1 ? `${title} x${qty}` : title);
   }

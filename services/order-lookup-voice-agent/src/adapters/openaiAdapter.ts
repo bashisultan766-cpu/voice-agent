@@ -31,6 +31,11 @@ import {
   isRefundNotificationEmailQuestion,
 } from "../agents/orderFollowUpSpeech.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
+import {
+  buildCallerWelcomeBackSystemMessage,
+  SURESHOT_GOODBYE_SPEECH,
+} from "../utils/callerMemory.js";
+import { isClosingConversationUtterance } from "../services/llmService.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -225,7 +230,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "end_call",
       description:
-        "ONLY invoke this tool if the user explicitly says 'goodbye', 'bye', 'see you', or 'hang up'. Never use for a bare 'no' or declining an offer.",
+        "Invoke when the caller is done: explicit goodbye, thank you, okay bye, or 'no' after you asked if they need anything else. Say the SureShot goodbye line first, then call this tool. Never use while a lookup is still needed.",
       parameters: {
         type: "object",
         properties: {},
@@ -381,6 +386,13 @@ function buildOpenAiMessages(
     const vaultMessage = buildVaultSecuritySystemMessage(input.session);
     if (vaultMessage) {
       systemMessages.push({ role: "system", content: vaultMessage });
+    }
+
+    if (input.session.welcomeBack) {
+      systemMessages.push({
+        role: "system",
+        content: buildCallerWelcomeBackSystemMessage(),
+      });
     }
 
     systemMessages.push({
@@ -543,6 +555,27 @@ export async function* runLlmAgentTurnEvents(
     return;
   }
 
+  if (isClosingConversationUtterance(input.userMessage, input.messages)) {
+    yield {
+      type: "result",
+      result: {
+        speech: SURESHOT_GOODBYE_SPEECH,
+        toolExecutions: [
+          {
+            tool: "end_call",
+            args: {},
+            ok: true,
+            status: "ok",
+            elapsedMs: 0,
+          },
+        ],
+        responseType: "general_help",
+        endCall: true,
+      },
+    };
+    return;
+  }
+
   if (
     input.activeOrderContext &&
     Object.keys(input.activeOrderContext).length > 0 &&
@@ -634,6 +667,22 @@ export async function* runLlmAgentTurnEvents(
           yield {
             type: "result",
             result: resultFromOrderToolExecution(lastOrderExec, toolExecutions),
+          };
+          return;
+        }
+
+        const endCallExec = toolExecutions.find(
+          (exec) => exec.tool === "end_call" && exec.ok,
+        );
+        if (endCallExec) {
+          yield {
+            type: "result",
+            result: {
+              speech: (message.content ?? "").trim() || SURESHOT_GOODBYE_SPEECH,
+              toolExecutions,
+              responseType: "general_help",
+              endCall: true,
+            },
           };
           return;
         }

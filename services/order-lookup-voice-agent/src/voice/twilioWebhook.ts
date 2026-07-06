@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { getConfig, VOICE_PATH_PREFIX, wsUrl } from "../config.js";
 import { BRAIN_GREETING } from "../agents/conversationBrain.js";
+import { getCallerMemory, CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
 import { logger } from "../utils/logger.js";import { buildConversationRelayVoiceAttrs } from "../services/voiceService.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
 
@@ -65,10 +66,13 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
   });
 
   const routerSpeech = String(req.body.RouterSpeech ?? "").trim();
+  const returningCaller = Boolean(getCallerMemory(from));
 
   const welcomeGreeting = routerSpeech
     ? "One moment while I look that up for you."
-    : BRAIN_GREETING;
+    : returningCaller
+      ? CALLER_WELCOME_BACK_GREETING
+      : BRAIN_GREETING;
   const twiml = renderConversationRelayTwiml({
     wsUrl: wsUrl(),
     callSid,

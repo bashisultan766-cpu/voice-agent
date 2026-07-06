@@ -29,9 +29,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
   });
 
   it("requires explicit goodbye before ending the call", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER END THE CALL PREMATURELY/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Is there anything else I can help you with today/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/EXPLICIT GOODBYE \/ HANGUP/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Thank you for choosing SureShot Books/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/end_call/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONVERSATIONAL WARMTH & TRANSITIONS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Let me check on that in my system/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/search the catalog for you/i);
   });
 
   it("requires omni-channel support escalation with email verification", () => {

@@ -1,10 +1,8 @@
 const PHRASES = {
-  checking: "Let me check that in our system.",
   found_order: "I found your order.",
   closing_question: "Is there anything else I can help with on this order?",
   follow_up: "Happy to help with anything else on this order.",
-  goodbye: "Thanks for calling SureShot Books. Take care.",
-  one_moment: "One moment while I pull that up.",
+  goodbye: "Thank you for choosing SureShot Books. Have a wonderful day!",
 } as const;
 
 export type PhraseKey = keyof typeof PHRASES;

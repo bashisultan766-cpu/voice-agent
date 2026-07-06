@@ -37,6 +37,7 @@ import {
   buildProgressiveDisclosureOrderSpeech,
   parsedDataFromOrderResult,
 } from "../utils/orderDataParser.js";
+import { filterPhysicalLineItems, physicalItemCount } from "../utils/productLineItems.js";
 import { speakMoney } from "../utils/formatter.js";
 import { logger } from "../utils/logger.js";
 
@@ -145,7 +146,12 @@ export function orderStatusToStructuredOrder(
 ): StructuredOrder | undefined {
   if (result.status !== "found" || !result.orderNumber) return undefined;
 
-  const products = (result.lineItems ?? []).map((item) => ({
+  const products = filterPhysicalLineItems(
+    (result.lineItems ?? []).map((item) => ({
+      title: item.title,
+      quantity: item.quantity,
+    })),
+  ).map((item) => ({
     name: item.title,
     quantity: item.quantity,
   }));
@@ -154,7 +160,9 @@ export function orderStatusToStructuredOrder(
     orderNumber: result.orderNumber,
     customerName: result.customerName ?? "",
     productCount:
-      result.itemCount ?? products.reduce((sum, item) => sum + item.quantity, 0),
+      result.itemCount ??
+      (physicalItemCount(result.lineItems ?? []) ||
+        products.reduce((sum, item) => sum + item.quantity, 0)),
     products,
     totalAmount: result.totalAmount ?? "",
     shippingFee: result.shippingFee ?? "",

@@ -15,7 +15,11 @@
  * streamHandler → process → gate → tools
  */
 import { getConfig } from "../config.js";
-import { logger } from "../utils/logger.js";
+import {
+  clearCallerMemory,
+  getCallerMemory,
+  saveCallerMemory,
+} from "../utils/callerMemory.js";
 import { pipelineTrace } from "../utils/pipelineTrace.js";
 import { clearCallExecutionPhase } from "../guards/toolExecutionGuard.js";
 import { runWithToolAuthorizationAsync } from "../guards/toolAccessGuard.js";
@@ -171,7 +175,8 @@ export const BRAIN_GREETING =
 /** Create a new call session — voice layer must not mutate slots/intent/phase. */
 export function createCallSession(callSid: string, from: string, to: string): CallSession {
   markCallSessionActive(callSid);
-  return {
+  const memory = getCallerMemory(from);
+  const session: CallSession = {
     callSid,
     from,
     to,
@@ -182,12 +187,35 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
     createdAt: Date.now(),
     awaitingInput: null,
     greetedThisCall: false,
+    welcomeBack: Boolean(memory),
     productSlots: undefined,
   };
+
+  if (memory) {
+    if (memory.shoppingCart?.length) {
+      session.shoppingCart = memory.shoppingCart.map((line) => ({ ...line }));
+    }
+    if (memory.currentOrderData) {
+      session.currentOrderData = { ...memory.currentOrderData };
+    }
+    if (memory.lastIntent) {
+      session.lastOrchestratorIntent = memory.lastIntent;
+    }
+  }
+
+  return session;
 }
 
 /** Tear down all per-call resources when the relay socket closes. */
-export function endCallSession(callSid: string): void {
+export function endCallSession(callSid: string, session?: CallSession): void {
+  if (session) {
+    saveCallerMemory({
+      phone: session.callerPhone ?? session.from,
+      lastIntent: session.lastOrchestratorIntent,
+      shoppingCart: session.shoppingCart,
+      currentOrderData: session.currentOrderData,
+    });
+  }
   markCallSessionClosed(callSid);
   clearDialogueState(callSid);
   clearCallMemory(callSid);
@@ -1197,6 +1225,7 @@ async function* handleFollowUpPhase(
 
   if (intent === "goodbye") {
     session.phase = "ended";
+    clearCallerMemory(session.callerPhone ?? session.from);
     yield chunkEvent(planGoodbye());
     yield doneEvent(session.phase, true);
     return;

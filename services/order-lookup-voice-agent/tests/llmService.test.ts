@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyFollowUpIntent,
+  isClosingConversationUtterance,
   isExplicitGoodbyeUtterance,
 } from "../src/services/llmService.js";
 
@@ -18,6 +19,17 @@ describe("isExplicitGoodbyeUtterance", () => {
     expect(isExplicitGoodbyeUtterance("no thanks")).toBe(false);
     expect(isExplicitGoodbyeUtterance("nope")).toBe(false);
     expect(isExplicitGoodbyeUtterance("no, I don't need more copies")).toBe(false);
+  });
+
+  it("treats thank you and closing-no as conversation end", () => {
+    expect(isClosingConversationUtterance("thank you")).toBe(true);
+    expect(isClosingConversationUtterance("okay bye")).toBe(true);
+    expect(
+      isClosingConversationUtterance("no", [
+        { role: "assistant", content: "Is there anything else I can help you with today?" },
+      ]),
+    ).toBe(true);
+    expect(isClosingConversationUtterance("no, I don't need more copies")).toBe(false);
   });
 });
 

@@ -18,6 +18,7 @@ import {
   type OrderTimelineEvent,
   type OrderTransactionNode,
 } from "../adapters/orderFieldExtractors.js";
+import { filterPhysicalLineItems } from "./productLineItems.js";
 import { fulfillmentStatusPhrase, speakMoney } from "./formatter.js";
 
 export interface DeepOrderGraphqlNode {
@@ -219,15 +220,15 @@ function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
 }
 
 function parseLineItems(node: DeepOrderGraphqlNode): Array<{ title: string; quantity: number }> {
-  return (
+  const raw =
     node.lineItems?.edges
       ?.map((e) => {
         const title = e.node?.title?.trim();
         if (!title) return null;
         return { title, quantity: e.node?.quantity ?? 1 };
       })
-      .filter((li): li is { title: string; quantity: number } => li !== null) ?? []
-  );
+      .filter((li): li is { title: string; quantity: number } => li !== null) ?? [];
+  return filterPhysicalLineItems(raw);
 }
 
 function subtotalFromNode(node: DeepOrderGraphqlNode): string | undefined {

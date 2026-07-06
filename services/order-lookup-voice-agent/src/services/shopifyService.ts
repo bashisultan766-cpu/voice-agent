@@ -2,6 +2,7 @@ import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { extractLast4, redactShopifyPayload } from "../utils/security.js";
 import type { OrderLookupResult, StructuredOrder } from "../types/order.js";
+import { isPhysicalBookLineItem } from "../utils/productLineItems.js";
 import { isValidOrderNumberFormat, normalizeOrderNumber } from "../utils/formatter.js";
 
 interface CacheEntry {
@@ -121,7 +122,7 @@ function customerName(order: ShopifyOrder): string {
 }
 
 function isProcessingFee(name: string): boolean {
-  return /processing fee/i.test(name);
+  return !isPhysicalBookLineItem(name);
 }
 
 function mapLineItems(items: ShopifyLineItem[] | undefined): StructuredOrder["products"] {

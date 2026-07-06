@@ -24,6 +24,7 @@ import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { logFinalResponseType } from "../runtime/turnObservability.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
 import type { GateIntent } from "./toolDecisionGate.js";
+import { clearCallerMemory } from "../utils/callerMemory.js";
 
 export { LLM_ORCHESTRATOR_TEMPERATURE } from "./llmConfig.js";
 
@@ -133,10 +134,10 @@ export async function* runLlmOrchestratorTurn(
     })),
     activeOrderContext: session.currentOrderData,
   })) {
-    if (event.type === "tool_pending") {
-      yield { type: "chunk", chunk: planInstantFiller() };
-      continue;
-    }
+      if (event.type === "tool_pending") {
+        yield { type: "chunk", chunk: planInstantFiller(event.tools[0]) };
+        continue;
+      }
     result = event.result;
   }
 
@@ -221,6 +222,7 @@ export async function* runLlmOrchestratorTurn(
 
   if (result.endCall) {
     session.phase = "ended";
+    clearCallerMemory(session.callerPhone ?? session.from);
   }
 
   yield* yieldSpeech(speech, preserveFullSpeech);

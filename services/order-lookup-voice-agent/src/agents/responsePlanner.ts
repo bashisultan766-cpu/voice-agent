@@ -32,12 +32,28 @@ function statusPhrase(order: StructuredOrder): string {
 }
 
 /** Immediate filler — emitted before Shopify returns. */
-export function planInstantFiller(): SpeechChunk {
+export function planInstantFiller(pendingTool?: string): SpeechChunk {
   return {
-    text: getCachedPhrase("checking"),
+    text: planToolTransitionPhrase(pendingTool),
     kind: "filler",
     pauseMs: 0,
   };
+}
+
+function planToolTransitionPhrase(tool?: string): string {
+  switch (tool) {
+    case "search_shopify_book_by_isbn":
+    case "search_shopify_book_by_title":
+      return "Give me just a second to search the catalog for you.";
+    case "send_checkout_email":
+      return "I am preparing your secure payment link right now.";
+    case "get_shopify_order_status":
+      return "Let me pull up your order details.";
+    case "get_customer_history":
+      return "Let me pull up your order history.";
+    default:
+      return "One moment, please.";
+  }
 }
 
 /** Fast confirmation — emitted the moment lookup succeeds. */

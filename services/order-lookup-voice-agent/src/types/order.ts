@@ -131,6 +131,8 @@ export interface CallSession {
     | "product_category"
     | null;
   greetedThisCall?: boolean;
+  /** Prior call dropped — welcome-back greeting and context restore. */
+  welcomeBack?: boolean;
   lastOrchestratorIntent?: string;
 }
 
