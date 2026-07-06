@@ -305,84 +305,18 @@ describe("getOrderStatus", () => {
     expect(result.status).toBe("system_maintenance");
   });
 
-  it("falls back to minimal query flat transactions and still maps paymentGateway", async () => {
-    const minimalNode = {
-      id: "gid://shopify/Order/1",
-      name: "#12345",
-      email: "jane@example.com",
-      displayFulfillmentStatus: "FULFILLED",
-      displayFinancialStatus: "PAID",
-      customer: { firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
-      subtotalPriceSet: { shopMoney: { amount: "40.00", currencyCode: "USD" } },
-      totalPriceSet: { shopMoney: { amount: "45.99", currencyCode: "USD" } },
-      totalShippingPriceSet: { shopMoney: { amount: "5.99", currencyCode: "USD" } },
-      lineItems: {
-        edges: [{ node: { title: "Sample Book", quantity: 1 } }],
-      },
-      refunds: [],
-      // Minimal query returns a flat [OrderTransaction] array — not a Connection.
-      transactions: [
-        {
-          kind: "SALE",
-          status: "SUCCESS",
-          gateway: "shopify_payments",
-          formattedGateway: "Shopify Payments",
-          paymentDetails: { company: "Visa", number: "•••• 4242" },
-        },
-      ],
-      fulfillments: [
-        {
-          status: "SUCCESS",
-          displayStatus: "Delivered",
-          estimatedDeliveryAt: null,
-          deliveredAt: "2025-01-01T00:00:00Z",
-          trackingInfo: [{ company: "USPS", number: "9400111899223197422222", url: "https://track.example/9400111899223197422222" }],
-        },
-      ],
-    };
-
-    vi.mocked(shopifyGraphql).mockImplementation(async (query: string) => {
-      if (String(query).includes("FulfillmentOrderLookupMinimal")) {
-        return { orders: { edges: [{ node: minimalNode }] } };
-      }
-      throw new Error(
-        'shopify_graphql_error:[{"message":"Field \'customAttributes\' doesn\'t exist on type \'Order\'"}]',
-      );
-    });
-
-    const result = await getOrderStatus("12345");
-    expect(result.status).toBe("found");
-    expect(result.paymentGateway).toBe("Shopify Payments");
-    expect(result.cardLast4).toBe("4242");
-    expect(result.orderNumber).toBe("#12345");
-
-    const deepCalls = vi.mocked(shopifyGraphql).mock.calls.filter(
-      (call) => String(call[0]).includes("FulfillmentOrderLookup") && !String(call[0]).includes("Minimal"),
-    );
-    const minimalCalls = vi.mocked(shopifyGraphql).mock.calls.filter((call) =>
-      String(call[0]).includes("FulfillmentOrderLookupMinimal"),
-    );
-    expect(deepCalls.length).toBeGreaterThan(0);
-    expect(minimalCalls.length).toBeGreaterThan(0);
-
-    const tts = buildOrderStatusTts(result);
-    expect(tts.text.length).toBeGreaterThan(0);
-    expect(tts.text.toLowerCase()).toContain("order");
-  });
-
-  it("queries Order.transactions as a flat list per 2026-01 Admin API schema", () => {
+  it("uses a single FulfillmentOrderLookup query without timeline or transactions", () => {
     const src = readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/adapters/shopifyStorefrontAdapter.ts"),
       "utf8",
     );
+    expect(src).not.toContain("LOOKUP_ORDER_QUERY_MINIMAL");
+    expect(src).not.toContain("enrichOrderNodeTimeline");
     const deepQueryMatch = src.match(/const LOOKUP_ORDER_QUERY = `([\s\S]*?)`;/);
     expect(deepQueryMatch).toBeTruthy();
     const deepQuery = deepQueryMatch![1];
-    const orderTxnBlock = deepQuery.match(/^\s+transactions\(first: 10\) \{([\s\S]*?)\n\s+\}/m);
-    expect(orderTxnBlock).toBeTruthy();
-    expect(orderTxnBlock![1]).not.toContain("edges");
-    expect(orderTxnBlock![1]).toContain("kind");
-    expect(deepQuery).toMatch(/refunds\(first: 5\)[\s\S]*transactions\(first: 5\) \{\s*edges/);
+    expect(deepQuery).not.toMatch(/\bevents\s*\(/);
+    expect(deepQuery).not.toMatch(/\btransactions\s*\(/);
   });
 });
 

@@ -162,6 +162,7 @@ export async function shopifyGraphql<T>(
 
   const started = Date.now();
   try {
+    console.log("[shopify_graphql]", query);
     const res = await fetch(`${shopifyBaseUrl()}/graphql.json`, {
       method: "POST",
       headers: {

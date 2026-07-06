@@ -44,7 +44,6 @@ import {
 } from "../utils/orderDataParser.js";
 import { isPhysicalBookLineItem } from "../utils/productLineItems.js";
 import { extractTrackingInfo, isValidTrackingNumber } from "./orderFieldExtractors.js";
-import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
 import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
 import { normalizeShopifyUnitPrice } from "../utils/shopifyMoney.js";
 
@@ -299,190 +298,12 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
           value
         }
         paymentGatewayNames
-        events(first: 50) {
-          edges {
-            node {
-              message
-              createdAt
-              action
-              ... on BasicEvent {
-                message
-                action
-                createdAt
-              }
-              ... on CommentEvent {
-                message
-                createdAt
-              }
-            }
-          }
-        }
         refunds(first: 5) {
           note
           totalRefundedSet {
             shopMoney {
               amount
               currencyCode
-            }
-          }
-          transactions(first: 5) {
-            edges {
-              node {
-                gateway
-                formattedGateway
-                receiptJson
-                paymentDetails {
-                  ... on CardPaymentDetails {
-                    company
-                    number
-                  }
-                }
-              }
-            }
-          }
-        }
-        transactions(first: 10) {
-          kind
-          status
-          gateway
-          formattedGateway
-          receiptJson
-          paymentDetails {
-            ... on CardPaymentDetails {
-              company
-              number
-            }
-          }
-        }
-        fulfillments(first: 5) {
-          status
-          displayStatus
-          estimatedDeliveryAt
-          deliveredAt
-          trackingInfo {
-            company
-            number
-            url
-          }
-        }
-      }
-    }
-  }
-}`;
-
-/** Fallback when enriched fields (events, customAttributes) are unavailable on the shop token/API version. */
-const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: String!, $first: Int!) {
-  orders(first: $first, query: $query) {
-    edges {
-      node {
-        id
-        name
-        createdAt
-        processedAt
-        updatedAt
-        note
-        displayFulfillmentStatus
-        displayFinancialStatus
-        cancelledAt
-        cancelReason
-        email
-        phone
-        shippingAddress {
-          name
-          address1
-          address2
-          city
-          provinceCode
-          zip
-          country
-          phone
-        }
-        billingAddress {
-          phone
-        }
-        customer {
-          id
-          firstName
-          lastName
-          email
-          phone
-          numberOfOrders
-        }
-        currentSubtotalPriceSet {
-          shopMoney {
-            amount
-            currencyCode
-          }
-        }
-        subtotalPriceSet {
-          shopMoney {
-            amount
-            currencyCode
-          }
-        }
-        totalPriceSet {
-          shopMoney {
-            amount
-            currencyCode
-          }
-        }
-        totalShippingPriceSet {
-          shopMoney {
-            amount
-            currencyCode
-          }
-        }
-        lineItems(first: 50) {
-          edges {
-            node {
-              title
-              quantity
-              originalUnitPriceSet {
-                shopMoney {
-                  amount
-                  currencyCode
-                }
-              }
-            }
-          }
-        }
-        events(first: 50) {
-          edges {
-            node {
-              message
-              createdAt
-              action
-              ... on BasicEvent {
-                message
-                action
-                createdAt
-              }
-              ... on CommentEvent {
-                message
-                createdAt
-              }
-            }
-          }
-        }
-        refunds(first: 5) {
-          note
-          totalRefundedSet {
-            shopMoney {
-              amount
-              currencyCode
-            }
-          }
-        }
-        transactions(first: 10) {
-          kind
-          status
-          gateway
-          formattedGateway
-          receiptJson
-          paymentDetails {
-            ... on CardPaymentDetails {
-              company
-              number
             }
           }
         }
@@ -504,30 +325,14 @@ const LOOKUP_ORDER_QUERY_MINIMAL = `query FulfillmentOrderLookupMinimal($query: 
 
 const DEFAULT_UNFULFILLED_SHIP_DAYS = 3;
 
-function isGraphqlShapeError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return /shopify_graphql_error/i.test(message);
-}
-
 async function lookupOrdersGraphql(
   query: string,
   variables: { query: string; first: number },
 ): Promise<{ orders: { edges: Array<{ node: GqlOrderNode }> } }> {
-  try {
-    return await shopifyGraphql<{ orders: { edges: Array<{ node: GqlOrderNode }> } }>(
-      LOOKUP_ORDER_QUERY,
-      variables,
-    );
-  } catch (err) {
-    if (!isGraphqlShapeError(err)) throw err;
-    logger.warn("shopify_order_lookup_fallback_minimal_query", {
-      reason: err instanceof Error ? err.message.slice(0, 120) : String(err),
-    });
-    return shopifyGraphql<{ orders: { edges: Array<{ node: GqlOrderNode }> } }>(
-      LOOKUP_ORDER_QUERY_MINIMAL,
-      variables,
-    );
-  }
+  return shopifyGraphql<{ orders: { edges: Array<{ node: GqlOrderNode }> } }>(
+    LOOKUP_ORDER_QUERY,
+    variables,
+  );
 }
 
 function findMatchingOrderNode(
@@ -1157,8 +962,7 @@ export async function getOrderStatus(
         const node = findMatchingOrderNode(edges, normalized);
 
         if (node) {
-          const enriched = await enrichOrderNodeTimeline(node);
-          return { status: "found" as const, ...mapOrderNode(enriched) };
+          return { status: "found" as const, ...mapOrderNode(node) };
         }
       }
       return {
