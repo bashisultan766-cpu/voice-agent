@@ -3,6 +3,9 @@ import { z } from "zod";
 
 loadEnv();
 
+/** EMERGENCY LOCKDOWN — bypass ElevenLabs until system is stable. */
+export const voiceProvider = "OpenAI" as const;
+
 const envSchema = z.object({
   PORT: z.coerce.number().default(8001),
   PUBLIC_BASE_URL: z.string().url(),
@@ -48,7 +51,7 @@ const envSchema = z.object({
   /** Twilio ConversationRelay — improves pronunciation (slight latency tradeoff). */
   ELEVENLABS_TEXT_NORMALIZATION: z.enum(["on", "off", "auto"]).default("on"),
   VOICE_LANGUAGE: z.string().default("en-US"),
-  VOICE_TTS_PROVIDER: z.string().default("ElevenLabs"),
+  VOICE_TTS_PROVIDER: z.string().default("OpenAI"),
   /** OpenAI tts-1-hd voice when ElevenLabs quota is exceeded — tuned to match Eric profile. */
   OPENAI_TTS_VOICE: z
     .enum(["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"])
@@ -128,6 +131,9 @@ export function formatTwilioVoiceTuning(speed: number, stability: number, simila
 
 export function conversationRelayVoice(): string {
   const cfg = getConfig();
+  if (voiceProvider === "OpenAI") {
+    return "Google.en-US-Neural2-J";
+  }
   const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
   if (cfg.VOICE_TTS_PROVIDER.toLowerCase() !== "elevenlabs" || !voiceId) {
     return "Google.en-US-Neural2-J";

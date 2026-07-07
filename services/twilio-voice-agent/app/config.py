@@ -276,7 +276,7 @@ class Settings(BaseSettings):
         """wss:// URL for Twilio ConversationRelay."""
         base = self.PUBLIC_BASE_URL.rstrip("/")
         ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
-        return f"{ws_base}/voice/twilio/ws"
+        return f"{ws_base}/conversationBrain/ws"
 
     @property
     def public_host(self) -> str:

@@ -2,8 +2,8 @@
  * PM2 — SureShot Books order lookup voice agent (production).
  *
  * Twilio number (+12512554549) webhook:
- *   POST /voice/twilio/inbound  → order-lookup-voice-agent :8001
- *   GET  /voice/twilio/ws       → order-lookup-voice-agent :8001
+ *   POST /conversationBrain/inbound  → order-lookup-voice-agent :8001
+ *   WS   /conversationBrain/ws       → order-lookup-voice-agent :8001
  *
  * Legacy Python commerce agent (services/twilio-voice-agent) is NOT started in production.
  */

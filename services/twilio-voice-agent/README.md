@@ -6,8 +6,8 @@ Production voice sales agent for Shopify bookstores (SureShot Books). Twilio han
 
 ```
 Twilio inbound call
-  → POST /voice/twilio/inbound (TwiML + signed WS token)
-  → WebSocket /voice/twilio/ws (ConversationRelay)
+  → POST /conversationBrain/inbound (TwiML + signed WS token)
+  → WebSocket /conversationBrain/ws (ConversationRelay)
   → voice/turn_assembler
   → agent_runtime/llm_tool_runtime
   → agent_runtime/llm_tools
@@ -31,7 +31,7 @@ cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-Expose port 8000 with ngrok (or similar) and point Twilio voice webhook to `https://<host>/voice/twilio/inbound`.
+Expose port 8000 with ngrok (or similar) and point Twilio voice webhook to `https://<host>/conversationBrain/inbound`.
 
 ## Environment variables
 

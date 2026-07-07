@@ -1,16 +1,14 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 
 from .config import get_settings
 from .logging_config import configure_logging
 from .api.health import router as health_router
-from .api.twilio_voice import router as twilio_router
 from .sync.webhooks import webhooks_router, admin_router
 from .api.admin_debug import admin_debug_router
 from .api.admin_analytics import admin_analytics_router
-from .ws.conversation_relay import handle_conversation_relay
 
 _log = logging.getLogger(__name__)
 
@@ -123,15 +121,10 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router)
-    app.include_router(twilio_router)
     app.include_router(webhooks_router)
     app.include_router(admin_router)
     app.include_router(admin_debug_router)
     app.include_router(admin_analytics_router)
-
-    @app.websocket("/voice/twilio/ws")
-    async def conversation_relay_ws(websocket: WebSocket) -> None:
-        await handle_conversation_relay(websocket)
 
     return app
 

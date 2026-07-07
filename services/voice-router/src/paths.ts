@@ -1,5 +1,5 @@
-/** Public Twilio webhook — same URL as the original project. */
-export const TWILIO_INBOUND_PATH = "/voice/twilio/inbound";
+/** Public Twilio webhook — conversation brain inbound. */
+export const TWILIO_INBOUND_PATH = "/conversationBrain/inbound";
 
 /** Internal routing callbacks (not configured in Twilio Console). */
 export const ROUTING_GATHER_PATH = "/voice/twilio/routing/gather";

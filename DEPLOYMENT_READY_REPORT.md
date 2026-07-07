@@ -13,8 +13,8 @@
 ```
 Twilio Phone Call
     → ConversationRelay STT/TTS (Twilio-managed)
-    → POST /voice/twilio/inbound (TwiML)
-    → WebSocket /voice/twilio/ws (plain-text JSON)
+    → POST /conversationBrain/inbound (TwiML)
+    → WebSocket /conversationBrain/ws (plain-text JSON)
     → RealtimePipelineEngine (deterministic intent router, no LLM)
     → WorkerOrchestrator (13 async non-LLM workers)
     → MainLLMComposer (single OpenAI call — worker path only)
@@ -249,9 +249,9 @@ curl -sS https://agent.mailcallcommunication.com/health
 | Setting | Value |
 |---------|-------|
 | A call comes in | Webhook |
-| URL | `https://agent.mailcallcommunication.com/voice/twilio/inbound` |
+| URL | `https://agent.mailcallcommunication.com/conversationBrain/inbound` |
 | HTTP method | **POST** |
-| ConversationRelay WebSocket | Derived from `PUBLIC_BASE_URL`: `wss://agent.mailcallcommunication.com/voice/twilio/ws` |
+| ConversationRelay WebSocket | Derived from `PUBLIC_BASE_URL`: `wss://agent.mailcallcommunication.com/conversationBrain/ws` |
 
 Set in service `.env`:
 

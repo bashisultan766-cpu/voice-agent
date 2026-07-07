@@ -6,7 +6,7 @@ Routes inbound calls using the **original project Twilio webhook URL**.
 
 ```
 Twilio phone number
-  → POST /voice/twilio/inbound   (port 8000 — same URL as before)
+  → POST /conversationBrain/inbound   (port 8000 — same URL as before)
   → <Gather> intent capture
   → POST /voice/twilio/routing/gather
   → POST /voice/twilio/routing/forward-to-agent
@@ -19,7 +19,7 @@ Twilio phone number
 **Keep your existing webhook — do not change it:**
 
 ```
-POST https://<your-domain>/voice/twilio/inbound
+POST https://<your-domain>/conversationBrain/inbound
 ```
 
 ## Local development (ngrok)
@@ -41,7 +41,7 @@ npm run dev
 Twilio webhook (unchanged):
 
 ```
-https://<ngrok-id>.ngrok.io/voice/twilio/inbound
+https://<ngrok-id>.ngrok.io/conversationBrain/inbound
 ```
 
 ## Production nginx
@@ -50,9 +50,9 @@ See [`infra/nginx/voice-agent.mailcallcommunication.com.conf`](../../infra/nginx
 
 Key routes:
 
-- `= /voice/twilio/inbound` → voice-router :8000
+- `= /conversationBrain/inbound` → voice-router :8000
 - `/voice/twilio/routing/` → voice-router :8000
-- `/voice/twilio/ws` → Python :8001
+- `/conversationBrain/ws` → order-lookup-voice-agent :8001
 - `/voice/twilio/agent/` → Python :8001
 - `/voice/order/` → order lookup :8002
 
