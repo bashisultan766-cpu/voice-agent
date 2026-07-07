@@ -2,11 +2,12 @@ import type { SpeechChunk } from "../types/order.js";
 import {
   MAX_AUDIO_CHUNK_BYTES,
   MIN_AUDIO_CHUNK_BYTES,
+  resolveTelephonyOutputFormat,
   synthesizeSpeechStream,
   type TtsEngineName,
 } from "../adapters/ttsAdapter.js";
 import { sanitizeTextForTTS } from "../utils/ttsFormatter.js";
-import { buildComfortNoisePacket } from "../utils/telephonyAudio.js";
+import { buildComfortNoisePacket, toTwilioMulaw8k, type TelephonySourceFormat } from "../utils/telephonyAudio.js";
 import type { MediaStreamOutboundMessage } from "../voice/mediaStreamProtocol.js";
 import { logger } from "../utils/logger.js";
 
@@ -48,19 +49,30 @@ export function sendAudio(
   streamSid: string,
   audio: Buffer,
   callSid?: string,
+  sourceFormat?: TelephonySourceFormat,
 ): void {
   if (!audio.length) return;
 
-  console.log("SENDING_AUDIO_CHUNK_TO_TWILIO", {
+  const telephonyMulaw = toTwilioMulaw8k(
+    audio,
+    sourceFormat ?? resolveTelephonyOutputFormat(),
+  );
+  const payload = telephonyMulaw.toString("base64");
+
+  logger.debug("media_stream_outbound_audio", {
     callSid: callSid?.slice(0, 8),
     streamSid: streamSid.slice(0, 8),
-    bytes: audio.length,
+    mulawBytes: telephonyMulaw.length,
+    base64Length: payload.length,
   });
 
   send({
     event: "media",
     streamSid,
-    media: { payload: audio.toString("base64") },
+    media: {
+      track: "outbound",
+      payload,
+    },
   });
 
   if (callSid) {
@@ -97,7 +109,7 @@ export async function streamSpeechToMediaStream(
 
     for (const frame of frames) {
       if (options.abortSignal?.aborted) break;
-      sendAudio(send, options.streamSid, frame, callSid);
+      sendAudio(send, options.streamSid, frame, callSid, chunk.sourceFormat);
       options.onAudioSent?.();
       chunksSent++;
     }

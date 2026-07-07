@@ -50,7 +50,13 @@ export type MediaStreamInboundMessage =
   | { event: string; streamSid?: string };
 
 export type MediaStreamOutboundMessage =
-  | { event: "media"; streamSid: string; media: { payload: string } }
+  | {
+      event: "media";
+      streamSid: string;
+      media: { track?: "outbound"; payload: string };
+    }
   | { event: "mark"; streamSid: string; mark: { name: string } }
   | { event: "clear"; streamSid: string }
   | { event: "stop"; streamSid: string };
+
+export const TWILIO_MEDIA_STREAM_PROTOCOL = "Call";

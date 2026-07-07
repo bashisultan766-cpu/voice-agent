@@ -189,7 +189,7 @@ async function* yieldOpenAiTelephonyFrames(
   const accumulator = new AudioChunkAccumulator(minBytes, maxBytes);
 
   for (const frame of accumulator.ingest(mulaw).concat(accumulator.drain())) {
-    yield { audio: frame, engine: result.engine, isFallback };
+    yield { audio: frame, engine: result.engine, isFallback, sourceFormat: "ulaw_8000" };
   }
 }
 
@@ -339,6 +339,7 @@ export interface TtsStreamChunk {
   audio: Buffer;
   engine: TtsEngineName;
   isFallback?: boolean;
+  sourceFormat: TelephonyAudioFormat;
 }
 
 /**
@@ -377,7 +378,8 @@ export async function* synthesizeSpeechStream(
     }
 
     const reader = res.body.getReader();
-    const { minBytes, maxBytes } = telephonyChunkBounds(resolveTelephonyOutputFormat());
+    const outputFormat = resolveTelephonyOutputFormat();
+    const { minBytes, maxBytes } = telephonyChunkBounds(outputFormat);
     const accumulator = new AudioChunkAccumulator(minBytes, maxBytes);
 
     try {
@@ -389,6 +391,7 @@ export async function* synthesizeSpeechStream(
             yield {
               audio: frame,
               engine: "ElevenLabs",
+              sourceFormat: outputFormat,
             };
           }
         }
@@ -397,6 +400,7 @@ export async function* synthesizeSpeechStream(
         yield {
           audio: frame,
           engine: "ElevenLabs",
+          sourceFormat: outputFormat,
         };
       }
     } catch (streamErr) {

@@ -1,7 +1,10 @@
 import { config as loadEnv } from "dotenv";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { z } from "zod";
 
-loadEnv();
+const serviceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+loadEnv({ path: resolve(serviceRoot, ".env") });
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(8001),

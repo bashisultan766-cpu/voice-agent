@@ -8,6 +8,8 @@ export const OPENAI_TTS_PCM_SAMPLE_RATE = 24_000;
 
 export const TWILIO_MULAW_SAMPLE_RATE = 8_000;
 
+export type TelephonySourceFormat = "ulaw_8000" | "pcm_16000" | "pcm_24000";
+
 /** μ-law silence / comfort-noise byte (G.711 idle line). */
 export const MULAW_SILENCE_BYTE = 0xff;
 
@@ -67,6 +69,19 @@ export function pcm16leToMulaw8k(
 ): Buffer {
   const at8k = resamplePcm16le(pcm16le, inputSampleRate, TWILIO_MULAW_SAMPLE_RATE);
   return pcm16leToMulaw(at8k);
+}
+
+/** Normalize any telephony TTS buffer to μ-law @ 8 kHz for Twilio Media Streams. */
+export function toTwilioMulaw8k(
+  audio: Buffer,
+  sourceFormat: TelephonySourceFormat = "ulaw_8000",
+): Buffer {
+  if (!audio.length || sourceFormat === "ulaw_8000") {
+    return audio;
+  }
+  const sampleRate =
+    sourceFormat === "pcm_16000" ? 16_000 : OPENAI_TTS_PCM_SAMPLE_RATE;
+  return pcm16leToMulaw8k(audio, sampleRate);
 }
 
 /** Build a comfort-noise frame (μ-law silence) for stream keepalive. */

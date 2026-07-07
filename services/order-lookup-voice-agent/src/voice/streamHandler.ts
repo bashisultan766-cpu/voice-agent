@@ -49,6 +49,7 @@ import type {
   MediaStreamInboundMessage,
   MediaStreamStartMessage,
 } from "./mediaStreamProtocol.js";
+import { TWILIO_MEDIA_STREAM_PROTOCOL } from "./mediaStreamProtocol.js";
 import type { CallSession } from "../types/order.js";
 
 const ERROR_SPEECH =
@@ -161,6 +162,14 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
 
   const send: MediaStreamSendFn = (msg) => {
     if (closed) return;
+    if (msg.event === "media" && msg.media?.payload) {
+      console.log("SENDING_AUDIO_CHUNK_TO_TWILIO", {
+        callSid: callSid ? callSid.slice(0, 8) : undefined,
+        streamSid: msg.streamSid.slice(0, 8),
+        base64Length: msg.media.payload.length,
+        track: msg.media.track ?? "outbound",
+      });
+    }
     socket.send(JSON.stringify(msg));
   };
 
@@ -215,7 +224,19 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
         const message = JSON.parse(raw.toString()) as MediaStreamInboundMessage;
 
         if (message.event === "connected") {
-          logger.info("media_stream_connected", { protocol: (message as { protocol?: string }).protocol });
+          const connected = message as import("./mediaStreamProtocol.js").MediaStreamConnectedMessage;
+          const protocol = connected.protocol ?? "unknown";
+          if (protocol !== TWILIO_MEDIA_STREAM_PROTOCOL) {
+            logger.warn("media_stream_unexpected_protocol", {
+              protocol,
+              expected: TWILIO_MEDIA_STREAM_PROTOCOL,
+              version: connected.version,
+            });
+          }
+          logger.info("media_stream_connected", {
+            protocol,
+            version: connected.version,
+          });
           return;
         }
 

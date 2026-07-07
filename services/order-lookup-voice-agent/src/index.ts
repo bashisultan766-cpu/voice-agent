@@ -1,3 +1,5 @@
+import "./bootstrapEnv.js";
+
 import http from "node:http";
 
 import express from "express";
@@ -27,6 +29,8 @@ import {
   initializeGlobalVoiceProvider,
 
 } from "./adapters/voiceAdapter.js";
+
+import { TWILIO_MEDIA_STREAM_PROTOCOL } from "./voice/mediaStreamProtocol.js";
 
 
 
@@ -156,6 +160,8 @@ export function startServer() {
 
       voiceProvider: voiceReady.provider,
 
+      protocol: TWILIO_MEDIA_STREAM_PROTOCOL,
+
     });
 
     socket.on("error", (err) => {
@@ -243,3 +249,4 @@ bootstrap().catch((err) => {
   process.exit(1);
 
 });
+
