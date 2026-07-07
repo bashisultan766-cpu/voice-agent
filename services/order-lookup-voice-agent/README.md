@@ -2,20 +2,20 @@
 
 **Production voice agent** for Twilio number order-status calls.
 
-## Twilio webhook (unchanged URL)
+## Twilio webhook
 
 ```
-POST https://your-domain.com/voice/twilio/inbound
-WebSocket: wss://your-domain.com/voice/twilio/ws
+POST https://your-domain.com/conversationBrain/inbound
+WebSocket: wss://your-domain.com/conversationBrain/ws
 ```
 
 ## Flow
 
 ```
 Caller dials Twilio number
-  → POST /voice/twilio/inbound
+  → POST /conversationBrain/inbound
   → ConversationRelay (Eric / ElevenLabs)
-  → WebSocket /voice/twilio/ws
+  → WebSocket /conversationBrain/ws
   → Order number → Shopify lookup → streamed voice response
 ```
 

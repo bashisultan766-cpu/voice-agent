@@ -4,7 +4,7 @@ import express from "express";
 
 import { WebSocketServer } from "ws";
 
-import { getConfig, VOICE_PATH_PREFIX, wsUrl } from "./config.js";
+import { getConfig, CONVERSATION_BRAIN_PATH_PREFIX, wsUrl } from "./config.js";
 
 import { warmPhraseCache } from "./utils/phraseCache.js";
 
@@ -12,7 +12,7 @@ import { prewarmVoiceCache } from "./services/voiceService.js";
 
 import { logger, setLogLevel } from "./utils/logger.js";
 
-import { handleInboundCall, handleRelayAction } from "./voice/twilioWebhook.js";
+import { handleInboundCall, handleRelayAction } from "./agents/conversationOrchestrator.js";
 
 import { handleConversationRelaySocket } from "./voice/streamHandler.js";
 
@@ -30,7 +30,7 @@ import {
 
 
 
-const CONVERSATION_BRAIN_INBOUND = "/conversationBrain/inbound";
+const CONVERSATION_BRAIN_INBOUND = `${CONVERSATION_BRAIN_PATH_PREFIX}/inbound`;
 
 export function createApp() {
 
@@ -70,6 +70,8 @@ export function createApp() {
 
   app.post(CONVERSATION_BRAIN_INBOUND, async (req, res) => {
 
+    console.log("INBOUND_CALL_RECEIVED_AND_ROUTED");
+
     try {
 
       await handleInboundCall(req, res);
@@ -98,7 +100,7 @@ export function createApp() {
 
 
 
-  app.post(`${VOICE_PATH_PREFIX}/relay-action`, async (req, res) => {
+  app.post(`${CONVERSATION_BRAIN_PATH_PREFIX}/relay-action`, async (req, res) => {
 
     try {
 
@@ -152,7 +154,7 @@ export function startServer() {
 
 
 
-  const wss = new WebSocketServer({ server, path: `${VOICE_PATH_PREFIX}/ws` });
+  const wss = new WebSocketServer({ server, path: `${CONVERSATION_BRAIN_PATH_PREFIX}/ws` });
 
   wss.on("connection", (socket, req) => {
 

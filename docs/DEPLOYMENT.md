@@ -60,7 +60,7 @@ grep -q "^PORT=" "$NEW" || echo "PORT=8001" >> "$NEW"
 pm2 logs order-lookup-voice-agent --lines 100
 
 # Simulate inbound (signature will fail without real Twilio sig — check logs for url=)
-curl -sS -X POST http://127.0.0.1:8001/voice/twilio/inbound \
+curl -sS -X POST http://127.0.0.1:8001/conversationBrain/inbound \
   -d "CallSid=CAtest&From=%2B15551234567&To=%2B12512554549"
 
 # Public health
@@ -77,7 +77,7 @@ curl -sS http://127.0.0.1:8001/health
 
 | Setting | Value |
 |---------|-------|
-| Voice webhook | `https://agent.mailcallcommunication.com/voice/twilio/inbound` |
+| Voice webhook | `https://agent.mailcallcommunication.com/conversationBrain/inbound` |
 | Method | POST |
 
 ## Stop legacy agents

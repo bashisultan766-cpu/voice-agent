@@ -146,8 +146,8 @@ export function conversationRelayVoice(): string {
 
 export function wsUrl(): string {
   const base = getConfig().PUBLIC_BASE_URL.replace(/^http/, "ws").replace(/\/$/, "");
-  return `${base}/voice/twilio/ws`;
+  return `${base}${CONVERSATION_BRAIN_PATH_PREFIX}/ws`;
 }
 
-/** Standard Twilio ConversationRelay paths (same webhook URL as before). */
-export const VOICE_PATH_PREFIX = "/voice/twilio";
+/** Twilio ConversationRelay paths under the conversation brain namespace. */
+export const CONVERSATION_BRAIN_PATH_PREFIX = "/conversationBrain";

@@ -17,7 +17,7 @@ const envSchema = z.object({
   VOICE_ROUTER_FORWARD_SECRET: z.string().min(8),
 
   ORDER_LOOKUP_INBOUND_URL: z.string().url().default("http://127.0.0.1:8002/voice/order/twilio/inbound"),
-  MAIN_AGENT_INBOUND_URL: z.string().url().default("http://127.0.0.1:8001/voice/twilio/agent/inbound"),
+  MAIN_AGENT_INBOUND_URL: z.string().url().default("http://127.0.0.1:8001/conversationBrain/inbound"),
   ORDER_LOOKUP_HEALTH_URL: z.string().url().default("http://127.0.0.1:8002/health"),
   AGENT_FORWARD_TIMEOUT_MS: z.coerce.number().default(8000),
   HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().default(2000),

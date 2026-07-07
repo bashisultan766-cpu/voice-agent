@@ -608,6 +608,9 @@ function emitResponseSent(
   });
 }
 
+// Inbound Twilio webhook → ConversationRelay → streamHandler → process()
+export { handleInboundCall, handleRelayAction } from "../voice/twilioWebhook.js";
+
 // Re-export slot helpers and gate for tests
 export { analyzeBrainTurn } from "./brainAnalyzer.js";
 export {

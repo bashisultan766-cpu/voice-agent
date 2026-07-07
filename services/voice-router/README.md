@@ -11,7 +11,7 @@ Twilio phone number
   → POST /voice/twilio/routing/gather
   → POST /voice/twilio/routing/forward-to-agent
        ├─ order intent  → Node order agent :8002
-       └─ general intent → Python main agent :8001 (/voice/twilio/agent/inbound)
+       └─ general intent → order-lookup voice agent :8001 (/conversationBrain/inbound)
 ```
 
 ## Twilio configuration

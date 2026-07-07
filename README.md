@@ -6,7 +6,7 @@ AI phone sales agent for Shopify bookstores. Inbound calls hit **Twilio Conversa
 
 ```
 Twilio phone call (+12512554549)
-    → POST /voice/twilio/inbound
+    → POST /conversationBrain/inbound
     → Order Lookup Voice Agent (Node, port 8001)
     → ConversationRelay + Eric voice
     → Shopify order lookup + streamed response
@@ -14,12 +14,12 @@ Twilio phone call (+12512554549)
 
 **Production service:** [`services/order-lookup-voice-agent/`](services/order-lookup-voice-agent/)
 
-**Twilio webhook:** `POST /voice/twilio/inbound` (same URL as before)
+**Twilio webhook:** `POST /conversationBrain/inbound`
 
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /voice/twilio/inbound` | Twilio voice webhook |
-| `WS /voice/twilio/ws` | ConversationRelay WebSocket |
+| `POST /conversationBrain/inbound` | Twilio voice webhook |
+| `WS /conversationBrain/ws` | ConversationRelay WebSocket |
 | `GET /health` | Health check |
 
 The legacy Python commerce agent (`services/twilio-voice-agent/`) remains in the repo for reference but is **not** started in production PM2.
@@ -69,8 +69,8 @@ docker compose -f infra/docker/docker-compose.yml up -d
 ### Twilio webhook URLs (local via ngrok)
 
 ```
-Voice webhook:  https://<ngrok-id>.ngrok.io/voice/twilio/inbound  (POST)
-WebSocket:      wss://<ngrok-id>.ngrok.io/voice/twilio/ws
+Voice webhook:  https://<ngrok-id>.ngrok.io/conversationBrain/inbound  (POST)
+WebSocket:      wss://<ngrok-id>.ngrok.io/conversationBrain/ws
 ```
 
 Set `PUBLIC_BASE_URL=https://<ngrok-id>.ngrok.io` in `.env`.
@@ -95,13 +95,13 @@ Production paths in `ecosystem.config.cjs`:
 - **script:** `.venv/bin/uvicorn`
 - **args:** `app.main:app --host 0.0.0.0 --port 8001 --workers 1`
 
-Nginx should proxy `/voice/twilio/inbound`, `/voice/twilio/ws`, and `/health` to port **8001**. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Nginx should proxy `/conversationBrain/inbound`, `/conversationBrain/ws`, `/conversationBrain/relay-action`, and `/health` to port **8001**. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ### Twilio webhook URLs (production)
 
 ```
-Voice webhook:  https://your-domain.com/voice/twilio/inbound  (POST)
-WebSocket:      wss://your-domain.com/voice/twilio/ws
+Voice webhook:  https://your-domain.com/conversationBrain/inbound  (POST)
+WebSocket:      wss://your-domain.com/conversationBrain/ws
 ```
 
 ## Tests

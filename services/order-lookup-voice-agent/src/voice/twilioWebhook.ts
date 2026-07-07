@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { getConfig, VOICE_PATH_PREFIX, wsUrl } from "../config.js";
+import { getConfig, CONVERSATION_BRAIN_PATH_PREFIX, wsUrl } from "../config.js";
 import { BRAIN_GREETING } from "../agents/conversationOrchestrator.js";
 import { getCallerMemory, CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
 import { logger } from "../utils/logger.js";import { buildConversationRelayVoiceAttrs } from "../services/voiceService.js";
@@ -24,7 +24,7 @@ function renderConversationRelayTwiml(params: {
   const voiceAttrs = buildConversationRelayVoiceAttrs();
   const attrs = {
     url: params.wsUrl,
-    action: `${getConfig().PUBLIC_BASE_URL.replace(/\/$/, "")}${VOICE_PATH_PREFIX}/relay-action`,
+    action: `${getConfig().PUBLIC_BASE_URL.replace(/\/$/, "")}${CONVERSATION_BRAIN_PATH_PREFIX}/relay-action`,
     method: "POST",
     welcomeGreeting: params.welcomeGreeting,
     welcomeGreetingInterruptible: "any",
