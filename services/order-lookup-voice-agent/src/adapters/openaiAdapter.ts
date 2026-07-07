@@ -6,11 +6,11 @@ import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { SHOSHAN_SYSTEM_PROMPT } from "../prompts/systemPrompt.js";
 import {
-  executeLlmTool,
   toolResultForLlm,
   type LlmToolExecutionRecord,
   type LlmToolName,
 } from "./llmToolExecutor.js";
+import { ServiceRegistry } from "../sovereign/serviceRegistry.js";
 import { groundedOrderSpeech } from "../agents/fulfillmentHandlers.js";
 import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
@@ -42,6 +42,11 @@ import {
   ensureUniqueSpokenResponse,
 } from "../services/llmService.js";
 import { buildLockedFlowSystemMessage } from "../agents/lockedFlowState.js";
+import {
+  buildActiveSessionSystemMessage,
+  getOrCreateActiveSession,
+  shouldSkipToolReinvoke,
+} from "../sovereign/activeSession.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -418,6 +423,11 @@ function buildOpenAiMessages(
     if (lockedFlowMessage) {
       systemMessages.push({ role: "system", content: lockedFlowMessage });
     }
+
+    systemMessages.push({
+      role: "system",
+      content: buildActiveSessionSystemMessage(getOrCreateActiveSession(input.callSid)),
+    });
   }
 
   return [
@@ -439,6 +449,18 @@ function resolveToolsForTurn(input: LlmAgentTurnInput): OpenAI.Chat.ChatCompleti
     return SHOPIFY_LLM_TOOLS.filter((tool) => tool.function?.name !== "end_call");
   }
   return SHOPIFY_LLM_TOOLS;
+}
+
+function mapToolToIntentKey(tool: LlmToolName): string | null {
+  if (tool === "get_shopify_order_status") return "order";
+  if (tool === "search_shopify_book_by_title" || tool === "search_shopify_book_by_isbn") {
+    return "catalog";
+  }
+  if (tool === "get_cart_summary" || tool === "add_to_cart" || tool === "remove_from_cart") {
+    return "cart";
+  }
+  if (tool === "send_checkout_email") return "checkout";
+  return null;
 }
 
 function lastAssistantAskedForOrder(messages: LlmChatMessage[]): boolean {
@@ -556,7 +578,7 @@ export async function* runLlmAgentTurnEvents(
   const forcedOrderNumber = detectOrderNumberForForcedLookup(input);
   if (forcedOrderNumber) {
     yield { type: "tool_pending", tools: ["get_shopify_order_status"] };
-    const record = await executeLlmTool(
+    const record = await ServiceRegistry.executeTool(
       "get_shopify_order_status",
       { orderNumber: forcedOrderNumber },
       input.callSid,
@@ -711,7 +733,34 @@ export async function* runLlmAgentTurnEvents(
             }
           }
 
-          const record = await executeLlmTool(
+          const active = getOrCreateActiveSession(input.callSid);
+          const intentKey = mapToolToIntentKey(call.function.name);
+          if (
+            intentKey &&
+            shouldSkipToolReinvoke(active, intentKey, call.function.name)
+          ) {
+            toolExecutions.push({
+              tool: call.function.name,
+              args: toToolArgsRecord(parsedArgs),
+              ok: true,
+              status: "ok",
+              elapsedMs: 0,
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: JSON.stringify({
+                status: "CACHED",
+                source: "ActiveSession",
+                instructions:
+                  "Do NOT re-fetch. Use lastSpokenPayload from SOVEREIGN ACTIVE SESSION. Obey SILENCE PROTOCOL unless caller said 'full summary'.",
+                lastSpoken: active.lastSpokenPayload,
+              }),
+            });
+            continue;
+          }
+
+          const record = await ServiceRegistry.executeTool(
             call.function.name,
             parsedArgs,
             input.callSid,

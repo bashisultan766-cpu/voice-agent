@@ -17,6 +17,37 @@ export type TtsEngineName =
   | "Twilio ConversationRelay (ElevenLabs)"
   | "Twilio ConversationRelay (Google fallback)";
 
+export type PreferredVoiceEngine = "ElevenLabs" | "openai-tts-1-hd";
+
+const preferredVoiceByCall = new Map<string, PreferredVoiceEngine>();
+const authFailureLogged = new Set<string>();
+
+export function getPreferredVoiceForCall(callSid?: string): PreferredVoiceEngine {
+  if (!callSid) return "ElevenLabs";
+  return preferredVoiceByCall.get(callSid) ?? "ElevenLabs";
+}
+
+export function markElevenLabsAuthFailure(callSid?: string): void {
+  if (!callSid) return;
+  preferredVoiceByCall.set(callSid, "openai-tts-1-hd");
+  if (!authFailureLogged.has(callSid)) {
+    authFailureLogged.add(callSid);
+    logger.info("tts_voice_fallback_locked", {
+      callSid: callSid.slice(0, 8),
+      preferredVoice: "openai-tts-1-hd",
+    });
+  }
+}
+
+export function clearPreferredVoiceForCall(callSid: string): void {
+  preferredVoiceByCall.delete(callSid);
+  authFailureLogged.delete(callSid);
+}
+
+function isElevenLabsAuthError(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
 /** Telephony-native output formats only — never MP3 on the Twilio path. */
 export type TelephonyAudioFormat = "ulaw_8000" | "pcm_16000";
 
@@ -160,7 +191,11 @@ function buildTtsFallbackSpeech(text: string): string {
 async function synthesizeViaElevenLabsStream(
   text: string,
   signal?: AbortSignal,
+  callSid?: string,
 ): Promise<Response | null> {
+  if (getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
+    return null;
+  }
   const cfg = getConfig();
   const apiKey = cfg.ELEVENLABS_API_KEY;
   const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
@@ -191,7 +226,13 @@ async function synthesizeViaElevenLabsStream(
   });
 }
 
-async function synthesizeViaElevenLabs(text: string): Promise<VoiceSynthesisResult | null> {
+async function synthesizeViaElevenLabs(
+  text: string,
+  callSid?: string,
+): Promise<VoiceSynthesisResult | null> {
+  if (getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
+    return null;
+  }
   const cfg = getConfig();
   const apiKey = cfg.ELEVENLABS_API_KEY;
   const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
@@ -204,12 +245,16 @@ async function synthesizeViaElevenLabs(text: string): Promise<VoiceSynthesisResu
   const timer = setTimeout(() => controller.abort(), 8000);
 
   try {
-    const res = await synthesizeViaElevenLabsStream(text, controller.signal);
+    const res = await synthesizeViaElevenLabsStream(text, controller.signal, callSid);
     if (!res) return null;
 
     if (!res.ok) {
-      const body = await res.text();
-      logger.warn("elevenlabs_tts_failed", { status: res.status, body: body.slice(0, 80) });
+      if (isElevenLabsAuthError(res.status)) {
+        markElevenLabsAuthFailure(callSid);
+      } else {
+        const body = await res.text();
+        logger.warn("elevenlabs_tts_failed", { status: res.status, body: body.slice(0, 80) });
+      }
       return null;
     }
 
@@ -264,15 +309,20 @@ async function synthesizeViaOpenAI(text: string): Promise<VoiceSynthesisResult |
  * Synthesize speech for cache prewarm / offline playback.
  * Primary live path is Twilio ConversationRelay text tokens (see streamHandler).
  */
-export async function synthesizeSpeech(text: string): Promise<VoiceSynthesisResult | null> {
+export async function synthesizeSpeech(
+  text: string,
+  callSid?: string,
+): Promise<VoiceSynthesisResult | null> {
   const trimmed = sanitizeTextForTTS(text);
   if (!trimmed) return null;
 
   try {
-    const eleven = await synthesizeViaElevenLabs(trimmed);
+    const eleven = await synthesizeViaElevenLabs(trimmed, callSid);
     if (eleven) return eleven;
 
-    logger.warn("tts_fallback", { from: "ElevenLabs", to: "OpenAI tts-1-hd" });
+    if (getPreferredVoiceForCall(callSid) !== "openai-tts-1-hd") {
+      logger.warn("tts_fallback", { from: "ElevenLabs", to: "OpenAI tts-1-hd" });
+    }
     return synthesizeViaOpenAI(trimmed);
   } catch (err) {
     logger.error(TTS_STREAM_CRASH_LOG, {
@@ -295,6 +345,7 @@ export interface TtsStreamChunk {
  */
 export async function* synthesizeSpeechStream(
   text: string,
+  callSid?: string,
 ): AsyncGenerator<TtsStreamChunk, void, unknown> {
   const trimmed = sanitizeTextForTTS(text);
   if (!trimmed) return;
@@ -303,8 +354,11 @@ export async function* synthesizeSpeechStream(
   const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const res = await synthesizeViaElevenLabsStream(trimmed, controller.signal);
+    const res = await synthesizeViaElevenLabsStream(trimmed, controller.signal, callSid);
     if (!res?.ok || !res.body) {
+      if (res && isElevenLabsAuthError(res.status)) {
+        markElevenLabsAuthFailure(callSid);
+      }
       const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
       if (fallback) {
         yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };

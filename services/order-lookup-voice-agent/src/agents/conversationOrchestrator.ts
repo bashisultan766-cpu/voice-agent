@@ -1,18 +1,7 @@
 /**
- * Production orchestrator — 9-step SaaS agent platform pipeline.
+ * Production orchestrator — Sovereign State Machine pipeline.
  *
- * 1. Event ingestion (streamHandler)
- * 2. Memory reconciliation (SessionMemory SSOT)
- * 3. Intent + context resolution
- * 4. Tool routing (deterministic only)
- * 5. Execution freeze (snapshot + turn lock)
- * 6. Tool execution (Shopify / orders, retry once)
- * 7. Validation engine (canonical identity)
- * 8. Fail-safe response engine
- * 9. Response delivery
- *
- * Self-heal layer: turnHealthMonitor + selfHealPipeline
- * streamHandler → process → gate → tools
+ * streamHandler → process → sovereignRouter → llmOrchestrator → response delivery
  */
 import { getConfig } from "../config.js";
 import {
@@ -93,6 +82,9 @@ import {
   processShopifySearchResults,
 } from "../tools/shopifyProductAdapter.js";
 import { classifyFollowUpIntent, preAnalyzeOrderIntent, ensureUniqueSpokenResponse } from "../services/llmService.js";
+import { clearActiveSession, createActiveSession } from "../sovereign/activeSession.js";
+import { clearPreferredVoiceForCall } from "../adapters/ttsAdapter.js";
+import { resolveSovereignTurn } from "../sovereign/sovereignRouter.js";
 import { analyzeBrainTurn } from "./brainAnalyzer.js";
 import {
   buildToolDecisionState,
@@ -204,6 +196,8 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
     }
   }
 
+  createActiveSession(callSid);
+
   return session;
 }
 
@@ -229,6 +223,8 @@ export function endCallSession(callSid: string, session?: CallSession): void {
   resetTurnHealth(callSid);
   clearCallEventSession(callSid);
   clearCallSessionLock(callSid);
+  clearActiveSession(callSid);
+  clearPreferredVoiceForCall(callSid);
 }
 
 /**
@@ -462,6 +458,22 @@ async function* runOrchestratorTurnCore(
   setSlotValidationReady(session.callSid, false);
   const text = (callerText ?? "").trim();
   ingestUserTurn(session.callSid, text);
+
+  const sovereign = resolveSovereignTurn(text, session);
+  if (sovereign.handled && sovereign.speech) {
+    const uniqueSpeech = await ensureUniqueSpokenResponse(
+      session.callSid,
+      sovereign.speech,
+      text,
+    );
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+    yield* yieldSpeech(uniqueSpeech, "dictation");
+    yield doneEvent(session.phase);
+    return;
+  }
 
   if (session.phase === "order_disclosed" || session.phase === "follow_up") {
     yield* handleFollowUpPhase(session, text);
@@ -1222,6 +1234,22 @@ async function* handleFollowUpPhase(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  const sovereign = resolveSovereignTurn(callerText, session);
+  if (sovereign.handled && sovereign.speech) {
+    const uniqueSpeech = await ensureUniqueSpokenResponse(
+      session.callSid,
+      sovereign.speech,
+      callerText,
+    );
+    session.phase = "follow_up";
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    yield* yieldSpeech(uniqueSpeech, "dictation");
+    yield doneEvent(session.phase);
+    return;
+  }
+
   const intent = await classifyFollowUpIntent(callerText);
 
   if (intent === "goodbye") {

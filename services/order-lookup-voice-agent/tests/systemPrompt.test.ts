@@ -21,8 +21,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
 
   it("locks SureShot Books virtual-assistant identity at the top of the prompt", () => {
     expect(SHOSHAN_SYSTEM_PROMPT.indexOf("YOUR IDENTITY")).toBeLessThan(
-      SHOSHAN_SYSTEM_PROMPT.indexOf("CRITICAL — NO CONVERSATIONAL FILLERS"),
+      SHOSHAN_SYSTEM_PROMPT.indexOf("SOVEREIGN STATE MACHINE"),
     );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SOVEREIGN STATE MACHINE/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SILENCE PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SPATIAL TRACKING DICTATION/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/full summary/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Elite Customer Concierge and Virtual Assistant for SureShot Books/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Welcome to SureShot Books! I am your virtual assistant/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY BANNED identity phrases/i);

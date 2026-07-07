@@ -26,6 +26,10 @@ import type { FinalResponseType } from "../runtime/turnObservability.js";
 import type { GateIntent } from "./toolDecisionGate.js";
 import { clearCallerMemory } from "../utils/callerMemory.js";
 import { clearLastSpokenSentence } from "../services/llmService.js";
+import {
+  recordToolPayload,
+  recordTrackingPayload,
+} from "../sovereign/activeSession.js";
 
 export { LLM_ORCHESTRATOR_TEMPERATURE } from "./llmConfig.js";
 
@@ -220,6 +224,35 @@ export async function* runLlmOrchestratorTurn(
 
   applySessionPhaseAfterTurn(session, result.responseType);
   persistOrderContext(session, result);
+
+  const orderExec = result.toolExecutions.find((exec) => exec.tool === "get_shopify_order_status" && exec.ok);
+  if (orderExec?.data && "trackingNumber" in orderExec.data && orderExec.data.trackingNumber) {
+    recordTrackingPayload(session.callSid, String(orderExec.data.trackingNumber), result.speech);
+  } else if (orderExec?.ok) {
+    recordToolPayload(session.callSid, {
+      kind: "order_status",
+      speech: result.speech,
+      toolName: "get_shopify_order_status",
+      intentKey: "order",
+      state: "order_active",
+    });
+  } else {
+    const catalogExec = result.toolExecutions.find(
+      (exec) =>
+        (exec.tool === "search_shopify_book_by_title" ||
+          exec.tool === "search_shopify_book_by_isbn") &&
+        exec.ok,
+    );
+    if (catalogExec) {
+      recordToolPayload(session.callSid, {
+        kind: "catalog",
+        speech: result.speech,
+        toolName: catalogExec.tool,
+        intentKey: "catalog",
+        state: "catalog_active",
+      });
+    }
+  }
 
   if (result.endCall) {
     session.phase = "ended";

@@ -61,6 +61,7 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
       "get_shopify_order_status",
       expect.objectContaining({ orderNumber: expect.any(String) }),
       "CA_GROUND",
+      undefined,
     );
     expect(speech).toContain("I found your order");
     expect(speech).toMatch(/Your order status is Refunded/i);
