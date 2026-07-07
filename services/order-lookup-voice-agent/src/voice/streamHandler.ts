@@ -19,10 +19,15 @@ import {
 import { logEventIngestion } from "../runtime/turnObservability.js";
 import { clearShoppingCart } from "../agents/cartManager.js";
 import {
+  clearOutboundAudioTracking,
+  getLastOutboundAudioAt,
+  sendComfortNoise,
   sendMediaStreamClear,
   sendMediaStreamStop,
+  sendAudio,
   streamChunkToMediaStream,
   streamSpeechToMediaStream,
+  touchOutboundAudio,
   type MediaStreamSendFn,
 } from "../services/mediaStreamVoice.js";
 import {
@@ -51,6 +56,8 @@ const ERROR_SPEECH =
 
 const SILENCE_MS = 900;
 const MIN_INBOUND_MULAW_BYTES = 3200;
+const STREAM_HEARTBEAT_IDLE_MS = 500;
+const STREAM_HEARTBEAT_TICK_MS = 100;
 
 const speakingTurns = new Set<string>();
 const activeTurnAborts = new Map<string, AbortController>();
@@ -58,6 +65,7 @@ const streamSendRegistry = new Map<string, MediaStreamSendFn>();
 const streamSidRegistry = new Map<string, string>();
 const inboundMulawBuffers = new Map<string, Buffer[]>();
 const silenceTimers = new Map<string, NodeJS.Timeout>();
+const heartbeatTimers = new Map<string, NodeJS.Timeout>();
 
 type TurnGenerator = (
   callSid: string,
@@ -83,7 +91,37 @@ function unregisterStreamSend(callSid: string): void {
   const timer = silenceTimers.get(callSid);
   if (timer) clearTimeout(timer);
   silenceTimers.delete(callSid);
+  stopStreamHeartbeat(callSid);
+  clearOutboundAudioTracking(callSid);
 }
+
+function startStreamHeartbeat(callSid: string): void {
+  stopStreamHeartbeat(callSid);
+  touchOutboundAudio(callSid);
+
+  heartbeatTimers.set(
+    callSid,
+    setInterval(() => {
+      const send = streamSendRegistry.get(callSid);
+      const streamSid = streamSidRegistry.get(callSid);
+      if (!send || !streamSid) return;
+
+      const idleMs = Date.now() - getLastOutboundAudioAt(callSid);
+      if (idleMs >= STREAM_HEARTBEAT_IDLE_MS) {
+        sendComfortNoise(send, streamSid, callSid);
+      }
+    }, STREAM_HEARTBEAT_TICK_MS),
+  );
+}
+
+function stopStreamHeartbeat(callSid: string): void {
+  const timer = heartbeatTimers.get(callSid);
+  if (timer) clearInterval(timer);
+  heartbeatTimers.delete(callSid);
+}
+
+/** @deprecated Use sendAudio from mediaStreamVoice — re-exported for pipeline diagnostics. */
+export { sendAudio };
 
 /** Hard-stop — clear buffer, abort TTS, optional stream stop/reopen via Twilio Media Streams. */
 export async function abortCurrentTTS(callSid: string, reopenStream = false): Promise<boolean> {
@@ -191,6 +229,7 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
           session = createCallSession(callSid, from, to);
           session.callerPhone = from;
           registerStreamSend(callSid, send, streamSid);
+          startStreamHeartbeat(callSid);
 
           logger.info("media_stream_start", {
             callSid: callSid.slice(0, 8),
@@ -205,7 +244,10 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
           } else if (welcomeGreeting) {
             speakingTurns.add(callSid);
             setAgentRelayState(callSid, "SPEAKING");
-            await streamSpeechToMediaStream(welcomeGreeting, send, { streamSid });
+            await streamSpeechToMediaStream(welcomeGreeting, send, {
+              streamSid,
+              onAudioSent: () => touchOutboundAudio(callSid),
+            }, callSid);
             speakingTurns.delete(callSid);
             setAgentRelayState(callSid, "LISTENING");
           }
@@ -302,6 +344,12 @@ async function runStreamingTurn(
       }
 
       if (event.type === "chunk") {
+        logger.debug("orchestrator_chunk_received", {
+          callSid: session.callSid.slice(0, 8),
+          kind: event.chunk.kind,
+          textLength: event.chunk.text.length,
+        });
+
         if (isInterruptBufferFull(session.callSid)) {
           takeInterruptSignal(session.callSid);
           if (await abortCurrentTTS(session.callSid, true)) {
@@ -325,7 +373,11 @@ async function runStreamingTurn(
         await streamChunkToMediaStream(
           event.chunk,
           send,
-          { abortSignal: abort.signal, streamSid },
+          {
+            abortSignal: abort.signal,
+            streamSid,
+            onAudioSent: () => touchOutboundAudio(session.callSid),
+          },
           session.callSid,
         );
         if (abort.signal.aborted) {
@@ -349,7 +401,11 @@ async function runStreamingTurn(
       await streamChunkToMediaStream(
         { text: ERROR_SPEECH, kind: "error" },
         send,
-        { abortSignal: abort.signal, streamSid },
+        {
+          abortSignal: abort.signal,
+          streamSid,
+          onAudioSent: () => touchOutboundAudio(session.callSid),
+        },
         session.callSid,
       );
     }

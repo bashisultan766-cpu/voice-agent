@@ -6,6 +6,7 @@ import OpenAI from "openai";
 import { getConfig, normalizeTwilioElevenLabsModel } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { sanitizeTextForTTS } from "../utils/ttsFormatter.js";
+import { pcm16leToMulaw8k } from "../utils/telephonyAudio.js";
 import {
   ELEVENLABS_CIRCUIT_BREAKER_LOG,
   clearPreferredVoiceForCall,
@@ -178,6 +179,20 @@ function buildTtsFallbackSpeech(text: string): string {
   return spoken ? `${TTS_STREAM_FALLBACK_PREFIX} ${spoken}` : TTS_STREAM_FALLBACK_PREFIX;
 }
 
+/** Yield OpenAI PCM as μ-law telephony frames for Twilio Media Streams. */
+async function* yieldOpenAiTelephonyFrames(
+  result: VoiceSynthesisResult,
+  isFallback = false,
+): AsyncGenerator<TtsStreamChunk, void, unknown> {
+  const mulaw = pcm16leToMulaw8k(result.audio);
+  const { minBytes, maxBytes } = telephonyChunkBounds("ulaw_8000");
+  const accumulator = new AudioChunkAccumulator(minBytes, maxBytes);
+
+  for (const frame of accumulator.ingest(mulaw).concat(accumulator.drain())) {
+    yield { audio: frame, engine: result.engine, isFallback };
+  }
+}
+
 async function synthesizeViaElevenLabsStream(
   text: string,
   signal?: AbortSignal,
@@ -342,9 +357,9 @@ export async function* synthesizeSpeechStream(
 
   try {
     if (getIsElevenLabsDisabled()) {
-      const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
-      if (fallback) {
-        yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+      const openAi = await synthesizeViaOpenAI(trimmed);
+      if (openAi) {
+        yield* yieldOpenAiTelephonyFrames(openAi);
       }
       return;
     }
@@ -356,7 +371,7 @@ export async function* synthesizeSpeechStream(
       }
       const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
       if (fallback) {
-        yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+        yield* yieldOpenAiTelephonyFrames(fallback);
       }
       return;
     }
@@ -391,7 +406,7 @@ export async function* synthesizeSpeechStream(
       });
       const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
       if (fallback) {
-        yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+        yield* yieldOpenAiTelephonyFrames(fallback, true);
       }
     } finally {
       reader.releaseLock();
@@ -403,7 +418,7 @@ export async function* synthesizeSpeechStream(
     });
     const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
     if (fallback) {
-      yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+      yield* yieldOpenAiTelephonyFrames(fallback, true);
     }
   } finally {
     clearTimeout(timer);
