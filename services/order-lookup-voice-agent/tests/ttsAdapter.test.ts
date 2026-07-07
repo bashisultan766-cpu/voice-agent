@@ -5,16 +5,43 @@ import {
   MAX_AUDIO_CHUNK_BYTES,
   normalizeAudioChunks,
   telephonyChunkBounds,
-  ELEVENLABS_CIRCUIT_BREAKER_LOG,
-  getConversationRelayTtsEngine,
-  getIsElevenLabsDisabled,
-  getPreferredVoiceForCall,
-  markElevenLabsAuthFailure,
-  resetElevenLabsCircuitBreakerForTests,
-  synthesizeSpeech,
-  tripElevenLabsCircuitBreaker,
 } from "../src/adapters/ttsAdapter.js";
-import { buildConversationRelayVoiceAttrs } from "../src/adapters/voiceAdapter.js";
+
+const baseEnv = {
+  PUBLIC_BASE_URL: "https://example.com",
+  TWILIO_ACCOUNT_SID: "ACtest",
+  TWILIO_AUTH_TOKEN: "secret",
+  OPENAI_API_KEY: "sk-test",
+  SHOPIFY_SHOP_DOMAIN: "shop.myshopify.com",
+  SHOPIFY_ADMIN_ACCESS_TOKEN: "shpat",
+  VOICE_TTS_PROVIDER: "ElevenLabs",
+  ELEVENLABS_API_KEY: "el-test-key",
+  VOICE_ID: "voice123",
+};
+
+function mockElevenLabsProbe(ok: boolean, status = ok ? 200 : 403): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (String(url).includes("api.elevenlabs.io/v1/user")) {
+        return new Response(ok ? "{}" : "quota", { status });
+      }
+      if (String(url).includes("text-to-speech")) {
+        return new Response(new Uint8Array([1, 2, 3]), {
+          status: ok ? 200 : status,
+          headers: { "content-type": "audio/basic" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }),
+  );
+}
+
+async function loadVoiceStack() {
+  const config = await import("../src/config.js");
+  config.resetConfigCacheForTests();
+  return import("../src/adapters/voiceAdapter.js");
+}
 
 describe("AudioChunkAccumulator", () => {
   it("buffers sub-minimum reads until a telephony frame is ready", () => {
@@ -62,69 +89,116 @@ describe("normalizeAudioChunks", () => {
   });
 });
 
-describe("ElevenLabs circuit breaker", () => {
+describe("static global voice provider", () => {
+  const originalEnv = { ...process.env };
+
   beforeEach(() => {
-    resetElevenLabsCircuitBreakerForTests();
+    process.env = { ...originalEnv, ...baseEnv };
+    vi.resetModules();
   });
 
   afterEach(() => {
-    resetElevenLabsCircuitBreakerForTests();
+    process.env = { ...originalEnv };
+    vi.resetModules();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("starts disabled with ElevenLabs as preferred voice", () => {
-    expect(getIsElevenLabsDisabled()).toBe(false);
-    expect(getPreferredVoiceForCall("CA123")).toBe("ElevenLabs");
+  it("selects ElevenLabs once at boot when probe succeeds", async () => {
+    mockElevenLabsProbe(true);
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+
+    const provider = await voice.initializeGlobalVoiceProvider();
+    expect(provider).toBe("ElevenLabs");
+    expect(voice.getGlobalVoiceProvider()).toBe("ElevenLabs");
+    expect(voice.getPreferredVoiceForCall("CA123")).toBe("ElevenLabs");
+    expect(voice.getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (ElevenLabs)");
   });
 
-  it("trips on auth failure and routes all calls to OpenAI", async () => {
+  it("permanently locks OpenAI when ElevenLabs auth probe fails", async () => {
     const { logger } = await import("../src/utils/logger.js");
     const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
-    markElevenLabsAuthFailure("CA123");
+    mockElevenLabsProbe(false, 403);
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
 
-    expect(getIsElevenLabsDisabled()).toBe(true);
-    expect(getPreferredVoiceForCall("CA456")).toBe("openai-tts-1-hd");
-    expect(getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (OpenAI fallback)");
-    expect(warnSpy).toHaveBeenCalledWith(ELEVENLABS_CIRCUIT_BREAKER_LOG);
+    const provider = await voice.initializeGlobalVoiceProvider();
 
-    warnSpy.mockRestore();
-  });
-
-  it("logs the circuit breaker message once when tripped", async () => {
-    const { logger } = await import("../src/utils/logger.js");
-    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
-
-    tripElevenLabsCircuitBreaker();
-    tripElevenLabsCircuitBreaker();
-
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(ELEVENLABS_CIRCUIT_BREAKER_LOG);
-
-    warnSpy.mockRestore();
-  });
-
-  it("skips ElevenLabs fetch when circuit is open", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("quota", { status: 403 }),
+    expect(provider).toBe("OpenAI");
+    expect(voice.getIsElevenLabsDisabled()).toBe(true);
+    expect(voice.getPreferredVoiceForCall("CA456")).toBe("openai-tts-1-hd");
+    expect(voice.getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (OpenAI fallback)");
+    expect(warnSpy).toHaveBeenCalledWith(
+      voice.ELEVENLABS_CIRCUIT_BREAKER_LOG,
+      expect.objectContaining({ reason: "auth_failed" }),
     );
 
-    tripElevenLabsCircuitBreaker();
-    const result = await synthesizeSpeech("Hello there", "CA789");
+    warnSpy.mockRestore();
+  });
 
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(result).toBeNull();
+  it("does not re-probe ElevenLabs on subsequent init calls", async () => {
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+
+    await voice.initializeGlobalVoiceProvider();
+    await voice.initializeGlobalVoiceProvider();
+
+    const probeCalls = fetchSpy.mock.calls.filter((call) =>
+      String(call[0]).includes("api.elevenlabs.io/v1/user"),
+    );
+    expect(probeCalls).toHaveLength(1);
+  });
+
+  it("trips runtime auth failure without retrying ElevenLabs", async () => {
+    mockElevenLabsProbe(true);
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+    await voice.initializeGlobalVoiceProvider();
+
+    const tts = await import("../src/adapters/ttsAdapter.js");
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    voice.markElevenLabsAuthFailure("CA123");
+    expect(voice.getIsElevenLabsDisabled()).toBe(true);
+
+    await tts.synthesizeSpeech("Hello there", "CA789");
+    expect(
+      fetchSpy.mock.calls.some((call) => String(call[0]).includes("elevenlabs.io")),
+    ).toBe(false);
 
     fetchSpy.mockRestore();
   });
 
-  it("omits ElevenLabs ttsProvider from relay attrs when circuit is open", () => {
-    tripElevenLabsCircuitBreaker();
-    const attrs = buildConversationRelayVoiceAttrs();
+  it("omits ElevenLabs ttsProvider from relay attrs when OpenAI is locked", async () => {
+    mockElevenLabsProbe(false, 401);
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+    await voice.initializeGlobalVoiceProvider();
 
+    const attrs = voice.buildConversationRelayVoiceAttrs();
     expect(attrs.ttsProvider).toBeUndefined();
     expect(attrs.voice).toBeTruthy();
     expect(attrs.voice).not.toBe("Google.en-US-Neural2-J");
+  });
+
+  it("logs circuit breaker only once when tripped repeatedly", async () => {
+    const { logger } = await import("../src/utils/logger.js");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+
+    voice.tripElevenLabsCircuitBreaker();
+    voice.tripElevenLabsCircuitBreaker();
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(voice.ELEVENLABS_CIRCUIT_BREAKER_LOG);
+
+    warnSpy.mockRestore();
   });
 });

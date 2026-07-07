@@ -10,6 +10,7 @@ import {
   ELEVENLABS_CIRCUIT_BREAKER_LOG,
   clearPreferredVoiceForCall,
   getConversationRelayTtsEngine,
+  getGlobalVoiceProvider,
   getIsElevenLabsDisabled,
   getLockedElevenLabsVoiceId,
   getOpenAiEricFallbackVoice,
@@ -26,6 +27,7 @@ export {
   ELEVENLABS_CIRCUIT_BREAKER_LOG,
   clearPreferredVoiceForCall,
   getConversationRelayTtsEngine,
+  getGlobalVoiceProvider,
   getIsElevenLabsDisabled,
   getLockedElevenLabsVoiceId,
   getOpenAiEricFallbackVoice,
@@ -78,8 +80,9 @@ export function getElevenLabsVoiceSettings(): ElevenLabsVoiceSettings {
   };
 }
 
-/** Log the active TTS engine — call at turn start and before direct audio synthesis. */
+/** Log the active TTS engine — only at boot after static provider selection. */
 export function logTtsEngineSelection(engine?: TtsEngineName): void {
+  if (!getGlobalVoiceProvider()) return;
   logVoiceEngineSelection(engine as Parameters<typeof logVoiceEngineSelection>[0]);
 }
 
@@ -178,9 +181,9 @@ function buildTtsFallbackSpeech(text: string): string {
 async function synthesizeViaElevenLabsStream(
   text: string,
   signal?: AbortSignal,
-  callSid?: string,
+  _callSid?: string,
 ): Promise<Response | null> {
-  if (getIsElevenLabsDisabled() || getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
+  if (getIsElevenLabsDisabled()) {
     return null;
   }
   const cfg = getConfig();
@@ -189,7 +192,6 @@ async function synthesizeViaElevenLabsStream(
   if (!apiKey || !voiceId) return null;
 
   const outputFormat = resolveTelephonyOutputFormat();
-  logTtsEngineSelection("ElevenLabs");
 
   const url = new URL(
     `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream`,
@@ -217,7 +219,7 @@ async function synthesizeViaElevenLabs(
   text: string,
   callSid?: string,
 ): Promise<VoiceSynthesisResult | null> {
-  if (getIsElevenLabsDisabled() || getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
+  if (getIsElevenLabsDisabled()) {
     return null;
   }
   const cfg = getConfig();
@@ -226,7 +228,6 @@ async function synthesizeViaElevenLabs(
   if (!apiKey || !voiceId) return null;
 
   const outputFormat = resolveTelephonyOutputFormat();
-  logTtsEngineSelection("ElevenLabs");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
@@ -266,8 +267,6 @@ async function synthesizeViaOpenAI(text: string): Promise<VoiceSynthesisResult |
   const cfg = getConfig();
   if (!cfg.OPENAI_API_KEY) return null;
 
-  logTtsEngineSelection("OpenAI tts-1-hd");
-
   try {
     const client = new OpenAI({ apiKey: cfg.OPENAI_API_KEY });
     const response = await client.audio.speech.create({
@@ -304,12 +303,13 @@ export async function synthesizeSpeech(
   if (!trimmed) return null;
 
   try {
+    if (getIsElevenLabsDisabled()) {
+      return synthesizeViaOpenAI(trimmed);
+    }
+
     const eleven = await synthesizeViaElevenLabs(trimmed, callSid);
     if (eleven) return eleven;
 
-    if (getPreferredVoiceForCall(callSid) !== "openai-tts-1-hd") {
-      logger.warn("tts_fallback", { from: "ElevenLabs", to: "OpenAI tts-1-hd" });
-    }
     return synthesizeViaOpenAI(trimmed);
   } catch (err) {
     logger.error(TTS_STREAM_CRASH_LOG, {
@@ -341,6 +341,14 @@ export async function* synthesizeSpeechStream(
   const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
+    if (getIsElevenLabsDisabled()) {
+      const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
+      if (fallback) {
+        yield { audio: fallback.audio, engine: fallback.engine, isFallback: true };
+      }
+      return;
+    }
+
     const res = await synthesizeViaElevenLabsStream(trimmed, controller.signal, callSid);
     if (!res?.ok || !res.body) {
       if (res && isElevenLabsAuthError(res.status)) {

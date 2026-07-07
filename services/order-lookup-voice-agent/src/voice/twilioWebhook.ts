@@ -3,6 +3,7 @@ import { getConfig, VOICE_PATH_PREFIX, wsUrl } from "../config.js";
 import { BRAIN_GREETING } from "../agents/conversationOrchestrator.js";
 import { getCallerMemory, CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
 import { logger } from "../utils/logger.js";import { buildConversationRelayVoiceAttrs } from "../services/voiceService.js";
+import { ensureVoiceProviderReady } from "../adapters/voiceAdapter.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
 
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>';
@@ -47,6 +48,18 @@ function escapeXml(value: string): string {
 }
 
 export async function handleInboundCall(req: Request, res: Response): Promise<void> {
+  const voiceReady = ensureVoiceProviderReady();
+  if (!voiceReady.ok) {
+    logger.error("inbound_rejected_voice_provider_uninitialized", {
+      error: voiceReady.error,
+    });
+    res.status(500).json({
+      ok: false,
+      error: "voice_provider_unavailable",
+    });
+    return;
+  }
+
   const cfg = getConfig();
   await validateTwilioSignature(req, cfg.TWILIO_AUTH_TOKEN, cfg.VALIDATE_TWILIO_SIGNATURES, {
     routerForwardSecret: cfg.VOICE_ROUTER_FORWARD_SECRET,
@@ -62,6 +75,7 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
     from: maskPhone(from),
     to: maskPhone(to),
     wsUrl: wsUrl(),
+    voiceProvider: voiceReady.provider,
     voice: buildConversationRelayVoiceAttrs().voice ?? "default",
   });
 

@@ -50,7 +50,7 @@ import {
 
 import { logEventIngestion } from "../runtime/turnObservability.js";
 
-import { logTtsEngineSelection, getElevenLabsVoiceSettings } from "../adapters/ttsAdapter.js";
+import { getElevenLabsVoiceSettings } from "../adapters/ttsAdapter.js";
 
 import { getLockedElevenLabsVoiceId } from "../adapters/voiceAdapter.js";
 
@@ -319,8 +319,6 @@ async function runStreamingTurn(
   });
 
 
-
-  logTtsEngineSelection();
 
   logger.debug("relay_voice_profile", {
 
