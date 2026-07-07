@@ -82,8 +82,15 @@ import {
   processShopifySearchResults,
 } from "../tools/shopifyProductAdapter.js";
 import { classifyFollowUpIntent, preAnalyzeOrderIntent, ensureUniqueSpokenResponse } from "../services/llmService.js";
-import { clearActiveSession, createActiveSession } from "../sovereign/activeSession.js";
-import { clearPreferredVoiceForCall } from "../adapters/ttsAdapter.js";
+import {
+  clearActiveSession,
+  createActiveSession,
+  updateActiveSession,
+} from "../sovereign/activeSession.js";
+import {
+  clearPreferredVoiceForCall,
+  getPreferredVoiceForCall,
+} from "../adapters/ttsAdapter.js";
 import { resolveSovereignTurn } from "../sovereign/sovereignRouter.js";
 import { analyzeBrainTurn } from "./brainAnalyzer.js";
 import {
@@ -259,6 +266,7 @@ export async function* process(
   const state = getOrCreateCallState(callSid);
 
   beginOrchestratorTurn(callSid);
+  updateActiveSession(callSid, { preferredVoice: getPreferredVoiceForCall(callSid) });
   pipelineTrace({
     layer: "orchestrator",
     file: "conversationOrchestrator.ts",

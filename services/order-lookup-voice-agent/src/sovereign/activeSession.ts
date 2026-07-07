@@ -4,6 +4,7 @@
 import type { CallSession } from "../types/order.js";
 import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
 import type { LlmToolName } from "../adapters/llmToolExecutor.js";
+import { getPreferredVoiceForCall } from "../adapters/ttsAdapter.js";
 
 export type SovereignState =
   | "idle"
@@ -49,7 +50,7 @@ export function createActiveSession(callSid: string): ActiveSession {
     spatialIndex: [],
     awaitingClarification: null,
     cachedIntent: null,
-    preferredVoice: "ElevenLabs",
+    preferredVoice: getPreferredVoiceForCall(callSid),
   };
   store.set(callSid, session);
   return session;

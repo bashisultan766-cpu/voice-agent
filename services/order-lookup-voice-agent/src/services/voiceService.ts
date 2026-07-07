@@ -1,5 +1,9 @@
 import { getConfig, conversationRelayVoice } from "../config.js";
-import { synthesizeSpeech, type VoiceSynthesisResult } from "../adapters/ttsAdapter.js";
+import {
+  getIsElevenLabsDisabled,
+  synthesizeSpeech,
+  type VoiceSynthesisResult,
+} from "../adapters/ttsAdapter.js";
 import { smoothForVoice } from "./voiceSmoothingEngine.js";
 import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import { getCachedPhrase } from "../utils/phraseCache.js";
@@ -58,12 +62,17 @@ export function buildConversationRelayVoiceAttrs(): Record<string, string> {
     dtmfDetection: "true",
   };
 
-  if (cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs") {
+  const useElevenLabs =
+    !getIsElevenLabsDisabled() && cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs";
+
+  if (useElevenLabs) {
     attrs.ttsProvider = "ElevenLabs";
     attrs.voice = conversationRelayVoice();
     attrs.elevenlabsTextNormalization = cfg.ELEVENLABS_TEXT_NORMALIZATION;
   } else {
-    attrs.voice = conversationRelayVoice();
+    attrs.voice = getIsElevenLabsDisabled()
+      ? "Google.en-US-Neural2-J"
+      : conversationRelayVoice();
   }
 
   return attrs;

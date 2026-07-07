@@ -98,6 +98,7 @@ vi.mock("../src/adapters/ttsAdapter.js", () => ({
     style: 0,
     use_speaker_boost: true,
   })),
+  getPreferredVoiceForCall: vi.fn(() => "ElevenLabs"),
 }));
 
 class MockRelaySocket extends EventEmitter {

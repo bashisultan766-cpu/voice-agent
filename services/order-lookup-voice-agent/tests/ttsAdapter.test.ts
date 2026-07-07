@@ -1,11 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   AudioChunkAccumulator,
   MIN_AUDIO_CHUNK_BYTES,
   MAX_AUDIO_CHUNK_BYTES,
   normalizeAudioChunks,
   telephonyChunkBounds,
+  ELEVENLABS_CIRCUIT_BREAKER_LOG,
+  getConversationRelayTtsEngine,
+  getIsElevenLabsDisabled,
+  getPreferredVoiceForCall,
+  markElevenLabsAuthFailure,
+  resetElevenLabsCircuitBreakerForTests,
+  synthesizeSpeech,
+  tripElevenLabsCircuitBreaker,
 } from "../src/adapters/ttsAdapter.js";
+import { buildConversationRelayVoiceAttrs } from "../src/services/voiceService.js";
 
 describe("AudioChunkAccumulator", () => {
   it("buffers sub-minimum reads until a telephony frame is ready", () => {
@@ -50,5 +59,71 @@ describe("normalizeAudioChunks", () => {
   it("returns small buffers unchanged", () => {
     const small = Buffer.alloc(100);
     expect(normalizeAudioChunks(small, "ulaw_8000")).toBe(small);
+  });
+});
+
+describe("ElevenLabs circuit breaker", () => {
+  beforeEach(() => {
+    resetElevenLabsCircuitBreakerForTests();
+  });
+
+  afterEach(() => {
+    resetElevenLabsCircuitBreakerForTests();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("starts disabled with ElevenLabs as preferred voice", () => {
+    expect(getIsElevenLabsDisabled()).toBe(false);
+    expect(getPreferredVoiceForCall("CA123")).toBe("ElevenLabs");
+  });
+
+  it("trips on auth failure and routes all calls to OpenAI", async () => {
+    const { logger } = await import("../src/utils/logger.js");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    markElevenLabsAuthFailure("CA123");
+
+    expect(getIsElevenLabsDisabled()).toBe(true);
+    expect(getPreferredVoiceForCall("CA456")).toBe("openai-tts-1-hd");
+    expect(getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (Google fallback)");
+    expect(warnSpy).toHaveBeenCalledWith(ELEVENLABS_CIRCUIT_BREAKER_LOG);
+
+    warnSpy.mockRestore();
+  });
+
+  it("logs the circuit breaker message once when tripped", async () => {
+    const { logger } = await import("../src/utils/logger.js");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    tripElevenLabsCircuitBreaker();
+    tripElevenLabsCircuitBreaker();
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(ELEVENLABS_CIRCUIT_BREAKER_LOG);
+
+    warnSpy.mockRestore();
+  });
+
+  it("skips ElevenLabs fetch when circuit is open", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("quota", { status: 403 }),
+    );
+
+    tripElevenLabsCircuitBreaker();
+    const result = await synthesizeSpeech("Hello there", "CA789");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+
+    fetchSpy.mockRestore();
+  });
+
+  it("omits ElevenLabs ttsProvider from relay attrs when circuit is open", () => {
+    tripElevenLabsCircuitBreaker();
+    const attrs = buildConversationRelayVoiceAttrs();
+
+    expect(attrs.ttsProvider).toBeUndefined();
+    expect(attrs.voice).toBe("Google.en-US-Neural2-J");
   });
 });
