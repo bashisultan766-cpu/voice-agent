@@ -10,7 +10,7 @@ import {
   buildSpatialResumeSpeech,
   extractSpatialAnchorDigits,
 } from "../src/sovereign/spatialDictation.js";
-import { resolveSovereignTurn } from "../src/sovereign/sovereignRouter.js";
+import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
 import type { CallSession } from "../src/types/order.js";
 
 describe("activeSession spatial index", () => {
@@ -51,7 +51,7 @@ describe("spatialDictation", () => {
   });
 });
 
-describe("sovereignRouter", () => {
+describe("tracking phase gate", () => {
   it("replays tracking from ActiveSession without tools", () => {
     const session = {
       callSid: "CA3",
@@ -64,7 +64,7 @@ describe("sovereignRouter", () => {
     } as CallSession;
 
     recordTrackingPayload("CA3", "9250");
-    const resolution = resolveSovereignTurn("can you repeat my tracking number", session);
+    const resolution = resolveTrackingPhaseGate("can you repeat my tracking number", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.skipTools).toBe(true);
     expect(resolution.speech).toContain("pen and notepad");

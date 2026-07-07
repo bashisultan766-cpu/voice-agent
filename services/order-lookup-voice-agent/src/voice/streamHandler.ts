@@ -58,7 +58,12 @@ import { clearShoppingCart } from "../agents/cartManager.js";
 
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
 
-import { recordDictationProgress } from "../sovereign/activeSession.js";
+import { setAgentRelayState, getOrCreateActiveSession } from "../sovereign/activeSession.js";
+import {
+  chunkEndIndex,
+  setLastSpokenIndex,
+  TRACKING_DICTATION_CHUNK_SIZE,
+} from "../agents/dictationTool.js";
 
 import { isNoiseTranscript } from "../utils/noiseGate.js";
 
@@ -88,7 +93,7 @@ const activeTurnAborts = new Map<string, AbortController>();
 
 type SendFn = (msg: {
 
-  type: "text" | "end";
+  type: "text" | "end" | "clear";
 
   token?: string;
 
@@ -102,27 +107,111 @@ type SendFn = (msg: {
 
 
 
-/** Abort in-flight TTS for a call — returns true when a turn was actively speaking. */
+const relaySendRegistry = new Map<string, SendFn>();
 
-export function abortCurrentTTS(callSid: string): boolean {
+const ttsPlaybackQueues = new Map<string, Array<() => void>>();
 
-  const abort = activeTurnAborts.get(callSid);
 
-  if (!abort || abort.signal.aborted) {
 
-    return false;
+export function registerRelaySend(callSid: string, send: SendFn): void {
+
+  relaySendRegistry.set(callSid, send);
+
+}
+
+
+
+export function unregisterRelaySend(callSid: string): void {
+
+  relaySendRegistry.delete(callSid);
+
+  flushTtsPlaybackQueue(callSid);
+
+}
+
+
+
+function flushTtsPlaybackQueue(callSid: string): void {
+
+  const queue = ttsPlaybackQueues.get(callSid);
+
+  if (!queue?.length) return;
+
+  ttsPlaybackQueues.set(callSid, []);
+
+  for (const cancel of queue) {
+
+    cancel();
 
   }
 
-  abort.abort();
+}
+
+
+
+/** High-priority hard stop — abort TTS, flush queue, clear Twilio buffer, enter LISTENING. */
+
+export async function abortCurrentTTS(callSid: string): Promise<boolean> {
+
+  const abort = activeTurnAborts.get(callSid);
+
+  const wasSpeaking = Boolean(abort && !abort.signal.aborted) || speakingTurns.has(callSid);
+
+
+
+  flushTtsPlaybackQueue(callSid);
+
+
+
+  if (abort && !abort.signal.aborted) {
+
+    abort.abort();
+
+  }
+
+
 
   speakingTurns.delete(callSid);
 
   clearDictationLock(callSid);
 
-  logger.debug("relay_tts_aborted", { callSid: callSid.slice(0, 8) });
+  setAgentRelayState(callSid, "LISTENING");
 
-  return true;
+
+
+  const send = relaySendRegistry.get(callSid);
+
+  if (send) {
+
+    try {
+
+      await send({ type: "clear" });
+
+    } catch (err) {
+
+      logger.warn("relay_clear_failed", {
+
+        callSid: callSid.slice(0, 8),
+
+        error: err instanceof Error ? err.message : String(err),
+
+      });
+
+    }
+
+  }
+
+
+
+  if (wasSpeaking) {
+
+    logger.debug("relay_tts_aborted", { callSid: callSid.slice(0, 8) });
+
+  }
+
+
+
+  return wasSpeaking;
 
 }
 
@@ -214,6 +303,8 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
 
       activeTurnAborts.delete(session.callSid);
 
+      unregisterRelaySend(session.callSid);
+
       clearInterruptBuffer(session.callSid);
 
       markCallSessionClosed(session.callSid);
@@ -292,6 +383,8 @@ async function runStreamingTurn(
 
   speakingTurns.add(session.callSid);
 
+  setAgentRelayState(session.callSid, "SPEAKING");
+
 
 
   let endCall = false;
@@ -352,7 +445,7 @@ async function runStreamingTurn(
 
           takeInterruptSignal(session.callSid);
 
-          if (abortCurrentTTS(session.callSid)) {
+          if (await abortCurrentTTS(session.callSid)) {
 
             interruptedDuringSpeech = true;
 
@@ -376,7 +469,19 @@ async function runStreamingTurn(
 
           dictationIndex += 1;
 
-          recordDictationProgress(session.callSid, dictationIndex);
+          const endIndex =
+
+            event.chunk.dictationEndIndex ??
+
+            chunkEndIndex(
+
+              getOrCreateActiveSession(session.callSid).spatialIndex,
+
+              dictationIndex * TRACKING_DICTATION_CHUNK_SIZE,
+
+            );
+
+          setLastSpokenIndex(session.callSid, endIndex);
 
         }
 
@@ -386,7 +491,7 @@ async function runStreamingTurn(
 
           takeInterruptSignal(session.callSid);
 
-          if (abortCurrentTTS(session.callSid)) {
+          if (await abortCurrentTTS(session.callSid)) {
 
             interruptedDuringSpeech = true;
 
@@ -417,6 +522,8 @@ async function runStreamingTurn(
         }
 
         clearDictationLock(session.callSid);
+
+        setAgentRelayState(session.callSid, "LISTENING");
 
         logger.info("relay_turn_complete", {
 
@@ -588,13 +695,13 @@ interface RelayMessageContext {
 
 
 
-function signalUserInterruptDuringSpeech(
+async function onUserSpeechDetected(
 
   ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">,
 
   transcript = "",
 
-): { action: "aborted" | "ignored" } {
+): Promise<{ action: "aborted" | "ignored" }> {
 
   const session = ctx.getSession();
 
@@ -612,7 +719,7 @@ function signalUserInterruptDuringSpeech(
 
   pushInterruptSignal(callSid, transcript);
 
-  const aborted = abortCurrentTTS(callSid);
+  const aborted = await abortCurrentTTS(callSid);
 
   if (!aborted) {
 
@@ -622,7 +729,7 @@ function signalUserInterruptDuringSpeech(
 
 
 
-  logger.debug("relay_interrupt", { callSid: callSid.slice(0, 8) });
+  logger.debug("user_speech_detected_abort", { callSid: callSid.slice(0, 8) });
 
   return { action: "aborted" };
 
@@ -630,15 +737,29 @@ function signalUserInterruptDuringSpeech(
 
 
 
+function signalUserInterruptDuringSpeech(
+
+  ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">,
+
+  transcript = "",
+
+): Promise<{ action: "aborted" | "ignored" }> {
+
+  return onUserSpeechDetected(ctx, transcript);
+
+}
+
+
+
 /** Apply Twilio barge-in — aborts active TTS and queues dynamic re-state. */
 
-export function applyRelayInterrupt(ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">): {
+export function applyRelayInterrupt(ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">): Promise<{
 
   action: "aborted" | "ignored";
 
-} {
+}> {
 
-  return signalUserInterruptDuringSpeech(ctx);
+  return onUserSpeechDetected(ctx);
 
 }
 
@@ -675,6 +796,8 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
       session.callerPhone = from;
 
       ctx.setSession(session);
+
+      registerRelaySend(session.callSid, ctx.send);
 
       logger.info("relay_setup", { callSid: session.callSid.slice(0, 8) });
 
@@ -726,7 +849,7 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
         if (speakingTurns.has(session.callSid)) {
 
-          const interrupt = signalUserInterruptDuringSpeech(ctx, message.voicePrompt ?? "");
+          const interrupt = await signalUserInterruptDuringSpeech(ctx, message.voicePrompt ?? "");
 
           if (interrupt.action === "aborted") {
 
@@ -752,7 +875,7 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
       if (speakingTurns.has(session.callSid)) {
 
-        const interrupt = signalUserInterruptDuringSpeech(ctx, callerText);
+        const interrupt = await signalUserInterruptDuringSpeech(ctx, callerText);
 
         if (interrupt.action === "aborted") {
 
@@ -790,7 +913,7 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
       if (!session || ctx.isClosed()) break;
 
-      const interrupt = signalUserInterruptDuringSpeech(ctx);
+      const interrupt = await signalUserInterruptDuringSpeech(ctx);
 
       if (interrupt.action === "aborted") {
 
@@ -812,7 +935,7 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
 
       if (speakingTurns.has(session.callSid)) {
 
-        const interrupt = signalUserInterruptDuringSpeech(ctx, message.digit);
+        const interrupt = await signalUserInterruptDuringSpeech(ctx, message.digit);
 
         if (interrupt.action === "aborted") {
 

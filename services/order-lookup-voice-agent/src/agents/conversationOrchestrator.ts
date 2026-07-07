@@ -93,6 +93,13 @@ import {
   getPreferredVoiceForCall,
 } from "../adapters/voiceAdapter.js";
 import { resolveSovereignTurn } from "../sovereign/sovereignRouter.js";
+import {
+  buildResumeFromLastSpokenIndex,
+  buildTrackingDictationChunks,
+  calculateResumeOffset,
+  resolveSpatialResumeFromQuery,
+} from "./dictationTool.js";
+import { extractSpatialAnchorDigits } from "../sovereign/spatialDictation.js";
 import { analyzeBrainTurn } from "./brainAnalyzer.js";
 import {
   buildToolDecisionState,
@@ -241,15 +248,144 @@ export function endCallSession(callSid: string, session?: CallSession): void {
  */
 export const USER_INTERRUPTED_DICTATION_SIGNAL = "User interrupted during dictation.";
 
+/** Tracking / dictation phase gates — sole source of truth for handshake + dictation. */
+export const GET_TRACKING_INTENT = "get_tracking";
+export const PHASE_HANDSHAKE = "PHASE_HANDSHAKE";
+export const PHASE_DICTATION = "PHASE_DICTATION";
+export const USER_READY = "USER_READY";
+export const LISTENING = "LISTENING";
+
+export const NOTEPAD_HANDSHAKE_PROMPT =
+  "Please have your pen and notepad ready. Let me know when you are ready.";
+
+const TRACKING_QUERY_RE =
+  /\b(tracking|track(?:ing)?\s*(?:id|number)|where\s+is\s+my\s+package|read\s+(?:me\s+)?(?:the\s+)?tracking)\b/i;
+
+const NOTEPAD_READY_RE =
+  /\b(ready|i'?m\s+ready|yes|ok|okay|go\s+ahead|all\s+set|you\s+can\s+go|note\s+it\s+down)\b/i;
+
+const INTERRUPT_RESUME_RE =
+  /\b(what\s+did\s+you\s+miss|missed\s+that|didn'?t\s+catch|repeat\s+from|continue\s+from|pick\s+up)\b/i;
+
+interface TrackingPhaseResolution {
+  handled: boolean;
+  speech?: string;
+  intentKey?: string;
+  skipLlm?: boolean;
+  skipTools?: boolean;
+}
+
+function trackingPayloadReady(active: ReturnType<typeof getOrCreateActiveSession>): boolean {
+  return Boolean(active.lastSpokenPayload?.trackingForTts && active.spatialIndex.length > 0);
+}
+
+/** Sole tracking gate — notepad handshake, USER_READY, chunked dictation, spatial resume. */
+export function resolveTrackingPhaseGate(
+  callerText: string,
+  session: CallSession,
+): TrackingPhaseResolution {
+  const active = getOrCreateActiveSession(session.callSid);
+  const text = callerText.trim();
+  if (!text) return { handled: false };
+
+  if (INTERRUPT_RESUME_RE.test(text) && active.spatialIndex.length > 0 && active.lastSpokenIndex >= 0) {
+    const resume = buildResumeFromLastSpokenIndex(active);
+    if (resume) {
+      return {
+        handled: true,
+        speech: resume,
+        skipLlm: true,
+        skipTools: true,
+        intentKey: "spatial_resume_interrupt",
+      };
+    }
+  }
+
+  const spatialResume = resolveSpatialResumeFromQuery(text, active);
+  if (spatialResume) {
+    const anchor = extractSpatialAnchorDigits(text);
+    if (anchor) {
+      const offset = calculateResumeOffset(active.spatialIndex, anchor);
+      updateActiveSession(session.callSid, {
+        lastSpokenIndex: Math.max(offset - 1, -1),
+        currentState: "tracking_dictation",
+      });
+    }
+    return {
+      handled: true,
+      speech: spatialResume,
+      skipLlm: true,
+      skipTools: true,
+      intentKey: "spatial_resume",
+    };
+  }
+
+  if (active.currentState === "awaiting_notepad_ready" && trackingPayloadReady(active)) {
+    if (NOTEPAD_READY_RE.test(text)) {
+      updateActiveSession(session.callSid, {
+        isNotepadReady: true,
+        awaitingClarification: null,
+        currentState: "tracking_dictation",
+        lastSpokenIndex: -1,
+      });
+      return {
+        handled: true,
+        speech: active.lastSpokenPayload!.trackingForTts!,
+        skipLlm: true,
+        skipTools: true,
+        intentKey: "dictate_tracking",
+      };
+    }
+    return {
+      handled: true,
+      speech: NOTEPAD_HANDSHAKE_PROMPT,
+      skipLlm: true,
+      skipTools: true,
+      intentKey: PHASE_HANDSHAKE,
+    };
+  }
+
+  if (TRACKING_QUERY_RE.test(text) && active.lastSpokenPayload?.trackingForTts) {
+    if (!active.isNotepadReady) {
+      updateActiveSession(session.callSid, {
+        currentState: "awaiting_notepad_ready",
+        awaitingClarification: "notepad_ready",
+        isNotepadReady: false,
+        cachedIntent: GET_TRACKING_INTENT,
+      });
+      return {
+        handled: true,
+        speech: NOTEPAD_HANDSHAKE_PROMPT,
+        skipLlm: true,
+        skipTools: true,
+        intentKey: PHASE_HANDSHAKE,
+      };
+    }
+    updateActiveSession(session.callSid, {
+      currentState: "tracking_dictation",
+      lastSpokenIndex: -1,
+    });
+    return {
+      handled: true,
+      speech: active.lastSpokenPayload.trackingForTts,
+      skipLlm: true,
+      skipTools: true,
+      intentKey: PHASE_DICTATION,
+    };
+  }
+
+  return { handled: false };
+}
+
 /** @deprecated Use USER_INTERRUPTED_DICTATION_SIGNAL flow via process(). */
 export const INTERRUPT_LISTENING_ACK =
   "Yes, I am listening. What did you miss?";
 
-export function buildDictationInterruptSpeech(lastDictationIndex: number): string {
-  if (lastDictationIndex < 0) {
+export function buildDictationInterruptSpeech(lastSpokenIndex: number): string {
+  if (lastSpokenIndex < 0) {
     return "I am stopping. Understood. Tell me what you need now.";
   }
-  return `I am stopping. Understood, you have noted the ID up to ${lastDictationIndex}. Tell me what you need now.`;
+  return `I am stopping. Understood, you have noted the ID up to position ${lastSpokenIndex + 1}. Tell me what you need now.`;
 }
 
 /** @deprecated Interrupt turns route through process() with USER_INTERRUPTED_DICTATION_SIGNAL. */
@@ -257,7 +393,7 @@ export async function* processInterruptAcknowledgment(
   session: CallSession,
 ): AsyncGenerator<AgentStreamEvent> {
   const active = getOrCreateActiveSession(session.callSid);
-  const speech = buildDictationInterruptSpeech(active.lastDictationIndex);
+  const speech = buildDictationInterruptSpeech(active.lastSpokenIndex);
   const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, "");
   syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
     responseType: "general_help",
@@ -436,14 +572,23 @@ async function* runOrchestratorTurnCore(
 
   if (text === USER_INTERRUPTED_DICTATION_SIGNAL) {
     const active = getOrCreateActiveSession(session.callSid);
-    const speech = buildDictationInterruptSpeech(active.lastDictationIndex);
+    const speech = buildDictationInterruptSpeech(active.lastSpokenIndex);
     const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
     syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
       responseType: "general_help",
     });
-    updateActiveSession(session.callSid, { currentState: "awaiting_clarification" });
+    updateActiveSession(session.callSid, {
+      currentState: "awaiting_clarification",
+      agentRelayState: LISTENING,
+    });
     yield* yieldSpeech(uniqueSpeech);
     yield doneEvent(session.phase);
+    return;
+  }
+
+  const trackingGate = resolveTrackingPhaseGate(text, session);
+  if (trackingGate.handled) {
+    yield* yieldTrackingPhaseSpeech(session, text, trackingGate);
     return;
   }
 
@@ -459,6 +604,47 @@ async function* runOrchestratorTurnCore(
   }
 
   yield* runLlmOrchestratorTurn(session, text, emitResponseSent);
+}
+
+async function* yieldTrackingPhaseSpeech(
+  session: CallSession,
+  callerText: string,
+  gate: TrackingPhaseResolution,
+): AsyncGenerator<AgentStreamEvent> {
+  if (!gate.speech) {
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, gate.speech, callerText);
+  syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+    responseType: "general_help",
+  });
+  session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+
+  const dictationIntents = new Set([
+    "dictate_tracking",
+    PHASE_DICTATION,
+    "spatial_resume",
+    "spatial_resume_interrupt",
+  ]);
+
+  if (dictationIntents.has(gate.intentKey ?? "")) {
+    const active = getOrCreateActiveSession(session.callSid);
+    const startIndex = active.lastSpokenIndex + 1;
+    const chunks = buildTrackingDictationChunks(active.spatialIndex, startIndex);
+    if (chunks.length > 0) {
+      for (const chunk of chunks) {
+        yield { type: "chunk", chunk };
+      }
+    } else {
+      yield* yieldSpeech(uniqueSpeech, "dictation");
+    }
+  } else {
+    yield* yieldSpeech(uniqueSpeech, "summary");
+  }
+
+  yield doneEvent(session.phase);
 }
 
 async function* yieldSovereignSpeech(
@@ -483,11 +669,26 @@ async function* yieldSovereignSpeech(
 
   const dictationKinds = new Set([
     "dictate_tracking",
+    PHASE_DICTATION,
     "spatial_resume",
     "spatial_resume_interrupt",
   ]);
   const chunkKind = dictationKinds.has(sovereign.intentKey ?? "") ? "dictation" : "summary";
-  yield* yieldSpeech(uniqueSpeech, chunkKind);
+
+  if (chunkKind === "dictation") {
+    const active = getOrCreateActiveSession(session.callSid);
+    const startIndex = active.lastSpokenIndex + 1;
+    const chunks = buildTrackingDictationChunks(active.spatialIndex, startIndex);
+    if (chunks.length > 0) {
+      for (const chunk of chunks) {
+        yield { type: "chunk", chunk };
+      }
+    } else {
+      yield* yieldSpeech(uniqueSpeech, chunkKind);
+    }
+  } else {
+    yield* yieldSpeech(uniqueSpeech, chunkKind);
+  }
   yield doneEvent(session.phase);
 }
 
@@ -495,6 +696,12 @@ async function* handleFollowUpPhase(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  const trackingGate = resolveTrackingPhaseGate(callerText, session);
+  if (trackingGate.handled) {
+    yield* yieldTrackingPhaseSpeech(session, callerText, trackingGate);
+    return;
+  }
+
   const sovereign = resolveSovereignTurn(callerText, session);
   if (sovereign.handled) {
     yield* yieldSovereignSpeech(session, callerText, sovereign);

@@ -41,6 +41,10 @@ export interface ActiveSession {
   preferredVoice: "ElevenLabs" | "openai-tts-1-hd";
   /** Last spatial index spoken before an interrupt — resume from index + 1. */
   lastDictationIndex: number;
+  /** Character index in spatialIndex for chunked dictation resume. */
+  lastSpokenIndex: number;
+  /** Relay audio state — LISTENING after hard-stop interrupt. */
+  agentRelayState: "LISTENING" | "SPEAKING";
   /** True only after caller confirms pen and notepad are ready. */
   isNotepadReady: boolean;
 }
@@ -57,6 +61,8 @@ export function createActiveSession(callSid: string): ActiveSession {
     cachedIntent: null,
     preferredVoice: getPreferredVoiceForCall(callSid),
     lastDictationIndex: -1,
+    lastSpokenIndex: -1,
+    agentRelayState: "LISTENING",
     isNotepadReady: false,
   };
   store.set(callSid, session);
@@ -85,8 +91,18 @@ export function clearActiveSession(callSid: string): void {
   store.delete(callSid);
 }
 
+export function setAgentRelayState(
+  callSid: string,
+  agentRelayState: ActiveSession["agentRelayState"],
+): ActiveSession {
+  return updateActiveSession(callSid, { agentRelayState });
+}
+
 export function recordDictationProgress(callSid: string, spokenIndex: number): ActiveSession {
-  return updateActiveSession(callSid, { lastDictationIndex: spokenIndex });
+  return updateActiveSession(callSid, {
+    lastDictationIndex: spokenIndex,
+    lastSpokenIndex: spokenIndex,
+  });
 }
 
 export function buildSpatialResumeFromIndex(
@@ -124,6 +140,7 @@ export function recordTrackingPayload(
     spatialIndex: buildSpatialIndexFromTracking(trackingRaw),
     cachedIntent: "tracking",
     lastDictationIndex: -1,
+    lastSpokenIndex: -1,
     isNotepadReady: false,
     lastSpokenPayload: {
       kind: "tracking",

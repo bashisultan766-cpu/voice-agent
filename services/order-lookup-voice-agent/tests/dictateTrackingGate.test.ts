@@ -7,7 +7,7 @@ import {
 } from "../src/runtime/interruptBuffer.js";
 import { recordTrackingPayload, updateActiveSession } from "../src/sovereign/activeSession.js";
 import { resolveDictateTracking } from "../src/sovereign/dictateTrackingGate.js";
-import { resolveSovereignTurn } from "../src/sovereign/sovereignRouter.js";
+import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
 import type { CallSession } from "../src/types/order.js";
 
 describe("interruptBuffer", () => {
@@ -50,9 +50,9 @@ describe("sovereignRouter notepad gate", () => {
     } as CallSession;
 
     recordTrackingPayload("CA3", "9250");
-    const resolution = resolveSovereignTurn("can you repeat my tracking number", session);
+    const resolution = resolveTrackingPhaseGate("can you repeat my tracking number", session);
     expect(resolution.handled).toBe(true);
-    expect(resolution.intentKey).toBe("ReadinessRequest");
+    expect(resolution.intentKey).toBe("PHASE_HANDSHAKE");
     expect(resolution.speech).toContain("pen and notepad");
   });
 
@@ -68,7 +68,7 @@ describe("sovereignRouter notepad gate", () => {
     } as CallSession;
 
     recordTrackingPayload("CA4", "9250");
-    const resolution = resolveSovereignTurn("yes I am ready", session);
+    const resolution = resolveTrackingPhaseGate("yes I am ready", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("dictate_tracking");
     expect(resolution.speech).toContain("Nine.");

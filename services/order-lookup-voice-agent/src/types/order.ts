@@ -15,6 +15,8 @@ export interface SpeechChunk {
   pauseMs?: number;
   /** When true, TTS prosody preserves the full text (no sentence truncation). */
   preserveFull?: boolean;
+  /** Inclusive spatial index of the last digit spoken in this dictation chunk. */
+  dictationEndIndex?: number;
 }
 
 export interface SpeechPlan {
@@ -149,7 +151,7 @@ export interface TwilioRelayInboundMessage {
 }
 
 export interface TwilioRelayOutboundMessage {
-  type: "text" | "end";
+  type: "text" | "end" | "clear";
   token?: string;
   last?: boolean;
   interruptible?: boolean;

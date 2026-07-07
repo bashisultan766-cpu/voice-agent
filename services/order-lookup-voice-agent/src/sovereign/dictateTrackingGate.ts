@@ -5,7 +5,7 @@ import {
   getOrCreateActiveSession,
   updateActiveSession,
 } from "./activeSession.js";
-import { NOTEPAD_HANDSHAKE_PROMPT } from "./sovereignRouter.js";
+import { NOTEPAD_HANDSHAKE_PROMPT } from "../agents/conversationOrchestrator.js";
 
 export type DictateTrackingIntent = "ReadinessRequest" | "dictate_tracking" | "unavailable";
 
