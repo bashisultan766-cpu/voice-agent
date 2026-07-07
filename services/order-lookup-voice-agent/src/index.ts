@@ -12,9 +12,9 @@ import { prewarmVoiceCache } from "./services/voiceService.js";
 
 import { logger, setLogLevel } from "./utils/logger.js";
 
-import { handleInboundCall, handleRelayAction } from "./agents/conversationOrchestrator.js";
+import { handleInboundCall } from "./agents/conversationOrchestrator.js";
 
-import { handleConversationRelaySocket } from "./voice/streamHandler.js";
+import { handleMediaStreamSocket } from "./voice/streamHandler.js";
 
 import { initPostgresEventStore } from "./platform/postgresEventStore.js";
 
@@ -54,7 +54,7 @@ export function createApp() {
 
       service: "order-lookup-voice-agent",
 
-      runtime: "twilio_conversation_relay",
+      runtime: "twilio_media_streams",
 
       wsUrl: wsUrl(),
 
@@ -100,36 +100,6 @@ export function createApp() {
 
 
 
-  app.post(`${CONVERSATION_BRAIN_PATH_PREFIX}/relay-action`, async (req, res) => {
-
-    try {
-
-      await handleRelayAction(req, res);
-
-    } catch (err) {
-
-      logger.error("relay_action_failed", {
-
-        error: err instanceof Error ? err.message : String(err),
-
-      });
-
-      res
-
-        .type("application/xml")
-
-        .send(
-
-          '<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, something went wrong. Please try again.</Say></Response>',
-
-        );
-
-    }
-
-  });
-
-
-
   return app;
 
 }
@@ -162,7 +132,7 @@ export function startServer() {
 
     if (!voiceReady.ok) {
 
-      logger.error("relay_ws_rejected_voice_provider_uninitialized", {
+      logger.error("media_stream_ws_rejected_voice_provider_uninitialized", {
 
         path: req.url,
 
@@ -178,7 +148,7 @@ export function startServer() {
 
 
 
-    logger.info("relay_ws_connected", {
+    logger.info("media_stream_ws_connected", {
 
       path: req.url,
 
@@ -190,11 +160,11 @@ export function startServer() {
 
     socket.on("error", (err) => {
 
-      logger.error("relay_ws_socket_error", { error: err.message });
+      logger.error("media_stream_ws_socket_error", { error: err.message });
 
     });
 
-    void handleConversationRelaySocket(socket);
+    void handleMediaStreamSocket(socket);
 
   });
 
@@ -273,5 +243,3 @@ bootstrap().catch((err) => {
   process.exit(1);
 
 });
-
-

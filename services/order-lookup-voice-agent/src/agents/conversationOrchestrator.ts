@@ -173,6 +173,11 @@ import {
   markCallSessionActive,
   markCallSessionClosed,
 } from "../voice/callSessionLock.js";
+import type { Request, Response } from "express";
+import { wsUrl } from "../config.js";
+import { CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
+import { ensureVoiceProviderReady } from "../adapters/voiceAdapter.js";
+import { validateTwilioSignature } from "../utils/twilioSignature.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
@@ -815,8 +820,95 @@ function emitResponseSent(
   });
 }
 
-// Inbound Twilio webhook → ConversationRelay → streamHandler → process()
-export { handleInboundCall, handleRelayAction } from "../voice/twilioWebhook.js";
+const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>';
+
+function maskInboundPhone(number: string): string {
+  const digits = number.replace(/\D/g, "");
+  return digits.length >= 4 ? `***${digits.slice(-4)}` : "***";
+}
+
+function escapeTwiml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function renderMediaStreamTwiml(params: {
+  wsUrl: string;
+  from: string;
+  to: string;
+  welcomeGreeting: string;
+  routerSpeech?: string;
+}): string {
+  const parameters = [
+    `<Parameter name="from" value="${escapeTwiml(params.from)}"/>`,
+    `<Parameter name="to" value="${escapeTwiml(params.to)}"/>`,
+    `<Parameter name="welcomeGreeting" value="${escapeTwiml(params.welcomeGreeting)}"/>`,
+  ];
+  if (params.routerSpeech) {
+    parameters.push(
+      `<Parameter name="routerSpeech" value="${escapeTwiml(params.routerSpeech)}"/>`,
+    );
+  }
+
+  return `${XML_HEADER}<Response><Connect><Stream url="${escapeTwiml(params.wsUrl)}">${parameters.join("")}</Stream></Connect></Response>`;
+}
+
+/** Inbound Twilio webhook → Media Streams → streamHandler → process() */
+export async function handleInboundCall(req: Request, res: Response): Promise<void> {
+  const voiceReady = ensureVoiceProviderReady();
+  if (!voiceReady.ok) {
+    logger.error("inbound_rejected_voice_provider_uninitialized", {
+      error: voiceReady.error,
+    });
+    res.status(500).json({
+      ok: false,
+      error: "voice_provider_unavailable",
+    });
+    return;
+  }
+
+  const cfg = getConfig();
+  await validateTwilioSignature(req, cfg.TWILIO_AUTH_TOKEN, cfg.VALIDATE_TWILIO_SIGNATURES, {
+    routerForwardSecret: cfg.VOICE_ROUTER_FORWARD_SECRET,
+    publicBaseUrl: cfg.PUBLIC_BASE_URL,
+  });
+
+  const callSid = String(req.body.CallSid ?? "");
+  const from = String(req.body.From ?? "unknown");
+  const to = String(req.body.To ?? "unknown");
+
+  logger.info("inbound_call", {
+    callSid: callSid.slice(0, 8),
+    from: maskInboundPhone(from),
+    to: maskInboundPhone(to),
+    wsUrl: wsUrl(),
+    voiceProvider: voiceReady.provider,
+    runtime: "twilio_media_streams",
+  });
+
+  const routerSpeech = String(req.body.RouterSpeech ?? "").trim();
+  const returningCaller = Boolean(getCallerMemory(from));
+
+  const welcomeGreeting = routerSpeech
+    ? "One moment while I look that up for you."
+    : returningCaller
+      ? CALLER_WELCOME_BACK_GREETING
+      : BRAIN_GREETING;
+
+  const twiml = renderMediaStreamTwiml({
+    wsUrl: wsUrl(),
+    from,
+    to,
+    welcomeGreeting,
+    routerSpeech: routerSpeech || undefined,
+  });
+
+  res.type("application/xml").send(twiml);
+}
 
 // Re-export slot helpers and gate for tests
 export { analyzeBrainTurn } from "./brainAnalyzer.js";

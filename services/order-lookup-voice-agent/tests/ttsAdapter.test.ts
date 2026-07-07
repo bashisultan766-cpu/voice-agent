@@ -113,7 +113,7 @@ describe("static global voice provider", () => {
     expect(provider).toBe("ElevenLabs");
     expect(voice.getGlobalVoiceProvider()).toBe("ElevenLabs");
     expect(voice.getPreferredVoiceForCall("CA123")).toBe("ElevenLabs");
-    expect(voice.getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (ElevenLabs)");
+    expect(voice.getMediaStreamTtsEngine()).toBe("Media Streams (ElevenLabs)");
   });
 
   it("permanently locks OpenAI when ElevenLabs auth probe fails", async () => {
@@ -129,7 +129,7 @@ describe("static global voice provider", () => {
     expect(provider).toBe("OpenAI");
     expect(voice.getIsElevenLabsDisabled()).toBe(true);
     expect(voice.getPreferredVoiceForCall("CA456")).toBe("openai-tts-1-hd");
-    expect(voice.getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (OpenAI fallback)");
+    expect(voice.getMediaStreamTtsEngine()).toBe("Media Streams (OpenAI fallback)");
     expect(warnSpy).toHaveBeenCalledWith(
       voice.ELEVENLABS_CIRCUIT_BREAKER_LOG,
       expect.objectContaining({ reason: "auth_failed" }),
@@ -174,16 +174,14 @@ describe("static global voice provider", () => {
     fetchSpy.mockRestore();
   });
 
-  it("omits ElevenLabs ttsProvider from relay attrs when OpenAI is locked", async () => {
+  it("locks OpenAI Eric fallback voice when ElevenLabs auth probe fails", async () => {
     mockElevenLabsProbe(false, 401);
     const voice = await loadVoiceStack();
     voice.resetElevenLabsCircuitBreakerForTests();
     await voice.initializeGlobalVoiceProvider();
 
-    const attrs = voice.buildConversationRelayVoiceAttrs();
-    expect(attrs.ttsProvider).toBeUndefined();
-    expect(attrs.voice).toBeTruthy();
-    expect(attrs.voice).not.toBe("Google.en-US-Neural2-J");
+    expect(voice.getOpenAiEricFallbackVoice()).toBeTruthy();
+    expect(voice.getPreferredVoiceForCall("CA999")).toBe("openai-tts-1-hd");
   });
 
   it("logs circuit breaker only once when tripped repeatedly", async () => {

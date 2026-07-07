@@ -2,24 +2,18 @@
  * Voice adapter — static boot-time provider selection (single process-wide engine).
  * Probes ElevenLabs once at startup; on auth/quota/timeout failure locks OpenAI for life.
  */
-import {
-  getConfig,
-  conversationRelayVoice,
-  normalizeTwilioElevenLabsModel,
-  formatTwilioVoiceTuning,
-  voiceProvider as lockedVoiceProvider,
-} from "../config.js";
+import { getConfig, voiceProvider as lockedVoiceProvider } from "../config.js";
 import { logger } from "../utils/logger.js";
 
 export type PreferredVoiceEngine = "ElevenLabs" | "openai-tts-1-hd";
 
 export type GlobalVoiceProvider = "ElevenLabs" | "OpenAI";
 
-export type VoiceRelayEngineName =
+export type MediaStreamEngineName =
   | "ElevenLabs"
   | "OpenAI tts-1-hd"
-  | "Twilio ConversationRelay (ElevenLabs)"
-  | "Twilio ConversationRelay (OpenAI fallback)";
+  | "Media Streams (ElevenLabs)"
+  | "Media Streams (OpenAI fallback)";
 
 export const ELEVENLABS_CIRCUIT_BREAKER_LOG =
   "ELEVENLABS CIRCUIT BREAKER: Quota exceeded. Routing to OpenAI for the duration of this process.";
@@ -209,62 +203,21 @@ export function ensureVoiceProviderReady():
   return { ok: true, provider: globalVoiceProvider };
 }
 
-/** Resolve which engine handles live ConversationRelay TTS (Twilio-side synthesis). */
-export function getConversationRelayTtsEngine(): VoiceRelayEngineName {
+/** Resolve which engine synthesizes live Media Streams audio. */
+export function getMediaStreamTtsEngine(): MediaStreamEngineName {
   if (getIsElevenLabsDisabled()) {
-    return "Twilio ConversationRelay (OpenAI fallback)";
+    return "Media Streams (OpenAI fallback)";
   }
   const voiceId = getLockedElevenLabsVoiceId();
   if (getConfig().VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs" && voiceId) {
-    return "Twilio ConversationRelay (ElevenLabs)";
+    return "Media Streams (ElevenLabs)";
   }
-  return "Twilio ConversationRelay (OpenAI fallback)";
-}
-
-/** Twilio ConversationRelay voice attrs — locked to static boot-time provider. */
-export function buildConversationRelayVoiceAttrs(): Record<string, string> {
-  const cfg = getConfig();
-  const attrs: Record<string, string> = {
-    language: cfg.VOICE_LANGUAGE,
-    interruptible: "true",
-    dtmfDetection: "true",
-  };
-
-  const useElevenLabs = globalVoiceProvider === "ElevenLabs";
-
-  if (useElevenLabs) {
-    attrs.ttsProvider = "ElevenLabs";
-    attrs.voice = conversationRelayVoice();
-    attrs.elevenlabsTextNormalization = cfg.ELEVENLABS_TEXT_NORMALIZATION;
-  } else {
-    attrs.voice = buildOpenAiRelayVoiceSlug();
-  }
-
-  return attrs;
-}
-
-/** Relay voice slug when OpenAI fallback is active — uses locked Eric tuning, not a random system voice. */
-function buildOpenAiRelayVoiceSlug(): string {
-  const cfg = getConfig();
-  const voiceId = getLockedElevenLabsVoiceId();
-  if (!voiceId) {
-    return `openai-${getOpenAiEricFallbackVoice()}`;
-  }
-
-  const model = normalizeTwilioElevenLabsModel(cfg.VOICE_MODEL);
-  if (!model) return voiceId;
-
-  if (!cfg.VOICE_TUNING_ENABLED) {
-    return `${voiceId}-${model}`;
-  }
-
-  const tuning = formatTwilioVoiceTuning(cfg.VOICE_SPEED, cfg.VOICE_STABILITY, cfg.VOICE_SIMILARITY);
-  return `${voiceId}-${model}-${tuning}`;
+  return "Media Streams (OpenAI fallback)";
 }
 
 /** Logs static boot-time engine selection — safe to call once after init. */
-export function logVoiceEngineSelection(engine?: VoiceRelayEngineName): void {
-  const name = engine ?? getConversationRelayTtsEngine();
+export function logVoiceEngineSelection(engine?: MediaStreamEngineName): void {
+  const name = engine ?? getMediaStreamTtsEngine();
   const provider = globalVoiceProvider ?? (getIsElevenLabsDisabled() ? "OpenAI" : "ElevenLabs");
   logger.info("voice_engine_selected", {
     engine: name,

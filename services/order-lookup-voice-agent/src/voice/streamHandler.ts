@@ -1,982 +1,394 @@
 import type { WebSocket } from "ws";
 
 import { logger } from "../utils/logger.js";
-
 import { pipelineTrace } from "../utils/pipelineTrace.js";
-
 import {
-
   createCallSession,
-
   endCallSession,
-
   process,
-
   USER_INTERRUPTED_DICTATION_SIGNAL,
-
 } from "../agents/conversationOrchestrator.js";
-
+import { enqueueStreamTurn } from "../runtime/streamTurnBarrier.js";
+import { clearDictationLock, enterDictationLock } from "../runtime/dictationLock.js";
 import {
-
-  bufferPartialTranscript,
-
-  clearStreamBarrier,
-
-  enqueueStreamTurn,
-
-  takeFinalTranscript,
-
-} from "../runtime/streamTurnBarrier.js";
-
-import {
-
-  clearDictationLock,
-
-  enterDictationLock,
-
-} from "../runtime/dictationLock.js";
-
-import {
-
   clearInterruptBuffer,
-
   isInterruptBufferFull,
-
   pushInterruptSignal,
-
   takeInterruptSignal,
-
 } from "../runtime/interruptBuffer.js";
-
 import { logEventIngestion } from "../runtime/turnObservability.js";
-
-import { getElevenLabsVoiceSettings } from "../adapters/ttsAdapter.js";
-
-import { getLockedElevenLabsVoiceId } from "../adapters/voiceAdapter.js";
-
 import { clearShoppingCart } from "../agents/cartManager.js";
-
-import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
-
-import { setAgentRelayState, getOrCreateActiveSession } from "../sovereign/activeSession.js";
+import {
+  sendMediaStreamClear,
+  sendMediaStreamStop,
+  streamChunkToMediaStream,
+  streamSpeechToMediaStream,
+  type MediaStreamSendFn,
+} from "../services/mediaStreamVoice.js";
 import {
   chunkEndIndex,
   setLastSpokenIndex,
   TRACKING_DICTATION_CHUNK_SIZE,
 } from "../agents/dictationTool.js";
-
-import { isNoiseTranscript } from "../utils/noiseGate.js";
-
 import {
-
+  getOrCreateActiveSession,
+  setAgentRelayState,
+} from "../sovereign/activeSession.js";
+import { isNoiseTranscript } from "../utils/noiseGate.js";
+import {
   isCallSessionActive,
-
   markCallSessionClosed,
-
 } from "./callSessionLock.js";
+import { transcribeMulawBuffer } from "./mediaStreamStt.js";
+import type {
+  MediaStreamInboundMessage,
+  MediaStreamStartMessage,
+} from "./mediaStreamProtocol.js";
+import type { CallSession } from "../types/order.js";
 
-import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
-
-
-
-const RELAY_ERROR_SPEECH =
-
+const ERROR_SPEECH =
   "Sorry, we're having a brief technical issue. Please try again in a moment.";
 
-
+const SILENCE_MS = 900;
+const MIN_INBOUND_MULAW_BYTES = 3200;
 
 const speakingTurns = new Set<string>();
-
 const activeTurnAborts = new Map<string, AbortController>();
-
-
-
-type SendFn = (msg: {
-
-  type: "text" | "end" | "clear";
-
-  token?: string;
-
-  last?: boolean;
-
-  interruptible?: boolean;
-
-  handoffData?: string;
-
-}) => Promise<void>;
-
-
-
-const relaySendRegistry = new Map<string, SendFn>();
-
-const ttsPlaybackQueues = new Map<string, Array<() => void>>();
-
-
-
-export function registerRelaySend(callSid: string, send: SendFn): void {
-
-  relaySendRegistry.set(callSid, send);
-
-}
-
-
-
-export function unregisterRelaySend(callSid: string): void {
-
-  relaySendRegistry.delete(callSid);
-
-  flushTtsPlaybackQueue(callSid);
-
-}
-
-
-
-function flushTtsPlaybackQueue(callSid: string): void {
-
-  const queue = ttsPlaybackQueues.get(callSid);
-
-  if (!queue?.length) return;
-
-  ttsPlaybackQueues.set(callSid, []);
-
-  for (const cancel of queue) {
-
-    cancel();
-
-  }
-
-}
-
-
-
-/** High-priority hard stop — abort TTS, flush queue, clear Twilio buffer, enter LISTENING. */
-
-export async function abortCurrentTTS(callSid: string): Promise<boolean> {
-
-  const abort = activeTurnAborts.get(callSid);
-
-  const wasSpeaking = Boolean(abort && !abort.signal.aborted) || speakingTurns.has(callSid);
-
-
-
-  flushTtsPlaybackQueue(callSid);
-
-
-
-  if (abort && !abort.signal.aborted) {
-
-    abort.abort();
-
-  }
-
-
-
-  speakingTurns.delete(callSid);
-
-  clearDictationLock(callSid);
-
-  setAgentRelayState(callSid, "LISTENING");
-
-
-
-  const send = relaySendRegistry.get(callSid);
-
-  if (send) {
-
-    try {
-
-      await send({ type: "clear" });
-
-    } catch (err) {
-
-      logger.warn("relay_clear_failed", {
-
-        callSid: callSid.slice(0, 8),
-
-        error: err instanceof Error ? err.message : String(err),
-
-      });
-
-    }
-
-  }
-
-
-
-  if (wasSpeaking) {
-
-    logger.debug("relay_tts_aborted", { callSid: callSid.slice(0, 8) });
-
-  }
-
-
-
-  return wasSpeaking;
-
-}
-
-
-
-export async function handleConversationRelaySocket(socket: WebSocket): Promise<void> {
-
-  let session: CallSession | null = null;
-
-  let turnAbort: AbortController | null = null;
-
-  let closed = false;
-
-
-
-  const send: SendFn = async (msg) => {
-
-    if (closed) return;
-
-    socket.send(JSON.stringify(msg));
-
-  };
-
-
-
-  socket.on("message", (raw) => {
-
-    void (async () => {
-
-      try {
-
-        await handleRelayMessage(raw, {
-
-          getSession: () => session,
-
-          setSession: (s) => {
-
-            session = s;
-
-          },
-
-          getTurnAbort: () => turnAbort,
-
-          setTurnAbort: (a) => {
-
-            turnAbort = a;
-
-          },
-
-          send,
-
-          isClosed: () => closed,
-
-        });
-
-      } catch (err) {
-
-        logger.error("relay_message_handler_failed", {
-
-          callSid: session?.callSid?.slice(0, 8),
-
-          error: err instanceof Error ? err.message : String(err),
-
-        });
-
-        if (!closed) {
-
-          await send({ type: "text", token: RELAY_ERROR_SPEECH, last: true });
-
-        }
-
-      }
-
-    })();
-
-  });
-
-
-
-  socket.on("close", () => {
-
-    closed = true;
-
-    turnAbort?.abort();
-
-    if (session?.callSid) {
-
-      speakingTurns.delete(session.callSid);
-
-      activeTurnAborts.delete(session.callSid);
-
-      unregisterRelaySend(session.callSid);
-
-      clearInterruptBuffer(session.callSid);
-
-      markCallSessionClosed(session.callSid);
-
-      clearShoppingCart(session);
-
-      clearDictationLock(session.callSid);
-
-      clearStreamBarrier(session.callSid);
-
-      endCallSession(session.callSid, session);
-
-    }
-
-    logger.info("relay_closed", { callSid: session?.callSid?.slice(0, 8) });
-
-  });
-
-
-
-  socket.on("error", (err) => {
-
-    logger.error("relay_socket_error", { error: err.message });
-
-  });
-
-}
-
-
+const streamSendRegistry = new Map<string, MediaStreamSendFn>();
+const streamSidRegistry = new Map<string, string>();
+const inboundMulawBuffers = new Map<string, Buffer[]>();
+const silenceTimers = new Map<string, NodeJS.Timeout>();
 
 type TurnGenerator = (
-
   callSid: string,
-
   callerText: string,
-
   session: CallSession,
-
 ) => AsyncGenerator<import("../types/order.js").AgentStreamEvent>;
 
+function flushInboundBuffer(callSid: string): Buffer {
+  const chunks = inboundMulawBuffers.get(callSid) ?? [];
+  inboundMulawBuffers.set(callSid, []);
+  return Buffer.concat(chunks);
+}
 
+function registerStreamSend(callSid: string, send: MediaStreamSendFn, streamSid: string): void {
+  streamSendRegistry.set(callSid, send);
+  streamSidRegistry.set(callSid, streamSid);
+}
 
-async function runStreamingTurn(
+function unregisterStreamSend(callSid: string): void {
+  streamSendRegistry.delete(callSid);
+  streamSidRegistry.delete(callSid);
+  inboundMulawBuffers.delete(callSid);
+  const timer = silenceTimers.get(callSid);
+  if (timer) clearTimeout(timer);
+  silenceTimers.delete(callSid);
+}
 
-  session: CallSession,
+/** Hard-stop — clear buffer, abort TTS, optional stream stop/reopen via Twilio Media Streams. */
+export async function abortCurrentTTS(callSid: string, reopenStream = false): Promise<boolean> {
+  const abort = activeTurnAborts.get(callSid);
+  const wasSpeaking = Boolean(abort && !abort.signal.aborted) || speakingTurns.has(callSid);
 
-  callerText: string,
-
-  send: SendFn,
-
-  setAbort: (controller: AbortController) => void,
-
-  isClosed: () => boolean,
-
-  generator: TurnGenerator = process,
-
-): Promise<void> {
-
-  if (isClosed() || !isCallSessionActive(session.callSid)) {
-
-    logger.debug("relay_turn_skipped_inactive", { callSid: session.callSid.slice(0, 8) });
-
-    return;
-
+  if (abort && !abort.signal.aborted) {
+    abort.abort();
   }
 
+  speakingTurns.delete(callSid);
+  clearDictationLock(callSid);
+  setAgentRelayState(callSid, "LISTENING");
 
+  const send = streamSendRegistry.get(callSid);
+  const streamSid = streamSidRegistry.get(callSid);
+  if (send && streamSid) {
+    sendMediaStreamClear(send, streamSid);
+    if (reopenStream) {
+      sendMediaStreamStop(send, streamSid);
+    }
+  }
 
-  const started = Date.now();
+  if (wasSpeaking) {
+    logger.debug("media_stream_tts_aborted", { callSid: callSid.slice(0, 8) });
+  }
 
-  const abort = new AbortController();
+  return wasSpeaking;
+}
 
-  setAbort(abort);
+export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> {
+  let session: CallSession | null = null;
+  let turnAbort: AbortController | null = null;
+  let closed = false;
+  let streamSid = "";
+  let callSid = "";
 
-  activeTurnAborts.set(session.callSid, abort);
+  const send: MediaStreamSendFn = (msg) => {
+    if (closed) return;
+    socket.send(JSON.stringify(msg));
+  };
 
-  speakingTurns.add(session.callSid);
+  const scheduleTurn = (callerText: string): Promise<void> => {
+    const activeSession = session;
+    if (!activeSession) return Promise.resolve();
+    return enqueueStreamTurn(activeSession.callSid, () =>
+      runStreamingTurn(activeSession, callerText, send, streamSid, (controller) => {
+        turnAbort = controller;
+      }),
+    );
+  };
 
-  setAgentRelayState(session.callSid, "SPEAKING");
+  const scheduleSilenceTranscription = (): void => {
+    if (!callSid || !session) return;
+    const existing = silenceTimers.get(callSid);
+    if (existing) clearTimeout(existing);
 
+    silenceTimers.set(
+      callSid,
+      setTimeout(() => {
+        void flushAndTranscribe();
+      }, SILENCE_MS),
+    );
+  };
 
+  const flushAndTranscribe = async (): Promise<void> => {
+    if (!session || !callSid || closed) return;
+    const mulaw = flushInboundBuffer(callSid);
+    if (mulaw.length < MIN_INBOUND_MULAW_BYTES) return;
 
-  let endCall = false;
+    if (speakingTurns.has(callSid)) {
+      await onUserSpeechDetected(callSid);
+      return;
+    }
 
-  let chunkCount = 0;
+    const transcript = await transcribeMulawBuffer(mulaw);
+    if (!transcript || isNoiseTranscript(transcript)) return;
 
-  let firstChunkMs: number | null = null;
+    logEventIngestion(callSid, {
+      source: "media_stream",
+      textLength: transcript.length,
+      partial: false,
+    });
 
-  let dictationIndex = -1;
+    await scheduleTurn(transcript);
+  };
 
-  let interruptedDuringSpeech = false;
+  socket.on("message", (raw) => {
+    void (async () => {
+      try {
+        const message = JSON.parse(raw.toString()) as MediaStreamInboundMessage;
 
-
-
-  pipelineTrace({
-
-    layer: "streamHandler",
-
-    file: "streamHandler.ts",
-
-    callSid: session.callSid,
-
-    action: "forwarding_to_orchestrator",
-
-  });
-
-
-
-  logger.debug("relay_voice_profile", {
-
-    callSid: session.callSid.slice(0, 8),
-
-    voice: getLockedElevenLabsVoiceId(),
-
-    settings: getElevenLabsVoiceSettings(),
-
-  });
-
-
-
-  try {
-
-    for await (const event of generator(session.callSid, callerText, session)) {
-
-      if (abort.signal.aborted) {
-
-        logger.debug("relay_turn_aborted", { callSid: session.callSid.slice(0, 8) });
-
-        break;
-
-      }
-
-
-
-      if (event.type === "chunk") {
-
-        if (isInterruptBufferFull(session.callSid)) {
-
-          takeInterruptSignal(session.callSid);
-
-          if (await abortCurrentTTS(session.callSid)) {
-
-            interruptedDuringSpeech = true;
-
-            break;
-
-          }
-
+        if (message.event === "connected") {
+          logger.info("media_stream_connected", { protocol: (message as { protocol?: string }).protocol });
+          return;
         }
 
+        if (message.event === "start") {
+          const startMsg = message as MediaStreamStartMessage;
+          streamSid = startMsg.streamSid;
+          callSid = startMsg.start.callSid;
+          const from = startMsg.start.customParameters?.from ?? "unknown";
+          const to = startMsg.start.customParameters?.to ?? "unknown";
 
+          session = createCallSession(callSid, from, to);
+          session.callerPhone = from;
+          registerStreamSend(callSid, send, streamSid);
 
-        if (firstChunkMs === null) {
+          logger.info("media_stream_start", {
+            callSid: callSid.slice(0, 8),
+            streamSid: streamSid.slice(0, 8),
+          });
 
-          firstChunkMs = Date.now() - started;
+          const routerSpeech = (startMsg.start.customParameters?.routerSpeech ?? "").trim();
+          const welcomeGreeting = (startMsg.start.customParameters?.welcomeGreeting ?? "").trim();
 
+          if (routerSpeech) {
+            await scheduleTurn(routerSpeech);
+          } else if (welcomeGreeting) {
+            speakingTurns.add(callSid);
+            setAgentRelayState(callSid, "SPEAKING");
+            await streamSpeechToMediaStream(welcomeGreeting, send, { streamSid });
+            speakingTurns.delete(callSid);
+            setAgentRelayState(callSid, "LISTENING");
+          }
+          return;
+        }
+
+        if (message.event === "media" && session && callSid) {
+          const mediaMsg = message as import("./mediaStreamProtocol.js").MediaStreamMediaMessage;
+          if (mediaMsg.media?.track !== "inbound") return;
+          const payload = Buffer.from(mediaMsg.media.payload, "base64");
+          const chunks = inboundMulawBuffers.get(callSid) ?? [];
+          chunks.push(payload);
+          inboundMulawBuffers.set(callSid, chunks);
+          scheduleSilenceTranscription();
+          return;
+        }
+
+        if (message.event === "stop") {
+          logger.info("media_stream_stop", { callSid: callSid.slice(0, 8) });
+        }
+      } catch (err) {
+        logger.error("media_stream_message_failed", {
+          callSid: callSid.slice(0, 8),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+  });
+
+  socket.on("close", () => {
+    closed = true;
+    turnAbort?.abort();
+    if (callSid) {
+      speakingTurns.delete(callSid);
+      activeTurnAborts.delete(callSid);
+      clearInterruptBuffer(callSid);
+      unregisterStreamSend(callSid);
+      markCallSessionClosed(callSid);
+      if (session) {
+        clearShoppingCart(session);
+        clearDictationLock(callSid);
+        endCallSession(callSid, session);
+      }
+    }
+    logger.info("media_stream_closed", { callSid: callSid.slice(0, 8) });
+  });
+
+  socket.on("error", (err) => {
+    logger.error("media_stream_socket_error", { error: err.message });
+  });
+}
+
+async function onUserSpeechDetected(callSid: string): Promise<void> {
+  if (!speakingTurns.has(callSid)) return;
+  pushInterruptSignal(callSid, "");
+  const aborted = await abortCurrentTTS(callSid, true);
+  if (!aborted) return;
+  logger.debug("user_speech_detected_abort", { callSid: callSid.slice(0, 8) });
+}
+
+async function runStreamingTurn(
+  session: CallSession,
+  callerText: string,
+  send: MediaStreamSendFn,
+  streamSid: string,
+  setAbort: (controller: AbortController) => void,
+): Promise<void> {
+  if (!isCallSessionActive(session.callSid)) return;
+
+  const abort = new AbortController();
+  setAbort(abort);
+  activeTurnAborts.set(session.callSid, abort);
+  speakingTurns.add(session.callSid);
+  setAgentRelayState(session.callSid, "SPEAKING");
+
+  let dictationIndex = -1;
+  let interruptedDuringSpeech = false;
+  let endCall = false;
+
+  pipelineTrace({
+    layer: "streamHandler",
+    file: "streamHandler.ts",
+    callSid: session.callSid,
+    action: "media_stream_turn",
+  });
+
+  try {
+    const generator: TurnGenerator = process;
+
+    for await (const event of generator(session.callSid, callerText, session)) {
+      if (abort.signal.aborted) {
+        interruptedDuringSpeech = true;
+        break;
+      }
+
+      if (event.type === "chunk") {
+        if (isInterruptBufferFull(session.callSid)) {
+          takeInterruptSignal(session.callSid);
+          if (await abortCurrentTTS(session.callSid, true)) {
+            interruptedDuringSpeech = true;
+            break;
+          }
         }
 
         if (event.chunk.kind === "dictation") {
-
           enterDictationLock(session.callSid);
-
           dictationIndex += 1;
-
           const endIndex =
-
             event.chunk.dictationEndIndex ??
-
             chunkEndIndex(
-
               getOrCreateActiveSession(session.callSid).spatialIndex,
-
               dictationIndex * TRACKING_DICTATION_CHUNK_SIZE,
-
             );
-
           setLastSpokenIndex(session.callSid, endIndex);
-
         }
 
-
-
-        if (isInterruptBufferFull(session.callSid)) {
-
-          takeInterruptSignal(session.callSid);
-
-          if (await abortCurrentTTS(session.callSid)) {
-
-            interruptedDuringSpeech = true;
-
-            break;
-
-          }
-
+        await streamChunkToMediaStream(
+          event.chunk,
+          send,
+          { abortSignal: abort.signal, streamSid },
+          session.callSid,
+        );
+        if (abort.signal.aborted) {
+          interruptedDuringSpeech = true;
+          break;
         }
-
-
-
-        await streamOneChunkToRelay(event.chunk, send, false, { abortSignal: abort.signal });
-
-        chunkCount++;
-
       }
-
-
 
       if (event.type === "done") {
-
         endCall = event.endCall ?? false;
-
-        if (!abort.signal.aborted) {
-
-          await finalizeRelayStream(send);
-
-        }
-
         clearDictationLock(session.callSid);
-
         setAgentRelayState(session.callSid, "LISTENING");
-
-        logger.info("relay_turn_complete", {
-
-          callSid: session.callSid.slice(0, 8),
-
-          phase: event.phase,
-
-          elapsedMs: Date.now() - started,
-
-          firstChunkMs,
-
-          lookupMs: event.lookupMs,
-
-          chunks: chunkCount,
-
-        });
-
       }
-
     }
-
   } catch (err) {
-
-    logger.error("relay_turn_error", {
-
+    logger.error("media_stream_turn_error", {
       callSid: session.callSid.slice(0, 8),
-
       error: err instanceof Error ? err.message : String(err),
-
     });
-
     if (!abort.signal.aborted) {
-
-      await send({ type: "text", token: RELAY_ERROR_SPEECH, last: false });
-
-      await finalizeRelayStream(send);
-
+      await streamChunkToMediaStream(
+        { text: ERROR_SPEECH, kind: "error" },
+        send,
+        { abortSignal: abort.signal, streamSid },
+        session.callSid,
+      );
     }
-
   } finally {
-
     speakingTurns.delete(session.callSid);
-
     activeTurnAborts.delete(session.callSid);
-
   }
 
-
-
-  if (interruptedDuringSpeech) {
-
+  if (interruptedDuringSpeech && session) {
+    void enqueueStreamTurn(session.callSid, () =>
+      runStreamingTurn(session, USER_INTERRUPTED_DICTATION_SIGNAL, send, streamSid, setAbort),
+    );
     return;
-
   }
-
-
 
   if (endCall && !abort.signal.aborted) {
-
-    await send({ type: "end", handoffData: JSON.stringify({ reason: "caller_done" }) });
-
+    sendMediaStreamStop(send, streamSid);
   }
-
 }
 
+/** @deprecated Use handleMediaStreamSocket */
+export const handleConversationRelaySocket = handleMediaStreamSocket;
 
-
-function scheduleStreamingTurn(
-
-  session: CallSession,
-
-  callerText: string,
-
-  ctx: RelayMessageContext,
-
-  generator: TurnGenerator = process,
-
-): Promise<void> {
-
-  if (ctx.isClosed() || !isCallSessionActive(session.callSid)) {
-
-    return Promise.resolve();
-
-  }
-
-
-
-  if (isNoiseTranscript(callerText, { allowShortNumeric: true })) {
-
-    logger.debug("noise_gate_dropped_relay", {
-
-      callSid: session.callSid.slice(0, 8),
-
-      textLength: callerText.length,
-
-      preview: callerText.slice(0, 12),
-
-    });
-
-    return Promise.resolve();
-
-  }
-
-
-
-  return enqueueStreamTurn(session.callSid, () =>
-
-    runStreamingTurn(session, callerText, ctx.send, (controller) => {
-
-      ctx.setTurnAbort(controller);
-
-    }, ctx.isClosed, generator),
-
-  );
-
-}
-
-
-
-function scheduleDictationInterruptTurn(
-
-  session: CallSession,
-
-  ctx: RelayMessageContext,
-
-): Promise<void> {
-
-  return enqueueStreamTurn(session.callSid, () =>
-
-    runStreamingTurn(
-
-      session,
-
-      USER_INTERRUPTED_DICTATION_SIGNAL,
-
-      ctx.send,
-
-      (controller) => {
-
-        ctx.setTurnAbort(controller);
-
-      },
-
-      ctx.isClosed,
-
-    ),
-
-  );
-
-}
-
-
-
-interface RelayMessageContext {
-
+export function applyRelayInterrupt(ctx: {
   getSession: () => CallSession | null;
-
-  setSession: (session: CallSession) => void;
-
-  getTurnAbort: () => AbortController | null;
-
-  setTurnAbort: (abort: AbortController | null) => void;
-
-  send: SendFn;
-
-  isClosed: () => boolean;
-
-}
-
-
-
-async function onUserSpeechDetected(
-
-  ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">,
-
-  transcript = "",
-
-): Promise<{ action: "aborted" | "ignored" }> {
-
-  const session = ctx.getSession();
-
-  const callSid = session?.callSid;
-
+}): Promise<{ action: "aborted" | "ignored" }> {
+  const callSid = ctx.getSession()?.callSid;
   if (!callSid || !speakingTurns.has(callSid)) {
-
-    logger.debug("relay_interrupt_ignored", { callSid: callSid?.slice(0, 8) });
-
-    return { action: "ignored" };
-
+    return Promise.resolve({ action: "ignored" });
   }
-
-
-
-  pushInterruptSignal(callSid, transcript);
-
-  const aborted = await abortCurrentTTS(callSid);
-
-  if (!aborted) {
-
-    return { action: "ignored" };
-
-  }
-
-
-
-  logger.debug("user_speech_detected_abort", { callSid: callSid.slice(0, 8) });
-
-  return { action: "aborted" };
-
+  return abortCurrentTTS(callSid, true).then((aborted) => ({
+    action: aborted ? "aborted" : "ignored",
+  }));
 }
 
-
-
-function signalUserInterruptDuringSpeech(
-
-  ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">,
-
-  transcript = "",
-
-): Promise<{ action: "aborted" | "ignored" }> {
-
-  return onUserSpeechDetected(ctx, transcript);
-
+export function registerRelaySend(): void {
+  // no-op — Media Streams register per connection in handleMediaStreamSocket
 }
 
-
-
-/** Apply Twilio barge-in — aborts active TTS and queues dynamic re-state. */
-
-export function applyRelayInterrupt(ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">): Promise<{
-
-  action: "aborted" | "ignored";
-
-}> {
-
-  return onUserSpeechDetected(ctx);
-
+export function unregisterRelaySend(callSid: string): void {
+  unregisterStreamSend(callSid);
 }
-
-
-
-async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageContext): Promise<void> {
-
-  let message: TwilioRelayInboundMessage;
-
-  try {
-
-    message = JSON.parse(raw.toString()) as TwilioRelayInboundMessage;
-
-  } catch {
-
-    logger.warn("relay_invalid_json");
-
-    return;
-
-  }
-
-
-
-  switch (message.type) {
-
-    case "setup": {
-
-      const from = message.from ?? message.customParameters?.from ?? "unknown";
-
-      const to = message.to ?? message.customParameters?.to ?? "unknown";
-
-      const session = createCallSession(message.callSid ?? "unknown", from, to);
-
-      session.callerPhone = from;
-
-      ctx.setSession(session);
-
-      registerRelaySend(session.callSid, ctx.send);
-
-      logger.info("relay_setup", { callSid: session.callSid.slice(0, 8) });
-
-
-
-      const routerSpeech = (message.customParameters?.routerSpeech ?? "").trim();
-
-      if (routerSpeech) {
-
-        logEventIngestion(session.callSid, {
-
-          source: "router_speech",
-
-          textLength: routerSpeech.length,
-
-          partial: false,
-
-        });
-
-        await scheduleStreamingTurn(session, routerSpeech, ctx);
-
-      }
-
-      break;
-
-    }
-
-
-
-    case "prompt": {
-
-      const session = ctx.getSession();
-
-      if (!session || ctx.isClosed()) return;
-
-
-
-      if (!message.last) {
-
-        logEventIngestion(session.callSid, {
-
-          source: "prompt",
-
-          textLength: (message.voicePrompt ?? "").length,
-
-          partial: true,
-
-        });
-
-        if (speakingTurns.has(session.callSid)) {
-
-          const interrupt = await signalUserInterruptDuringSpeech(ctx, message.voicePrompt ?? "");
-
-          if (interrupt.action === "aborted") {
-
-            await scheduleDictationInterruptTurn(session, ctx);
-
-          }
-
-        }
-
-        bufferPartialTranscript(session.callSid, message.voicePrompt ?? "");
-
-        return;
-
-      }
-
-
-
-      const callerText = takeFinalTranscript(session.callSid, message.voicePrompt ?? "");
-
-      if (!callerText) return;
-
-
-
-      if (speakingTurns.has(session.callSid)) {
-
-        const interrupt = await signalUserInterruptDuringSpeech(ctx, callerText);
-
-        if (interrupt.action === "aborted") {
-
-          await scheduleDictationInterruptTurn(session, ctx);
-
-        }
-
-      }
-
-
-
-      logEventIngestion(session.callSid, {
-
-        source: "prompt",
-
-        textLength: callerText.length,
-
-        partial: false,
-
-      });
-
-
-
-      await scheduleStreamingTurn(session, callerText, ctx);
-
-      break;
-
-    }
-
-
-
-    case "interrupt": {
-
-      const session = ctx.getSession();
-
-      if (!session || ctx.isClosed()) break;
-
-      const interrupt = await signalUserInterruptDuringSpeech(ctx);
-
-      if (interrupt.action === "aborted") {
-
-        await scheduleDictationInterruptTurn(session, ctx);
-
-      }
-
-      break;
-
-    }
-
-
-
-    case "dtmf": {
-
-      const session = ctx.getSession();
-
-      if (!session || !message.digit || ctx.isClosed()) return;
-
-      if (speakingTurns.has(session.callSid)) {
-
-        const interrupt = await signalUserInterruptDuringSpeech(ctx, message.digit);
-
-        if (interrupt.action === "aborted") {
-
-          await scheduleDictationInterruptTurn(session, ctx);
-
-        }
-
-      }
-
-      logEventIngestion(session.callSid, {
-
-        source: "dtmf",
-
-        textLength: message.digit.length,
-
-        partial: false,
-
-      });
-
-      await scheduleStreamingTurn(session, message.digit, ctx);
-
-      break;
-
-    }
-
-
-
-    case "error":
-
-      logger.error("relay_error", { description: message.description });
-
-      break;
-
-
-
-    default:
-
-      logger.debug("relay_unknown_type", { type: (message as { type?: string }).type });
-
-  }
-
-}
-
-

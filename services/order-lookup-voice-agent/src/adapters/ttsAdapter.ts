@@ -9,7 +9,7 @@ import { sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import {
   ELEVENLABS_CIRCUIT_BREAKER_LOG,
   clearPreferredVoiceForCall,
-  getConversationRelayTtsEngine,
+  getMediaStreamTtsEngine,
   getGlobalVoiceProvider,
   getIsElevenLabsDisabled,
   getLockedElevenLabsVoiceId,
@@ -26,7 +26,7 @@ import {
 export {
   ELEVENLABS_CIRCUIT_BREAKER_LOG,
   clearPreferredVoiceForCall,
-  getConversationRelayTtsEngine,
+  getMediaStreamTtsEngine,
   getGlobalVoiceProvider,
   getIsElevenLabsDisabled,
   getLockedElevenLabsVoiceId,
@@ -45,8 +45,8 @@ export const TTS_STREAM_FALLBACK_PREFIX =
 export type TtsEngineName =
   | "ElevenLabs"
   | "OpenAI tts-1-hd"
-  | "Twilio ConversationRelay (ElevenLabs)"
-  | "Twilio ConversationRelay (OpenAI fallback)";
+  | "Media Streams (ElevenLabs)"
+  | "Media Streams (OpenAI fallback)";
 
 /** Telephony-native output formats only — never MP3 on the Twilio path. */
 export type TelephonyAudioFormat = "ulaw_8000" | "pcm_16000";
@@ -293,7 +293,7 @@ async function synthesizeViaOpenAI(text: string): Promise<VoiceSynthesisResult |
 
 /**
  * Synthesize speech for cache prewarm / offline playback.
- * Primary live path is Twilio ConversationRelay text tokens (see streamHandler).
+ * Primary live path streams μ-law over Twilio Media Streams (see streamHandler).
  */
 export async function synthesizeSpeech(
   text: string,

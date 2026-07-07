@@ -1,10 +1,7 @@
-import { getConfig } from "../config.js";
 import { synthesizeSpeech, type VoiceSynthesisResult } from "../adapters/ttsAdapter.js";
-import { buildConversationRelayVoiceAttrs } from "../adapters/voiceAdapter.js";
 import { smoothForVoice } from "./voiceSmoothingEngine.js";
 import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import { getCachedPhrase } from "../utils/phraseCache.js";
-import type { SpeechChunk } from "../types/order.js";
 
 export type { VoiceSynthesisResult };
 
@@ -12,7 +9,7 @@ const chunkAudioCache = new Map<string, VoiceSynthesisResult>();
 
 /**
  * Direct TTS synthesis — one sentence per request for cache prewarm.
- * Primary live path uses Twilio ConversationRelay text tokens.
+ * Live calls stream μ-law audio over Twilio Media Streams (see mediaStreamVoice).
  */
 export async function synthesizeSpeechChunk(text: string): Promise<VoiceSynthesisResult | null> {
   const cached = chunkAudioCache.get(text);
@@ -35,7 +32,7 @@ function isCacheablePhrase(text: string): boolean {
   ].includes(normalized);
 }
 
-/** Light prosody + rhythm smoothing for ConversationRelay text tokens. */
+/** Light prosody + rhythm smoothing before OpenAI/ElevenLabs synthesis. */
 export function applyVoiceProsody(text: string, preserveFull = false): string {
   const trimmed = text
     .replace(/\s*—\s*/g, "... ")
@@ -50,115 +47,6 @@ export function applyVoiceProsody(text: string, preserveFull = false): string {
 }
 
 export { getCachedPhrase } from "../utils/phraseCache.js";
-export { buildConversationRelayVoiceAttrs } from "../adapters/voiceAdapter.js";
-
-export interface StreamRelayOptions {
-  abortSignal?: AbortSignal;
-}
-
-export async function streamOneChunkToRelay(
-  chunk: SpeechChunk,
-  send: (msg: {
-    type: "text";
-    token: string;
-    last: boolean;
-    interruptible?: boolean;
-  }) => Promise<void>,
-  isLast: boolean,
-  options?: StreamRelayOptions,
-): Promise<void> {
-  if (options?.abortSignal?.aborted) return;
-
-  if (chunk.pauseMs && chunk.pauseMs > 0) {
-    await sleep(Math.min(chunk.pauseMs, getConfig().VOICE_CHUNK_MAX_PAUSE_MS), options?.abortSignal);
-  }
-
-  if (options?.abortSignal?.aborted) return;
-
-  const token = applyVoiceProsody(chunk.text, chunk.preserveFull === true);
-
-  await send({
-    type: "text",
-    token,
-    last: isLast,
-    interruptible: chunk.kind !== "payment" && chunk.kind !== "dictation",
-  });
-}
-
-export async function finalizeRelayStream(
-  send: (msg: { type: "text"; token: string; last: boolean }) => Promise<void>,
-): Promise<void> {
-  await send({ type: "text", token: "", last: true });
-}
-
-/**
- * Stream speech chunks to Twilio ConversationRelay immediately — no full-response buffering.
- */
-export async function streamChunksToRelay(
-  chunks: AsyncIterable<SpeechChunk>,
-  send: (msg: {
-    type: "text";
-    token: string;
-    last: boolean;
-    interruptible?: boolean;
-  }) => Promise<void>,
-  options?: StreamRelayOptions,
-): Promise<number> {
-  let count = 0;
-  const pending: SpeechChunk[] = [];
-
-  for await (const chunk of chunks) {
-    if (options?.abortSignal?.aborted) break;
-    pending.push(chunk);
-    await streamOneChunkToRelay(chunk, send, false, options);
-    count++;
-  }
-
-  if (!options?.abortSignal?.aborted && count > 0) {
-    await finalizeRelayStream(send);
-  }
-
-  return count;
-}
-
-/** @deprecated Use streamChunksToRelay for streaming turns. */
-export async function streamTextToRelay(
-  text: string,
-  send: (msg: { type: "text"; token: string; last: boolean; interruptible?: boolean }) => Promise<void>,
-): Promise<void> {
-  const sentences = splitForTts(text);
-  for (let i = 0; i < sentences.length; i++) {
-    await send({
-      type: "text",
-      token: applyVoiceProsody(sentences[i]),
-      last: i === sentences.length - 1,
-      interruptible: true,
-    });
-  }
-}
-
-function splitForTts(text: string): string[] {
-  const parts = text
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return parts.length ? parts : [text.trim()];
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (!ms || ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
-  });
-}
 
 export async function prewarmVoiceCache(): Promise<void> {
   const phrases = [

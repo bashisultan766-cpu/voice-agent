@@ -38,7 +38,7 @@ export function resolveExecutionFlow(
 export function logEventIngestion(
   callSid: string,
   input: {
-    source: "prompt" | "dtmf" | "router_speech";
+    source: "prompt" | "dtmf" | "router_speech" | "media_stream";
     textLength: number;
     partial: boolean;
     queueDepth?: number;
