@@ -2,7 +2,6 @@
  * Executes OpenAI tool calls against Shopify with zero-hallucination validation.
  */
 import {
-  getOrderStatus,
   getCustomerHistory,
   searchByISBN,
   searchByTitle,
@@ -11,6 +10,7 @@ import {
   type CustomerHistoryResult,
   type OrderStatusResult,
 } from "./shopifyStorefrontAdapter.js";
+import { lookupOrderStatus } from "../services/shopifyService.js";
 import {
   addToCart,
   getCartSummary,
@@ -474,7 +474,7 @@ export async function executeLlmTool(
     });
 
     try {
-      const data = await getOrderStatus(orderNumber, callSid);
+      const data = await lookupOrderStatus(orderNumber, callSid);
       if (session && data.status === "found") {
         applyCallerVerificationFromOrder(session, data);
       }

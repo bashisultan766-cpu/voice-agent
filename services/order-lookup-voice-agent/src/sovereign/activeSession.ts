@@ -4,7 +4,7 @@
 import type { CallSession } from "../types/order.js";
 import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
 import type { LlmToolName } from "../adapters/llmToolExecutor.js";
-import { getPreferredVoiceForCall } from "../adapters/ttsAdapter.js";
+import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
 
 export type SovereignState =
   | "idle"
@@ -13,6 +13,7 @@ export type SovereignState =
   | "cart_active"
   | "checkout_active"
   | "tracking_dictation"
+  | "awaiting_notepad_ready"
   | "awaiting_clarification";
 
 export interface SpatialIndexEntry {
@@ -38,6 +39,8 @@ export interface ActiveSession {
   awaitingClarification: string | null;
   cachedIntent: string | null;
   preferredVoice: "ElevenLabs" | "openai-tts-1-hd";
+  /** Last spatial index spoken before an interrupt — resume from index + 1. */
+  lastDictationIndex: number;
 }
 
 const store = new Map<string, ActiveSession>();
@@ -51,6 +54,7 @@ export function createActiveSession(callSid: string): ActiveSession {
     awaitingClarification: null,
     cachedIntent: null,
     preferredVoice: getPreferredVoiceForCall(callSid),
+    lastDictationIndex: -1,
   };
   store.set(callSid, session);
   return session;
@@ -78,6 +82,28 @@ export function clearActiveSession(callSid: string): void {
   store.delete(callSid);
 }
 
+export function recordDictationProgress(callSid: string, spokenIndex: number): ActiveSession {
+  return updateActiveSession(callSid, { lastDictationIndex: spokenIndex });
+}
+
+export function buildSpatialResumeFromIndex(
+  spatialIndex: SpatialIndexEntry[],
+  startIndex: number,
+): string | null {
+  if (startIndex < 0 || startIndex >= spatialIndex.length) return null;
+  const remaining = spatialIndex.slice(startIndex + 1);
+  if (!remaining.length) return "That is the end of the tracking number.";
+  return remaining.map((entry) => {
+    const word =
+      entry.digit >= "0" && entry.digit <= "9"
+        ? ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"][
+            Number(entry.digit)
+          ]
+        : entry.digit;
+    return `${word}.`;
+  }).join(" ");
+}
+
 export function buildSpatialIndexFromTracking(trackingId: string): SpatialIndexEntry[] {
   const normalized = trackingId.trim().toUpperCase();
   return [...normalized].map((digit, index) => ({ index, digit }));
@@ -90,9 +116,11 @@ export function recordTrackingPayload(
 ): ActiveSession {
   const trackingForTts = formatTrackingNumberForTTS(trackingRaw);
   return updateActiveSession(callSid, {
-    currentState: "tracking_dictation",
+    currentState: "awaiting_notepad_ready",
+    awaitingClarification: "notepad_ready",
     spatialIndex: buildSpatialIndexFromTracking(trackingRaw),
     cachedIntent: "tracking",
+    lastDictationIndex: -1,
     lastSpokenPayload: {
       kind: "tracking",
       speech: speech ?? trackingForTts,
@@ -102,7 +130,6 @@ export function recordTrackingPayload(
       intentKey: "tracking",
       capturedAt: Date.now(),
     },
-    awaitingClarification: null,
   });
 }
 

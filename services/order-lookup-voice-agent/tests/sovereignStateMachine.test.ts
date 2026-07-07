@@ -4,6 +4,7 @@ import {
   createActiveSession,
   recordTrackingPayload,
   shouldSkipToolReinvoke,
+  updateActiveSession,
 } from "../src/sovereign/activeSession.js";
 import {
   buildSpatialResumeSpeech,
@@ -24,7 +25,7 @@ describe("activeSession spatial index", () => {
 
   it("records tracking payload with phonetic pacing", () => {
     const active = recordTrackingPayload("CA1", "925");
-    expect(active.currentState).toBe("tracking_dictation");
+    expect(active.currentState).toBe("awaiting_notepad_ready");
     expect(active.lastSpokenPayload?.trackingForTts).toBe("Nine. Two. Five.");
     expect(active.spatialIndex).toHaveLength(3);
   });
@@ -66,6 +67,6 @@ describe("sovereignRouter", () => {
     const resolution = resolveSovereignTurn("can you repeat my tracking number", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.skipTools).toBe(true);
-    expect(resolution.speech).toBe("Nine. Two. Five. Zero.");
+    expect(resolution.speech).toContain("pen and notepad");
   });
 });

@@ -1,11 +1,40 @@
 /**
  * TTS adapter — ElevenLabs primary, OpenAI tts-1-hd fallback.
- * Enforces Twilio-native audio format and logs the active engine before every synthesis.
+ * Voice engine selection lives in voiceAdapter.ts (single entry point).
  */
 import OpenAI from "openai";
 import { getConfig, normalizeTwilioElevenLabsModel } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { sanitizeTextForTTS } from "../utils/ttsFormatter.js";
+import {
+  ELEVENLABS_CIRCUIT_BREAKER_LOG,
+  clearPreferredVoiceForCall,
+  getConversationRelayTtsEngine,
+  getIsElevenLabsDisabled,
+  getLockedElevenLabsVoiceId,
+  getOpenAiEricFallbackVoice,
+  getPreferredVoiceForCall,
+  isElevenLabsAuthError,
+  logVoiceEngineSelection,
+  markElevenLabsAuthFailure,
+  resetElevenLabsCircuitBreakerForTests,
+  tripElevenLabsCircuitBreaker,
+  type PreferredVoiceEngine,
+} from "./voiceAdapter.js";
+
+export {
+  ELEVENLABS_CIRCUIT_BREAKER_LOG,
+  clearPreferredVoiceForCall,
+  getConversationRelayTtsEngine,
+  getIsElevenLabsDisabled,
+  getLockedElevenLabsVoiceId,
+  getOpenAiEricFallbackVoice,
+  getPreferredVoiceForCall,
+  markElevenLabsAuthFailure,
+  resetElevenLabsCircuitBreakerForTests,
+  tripElevenLabsCircuitBreaker,
+  type PreferredVoiceEngine,
+};
 
 export const TTS_STREAM_CRASH_LOG = "TTS_STREAM_CRASH_DETECTED";
 export const TTS_STREAM_FALLBACK_PREFIX =
@@ -15,64 +44,7 @@ export type TtsEngineName =
   | "ElevenLabs"
   | "OpenAI tts-1-hd"
   | "Twilio ConversationRelay (ElevenLabs)"
-  | "Twilio ConversationRelay (Google fallback)";
-
-export type PreferredVoiceEngine = "ElevenLabs" | "openai-tts-1-hd";
-
-export const ELEVENLABS_CIRCUIT_BREAKER_LOG =
-  "ELEVENLABS CIRCUIT BREAKER: Quota exceeded. Routing to OpenAI for the duration of this process.";
-
-/** Process-wide circuit breaker — trips on ElevenLabs 401/403 and skips all further EL calls. */
-let isElevenLabsDisabled = false;
-
-const preferredVoiceByCall = new Map<string, PreferredVoiceEngine>();
-const authFailureLogged = new Set<string>();
-
-export function getIsElevenLabsDisabled(): boolean {
-  return isElevenLabsDisabled;
-}
-
-/** @internal Test helper — resets process-wide circuit breaker state. */
-export function resetElevenLabsCircuitBreakerForTests(): void {
-  isElevenLabsDisabled = false;
-  preferredVoiceByCall.clear();
-  authFailureLogged.clear();
-}
-
-export function tripElevenLabsCircuitBreaker(): void {
-  if (isElevenLabsDisabled) return;
-  isElevenLabsDisabled = true;
-  logger.warn(ELEVENLABS_CIRCUIT_BREAKER_LOG);
-}
-
-export function getPreferredVoiceForCall(callSid?: string): PreferredVoiceEngine {
-  if (isElevenLabsDisabled) return "openai-tts-1-hd";
-  if (!callSid) return "ElevenLabs";
-  return preferredVoiceByCall.get(callSid) ?? "ElevenLabs";
-}
-
-export function markElevenLabsAuthFailure(callSid?: string): void {
-  tripElevenLabsCircuitBreaker();
-  if (callSid) {
-    preferredVoiceByCall.set(callSid, "openai-tts-1-hd");
-    if (!authFailureLogged.has(callSid)) {
-      authFailureLogged.add(callSid);
-      logger.info("tts_voice_fallback_locked", {
-        callSid: callSid.slice(0, 8),
-        preferredVoice: "openai-tts-1-hd",
-      });
-    }
-  }
-}
-
-export function clearPreferredVoiceForCall(callSid: string): void {
-  preferredVoiceByCall.delete(callSid);
-  authFailureLogged.delete(callSid);
-}
-
-function isElevenLabsAuthError(status: number): boolean {
-  return status === 401 || status === 403;
-}
+  | "Twilio ConversationRelay (OpenAI fallback)";
 
 /** Telephony-native output formats only — never MP3 on the Twilio path. */
 export type TelephonyAudioFormat = "ulaw_8000" | "pcm_16000";
@@ -106,23 +78,9 @@ export function getElevenLabsVoiceSettings(): ElevenLabsVoiceSettings {
   };
 }
 
-/** Resolve which engine handles live ConversationRelay TTS (Twilio-side synthesis). */
-export function getConversationRelayTtsEngine(): TtsEngineName {
-  if (isElevenLabsDisabled) {
-    return "Twilio ConversationRelay (Google fallback)";
-  }
-  const cfg = getConfig();
-  const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
-  if (cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs" && voiceId) {
-    return "Twilio ConversationRelay (ElevenLabs)";
-  }
-  return "Twilio ConversationRelay (Google fallback)";
-}
-
 /** Log the active TTS engine — call at turn start and before direct audio synthesis. */
 export function logTtsEngineSelection(engine?: TtsEngineName): void {
-  const name = engine ?? getConversationRelayTtsEngine();
-  logger.info(`Generating TTS via: ${name}`);
+  logVoiceEngineSelection(engine as Parameters<typeof logVoiceEngineSelection>[0]);
 }
 
 function elevenLabsModelId(): string {
@@ -222,12 +180,12 @@ async function synthesizeViaElevenLabsStream(
   signal?: AbortSignal,
   callSid?: string,
 ): Promise<Response | null> {
-  if (isElevenLabsDisabled || getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
+  if (getIsElevenLabsDisabled() || getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
     return null;
   }
   const cfg = getConfig();
   const apiKey = cfg.ELEVENLABS_API_KEY;
-  const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
+  const voiceId = getLockedElevenLabsVoiceId();
   if (!apiKey || !voiceId) return null;
 
   const outputFormat = resolveTelephonyOutputFormat();
@@ -259,12 +217,12 @@ async function synthesizeViaElevenLabs(
   text: string,
   callSid?: string,
 ): Promise<VoiceSynthesisResult | null> {
-  if (isElevenLabsDisabled || getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
+  if (getIsElevenLabsDisabled() || getPreferredVoiceForCall(callSid) === "openai-tts-1-hd") {
     return null;
   }
   const cfg = getConfig();
   const apiKey = cfg.ELEVENLABS_API_KEY;
-  const voiceId = (cfg.VOICE_ID || cfg.ELEVENLABS_VOICE_ID || "").trim();
+  const voiceId = getLockedElevenLabsVoiceId();
   if (!apiKey || !voiceId) return null;
 
   const outputFormat = resolveTelephonyOutputFormat();
@@ -314,7 +272,7 @@ async function synthesizeViaOpenAI(text: string): Promise<VoiceSynthesisResult |
     const client = new OpenAI({ apiKey: cfg.OPENAI_API_KEY });
     const response = await client.audio.speech.create({
       model: "tts-1-hd",
-      voice: "nova",
+      voice: getOpenAiEricFallbackVoice(),
       input: text,
       response_format: "pcm",
     });

@@ -1,4 +1,7 @@
-import { getOrderStatus, type OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
+import {
+  getOrderStatus,
+  type OrderStatusResult,
+} from "../adapters/shopifyStorefrontAdapter.js";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import type { OrderLookupResult, StructuredOrder } from "../types/order.js";
@@ -9,7 +12,13 @@ interface CacheEntry {
   value: OrderLookupResult;
 }
 
+interface StatusCacheEntry {
+  expiresAt: number;
+  value: OrderStatusResult;
+}
+
 const cache = new Map<string, CacheEntry>();
+const statusCache = new Map<string, StatusCacheEntry>();
 
 function cacheGet(key: string): OrderLookupResult | null {
   const entry = cache.get(key);
@@ -24,6 +33,21 @@ function cacheGet(key: string): OrderLookupResult | null {
 function cacheSet(key: string, value: OrderLookupResult): void {
   const ttl = getConfig().SHOPIFY_CACHE_TTL_SECS * 1000;
   cache.set(key, { value, expiresAt: Date.now() + ttl });
+}
+
+function statusCacheGet(key: string): OrderStatusResult | null {
+  const entry = statusCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    statusCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function statusCacheSet(key: string, value: OrderStatusResult): void {
+  const ttl = getConfig().SHOPIFY_CACHE_TTL_SECS * 1000;
+  statusCache.set(key, { value, expiresAt: Date.now() + ttl });
 }
 
 function mapFoundOrder(data: OrderStatusResult): StructuredOrder {
@@ -77,10 +101,12 @@ function mapLookupResult(data: OrderStatusResult): OrderLookupResult {
 }
 
 /**
- * Order lookup — uses the same GraphQL FulfillmentOrderLookup query as the voice agent.
- * No REST fallback and no alternate GraphQL query shape.
+ * Full order status lookup — single Shopify entry point for LLM tools and adapters.
  */
-export async function lookupOrder(rawOrderNumber: string): Promise<OrderLookupResult> {
+export async function lookupOrderStatus(
+  rawOrderNumber: string,
+  callSid = "fulfillment",
+): Promise<OrderStatusResult> {
   const orderNumber = normalizeOrderNumber(rawOrderNumber);
   if (!orderNumber || !isValidOrderNumberFormat(orderNumber)) {
     return {
@@ -89,29 +115,20 @@ export async function lookupOrder(rawOrderNumber: string): Promise<OrderLookupRe
     };
   }
 
-  const cacheKey = `order:${orderNumber}`;
-  const cached = cacheGet(cacheKey);
+  const cacheKey = `status:${orderNumber}`;
+  const cached = statusCacheGet(cacheKey);
   if (cached) {
-    logger.debug("shopify_cache_hit", { orderNumber });
+    logger.debug("shopify_status_cache_hit", { orderNumber });
     return cached;
   }
 
   try {
-    const data = await getOrderStatus(orderNumber);
-    const result = mapLookupResult(data);
-    cacheSet(cacheKey, result);
-
-    if (result.status === "found") {
-      logger.info("shopify_order_found", {
-        orderNumber: result.order.orderNumber,
-        productCount: result.order.productCount,
-        refunded: result.order.refund.refunded,
-      });
-    }
-
-    return result;
+    const data = await getOrderStatus(orderNumber, callSid);
+    statusCacheSet(cacheKey, data);
+    cacheSet(`order:${orderNumber}`, mapLookupResult(data));
+    return data;
   } catch (err) {
-    logger.error("shopify_lookup_failed", {
+    logger.error("shopify_status_lookup_failed", {
       orderNumber,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -122,6 +139,15 @@ export async function lookupOrder(rawOrderNumber: string): Promise<OrderLookupRe
   }
 }
 
+/**
+ * Structured order lookup — uses lookupOrderStatus internally.
+ */
+export async function lookupOrder(rawOrderNumber: string): Promise<OrderLookupResult> {
+  const data = await lookupOrderStatus(rawOrderNumber);
+  return mapLookupResult(data);
+}
+
 export function clearOrderCache(): void {
   cache.clear();
+  statusCache.clear();
 }

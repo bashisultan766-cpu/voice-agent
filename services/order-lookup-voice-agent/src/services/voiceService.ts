@@ -1,9 +1,6 @@
-import { getConfig, conversationRelayVoice } from "../config.js";
-import {
-  getIsElevenLabsDisabled,
-  synthesizeSpeech,
-  type VoiceSynthesisResult,
-} from "../adapters/ttsAdapter.js";
+import { getConfig } from "../config.js";
+import { synthesizeSpeech, type VoiceSynthesisResult } from "../adapters/ttsAdapter.js";
+import { buildConversationRelayVoiceAttrs } from "../adapters/voiceAdapter.js";
 import { smoothForVoice } from "./voiceSmoothingEngine.js";
 import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import { getCachedPhrase } from "../utils/phraseCache.js";
@@ -53,30 +50,7 @@ export function applyVoiceProsody(text: string, preserveFull = false): string {
 }
 
 export { getCachedPhrase } from "../utils/phraseCache.js";
-
-export function buildConversationRelayVoiceAttrs(): Record<string, string> {
-  const cfg = getConfig();
-  const attrs: Record<string, string> = {
-    language: cfg.VOICE_LANGUAGE,
-    interruptible: "true",
-    dtmfDetection: "true",
-  };
-
-  const useElevenLabs =
-    !getIsElevenLabsDisabled() && cfg.VOICE_TTS_PROVIDER.toLowerCase() === "elevenlabs";
-
-  if (useElevenLabs) {
-    attrs.ttsProvider = "ElevenLabs";
-    attrs.voice = conversationRelayVoice();
-    attrs.elevenlabsTextNormalization = cfg.ELEVENLABS_TEXT_NORMALIZATION;
-  } else {
-    attrs.voice = getIsElevenLabsDisabled()
-      ? "Google.en-US-Neural2-J"
-      : conversationRelayVoice();
-  }
-
-  return attrs;
-}
+export { buildConversationRelayVoiceAttrs } from "../adapters/voiceAdapter.js";
 
 export interface StreamRelayOptions {
   abortSignal?: AbortSignal;

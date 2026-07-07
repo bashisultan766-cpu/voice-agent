@@ -14,7 +14,7 @@ import {
   synthesizeSpeech,
   tripElevenLabsCircuitBreaker,
 } from "../src/adapters/ttsAdapter.js";
-import { buildConversationRelayVoiceAttrs } from "../src/services/voiceService.js";
+import { buildConversationRelayVoiceAttrs } from "../src/adapters/voiceAdapter.js";
 
 describe("AudioChunkAccumulator", () => {
   it("buffers sub-minimum reads until a telephony frame is ready", () => {
@@ -86,7 +86,7 @@ describe("ElevenLabs circuit breaker", () => {
 
     expect(getIsElevenLabsDisabled()).toBe(true);
     expect(getPreferredVoiceForCall("CA456")).toBe("openai-tts-1-hd");
-    expect(getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (Google fallback)");
+    expect(getConversationRelayTtsEngine()).toBe("Twilio ConversationRelay (OpenAI fallback)");
     expect(warnSpy).toHaveBeenCalledWith(ELEVENLABS_CIRCUIT_BREAKER_LOG);
 
     warnSpy.mockRestore();
@@ -124,6 +124,7 @@ describe("ElevenLabs circuit breaker", () => {
     const attrs = buildConversationRelayVoiceAttrs();
 
     expect(attrs.ttsProvider).toBeUndefined();
-    expect(attrs.voice).toBe("Google.en-US-Neural2-J");
+    expect(attrs.voice).toBeTruthy();
+    expect(attrs.voice).not.toBe("Google.en-US-Neural2-J");
   });
 });

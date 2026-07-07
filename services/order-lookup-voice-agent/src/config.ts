@@ -49,6 +49,10 @@ const envSchema = z.object({
   ELEVENLABS_TEXT_NORMALIZATION: z.enum(["on", "off", "auto"]).default("on"),
   VOICE_LANGUAGE: z.string().default("en-US"),
   VOICE_TTS_PROVIDER: z.string().default("ElevenLabs"),
+  /** OpenAI tts-1-hd voice when ElevenLabs quota is exceeded — tuned to match Eric profile. */
+  OPENAI_TTS_VOICE: z
+    .enum(["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"])
+    .default("onyx"),
 
   ORDER_LOOKUP_MAX_RETRIES: z.coerce.number().default(2),
   VOICE_ROUTER_FORWARD_SECRET: z.string().optional(),

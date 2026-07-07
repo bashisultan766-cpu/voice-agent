@@ -178,7 +178,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID DICTATION PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I currently do not have a valid tracking number for this order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do not spell out words like "Refund"/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and a notepad ready/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and notepad ready/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Did you get all of that/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Were you able to write that down/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);

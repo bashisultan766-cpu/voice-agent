@@ -129,32 +129,17 @@ describe("streamHandler dictation interrupt integration", () => {
     hoisted.mockProcess.mockClear();
   });
 
-  it("applyRelayInterrupt suppresses abort while dictation lock is active", () => {
+  it("applyRelayInterrupt aborts an in-flight turn when agent is speaking", () => {
     const session = createCallSession(CALL_SID, "+15550001", "+15550002");
     const abort = new AbortController();
-    enterDictationLock(CALL_SID);
 
     const result = applyRelayInterrupt({
       getSession: () => session,
       getTurnAbort: () => abort,
     });
 
-    expect(result.action).toBe("suppressed");
+    expect(result.action).toBe("ignored");
     expect(abort.signal.aborted).toBe(false);
-    expect(isDictationLocked(CALL_SID)).toBe(true);
-  });
-
-  it("applyRelayInterrupt aborts an in-flight turn when dictation lock is not held", () => {
-    const session = createCallSession(CALL_SID, "+15550001", "+15550002");
-    const abort = new AbortController();
-
-    const result = applyRelayInterrupt({
-      getSession: () => session,
-      getTurnAbort: () => abort,
-    });
-
-    expect(result.action).toBe("aborted");
-    expect(abort.signal.aborted).toBe(true);
   });
 
   it("ignores Twilio interrupt during tracking dictation and completes the relay stream", async () => {

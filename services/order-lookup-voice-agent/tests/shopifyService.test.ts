@@ -25,7 +25,7 @@ describe("shopifyService", () => {
 
     const result = await lookupOrder("99999");
     expect(result.status).toBe("not_found");
-    expect(getOrderStatus).toHaveBeenCalledWith("#99999");
+    expect(getOrderStatus).toHaveBeenCalledWith("#99999", "fulfillment");
   });
 
   it("returns api_error when Shopify lookup fails", async () => {

@@ -5,6 +5,7 @@ import {
   createCallSession,
   endCallSession,
   process,
+  processInterruptAcknowledgment,
 } from "../agents/conversationOrchestrator.js";
 import {
   bufferPartialTranscript,
@@ -15,13 +16,13 @@ import {
 import {
   clearDictationLock,
   enterDictationLock,
-  isDictationLocked,
 } from "../runtime/dictationLock.js";
 import { logEventIngestion } from "../runtime/turnObservability.js";
 import { logTtsEngineSelection, getElevenLabsVoiceSettings } from "../adapters/ttsAdapter.js";
+import { getLockedElevenLabsVoiceId } from "../adapters/voiceAdapter.js";
 import { clearShoppingCart } from "../agents/cartManager.js";
 import { streamOneChunkToRelay, finalizeRelayStream } from "../services/voiceService.js";
-import { conversationRelayVoice } from "../config.js";
+import { recordDictationProgress } from "../sovereign/activeSession.js";
 import { isNoiseTranscript } from "../utils/noiseGate.js";
 import {
   isCallSessionActive,
@@ -31,6 +32,8 @@ import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
 
 const RELAY_ERROR_SPEECH =
   "Sorry, we're having a brief technical issue. Please try again in a moment.";
+
+const speakingTurns = new Set<string>();
 
 type SendFn = (msg: {
   type: "text" | "end";
@@ -81,6 +84,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
     closed = true;
     turnAbort?.abort();
     if (session?.callSid) {
+      speakingTurns.delete(session.callSid);
       markCallSessionClosed(session.callSid);
       clearShoppingCart(session);
       clearDictationLock(session.callSid);
@@ -95,12 +99,19 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
   });
 }
 
+type TurnGenerator = (
+  callSid: string,
+  callerText: string,
+  session: CallSession,
+) => AsyncGenerator<import("../types/order.js").AgentStreamEvent>;
+
 async function runStreamingTurn(
   session: CallSession,
   callerText: string,
   send: SendFn,
   setAbort: (controller: AbortController) => void,
   isClosed: () => boolean,
+  generator: TurnGenerator = process,
 ): Promise<void> {
   if (isClosed() || !isCallSessionActive(session.callSid)) {
     logger.debug("relay_turn_skipped_inactive", { callSid: session.callSid.slice(0, 8) });
@@ -110,10 +121,12 @@ async function runStreamingTurn(
   const started = Date.now();
   const abort = new AbortController();
   setAbort(abort);
+  speakingTurns.add(session.callSid);
 
   let endCall = false;
   let chunkCount = 0;
   let firstChunkMs: number | null = null;
+  let dictationIndex = -1;
 
   pipelineTrace({
     layer: "streamHandler",
@@ -125,12 +138,12 @@ async function runStreamingTurn(
   logTtsEngineSelection();
   logger.debug("relay_voice_profile", {
     callSid: session.callSid.slice(0, 8),
-    voice: conversationRelayVoice(),
+    voice: getLockedElevenLabsVoiceId(),
     settings: getElevenLabsVoiceSettings(),
   });
 
   try {
-    for await (const event of process(session.callSid, callerText, session)) {
+    for await (const event of generator(session.callSid, callerText, session)) {
       if (abort.signal.aborted) {
         logger.debug("relay_turn_aborted", { callSid: session.callSid.slice(0, 8) });
         break;
@@ -142,6 +155,8 @@ async function runStreamingTurn(
         }
         if (event.chunk.kind === "dictation") {
           enterDictationLock(session.callSid);
+          dictationIndex += 1;
+          recordDictationProgress(session.callSid, dictationIndex);
         }
         await streamOneChunkToRelay(event.chunk, send, false, { abortSignal: abort.signal });
         chunkCount++;
@@ -172,6 +187,8 @@ async function runStreamingTurn(
       await send({ type: "text", token: RELAY_ERROR_SPEECH, last: false });
       await finalizeRelayStream(send);
     }
+  } finally {
+    speakingTurns.delete(session.callSid);
   }
 
   if (endCall && !abort.signal.aborted) {
@@ -183,6 +200,7 @@ function scheduleStreamingTurn(
   session: CallSession,
   callerText: string,
   ctx: RelayMessageContext,
+  generator: TurnGenerator = process,
 ): Promise<void> {
   if (ctx.isClosed() || !isCallSessionActive(session.callSid)) {
     return Promise.resolve();
@@ -200,7 +218,25 @@ function scheduleStreamingTurn(
   return enqueueStreamTurn(session.callSid, () =>
     runStreamingTurn(session, callerText, ctx.send, (controller) => {
       ctx.setTurnAbort(controller);
-    }, ctx.isClosed),
+    }, ctx.isClosed, generator),
+  );
+}
+
+function scheduleInterruptAcknowledgment(
+  session: CallSession,
+  ctx: RelayMessageContext,
+): Promise<void> {
+  return enqueueStreamTurn(session.callSid, () =>
+    runStreamingTurn(
+      session,
+      "",
+      ctx.send,
+      (controller) => {
+        ctx.setTurnAbort(controller);
+      },
+      ctx.isClosed,
+      (_callSid, _text, s) => processInterruptAcknowledgment(s),
+    ),
   );
 }
 
@@ -213,21 +249,15 @@ interface RelayMessageContext {
   isClosed: () => boolean;
 }
 
-/** Apply Twilio barge-in — suppressed while tracking dictation lock is held. */
+/** Apply Twilio barge-in — aborts active TTS and queues listening acknowledgment. */
 export function applyRelayInterrupt(ctx: Pick<RelayMessageContext, "getSession" | "getTurnAbort">): {
-  action: "suppressed" | "aborted" | "ignored";
+  action: "aborted" | "ignored";
 } {
   const callSid = ctx.getSession()?.callSid;
-  if (callSid && isDictationLocked(callSid)) {
-    logger.debug("relay_interrupt_suppressed_dictation", {
-      callSid: callSid.slice(0, 8),
-    });
-    return { action: "suppressed" };
-  }
-
   const abort = ctx.getTurnAbort();
-  if (!abort) {
-    logger.debug("relay_interrupt", { callSid: callSid?.slice(0, 8) });
+
+  if (!abort || !speakingTurns.has(callSid ?? "")) {
+    logger.debug("relay_interrupt_ignored", { callSid: callSid?.slice(0, 8) });
     return { action: "ignored" };
   }
 
@@ -271,17 +301,30 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
       if (!session || ctx.isClosed()) return;
 
       if (!message.last) {
-        bufferPartialTranscript(session.callSid, message.voicePrompt ?? "");
         logEventIngestion(session.callSid, {
           source: "prompt",
           textLength: (message.voicePrompt ?? "").length,
           partial: true,
         });
+        if (speakingTurns.has(session.callSid)) {
+          const interrupt = applyRelayInterrupt(ctx);
+          if (interrupt.action === "aborted") {
+            await scheduleInterruptAcknowledgment(session, ctx);
+          }
+        }
+        bufferPartialTranscript(session.callSid, message.voicePrompt ?? "");
         return;
       }
 
       const callerText = takeFinalTranscript(session.callSid, message.voicePrompt ?? "");
       if (!callerText) return;
+
+      if (speakingTurns.has(session.callSid)) {
+        const interrupt = applyRelayInterrupt(ctx);
+        if (interrupt.action === "aborted") {
+          await scheduleInterruptAcknowledgment(session, ctx);
+        }
+      }
 
       logEventIngestion(session.callSid, {
         source: "prompt",
@@ -294,13 +337,24 @@ async function handleRelayMessage(raw: WebSocket.RawData, ctx: RelayMessageConte
     }
 
     case "interrupt": {
-      applyRelayInterrupt(ctx);
+      const session = ctx.getSession();
+      if (!session || ctx.isClosed()) break;
+      const interrupt = applyRelayInterrupt(ctx);
+      if (interrupt.action === "aborted") {
+        await scheduleInterruptAcknowledgment(session, ctx);
+      }
       break;
     }
 
     case "dtmf": {
       const session = ctx.getSession();
       if (!session || !message.digit || ctx.isClosed()) return;
+      if (speakingTurns.has(session.callSid)) {
+        const interrupt = applyRelayInterrupt(ctx);
+        if (interrupt.action === "aborted") {
+          await scheduleInterruptAcknowledgment(session, ctx);
+        }
+      }
       logEventIngestion(session.callSid, {
         source: "dtmf",
         textLength: message.digit.length,
