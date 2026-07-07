@@ -9,7 +9,7 @@ import {
   syncActiveSessionFromCallSession,
   updateActiveSession,
 } from "./activeSession.js";
-import { NOTEPAD_HANDSHAKE_PROMPT } from "../agents/conversationOrchestrator.js";
+import { promptUserForNotepad } from "../agents/dictationTool.js";
 
 export interface SovereignTurnResolution {
   handled: boolean;
@@ -19,7 +19,7 @@ export interface SovereignTurnResolution {
   intentKey?: string;
 }
 
-export { NOTEPAD_HANDSHAKE_PROMPT };
+export const NOTEPAD_HANDSHAKE_PROMPT = promptUserForNotepad();
 
 const FULL_SUMMARY_RE = /\bfull\s+summary\b/i;
 

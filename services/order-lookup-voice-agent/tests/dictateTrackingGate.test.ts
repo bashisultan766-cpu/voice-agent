@@ -68,9 +68,13 @@ describe("sovereignRouter notepad gate", () => {
     } as CallSession;
 
     recordTrackingPayload("CA4", "9250");
+    const handshake = resolveTrackingPhaseGate("can you read my tracking number", session);
+    expect(handshake.handled).toBe(true);
+    expect(handshake.intentKey).toBe("PHASE_HANDSHAKE");
+
     const resolution = resolveTrackingPhaseGate("yes I am ready", session);
     expect(resolution.handled).toBe(true);
-    expect(resolution.intentKey).toBe("dictate_tracking");
+    expect(resolution.intentKey).toBe("USER_NOTEPAD_READY");
     expect(resolution.speech).toContain("Nine.");
   });
 });

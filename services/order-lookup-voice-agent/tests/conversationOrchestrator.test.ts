@@ -105,18 +105,18 @@ describe("conversationOrchestrator flows", () => {
     mockLiveShopifyFetch(mockCatalog);
   });
 
-  it('greets naturally on "hello" without order-number demand', async () => {
+  it('routes "hello" to order lookup on the first turn', async () => {
     const session = createCallSession("CA_ORCH", "+1", "+2");
     const speech = await collectSpeech(session, "hello");
-    expect(speech).toMatch(/SureShot Books|virtual assistant|help you today/i);
-    expect(speech).not.toMatch(/valid order number|didn't catch/i);
+    expect(speech).toMatch(/order number/i);
+    expect(session.awaitingInput).toBe("order_number");
   });
 
   it("asks for order number on order status", async () => {
     const session = createCallSession("CA_ORD", "+1", "+2");
     const speech = await collectSpeech(session, "where is my order");
     expect(speech).toMatch(/order number/i);
-    expect(session.awaitingInput).toBeNull();
+    expect(session.awaitingInput).toBe("order_number");
   });
 
   it('Phase 1: "I need a book" asks for ISBN or title without Shopify', async () => {

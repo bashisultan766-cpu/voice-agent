@@ -97,7 +97,12 @@ import {
   buildResumeFromLastSpokenIndex,
   buildTrackingDictationChunks,
   calculateResumeOffset,
+  confirmUserNotepadReady,
+  dictateTracking,
+  isUserNotepadReadyIntent,
+  promptUserForNotepad,
   resolveSpatialResumeFromQuery,
+  USER_NOTEPAD_READY,
 } from "./dictationTool.js";
 import { extractSpatialAnchorDigits } from "../sovereign/spatialDictation.js";
 import { analyzeBrainTurn } from "./brainAnalyzer.js";
@@ -178,12 +183,16 @@ import { wsUrl } from "../config.js";
 import { CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
 import { ensureVoiceProviderReady } from "../adapters/voiceAdapter.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
+import {
+  buildClarifyingResponse,
+  buildGreetingResponse,
+} from "../handlers/greetingHandler.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
 /** Fixed greeting spoken at call start (TwiML welcomeGreeting). */
 export const BRAIN_GREETING =
-  "Welcome to SureShot Books! I am your virtual assistant. How can I help you today?";
+  "Welcome to SureShot Books! I can look up your order status — what's your order number?";
 
 /** Create a new call session — voice layer must not mutate slots/intent/phase. */
 export function createCallSession(callSid: string, from: string, to: string): CallSession {
@@ -260,14 +269,10 @@ export const PHASE_DICTATION = "PHASE_DICTATION";
 export const USER_READY = "USER_READY";
 export const LISTENING = "LISTENING";
 
-export const NOTEPAD_HANDSHAKE_PROMPT =
-  "Please have your pen and notepad ready. Let me know when you are ready.";
+export const NOTEPAD_HANDSHAKE_PROMPT = promptUserForNotepad();
 
 const TRACKING_QUERY_RE =
   /\b(tracking|track(?:ing)?\s*(?:id|number)|where\s+is\s+my\s+package|read\s+(?:me\s+)?(?:the\s+)?tracking)\b/i;
-
-const NOTEPAD_READY_RE =
-  /\b(ready|i'?m\s+ready|yes|ok|okay|go\s+ahead|all\s+set|you\s+can\s+go|note\s+it\s+down)\b/i;
 
 const INTERRUPT_RESUME_RE =
   /\b(what\s+did\s+you\s+miss|missed\s+that|didn'?t\s+catch|repeat\s+from|continue\s+from|pick\s+up)\b/i;
@@ -326,24 +331,29 @@ export function resolveTrackingPhaseGate(
   }
 
   if (active.currentState === "awaiting_notepad_ready" && trackingPayloadReady(active)) {
-    if (NOTEPAD_READY_RE.test(text)) {
-      updateActiveSession(session.callSid, {
-        isNotepadReady: true,
-        awaitingClarification: null,
-        currentState: "tracking_dictation",
-        lastSpokenIndex: -1,
-      });
+    if (isUserNotepadReadyIntent(text)) {
+      confirmUserNotepadReady(session.callSid);
+      const dictated = dictateTracking(session.callSid);
+      if (!dictated.ok) {
+        return {
+          handled: true,
+          speech: dictated.error.message,
+          skipLlm: true,
+          skipTools: true,
+          intentKey: PHASE_HANDSHAKE,
+        };
+      }
       return {
         handled: true,
-        speech: active.lastSpokenPayload!.trackingForTts!,
+        speech: dictated.speech,
         skipLlm: true,
         skipTools: true,
-        intentKey: "dictate_tracking",
+        intentKey: USER_NOTEPAD_READY,
       };
     }
     return {
       handled: true,
-      speech: NOTEPAD_HANDSHAKE_PROMPT,
+      speech: promptUserForNotepad(),
       skipLlm: true,
       skipTools: true,
       intentKey: PHASE_HANDSHAKE,
@@ -351,16 +361,11 @@ export function resolveTrackingPhaseGate(
   }
 
   if (TRACKING_QUERY_RE.test(text) && active.lastSpokenPayload?.trackingForTts) {
-    if (!active.isNotepadReady) {
-      updateActiveSession(session.callSid, {
-        currentState: "awaiting_notepad_ready",
-        awaitingClarification: "notepad_ready",
-        isNotepadReady: false,
-        cachedIntent: GET_TRACKING_INTENT,
-      });
+    const dictated = dictateTracking(session.callSid);
+    if (!dictated.ok) {
       return {
         handled: true,
-        speech: NOTEPAD_HANDSHAKE_PROMPT,
+        speech: dictated.error.message,
         skipLlm: true,
         skipTools: true,
         intentKey: PHASE_HANDSHAKE,
@@ -372,10 +377,10 @@ export function resolveTrackingPhaseGate(
     });
     return {
       handled: true,
-      speech: active.lastSpokenPayload.trackingForTts,
+      speech: dictated.speech,
       skipLlm: true,
       skipTools: true,
-      intentKey: PHASE_DICTATION,
+      intentKey: USER_NOTEPAD_READY,
     };
   }
 
@@ -608,7 +613,89 @@ async function* runOrchestratorTurnCore(
     return;
   }
 
+  if (session.phase === "greeting") {
+    if (!session.greetedThisCall) {
+      const orderLookupHandled = yield* handleGreetingPhaseOrderLookup(session, text);
+      if (orderLookupHandled) {
+        return;
+      }
+      session.greetedThisCall = true;
+      session.phase = "follow_up";
+    }
+  }
+
   yield* runLlmOrchestratorTurn(session, text, emitResponseSent);
+}
+
+async function* handleGreetingPhaseOrderLookup(
+  session: CallSession,
+  callerText: string,
+): AsyncGenerator<AgentStreamEvent, boolean> {
+  const text = callerText.trim();
+  const orderNumber = extractOrderNumberFromSpeech(text);
+
+  if (orderNumber) {
+    yield chunkEvent(planInstantFiller("get_shopify_order_status"));
+    const lookup = await orderLookupTool(orderNumber);
+    if (lookup.status === "found" && lookup.order) {
+      session.currentOrder = lookup.order;
+      session.phase = "order_disclosed";
+      session.awaitingInput = null;
+      session.lastOrchestratorIntent = "order_lookup";
+      updateActiveSession(session.callSid, { cachedIntent: "order" });
+      yield chunkEvent(planInstantConfirmation(lookup.order));
+      yield* streamOrderSummary(lookup.order);
+      emitResponseSent(session.callSid, "order_found", "Order found.");
+    } else {
+      session.phase = "awaiting_order_number";
+      session.awaitingInput = "order_number";
+      const errorPlan = planLookupError(lookup);
+      const speech = errorPlan.chunks.map((c) => c.text).join(" ") || buildClarifyingResponse();
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: lookup.status === "invalid_format" ? "clarification_question" : "order_not_found",
+      });
+      emitResponseSent(
+        session.callSid,
+        lookup.status === "invalid_format" ? "clarification_question" : "order_not_found",
+        uniqueSpeech,
+      );
+      yield* yieldSpeech(uniqueSpeech);
+    }
+    yield doneEvent(session.phase);
+    return true;
+  }
+
+  const intent = classifyOrchestratorIntent(text);
+  const orderLookupIntent =
+    intent === "greeting" ||
+    intent === "unknown" ||
+    intent === "order_status" ||
+    classifyBrainIntent(text) === "general_help";
+
+  if (!orderLookupIntent) {
+    return false;
+  }
+
+  const speech =
+    intent === "greeting" || classifyBrainIntent(text) === "general_help"
+      ? buildGreetingResponse(text)
+      : buildClarifyingResponse();
+
+  session.phase = "awaiting_order_number";
+  session.awaitingInput = "order_number";
+  session.lastOrchestratorIntent = "order_lookup";
+  session.greetedThisCall = true;
+  updateActiveSession(session.callSid, { cachedIntent: "order" });
+
+  const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+  syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+    responseType: "clarification_question",
+  });
+  emitResponseSent(session.callSid, "clarification_question", uniqueSpeech);
+  yield* yieldSpeech(uniqueSpeech);
+  yield doneEvent(session.phase);
+  return true;
 }
 
 async function* yieldTrackingPhaseSpeech(
@@ -629,6 +716,7 @@ async function* yieldTrackingPhaseSpeech(
 
   const dictationIntents = new Set([
     "dictate_tracking",
+    USER_NOTEPAD_READY,
     PHASE_DICTATION,
     "spatial_resume",
     "spatial_resume_interrupt",
@@ -674,6 +762,7 @@ async function* yieldSovereignSpeech(
 
   const dictationKinds = new Set([
     "dictate_tracking",
+    USER_NOTEPAD_READY,
     PHASE_DICTATION,
     "spatial_resume",
     "spatial_resume_interrupt",

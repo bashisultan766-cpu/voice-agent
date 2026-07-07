@@ -16,24 +16,22 @@ describe("conversationBrain", () => {
 
   it("exposes the canonical call-start greeting", () => {
     expect(BRAIN_GREETING).toMatch(/Welcome to SureShot Books/i);
-    expect(BRAIN_GREETING).toMatch(/virtual assistant/i);
-    expect(BRAIN_GREETING).toMatch(/How can I help you today/i);
-    expect(BRAIN_GREETING).not.toMatch(/order number|ISBN/i);
+    expect(BRAIN_GREETING).toMatch(/order/i);
+    expect(BRAIN_GREETING).toMatch(/order number/i);
     expect(BRAIN_GREETING).not.toMatch(/I am SureShot Bookstore/i);
   });
 
-  it('responds naturally to "hello" without demanding order number', async () => {
+  it('routes "hello" to order lookup on the first turn', async () => {
     const session = createCallSession("CA_BRAIN", "+1", "+2");
-    session.phase = "awaiting_order_number";
     const result = await handleBrainTurn(session, "hello");
-    expect(result.speech).toMatch(/help|Sureshot|hi/i);
-    expect(result.speech).not.toMatch(/provide your order|valid order number/i);
+    expect(result.speech).toMatch(/order number/i);
+    expect(session.awaitingInput).toBe("order_number");
   });
 
   it('asks for order number on "where is my order"', async () => {
     const session = createCallSession("CA_ORD", "+1", "+2");
     const result = await handleBrainTurn(session, "where is my order");
     expect(result.speech).toMatch(/order number/i);
-    expect(session.awaitingInput).toBeNull();
+    expect(session.awaitingInput).toBe("order_number");
   });
 });

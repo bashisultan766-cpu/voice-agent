@@ -2,7 +2,7 @@
  * Voice adapter — static boot-time provider selection (single process-wide engine).
  * Probes ElevenLabs once at startup; on auth/quota/timeout failure locks OpenAI for life.
  */
-import { getConfig, voiceProvider as lockedVoiceProvider } from "../config.js";
+import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 
 export type PreferredVoiceEngine = "ElevenLabs" | "openai-tts-1-hd";
@@ -86,7 +86,6 @@ export function isElevenLabsAuthError(status: number): boolean {
 }
 
 function shouldAttemptElevenLabsAtBoot(): boolean {
-  if (lockedVoiceProvider === "OpenAI") return false;
   const cfg = getConfig();
   const voiceId = getLockedElevenLabsVoiceId();
   return (
@@ -146,16 +145,6 @@ export async function initializeGlobalVoiceProvider(): Promise<GlobalVoiceProvid
   }
 
   initPromise = (async (): Promise<GlobalVoiceProvider> => {
-    if (lockedVoiceProvider === "OpenAI") {
-      globalVoiceProvider = "OpenAI";
-      isElevenLabsDisabled = true;
-      logger.info("voice_provider_lockdown_openai", {
-        reason: "emergency_stabilization",
-      });
-      logVoiceEngineSelection();
-      return globalVoiceProvider;
-    }
-
     if (!shouldAttemptElevenLabsAtBoot()) {
       globalVoiceProvider = "OpenAI";
       isElevenLabsDisabled = true;

@@ -1,5 +1,5 @@
 /**
- * Tracking dictation — chunked playback, lastSpokenIndex, and spatial resume.
+ * Tracking dictation — chunked playback, lastSpokenIndex, spatial resume, and notepad gate.
  */
 import type { SpeechChunk } from "../types/order.js";
 import type { ActiveSession, SpatialIndexEntry } from "../sovereign/activeSession.js";
@@ -14,6 +14,98 @@ import {
   extractSpatialAnchorDigits,
   isSpatialResumeQuery,
 } from "../sovereign/spatialDictation.js";
+
+export const USER_NOTEPAD_READY = "USER_NOTEPAD_READY";
+
+const NOTEPAD_READY_RE =
+  /\b(ready|i'?m\s+ready|yes|ok|okay|go\s+ahead|all\s+set|you\s+can\s+go|note\s+it\s+down)\b/i;
+
+export class NotReadyError extends Error {
+  readonly code = "NOTEPAD_NOT_READY" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "NotReadyError";
+  }
+}
+
+export function promptUserForNotepad(): string {
+  return "Please have your pen and notepad ready. Let me know when you are ready.";
+}
+
+export function isUserNotepadReadyIntent(callerText: string): boolean {
+  return NOTEPAD_READY_RE.test(callerText.trim());
+}
+
+export type DictateTrackingSuccess = {
+  ok: true;
+  intent: typeof USER_NOTEPAD_READY;
+  speech: string;
+};
+
+export type DictateTrackingBlocked = {
+  ok: false;
+  error: NotReadyError;
+};
+
+export type DictateTrackingResult = DictateTrackingSuccess | DictateTrackingBlocked;
+
+/**
+ * Hard notepad gate — tracking dictation only after USER_NOTEPAD_READY.
+ * Returns NotReadyError (with promptUserForNotepad speech) when caller has not confirmed readiness.
+ */
+export function dictateTracking(callSid: string): DictateTrackingResult {
+  const active = getOrCreateActiveSession(callSid);
+  const trackingForTts = active.lastSpokenPayload?.trackingForTts?.trim();
+
+  if (!trackingForTts) {
+    return {
+      ok: false,
+      error: new NotReadyError(
+        "I do not have a tracking number on file yet. Would you like me to look up your order?",
+      ),
+    };
+  }
+
+  if (!active.isNotepadReady) {
+    markTrackingAwaitingNotepad(callSid);
+    return {
+      ok: false,
+      error: new NotReadyError(promptUserForNotepad()),
+    };
+  }
+
+  updateActiveSession(callSid, {
+    currentState: "tracking_dictation",
+    awaitingClarification: null,
+    lastDictationIndex: -1,
+  });
+
+  return {
+    ok: true,
+    intent: USER_NOTEPAD_READY,
+    speech: trackingForTts,
+  };
+}
+
+export function confirmUserNotepadReady(callSid: string): void {
+  updateActiveSession(callSid, {
+    isNotepadReady: true,
+    awaitingClarification: null,
+    currentState: "tracking_dictation",
+    lastSpokenIndex: -1,
+  });
+}
+
+function markTrackingAwaitingNotepad(callSid: string): void {
+  updateActiveSession(callSid, {
+    currentState: "awaiting_notepad_ready",
+    awaitingClarification: "notepad_ready",
+    lastDictationIndex: -1,
+    lastSpokenIndex: -1,
+    isNotepadReady: false,
+  });
+}
 
 export const TRACKING_DICTATION_CHUNK_SIZE = 4;
 

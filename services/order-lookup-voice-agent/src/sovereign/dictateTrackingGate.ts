@@ -1,11 +1,14 @@
 /**
- * Notepad gate for tracking dictation — sole entry for dictate_tracking speech.
+ * Notepad gate for tracking dictation — delegates to dictationTool.dictateTracking.
  */
 import {
-  getOrCreateActiveSession,
-  updateActiveSession,
-} from "./activeSession.js";
-import { NOTEPAD_HANDSHAKE_PROMPT } from "../agents/conversationOrchestrator.js";
+  NotReadyError,
+  dictateTracking,
+  promptUserForNotepad,
+  USER_NOTEPAD_READY,
+} from "../agents/dictationTool.js";
+
+export { NotReadyError, promptUserForNotepad, USER_NOTEPAD_READY };
 
 export type DictateTrackingIntent = "ReadinessRequest" | "dictate_tracking" | "unavailable";
 
@@ -15,31 +18,23 @@ export interface DictateTrackingResolution {
 }
 
 export function resolveDictateTracking(callSid: string): DictateTrackingResolution {
-  const active = getOrCreateActiveSession(callSid);
-  const trackingForTts = active.lastSpokenPayload?.trackingForTts?.trim();
+  const result = dictateTracking(callSid);
 
-  if (!trackingForTts) {
-    return {
-      intent: "unavailable",
-      speech: "I do not have a tracking number on file yet. Would you like me to look up your order?",
-    };
-  }
-
-  if (!active.isNotepadReady) {
+  if (!result.ok) {
+    if (result.error.message.includes("do not have a tracking number")) {
+      return {
+        intent: "unavailable",
+        speech: result.error.message,
+      };
+    }
     return {
       intent: "ReadinessRequest",
-      speech: NOTEPAD_HANDSHAKE_PROMPT,
+      speech: result.error.message,
     };
   }
-
-  updateActiveSession(callSid, {
-    currentState: "tracking_dictation",
-    awaitingClarification: null,
-    lastDictationIndex: -1,
-  });
 
   return {
     intent: "dictate_tracking",
-    speech: trackingForTts,
+    speech: result.speech,
   };
 }
