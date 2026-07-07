@@ -15,6 +15,7 @@ import {
   extractSpatialAnchorDigits,
   isSpatialResumeQuery,
 } from "./spatialDictation.js";
+import { resolveDictateTracking } from "./dictateTrackingGate.js";
 
 export interface SovereignTurnResolution {
   handled: boolean;
@@ -42,6 +43,17 @@ function trackingPayloadReady(active: ActiveSession): boolean {
   return Boolean(active.lastSpokenPayload?.trackingForTts && active.spatialIndex.length > 0);
 }
 
+function readinessResolution(callSid: string): SovereignTurnResolution {
+  const gate = resolveDictateTracking(callSid);
+  return {
+    handled: true,
+    speech: gate.speech,
+    skipLlm: true,
+    skipTools: true,
+    intentKey: gate.intent,
+  };
+}
+
 export function resolveSovereignTurn(
   callerText: string,
   callSession: CallSession,
@@ -53,24 +65,17 @@ export function resolveSovereignTurn(
   if (active.currentState === "awaiting_notepad_ready" && trackingPayloadReady(active)) {
     if (NOTEPAD_READY_RE.test(text)) {
       updateActiveSession(callSession.callSid, {
-        currentState: "tracking_dictation",
+        isNotepadReady: true,
         awaitingClarification: null,
-        lastDictationIndex: -1,
       });
-      return {
-        handled: true,
-        speech: active.lastSpokenPayload!.trackingForTts!,
-        skipLlm: true,
-        skipTools: true,
-        intentKey: "tracking_dictation",
-      };
+      return readinessResolution(callSession.callSid);
     }
     return {
       handled: true,
       speech: NOTEPAD_HANDSHAKE_PROMPT,
       skipLlm: true,
       skipTools: true,
-      intentKey: "notepad_handshake",
+      intentKey: "ReadinessRequest",
     };
   }
 
@@ -111,26 +116,21 @@ export function resolveSovereignTurn(
       active.currentState === "tracking_dictation" ||
       active.currentState === "awaiting_notepad_ready"
     ) {
-      if (active.currentState !== "tracking_dictation") {
+      if (!active.isNotepadReady) {
         updateActiveSession(callSession.callSid, {
           currentState: "awaiting_notepad_ready",
           awaitingClarification: "notepad_ready",
+          isNotepadReady: false,
         });
         return {
           handled: true,
           speech: NOTEPAD_HANDSHAKE_PROMPT,
           skipLlm: true,
           skipTools: true,
-          intentKey: "notepad_handshake",
+          intentKey: "ReadinessRequest",
         };
       }
-      return {
-        handled: true,
-        speech: active.lastSpokenPayload.trackingForTts,
-        skipLlm: true,
-        skipTools: true,
-        intentKey: "tracking",
-      };
+      return readinessResolution(callSession.callSid);
     }
   }
 
@@ -140,24 +140,24 @@ export function resolveSovereignTurn(
     !FULL_SUMMARY_RE.test(text) &&
     /\b(repeat|say that again|what did you say)\b/i.test(text)
   ) {
-    const replay =
-      active.lastSpokenPayload.trackingForTts ?? active.lastSpokenPayload.speech;
     if (active.lastSpokenPayload.trackingForTts) {
       updateActiveSession(callSession.callSid, {
         currentState: "awaiting_notepad_ready",
         awaitingClarification: "notepad_ready",
+        isNotepadReady: false,
+        lastDictationIndex: -1,
       });
       return {
         handled: true,
         speech: NOTEPAD_HANDSHAKE_PROMPT,
         skipLlm: true,
         skipTools: true,
-        intentKey: "notepad_handshake",
+        intentKey: "ReadinessRequest",
       };
     }
     return {
       handled: true,
-      speech: replay,
+      speech: active.lastSpokenPayload.speech,
       skipLlm: true,
       skipTools: true,
       intentKey: active.cachedIntent,
@@ -176,5 +176,6 @@ export function markTrackingAwaitingNotepad(callSid: string): ActiveSession {
     currentState: "awaiting_notepad_ready",
     awaitingClarification: "notepad_ready",
     lastDictationIndex: -1,
+    isNotepadReady: false,
   });
 }

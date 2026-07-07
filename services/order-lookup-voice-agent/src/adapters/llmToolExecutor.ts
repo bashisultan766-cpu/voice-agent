@@ -45,12 +45,14 @@ import {
   formatTrackingNumberForTTS,
 } from "../utils/ttsFormatter.js";
 import { SURESHOT_GOODBYE_SPEECH } from "../utils/callerMemory.js";
+import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 
 export type LlmToolName =
   | "get_shopify_order_status"
   | "get_customer_history"
   | "search_shopify_book_by_isbn"
   | "search_shopify_book_by_title"
+  | "dictate_tracking"
   | "add_to_cart"
   | "remove_from_cart"
   | "get_cart_summary"
@@ -85,6 +87,12 @@ export interface SupportEscalationToolResult {
   message?: string;
 }
 
+export interface DictateTrackingToolResult {
+  intent: "ReadinessRequest" | "dictate_tracking" | "unavailable";
+  message?: string;
+  tracking_number_for_tts?: string;
+}
+
 export interface LlmToolExecutionRecord {
   tool: LlmToolName;
   args: Record<string, string>;
@@ -108,7 +116,8 @@ export interface LlmToolExecutionRecord {
     | BookAvailabilityResult
     | CartToolResult
     | CheckoutEmailToolResult
-    | SupportEscalationToolResult;
+    | SupportEscalationToolResult
+    | DictateTrackingToolResult;
   errorMessage?: string;
   elapsedMs: number;
 }
@@ -450,6 +459,43 @@ export async function executeLlmTool(
     }
   }
 
+  if (tool === "dictate_tracking") {
+    const gate = resolveDictateTracking(callSid);
+    if (gate.intent === "ReadinessRequest") {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        data: { intent: "ReadinessRequest", message: gate.speech },
+        errorMessage: gate.speech,
+        elapsedMs: Date.now() - started,
+      };
+    }
+    if (gate.intent === "unavailable") {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        data: { intent: "unavailable", message: gate.speech },
+        errorMessage: gate.speech,
+        elapsedMs: Date.now() - started,
+      };
+    }
+    return {
+      tool,
+      args,
+      ok: true,
+      status: "ok",
+      data: {
+        intent: "dictate_tracking",
+        tracking_number_for_tts: gate.speech,
+      },
+      elapsedMs: Date.now() - started,
+    };
+  }
+
   if (tool === "get_shopify_order_status") {
     const rawInput = args.orderNumber ?? "";
     const orderNumber = normalizeOrderNumber(rawInput);
@@ -612,6 +658,17 @@ export async function executeLlmTool(
 /** Compact JSON tool result for the LLM synthesis pass. */
 export function toolResultForLlm(record: LlmToolExecutionRecord): string {
   if (record.status === "blocked") {
+    if (record.tool === "dictate_tracking") {
+      return JSON.stringify({
+        intent:
+          record.data && typeof record.data === "object" && "intent" in record.data
+            ? record.data.intent
+            : "ReadinessRequest",
+        message: record.errorMessage,
+        instructions:
+          "Caller has not confirmed notepad readiness. Speak the readiness request exactly — do NOT dictate the tracking number.",
+      });
+    }
     return JSON.stringify({
       error: "missing_or_invalid_slot",
       message: record.errorMessage,
@@ -625,6 +682,18 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
 
   if (record.data && "status" in record.data && isMaintenanceToolStatus(record.data.status)) {
     return JSON.stringify(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
+  }
+
+  if (record.tool === "dictate_tracking") {
+    return JSON.stringify({
+      intent: "dictate_tracking",
+      tracking_number_for_tts:
+        record.data && "tracking_number_for_tts" in record.data
+          ? record.data.tracking_number_for_tts
+          : null,
+      instructions:
+        "Speak tracking_number_for_tts verbatim with slow phonetic pacing. Do not paraphrase.",
+    });
   }
 
   if (record.tool === "get_shopify_order_status" && record.status === "not_found") {

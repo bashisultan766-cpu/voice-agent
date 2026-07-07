@@ -92,24 +92,27 @@ function persistOrderContext(
 
   if (!orderExec) return;
 
-  if (!orderExec.ok || orderExec.data?.status !== "found") {
+  const orderData =
+    orderExec.tool === "get_shopify_order_status" ? orderExec.data : undefined;
+
+  if (!orderExec.ok || !orderData || !("status" in orderData) || orderData.status !== "found") {
     clearActiveOrderContext(session);
     session.isVerifiedCaller = false;
     return;
   }
 
-  if (orderExec.data && "orderNumber" in orderExec.data) {
-    applyCallerVerificationFromOrder(session, orderExec.data);
+  if ("orderNumber" in orderData) {
+    applyCallerVerificationFromOrder(session, orderData);
   }
 
-  const payload = buildActiveOrderContextFromResult(orderExec.data, session);
+  const payload = buildActiveOrderContextFromResult(orderData, session);
   if (payload) {
     saveActiveOrderContext(session, payload);
   }
 
-  if (!orderExec.data || !("orderNumber" in orderExec.data)) return;
+  if (!("orderNumber" in orderData)) return;
 
-  const structured = orderStatusToStructuredOrder(orderExec.data);
+  const structured = orderStatusToStructuredOrder(orderData);
   if (structured) {
     session.currentOrder = structured;
   }
@@ -204,7 +207,9 @@ export async function* runLlmOrchestratorTurn(
     });
   }
 
-  const preserveFullSpeech = result.responseType === "order_found";
+  const preserveFullSpeech =
+    result.responseType === "order_found" ||
+    result.toolExecutions.some((exec) => exec.tool === "dictate_tracking" && exec.ok);
   const speech = result.speech.trim();
   const finalizeToolExecution = result.toolExecutions.some((t) => t.ok);
 

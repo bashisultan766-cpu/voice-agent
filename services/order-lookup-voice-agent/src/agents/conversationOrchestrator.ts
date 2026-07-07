@@ -85,6 +85,7 @@ import { classifyFollowUpIntent, preAnalyzeOrderIntent, ensureUniqueSpokenRespon
 import {
   clearActiveSession,
   createActiveSession,
+  getOrCreateActiveSession,
   updateActiveSession,
 } from "../sovereign/activeSession.js";
 import {
@@ -238,18 +239,26 @@ export function endCallSession(callSid: string, session?: CallSession): void {
  * Sole runtime entry point for user turns.
  * streamHandler → process → sovereignRouter → llmOrchestrator → response delivery
  */
+export const USER_INTERRUPTED_DICTATION_SIGNAL = "User interrupted during dictation.";
+
+/** @deprecated Use USER_INTERRUPTED_DICTATION_SIGNAL flow via process(). */
 export const INTERRUPT_LISTENING_ACK =
   "Yes, I am listening. What did you miss?";
 
-/** Zero-latency barge-in acknowledgment — spoken immediately after TTS abort. */
+export function buildDictationInterruptSpeech(lastDictationIndex: number): string {
+  if (lastDictationIndex < 0) {
+    return "I am stopping. Understood. Tell me what you need now.";
+  }
+  return `I am stopping. Understood, you have noted the ID up to ${lastDictationIndex}. Tell me what you need now.`;
+}
+
+/** @deprecated Interrupt turns route through process() with USER_INTERRUPTED_DICTATION_SIGNAL. */
 export async function* processInterruptAcknowledgment(
   session: CallSession,
 ): AsyncGenerator<AgentStreamEvent> {
-  const uniqueSpeech = await ensureUniqueSpokenResponse(
-    session.callSid,
-    INTERRUPT_LISTENING_ACK,
-    "",
-  );
+  const active = getOrCreateActiveSession(session.callSid);
+  const speech = buildDictationInterruptSpeech(active.lastDictationIndex);
+  const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, "");
   syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
     responseType: "general_help",
   });
@@ -425,19 +434,22 @@ async function* runOrchestratorTurnCore(
   const text = (callerText ?? "").trim();
   ingestUserTurn(session.callSid, text);
 
-  const sovereign = resolveSovereignTurn(text, session);
-  if (sovereign.handled && sovereign.speech) {
-    const uniqueSpeech = await ensureUniqueSpokenResponse(
-      session.callSid,
-      sovereign.speech,
-      text,
-    );
+  if (text === USER_INTERRUPTED_DICTATION_SIGNAL) {
+    const active = getOrCreateActiveSession(session.callSid);
+    const speech = buildDictationInterruptSpeech(active.lastDictationIndex);
+    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
     syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
       responseType: "general_help",
     });
-    session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
-    yield* yieldSpeech(uniqueSpeech, "dictation");
+    updateActiveSession(session.callSid, { currentState: "awaiting_clarification" });
+    yield* yieldSpeech(uniqueSpeech);
     yield doneEvent(session.phase);
+    return;
+  }
+
+  const sovereign = resolveSovereignTurn(text, session);
+  if (sovereign.handled) {
+    yield* yieldSovereignSpeech(session, text, sovereign);
     return;
   }
 
@@ -449,23 +461,43 @@ async function* runOrchestratorTurnCore(
   yield* runLlmOrchestratorTurn(session, text, emitResponseSent);
 }
 
+async function* yieldSovereignSpeech(
+  session: CallSession,
+  callerText: string,
+  sovereign: import("../sovereign/sovereignRouter.js").SovereignTurnResolution,
+): AsyncGenerator<AgentStreamEvent> {
+  if (!sovereign.speech) {
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  const uniqueSpeech = await ensureUniqueSpokenResponse(
+    session.callSid,
+    sovereign.speech,
+    callerText,
+  );
+  syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+    responseType: "general_help",
+  });
+  session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+
+  const dictationKinds = new Set([
+    "dictate_tracking",
+    "spatial_resume",
+    "spatial_resume_interrupt",
+  ]);
+  const chunkKind = dictationKinds.has(sovereign.intentKey ?? "") ? "dictation" : "summary";
+  yield* yieldSpeech(uniqueSpeech, chunkKind);
+  yield doneEvent(session.phase);
+}
+
 async function* handleFollowUpPhase(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
   const sovereign = resolveSovereignTurn(callerText, session);
-  if (sovereign.handled && sovereign.speech) {
-    const uniqueSpeech = await ensureUniqueSpokenResponse(
-      session.callSid,
-      sovereign.speech,
-      callerText,
-    );
-    session.phase = "follow_up";
-    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
-      responseType: "general_help",
-    });
-    yield* yieldSpeech(uniqueSpeech, "dictation");
-    yield doneEvent(session.phase);
+  if (sovereign.handled) {
+    yield* yieldSovereignSpeech(session, callerText, sovereign);
     return;
   }
 

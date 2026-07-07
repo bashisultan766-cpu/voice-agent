@@ -47,6 +47,7 @@ import {
   getOrCreateActiveSession,
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
+import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -124,6 +125,19 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
           },
         },
         required: ["title"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "dictate_tracking",
+      description:
+        "Read the tracking number aloud with slow phonetic pacing. ONLY call after the caller confirms pen and notepad are ready (isNotepadReady). If not ready, the tool returns ReadinessRequest.",
+      parameters: {
+        type: "object",
+        properties: {},
         additionalProperties: false,
       },
     },
@@ -310,6 +324,7 @@ function isToolName(name: string): name is LlmToolName {
     name === "get_customer_history" ||
     name === "search_shopify_book_by_isbn" ||
     name === "search_shopify_book_by_title" ||
+    name === "dictate_tracking" ||
     name === "add_to_cart" ||
     name === "remove_from_cart" ||
     name === "get_cart_summary" ||
@@ -364,9 +379,14 @@ function extractRecordMeta(
   executions: LlmToolExecutionRecord[],
 ): Pick<LlmAgentTurnResult, "recordOrderNumber" | "recordProduct"> {
   const last = executions[executions.length - 1];
-  if (!last?.data || last.data.status !== "found") return {};
+  if (!last?.data) return {};
 
-  if (last.tool === "get_shopify_order_status" && "orderNumber" in last.data) {
+  if (
+    last.tool === "get_shopify_order_status" &&
+    "status" in last.data &&
+    last.data.status === "found" &&
+    "orderNumber" in last.data
+  ) {
     return { recordOrderNumber: last.data.orderNumber };
   }
 
@@ -453,6 +473,7 @@ function resolveToolsForTurn(input: LlmAgentTurnInput): OpenAI.Chat.ChatCompleti
 
 function mapToolToIntentKey(tool: LlmToolName): string | null {
   if (tool === "get_shopify_order_status") return "order";
+  if (tool === "dictate_tracking") return "tracking";
   if (tool === "search_shopify_book_by_title" || tool === "search_shopify_book_by_isbn") {
     return "catalog";
   }
@@ -505,6 +526,21 @@ function groundedSpeechFromOrderToolRecord(record: LlmToolExecutionRecord): stri
     return groundedOrderSpeech(record.data);
   }
   return ORDER_NOT_FOUND_STRICT_SPOKEN;
+}
+
+function resultFromDictateTrackingExecution(
+  record: LlmToolExecutionRecord,
+  toolExecutions: LlmToolExecutionRecord[],
+): LlmAgentTurnResult {
+  const speech =
+    record.ok && record.data && "tracking_number_for_tts" in record.data
+      ? String(record.data.tracking_number_for_tts ?? "")
+      : (record.errorMessage ?? NOTEPAD_HANDSHAKE_PROMPT);
+  return {
+    speech,
+    toolExecutions,
+    responseType: record.ok ? "order_found" : "general_help",
+  };
 }
 
 function resultFromOrderToolExecution(
@@ -782,6 +818,17 @@ export async function* runLlmAgentTurnEvents(
           yield {
             type: "result",
             result: resultFromOrderToolExecution(lastOrderExec, toolExecutions),
+          };
+          return;
+        }
+
+        const dictateExec = [...toolExecutions]
+          .reverse()
+          .find((exec) => exec.tool === "dictate_tracking");
+        if (dictateExec) {
+          yield {
+            type: "result",
+            result: resultFromDictateTrackingExecution(dictateExec, toolExecutions),
           };
           return;
         }

@@ -41,6 +41,8 @@ export interface ActiveSession {
   preferredVoice: "ElevenLabs" | "openai-tts-1-hd";
   /** Last spatial index spoken before an interrupt — resume from index + 1. */
   lastDictationIndex: number;
+  /** True only after caller confirms pen and notepad are ready. */
+  isNotepadReady: boolean;
 }
 
 const store = new Map<string, ActiveSession>();
@@ -55,6 +57,7 @@ export function createActiveSession(callSid: string): ActiveSession {
     cachedIntent: null,
     preferredVoice: getPreferredVoiceForCall(callSid),
     lastDictationIndex: -1,
+    isNotepadReady: false,
   };
   store.set(callSid, session);
   return session;
@@ -121,6 +124,7 @@ export function recordTrackingPayload(
     spatialIndex: buildSpatialIndexFromTracking(trackingRaw),
     cachedIntent: "tracking",
     lastDictationIndex: -1,
+    isNotepadReady: false,
     lastSpokenPayload: {
       kind: "tracking",
       speech: speech ?? trackingForTts,
@@ -215,6 +219,7 @@ export function buildActiveSessionSystemMessage(active: ActiveSession): string {
     `currentState: ${active.currentState}`,
     `cachedIntent: ${active.cachedIntent ?? "none"}`,
     `awaitingClarification: ${active.awaitingClarification ?? "none"}`,
+    `isNotepadReady: ${active.isNotepadReady}`,
   ];
 
   if (active.spatialIndex.length > 0) {

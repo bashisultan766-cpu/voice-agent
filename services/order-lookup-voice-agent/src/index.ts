@@ -41,21 +41,6 @@ export function createApp() {
     }
   });
 
-  app.post(`${VOICE_PATH_PREFIX}/inbound`, async (req, res) => {
-    logger.info("legacy_inbound_route", { redirect: CONVERSATION_BRAIN_INBOUND });
-    try {
-      await handleInboundCall(req, res);
-    } catch (err) {      logger.error("inbound_call_failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      res
-        .type("application/xml")
-        .send(
-          '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Matthew">We are experiencing technical difficulties. Please try again later.</Say></Response>',
-        );
-    }
-  });
-
   app.post(`${VOICE_PATH_PREFIX}/relay-action`, async (req, res) => {
     try {
       await handleRelayAction(req, res);
@@ -102,7 +87,6 @@ export function startServer() {
       service: "order-lookup-voice-agent",
       wsUrl: wsUrl(),
       inbound: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${CONVERSATION_BRAIN_INBOUND}`,
-      legacyInbound: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${VOICE_PATH_PREFIX}/inbound`,
     });
   });
 

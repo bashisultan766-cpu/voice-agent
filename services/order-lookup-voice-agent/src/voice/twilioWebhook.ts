@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { getConfig, VOICE_PATH_PREFIX, wsUrl } from "../config.js";
-import { BRAIN_GREETING } from "../agents/conversationBrain.js";
+import { BRAIN_GREETING } from "../agents/conversationOrchestrator.js";
 import { getCallerMemory, CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
 import { logger } from "../utils/logger.js";import { buildConversationRelayVoiceAttrs } from "../services/voiceService.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
