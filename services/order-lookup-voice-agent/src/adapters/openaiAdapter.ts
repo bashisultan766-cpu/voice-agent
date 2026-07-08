@@ -10,6 +10,7 @@ import {
   type LlmToolExecutionRecord,
   type LlmToolName,
 } from "./llmToolExecutor.js";
+import type { OrderStatusResult } from "./shopifyStorefrontAdapter.js";
 import { ServiceRegistry } from "../sovereign/serviceRegistry.js";
 import {
   isOrderLookupInsistenceUtterance,
@@ -719,8 +720,12 @@ function groundedSpeechFromOrderToolRecord(
   if (record.status === "blocked") {
     return record.errorMessage ?? "What's your order number?";
   }
-  if (record.data && "status" in record.data) {
-    return speechForOrderLookupResult(record.data, options);
+  if (
+    record.tool === "get_shopify_order_status" &&
+    record.data &&
+    "status" in record.data
+  ) {
+    return speechForOrderLookupResult(record.data as OrderStatusResult, options);
   }
   if (
     record.status === "system_maintenance" ||
