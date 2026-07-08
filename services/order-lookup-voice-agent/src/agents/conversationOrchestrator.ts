@@ -156,7 +156,7 @@ import {
   type CanonicalResolution,
   type ProductSearchContext,
 } from "./productRetrievalPolicy.js";
-import { digitizeSpeechForIsbn, extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
+import { digitizeSpeechForIsbn, extractIsbnFromSpeech, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 import { clearDialogueState } from "./dialogueManager.js";
 import { runLlmOrchestratorTurn } from "./llmOrchestrator.js";
 import { syncDeterministicAssistantSpeech } from "../adapters/openaiAdapter.js";
@@ -201,7 +201,6 @@ import {
 } from "./sessionManager.js";
 import { applyCallerVerificationFromOrder } from "./callerVerification.js";
 import { lookupOrderStatus } from "../services/shopifyService.js";
-import { extractIsbnFromSpeech, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "./trackingIntent.js";
 import {
   resolveCallerIntent,
@@ -861,7 +860,7 @@ async function* runOrchestratorTurnCore(
     ) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const refusal = buildUnverifiedRestrictedFieldRefusal(
-        String(session.currentOrderData.customer_name ?? ""),
+        String(session.currentOrderData?.customer_name ?? ""),
       );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, text);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
@@ -1293,7 +1292,7 @@ async function* handleFollowUpPhase(
     ) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const refusal = buildUnverifiedRestrictedFieldRefusal(
-        String(session.currentOrderData.customer_name ?? ""),
+        String(session.currentOrderData?.customer_name ?? ""),
       );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, callerText);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
