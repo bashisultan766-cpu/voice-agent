@@ -71,6 +71,13 @@ describe("extractOrderNumberFromStt", () => {
   it("extracts inline digit run", () => {
     expect(extractOrderNumberFromStt("status for 98765")).toBe("#98765");
   });
+
+  it("does not treat conversational for as digit 4 in spoken order numbers", () => {
+    expect(extractOrderNumberFromStt("order for two one six nine eight")).toBe("#21698");
+    expect(extractOrderNumberFromStt("order for two one six nine eight", { awaitingSlot: true })).toBe(
+      "#21698",
+    );
+  });
 });
 
 describe("extractTitleFromStt", () => {

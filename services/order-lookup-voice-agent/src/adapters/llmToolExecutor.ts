@@ -574,11 +574,9 @@ export async function executeLlmTool(
     });
 
     try {
-      const bypassCache =
-        session?.awaitingInput === "order_number" ||
-        session?.phase === "awaiting_order_number" ||
-        args.bypassCache === "true";
-      const data = await lookupOrderStatus(orderNumber, callSid, { bypassCache });
+      const data = await lookupOrderStatus(orderNumber, callSid, {
+        bypassCache: true,
+      });
       if (session && data.status === "found") {
         applyCallerVerificationFromOrder(session, data);
       }

@@ -14,7 +14,6 @@ import type { OrderStatusResult } from "./shopifyStorefrontAdapter.js";
 import { ServiceRegistry } from "../sovereign/serviceRegistry.js";
 import {
   isOrderLookupInsistenceUtterance,
-  shouldBypassOrderLookupCache,
   speechForOrderLookupResult,
 } from "../agents/orderLookupWorkflow.js";
 import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
@@ -600,8 +599,8 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
   const allowLoose = awaitingSlot || bareOrder;
 
   const orderNumber =
-    extractOrderNumberFromStt(input.userMessage, { awaitingSlot: allowLoose }) ??
-    (allowLoose ? extractOrderNumberFromSpeech(input.userMessage) : null);
+    (allowLoose ? extractOrderNumberFromSpeech(input.userMessage) : null) ??
+    extractOrderNumberFromStt(input.userMessage, { awaitingSlot: allowLoose });
 
   if (!orderNumber) return null;
 
@@ -1011,9 +1010,7 @@ export async function* runLlmAgentTurnEvents(
       "get_shopify_order_status",
       {
         orderNumber: forcedOrderNumber,
-        ...(insistence || shouldBypassOrderLookupCache(input.userMessage, input.session?.phase)
-          ? { bypassCache: "true" }
-          : {}),
+        bypassCache: "true",
       },
       input.callSid,
       input.session,

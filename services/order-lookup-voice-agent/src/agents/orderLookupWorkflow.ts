@@ -52,6 +52,12 @@ export function speechForOrderLookupResult(
   return groundedOrderSpeech(result);
 }
 
+export function isRetriableOrderLookupMiss(
+  status: OrderStatusResult["status"] | string | undefined,
+): boolean {
+  return status === "not_found";
+}
+
 export function shouldBypassOrderLookupCache(
   userMessage: string,
   phase?: string,

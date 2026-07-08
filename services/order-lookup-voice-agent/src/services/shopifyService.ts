@@ -5,6 +5,7 @@ import {
 import {
   isStableOrderLookupStatus,
   isTransientOrderLookupStatus,
+  isRetriableOrderLookupMiss,
 } from "../agents/orderLookupWorkflow.js";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
@@ -167,6 +168,19 @@ export async function lookupOrderStatus(
         statusCacheSet(cacheKey, data);
         cacheSet(`order:${orderNumber}`, mapLookupResult(data));
         return data;
+      }
+
+      if (
+        isRetriableOrderLookupMiss(data.status) &&
+        attempt < maxRetries
+      ) {
+        clearOrderStatusCache(orderNumber);
+        await delay(300 * (attempt + 1));
+        logger.info("shopify_status_lookup_not_found_retry", {
+          orderNumber,
+          attempt: attempt + 1,
+        });
+        continue;
       }
 
       if (!isTransientOrderLookupStatus(data.status) || attempt >= maxRetries) {

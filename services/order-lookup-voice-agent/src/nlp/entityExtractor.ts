@@ -38,6 +38,34 @@ export interface EntityExtractionResult {
   normalizedValue?: string;
 }
 
+/** Drop conversational filler before homophone digit mapping (e.g. "for" → 4). */
+const SPOKEN_NUMERIC_SKIP = new Set([
+  "an",
+  "and",
+  "at",
+  "for",
+  "fore",
+  "im",
+  "is",
+  "it",
+  "its",
+  "it's",
+  "me",
+  "my",
+  "number",
+  "of",
+  "order",
+  "please",
+  "the",
+  "this",
+  "that",
+  "what",
+  "was",
+  "would",
+  "you",
+  "your",
+]);
+
 /** Spoken number words → digits (phone STT). */
 const SPOKEN_DIGIT_WORDS: Record<string, string> = {
   zero: "0",
@@ -134,6 +162,9 @@ export function normalizeSpokenNumericSequence(text: string): string {
 
   let out = "";
   for (const token of tokens) {
+    if (SPOKEN_NUMERIC_SKIP.has(token)) {
+      continue;
+    }
     if (/^\d+$/.test(token)) {
       out += token;
       continue;
@@ -242,9 +273,19 @@ export function extractOrderNumberFromStt(
       const candidate = normalizeOrderNumber(`#${inline[1]}`);
       if (isValidOrderNumberFormat(candidate)) return candidate;
     }
+
+    const fromNormalizer = normalizeOrderNumber(text);
+    if (fromNormalizer && isValidOrderNumberFormat(fromNormalizer)) {
+      return fromNormalizer;
+    }
   }
 
   if (allowLoose) {
+    const fromNormalizer = normalizeOrderNumber(text);
+    if (fromNormalizer && isValidOrderNumberFormat(fromNormalizer)) {
+      return fromNormalizer;
+    }
+
     const spoken = normalizeSpokenNumericSequence(text);
     if (spoken.length >= 4 && spoken.length <= 10) {
       const candidate = normalizeOrderNumber(`#${spoken}`);
