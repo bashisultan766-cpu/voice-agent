@@ -575,10 +575,18 @@ export async function executeLlmTool(
 
     try {
       const bypassCache =
-        session?.awaitingInput === "order_number" || session?.phase === "awaiting_order_number";
+        session?.awaitingInput === "order_number" ||
+        session?.phase === "awaiting_order_number" ||
+        args.bypassCache === "true";
       const data = await lookupOrderStatus(orderNumber, callSid, { bypassCache });
       if (session && data.status === "found") {
         applyCallerVerificationFromOrder(session, data);
+      }
+      // After a miss, keep the order-number slot so the next turn bypasses cache
+      // and retries live instead of replaying a stale not_found.
+      if (session && data.status === "not_found") {
+        session.phase = "awaiting_order_number";
+        session.awaitingInput = "order_number";
       }
       return {
         tool,

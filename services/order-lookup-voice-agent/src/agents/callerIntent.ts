@@ -12,6 +12,7 @@ import {
 } from "./trackingIntent.js";
 import { isUserNotepadReadyIntent } from "./dictationTool.js";
 import { isRefundNotificationEmailQuestion, isOrderFieldQuestion } from "./orderFollowUpSpeech.js";
+import { extractTitleFromStt } from "../nlp/entityExtractor.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -37,7 +38,7 @@ const ORDER_LOOKUP_RE =
   /\b(order\s+number|lookup\s+(?:my\s+)?order|find\s+(?:my\s+)?order|track\s+my\s+order|check\s+(?:an?\s+)?order)\b/i;
 
 const CATALOG_RE =
-  /\b(book|books|isbn|magazine|good\s+books?|looking\s+for\s+(?:a\s+)?(?:book|product)|buy\s+(?:a\s+)?(?:book|product|books)|purchase\s+(?:a\s+)?(?:book|product)|how\s+(?:can|do)\s+i\s+buy|want\s+to\s+buy|i\s+want\s+(?:a\s+)?product|add\s+to\s+cart|recommend\s+(?:a\s+)?book)\b/i;
+  /\b(book|books|isbn|magazine|good\s+books?|looking\s+for\s+(?:a\s+)?(?:book|product)|buy\s+(?:a\s+)?(?:book|product|books)|purchase\s+(?:a\s+)?(?:book|product)|how\s+(?:can|do)\s+i\s+buy|want\s+to\s+buy|i\s+want\s+(?:a\s+)?product|add\s+to\s+cart|recommend\s+(?:a\s+)?book|search\s+for\s+(?:a\s+)?book|book\s+(?:called|titled|named)|title\s+is|find\s+(?:me\s+)?(?:a\s+)?book)\b/i;
 
 const CART_RE = /\b(cart|checkout|invoice|pay\s+for|payment\s+link)\b/i;
 
@@ -132,6 +133,22 @@ export function resolveCallerIntent(
 
   if (isSupportEscalationRequest(text)) return "support_escalation";
 
+  // Catalog/buy pivots beat order-field matching ("book title" on a buy turn).
+  if (CART_RE.test(text)) return "cart";
+  if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) {
+    return "catalog";
+  }
+  // Named-title searches only — never treat "customer name" / multi-word questions as titles.
+  const spokenTitle = extractTitleFromStt(text);
+  if (
+    spokenTitle &&
+    /\b(book|books|isbn|title|looking\s+for|search|buy|purchase|find\s+(?:me\s+)?(?:a\s+)?book)\b/i.test(
+      text,
+    )
+  ) {
+    return "catalog";
+  }
+
   if (isOrderFieldQuestion(text) && hasActiveOrderContext(session)) {
     return "order_field_query";
   }
@@ -170,15 +187,16 @@ export function resolveCallerIntent(
     return "repeat_order";
   }
 
-  if (CART_RE.test(text)) return "cart";
-
-  if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) return "catalog";
-
   if (isExplicitTrackingDictationRequest(text)) {
     return "tracking_dictation";
   }
 
-  if (!hasActiveOrderContext(session) && /\border\b/i.test(text)) {
+  // "I want to order a book" is catalog, not order lookup.
+  if (
+    !hasActiveOrderContext(session) &&
+    /\border\b/i.test(text) &&
+    !/\b(book|books|isbn|title|product|magazine)\b/i.test(text)
+  ) {
     return "order_lookup";
   }
 

@@ -68,7 +68,9 @@ import { isTrackingDictationText } from "../utils/ttsFormatter.js";
 import {
   isIntentSwitchAwayFromTracking,
   releaseTrackingFlowForIntentSwitch,
+  resolveCallerIntent,
 } from "../agents/callerIntent.js";
+import { extractIsbnFromSpeech, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -404,17 +406,22 @@ function inferResponseType(
 function extractRecordMeta(
   executions: LlmToolExecutionRecord[],
 ): Pick<LlmAgentTurnResult, "recordOrderNumber" | "recordProduct"> {
+  const lastOrder = [...executions]
+    .reverse()
+    .find((exec) => exec.tool === "get_shopify_order_status");
+  if (lastOrder?.data && "status" in lastOrder.data) {
+    const attempted =
+      ("orderNumber" in lastOrder.data && typeof lastOrder.data.orderNumber === "string"
+        ? lastOrder.data.orderNumber
+        : null) ??
+      lastOrder.args.orderNumber;
+    if (attempted) {
+      return { recordOrderNumber: attempted };
+    }
+  }
+
   const last = executions[executions.length - 1];
   if (!last?.data) return {};
-
-  if (
-    last.tool === "get_shopify_order_status" &&
-    "status" in last.data &&
-    last.data.status === "found" &&
-    "orderNumber" in last.data
-  ) {
-    return { recordOrderNumber: last.data.orderNumber };
-  }
 
   if ("bookName" in last.data && last.data.bookName) {
     return {
@@ -447,9 +454,13 @@ function buildOpenAiMessages(
       redactTrackingFromOrderContext(input.activeOrderContext, active.isNotepadReady),
       verified,
     );
+    const catalogPivot = isCatalogBuyPivotUtterance(
+      input.userMessage,
+      input.session ?? undefined,
+    );
     systemMessages.push({
       role: "system",
-      content: buildActiveOrderContextSystemMessage(orderContext),
+      content: buildActiveOrderContextSystemMessage(orderContext, { catalogPivot }),
     });
   }
 
@@ -556,7 +567,21 @@ function isBareOrderNumberUtterance(text: string): boolean {
   return digits.length >= 4 && digits.length <= 10 && !/\bisbn\b/i.test(trimmed);
 }
 
+function isCatalogBuyPivotUtterance(text: string, session?: CallSession): boolean {
+  const intent = resolveCallerIntent(text, session);
+  if (intent === "catalog" || intent === "cart") return true;
+  if (extractIsbnFromSpeech(text)) return true;
+  return /\b(buy|purchase|isbn|looking\s+for\s+(?:a\s+)?book|add\s+to\s+cart|search\s+for\s+(?:a\s+)?book|book\s+(?:called|titled|named)|title\s+is|find\s+(?:me\s+)?(?:a\s+)?book)\b/i.test(
+    text,
+  );
+}
+
 function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | null {
+  // Intent-first: never hijack a buy/catalog turn into order lookup speech.
+  if (isCatalogBuyPivotUtterance(input.userMessage, input.session ?? undefined)) {
+    return null;
+  }
+
   const insistence = isOrderLookupInsistenceUtterance(input.userMessage);
 
   if (insistence) {
@@ -580,6 +605,15 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
 
   if (!orderNumber) return null;
 
+  // ISBN-10 (and 10-digit catalog ids) must not be treated as order numbers.
+  const digitsOnly = orderNumber.replace(/\D/g, "");
+  if (
+    (digitsOnly.length === 10 || digitsOnly.length === 13) &&
+    (/\bisbn\b/i.test(input.userMessage) || isValidIsbnFormat(digitsOnly))
+  ) {
+    return null;
+  }
+
   const agentState = getAgentState(input.callSid);
   const orderAlreadyFound =
     !insistence &&
@@ -597,7 +631,10 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
   const lower = input.userMessage.toLowerCase();
   const hasOrderIntent =
     bareOrder ||
-    /\b(order|track|status|number|lookup)\b/i.test(lower);
+    /\b(order\s+number|track\s+(?:my\s+)?order|order\s+status|lookup\s+(?:my\s+)?order|check\s+(?:my\s+)?order)\b/i.test(
+      lower,
+    ) ||
+    (/\border\b/i.test(lower) && /\b(number|status|track|lookup|check|find)\b/i.test(lower));
 
   return hasOrderIntent ? orderNumber : null;
 }
@@ -965,20 +1002,19 @@ export async function* runLlmAgentTurnEvents(
   if (forcedOrderNumber) {
     const insistence = isOrderLookupInsistenceUtterance(input.userMessage);
     if (input.session) {
-      if (
-        insistence ||
-        shouldBypassOrderLookupCache(input.userMessage, input.session.phase)
-      ) {
-        input.session.phase = "awaiting_order_number";
-        input.session.awaitingInput = "order_number";
-      } else {
-        input.session.awaitingInput = null;
-      }
+      // Always keep miss/retry turns in the order-number slot so bypassCache works.
+      input.session.phase = "awaiting_order_number";
+      input.session.awaitingInput = "order_number";
     }
     yield { type: "tool_pending", tools: ["get_shopify_order_status"] };
     const record = await ServiceRegistry.executeTool(
       "get_shopify_order_status",
-      { orderNumber: forcedOrderNumber },
+      {
+        orderNumber: forcedOrderNumber,
+        ...(insistence || shouldBypassOrderLookupCache(input.userMessage, input.session?.phase)
+          ? { bypassCache: "true" }
+          : {}),
+      },
       input.callSid,
       input.session,
     );
@@ -1222,10 +1258,18 @@ export async function* runLlmAgentTurnEvents(
           });
         }
 
+        const lastCatalogExec = [...toolExecutions].reverse().find(
+          (exec) =>
+            exec.tool === "search_shopify_book_by_title" ||
+            exec.tool === "search_shopify_book_by_isbn" ||
+            exec.tool === "add_to_cart" ||
+            exec.tool === "send_checkout_email",
+        );
         const lastOrderExec = [...toolExecutions]
           .reverse()
           .find((exec) => exec.tool === "get_shopify_order_status");
-        if (lastOrderExec) {
+        // Catalog/buy tools win when the caller pivoted away from order status.
+        if (lastOrderExec && !lastCatalogExec) {
           yield {
             type: "result",
             result: resultFromOrderToolExecution(lastOrderExec, toolExecutions),

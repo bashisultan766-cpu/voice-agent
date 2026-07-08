@@ -39,6 +39,14 @@ describe("shopifyService", () => {
     expect(getOrderStatus.mock.calls.length).toBeGreaterThan(1);
   });
 
+  it("does not cache not_found — second lookup hits Shopify again", async () => {
+    vi.mocked(getOrderStatus).mockResolvedValue({ status: "not_found" });
+
+    await lookupOrder("21698");
+    await lookupOrder("21698");
+    expect(vi.mocked(getOrderStatus).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("does not cache transient order lookup failures", async () => {
     vi.mocked(getOrderStatus).mockResolvedValue({ status: "api_error", message: "down" });
 

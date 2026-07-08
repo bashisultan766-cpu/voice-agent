@@ -950,6 +950,18 @@ async function* handleAwaitingOrderNumberPhase(
     return false;
   }
 
+  const pivotIntent = resolveCallerIntent(text, session);
+  if (
+    pivotIntent === "catalog" ||
+    pivotIntent === "cart" ||
+    pivotIntent === "support_escalation"
+  ) {
+    // Caller left the order-number slot — buy / cart / support takes over.
+    session.phase = "follow_up";
+    session.awaitingInput = null;
+    return false;
+  }
+
   const orderNumber =
     extractOrderNumberFromSpeech(text) ??
     extractOrderNumberFromStt(text, { awaitingSlot: true });
@@ -1198,6 +1210,16 @@ async function* handleFollowUpPhase(
     callerIntent === "support_escalation"
   ) {
     exitTrackingHandshakeForOrderQuery(session.callSid);
+    if (callerIntent === "catalog" || callerIntent === "cart") {
+      session.awaitingInput = null;
+      if (session.phase === "awaiting_order_number") {
+        session.phase = "follow_up";
+      }
+      updateActiveSession(session.callSid, {
+        currentState: callerIntent === "cart" ? "cart_active" : "catalog_active",
+        cachedIntent: callerIntent,
+      });
+    }
   }
 
   if (

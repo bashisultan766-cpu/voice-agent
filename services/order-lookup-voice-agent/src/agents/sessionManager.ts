@@ -98,7 +98,17 @@ export function shouldReplaceOrderContext(
 
 export function buildActiveOrderContextSystemMessage(
   data: ActiveOrderContextData,
+  options?: { catalogPivot?: boolean },
 ): string {
+  if (options?.catalogPivot) {
+    return (
+      "ACTIVE ORDER CONTEXT (BACKGROUND ONLY): An order was previously loaded this call, " +
+      "but the caller just pivoted to buying / searching the catalog. " +
+      "Do NOT restate order status, fulfillment, or progressive disclosure. " +
+      "Call search_shopify_book_by_title or search_shopify_book_by_isbn, then add_to_cart / send_checkout_email as needed. " +
+      `Prior order JSON (reference only): ${JSON.stringify(data)}`
+    );
+  }
   return (
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +

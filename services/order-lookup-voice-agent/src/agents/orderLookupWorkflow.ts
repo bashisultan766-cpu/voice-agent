@@ -21,10 +21,15 @@ export function isTransientOrderLookupStatus(
   return status === "api_error" || status === "system_maintenance" || status === "throttled";
 }
 
+/**
+ * Only cache durable positive / format failures.
+ * Never cache `not_found` — a first Shopify miss must not block the next live retry
+ * when the caller insists with the same digits (common after STT noise or a brief miss).
+ */
 export function isStableOrderLookupStatus(
   status: OrderStatusResult["status"] | string | undefined,
 ): boolean {
-  return status === "found" || status === "not_found" || status === "invalid_format";
+  return status === "found" || status === "invalid_format";
 }
 
 /** Deterministic spoken response for any order lookup tool result — one workflow, no LLM paraphrase. */
@@ -53,5 +58,7 @@ export function shouldBypassOrderLookupCache(
 ): boolean {
   if (isOrderLookupInsistenceUtterance(userMessage)) return true;
   if (phase === "awaiting_order_number") return true;
-  return /\b(try\s+again|one\s+more\s+time|digit\s+by\s+digit)\b/i.test(userMessage.trim());
+  return /\b(try\s+again|one\s+more\s+time|digit\s+by\s+digit|check\s+(?:the\s+)?system|search\s+again)\b/i.test(
+    userMessage.trim(),
+  );
 }

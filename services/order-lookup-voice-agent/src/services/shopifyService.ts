@@ -54,7 +54,8 @@ function statusCacheGet(key: string): OrderStatusResult | null {
 }
 
 function statusCacheSet(key: string, value: OrderStatusResult): void {
-  if (!isStableOrderLookupStatus(value.status)) return;
+  // Positive hits and invalid format only — never negative not_found.
+  if (value.status !== "found" && value.status !== "invalid_format") return;
   const ttl = getConfig().SHOPIFY_CACHE_TTL_SECS * 1000;
   statusCache.set(key, { value, expiresAt: Date.now() + ttl });
 }
