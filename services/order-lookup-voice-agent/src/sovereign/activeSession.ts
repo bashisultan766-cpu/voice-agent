@@ -257,9 +257,12 @@ export function syncActiveSessionFromCallSession(callSession: CallSession): Acti
   }
 
   if (callSession.currentOrderData && Object.keys(callSession.currentOrderData).length > 0) {
-    const tracking = String(callSession.currentOrderData.tracking_number ?? "").trim();
-    if (tracking) {
-      return ensureTrackingPayload(callSession.callSid, tracking);
+    const active = getOrCreateActiveSession(callSession.callSid);
+    if (
+      active.currentState === "tracking_dictation" ||
+      (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking")
+    ) {
+      return active;
     }
     return updateActiveSession(callSession.callSid, {
       currentState: "order_active",

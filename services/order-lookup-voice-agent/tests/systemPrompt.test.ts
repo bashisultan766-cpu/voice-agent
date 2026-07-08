@@ -175,16 +175,10 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ACTIVE ORDER CONTEXT/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I don't have that specific detail on file|that specific detail is not on file/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID DICTATION PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID \(TOOL-SCOPED\)/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I currently do not have a valid tracking number for this order/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do not spell out words like "Refund"/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/pen and notepad ready/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Did you get all of that/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Were you able to write that down/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/GAG ORDER \(AFTER NOTEPAD READY ONLY\)/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOWLY OVERRIDE/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/tracking_number_for_tts verbatim/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/dictate_tracking/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/GAG ORDER \(AFTER NOTEPAD READY ONLY\)/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);
   });
 

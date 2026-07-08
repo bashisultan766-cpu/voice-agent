@@ -733,14 +733,19 @@ export function toolResultForLlm(
   }
 
   if (record.tool === "dictate_tracking") {
+    const blocked = !record.ok;
+    const readiness =
+      blocked && record.data && "intent" in record.data && record.data.intent === "ReadinessRequest";
     return JSON.stringify({
-      intent: "dictate_tracking",
+      intent: readiness ? "ReadinessRequest" : "dictate_tracking",
+      message: record.errorMessage ?? (record.data && "message" in record.data ? record.data.message : undefined),
       tracking_number_for_tts:
-        record.data && "tracking_number_for_tts" in record.data
+        !blocked && record.data && "tracking_number_for_tts" in record.data
           ? record.data.tracking_number_for_tts
           : null,
-      instructions:
-        "Speak tracking_number_for_tts verbatim with slow phonetic pacing. Do not paraphrase.",
+      instructions: readiness
+        ? "NOTEPAD-FIRST RULE: Speak ONLY the readiness handshake verbatim — 'Please have your pen and notepad ready. Let me know when you are ready.' Do NOT read any tracking digits."
+        : "TRACKING DICTATION PROTOCOL: Speak tracking_number_for_tts verbatim with slow phonetic pacing (periods between words). Append 'Did you write that correctly, or should I repeat it?' Never mention items, fees, payment, or other order fields. If the caller confirms they wrote it down, stop dictating and ask if they need anything else.",
     });
   }
 

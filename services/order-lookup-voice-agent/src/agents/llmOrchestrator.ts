@@ -29,7 +29,6 @@ import { clearLastSpokenSentence } from "../services/llmService.js";
 import {
   getOrCreateActiveSession,
   recordToolPayload,
-  ensureTrackingPayload,
 } from "../sovereign/activeSession.js";
 import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH } from "./dictationTool.js";
 import { isTrackingDictationCompleteIntent } from "./trackingIntent.js";
@@ -120,11 +119,13 @@ function persistOrderContext(
   const payload = buildActiveOrderContextFromResult(orderData, session);
   if (payload) {
     saveActiveOrderContext(session, payload);
-    const trackingRaw = String(payload.tracking_number ?? "").trim();
-    const active = getOrCreateActiveSession(session.callSid);
-    if (trackingRaw && !active.lastSpokenPayload?.trackingForTts) {
-      ensureTrackingPayload(session.callSid, trackingRaw);
-    }
+    recordToolPayload(session.callSid, {
+      kind: "order_status",
+      speech: "",
+      toolName: "get_shopify_order_status",
+      intentKey: "order",
+      state: "order_active",
+    });
   }
 
   if (!("orderNumber" in orderData)) return;
@@ -268,12 +269,7 @@ export async function* runLlmOrchestratorTurn(
   persistOrderContext(session, result);
 
   const orderExec = result.toolExecutions.find((exec) => exec.tool === "get_shopify_order_status" && exec.ok);
-  if (orderExec?.data && "trackingNumber" in orderExec.data && orderExec.data.trackingNumber) {
-    const active = getOrCreateActiveSession(session.callSid);
-    if (!active.lastSpokenPayload?.trackingForTts) {
-      ensureTrackingPayload(session.callSid, String(orderExec.data.trackingNumber), result.speech);
-    }
-  } else if (orderExec?.ok) {
+  if (orderExec?.ok) {
     recordToolPayload(session.callSid, {
       kind: "order_status",
       speech: result.speech,

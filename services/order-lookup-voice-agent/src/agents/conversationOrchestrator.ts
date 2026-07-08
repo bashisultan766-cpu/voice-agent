@@ -162,11 +162,6 @@ import { clearDialogueState } from "./dialogueManager.js";
 import { runLlmOrchestratorTurn } from "./llmOrchestrator.js";
 import { syncDeterministicAssistantSpeech } from "../adapters/openaiAdapter.js";
 import {
-  buildRefundEmailFollowUpSpeech,
-  isRefundNotificationEmailQuestion,
-} from "./orderFollowUpSpeech.js";
-import type { AgentState } from "../platform/agentState.js";
-import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
   pickProductSlotQuestion,
@@ -200,6 +195,16 @@ import {
 } from "../handlers/greetingHandler.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
 import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent } from "./trackingIntent.js";
+import {
+  resolveCallerIntent,
+  shouldRunTrackingPhaseGate,
+  type CallerIntent,
+} from "./callerIntent.js";
+import {
+  buildOrderFieldQuerySpeech,
+  buildRefundEmailFollowUpSpeech,
+  isRefundNotificationEmailQuestion,
+} from "./orderFollowUpSpeech.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
@@ -309,16 +314,43 @@ function ensureTrackingPayloadFromSession(session: CallSession): void {
   }
 }
 
+function exitTrackingHandshakeForOrderQuery(callSid: string): void {
+  const active = getOrCreateActiveSession(callSid);
+  if (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") {
+    updateActiveSession(callSid, {
+      currentState: "order_active",
+      cachedIntent: "order",
+      awaitingClarification: null,
+      isNotepadReady: false,
+    });
+  }
+}
+
 /** Sole tracking gate — notepad handshake, USER_READY, chunked dictation, spatial resume. */
 export function resolveTrackingPhaseGate(
   callerText: string,
   session: CallSession,
+  callerIntent?: CallerIntent,
 ): TrackingPhaseResolution {
   const active = getOrCreateActiveSession(session.callSid);
   const text = callerText.trim();
   if (!text) return { handled: false };
 
-  if (isTrackingRequest(text) || active.currentState === "awaiting_notepad_ready" || isSpatialResumeQuery(text)) {
+  const intent = callerIntent ?? resolveCallerIntent(callerText, session);
+
+  if (!shouldRunTrackingPhaseGate(intent)) {
+    if (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") {
+      updateActiveSession(session.callSid, {
+        currentState: "order_active",
+        cachedIntent: "order",
+        awaitingClarification: null,
+        isNotepadReady: false,
+      });
+    }
+    return { handled: false };
+  }
+
+  if (isTrackingRequest(text) || isSpatialResumeQuery(text)) {
     ensureTrackingPayloadFromSession(session);
   }
 
@@ -692,7 +724,28 @@ async function* runOrchestratorTurnCore(
     return;
   }
 
-  const trackingGate = resolveTrackingPhaseGate(text, session);
+  const callerIntent = resolveCallerIntent(text, session);
+
+  if (
+    callerIntent === "order_field_query" &&
+    session.currentOrderData &&
+    Object.keys(session.currentOrderData).length > 0
+  ) {
+    const fieldSpeech = buildOrderFieldQuerySpeech(text, session.currentOrderData);
+    if (fieldSpeech) {
+      exitTrackingHandshakeForOrderQuery(session.callSid);
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, text);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "general_help",
+      });
+      session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
+  }
+
+  const trackingGate = resolveTrackingPhaseGate(text, session, callerIntent);
   if (trackingGate.handled) {
     yield* yieldTrackingPhaseSpeech(session, text, trackingGate);
     return;
@@ -1047,7 +1100,28 @@ async function* handleFollowUpPhase(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
-  const trackingGate = resolveTrackingPhaseGate(callerText, session);
+  const callerIntent = resolveCallerIntent(callerText, session);
+
+  if (
+    callerIntent === "order_field_query" &&
+    session.currentOrderData &&
+    Object.keys(session.currentOrderData).length > 0
+  ) {
+    const fieldSpeech = buildOrderFieldQuerySpeech(callerText, session.currentOrderData);
+    if (fieldSpeech) {
+      exitTrackingHandshakeForOrderQuery(session.callSid);
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, callerText);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "general_help",
+      });
+      session.phase = "follow_up";
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
+  }
+
+  const trackingGate = resolveTrackingPhaseGate(callerText, session, callerIntent);
   if (trackingGate.handled) {
     yield* yieldTrackingPhaseSpeech(session, callerText, trackingGate);
     return;

@@ -70,7 +70,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "get_shopify_order_status",
       description:
-        "Fetch real order details from Shopify. Pass ONLY the digit sequence the caller stated — strip filler words and hesitation. Translate non-English order references to English digits before calling.",
+        "Fetch or use order details from Shopify. Use when the caller asks for customer name, order status, refund reason, totals, payment method, or order history context on the current order. Pass ONLY the digit sequence for a new lookup — strip filler words. When ACTIVE ORDER CONTEXT is already loaded for the same order, answer from that JSON instead of re-fetching unless they give a different order number.",
       parameters: {
         type: "object",
         properties: {
@@ -149,7 +149,7 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "dictate_tracking",
       description:
-        "Read the tracking number aloud with slow phonetic pacing. ONLY call after the caller confirms pen and notepad are ready (isNotepadReady). If not ready, the tool returns ReadinessRequest.",
+        "ONLY use when the caller explicitly asks for their tracking ID, carrier tracking number, or package/shipment location. Never use for customer name, order status, refund questions, or general order details. Requires pen-and-notepad readiness before speaking digits.",
       parameters: {
         type: "object",
         properties: {},

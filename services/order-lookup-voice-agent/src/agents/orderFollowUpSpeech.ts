@@ -196,3 +196,46 @@ export function buildRefundEmailFollowUpSpeech(
   }
   return buildRefundNotificationEmailSpeech(context);
 }
+
+/** True when the caller asks for the name on the order. */
+export function isCustomerNameQuestion(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  return /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|what'?s\s+the\s+name)\b/i.test(
+    trimmed,
+  );
+}
+
+export function buildCustomerNameSpeech(context: ActiveOrderContextData): string | null {
+  const name = String(context.customer_name ?? "").trim();
+  if (!name) {
+    return "I checked this order, but I do not have a customer name on file.";
+  }
+  return `This order is under the name ${name}.`;
+}
+
+/** Deterministic one-field answers from ACTIVE ORDER CONTEXT — null defers to LLM. */
+export function buildOrderFieldQuerySpeech(
+  callerText: string,
+  context: ActiveOrderContextData,
+): string | null {
+  if (isCustomerNameQuestion(callerText)) {
+    return buildCustomerNameSpeech(context);
+  }
+
+  if (isRefundNotificationEmailQuestion(callerText)) {
+    return buildRefundEmailFollowUpSpeech(context, callerText);
+  }
+
+  if (/\b(order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order)\b/i.test(callerText)) {
+    const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
+    if (status) return `Your order status is ${status}.`;
+  }
+
+  if (/\b(refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled))\b/i.test(callerText)) {
+    const reason = String(context.cancel_reason ?? context.refund_reason ?? "").trim();
+    if (reason) return `The reason on file is: ${reason}.`;
+  }
+
+  return null;
+}
