@@ -304,6 +304,16 @@ export function extractTitleFromStt(text: string): string | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
+  // Order follow-ups ("what is the title on my order") are not catalog title searches.
+  if (
+    /\b(my\s+order|this\s+order|on\s+(?:the\s+)?order|order\s+details|how\s+many\s+items|item\s+count|what\s+did\s+(?:i|you)\s+order)\b/i.test(
+      trimmed,
+    ) &&
+    /\b(title|titles|items?|products?|books?)\b/i.test(trimmed)
+  ) {
+    return null;
+  }
+
   const patterns = [
     /(?:looking\s+for|search(?:ing)?\s+for|find(?:\s+the)?|do\s+you\s+have)\s+(?:the\s+book\s+)?(.+)/i,
     /(?:book\s+(?:called|titled|named))\s+(.+)/i,

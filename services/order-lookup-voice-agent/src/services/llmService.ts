@@ -105,6 +105,17 @@ export function shouldOfferEndCallTool(input: {
   return isExplicitEndCallIntent(input.userMessage, input.messages ?? []);
 }
 
+/** Caller affirms help after "anything else?" and continues with a real question — not a hangup. */
+export function isAffirmativeFollowUpRequest(callerText: string): boolean {
+  const text = callerText.trim();
+  if (!text) return false;
+  if (isExplicitGoodbyeUtterance(text)) return false;
+  if (!/^(yes|yeah|yep|yup|sure|ok|okay)\b/i.test(text)) return false;
+  return /\b(tell\s+me|how\s+many|what\s+is|what'?s|can\s+you|please|items?|products?|title|total|shipping|price)\b/i.test(
+    text,
+  );
+}
+
 /** Thank-you / closing turns that should trigger graceful hangup. */
 export function isClosingConversationUtterance(
   callerText: string,
@@ -112,6 +123,7 @@ export function isClosingConversationUtterance(
 ): boolean {
   if (isCartModificationUtterance(callerText)) return false;
   if (isNoWithCartCorrection(callerText)) return false;
+  if (isAffirmativeFollowUpRequest(callerText)) return false;
 
   if (isExplicitGoodbyeUtterance(callerText)) return true;
 

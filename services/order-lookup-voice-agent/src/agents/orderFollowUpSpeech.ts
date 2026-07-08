@@ -13,7 +13,7 @@ const REFUND_EMAIL_QUESTION_RE =
 
 /** Shared patterns — callerIntent and deterministic speech use the same detector. */
 export const ORDER_FIELD_QUESTION_RE =
-  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+is\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|payment\s+method|card\s+ending|what\s+email|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
+  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|what\s+is\s+the\s+title|what'?s\s+the\s+title|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+is\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|payment\s+method|card\s+ending|what\s+email|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
 
 export function isOrderFieldQuestion(text: string): boolean {
   const trimmed = text.trim();
@@ -254,7 +254,7 @@ export function buildOrderFieldQuerySpeech(
       lower,
     );
   const wantsTitles =
-    /\b(product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|titles?|what\s+did\s+(?:i|you)\s+order|which\s+books?|product\s+detail|item\s+detail|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|order\s+details|tell\s+me\s+(?:the\s+)?details)\b/i.test(
+    /\b(product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|what\s+is\s+the\s+title|what'?s\s+the\s+title|titles?|what\s+did\s+(?:i|you)\s+order|which\s+books?|product\s+detail|item\s+detail|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|order\s+details|tell\s+me\s+(?:the\s+)?details)\b/i.test(
       lower,
     );
   const wantsLineItemAmounts =

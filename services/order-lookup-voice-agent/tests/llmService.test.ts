@@ -27,6 +27,17 @@ describe("isExplicitGoodbyeUtterance", () => {
     expect(isExplicitGoodbyeUtterance("no, I don't need more copies")).toBe(false);
   });
 
+  it("does not treat yes + order question as conversation end after anything else", () => {
+    expect(
+      isClosingConversationUtterance("yes, tell me how many items and what is the title", [
+        {
+          role: "assistant",
+          content:
+            "Would you like help with anything else on your order, or are you looking to buy a book?",
+        },
+      ]),
+    ).toBe(false);
+  });
 });
 
 describe("isClosingConversationUtterance", () => {

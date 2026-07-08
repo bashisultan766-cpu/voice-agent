@@ -29,7 +29,9 @@ import { buildCartContextSystemMessage } from "../agents/cartManager.js";
 import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
 import {
+  buildOrderFieldQuerySpeech,
   buildRefundEmailFollowUpSpeech,
+  isOrderFieldQuestion,
   isRefundNotificationEmailQuestion,
 } from "../agents/orderFollowUpSpeech.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
@@ -847,6 +849,21 @@ export function syncDeterministicAssistantSpeech(
 /**
  * Run one caller turn with tool-pending events for system-level filler injection.
  */
+function interceptOrderFieldQueryBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  const ctx = input.activeOrderContext;
+  if (!ctx || Object.keys(ctx).length === 0) return null;
+  if (!isOrderFieldQuestion(input.userMessage)) return null;
+
+  const speech = buildOrderFieldQuerySpeech(input.userMessage, ctx);
+  if (!speech) return null;
+
+  return {
+    speech,
+    toolExecutions: [],
+    responseType: "general_help",
+  };
+}
+
 function interceptTrackingCompleteBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
   const active = getOrCreateActiveSession(input.callSid);
   const trackingDictationContext = {
@@ -1068,6 +1085,12 @@ export async function* runLlmAgentTurnEvents(
   const trackingIntercept = interceptTrackingBeforeLlm(input);
   if (trackingIntercept) {
     yield { type: "result", result: trackingIntercept };
+    return;
+  }
+
+  const orderFieldIntercept = interceptOrderFieldQueryBeforeLlm(input);
+  if (orderFieldIntercept) {
+    yield { type: "result", result: orderFieldIntercept };
     return;
   }
 

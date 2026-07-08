@@ -66,6 +66,17 @@ describe("intent-first switching", () => {
     expect(intent).toBe("support_escalation");
   });
 
+  it("classifies post-tracking item/title follow-up as order_field_query not catalog", () => {
+    completeTrackingDictation(callSid);
+    const session = mockSession(callSid);
+    const utterance =
+      "yes, tell me how many items are there in this product and what is the title";
+    expect(resolveCallerIntent(utterance, session)).toBe("order_field_query");
+    const speech = buildOrderFieldQuerySpeech(utterance, session.currentOrderData as any);
+    expect(speech).toMatch(/Sample Book/i);
+    expect(speech).toMatch(/1 book/i);
+  });
+
   it("releases tracking gate when caller pivots to catalog mid-dictation", () => {
     const session = mockSession(callSid);
     const gate = resolveTrackingPhaseGate("tell me good books to buy", session);
