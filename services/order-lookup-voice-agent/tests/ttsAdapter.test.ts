@@ -15,6 +15,7 @@ const baseEnv = {
   SHOPIFY_SHOP_DOMAIN: "shop.myshopify.com",
   SHOPIFY_ADMIN_ACCESS_TOKEN: "shpat",
   VOICE_TTS_PROVIDER: "ElevenLabs",
+  VOICE_IDENTITY_CONSTRAINT: "false",
   ELEVENLABS_API_KEY: "el-test-key",
   VOICE_ID: "voice123",
 };
@@ -260,5 +261,78 @@ describe("static global voice provider", () => {
     expect(warnSpy).toHaveBeenCalledWith(voice.ELEVENLABS_CIRCUIT_BREAKER_LOG);
 
     warnSpy.mockRestore();
+  });
+});
+
+describe("voice identity constraint", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env = {
+      ...originalEnv,
+      ...baseEnv,
+      VOICE_IDENTITY_CONSTRAINT: "true",
+    };
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.resetModules();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("locks OpenAI without ElevenLabs probe or failure logs", async () => {
+    const { logger } = await import("../src/utils/logger.js");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+
+    const provider = await voice.initializeGlobalVoiceProvider();
+
+    expect(provider).toBe("OpenAI");
+    expect(voice.getHealthVoiceProviderLabel()).toBe(
+      "OpenAI (Identity Constraint Active)",
+    );
+    expect(voice.getElevenLabsCircuitSnapshot()).toMatchObject({
+      open: true,
+      failoverReason: "identity_constraint",
+      lastHttpStatus: null,
+    });
+    expect(
+      fetchSpy.mock.calls.some((call) => String(call[0]).includes("elevenlabs.io")),
+    ).toBe(false);
+    expect(
+      warnSpy.mock.calls.some(
+        (call) => call[0] === "elevenlabs_failure_recorded",
+      ),
+    ).toBe(false);
+    expect(
+      warnSpy.mock.calls.some(
+        (call) => call[0] === voice.ELEVENLABS_CIRCUIT_BREAKER_LOG,
+      ),
+    ).toBe(false);
+
+    warnSpy.mockRestore();
+  });
+
+  it("routes TTS through OpenAI only when constraint is active", async () => {
+    const fetchSpy = vi.fn(async () => new Response("not found", { status: 404 }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+    await voice.initializeGlobalVoiceProvider();
+
+    const tts = await import("../src/adapters/ttsAdapter.js");
+    await tts.synthesizeSpeech("Hello there", "CA-constraint");
+
+    expect(
+      fetchSpy.mock.calls.some((call) => String(call[0]).includes("elevenlabs.io")),
+    ).toBe(false);
   });
 });

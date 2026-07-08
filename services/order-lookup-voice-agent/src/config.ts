@@ -53,6 +53,11 @@ const envSchema = z.object({
   ELEVENLABS_TEXT_NORMALIZATION: z.enum(["on", "off", "auto"]).default("on"),
   VOICE_LANGUAGE: z.string().default("en-US"),
   VOICE_TTS_PROVIDER: z.string().default("ElevenLabs"),
+  /** When true, skip all ElevenLabs probes/calls and lock OpenAI fallback for production. */
+  VOICE_IDENTITY_CONSTRAINT: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
   /** OpenAI tts-1-hd voice when ElevenLabs quota is exceeded — tuned to match Eric profile. */
   OPENAI_TTS_VOICE: z
     .enum(["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"])
@@ -106,6 +111,7 @@ export function getConfig(): AppConfig {
 
     if (
       !warnedNonElevenLabsProvider &&
+      !cached.VOICE_IDENTITY_CONSTRAINT &&
       cached.VOICE_TTS_PROVIDER.toLowerCase() !== "elevenlabs"
     ) {
       warnedNonElevenLabsProvider = true;

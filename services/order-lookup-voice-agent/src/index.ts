@@ -32,9 +32,15 @@ import {
 
   getElevenLabsCircuitSnapshot,
 
+  getHealthVoiceProviderLabel,
+
+  getLockedElevenLabsVoiceId,
+
   getOpenAiEricFallbackVoice,
 
   initializeGlobalVoiceProvider,
+
+  isVoiceIdentityConstraintActive,
 
 } from "./adapters/voiceAdapter.js";
 
@@ -72,9 +78,13 @@ export function createApp() {
 
       wsUrl: wsUrl(),
 
-      voiceProvider: voiceReady.ok ? voiceReady.provider : null,
+      voiceProvider: getHealthVoiceProviderLabel(),
 
       voiceProviderReady: voiceReady.ok,
+
+      voiceIdentityConstraint: isVoiceIdentityConstraintActive(),
+
+      reservedElevenLabsVoiceId: getLockedElevenLabsVoiceId() || undefined,
 
       primaryEngine: circuit.primaryEngine,
 
@@ -84,7 +94,7 @@ export function createApp() {
 
       voiceFailoverActive: circuit.open && circuit.activeProvider === "OpenAI",
 
-      openAiFallbackVoice: circuit.open ? getOpenAiEricFallbackVoice() : undefined,
+      openAiFallbackVoice: getOpenAiEricFallbackVoice(),
 
       circuitTrippedAt: circuit.trippedAt,
 

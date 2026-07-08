@@ -17,6 +17,7 @@ import {
   getLockedElevenLabsVoiceId,
   getOpenAiEricFallbackVoice,
   getPreferredVoiceForCall,
+  isVoiceIdentityConstraintActive,
   logVoiceEngineSelection,
   markElevenLabsAuthFailure,
   recordElevenLabsFailure,
@@ -201,7 +202,7 @@ async function synthesizeViaElevenLabsStream(
   signal?: AbortSignal,
   _callSid?: string,
 ): Promise<Response | null> {
-  if (getIsElevenLabsDisabled()) {
+  if (isVoiceIdentityConstraintActive() || getIsElevenLabsDisabled()) {
     return null;
   }
   const cfg = getConfig();
@@ -237,7 +238,7 @@ async function synthesizeViaElevenLabs(
   text: string,
   callSid?: string,
 ): Promise<VoiceSynthesisResult | null> {
-  if (getIsElevenLabsDisabled()) {
+  if (isVoiceIdentityConstraintActive() || getIsElevenLabsDisabled()) {
     return null;
   }
   const cfg = getConfig();
@@ -321,7 +322,7 @@ export async function synthesizeSpeech(
   if (!trimmed) return null;
 
   try {
-    if (getIsElevenLabsDisabled()) {
+    if (isVoiceIdentityConstraintActive() || getIsElevenLabsDisabled()) {
       return synthesizeViaOpenAI(trimmed);
     }
 
@@ -360,7 +361,7 @@ export async function* synthesizeSpeechStream(
   const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
-    if (getIsElevenLabsDisabled()) {
+    if (isVoiceIdentityConstraintActive() || getIsElevenLabsDisabled()) {
       const openAi = await synthesizeViaOpenAI(trimmed);
       if (openAi) {
         yield* yieldOpenAiTelephonyFrames(openAi);

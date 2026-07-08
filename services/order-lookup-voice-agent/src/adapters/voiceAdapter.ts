@@ -1,6 +1,7 @@
 /**
  * Voice adapter — static boot-time provider selection (single process-wide engine).
- * Probes ElevenLabs once at startup; on auth/quota/timeout/5xx failure locks OpenAI for life.
+ * When VOICE_IDENTITY_CONSTRAINT is active, locks OpenAI without ElevenLabs probes.
+ * Otherwise probes ElevenLabs once at startup; on failure locks OpenAI for life.
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
@@ -23,7 +24,8 @@ export type ElevenLabsFailureReason =
   | "network_error"
   | "probe_http_error"
   | "stream_crash"
-  | "elevenlabs_not_configured";
+  | "elevenlabs_not_configured"
+  | "identity_constraint";
 
 export interface ElevenLabsCircuitSnapshot {
   open: boolean;
@@ -60,7 +62,20 @@ let circuitTrippedAt: number | null = null;
 let failoverReason: ElevenLabsFailureReason | null = null;
 let lastHttpStatus: number | null = null;
 
+export function isVoiceIdentityConstraintActive(): boolean {
+  return getConfig().VOICE_IDENTITY_CONSTRAINT;
+}
+
 export function getGlobalVoiceProvider(): GlobalVoiceProvider | null {
+  return globalVoiceProvider;
+}
+
+/** Health-facing provider label — includes identity-constraint suffix when active. */
+export function getHealthVoiceProviderLabel(): string | null {
+  if (globalVoiceProvider === null) return null;
+  if (isVoiceIdentityConstraintActive() && globalVoiceProvider === "OpenAI") {
+    return "OpenAI (Identity Constraint Active)";
+  }
   return globalVoiceProvider;
 }
 
@@ -109,6 +124,8 @@ export function tripElevenLabsCircuitBreaker(
   if (status !== undefined) {
     lastHttpStatus = status;
   }
+
+  if (isVoiceIdentityConstraintActive()) return;
 
   if (reason !== undefined || status !== undefined) {
     logger.warn(ELEVENLABS_CIRCUIT_BREAKER_LOG, {
@@ -165,6 +182,8 @@ export function recordElevenLabsFailure(
   reason: ElevenLabsFailureReason,
   options?: { status?: number; callSid?: string },
 ): void {
+  if (isVoiceIdentityConstraintActive()) return;
+
   if (options?.status !== undefined) {
     lastHttpStatus = options.status;
   }
@@ -192,6 +211,8 @@ export function clearPreferredVoiceForCall(_callSid: string): void {
 }
 
 function shouldAttemptElevenLabsAtBoot(): boolean {
+  if (isVoiceIdentityConstraintActive()) return false;
+
   const cfg = getConfig();
   const voiceId = getLockedElevenLabsVoiceId();
   return (
@@ -199,6 +220,23 @@ function shouldAttemptElevenLabsAtBoot(): boolean {
     Boolean(cfg.ELEVENLABS_API_KEY?.trim()) &&
     Boolean(voiceId)
   );
+}
+
+function activateVoiceIdentityConstraint(): GlobalVoiceProvider {
+  globalVoiceProvider = "OpenAI";
+  isElevenLabsDisabled = true;
+  failoverReason = "identity_constraint";
+  circuitTrippedAt = Date.now();
+  lastHttpStatus = null;
+
+  const reservedVoiceId = getLockedElevenLabsVoiceId();
+  logger.info("voice_identity_constraint_active", {
+    provider: "OpenAI",
+    openAiVoice: getOpenAiEricFallbackVoice(),
+    reservedElevenLabsVoiceId: reservedVoiceId || undefined,
+  });
+  logVoiceEngineSelection();
+  return globalVoiceProvider;
 }
 
 async function probeElevenLabsOnce(): Promise<{
@@ -251,6 +289,10 @@ export async function initializeGlobalVoiceProvider(): Promise<GlobalVoiceProvid
   }
 
   initPromise = (async (): Promise<GlobalVoiceProvider> => {
+    if (isVoiceIdentityConstraintActive()) {
+      return activateVoiceIdentityConstraint();
+    }
+
     if (!shouldAttemptElevenLabsAtBoot()) {
       globalVoiceProvider = "OpenAI";
       isElevenLabsDisabled = true;
