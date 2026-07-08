@@ -4,6 +4,7 @@
 import {
   NotReadyError,
   dictateTracking,
+  markTrackingAwaitingNotepad,
   promptUserForNotepad,
   USER_NOTEPAD_READY,
 } from "../agents/dictationTool.js";
@@ -27,6 +28,7 @@ export function resolveDictateTracking(callSid: string): DictateTrackingResoluti
         speech: result.error.message,
       };
     }
+    markTrackingAwaitingNotepad(callSid);
     return {
       intent: "ReadinessRequest",
       speech: result.error.message,

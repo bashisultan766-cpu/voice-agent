@@ -64,7 +64,14 @@ import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
 import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
-import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH, isUserNotepadReadyIntent } from "../agents/dictationTool.js";
+import {
+  promptUserForNotepad,
+  completeTrackingDictation,
+  TRACKING_DICTATION_COMPLETE_SPEECH,
+  isUserNotepadReadyIntent,
+  beginTrackingDictationAfterNotepadReady,
+  isTrackingDictationPending,
+} from "../agents/dictationTool.js";
 import { isTrackingDictationText } from "../utils/ttsFormatter.js";
 import {
   isIntentSwitchAwayFromTracking,
@@ -864,6 +871,29 @@ function interceptOrderFieldQueryBeforeLlm(input: LlmAgentTurnInput): LlmAgentTu
   };
 }
 
+function interceptNotepadReadyBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  if (!isUserNotepadReadyIntent(input.userMessage)) return null;
+
+  const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
+  const active = getOrCreateActiveSession(input.callSid);
+  if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
+    ensureTrackingPayload(input.callSid, trackingRaw);
+  }
+  if (
+    !isTrackingDictationPending(input.callSid, input.session?.currentOrderData) ||
+    !getOrCreateActiveSession(input.callSid).lastSpokenPayload?.trackingForTts
+  ) {
+    return null;
+  }
+
+  const turn = beginTrackingDictationAfterNotepadReady(input.callSid);
+  return {
+    speech: turn.speech,
+    toolExecutions: [],
+    responseType: turn.ok ? "order_found" : "general_help",
+  };
+}
+
 function interceptTrackingCompleteBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
   const active = getOrCreateActiveSession(input.callSid);
   const trackingDictationContext = {
@@ -1073,6 +1103,12 @@ export async function* runLlmAgentTurnEvents(
   const trackingDictationLock = interceptTrackingDictationLockBeforeLlm(input);
   if (trackingDictationLock) {
     yield { type: "result", result: trackingDictationLock };
+    return;
+  }
+
+  const notepadReadyIntercept = interceptNotepadReadyBeforeLlm(input);
+  if (notepadReadyIntercept) {
+    yield { type: "result", result: notepadReadyIntercept };
     return;
   }
 

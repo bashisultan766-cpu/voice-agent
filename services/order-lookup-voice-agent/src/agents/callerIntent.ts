@@ -10,7 +10,7 @@ import {
   isExplicitTrackingDictationRequest,
   isTrackingDictationCompleteIntent,
 } from "./trackingIntent.js";
-import { isUserNotepadReadyIntent } from "./dictationTool.js";
+import { isUserNotepadReadyIntent, isTrackingDictationPending } from "./dictationTool.js";
 import { isRefundNotificationEmailQuestion, isOrderFieldQuestion } from "./orderFollowUpSpeech.js";
 import { extractTitleFromStt } from "../nlp/entityExtractor.js";
 
@@ -101,6 +101,15 @@ export function resolveCallerIntent(
 
   const callSid = session?.callSid ?? "";
   const active = callSid ? getOrCreateActiveSession(callSid) : undefined;
+
+  if (
+    callSid &&
+    active &&
+    isUserNotepadReadyIntent(text) &&
+    isTrackingDictationPending(callSid, session?.currentOrderData)
+  ) {
+    return "tracking_flow_active";
+  }
 
   if (callSid && active) {
     const inTrackingHandshake =

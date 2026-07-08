@@ -103,16 +103,15 @@ import {
 } from "../adapters/voiceAdapter.js";
 import { resolveSovereignTurn } from "../sovereign/sovereignRouter.js";
 import {
+  beginTrackingDictationAfterNotepadReady,
+  beginTrackingNotepadHandshake,
   buildResumeFromLastSpokenIndex,
   buildTrackingDictationChunks,
-  confirmUserNotepadReady,
   completeTrackingDictation,
-  dictateTracking,
   isUserNotepadReadyIntent,
-  markTrackingAwaitingNotepad,
-  promptUserForNotepad,
   buildNotepadReadyNudge,
   appendTrackingDictationConfirm,
+  promptUserForNotepad,
   TRACKING_DICTATION_COMPLETE_SPEECH,
   USER_NOTEPAD_READY,
 } from "./dictationTool.js";
@@ -347,6 +346,29 @@ function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
   );
 }
 
+function tryResolveNotepadReadyTurn(
+  text: string,
+  session: CallSession,
+): TrackingPhaseResolution | null {
+  if (!isUserNotepadReadyIntent(text)) return null;
+
+  ensureTrackingPayloadFromSession(session);
+  const active = getOrCreateActiveSession(session.callSid);
+  if (active.trackingDictationComplete) return null;
+  if (!active.lastSpokenPayload?.trackingForTts && !hasTrackingInSessionContext(session.currentOrderData)) {
+    return null;
+  }
+
+  const turn = beginTrackingDictationAfterNotepadReady(session.callSid);
+  return {
+    handled: true,
+    speech: turn.speech,
+    skipLlm: true,
+    skipTools: true,
+    intentKey: turn.ok ? USER_NOTEPAD_READY : PHASE_HANDSHAKE,
+  };
+}
+
 function tryResolveTrackingCompletionTurn(
   text: string,
   session: CallSession,
@@ -408,6 +430,9 @@ export function resolveTrackingPhaseGate(
 
   const completionTurn = tryResolveTrackingCompletionTurn(text, session, active);
   if (completionTurn) return completionTurn;
+
+  const notepadReadyTurn = tryResolveNotepadReadyTurn(text, session);
+  if (notepadReadyTurn) return notepadReadyTurn;
 
   if (!shouldRunTrackingPhaseGate(intent)) {
     if (
@@ -480,23 +505,13 @@ export function resolveTrackingPhaseGate(
     }
 
     if (isUserNotepadReadyIntent(text)) {
-      confirmUserNotepadReady(session.callSid);
-      const dictated = dictateTracking(session.callSid);
-      if (!dictated.ok) {
-        return {
-          handled: true,
-          speech: dictated.error.message,
-          skipLlm: true,
-          skipTools: true,
-          intentKey: PHASE_HANDSHAKE,
-        };
-      }
+      const turn = beginTrackingDictationAfterNotepadReady(session.callSid);
       return {
         handled: true,
-        speech: dictated.speech,
+        speech: turn.speech,
         skipLlm: true,
         skipTools: true,
-        intentKey: USER_NOTEPAD_READY,
+        intentKey: turn.ok ? USER_NOTEPAD_READY : PHASE_HANDSHAKE,
       };
     }
 
@@ -541,36 +556,22 @@ export function resolveTrackingPhaseGate(
 
   if (wantsTrackingDictation && trackingContextReady) {
     if (!refreshed.isNotepadReady) {
-      markTrackingAwaitingNotepad(session.callSid);
       return {
         handled: true,
-        speech: promptUserForNotepad(),
+        speech: beginTrackingNotepadHandshake(session.callSid),
         skipLlm: true,
         skipTools: true,
         intentKey: PHASE_HANDSHAKE,
       };
     }
 
-    const dictated = dictateTracking(session.callSid);
-    if (!dictated.ok) {
-      return {
-        handled: true,
-        speech: dictated.error.message,
-        skipLlm: true,
-        skipTools: true,
-        intentKey: PHASE_HANDSHAKE,
-      };
-    }
-    updateActiveSession(session.callSid, {
-      currentState: "tracking_dictation",
-      lastSpokenIndex: -1,
-    });
+    const turn = beginTrackingDictationAfterNotepadReady(session.callSid);
     return {
       handled: true,
-      speech: dictated.speech,
+      speech: turn.speech,
       skipLlm: true,
       skipTools: true,
-      intentKey: USER_NOTEPAD_READY,
+      intentKey: turn.ok ? USER_NOTEPAD_READY : PHASE_HANDSHAKE,
     };
   }
 

@@ -52,6 +52,8 @@ function planToolTransitionPhrase(tool?: string): string {
       return "Let me pull up your order details.";
     case "get_customer_history":
       return "Let me pull up your order history.";
+    case "dictate_tracking":
+      return "I'll read your tracking number now.";
     default:
       return "One moment, please.";
   }

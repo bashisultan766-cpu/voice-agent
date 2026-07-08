@@ -23,7 +23,7 @@ export const TRACKING_DICTATION_CONFIRM_SPEECH =
   "Did you write that correctly, or should I repeat it?";
 
 const NOTEPAD_READY_RE =
-  /\b(?:ready|i'?m\s+ready|go\s+ahead|all\s+set|you\s+can\s+go|notepad\s+ready|pen\s+ready|have\s+my\s+pen|got\s+my\s+pen|paper\s+ready|pen\s+and\s+paper)\b/i;
+  /\b(?:i'?m\s+ready|i am ready|we'?re ready|(?:have|got)\s+(?:it|my\s+(?:pen|notepad|paper))\s+ready|notepad\s+ready|pen\s+ready|go\s+ahead|all\s+set|you\s+can\s+go|have\s+my\s+pen|got\s+my\s+pen|paper\s+ready|pen\s+and\s+paper|\bready\b)/i;
 
 export class NotReadyError extends Error {
   readonly code = "NOTEPAD_NOT_READY" as const;
@@ -53,7 +53,47 @@ export function isUserNotepadReadyIntent(callerText: string): boolean {
   const text = callerText.trim();
   if (!text) return false;
   if (/\b(?:written|wrote|got it|thank|done writing|copied)\b/i.test(text)) return false;
-  return NOTEPAD_READY_RE.test(text) || /^(yes|ok|okay)\.?$/i.test(text);
+  if (NOTEPAD_READY_RE.test(text)) return true;
+  return /^(yes|ok|okay)\.?$/i.test(text);
+}
+
+/** Caller has tracking on file and has not finished dictation yet. */
+export function isTrackingDictationPending(
+  callSid: string,
+  orderData?: Record<string, unknown>,
+): boolean {
+  const active = getOrCreateActiveSession(callSid);
+  if (active.trackingDictationComplete) return false;
+  const trackingRaw = String(orderData?.tracking_number ?? "").trim();
+  return Boolean(active.lastSpokenPayload?.trackingForTts || trackingRaw);
+}
+
+/**
+ * Confirm notepad readiness and begin tracking dictation speech.
+ * Used by orchestrator and LLM intercepts so both paths share one handshake.
+ */
+export function beginTrackingDictationAfterNotepadReady(callSid: string): {
+  ok: boolean;
+  speech: string;
+} {
+  markTrackingAwaitingNotepad(callSid);
+  confirmUserNotepadReady(callSid);
+  const dictated = dictateTracking(callSid);
+  if (!dictated.ok) {
+    return { ok: false, speech: dictated.error.message };
+  }
+  updateActiveSession(callSid, {
+    currentState: "tracking_dictation",
+    cachedIntent: "tracking",
+    lastSpokenIndex: -1,
+  });
+  return { ok: true, speech: dictated.speech };
+}
+
+/** Start or repeat the pen-and-notepad handshake before digits are spoken. */
+export function beginTrackingNotepadHandshake(callSid: string): string {
+  markTrackingAwaitingNotepad(callSid);
+  return promptUserForNotepad();
 }
 
 export function completeTrackingDictation(callSid: string): void {
