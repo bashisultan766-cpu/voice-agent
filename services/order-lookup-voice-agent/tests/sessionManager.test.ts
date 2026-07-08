@@ -17,9 +17,23 @@ const SAMPLE_ORDER: OrderStatusResult = {
   refundReason: "OUT OF STOCK",
   refundNotificationEmail: "btazp@yahoo.com",
   fulfillmentStatus: "unfulfilled",
+  shippingAddress: "123 Facility Rd, Unit 4B",
+  lineItems: [{ title: "Hidden Book Title", quantity: 1 }],
 };
 
 describe("sessionManager active order context", () => {
+  it("strips restricted line-item detail for unverified callers", () => {
+    const session = createCallSession("CA_UNVER", "+1", "+2");
+    session.isVerifiedCaller = false;
+    const payload = buildActiveOrderContextPayload(SAMPLE_ORDER, session);
+
+    expect(payload.shipping_address).toBeNull();
+    expect(payload.physical_items).toBeNull();
+    expect(payload.items).toBeNull();
+    expect(payload.customer_name).toBe("Joel Moore");
+    expect(payload.refund_notification_email).toBe("btazp@yahoo.com");
+  });
+
   it("builds sanitized payload with refund notification email", () => {
     const payload = buildActiveOrderContextPayload(SAMPLE_ORDER);
     expect(payload.refund_notification_email).toBe("btazp@yahoo.com");

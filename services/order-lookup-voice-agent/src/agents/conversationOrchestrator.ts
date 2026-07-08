@@ -93,6 +93,7 @@ import {
   clearActiveSession,
   createActiveSession,
   getOrCreateActiveSession,
+  ensureTrackingPayload,
   recordTrackingPayload,
   updateActiveSession,
 } from "../sovereign/activeSession.js";
@@ -110,6 +111,8 @@ import {
   isUserNotepadReadyIntent,
   markTrackingAwaitingNotepad,
   promptUserForNotepad,
+  buildNotepadReadyNudge,
+  appendTrackingDictationConfirm,
   TRACKING_DICTATION_COMPLETE_SPEECH,
   USER_NOTEPAD_READY,
 } from "./dictationTool.js";
@@ -302,7 +305,7 @@ function ensureTrackingPayloadFromSession(session: CallSession): void {
 
   const trackingRaw = String(session.currentOrderData?.tracking_number ?? "").trim();
   if (trackingRaw) {
-    recordTrackingPayload(session.callSid, trackingRaw);
+    ensureTrackingPayload(session.callSid, trackingRaw);
   }
 }
 
@@ -358,12 +361,18 @@ export function resolveTrackingPhaseGate(
     }
   }
 
+  const trackingDictationContext = {
+    currentState: refreshed.currentState,
+    lastSpokenIndex: refreshed.lastSpokenIndex,
+    isNotepadReady: refreshed.isNotepadReady,
+  };
+
   const inTrackingFlow =
     Boolean(refreshed.lastSpokenPayload?.trackingForTts) &&
     (refreshed.currentState === "tracking_dictation" ||
       refreshed.cachedIntent === "tracking");
 
-  if (inTrackingFlow && isTrackingDictationCompleteIntent(text)) {
+  if (inTrackingFlow && isTrackingDictationCompleteIntent(text, trackingDictationContext)) {
     completeTrackingDictation(session.callSid);
     session.phase = "follow_up";
     session.awaitingInput = null;
@@ -397,9 +406,35 @@ export function resolveTrackingPhaseGate(
         intentKey: USER_NOTEPAD_READY,
       };
     }
+
+    if (/\b(how long|what number|which number|how many digits)\b/i.test(text)) {
+      return {
+        handled: true,
+        speech:
+          "I'll read your tracking ID one digit at a time once you confirm your pen and notepad are ready. Just say ready when you're set.",
+        skipLlm: true,
+        skipTools: true,
+        intentKey: "spatial_clarify",
+      };
+    }
+
+    if (
+      /\b(?:repeat|say (?:it )?again|one more time|can you repeat|read (?:it )?again|start over)\b/i.test(
+        text,
+      )
+    ) {
+      return {
+        handled: true,
+        speech: buildNotepadReadyNudge(),
+        skipLlm: true,
+        skipTools: true,
+        intentKey: PHASE_HANDSHAKE,
+      };
+    }
+
     return {
       handled: true,
-      speech: promptUserForNotepad(),
+      speech: buildNotepadReadyNudge(),
       skipLlm: true,
       skipTools: true,
       intentKey: PHASE_HANDSHAKE,
@@ -927,8 +962,19 @@ async function* yieldTrackingPhaseSpeech(
     const startIndex = active.lastSpokenIndex + 1;
     const chunks = buildTrackingDictationChunks(active.spatialIndex, startIndex);
     if (chunks.length > 0) {
-      for (const chunk of chunks) {
-        yield { type: "chunk", chunk };
+      for (let i = 0; i < chunks.length; i += 1) {
+        const chunk = chunks[i];
+        const isLast = i === chunks.length - 1;
+        yield {
+          type: "chunk",
+          chunk: isLast
+            ? {
+                ...chunk,
+                text: appendTrackingDictationConfirm(chunk.text),
+                preserveFull: true,
+              }
+            : chunk,
+        };
       }
     } else {
       yield* yieldSpeech(uniqueSpeech, "dictation");
@@ -974,8 +1020,19 @@ async function* yieldSovereignSpeech(
     const startIndex = active.lastSpokenIndex + 1;
     const chunks = buildTrackingDictationChunks(active.spatialIndex, startIndex);
     if (chunks.length > 0) {
-      for (const chunk of chunks) {
-        yield { type: "chunk", chunk };
+      for (let i = 0; i < chunks.length; i += 1) {
+        const chunk = chunks[i];
+        const isLast = i === chunks.length - 1;
+        yield {
+          type: "chunk",
+          chunk: isLast
+            ? {
+                ...chunk,
+                text: appendTrackingDictationConfirm(chunk.text),
+                preserveFull: true,
+              }
+            : chunk,
+        };
       }
     } else {
       yield* yieldSpeech(uniqueSpeech, chunkKind);

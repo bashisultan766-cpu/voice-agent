@@ -155,7 +155,9 @@ describe("toolResultForLlm order shaping", () => {
       },
     };
 
-    const parsed = JSON.parse(toolResultForLlm(record)) as {
+    const parsed = JSON.parse(
+      toolResultForLlm(record, { isVerifiedCaller: true }),
+    ) as {
       data: Record<string, unknown>;
     };
 

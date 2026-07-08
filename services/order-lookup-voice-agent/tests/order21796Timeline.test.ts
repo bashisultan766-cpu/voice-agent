@@ -89,7 +89,9 @@ describe("order #21796 deep timeline extraction", () => {
       data,
     };
 
-    const llmPayload = JSON.parse(toolResultForLlm(record)) as {
+    const llmPayload = JSON.parse(
+      toolResultForLlm(record, { isVerifiedCaller: true }),
+    ) as {
       data: Record<string, unknown>;
     };
     expect(llmPayload.data.refund_notification_email).toBe(
@@ -113,7 +115,9 @@ describe("order #21796 deep timeline extraction", () => {
       ]),
     );
 
-    const sessionPayload = buildActiveOrderContextPayload(data);
+    const session = createCallSession("CA_21796", "+1", "+2");
+    session.isVerifiedCaller = true;
+    const sessionPayload = buildActiveOrderContextPayload(data, session);
     expect(sessionPayload.refund_notification_email).toBe(
       "jamaicathompson87@gmail.com",
     );
@@ -124,7 +128,6 @@ describe("order #21796 deep timeline extraction", () => {
     expect(sessionPayload.events).toEqual(expect.any(Array));
     expect((sessionPayload.events as string[]).length).toBeGreaterThan(0);
 
-    const session = createCallSession("CA_21796", "+1", "+2");
     saveActiveOrderContext(session, sessionPayload);
     expect(session.currentOrderData?.refund_notification_email).toBe(
       "jamaicathompson87@gmail.com",

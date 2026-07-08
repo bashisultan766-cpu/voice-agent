@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildSpatialIndexFromTracking,
   createActiveSession,
+  ensureTrackingPayload,
   recordTrackingPayload,
   shouldSkipToolReinvoke,
+  syncActiveSessionFromCallSession,
   updateActiveSession,
 } from "../src/sovereign/activeSession.js";
 import {
@@ -31,9 +33,29 @@ describe("activeSession spatial index", () => {
 
   it("skips tool reinvoke when intent is cached", () => {
     recordTrackingPayload("CA2", "9250");
-    const active = recordTrackingPayload("CA2", "9250");
+    const active = ensureTrackingPayload("CA2", "9250");
     expect(shouldSkipToolReinvoke(active, "tracking", "get_shopify_order_status")).toBe(true);
     expect(shouldSkipToolReinvoke(active, "order", "get_shopify_order_status")).toBe(false);
+  });
+
+  it("ensureTrackingPayload preserves notepad progress on sync", () => {
+    recordTrackingPayload("CA_SYNC", "9250");
+    updateActiveSession("CA_SYNC", { isNotepadReady: true, currentState: "tracking_dictation", lastSpokenIndex: 2 });
+
+    const session = {
+      callSid: "CA_SYNC",
+      from: "+1",
+      to: "+2",
+      phase: "follow_up",
+      orderNumberAttempts: 0,
+      createdAt: Date.now(),
+      currentOrderData: { tracking_number: "9250" },
+    } as CallSession;
+
+    const after = syncActiveSessionFromCallSession(session);
+    expect(after.isNotepadReady).toBe(true);
+    expect(after.currentState).toBe("tracking_dictation");
+    expect(after.lastSpokenIndex).toBe(2);
   });
 });
 

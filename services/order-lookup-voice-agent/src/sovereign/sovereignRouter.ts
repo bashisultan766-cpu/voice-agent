@@ -55,13 +55,3 @@ export function resolveSovereignTurn(
 export function prepareActiveSessionForTurn(callSid: string): ActiveSession {
   return getOrCreateActiveSession(callSid);
 }
-
-export function markTrackingAwaitingNotepad(callSid: string): ActiveSession {
-  return updateActiveSession(callSid, {
-    currentState: "awaiting_notepad_ready",
-    awaitingClarification: "notepad_ready",
-    lastDictationIndex: -1,
-    lastSpokenIndex: -1,
-    isNotepadReady: false,
-  });
-}

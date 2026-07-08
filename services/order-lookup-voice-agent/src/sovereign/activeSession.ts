@@ -162,6 +162,30 @@ export function recordTrackingPayload(
   });
 }
 
+/**
+ * Load tracking into ActiveSession without resetting notepad/dictation progress
+ * when the same tracking number is already on file.
+ */
+export function ensureTrackingPayload(
+  callSid: string,
+  trackingRaw: string,
+  speech?: string,
+): ActiveSession {
+  const active = getOrCreateActiveSession(callSid);
+  const normalizedRaw = normalizeTrackingRaw(trackingRaw);
+  const existingRaw = active.lastSpokenPayload?.trackingRaw?.trim();
+
+  if (
+    existingRaw &&
+    existingRaw === normalizedRaw &&
+    active.lastSpokenPayload?.trackingForTts
+  ) {
+    return active;
+  }
+
+  return recordTrackingPayload(callSid, trackingRaw, speech);
+}
+
 export function recordToolPayload(
   callSid: string,
   input: {
@@ -202,6 +226,14 @@ export function shouldSkipToolReinvoke(
   toolName: LlmToolName,
 ): boolean {
   if (!active.lastSpokenPayload) return false;
+
+  if (toolName === "dictate_tracking" && active.cachedIntent === "tracking") {
+    if (!active.isNotepadReady) return true;
+    if (active.currentState === "tracking_dictation" && active.lastSpokenIndex >= 0) {
+      return true;
+    }
+  }
+
   if (active.cachedIntent !== intentKey) return false;
   if (active.lastSpokenPayload.toolName !== toolName) return false;
   return active.currentState !== "idle" && active.currentState !== "awaiting_clarification";
@@ -227,7 +259,7 @@ export function syncActiveSessionFromCallSession(callSession: CallSession): Acti
   if (callSession.currentOrderData && Object.keys(callSession.currentOrderData).length > 0) {
     const tracking = String(callSession.currentOrderData.tracking_number ?? "").trim();
     if (tracking) {
-      return recordTrackingPayload(callSession.callSid, tracking);
+      return ensureTrackingPayload(callSession.callSid, tracking);
     }
     return updateActiveSession(callSession.callSid, {
       currentState: "order_active",

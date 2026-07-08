@@ -29,6 +29,10 @@ import {
   type EntityExtractionResult,
 } from "../nlp/entityExtractor.js";
 import { normalizeIsbn, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
+import { parseVariantGid } from "../utils/shopifyGid.js";
+import { getAgentState } from "../platform/eventDispatcher.js";
+import { filterOrderContextForVerification } from "../agents/orderContextPrivacy.js";
+import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import {
   isValidOrderNumberFormat,
 } from "../utils/formatter.js";
@@ -80,6 +84,7 @@ export interface CheckoutEmailToolResult {
   draft_order_name?: string;
   reason?: string;
   message?: string;
+  instructions?: string;
 }
 
 export interface SupportEscalationToolResult {
@@ -227,6 +232,29 @@ export async function executeLlmTool(
           elapsedMs: Date.now() - started,
         };
       }
+      for (const item of items) {
+        const rawVariant = (item.variant_id ?? "").trim();
+        if (rawVariant && !rawVariant.startsWith("custom:") && !parseVariantGid(rawVariant)) {
+          return {
+            tool,
+            args,
+            ok: false,
+            status: "blocked",
+            errorMessage: `Invalid Shopify variant id for "${item.title ?? rawVariant}". Use a ProductVariant GID or title-only custom line with unit_price.`,
+            elapsedMs: Date.now() - started,
+          };
+        }
+        if (!rawVariant && !(item.title ?? "").trim()) {
+          return {
+            tool,
+            args,
+            ok: false,
+            status: "blocked",
+            errorMessage: "Each cart line needs a valid variant_id or title.",
+            elapsedMs: Date.now() - started,
+          };
+        }
+      }
       const cart = addToCart(session, items);
       const data: CartToolResult = {
         status: "ok",
@@ -318,6 +346,18 @@ export async function executeLlmTool(
       };
     }
 
+    const cartValidationError = validateCartForCheckout(summary.items);
+    if (cartValidationError) {
+      return {
+        tool,
+        args: { customerEmail, customerName },
+        ok: false,
+        status: "blocked",
+        errorMessage: cartValidationError,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
     if (!isResendAvailable()) {
       return {
         tool,
@@ -377,6 +417,9 @@ export async function executeLlmTool(
         message: emailResult.ok
           ? "Checkout email sent successfully."
           : emailResult.error ?? "Could not send checkout email.",
+        instructions: emailResult.ok
+          ? undefined
+          : "Email delivery failed but invoice_url is valid — read the checkout link aloud or offer to retry email.",
       };
 
       return {
@@ -385,6 +428,7 @@ export async function executeLlmTool(
         ok: emailResult.ok,
         status: emailResult.ok ? "sent" : "error",
         data,
+        errorMessage: emailResult.ok ? undefined : emailResult.error ?? "Could not send checkout email.",
         elapsedMs: Date.now() - started,
       };
     } catch {
@@ -427,11 +471,12 @@ export async function executeLlmTool(
     }
 
     try {
+      const enrichedSummary = buildEscalationIssueSummary(callSid, session, issueSummary);
       const emailResult = await sendSupportEscalation(
         customerName,
         customerEmail,
         session.from,
-        issueSummary,
+        enrichedSummary,
       );
       const data: SupportEscalationToolResult = {
         status: emailResult.ok ? "sent" : "error",
@@ -656,7 +701,10 @@ export async function executeLlmTool(
 }
 
 /** Compact JSON tool result for the LLM synthesis pass. */
-export function toolResultForLlm(record: LlmToolExecutionRecord): string {
+export function toolResultForLlm(
+  record: LlmToolExecutionRecord,
+  options?: { isVerifiedCaller?: boolean },
+): string {
   if (record.status === "blocked") {
     if (record.tool === "dictate_tracking") {
       return JSON.stringify({
@@ -827,10 +875,14 @@ export function toolResultForLlm(record: LlmToolExecutionRecord): string {
       return JSON.stringify(payload);
     }
 
+    const verified = options?.isVerifiedCaller === true;
     const payload = {
       status: "FOUND",
       found: true,
-      data: shapeOrderStatusForLlm(record.data),
+      data: filterOrderContextForVerification(
+        shapeOrderStatusForLlm(record.data, undefined, verified) as ActiveOrderContextData,
+        verified,
+      ),
       instructions:
         "Deep-fetch data is for internal memory only, including the full timeline events array (internal — never read verbatim; no staff names). On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. physical_items and item_count are BOOKS ONLY — each physical_items entry includes title, quantity, and price (per-unit); use that price for ordinal item questions (1st/2nd/3rd) — never substitute subtotal_amount. Never count or speak fee_items, processing_fees, shipping_fees, or handling_fees as books. Use shipping_amount for order shipping cost; use fee line arrays only when the caller explicitly asks about surcharges. Keys always present: customer_name, customer_email, customer_email_for_tts, order_placed_at, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). Use payment_method for spoken payment summaries (e.g. Visa ending in 1302 or PayPal). Use cancel_reason or refund_reason when explaining why an order was refunded or cancelled — always speak the reason when the caller asks about refunds. For spoken refund notification email, use refund_notification_email_for_tts (full speakable address, e.g. jamaicathompson87 at gmail dot com). If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK from INTERNATIONAL PROTOCOL using order_placed_at and customer_email_for_tts — never say not on file for archived orders with customer_email on file. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow TRACKING ID DICTATION PROTOCOL and CRITICAL GAG ORDER — speak ONLY tracking_number_for_tts verbatim (phonetic word-form paced, e.g. Nine. Two. Five. Zero.) plus Did you get that? Never mention items, fees, or payment when repeating tracking. For repeat requests, follow THE ISOLATION RULE and HUMAN SPATIAL DICTATION — never data-vomit the full order. If a field is null on a recent order (within 1 year), apologize and say my system doesn't show that specific detail — never invent a replacement and never end_call.",
     };
@@ -912,6 +964,44 @@ function cartErrorRecord(
   };
 }
 
+function validateCartForCheckout(
+  items: Array<{ title: string; variantId: string; unitPrice?: string; price?: string }>,
+): string | null {
+  for (const line of items) {
+    if (line.variantId.startsWith("custom:") && !(line.unitPrice ?? line.price)) {
+      return `Missing unit_price for custom cart line "${line.title}".`;
+    }
+    if (!line.variantId.startsWith("custom:") && !line.variantId.startsWith("gid://shopify/ProductVariant/")) {
+      return `Invalid Shopify variant on "${line.title}" — checkout blocked until variant is corrected.`;
+    }
+  }
+  return null;
+}
+
+function buildEscalationIssueSummary(
+  callSid: string,
+  session: CallSession,
+  userSummary: string,
+): string {
+  const state = getAgentState(callSid);
+  const transcript = state.messages
+    .slice(-16)
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
+  const orderNumber = String(session.currentOrderData?.order_number ?? "n/a");
+  return [
+    userSummary.trim(),
+    "",
+    "--- Session context ---",
+    `Caller: ${session.from}`,
+    `Order: ${orderNumber}`,
+    `Verified: ${session.isVerifiedCaller === true}`,
+    "",
+    "--- Recent transcript ---",
+    transcript || "(no transcript captured)",
+  ].join("\n");
+}
+
 /** Keys that must always exist on session.currentOrderData / LLM payloads (null allowed). */
 export const OMNI_EXTRACTOR_PAYLOAD_KEYS = [
   "customer_name",
@@ -939,6 +1029,7 @@ export function buildActiveOrderContextPayload(
 function shapeOrderStatusForLlm(
   data: OrderStatusResult,
   session?: CallSession,
+  verifiedOverride?: boolean,
 ): Record<string, unknown> {
   const trackingNumber =
     data.trackingNumber && isValidTrackingNumber(data.trackingNumber)
@@ -952,7 +1043,7 @@ function shapeOrderStatusForLlm(
     ) ??
     null;
   const orderConfirmationEmail = data.orderConfirmationEmail ?? null;
-  const verified = session?.isVerifiedCaller === true;
+  const verified = verifiedOverride ?? session?.isVerifiedCaller === true;
   const paymentMethod =
     formatPaymentMethodLabel(data.cardBrand, data.cardLast4, data.paymentGateway) ?? null;
   const cancelReason = data.cancelReason ?? data.refundReason ?? null;
@@ -1009,6 +1100,16 @@ function shapeOrderStatusForLlm(
     if (!(key in payload)) {
       payload[key] = null;
     }
+  }
+
+  if (!verified) {
+    payload.physical_items = null;
+    payload.fee_items = null;
+    payload.items = null;
+    payload.processing_fees = null;
+    payload.shipping_fees = null;
+    payload.handling_fees = null;
+    payload.events = null;
   }
 
   return payload;

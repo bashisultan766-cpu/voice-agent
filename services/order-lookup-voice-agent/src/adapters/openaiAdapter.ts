@@ -22,6 +22,7 @@ import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.j
 import { extractOrderNumberFromSpeech, orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
 import { buildActiveOrderContextSystemMessage, redactTrackingFromOrderContext } from "../agents/sessionManager.js";
+import { filterOrderContextForVerification } from "../agents/orderContextPrivacy.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { buildCartContextSystemMessage } from "../agents/cartManager.js";
 import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
@@ -53,7 +54,7 @@ import { buildLockedFlowSystemMessage } from "../agents/lockedFlowState.js";
 import {
   buildActiveSessionSystemMessage,
   getOrCreateActiveSession,
-  recordTrackingPayload,
+  ensureTrackingPayload,
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
@@ -430,9 +431,10 @@ function buildOpenAiMessages(
 
   if (input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) {
     const active = getOrCreateActiveSession(input.callSid);
-    const orderContext = redactTrackingFromOrderContext(
-      input.activeOrderContext,
-      active.isNotepadReady,
+    const verified = input.session?.isVerifiedCaller === true;
+    const orderContext = filterOrderContextForVerification(
+      redactTrackingFromOrderContext(input.activeOrderContext, active.isNotepadReady),
+      verified,
     );
     systemMessages.push({
       role: "system",
@@ -774,9 +776,13 @@ export function syncDeterministicAssistantSpeech(
  * Run one caller turn with tool-pending events for system-level filler injection.
  */
 function interceptTrackingCompleteBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  if (!isTrackingDictationCompleteIntent(input.userMessage)) return null;
-
   const active = getOrCreateActiveSession(input.callSid);
+  const trackingDictationContext = {
+    currentState: active.currentState,
+    lastSpokenIndex: active.lastSpokenIndex,
+  };
+  if (!isTrackingDictationCompleteIntent(input.userMessage, trackingDictationContext)) return null;
+
   const inTrackingFlow =
     Boolean(active.lastSpokenPayload?.trackingForTts) &&
     (active.currentState === "tracking_dictation" || active.cachedIntent === "tracking");
@@ -798,7 +804,7 @@ function interceptSpatialBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult
   const active = getOrCreateActiveSession(input.callSid);
   const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
   if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
-    recordTrackingPayload(input.callSid, trackingRaw);
+    ensureTrackingPayload(input.callSid, trackingRaw);
   }
 
   const refreshed = getOrCreateActiveSession(input.callSid);
@@ -834,7 +840,7 @@ function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResul
   const active = getOrCreateActiveSession(input.callSid);
   const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
   if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
-    recordTrackingPayload(input.callSid, trackingRaw);
+    ensureTrackingPayload(input.callSid, trackingRaw);
   }
 
   const hasTracking = Boolean(
@@ -1104,7 +1110,9 @@ export async function* runLlmAgentTurnEvents(
           messages.push({
             role: "tool",
             tool_call_id: call.id,
-            content: toolResultForLlm(record),
+            content: toolResultForLlm(record, {
+              isVerifiedCaller: input.session?.isVerifiedCaller === true,
+            }),
           });
         }
 

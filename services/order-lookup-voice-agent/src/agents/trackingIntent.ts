@@ -14,8 +14,27 @@ const TRACKING_ID_FRAGMENT_RE = /\btracking\s*i\.?d\.?\b/i;
 const TRACKING_REPEAT_RE =
   /\b(?:didn'?t|did not|not yet|repeat|say (?:it )?again|one more time|can you repeat|read (?:it )?again|start over)\b/i;
 
+export interface TrackingDictationContext {
+  currentState?: string;
+  lastSpokenIndex?: number;
+  isNotepadReady?: boolean;
+}
+
+/** True when dictation has started (at least one digit spoken or actively dictating). */
+export function hasTrackingDictationProgress(context?: TrackingDictationContext): boolean {
+  if (!context) return true;
+  if (context.isNotepadReady && context.currentState === "tracking_dictation") return true;
+  if (context.currentState === "tracking_dictation" && (context.lastSpokenIndex ?? -1) >= 0) {
+    return true;
+  }
+  return false;
+}
+
 /** Caller confirms they captured the tracking number — must NOT restart dictation. */
-export function isTrackingDictationCompleteIntent(callerText: string): boolean {
+export function isTrackingDictationCompleteIntent(
+  callerText: string,
+  context?: TrackingDictationContext,
+): boolean {
   const text = callerText.trim();
   if (!text) return false;
   if (isSpatialResumeQuery(text)) return false;
@@ -23,27 +42,33 @@ export function isTrackingDictationCompleteIntent(callerText: string): boolean {
   if (/\b(?:notepad|pen and paper|pen and notepad)\s+ready\b/i.test(text)) return false;
   if (/\b(?:i'?m|i am)\s+ready\b/i.test(text)) return false;
 
+  const awaitingHandshake = context?.currentState === "awaiting_notepad_ready";
+
   if (
     /\b(?:written\s+(?:it\s+)?(?:down|correctly)|wrote\s+(?:it\s+)?down|got\s+it(?:\s+all)?|have\s+it(?:\s+all)?|copied\s+it|noted\s+(?:it|that)|finished\s+writing|done\s+writing)\b/i.test(
       text,
     )
   ) {
+    if (awaitingHandshake) return false;
     return true;
   }
 
   if (/\b(?:thank\s+you|thanks(?:\s+(?:so\s+much|a\s+lot))?)\b/i.test(text)) {
-    return true;
+    if (awaitingHandshake) return false;
+    return hasTrackingDictationProgress(context);
   }
 
   if (/^(yes|yeah|yep|yup|correct|that'?s (?:right|correct)|perfect|ok|okay|sure)\.?!?$/i.test(text)) {
-    return true;
+    if (awaitingHandshake) return false;
+    return hasTrackingDictationProgress(context);
   }
 
   if (
     /\b(?:ok|okay|yes|yeah)\b/i.test(text) &&
     /\b(?:done|written|wrote|got it|have it|all set|all good)\b/i.test(text)
   ) {
-    return true;
+    if (awaitingHandshake) return false;
+    return hasTrackingDictationProgress(context);
   }
 
   return false;

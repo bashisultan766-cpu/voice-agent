@@ -47,6 +47,39 @@ describe("tracking dictation completion", () => {
     );
   });
 
+  it("does not treat bare thanks as completion during notepad handshake", () => {
+    expect(
+      isTrackingDictationCompleteIntent("thanks", {
+        currentState: "awaiting_notepad_ready",
+        lastSpokenIndex: -1,
+      }),
+    ).toBe(false);
+    expect(
+      isTrackingDictationCompleteIntent("thank you", {
+        currentState: "tracking_dictation",
+        lastSpokenIndex: -1,
+      }),
+    ).toBe(false);
+  });
+
+  it("nudges notepad readiness instead of restarting handshake on thanks", () => {
+    const session = {
+      callSid: "CA_THANKS",
+      from: "+1",
+      to: "+2",
+      phase: "follow_up",
+      orderNumberAttempts: 0,
+      createdAt: Date.now(),
+      currentOrderData: { tracking_number: "9250" },
+    } as CallSession;
+
+    recordTrackingPayload("CA_THANKS", "9250");
+    const resolution = resolveTrackingPhaseGate("thanks", session);
+    expect(resolution.handled).toBe(true);
+    expect(resolution.speech).toMatch(/ready with pen and (?:paper|notepad)/i);
+    expect(resolution.speech).not.toMatch(/Nine\./);
+  });
+
   it("closes tracking flow instead of restarting dictation", () => {
     const session = {
       callSid: "CA_DONE",

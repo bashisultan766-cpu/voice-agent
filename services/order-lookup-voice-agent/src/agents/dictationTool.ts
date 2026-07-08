@@ -19,8 +19,11 @@ export const TRACKING_DICTATION_COMPLETE = "TRACKING_DICTATION_COMPLETE";
 export const TRACKING_DICTATION_COMPLETE_SPEECH =
   "Great — sounds like you have the tracking number written down. Would you like help with anything else on your order, or are you looking to buy a book?";
 
+export const TRACKING_DICTATION_CONFIRM_SPEECH =
+  "Did you write that correctly, or should I repeat it?";
+
 const NOTEPAD_READY_RE =
-  /\b(?:ready|i'?m\s+ready|go\s+ahead|all\s+set|you\s+can\s+go)\b/i;
+  /\b(?:ready|i'?m\s+ready|go\s+ahead|all\s+set|you\s+can\s+go|notepad\s+ready|pen\s+ready|have\s+my\s+pen|got\s+my\s+pen|paper\s+ready|pen\s+and\s+paper)\b/i;
 
 export class NotReadyError extends Error {
   readonly code = "NOTEPAD_NOT_READY" as const;
@@ -33,6 +36,17 @@ export class NotReadyError extends Error {
 
 export function promptUserForNotepad(): string {
   return "Please have your pen and notepad ready. Let me know when you are ready.";
+}
+
+export function buildNotepadReadyNudge(): string {
+  return "Whenever you're ready with pen and notepad, just say ready and I'll read the tracking ID slowly.";
+}
+
+export function appendTrackingDictationConfirm(speech: string): string {
+  const trimmed = speech.trim();
+  if (!trimmed) return TRACKING_DICTATION_CONFIRM_SPEECH;
+  if (/write that correctly|should I repeat/i.test(trimmed)) return trimmed;
+  return `${trimmed} ${TRACKING_DICTATION_CONFIRM_SPEECH}`;
 }
 
 export function isUserNotepadReadyIntent(callerText: string): boolean {
@@ -100,7 +114,7 @@ export function dictateTracking(callSid: string): DictateTrackingResult {
   return {
     ok: true,
     intent: USER_NOTEPAD_READY,
-    speech: trackingForTts,
+    speech: appendTrackingDictationConfirm(trackingForTts),
   };
 }
 
@@ -114,6 +128,10 @@ export function confirmUserNotepadReady(callSid: string): void {
 }
 
 export function markTrackingAwaitingNotepad(callSid: string): void {
+  const active = getOrCreateActiveSession(callSid);
+  if (active.currentState === "awaiting_notepad_ready" && active.lastSpokenPayload?.trackingForTts) {
+    return;
+  }
   updateActiveSession(callSid, {
     currentState: "awaiting_notepad_ready",
     awaitingClarification: "notepad_ready",

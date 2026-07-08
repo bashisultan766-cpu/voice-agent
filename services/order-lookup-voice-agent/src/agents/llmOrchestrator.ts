@@ -29,7 +29,7 @@ import { clearLastSpokenSentence } from "../services/llmService.js";
 import {
   getOrCreateActiveSession,
   recordToolPayload,
-  recordTrackingPayload,
+  ensureTrackingPayload,
 } from "../sovereign/activeSession.js";
 import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH } from "./dictationTool.js";
 import { isTrackingDictationCompleteIntent } from "./trackingIntent.js";
@@ -123,7 +123,7 @@ function persistOrderContext(
     const trackingRaw = String(payload.tracking_number ?? "").trim();
     const active = getOrCreateActiveSession(session.callSid);
     if (trackingRaw && !active.lastSpokenPayload?.trackingForTts) {
-      recordTrackingPayload(session.callSid, trackingRaw);
+      ensureTrackingPayload(session.callSid, trackingRaw);
     }
   }
 
@@ -229,8 +229,12 @@ export async function* runLlmOrchestratorTurn(
     result.toolExecutions.some((exec) => exec.tool === "dictate_tracking" && exec.ok);
   let speech = result.speech.trim();
   const activeSession = getOrCreateActiveSession(session.callSid);
+  const trackingDictationContext = {
+    currentState: activeSession.currentState,
+    lastSpokenIndex: activeSession.lastSpokenIndex,
+  };
   if (
-    isTrackingDictationCompleteIntent(text) &&
+    isTrackingDictationCompleteIntent(text, trackingDictationContext) &&
     Boolean(activeSession.lastSpokenPayload?.trackingForTts) &&
     (activeSession.currentState === "tracking_dictation" || activeSession.cachedIntent === "tracking")
   ) {
@@ -267,7 +271,7 @@ export async function* runLlmOrchestratorTurn(
   if (orderExec?.data && "trackingNumber" in orderExec.data && orderExec.data.trackingNumber) {
     const active = getOrCreateActiveSession(session.callSid);
     if (!active.lastSpokenPayload?.trackingForTts) {
-      recordTrackingPayload(session.callSid, String(orderExec.data.trackingNumber), result.speech);
+      ensureTrackingPayload(session.callSid, String(orderExec.data.trackingNumber), result.speech);
     }
   } else if (orderExec?.ok) {
     recordToolPayload(session.callSid, {

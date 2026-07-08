@@ -114,3 +114,5 @@ export function buildActiveOrderContextSystemMessage(
     `JSON: ${JSON.stringify(data)}`
   );
 }
+
+export { filterOrderContextForVerification } from "./orderContextPrivacy.js";
