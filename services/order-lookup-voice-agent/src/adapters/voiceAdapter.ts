@@ -3,7 +3,7 @@
  * When VOICE_IDENTITY_CONSTRAINT is active, locks OpenAI without ElevenLabs probes.
  * Otherwise probes ElevenLabs once at startup; on failure locks OpenAI for life.
  */
-import { getConfig } from "../config.js";
+import { getConfig, isConversationRelayRuntime } from "../config.js";
 import { logger } from "../utils/logger.js";
 
 export type PreferredVoiceEngine = "ElevenLabs" | "openai-tts-1-hd";
@@ -73,6 +73,9 @@ export function getGlobalVoiceProvider(): GlobalVoiceProvider | null {
 /** Health-facing provider label — includes identity-constraint suffix when active. */
 export function getHealthVoiceProviderLabel(): string | null {
   if (globalVoiceProvider === null) return null;
+  if (isConversationRelayRuntime()) {
+    return "ElevenLabs (Twilio ConversationRelay)";
+  }
   if (isVoiceIdentityConstraintActive() && globalVoiceProvider === "OpenAI") {
     return "OpenAI (Identity Constraint Active)";
   }
@@ -289,6 +292,20 @@ export async function initializeGlobalVoiceProvider(): Promise<GlobalVoiceProvid
   }
 
   initPromise = (async (): Promise<GlobalVoiceProvider> => {
+    if (isConversationRelayRuntime()) {
+      globalVoiceProvider = "ElevenLabs";
+      isElevenLabsDisabled = false;
+      failoverReason = null;
+      circuitTrippedAt = null;
+      lastHttpStatus = null;
+      logger.info("voice_runtime_conversation_relay", {
+        voiceId: getLockedElevenLabsVoiceId() || undefined,
+        note: "Twilio synthesizes Eric voice from VOICE_ID — no ElevenLabs API key required",
+      });
+      logVoiceEngineSelection();
+      return globalVoiceProvider;
+    }
+
     if (isVoiceIdentityConstraintActive()) {
       return activateVoiceIdentityConstraint();
     }

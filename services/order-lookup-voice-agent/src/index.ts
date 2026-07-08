@@ -6,7 +6,12 @@ import express from "express";
 
 import { WebSocketServer } from "ws";
 
-import { getConfig, CONVERSATION_BRAIN_PATH_PREFIX, wsUrl } from "./config.js";
+import {
+  getConfig,
+  CONVERSATION_BRAIN_PATH_PREFIX,
+  wsUrl,
+  isConversationRelayRuntime,
+} from "./config.js";
 
 import { warmPhraseCache } from "./utils/phraseCache.js";
 
@@ -18,6 +23,8 @@ import { handleInboundCall } from "./agents/conversationOrchestrator.js";
 
 import { handleMediaStreamSocket } from "./voice/streamHandler.js";
 
+import { handleConversationRelaySocket } from "./voice/conversationRelayHandler.js";
+
 import {
   initPostgresEventStore,
   isPostgresDisabled,
@@ -27,31 +34,20 @@ import {
 import { validateEnvironmentOnStartup } from "./platform/envValidator.js";
 
 import {
-
   ensureVoiceProviderReady,
-
   getElevenLabsCircuitSnapshot,
-
   getHealthVoiceProviderLabel,
-
   getLockedElevenLabsVoiceId,
-
   getOpenAiEricFallbackVoice,
-
   initializeGlobalVoiceProvider,
-
   isVoiceIdentityConstraintActive,
-
 } from "./adapters/voiceAdapter.js";
 
 import { TWILIO_MEDIA_STREAM_PROTOCOL } from "./voice/mediaStreamProtocol.js";
 
-
-
 const CONVERSATION_BRAIN_INBOUND = `${CONVERSATION_BRAIN_PATH_PREFIX}/inbound`;
 
 export function createApp() {
-
   const app = express();
 
   app.set("trust proxy", true);
@@ -60,97 +56,58 @@ export function createApp() {
 
   app.use(express.json());
 
-
-
   app.get("/health", (_req, res) => {
-
     const voiceReady = ensureVoiceProviderReady();
-
     const circuit = getElevenLabsCircuitSnapshot();
+    const conversationRelay = isConversationRelayRuntime();
 
     res.json({
-
       ok: true,
-
       service: "order-lookup-voice-agent",
-
-      runtime: "twilio_media_streams",
-
+      runtime: conversationRelay ? "twilio_conversation_relay" : "twilio_media_streams",
       wsUrl: wsUrl(),
-
       voiceProvider: getHealthVoiceProviderLabel(),
-
       voiceProviderReady: voiceReady.ok,
-
       voiceIdentityConstraint: isVoiceIdentityConstraintActive(),
-
       reservedElevenLabsVoiceId: getLockedElevenLabsVoiceId() || undefined,
-
-      primaryEngine: circuit.primaryEngine,
-
-      elevenLabsCircuitOpen: circuit.open,
-
-      voiceFailoverReason: circuit.failoverReason,
-
-      voiceFailoverActive: circuit.open && circuit.activeProvider === "OpenAI",
-
+      primaryEngine: conversationRelay ? "Twilio ConversationRelay" : circuit.primaryEngine,
+      elevenLabsCircuitOpen: conversationRelay ? false : circuit.open,
+      voiceFailoverReason: conversationRelay ? null : circuit.failoverReason,
+      voiceFailoverActive: conversationRelay
+        ? false
+        : circuit.open && circuit.activeProvider === "OpenAI",
       openAiFallbackVoice: getOpenAiEricFallbackVoice(),
-
       circuitTrippedAt: circuit.trippedAt,
-
       lastElevenLabsHttpStatus: circuit.lastHttpStatus,
-
       postgresEventStoreEnabled: isPostgresEventStoreEnabled(),
-
       postgresDisabled: isPostgresDisabled(),
-
     });
-
   });
 
-
-
   app.post(CONVERSATION_BRAIN_INBOUND, async (req, res) => {
-
     console.log("INBOUND_CALL_RECEIVED_AND_ROUTED");
 
     try {
-
       await handleInboundCall(req, res);
-
     } catch (err) {
-
       logger.error("conversation_brain_inbound_failed", {
-
         error: err instanceof Error ? err.message : String(err),
-
       });
 
       res
-
         .type("application/xml")
-
         .send(
-
           '<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Matthew">We are experiencing technical difficulties. Please try again later.</Say></Response>',
-
         );
-
     }
-
   });
 
-
-
   return app;
-
 }
 
-
-
 export function startServer() {
-
   const cfg = getConfig();
+  const conversationRelay = isConversationRelayRuntime();
 
   setLogLevel(cfg.LOG_LEVEL);
 
@@ -160,129 +117,80 @@ export function startServer() {
 
   const server = http.createServer(app);
 
-
-
   const wss = new WebSocketServer({ server, path: `${CONVERSATION_BRAIN_PATH_PREFIX}/ws` });
 
   wss.on("connection", (socket, req) => {
-
     const voiceReady = ensureVoiceProviderReady();
-
     if (!voiceReady.ok) {
-
-      logger.error("media_stream_ws_rejected_voice_provider_uninitialized", {
-
+      logger.error("voice_ws_rejected_provider_uninitialized", {
         path: req.url,
-
         error: voiceReady.error,
-
       });
-
       socket.close(1011, "Voice provider unavailable");
-
       return;
-
     }
 
-
-
-    logger.info("media_stream_ws_connected", {
-
+    logger.info("voice_ws_connected", {
       path: req.url,
-
       remote: req.socket.remoteAddress,
-
       voiceProvider: voiceReady.provider,
-
-      protocol: TWILIO_MEDIA_STREAM_PROTOCOL,
-
+      protocol: conversationRelay ? "twilio_conversation_relay" : TWILIO_MEDIA_STREAM_PROTOCOL,
     });
 
     socket.on("error", (err) => {
-
-      logger.error("media_stream_ws_socket_error", { error: err.message });
-
+      logger.error("voice_ws_socket_error", { error: err.message });
     });
 
-    void handleMediaStreamSocket(socket);
-
+    if (conversationRelay) {
+      void handleConversationRelaySocket(socket);
+    } else {
+      void handleMediaStreamSocket(socket);
+    }
   });
-
-
 
   server.listen(cfg.PORT, () => {
-
-    const voiceReady = ensureVoiceProviderReady();
+    const ready = ensureVoiceProviderReady();
 
     logger.info("server_started", {
-
       port: cfg.PORT,
-
       service: "order-lookup-voice-agent",
-
       wsUrl: wsUrl(),
-
       inbound: `${cfg.PUBLIC_BASE_URL.replace(/\/$/, "")}${CONVERSATION_BRAIN_INBOUND}`,
-
-      voiceProvider: voiceReady.ok ? voiceReady.provider : null,
-
+      runtime: conversationRelay ? "twilio_conversation_relay" : "twilio_media_streams",
+      voiceProvider: ready.ok ? ready.provider : null,
+      voiceId: getLockedElevenLabsVoiceId() || undefined,
     });
-
   });
 
-
-
   return server;
-
 }
 
-
-
 async function bootstrap(): Promise<void> {
-
   if (process.env.SKIP_SHOPIFY_STARTUP_CHECK !== "true") {
-
     await validateEnvironmentOnStartup();
-
   }
 
-
-
   const provider = await initializeGlobalVoiceProvider();
-
   logger.info("voice_provider_ready", { provider });
 
   await initPostgresEventStore();
 
-  await prewarmVoiceCache();
+  if (!isConversationRelayRuntime()) {
+    await prewarmVoiceCache();
+  }
 
   startServer();
-
 }
 
-
-
 process.on("unhandledRejection", (reason) => {
-
   logger.error("unhandled_rejection", {
-
     error: reason instanceof Error ? reason.message : String(reason),
-
   });
-
 });
-
-
 
 bootstrap().catch((err) => {
-
   logger.error("startup_failed", {
-
     error: err instanceof Error ? err.message : String(err),
-
   });
-
   process.exit(1);
-
 });
-

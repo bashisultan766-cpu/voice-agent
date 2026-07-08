@@ -15,6 +15,7 @@ const baseEnv = {
   SHOPIFY_SHOP_DOMAIN: "shop.myshopify.com",
   SHOPIFY_ADMIN_ACCESS_TOKEN: "shpat",
   VOICE_TTS_PROVIDER: "ElevenLabs",
+  VOICE_RUNTIME: "twilio_media_streams",
   VOICE_IDENTITY_CONSTRAINT: "false",
   ELEVENLABS_API_KEY: "el-test-key",
   VOICE_ID: "voice123",

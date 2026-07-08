@@ -3,7 +3,14 @@
  *
  * streamHandler → process → sovereignRouter → llmOrchestrator → response delivery
  */
-import { getConfig } from "../config.js";
+import {
+  wsUrl,
+  conversationRelayVoice,
+  isConversationRelayRuntime,
+  getConfig,
+} from "../config.js";
+import { CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
+import { ensureVoiceProviderReady, getLockedElevenLabsVoiceId } from "../adapters/voiceAdapter.js";
 import {
   clearCallerMemory,
   getCallerMemory,
@@ -179,9 +186,6 @@ import {
   markCallSessionClosed,
 } from "../voice/callSessionLock.js";
 import type { Request, Response } from "express";
-import { wsUrl } from "../config.js";
-import { CALLER_WELCOME_BACK_GREETING } from "../utils/callerMemory.js";
-import { ensureVoiceProviderReady } from "../adapters/voiceAdapter.js";
 import { validateTwilioSignature } from "../utils/twilioSignature.js";
 import {
   buildClarifyingResponse,
@@ -192,7 +196,7 @@ export type BrainIntent = "order_status" | "product_search" | "general_help" | "
 
 /** Fixed greeting spoken at call start (TwiML welcomeGreeting). */
 export const BRAIN_GREETING =
-  "Welcome to SureShot Books! I can look up your order status — what's your order number?";
+  "This is SureShot Books. I can help with order status, book searches by ISBN or title, and payment links. How can I help you today?";
 
 /** Create a new call session — voice layer must not mutate slots/intent/phase. */
 export function createCallSession(callSid: string, from: string, to: string): CallSession {
@@ -946,18 +950,51 @@ function renderMediaStreamTwiml(params: {
   return `${XML_HEADER}<Response><Connect><Stream url="${escapeTwiml(params.wsUrl)}">${parameters.join("")}</Stream></Connect></Response>`;
 }
 
-/** Inbound Twilio webhook → Media Streams → streamHandler → process() */
+function renderConversationRelayTwiml(params: {
+  wsUrl: string;
+  from: string;
+  to: string;
+  welcomeGreeting: string;
+  routerSpeech?: string;
+}): string {
+  const cfg = getConfig();
+  const voice = conversationRelayVoice();
+  const parameters = [
+    `<Parameter name="from" value="${escapeTwiml(params.from)}"/>`,
+    `<Parameter name="to" value="${escapeTwiml(params.to)}"/>`,
+    `<Parameter name="welcomeGreeting" value="${escapeTwiml(params.welcomeGreeting)}"/>`,
+  ];
+  if (params.routerSpeech) {
+    parameters.push(
+      `<Parameter name="routerSpeech" value="${escapeTwiml(params.routerSpeech)}"/>`,
+    );
+  }
+
+  return `${XML_HEADER}<Response><Connect><ConversationRelay url="${escapeTwiml(params.wsUrl)}" voice="${escapeTwiml(voice)}" ttsProvider="ElevenLabs" language="${escapeTwiml(cfg.VOICE_LANGUAGE)}" elevenlabsTextNormalization="${escapeTwiml(cfg.ELEVENLABS_TEXT_NORMALIZATION)}" welcomeGreeting="${escapeTwiml(params.welcomeGreeting)}" interruptible="speech">${parameters.join("")}</ConversationRelay></Connect></Response>`;
+}
+
+/** Inbound Twilio webhook → ConversationRelay or Media Streams → process() */
 export async function handleInboundCall(req: Request, res: Response): Promise<void> {
-  const voiceReady = ensureVoiceProviderReady();
-  if (!voiceReady.ok) {
-    logger.error("inbound_rejected_voice_provider_uninitialized", {
-      error: voiceReady.error,
-    });
-    res.status(500).json({
-      ok: false,
-      error: "voice_provider_unavailable",
-    });
-    return;
+  const conversationRelay = isConversationRelayRuntime();
+
+  if (conversationRelay) {
+    if (!getLockedElevenLabsVoiceId()) {
+      logger.error("inbound_rejected_voice_id_missing");
+      res.status(500).json({ ok: false, error: "voice_id_not_configured" });
+      return;
+    }
+  } else {
+    const voiceReady = ensureVoiceProviderReady();
+    if (!voiceReady.ok) {
+      logger.error("inbound_rejected_voice_provider_uninitialized", {
+        error: voiceReady.error,
+      });
+      res.status(500).json({
+        ok: false,
+        error: "voice_provider_unavailable",
+      });
+      return;
+    }
   }
 
   const cfg = getConfig();
@@ -975,8 +1012,8 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
     from: maskInboundPhone(from),
     to: maskInboundPhone(to),
     wsUrl: wsUrl(),
-    voiceProvider: voiceReady.provider,
-    runtime: "twilio_media_streams",
+    voiceId: getLockedElevenLabsVoiceId() || undefined,
+    runtime: conversationRelay ? "twilio_conversation_relay" : "twilio_media_streams",
   });
 
   const routerSpeech = String(req.body.RouterSpeech ?? "").trim();
@@ -988,13 +1025,21 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
       ? CALLER_WELCOME_BACK_GREETING
       : BRAIN_GREETING;
 
-  const twiml = renderMediaStreamTwiml({
-    wsUrl: wsUrl(),
-    from,
-    to,
-    welcomeGreeting,
-    routerSpeech: routerSpeech || undefined,
-  });
+  const twiml = conversationRelay
+    ? renderConversationRelayTwiml({
+        wsUrl: wsUrl(),
+        from,
+        to,
+        welcomeGreeting,
+        routerSpeech: routerSpeech || undefined,
+      })
+    : renderMediaStreamTwiml({
+        wsUrl: wsUrl(),
+        from,
+        to,
+        welcomeGreeting,
+        routerSpeech: routerSpeech || undefined,
+      });
 
   res.type("application/xml").send(twiml);
 }

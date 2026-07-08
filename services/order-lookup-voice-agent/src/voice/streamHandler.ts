@@ -447,8 +447,8 @@ async function runStreamingTurn(
   }
 }
 
-/** @deprecated Use handleMediaStreamSocket */
-export const handleConversationRelaySocket = handleMediaStreamSocket;
+/** @deprecated Use conversationRelayHandler.handleConversationRelaySocket for live calls. */
+export { handleConversationRelaySocket } from "./conversationRelayHandler.js";
 
 export function applyRelayInterrupt(ctx: {
   getSession: () => CallSession | null;

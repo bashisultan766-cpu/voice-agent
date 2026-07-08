@@ -56,12 +56,20 @@ const envSchema = z.object({
   /** When true, skip all ElevenLabs probes/calls and lock OpenAI fallback for production. */
   VOICE_IDENTITY_CONSTRAINT: z
     .enum(["true", "false"])
-    .default("true")
+    .default("false")
     .transform((v) => v === "true"),
   /** OpenAI tts-1-hd voice when ElevenLabs quota is exceeded — tuned to match Eric profile. */
   OPENAI_TTS_VOICE: z
     .enum(["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"])
     .default("onyx"),
+
+  /**
+   * twilio_conversation_relay — Eric voice via VOICE_ID only (Twilio synthesizes; no ElevenLabs API key).
+   * twilio_media_streams — direct ElevenLabs/OpenAI TTS over Media Streams (requires API key).
+   */
+  VOICE_RUNTIME: z
+    .enum(["twilio_conversation_relay", "twilio_media_streams"])
+    .default("twilio_conversation_relay"),
 
   ORDER_LOOKUP_MAX_RETRIES: z.coerce.number().default(2),
   VOICE_ROUTER_FORWARD_SECRET: z.string().optional(),
@@ -172,6 +180,11 @@ export function conversationRelayVoice(): string {
 export function wsUrl(): string {
   const base = getConfig().PUBLIC_BASE_URL.replace(/^http/, "ws").replace(/\/$/, "");
   return `${base}${CONVERSATION_BRAIN_PATH_PREFIX}/ws`;
+}
+
+/** True when Twilio ConversationRelay handles STT/TTS — only VOICE_ID required. */
+export function isConversationRelayRuntime(): boolean {
+  return getConfig().VOICE_RUNTIME === "twilio_conversation_relay";
 }
 
 /** Twilio ConversationRelay paths under the conversation brain namespace. */
