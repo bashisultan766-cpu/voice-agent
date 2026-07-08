@@ -1210,11 +1210,23 @@ async function* handleFollowUpPhase(
   }
 
   if (intent === "repeat_order" && session.currentOrder) {
-    yield chunkEvent(planRepeatIntro());
-    yield* streamOrderSummary(session.currentOrder);
-    session.phase = "follow_up";
-    yield doneEvent(session.phase);
-    return;
+    const active = getOrCreateActiveSession(session.callSid);
+    if (
+      active.currentState === "tracking_dictation" ||
+      (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking")
+    ) {
+      const trackingRetry = resolveTrackingPhaseGate(callerText, session, callerIntent);
+      if (trackingRetry.handled) {
+        yield* yieldTrackingPhaseSpeech(session, callerText, trackingRetry);
+        return;
+      }
+    } else {
+      yield chunkEvent(planRepeatIntro());
+      yield* streamOrderSummary(session.currentOrder);
+      session.phase = "follow_up";
+      yield doneEvent(session.phase);
+      return;
+    }
   }
 
   if (

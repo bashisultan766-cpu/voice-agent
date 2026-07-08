@@ -250,8 +250,10 @@ describe("enterprise restoration phase 2 e2e", () => {
     expect(escalationSpeech).toMatch(/support team/i);
     expect(escalationSpy).toHaveBeenCalled();
     const summary = escalationSpy.mock.calls[0]?.[3] ?? "";
-    expect(summary).toMatch(/Session context/i);
-    expect(summary).toMatch(/Recent transcript/i);
-    expect(summary).toMatch(/human please/i);
+    expect(summary).toMatch(/human please|support/i);
+    expect(summary).toMatch(/\+15551234567/);
+    expect(summary).toMatch(/Order 21796/);
+    expect(summary).not.toMatch(/Recent transcript/i);
+    expect(summary.split("\n").length).toBeLessThanOrEqual(3);
   });
 });

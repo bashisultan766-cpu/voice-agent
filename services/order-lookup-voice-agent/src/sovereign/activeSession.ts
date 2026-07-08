@@ -300,7 +300,13 @@ export function buildActiveSessionSystemMessage(active: ActiveSession): string {
   if (active.spatialIndex.length > 0) {
     lines.push(
       `spatialIndex: ${JSON.stringify(active.spatialIndex)}`,
-      "For spatial resume questions (e.g. 'what comes after 3-9'), use spatialIndex — speak ONLY the digits after the latest anchor match.",
+      "For spatial resume questions (e.g. 'what comes after 3-9'), use spatialIndex — speak ONLY the digits after the latest anchor match. NEVER read order items, customer name, shipping fees, or totals during tracking dictation.",
+    );
+  }
+
+  if (active.currentState === "tracking_dictation") {
+    lines.push(
+      "TRACKING DICTATION LOCK: Speak ONLY tracking digits from tracking_number_for_tts or spatial resume. Do NOT read physical_items, fees, customer name, or order totals unless the caller explicitly says 'full summary'.",
     );
   }
 

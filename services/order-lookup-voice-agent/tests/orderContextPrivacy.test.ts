@@ -19,7 +19,8 @@ describe("orderContextPrivacy", () => {
     );
     expect(filtered.customer_name).toBe("Jamaica Thompson");
     expect(filtered.shipping_address).toBeNull();
-    expect(filtered.physical_items).toBeNull();
+    expect(filtered.physical_items).toEqual([{ title: "Book" }]);
+    expect(filtered.events).toBeNull();
     expect(filtered.privacy_tier).toBe("unverified");
   });
 

@@ -31,6 +31,7 @@ import {
 } from "../nlp/entityExtractor.js";
 import {
   ORDER_NOT_FOUND_STRICT_SPOKEN,
+  ORDER_LOOKUP_MAINTENANCE_SPOKEN,
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
 import {
@@ -204,7 +205,7 @@ function buildOrderFallbackTts(result: OrderStatusResult): TtsPayload {
   }
   if (result.status === "throttled" || result.status === "api_error" || result.status === "system_maintenance") {
     return {
-      text: SYSTEM_MAINTENANCE_SPOKEN,
+      text: ORDER_LOOKUP_MAINTENANCE_SPOKEN,
       awaitingSlot: "order_number",
     };
   }

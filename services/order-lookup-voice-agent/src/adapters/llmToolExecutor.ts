@@ -998,23 +998,12 @@ function buildEscalationIssueSummary(
   session: CallSession,
   userSummary: string,
 ): string {
-  const state = getAgentState(callSid);
-  const transcript = state.messages
-    .slice(-16)
-    .map((message) => `${message.role}: ${message.content}`)
-    .join("\n");
-  const orderNumber = String(session.currentOrderData?.order_number ?? "n/a");
-  return [
-    userSummary.trim(),
-    "",
-    "--- Session context ---",
-    `Caller: ${session.from}`,
-    `Order: ${orderNumber}`,
-    `Verified: ${session.isVerifiedCaller === true}`,
-    "",
-    "--- Recent transcript ---",
-    transcript || "(no transcript captured)",
-  ].join("\n");
+  const issue = userSummary.trim() || "Voice support request";
+  const orderNumber = String(session.currentOrderData?.order_number ?? "").trim();
+  const verified = session.isVerifiedCaller === true ? "verified" : "unverified";
+  const parts = [issue, `Caller ${session.from}`, `${verified} line`];
+  if (orderNumber) parts.push(`Order ${orderNumber}`);
+  return parts.join(" | ");
 }
 
 /** Keys that must always exist on session.currentOrderData / LLM payloads (null allowed). */

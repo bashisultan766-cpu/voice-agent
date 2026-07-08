@@ -9,6 +9,7 @@ import {
   isLockedFlowState,
   isPaymentLinkActionUtterance,
 } from "../agents/lockedFlowState.js";
+import { isSpatialResumeQuery } from "../sovereign/spatialDictation.js";
 
 let client: OpenAI | null = null;
 
@@ -150,8 +151,14 @@ export async function classifyFollowUpIntent(
   if (isExplicitGoodbyeUtterance(callerText)) {
     return "goodbye";
   }
-  const text = callerText.toLowerCase();
-  if (/\b(repeat|say that again|order details|what did you find|summary)\b/.test(text)) {
+  const text = callerText.trim();
+  if (!text) return "other";
+
+  if (isSpatialResumeQuery(text)) return "other";
+  if (/\b(tracking|tracking\s+id|tracking\s+number|digit)\b/i.test(text)) return "other";
+
+  if (/\b(repeat|say that again|order details|what did you find|summary)\b/i.test(text)) {
+    if (/\b(after|before|from|tracking)\b/i.test(text)) return "other";
     return "repeat_order";
   }
   return "other";

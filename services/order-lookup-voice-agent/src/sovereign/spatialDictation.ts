@@ -22,7 +22,11 @@ function digitWord(char: string): string {
 }
 
 function digitsFromFragment(fragment: string): string[] {
-  return fragment.replace(/\D/g, "").split("").filter(Boolean);
+  return fragment
+    .replace(/\band\b/gi, " ")
+    .replace(/\D/g, "")
+    .split("")
+    .filter(Boolean);
 }
 
 /**
@@ -34,7 +38,7 @@ export function extractSpatialAnchorDigits(callerText: string): string[] | null 
   if (!text) return null;
 
   const afterClause = text.match(
-    /\b(?:what\s+comes\s+after|what\s+comes\s+before|after|following|past|before|prior\s+to|preceding)\s+(?:the\s+)?([\d][\d\s,.\-]{0,48}[\d])\b/i,
+    /\b(?:what\s+comes\s+after|what\s+comes\s+before|after|following|past|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\?|$)/i,
   );
   if (afterClause) {
     const digits = digitsFromFragment(afterClause[1]);

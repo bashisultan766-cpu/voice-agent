@@ -17,6 +17,11 @@ describe("spatialDictation anchors", () => {
     expect(extractSpatialAnchorDigits("what comes after 3,9")).toEqual(["3", "9"]);
   });
 
+  it("extracts anchors with spoken 'and' between digits", () => {
+    expect(extractSpatialAnchorDigits("what comes after 3 and 5")).toEqual(["3", "5"]);
+    expect(extractSpatialAnchorDigits("please repeat after 5, 3")).toEqual(["5", "3"]);
+  });
+
   it("extracts long comma runs and resumes from the matched suffix anchor", () => {
     expect(extractSpatialAnchorDigits("what comes after 7,8,9,3,9")).toEqual([
       "7",

@@ -3,14 +3,9 @@
  */
 import type { ActiveOrderContextData } from "./sessionManager.js";
 
+/** Vault-only fields — unverified callers still receive line items, totals, and fees. */
 const UNVERIFIED_STRIPPED_CONTEXT_KEYS = [
   "shipping_address",
-  "physical_items",
-  "fee_items",
-  "items",
-  "processing_fees",
-  "shipping_fees",
-  "handling_fees",
   "events",
   "order_confirmation_email",
   "order_confirmation_email_for_tts",
@@ -35,16 +30,12 @@ export function filterOrderContextForVerification(
 const SHIPPING_ADDRESS_RE =
   /\b(shipping\s+address|delivery\s+address|where\s+(?:was|is)\s+it\s+shipped|ship\s+to|mailing\s+address)\b/i;
 
-const LINE_ITEM_DRILLDOWN_RE =
-  /\b(line\s*items?|what\s+books|which\s+books|item\s+details|physical\s+items|book\s+titles?\s+on\s+(?:the\s+)?order)\b/i;
-
 /** Vault-only fields an unverified caller must not receive via deterministic speech. */
 export function isRestrictedFieldQueryForUnverified(callerText: string): boolean {
   const text = callerText.trim();
   if (!text) return false;
   if (SHIPPING_ADDRESS_RE.test(text)) return true;
-  if (LINE_ITEM_DRILLDOWN_RE.test(text)) return true;
-  if (/\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders)\b/i.test(text)) {
+  if (/\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders|what\s+did\s+i\s+order\s+in)\b/i.test(text)) {
     return true;
   }
   return false;

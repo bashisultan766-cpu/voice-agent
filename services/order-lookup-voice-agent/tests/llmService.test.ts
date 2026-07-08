@@ -179,4 +179,9 @@ describe("classifyFollowUpIntent", () => {
   it("classifies explicit goodbye", async () => {
     await expect(classifyFollowUpIntent("bye")).resolves.toBe("goodbye");
   });
+
+  it("does not treat spatial tracking repeat as repeat_order", async () => {
+    await expect(classifyFollowUpIntent("please repeat after 5, 3")).resolves.toBe("other");
+    await expect(classifyFollowUpIntent("what comes after 3 and 5")).resolves.toBe("other");
+  });
 });

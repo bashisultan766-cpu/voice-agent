@@ -16,6 +16,7 @@ import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
 import {
   ORDER_NOT_FOUND_STRICT_SPOKEN,
+  ORDER_LOOKUP_MAINTENANCE_SPOKEN,
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
@@ -61,7 +62,7 @@ import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
 import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent } from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
-import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH } from "../agents/dictationTool.js";
+import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH, isUserNotepadReadyIntent } from "../agents/dictationTool.js";
 import { isTrackingDictationText } from "../utils/ttsFormatter.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -550,7 +551,24 @@ function isBareOrderNumberUtterance(text: string): boolean {
   return digits.length >= 4 && digits.length <= 10 && !/\bisbn\b/i.test(trimmed);
 }
 
+function isOrderLookupInsistenceUtterance(text: string): boolean {
+  return /\b((?:this\s+is\s+the\s+)?correct|right)\s+order|please\s+(?:find|look\s*(?:it\s+)?up|try\s+again|provide)\b/i.test(
+    text,
+  );
+}
+
 function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | null {
+  if (isOrderLookupInsistenceUtterance(input.userMessage)) {
+    const agentState = getAgentState(input.callSid);
+    if (agentState.lastOrderNumber) {
+      return agentState.lastOrderNumber;
+    }
+    const insisted =
+      extractOrderNumberFromStt(input.userMessage, { awaitingSlot: true }) ??
+      extractOrderNumberFromSpeech(input.userMessage);
+    if (insisted) return insisted;
+  }
+
   const awaitingSlot = isAwaitingOrderNumberSlot(input);
   const bareOrder = isBareOrderNumberUtterance(input.userMessage);
   const allowLoose = awaitingSlot || bareOrder;
@@ -702,7 +720,7 @@ function groundedSpeechFromOrderToolRecord(record: LlmToolExecutionRecord): stri
     record.status === "api_error" ||
     record.status === "throttled"
   ) {
-    return SYSTEM_MAINTENANCE_SPOKEN;
+    return ORDER_LOOKUP_MAINTENANCE_SPOKEN;
   }
   if (record.data && "orderNumber" in record.data) {
     return groundedOrderSpeech(record.data);
@@ -798,6 +816,34 @@ function interceptTrackingCompleteBeforeLlm(input: LlmAgentTurnInput): LlmAgentT
 
   return {
     speech: TRACKING_DICTATION_COMPLETE_SPEECH,
+    toolExecutions: [],
+    responseType: "general_help",
+  };
+}
+
+function interceptTrackingDictationLockBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  const active = getOrCreateActiveSession(input.callSid);
+  const inTracking =
+    active.currentState === "tracking_dictation" ||
+    (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking");
+  if (!inTracking) return null;
+
+  if (isSpatialResumeQuery(input.userMessage)) return null;
+  if (isUserNotepadReadyIntent(input.userMessage)) return null;
+  if (isTrackingRequest(input.userMessage)) return null;
+  if (
+    isTrackingDictationCompleteIntent(input.userMessage, {
+      currentState: active.currentState,
+      lastSpokenIndex: active.lastSpokenIndex,
+      isNotepadReady: active.isNotepadReady,
+    })
+  ) {
+    return null;
+  }
+
+  return {
+    speech:
+      "I'm still on your tracking number. Tell me which digits to repeat from, or let me know once you've written it down.",
     toolExecutions: [],
     responseType: "general_help",
   };
@@ -932,6 +978,12 @@ export async function* runLlmAgentTurnEvents(
   const spatialIntercept = interceptSpatialBeforeLlm(input);
   if (spatialIntercept) {
     yield { type: "result", result: spatialIntercept };
+    return;
+  }
+
+  const trackingDictationLock = interceptTrackingDictationLockBeforeLlm(input);
+  if (trackingDictationLock) {
+    yield { type: "result", result: trackingDictationLock };
     return;
   }
 

@@ -11,9 +11,17 @@ export const ORDER_NOT_FOUND_MESSAGE =
 export const ORDER_NOT_FOUND_STRICT_SPOKEN =
   "I apologize, but I cannot find an order matching that number in our system.";
 
-/** Spoken when tools return SYSTEM_MAINTENANCE — never mention API/token errors. */
+/** Spoken when catalog/book tools return SYSTEM_MAINTENANCE — never mention API/token errors. */
 export const SYSTEM_MAINTENANCE_SPOKEN =
   "I apologize, but our catalog system is currently undergoing a brief update. Is there anything else I can help you with today?";
+
+/** Spoken when an order lookup hits a transient Shopify error — not the catalog. */
+export const ORDER_LOOKUP_MAINTENANCE_SPOKEN =
+  "I had a brief hiccup pulling that order. Let me try your order number again right now.";
+
+/** Spoken when the caller insists the order number is correct after a miss. */
+export const ORDER_LOOKUP_RETRY_SPOKEN =
+  "You're right — let me look that order up again for you.";
 
 /** Spoken when Shopify catalog is throttled / circuit is open — buys backoff time. */
 export const CATALOG_DEGRADED_MESSAGE =

@@ -115,14 +115,6 @@ export function resolveCallerIntent(
     return "order_lookup";
   }
 
-  if (REPEAT_ORDER_RE.test(text) && session?.currentOrder) {
-    return "repeat_order";
-  }
-
-  if (CART_RE.test(text)) return "cart";
-
-  if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) return "catalog";
-
   if (
     callSid &&
     isInActiveTrackingFlow(callSid) &&
@@ -137,6 +129,21 @@ export function resolveCallerIntent(
   ) {
     return "tracking_flow_active";
   }
+
+  if (REPEAT_ORDER_RE.test(text) && session?.currentOrder) {
+    if (isSpatialResumeQuery(text)) return "tracking_flow_active";
+    if (/\b(tracking|tracking\s+id|tracking\s+number|digit)\b/i.test(text)) {
+      return "tracking_flow_active";
+    }
+    if (/\brepeat\b/i.test(text) && /\b(after|before|from)\b/i.test(text)) {
+      return "tracking_flow_active";
+    }
+    return "repeat_order";
+  }
+
+  if (CART_RE.test(text)) return "cart";
+
+  if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) return "catalog";
 
   if (isExplicitTrackingDictationRequest(text)) {
     return "tracking_dictation";
