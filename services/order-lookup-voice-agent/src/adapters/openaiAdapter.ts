@@ -11,14 +11,14 @@ import {
   type LlmToolName,
 } from "./llmToolExecutor.js";
 import { ServiceRegistry } from "../sovereign/serviceRegistry.js";
-import { groundedOrderSpeech } from "../agents/fulfillmentHandlers.js";
+import {
+  isOrderLookupInsistenceUtterance,
+  shouldBypassOrderLookupCache,
+  speechForOrderLookupResult,
+} from "../agents/orderLookupWorkflow.js";
 import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
-import {
-  ORDER_NOT_FOUND_STRICT_SPOKEN,
-  ORDER_LOOKUP_MAINTENANCE_SPOKEN,
-  SYSTEM_MAINTENANCE_SPOKEN,
-} from "../constants/systemMessages.js";
+import { ORDER_NOT_FOUND_STRICT_SPOKEN } from "../constants/systemMessages.js";
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
 import { extractOrderNumberFromSpeech, orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
@@ -551,14 +551,10 @@ function isBareOrderNumberUtterance(text: string): boolean {
   return digits.length >= 4 && digits.length <= 10 && !/\bisbn\b/i.test(trimmed);
 }
 
-function isOrderLookupInsistenceUtterance(text: string): boolean {
-  return /\b((?:this\s+is\s+the\s+)?correct|right)\s+order|please\s+(?:find|look\s*(?:it\s+)?up|try\s+again|provide)\b/i.test(
-    text,
-  );
-}
-
 function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | null {
-  if (isOrderLookupInsistenceUtterance(input.userMessage)) {
+  const insistence = isOrderLookupInsistenceUtterance(input.userMessage);
+
+  if (insistence) {
     const agentState = getAgentState(input.callSid);
     if (agentState.lastOrderNumber) {
       return agentState.lastOrderNumber;
@@ -581,6 +577,7 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
 
   const agentState = getAgentState(input.callSid);
   const orderAlreadyFound =
+    !insistence &&
     Boolean(input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) &&
     agentState.lastOrderNumber &&
     orderNumbersMatch(agentState.lastOrderNumber, orderNumber);
@@ -711,19 +708,25 @@ function interceptOrderNumberOfferBeforeLlm(
   };
 }
 
-function groundedSpeechFromOrderToolRecord(record: LlmToolExecutionRecord): string {
+function groundedSpeechFromOrderToolRecord(
+  record: LlmToolExecutionRecord,
+  options?: { insistence?: boolean },
+): string {
   if (record.status === "blocked") {
     return record.errorMessage ?? "What's your order number?";
+  }
+  if (record.data && "status" in record.data) {
+    return speechForOrderLookupResult(record.data, options);
   }
   if (
     record.status === "system_maintenance" ||
     record.status === "api_error" ||
     record.status === "throttled"
   ) {
-    return ORDER_LOOKUP_MAINTENANCE_SPOKEN;
-  }
-  if (record.data && "orderNumber" in record.data) {
-    return groundedOrderSpeech(record.data);
+    return speechForOrderLookupResult(
+      { status: record.status, message: record.errorMessage },
+      options,
+    );
   }
   return ORDER_NOT_FOUND_STRICT_SPOKEN;
 }
@@ -748,8 +751,9 @@ function resultFromDictateTrackingExecution(
 function resultFromOrderToolExecution(
   record: LlmToolExecutionRecord,
   toolExecutions: LlmToolExecutionRecord[],
+  options?: { insistence?: boolean },
 ): LlmAgentTurnResult {
-  const speech = groundedSpeechFromOrderToolRecord(record);
+  const speech = groundedSpeechFromOrderToolRecord(record, options);
   return {
     speech,
     toolExecutions,
@@ -934,18 +938,28 @@ export async function* runLlmAgentTurnEvents(
 
   const forcedOrderNumber = detectOrderNumberForForcedLookup(input);
   if (forcedOrderNumber) {
+    const insistence = isOrderLookupInsistenceUtterance(input.userMessage);
     if (input.session) {
-      input.session.awaitingInput = null;
+      if (
+        insistence ||
+        shouldBypassOrderLookupCache(input.userMessage, input.session.phase)
+      ) {
+        input.session.phase = "awaiting_order_number";
+        input.session.awaitingInput = "order_number";
+      } else {
+        input.session.awaitingInput = null;
+      }
     }
     yield { type: "tool_pending", tools: ["get_shopify_order_status"] };
     const record = await ServiceRegistry.executeTool(
       "get_shopify_order_status",
       { orderNumber: forcedOrderNumber },
       input.callSid,
+      input.session,
     );
     yield {
       type: "result",
-      result: resultFromOrderToolExecution(record, [record]),
+      result: resultFromOrderToolExecution(record, [record], { insistence }),
     };
     return;
   }

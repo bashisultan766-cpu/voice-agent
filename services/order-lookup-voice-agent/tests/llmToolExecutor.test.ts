@@ -3,10 +3,13 @@ import {
   executeLlmTool,
   buildActiveOrderContextPayload,
   buildOrderNotFoundLlmPayload,
-  SYSTEM_MAINTENANCE_LLM_PAYLOAD,
   toolResultForLlm,
 } from "../src/adapters/llmToolExecutor.js";
 import type { LlmToolExecutionRecord } from "../src/adapters/llmToolExecutor.js";
+import {
+  ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
+  SYSTEM_MAINTENANCE_LLM_PAYLOAD,
+} from "../src/constants/systemMessages.js";
 import { ShopifyAuthError } from "../src/platform/shopifyErrors.js";
 
 vi.mock("../src/adapters/shopifyStorefrontAdapter.js", () => ({
@@ -202,7 +205,7 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed).not.toHaveProperty("found");
   });
 
-  it("returns sanitized SYSTEM_MAINTENANCE payload for auth failures", () => {
+  it("returns sanitized ORDER_LOOKUP_RETRY payload for order auth failures", () => {
     const record: LlmToolExecutionRecord = {
       tool: "get_shopify_order_status",
       args: { orderNumber: "12345" },
@@ -215,14 +218,14 @@ describe("toolResultForLlm order shaping", () => {
       },
     };
 
-    const parsed = JSON.parse(toolResultForLlm(record)) as typeof SYSTEM_MAINTENANCE_LLM_PAYLOAD;
-    expect(parsed).toEqual(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
-    expect(parsed.error).toBe("SYSTEM_MAINTENANCE");
+    const parsed = JSON.parse(toolResultForLlm(record)) as typeof ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD;
+    expect(parsed).toEqual(ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD);
+    expect(parsed.error).toBe("ORDER_LOOKUP_RETRY");
   });
 });
 
 describe("executeLlmTool error boundary", () => {
-  it("maps Shopify 401 auth failures to SYSTEM_MAINTENANCE for the LLM", async () => {
+  it("maps Shopify 401 auth failures to ORDER_LOOKUP_RETRY for order lookup", async () => {
     vi.mocked(getOrderStatus).mockResolvedValue({
       status: "system_maintenance",
       message: "Catalog temporarily unavailable",
@@ -236,7 +239,7 @@ describe("executeLlmTool error boundary", () => {
 
     expect(record.status).toBe("system_maintenance");
     const parsed = JSON.parse(toolResultForLlm(record)) as { error: string };
-    expect(parsed.error).toBe("SYSTEM_MAINTENANCE");
+    expect(parsed.error).toBe("ORDER_LOOKUP_RETRY");
   });
 
   it("never passes raw ShopifyAuthError text to the LLM", async () => {
@@ -248,10 +251,10 @@ describe("executeLlmTool error boundary", () => {
       "CA_AUTH",
     );
 
-    expect(record.status).toBe("system_maintenance");
+    expect(record.status).toBe("api_error");
     const payload = toolResultForLlm(record);
     expect(payload).not.toMatch(/401|unauthorized|invalid token/i);
-    expect(JSON.parse(payload)).toEqual(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
+    expect(JSON.parse(payload)).toEqual(ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD);
   });
 
   it("normalizes spoken order numbers before Shopify lookup", async () => {

@@ -7,6 +7,7 @@ import type { LlmToolName } from "../adapters/llmToolExecutor.js";
 import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { orderUtteranceNeedsFreshLookup } from "../agents/orderContextPrivacy.js";
+import { isOrderLookupInsistenceUtterance } from "../agents/orderLookupWorkflow.js";
 
 export type SovereignState =
   | "idle"
@@ -240,13 +241,23 @@ export function shouldSkipToolReinvoke(
     }
   }
 
-  if (
-    toolName === "get_shopify_order_status" &&
-    options?.userMessage &&
-    options?.orderContext &&
-    orderUtteranceNeedsFreshLookup(options.userMessage, options.orderContext)
-  ) {
-    return false;
+  if (toolName === "get_shopify_order_status") {
+    if (options?.userMessage && isOrderLookupInsistenceUtterance(options.userMessage)) {
+      return false;
+    }
+    if (
+      options?.orderContext &&
+      Object.keys(options.orderContext).length === 0
+    ) {
+      return false;
+    }
+    if (
+      options?.userMessage &&
+      options?.orderContext &&
+      orderUtteranceNeedsFreshLookup(options.userMessage, options.orderContext)
+    ) {
+      return false;
+    }
   }
 
   if (active.cachedIntent !== intentKey) return false;

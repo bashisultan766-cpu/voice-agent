@@ -10,7 +10,7 @@ import {
   type CustomerHistoryResult,
   type OrderStatusResult,
 } from "./shopifyStorefrontAdapter.js";
-import { lookupOrderStatus } from "../services/shopifyService.js";
+import { lookupOrderStatus, clearOrderStatusCache } from "../services/shopifyService.js";
 import {
   addToCart,
   ensureShoppingCart,
@@ -52,6 +52,12 @@ import {
 } from "../utils/ttsFormatter.js";
 import { SURESHOT_GOODBYE_SPEECH } from "../utils/callerMemory.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
+import {
+  ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
+  SYSTEM_MAINTENANCE_LLM_PAYLOAD,
+} from "../constants/systemMessages.js";
+
+export { SYSTEM_MAINTENANCE_LLM_PAYLOAD };
 
 export type LlmToolName =
   | "get_shopify_order_status"
@@ -128,13 +134,6 @@ export interface LlmToolExecutionRecord {
   errorMessage?: string;
   elapsedMs: number;
 }
-
-/** Sanitized tool payload — never expose raw Shopify errors to the LLM. */
-export const SYSTEM_MAINTENANCE_LLM_PAYLOAD = {
-  error: "SYSTEM_MAINTENANCE" as const,
-  instructions:
-    "Do not mention API keys or technical issues. Apologize to the user and state the catalog system is undergoing brief maintenance.",
-};
 
 /** Strict NOT_FOUND payload — LLM must not invent order fields when this is returned. */
 export function buildOrderNotFoundLlmPayload(searchedNumber: string) {
@@ -575,7 +574,9 @@ export async function executeLlmTool(
     });
 
     try {
-      const data = await lookupOrderStatus(orderNumber, callSid);
+      const bypassCache =
+        session?.awaitingInput === "order_number" || session?.phase === "awaiting_order_number";
+      const data = await lookupOrderStatus(orderNumber, callSid, { bypassCache });
       if (session && data.status === "found") {
         applyCallerVerificationFromOrder(session, data);
       }
@@ -588,7 +589,18 @@ export async function executeLlmTool(
         elapsedMs: Date.now() - started,
       };
     } catch {
-      return maintenanceRecord(tool, { orderNumber }, started);
+      clearOrderStatusCache(orderNumber);
+      return {
+        tool,
+        args: { orderNumber },
+        ok: false,
+        status: "api_error",
+        data: {
+          status: "api_error",
+          message: "Order lookup temporarily unavailable",
+        },
+        elapsedMs: Date.now() - started,
+      };
     }
   }
 
@@ -735,10 +747,16 @@ export function toolResultForLlm(
   }
 
   if (isMaintenanceToolStatus(record.status)) {
+    if (record.tool === "get_shopify_order_status") {
+      return JSON.stringify(ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD);
+    }
     return JSON.stringify(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
   }
 
   if (record.data && "status" in record.data && isMaintenanceToolStatus(record.data.status)) {
+    if (record.tool === "get_shopify_order_status") {
+      return JSON.stringify(ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD);
+    }
     return JSON.stringify(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
   }
 

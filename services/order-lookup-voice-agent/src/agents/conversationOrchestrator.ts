@@ -911,7 +911,7 @@ async function* handleAwaitingOrderNumberPhase(
 
   if (orderNumber) {
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));
-    const lookup = await orderLookupTool(orderNumber);
+    const lookup = await orderLookupTool(orderNumber, { bypassCache: true });
     if (lookup.status === "found" && lookup.order) {
       session.currentOrder = lookup.order;
       session.phase = "order_disclosed";
@@ -967,7 +967,7 @@ async function* handleGreetingPhaseOrderLookup(
 
   if (orderNumber) {
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));
-    const lookup = await orderLookupTool(orderNumber);
+    const lookup = await orderLookupTool(orderNumber, { bypassCache: true });
     if (lookup.status === "found" && lookup.order) {
       session.currentOrder = lookup.order;
       session.phase = "order_disclosed";

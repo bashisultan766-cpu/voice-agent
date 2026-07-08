@@ -36,6 +36,17 @@ describe("shopifyService", () => {
 
     const result = await lookupOrder("12345");
     expect(result.status).toBe("api_error");
+    expect(getOrderStatus.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("does not cache transient order lookup failures", async () => {
+    vi.mocked(getOrderStatus).mockResolvedValue({ status: "api_error", message: "down" });
+
+    await lookupOrder("12345");
+    const callsAfterFirst = vi.mocked(getOrderStatus).mock.calls.length;
+
+    await lookupOrder("12345", { bypassCache: true });
+    expect(vi.mocked(getOrderStatus).mock.calls.length).toBeGreaterThan(callsAfterFirst);
   });
 
   it("maps a found order into structured fields via GraphQL lookup", async () => {

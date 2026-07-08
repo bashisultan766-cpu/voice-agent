@@ -1,4 +1,5 @@
 import type { OrderLookupResult, SpeechChunk, SpeechPlan, StructuredOrder } from "../types/order.js";
+import { ORDER_LOOKUP_MAINTENANCE_SPOKEN } from "../constants/systemMessages.js";
 import {
   fulfillmentStatusPhrase,
   speakCardLast4,
@@ -173,7 +174,7 @@ export function planLookupError(result: OrderLookupResult): SpeechPlan {
     return {
       tone: "empathetic",
       chunks: [{
-        text: "I'm having a little trouble reaching our order system. Give us a few minutes and try again?",
+        text: ORDER_LOOKUP_MAINTENANCE_SPOKEN,
         kind: "error",
       }],
     };

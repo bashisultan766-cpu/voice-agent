@@ -15,6 +15,13 @@ export const ORDER_NOT_FOUND_STRICT_SPOKEN =
 export const SYSTEM_MAINTENANCE_SPOKEN =
   "I apologize, but our catalog system is currently undergoing a brief update. Is there anything else I can help you with today?";
 
+/** LLM payload for catalog/book tool maintenance — never use for order lookup. */
+export const SYSTEM_MAINTENANCE_LLM_PAYLOAD = {
+  error: "SYSTEM_MAINTENANCE" as const,
+  instructions:
+    "Do not mention API keys or technical issues. Apologize to the user and state the catalog system is undergoing brief maintenance.",
+};
+
 /** Spoken when an order lookup hits a transient Shopify error — not the catalog. */
 export const ORDER_LOOKUP_MAINTENANCE_SPOKEN =
   "I had a brief hiccup pulling that order. Let me try your order number again right now.";
@@ -22,6 +29,13 @@ export const ORDER_LOOKUP_MAINTENANCE_SPOKEN =
 /** Spoken when the caller insists the order number is correct after a miss. */
 export const ORDER_LOOKUP_RETRY_SPOKEN =
   "You're right — let me look that order up again for you.";
+
+/** LLM payload when order lookup hits a transient error — never use catalog maintenance wording. */
+export const ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD = {
+  error: "ORDER_LOOKUP_RETRY" as const,
+  instructions:
+    "A transient order lookup error occurred. Say you are pulling the order up again now. Do NOT mention catalog updates or system maintenance. Do NOT invent order fields.",
+};
 
 /** Spoken when Shopify catalog is throttled / circuit is open — buys backoff time. */
 export const CATALOG_DEGRADED_MESSAGE =

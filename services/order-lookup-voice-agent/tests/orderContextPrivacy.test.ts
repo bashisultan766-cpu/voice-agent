@@ -67,6 +67,24 @@ describe("shouldSkipToolReinvoke", () => {
     ).toBe(false);
   });
 
+  it("allows re-fetch when no order context is loaded yet", () => {
+    expect(
+      shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
+        userMessage: "21796",
+        orderContext: {},
+      }),
+    ).toBe(false);
+  });
+
+  it("allows re-fetch when caller insists the order number is correct", () => {
+    expect(
+      shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
+        userMessage: "this is the correct order number please find it",
+        orderContext: { customer_name: "A" },
+      }),
+    ).toBe(false);
+  });
+
   it("still skips identical order re-fetch when context is complete", () => {
     expect(
       shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {

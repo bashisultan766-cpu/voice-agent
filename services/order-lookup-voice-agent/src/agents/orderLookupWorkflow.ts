@@ -1,0 +1,57 @@
+/**
+ * Single order-lookup workflow — shared speech, retry signals, and status classification.
+ */
+import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
+import {
+  ORDER_LOOKUP_MAINTENANCE_SPOKEN,
+  ORDER_LOOKUP_RETRY_SPOKEN,
+  ORDER_NOT_FOUND_STRICT_SPOKEN,
+} from "../constants/systemMessages.js";
+import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
+
+export function isOrderLookupInsistenceUtterance(text: string): boolean {
+  return /\b((?:this\s+is\s+the\s+)?correct|right)\s+order|please\s+(?:find|look\s*(?:it\s+)?up|try\s+again|provide)\b/i.test(
+    text.trim(),
+  );
+}
+
+export function isTransientOrderLookupStatus(
+  status: OrderStatusResult["status"] | string | undefined,
+): boolean {
+  return status === "api_error" || status === "system_maintenance" || status === "throttled";
+}
+
+export function isStableOrderLookupStatus(
+  status: OrderStatusResult["status"] | string | undefined,
+): boolean {
+  return status === "found" || status === "not_found" || status === "invalid_format";
+}
+
+/** Deterministic spoken response for any order lookup tool result — one workflow, no LLM paraphrase. */
+export function speechForOrderLookupResult(
+  result: OrderStatusResult,
+  options?: { insistence?: boolean },
+): string {
+  if (options?.insistence && isTransientOrderLookupStatus(result.status)) {
+    return ORDER_LOOKUP_RETRY_SPOKEN;
+  }
+  if (isTransientOrderLookupStatus(result.status)) {
+    return ORDER_LOOKUP_MAINTENANCE_SPOKEN;
+  }
+  if (result.status === "found") {
+    return groundedOrderSpeech(result);
+  }
+  if (result.status === "not_found") {
+    return ORDER_NOT_FOUND_STRICT_SPOKEN;
+  }
+  return groundedOrderSpeech(result);
+}
+
+export function shouldBypassOrderLookupCache(
+  userMessage: string,
+  phase?: string,
+): boolean {
+  if (isOrderLookupInsistenceUtterance(userMessage)) return true;
+  if (phase === "awaiting_order_number") return true;
+  return /\b(try\s+again|one\s+more\s+time|digit\s+by\s+digit)\b/i.test(userMessage.trim());
+}
