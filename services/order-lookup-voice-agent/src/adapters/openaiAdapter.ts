@@ -59,7 +59,7 @@ import {
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
-import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent } from "../agents/trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
 import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH, isUserNotepadReadyIntent } from "../agents/dictationTool.js";
@@ -894,6 +894,7 @@ function interceptSpatialBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult
 
 function enforceNotepadGateOnSpeech(callSid: string, speech: string): string {
   const active = getOrCreateActiveSession(callSid);
+  if (active.trackingDictationComplete) return speech;
   if (active.isNotepadReady) return speech;
   if (!active.lastSpokenPayload?.trackingForTts) return speech;
   if (isTrackingDictationText(speech)) {
@@ -903,9 +904,15 @@ function enforceNotepadGateOnSpeech(callSid: string, speech: string): string {
 }
 
 function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  if (!isTrackingRequest(input.userMessage)) return null;
-
   const active = getOrCreateActiveSession(input.callSid);
+  if (
+    !shouldStartTrackingDictation(
+      input.userMessage,
+      active.trackingDictationComplete === true,
+    )
+  ) {
+    return null;
+  }
   const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
   if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
     ensureTrackingPayload(input.callSid, trackingRaw);

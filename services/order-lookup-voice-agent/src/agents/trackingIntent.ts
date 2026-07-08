@@ -105,3 +105,22 @@ export function hasTrackingInSessionContext(
   const tracking = String(currentOrderData?.tracking_number ?? "").trim();
   return tracking.length > 0;
 }
+
+/** Caller explicitly wants tracking read again after prior completion. */
+export function isTrackingRedictationRequest(callerText: string): boolean {
+  const text = callerText.trim();
+  if (!text) return false;
+  if (isTrackingDictationCompleteIntent(text)) return false;
+  return isExplicitTrackingDictationRequest(text);
+}
+
+/** Whether tracking dictation / notepad handshake should run for this turn. */
+export function shouldStartTrackingDictation(
+  callerText: string,
+  trackingDictationComplete: boolean,
+): boolean {
+  if (!trackingDictationComplete) {
+    return isExplicitTrackingDictationRequest(callerText);
+  }
+  return isTrackingRedictationRequest(callerText);
+}

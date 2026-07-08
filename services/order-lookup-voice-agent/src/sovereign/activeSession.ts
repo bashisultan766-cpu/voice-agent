@@ -50,6 +50,8 @@ export interface ActiveSession {
   agentRelayState: "LISTENING" | "SPEAKING";
   /** True only after caller confirms pen and notepad are ready. */
   isNotepadReady: boolean;
+  /** True after caller confirms tracking was written down — blocks notepad re-entry. */
+  trackingDictationComplete: boolean;
 }
 
 const store = new Map<string, ActiveSession>();
@@ -67,6 +69,7 @@ export function createActiveSession(callSid: string): ActiveSession {
     lastSpokenIndex: -1,
     agentRelayState: "LISTENING",
     isNotepadReady: false,
+    trackingDictationComplete: false,
   };
   store.set(callSid, session);
   return session;
@@ -153,6 +156,7 @@ export function recordTrackingPayload(
     lastDictationIndex: -1,
     lastSpokenIndex: -1,
     isNotepadReady: false,
+    trackingDictationComplete: false,
     lastSpokenPayload: {
       kind: "tracking",
       speech: speech ?? trackingForTts,
@@ -234,10 +238,20 @@ export function shouldSkipToolReinvoke(
 ): boolean {
   if (!active.lastSpokenPayload) return false;
 
-  if (toolName === "dictate_tracking" && active.cachedIntent === "tracking") {
-    if (!active.isNotepadReady) return true;
-    if (active.currentState === "tracking_dictation" && active.lastSpokenIndex >= 0) {
-      return true;
+  if (toolName === "dictate_tracking") {
+    if (active.trackingDictationComplete) {
+      const wantsAgain =
+        options?.userMessage &&
+        /\b(?:repeat|read|give|tell|say|hear)\s+(?:me\s+)?(?:the\s+)?tracking|tracking\s+(?:id|number)\s+again\b/i.test(
+          options.userMessage,
+        );
+      if (!wantsAgain) return true;
+    }
+    if (active.cachedIntent === "tracking") {
+      if (!active.isNotepadReady) return true;
+      if (active.currentState === "tracking_dictation" && active.lastSpokenIndex >= 0) {
+        return true;
+      }
     }
   }
 
@@ -315,7 +329,11 @@ export function buildActiveSessionSystemMessage(active: ActiveSession): string {
     );
   }
 
-  if (active.currentState === "tracking_dictation") {
+  if (active.trackingDictationComplete) {
+    lines.push(
+      "TRACKING DICTATION COMPLETE: The caller already captured the tracking number. Do NOT restart the pen-and-notepad handshake or call dictate_tracking unless they explicitly ask to hear the tracking ID again. Answer order questions (items, prices, totals, shipping) from ACTIVE ORDER CONTEXT.",
+    );
+  } else if (active.currentState === "tracking_dictation") {
     lines.push(
       "TRACKING DICTATION LOCK: Speak ONLY tracking digits from tracking_number_for_tts or spatial resume. Do NOT read physical_items, fees, customer name, or order totals unless the caller explicitly says 'full summary'.",
     );
@@ -323,11 +341,15 @@ export function buildActiveSessionSystemMessage(active: ActiveSession): string {
 
   if (active.lastSpokenPayload) {
     lines.push(`lastSpokenPayload.kind: ${active.lastSpokenPayload.kind}`);
-    if (active.isNotepadReady && active.lastSpokenPayload.trackingForTts) {
+    if (
+      !active.trackingDictationComplete &&
+      active.isNotepadReady &&
+      active.lastSpokenPayload.trackingForTts
+    ) {
       lines.push(
         `tracking_number_for_tts (verbatim): ${active.lastSpokenPayload.trackingForTts}`,
       );
-    } else if (active.lastSpokenPayload.trackingForTts) {
+    } else if (!active.trackingDictationComplete && active.lastSpokenPayload.trackingForTts) {
       lines.push(
         "TRACKING DICTATION LOCKED: tracking_number_for_tts is withheld until caller confirms notepad ready. If they ask for tracking, use dictate_tracking or the notepad handshake ONLY — never speak digits.",
       );

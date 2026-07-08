@@ -57,6 +57,7 @@ export function isUserNotepadReadyIntent(callerText: string): boolean {
 }
 
 export function completeTrackingDictation(callSid: string): void {
+  const active = getOrCreateActiveSession(callSid);
   updateActiveSession(callSid, {
     currentState: "order_active",
     awaitingClarification: null,
@@ -64,6 +65,17 @@ export function completeTrackingDictation(callSid: string): void {
     lastSpokenIndex: -1,
     lastDictationIndex: -1,
     isNotepadReady: false,
+    spatialIndex: [],
+    trackingDictationComplete: true,
+    lastSpokenPayload:
+      active.lastSpokenPayload?.kind === "tracking"
+        ? {
+            kind: "order_status",
+            speech: TRACKING_DICTATION_COMPLETE_SPEECH,
+            intentKey: "tracking_complete",
+            capturedAt: Date.now(),
+          }
+        : active.lastSpokenPayload,
   });
 }
 

@@ -11,7 +11,7 @@ import {
   isTrackingDictationCompleteIntent,
 } from "./trackingIntent.js";
 import { isUserNotepadReadyIntent } from "./dictationTool.js";
-import { isRefundNotificationEmailQuestion } from "./orderFollowUpSpeech.js";
+import { isRefundNotificationEmailQuestion, isOrderFieldQuestion } from "./orderFollowUpSpeech.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -28,7 +28,7 @@ export type CallerIntent =
   | "general_help";
 
 const ORDER_FIELD_QUERY_RE =
-  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+books|item\s+count|total\s+product|total\s+products|total\s+items|product\s+title|item\s+title|book\s+title|product\s+titles|product\s+amount|item\s+amount|book\s+price|total\s+amount|order\s+total|shipping\s+(?:cost|fee|fees|amount)|payment\s+method|card\s+ending|what\s+email|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|tell\s+me\s+(?:the\s+)?details)\b/i;
+  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+is\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|payment\s+method|card\s+ending|what\s+email|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
 
 const ORDER_HISTORY_RE =
   /\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders|orders\s+in\s+\w+)\b/i;
@@ -81,7 +81,7 @@ export function isIntentSwitchAwayFromTracking(
   if (CART_RE.test(trimmed)) return true;
   if (extractIsbnFromSpeech(trimmed) || CATALOG_RE.test(trimmed)) return true;
   if (hasActiveOrderContext(session)) {
-    if (ORDER_FIELD_QUERY_RE.test(trimmed) || isRefundNotificationEmailQuestion(trimmed)) {
+    if (isOrderFieldQuestion(trimmed)) {
       return true;
     }
     if (ORDER_HISTORY_RE.test(trimmed)) return true;
@@ -109,7 +109,7 @@ export function resolveCallerIntent(
 
     if (inTrackingHandshake) {
       if (isSupportEscalationRequest(text)) return "support_escalation";
-      if (ORDER_FIELD_QUERY_RE.test(text) || isRefundNotificationEmailQuestion(text)) {
+      if (isOrderFieldQuestion(text)) {
         return "order_field_query";
       }
       if (ORDER_HISTORY_RE.test(text) && hasActiveOrderContext(session)) {
@@ -132,11 +132,7 @@ export function resolveCallerIntent(
 
   if (isSupportEscalationRequest(text)) return "support_escalation";
 
-  if (isRefundNotificationEmailQuestion(text) && hasActiveOrderContext(session)) {
-    return "order_field_query";
-  }
-
-  if (ORDER_FIELD_QUERY_RE.test(text) && hasActiveOrderContext(session)) {
+  if (isOrderFieldQuestion(text) && hasActiveOrderContext(session)) {
     return "order_field_query";
   }
 

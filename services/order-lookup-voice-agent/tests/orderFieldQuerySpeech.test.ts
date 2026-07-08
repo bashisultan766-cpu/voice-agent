@@ -35,5 +35,15 @@ describe("order field query speech", () => {
     expect(speech).toMatch(/Book B.*7\.50 USD/i);
     expect(speech).toMatch(/total is 25\.00 USD/i);
   });
+
+  it("handles how many products, price, and shipping after tracking", () => {
+    const speech = buildOrderFieldQuerySpeech(
+      "how many products did I order, what is their price, and what is the shipping fee",
+      context,
+    );
+    expect(speech).toBeTruthy();
+    expect(speech).toMatch(/3 book/i);
+    expect(speech).toMatch(/shipping is 4\.99 USD/i);
+  });
 });
 

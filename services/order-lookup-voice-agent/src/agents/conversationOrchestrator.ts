@@ -194,7 +194,7 @@ import {
   isSocialGreetingUtterance,
 } from "../handlers/greetingHandler.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
-import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent } from "./trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "./trackingIntent.js";
 import {
   resolveCallerIntent,
   shouldRunTrackingPhaseGate,
@@ -425,11 +425,16 @@ export function resolveTrackingPhaseGate(
     return { handled: false };
   }
 
-  if (isTrackingRequest(text) || isSpatialResumeQuery(text)) {
-    ensureTrackingPayloadFromSession(session);
-  }
+  let refreshed = getOrCreateActiveSession(session.callSid);
+  const wantsTrackingDictation = shouldStartTrackingDictation(
+    text,
+    refreshed.trackingDictationComplete === true,
+  );
 
-  const refreshed = getOrCreateActiveSession(session.callSid);
+  if (wantsTrackingDictation || isSpatialResumeQuery(text)) {
+    ensureTrackingPayloadFromSession(session);
+    refreshed = getOrCreateActiveSession(session.callSid);
+  }
 
   if (refreshed.spatialIndex.length > 0 && isSpatialResumeQuery(text)) {
     const spatialTurn = resolveSpatialTurnSpeech(
@@ -521,7 +526,7 @@ export function resolveTrackingPhaseGate(
     }
 
     if (
-      !isTrackingRequest(text) &&
+      !wantsTrackingDictation &&
       intent !== "tracking_dictation" &&
       intent !== "tracking_flow_active"
     ) {
@@ -534,7 +539,7 @@ export function resolveTrackingPhaseGate(
     refreshed.lastSpokenPayload?.trackingForTts || hasTrackingInSessionContext(session.currentOrderData),
   );
 
-  if (isTrackingRequest(text) && trackingContextReady) {
+  if (wantsTrackingDictation && trackingContextReady) {
     if (!refreshed.isNotepadReady) {
       markTrackingAwaitingNotepad(session.callSid);
       return {

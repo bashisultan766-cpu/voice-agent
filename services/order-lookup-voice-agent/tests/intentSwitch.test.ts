@@ -6,6 +6,8 @@ import {
 } from "../src/agents/callerIntent.js";
 import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
 import { getOrCreateActiveSession, updateActiveSession } from "../src/sovereign/activeSession.js";
+import { completeTrackingDictation } from "../src/agents/dictationTool.js";
+import { buildOrderFieldQuerySpeech } from "../src/agents/orderFollowUpSpeech.js";
 import type { CallSession } from "../src/types/order.js";
 
 function mockSession(callSid: string): CallSession {
@@ -19,6 +21,7 @@ function mockSession(callSid: string): CallSession {
       order_number: "21698",
       customer_name: "Jane Doe",
       tracking_number: "1Z999AA10123456784",
+      shipping_amount: "4.99 USD",
       physical_items: [{ title: "Sample Book", quantity: 1, price: "19.99" }],
     },
     isVerifiedCaller: false,
@@ -81,5 +84,27 @@ describe("intent-first switching", () => {
     expect(gate.handled).toBe(true);
     expect(gate.speech).toMatch(/Sample Book|product/i);
     expect(gate.intentKey).toBe("order_field_query");
+  });
+
+  it("does not restart notepad after tracking complete when caller asks product totals", () => {
+    completeTrackingDictation(callSid);
+    const session = mockSession(callSid);
+    const gate = resolveTrackingPhaseGate(
+      "tell me what is the total order number, how many products, their price, and shipping fee",
+      session,
+    );
+    expect(gate.handled).toBe(false);
+    expect(gate.speech).toBeUndefined();
+    const active = getOrCreateActiveSession(callSid);
+    expect(active.trackingDictationComplete).toBe(true);
+    expect(active.currentState).toBe("order_active");
+    expect(active.lastSpokenPayload?.trackingForTts).toBeUndefined();
+
+    const fieldSpeech = buildOrderFieldQuerySpeech(
+      "how many products, their price, and shipping fee",
+      session.currentOrderData as any,
+    );
+    expect(fieldSpeech).toMatch(/1 book|Sample Book/i);
+    expect(fieldSpeech).toMatch(/shipping/i);
   });
 });
