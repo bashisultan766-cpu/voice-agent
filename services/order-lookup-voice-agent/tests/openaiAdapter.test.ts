@@ -101,6 +101,78 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
     expect(speech).toBe(ORDER_NOT_FOUND_STRICT_SPOKEN);
     expect(speech).not.toMatch(/Joel|Moore|dollars|yahoo|gmail/i);
   });
+
+  it("forces lookup for bare digits after greeting without asking for order number again", async () => {
+    vi.mocked(executeLlmTool).mockResolvedValue({
+      tool: "get_shopify_order_status",
+      args: { orderNumber: "#21698" },
+      ok: true,
+      status: "found",
+      elapsedMs: 10,
+      data: {
+        status: "found",
+        orderNumber: "#21698",
+        itemCount: 1,
+        lineItems: [{ title: "Test Book", quantity: 1 }],
+        totalAmount: "10.00 USD",
+        orderPlacedAt: "2025-04-01T10:00:00Z",
+        refundStatus: "NONE",
+      },
+    });
+
+    const session = {
+      callSid: "CA_BARE",
+      from: "+1",
+      to: "+2",
+      phase: "follow_up" as const,
+      orderNumberAttempts: 0,
+      createdAt: Date.now(),
+      greetedThisCall: true,
+    };
+
+    let forced = false;
+    for await (const event of runLlmAgentTurnEvents({
+      callSid: "CA_BARE",
+      userMessage: "21698",
+      messages: [
+        { role: "assistant", content: "I'm doing well, thanks for asking. What can I help you with today?" },
+        { role: "user", content: "21698" },
+      ],
+      session,
+    })) {
+      if (event.type === "tool_pending") forced = true;
+    }
+
+    expect(forced).toBe(true);
+    expect(executeLlmTool).toHaveBeenCalled();
+  });
+
+  it("asks for digits when caller says they have an order number", async () => {
+    let speech = "";
+    const session = {
+      callSid: "CA_OFFER",
+      from: "+1",
+      to: "+2",
+      phase: "follow_up" as const,
+      orderNumberAttempts: 0,
+      createdAt: Date.now(),
+      greetedThisCall: true,
+      awaitingInput: null as null,
+    };
+
+    for await (const event of runLlmAgentTurnEvents({
+      callSid: "CA_OFFER",
+      userMessage: "I have an order number",
+      messages: [{ role: "user", content: "I have an order number" }],
+      session,
+    })) {
+      if (event.type === "result") speech = event.result.speech;
+    }
+
+    expect(speech).toMatch(/tell me your order number/i);
+    expect(session.awaitingInput).toBe("order_number");
+    expect(executeLlmTool).not.toHaveBeenCalled();
+  });
 });
 
 describe("syncDeterministicAssistantSpeech", () => {

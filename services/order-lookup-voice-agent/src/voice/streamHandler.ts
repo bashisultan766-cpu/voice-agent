@@ -263,6 +263,7 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
           if (routerSpeech) {
             await scheduleTurn(routerSpeech);
           } else if (welcomeGreeting) {
+            session.greetedThisCall = true;
             speakingTurns.add(callSid);
             setAgentRelayState(callSid, "SPEAKING");
             await streamSpeechToMediaStream(welcomeGreeting, send, {

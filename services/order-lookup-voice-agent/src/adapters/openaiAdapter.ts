@@ -19,7 +19,7 @@ import {
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
-import { orderNumbersMatch } from "../utils/formatter.js";
+import { extractOrderNumberFromSpeech, orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
 import { buildActiveOrderContextSystemMessage, redactTrackingFromOrderContext } from "../agents/sessionManager.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
@@ -505,12 +505,45 @@ function mapToolToIntentKey(tool: LlmToolName): string | null {
 
 function lastAssistantAskedForOrder(messages: LlmChatMessage[]): boolean {
   const last = [...messages].reverse().find((m) => m.role === "assistant");
-  return Boolean(last && /order number/i.test(last.content));
+  return Boolean(
+    last &&
+      /order\s*(?:number|#)|what(?:'s| is) your order|tell me (?:your |the )?order/i.test(
+        last.content,
+      ),
+  );
+}
+
+function isAwaitingOrderNumberSlot(input: LlmAgentTurnInput): boolean {
+  if (lastAssistantAskedForOrder(input.messages)) return true;
+  const session = input.session;
+  if (!session) return false;
+  return (
+    session.awaitingInput === "order_number" ||
+    session.phase === "awaiting_order_number"
+  );
+}
+
+/** Digit-only / spoken-digit utterance that is clearly an order number, not an ISBN. */
+function isBareOrderNumberUtterance(text: string): boolean {
+  const trimmed = text.trim();
+  if (/^\d{4,10}(-[a-z0-9]{1,6})?$/i.test(trimmed)) return true;
+  if (/^#?\d{4,10}(?:-[a-z0-9]{1,6})?$/i.test(trimmed)) return true;
+  // Spoken digits only (e.g. "two one six nine eight") — reject ISBN-length 10/13.
+  const fromSpeech = extractOrderNumberFromSpeech(trimmed);
+  if (!fromSpeech) return false;
+  const digits = fromSpeech.replace(/\D/g, "");
+  return digits.length >= 4 && digits.length <= 10 && !/\bisbn\b/i.test(trimmed);
 }
 
 function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | null {
-  const awaitingSlot = lastAssistantAskedForOrder(input.messages);
-  const orderNumber = extractOrderNumberFromStt(input.userMessage, { awaitingSlot });
+  const awaitingSlot = isAwaitingOrderNumberSlot(input);
+  const bareOrder = isBareOrderNumberUtterance(input.userMessage);
+  const allowLoose = awaitingSlot || bareOrder;
+
+  const orderNumber =
+    extractOrderNumberFromStt(input.userMessage, { awaitingSlot: allowLoose }) ??
+    (allowLoose ? extractOrderNumberFromSpeech(input.userMessage) : null);
+
   if (!orderNumber) return null;
 
   const agentState = getAgentState(input.callSid);
@@ -524,10 +557,57 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
   const lower = input.userMessage.toLowerCase();
   const hasOrderIntent =
     awaitingSlot ||
-    /\b(order|track|status|number|lookup)\b/i.test(lower) ||
-    /^\d{4,10}(-[a-z0-9]{1,6})?$/i.test(input.userMessage.trim());
+    bareOrder ||
+    /\b(order|track|status|number|lookup)\b/i.test(lower);
 
   return hasOrderIntent ? orderNumber : null;
+}
+
+const LLM_FALLBACK_SPEECH =
+  "Sorry, I didn't catch that. Do you have an order number, or are you looking for a book?";
+
+/** Caller signals they have an order number but hasn't spoken digits yet. */
+function interceptOrderNumberOfferBeforeLlm(
+  input: LlmAgentTurnInput,
+): LlmAgentTurnResult | null {
+  const text = input.userMessage.trim();
+  if (!text) return null;
+
+  // Too-short bare digits (e.g. "222") — ask for the full order number once.
+  if (/^\d{1,3}$/.test(text)) {
+    if (input.session) {
+      input.session.phase = "awaiting_order_number";
+      input.session.awaitingInput = "order_number";
+    }
+    return {
+      speech: "I need the full order number — it's usually four to six digits. What's your order number?",
+      toolExecutions: [],
+      responseType: "clarification_question",
+    };
+  }
+
+  // Already contains a valid order number → forced lookup handles it.
+  if (extractOrderNumberFromSpeech(text) || extractOrderNumberFromStt(text, { awaitingSlot: true })) {
+    return null;
+  }
+  if (
+    !/\b(?:i\s+have\s+(?:an?\s+|my\s+|the\s+)?order(?:\s+number)?|have\s+(?:an?\s+|my\s+)?order\s+number|my\s+order\s+number\s+is|want\s+to\s+(?:check|look\s*up)\s+(?:my\s+)?order|check\s+(?:my\s+)?order|order\s+status)\b/i.test(
+      text,
+    )
+  ) {
+    return null;
+  }
+
+  if (input.session) {
+    input.session.phase = "awaiting_order_number";
+    input.session.awaitingInput = "order_number";
+  }
+
+  return {
+    speech: "Perfect — go ahead and tell me your order number.",
+    toolExecutions: [],
+    responseType: "clarification_question",
+  };
 }
 
 function groundedSpeechFromOrderToolRecord(record: LlmToolExecutionRecord): string {
@@ -712,6 +792,9 @@ export async function* runLlmAgentTurnEvents(
 
   const forcedOrderNumber = detectOrderNumberForForcedLookup(input);
   if (forcedOrderNumber) {
+    if (input.session) {
+      input.session.awaitingInput = null;
+    }
     yield { type: "tool_pending", tools: ["get_shopify_order_status"] };
     const record = await ServiceRegistry.executeTool(
       "get_shopify_order_status",
@@ -722,6 +805,12 @@ export async function* runLlmAgentTurnEvents(
       type: "result",
       result: resultFromOrderToolExecution(record, [record]),
     };
+    return;
+  }
+
+  const orderOfferIntercept = interceptOrderNumberOfferBeforeLlm(input);
+  if (orderOfferIntercept) {
+    yield { type: "result", result: orderOfferIntercept };
     return;
   }
 
@@ -1007,8 +1096,7 @@ export async function* runLlmAgentTurnEvents(
   yield {
     type: "result",
     result: {
-      speech:
-        "I'm here to help with book orders and lookups. What would you like to do today?",
+      speech: LLM_FALLBACK_SPEECH,
       toolExecutions,
       responseType: "general_help",
     },
@@ -1030,8 +1118,7 @@ export async function runLlmAgentTurn(
 
   return (
     last ?? {
-      speech:
-        "I'm here to help with book orders and lookups. What would you like to do today?",
+      speech: LLM_FALLBACK_SPEECH,
       toolExecutions: [],
       responseType: "general_help",
     }

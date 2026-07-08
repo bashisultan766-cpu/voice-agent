@@ -79,8 +79,17 @@ function applySessionPhaseAfterTurn(
       session.phase = "follow_up";
       session.awaitingInput = null;
       break;
+    case "clarification_question":
+      // Keep explicit slot awaits set by intercepts (e.g. order_number offer).
+      if (!session.awaitingInput) {
+        session.awaitingInput = null;
+      }
+      break;
     default:
-      session.awaitingInput = null;
+      // Do not wipe an active order_number slot mid-conversation.
+      if (session.awaitingInput !== "order_number") {
+        session.awaitingInput = null;
+      }
       break;
   }
 }

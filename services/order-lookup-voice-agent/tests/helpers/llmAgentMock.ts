@@ -71,10 +71,19 @@ export async function defaultTestLlmAgentTurn(
 
   const orderNumber =
     extractOrderNumberFromStt(text, {
-      awaitingSlot: lastAssistantAsked(input.messages, /order number/i),
+      awaitingSlot:
+        lastAssistantAsked(input.messages, /order number/i) ||
+        input.session?.awaitingInput === "order_number" ||
+        Boolean(input.session?.greetedThisCall),
     }) ?? extractOrderNumberFromStt(text);
 
-  if (orderNumber && (/\b(order|track|status|number)\b/i.test(lower) || /^\d{4,}$/.test(text))) {
+  if (
+    orderNumber &&
+    (/\b(order|track|status|number)\b/i.test(lower) ||
+      /^\d{4,}$/.test(text) ||
+      input.session?.greetedThisCall ||
+      input.session?.awaitingInput === "order_number")
+  ) {
     const exec = await runTool(
       "get_shopify_order_status",
       { orderNumber },
