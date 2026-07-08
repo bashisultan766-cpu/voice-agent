@@ -454,6 +454,7 @@ export function resolveTrackingPhaseGate(
   const wantsTrackingDictation = shouldStartTrackingDictation(
     text,
     refreshed.trackingDictationComplete === true,
+    { session },
   );
 
   if (wantsTrackingDictation || isSpatialResumeQuery(text)) {

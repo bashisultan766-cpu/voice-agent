@@ -9,10 +9,12 @@ import { isSpatialResumeQuery } from "../sovereign/spatialDictation.js";
 import {
   isExplicitTrackingDictationRequest,
   isTrackingDictationCompleteIntent,
+  isOrderTrackingIdShorthand,
 } from "./trackingIntent.js";
 import { isUserNotepadReadyIntent, isTrackingDictationPending } from "./dictationTool.js";
 import { isRefundNotificationEmailQuestion, isOrderFieldQuestion } from "./orderFollowUpSpeech.js";
 import { extractTitleFromStt } from "../nlp/entityExtractor.js";
+import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -80,6 +82,7 @@ export function isIntentSwitchAwayFromTracking(
   if (!trimmed) return false;
   if (isSupportEscalationRequest(trimmed)) return true;
   if (CART_RE.test(trimmed)) return true;
+  if (isCatalogShoppingUtterance(trimmed)) return true;
   if (extractIsbnFromSpeech(trimmed) || CATALOG_RE.test(trimmed)) return true;
   if (hasActiveOrderContext(session)) {
     if (isOrderFieldQuestion(trimmed)) {
@@ -142,6 +145,8 @@ export function resolveCallerIntent(
 
   if (isSupportEscalationRequest(text)) return "support_escalation";
 
+  if (isCatalogShoppingUtterance(text)) return "catalog";
+
   if (CART_RE.test(text)) return "cart";
 
   // Active-order follow-ups beat catalog title sniffing ("what is the title on my order").
@@ -198,6 +203,14 @@ export function resolveCallerIntent(
     return "tracking_dictation";
   }
 
+  const cartActive = (session?.shoppingCart?.length ?? 0) > 0;
+  const orderTrackingOnFile = Boolean(
+    String(session?.currentOrderData?.tracking_number ?? "").trim(),
+  );
+  if (!cartActive && orderTrackingOnFile && isOrderTrackingIdShorthand(text)) {
+    return "tracking_dictation";
+  }
+
   // "I want to order a book" is catalog, not order lookup.
   if (
     !hasActiveOrderContext(session) &&
@@ -222,8 +235,32 @@ export function shouldRunTrackingPhaseGate(intent: CallerIntent): boolean {
 }
 
 /** Tear down in-progress tracking handshake when caller pivots to another intent. */
-export function releaseTrackingFlowForIntentSwitch(callSid: string): void {
+export function releaseTrackingFlowForIntentSwitch(
+  callSid: string,
+  options?: { pivotToCatalog?: boolean },
+): void {
   const active = getOrCreateActiveSession(callSid);
+  const trackingActive =
+    active.currentState === "awaiting_notepad_ready" ||
+    active.currentState === "tracking_dictation" ||
+    active.cachedIntent === "tracking" ||
+    active.lastSpokenPayload?.kind === "tracking";
+
+  if (!trackingActive && !options?.pivotToCatalog) return;
+
+  if (options?.pivotToCatalog) {
+    updateActiveSession(callSid, {
+      currentState: "catalog_active",
+      cachedIntent: "catalog",
+      awaitingClarification: null,
+      isNotepadReady: false,
+      spatialIndex: [],
+      lastSpokenIndex: -1,
+      ...(active.lastSpokenPayload?.kind === "tracking" ? { lastSpokenPayload: null } : {}),
+    });
+    return;
+  }
+
   if (
     active.currentState === "awaiting_notepad_ready" ||
     active.currentState === "tracking_dictation"

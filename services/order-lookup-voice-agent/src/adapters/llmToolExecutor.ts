@@ -18,6 +18,7 @@ import {
   removeFromCart,
   setCartLineQuantity,
 } from "../agents/cartManager.js";
+import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
 import { applyCallerVerificationFromOrder } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
 import {
@@ -222,7 +223,7 @@ export async function executeLlmTool(
 
   if (tool === "add_to_cart" && session) {
     try {
-      const items = parseCartItemsArg(rawArgs.items);
+      const items = reconcileAddToCartItems(session, parseCartItemsArg(rawArgs.items));
       if (!items.length) {
         return {
           tool,
@@ -684,6 +685,9 @@ export async function executeLlmTool(
 
     try {
       const data = await searchByISBN(isbn, callSid);
+      if (session && data.status === "found") {
+        recordLastCatalogSearch(session, data);
+      }
       return {
         tool,
         args: { isbn },
@@ -715,6 +719,9 @@ export async function executeLlmTool(
 
   try {
     const data = await searchByTitle(title, callSid);
+    if (session && data.status === "found") {
+      recordLastCatalogSearch(session, data);
+    }
     return {
       tool,
       args: { title },

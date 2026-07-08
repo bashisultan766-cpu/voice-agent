@@ -26,6 +26,7 @@ import { buildActiveOrderContextSystemMessage, redactTrackingFromOrderContext } 
 import { filterOrderContextForVerification } from "../agents/orderContextPrivacy.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { buildCartContextSystemMessage } from "../agents/cartManager.js";
+import { buildCatalogTargetSystemMessage } from "../agents/catalogTarget.js";
 import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
 import {
@@ -53,7 +54,12 @@ import {
   isSocialGreetingUtterance,
 } from "../handlers/greetingHandler.js";
 import { stripRoboticAssistantSpeech, softFallback } from "../agents/conversationBrainAgent.js";
-import { buildLockedFlowSystemMessage } from "../agents/lockedFlowState.js";
+import { isCatalogShoppingUtterance } from "../agents/catalogShoppingIntent.js";
+import {
+  buildLockedFlowSystemMessage,
+  isLockedFlowState,
+  isPaymentLinkActionUtterance,
+} from "../agents/lockedFlowState.js";
 import {
   buildActiveSessionSystemMessage,
   getOrCreateActiveSession,
@@ -61,7 +67,7 @@ import {
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
-import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "../agents/trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation, type TrackingDictationGateContext } from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
 import {
@@ -498,6 +504,11 @@ function buildOpenAiMessages(
       content: buildCartContextSystemMessage(input.session),
     });
 
+    const catalogTargetMessage = buildCatalogTargetSystemMessage(input.session);
+    if (catalogTargetMessage) {
+      systemMessages.push({ role: "system", content: catalogTargetMessage });
+    }
+
     const lockedFlowMessage = buildLockedFlowSystemMessage(input.session);
     if (lockedFlowMessage) {
       systemMessages.push({ role: "system", content: lockedFlowMessage });
@@ -528,6 +539,13 @@ function resolveToolsForTurn(input: LlmAgentTurnInput): OpenAI.Chat.ChatCompleti
     return SHOPIFY_LLM_TOOLS.filter((tool) => tool.function?.name !== "end_call");
   }
   return SHOPIFY_LLM_TOOLS;
+}
+
+function ensureCatalogPivotClearsTracking(input: LlmAgentTurnInput): void {
+  if (!input.session) return;
+  const intent = resolveCallerIntent(input.userMessage, input.session);
+  if (intent !== "catalog" && intent !== "cart") return;
+  releaseTrackingFlowForIntentSwitch(input.callSid, { pivotToCatalog: true });
 }
 
 function mapToolToIntentKey(tool: LlmToolName): string | null {
@@ -992,11 +1010,18 @@ function enforceNotepadGateOnSpeech(callSid: string, speech: string): string {
 }
 
 function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  if (isCatalogShoppingUtterance(input.userMessage)) return null;
+
+  const callerIntent = resolveCallerIntent(input.userMessage, input.session ?? undefined);
+  if (callerIntent === "catalog" || callerIntent === "cart") return null;
+
   const active = getOrCreateActiveSession(input.callSid);
+  const trackingGate: TrackingDictationGateContext = { session: input.session };
   if (
     !shouldStartTrackingDictation(
       input.userMessage,
       active.trackingDictationComplete === true,
+      trackingGate,
     )
   ) {
     return null;
@@ -1094,6 +1119,8 @@ export async function* runLlmAgentTurnEvents(
     return;
   }
 
+  ensureCatalogPivotClearsTracking(input);
+
   const spatialIntercept = interceptSpatialBeforeLlm(input);
   if (spatialIntercept) {
     yield { type: "result", result: spatialIntercept };
@@ -1130,7 +1157,10 @@ export async function* runLlmAgentTurnEvents(
     return;
   }
 
-  if (isClosingConversationUtterance(input.userMessage, input.messages)) {
+  if (
+    isClosingConversationUtterance(input.userMessage, input.messages, input.session) &&
+    !isPaymentLinkActionUtterance(input.userMessage)
+  ) {
     yield {
       type: "result",
       result: {

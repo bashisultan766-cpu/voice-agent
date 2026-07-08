@@ -101,7 +101,9 @@ export function shouldBlockPrematureEndCall(input: {
 export function shouldOfferEndCallTool(input: {
   userMessage: string;
   messages?: Array<{ role: string; content: string }>;
+  session?: CallSession;
 }): boolean {
+  if (input.session && isLockedFlowState(input.session)) return false;
   return isExplicitEndCallIntent(input.userMessage, input.messages ?? []);
 }
 
@@ -120,10 +122,13 @@ export function isAffirmativeFollowUpRequest(callerText: string): boolean {
 export function isClosingConversationUtterance(
   callerText: string,
   messages: Array<{ role: string; content: string }> = [],
+  session?: CallSession,
 ): boolean {
   if (isCartModificationUtterance(callerText)) return false;
   if (isNoWithCartCorrection(callerText)) return false;
   if (isAffirmativeFollowUpRequest(callerText)) return false;
+  if (isPaymentLinkActionUtterance(callerText)) return false;
+  if (session && isLockedFlowState(session)) return false;
 
   if (isExplicitGoodbyeUtterance(callerText)) return true;
 

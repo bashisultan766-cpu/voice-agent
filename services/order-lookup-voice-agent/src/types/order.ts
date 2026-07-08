@@ -118,6 +118,14 @@ export interface CallSession {
   currentOrderData?: Record<string, unknown>;
   /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
   shoppingCart?: ShoppingCartLineItem[];
+  /** Most recent successful catalog search — binds add_to_cart to the right variant. */
+  lastCatalogSearch?: {
+    title: string;
+    variantId?: string;
+    unitPrice?: string;
+    isbn?: string;
+    recordedAt: number;
+  };
   /** Last generated Shopify invoice URL for checkout email. */
   pendingInvoiceUrl?: string;
   pendingDraftOrderName?: string;

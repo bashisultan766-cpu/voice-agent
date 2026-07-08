@@ -1,6 +1,8 @@
 /**
  * Shared tracking-intent detection — orchestrator + LLM safety net use the same patterns.
  */
+import type { CallSession } from "../types/order.js";
+import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
 import { isSpatialResumeQuery } from "../sovereign/spatialDictation.js";
 
 export const TRACKING_REQUEST_RE =
@@ -8,6 +10,13 @@ export const TRACKING_REQUEST_RE =
 
 const TRACKING_SHORTHAND_RE =
   /\b(?:give|tell|read|say|speak|repeat)\s+(?:me\s+)?(?:the\s+)?(?:id|i\.?d\.?)\s*(?:number)?\b/i;
+
+export function isOrderTrackingIdShorthand(callerText: string): boolean {
+  const text = callerText.trim();
+  if (!text) return false;
+  if (isCatalogShoppingUtterance(text)) return false;
+  return TRACKING_SHORTHAND_RE.test(text) && /\bid\s*number\b/i.test(text);
+}
 
 const TRACKING_ID_FRAGMENT_RE = /\btracking\s*i\.?d\.?\b/i;
 
@@ -87,6 +96,7 @@ export function isTrackingRequest(callerText: string): boolean {
 export function isExplicitTrackingDictationRequest(callerText: string): boolean {
   const text = callerText.trim();
   if (!text) return false;
+  if (isCatalogShoppingUtterance(text)) return false;
   if (isTrackingDictationCompleteIntent(text)) return false;
   if (isSpatialResumeQuery(text)) return false;
   if (TRACKING_REQUEST_RE.test(text)) return true;
@@ -94,9 +104,19 @@ export function isExplicitTrackingDictationRequest(callerText: string): boolean 
   if (TRACKING_SHORTHAND_RE.test(text)) {
     if (/\btracking\b/i.test(text)) return true;
     if (/\b(?:carrier|package|shipment|parcel)\b/i.test(text)) return true;
-    if (/\bid\s*number\b/i.test(text)) return true;
+    // Bare "id number" alone is catalog STT noise (e.g. "title number") — require shipping context.
+    if (
+      /\bid\s*number\b/i.test(text) &&
+      /\b(?:tracking|carrier|package|shipment|parcel|ship(?:ping)?)\b/i.test(text)
+    ) {
+      return true;
+    }
   }
   return false;
+}
+
+export interface TrackingDictationGateContext {
+  session?: CallSession;
 }
 
 export function hasTrackingInSessionContext(
@@ -118,9 +138,22 @@ export function isTrackingRedictationRequest(callerText: string): boolean {
 export function shouldStartTrackingDictation(
   callerText: string,
   trackingDictationComplete: boolean,
+  gate?: TrackingDictationGateContext,
 ): boolean {
+  if (isCatalogShoppingUtterance(callerText)) return false;
+
+  const cartActive = (gate?.session?.shoppingCart?.length ?? 0) > 0;
+  const explicitTracking = TRACKING_REQUEST_RE.test(callerText.trim());
+  if (cartActive && !explicitTracking) return false;
+
+  const hasOrderTracking = Boolean(
+    String(gate?.session?.currentOrderData?.tracking_number ?? "").trim(),
+  );
+  const orderIdShorthand =
+    isOrderTrackingIdShorthand(callerText) && hasOrderTracking && !cartActive;
+
   if (!trackingDictationComplete) {
-    return isExplicitTrackingDictationRequest(callerText);
+    return isExplicitTrackingDictationRequest(callerText) || orderIdShorthand;
   }
-  return isTrackingRedictationRequest(callerText);
+  return isTrackingRedictationRequest(callerText) || orderIdShorthand;
 }
