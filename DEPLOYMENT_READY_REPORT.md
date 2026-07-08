@@ -1,8 +1,132 @@
 # Deployment Ready Report — Production Hardening v4.0
 
-**Date:** 2026-06-22  
+**Last updated:** 2026-07-08 (Sprint 3 — Mission Deployment)  
 **Project root:** `E:\Agents\shopify agent`  
-**Canonical service:** `services/twilio-voice-agent`  
+**Canonical TypeScript service:** `services/order-lookup-voice-agent`  
+**Legacy Python service:** `services/twilio-voice-agent` (not started in PM2 production)
+
+---
+
+## Sprint 3 — order-lookup-voice-agent (Task 1: Production Reliability)
+
+### Environment status (live probe `GET /health` @ port 8001)
+
+| Field | Value | Notes |
+|-------|-------|-------|
+| `ok` | `true` | Service responding |
+| `voiceProvider` | `OpenAI` | ElevenLabs circuit tripped at boot |
+| `elevenLabsCircuitOpen` | `true` | `voiceFailoverReason: auth_failed` |
+| `openAiFallbackVoice` | `onyx` | Fallback active |
+| `postgresEventStoreEnabled` | `false` | `DATABASE_URL` not loaded by running process |
+| `wsUrl` | `wss://agent.mailcallcommunication.com/conversationBrain/ws` | Production URL configured |
+| `PUBLIC_BASE_URL` | `https://agent.mailcallcommunication.com` | In `.env` |
+
+**Credential audit (names only, no values):**
+
+| Variable | Status |
+|----------|--------|
+| `ELEVENLABS_API_KEY` | Placeholder — circuit breaker trips on boot |
+| `VOICE_ID` | Placeholder |
+| `DATABASE_URL` | Commented placeholder in `.env` — Postgres disabled |
+| `SHOPIFY_ADMIN_ACCESS_TOKEN` | Present — **live API returns HTTP 401** |
+| `SKIP_SHOPIFY_STARTUP_CHECK` | `true` (required while Shopify token invalid) |
+
+**Action required:** Restart service after injecting real `ELEVENLABS_API_KEY`, `VOICE_ID`, `DATABASE_URL`, and valid `SHOPIFY_ADMIN_ACCESS_TOKEN`. Remove `SKIP_SHOPIFY_STARTUP_CHECK` once Shopify ping passes.
+
+### Task 1 — Regression test suite
+
+```powershell
+cd "E:\Agents\shopify agent\services\order-lookup-voice-agent"
+npm test
+```
+
+| Suite | Result | Duration |
+|-------|--------|----------|
+| Full regression (`npm test`) | **447 / 447 passed** (66 files) | 82.15s |
+| TypeScript build (`npm run build`) | **PASS** | — |
+
+### Task 1 — Shopify order lookup flow (simulated + live)
+
+**Automated flow tests (mocked Shopify + orchestrator):**
+
+```powershell
+npm test -- tests/conversationOrchestrator.test.ts tests/shopifyStorefrontAdapter.test.ts tests/order21796Timeline.test.ts tests/pipelineAcceptance.test.ts tests/circuitBreaker.test.ts tests/shopifyService.test.ts
+```
+
+| Result | Details |
+|--------|---------|
+| **62 / 62 passed** (6 files) | Greeting → order routing, timeline parsing, circuit breaker on THROTTLED, pipeline guards |
+
+**Edge cases exercised in suite:**
+
+- Shopify GraphQL THROTTLED → circuit opens, calls short-circuit
+- Order not found / api_error mapping
+- Orchestrator greeting routes to order lookup intent
+- Order #21796 timeline fixture (refund/email fields)
+- Tool execution blocked when slot validation not ready
+
+**Live Shopify Admin API probe:**
+
+```powershell
+npx tsx scripts/audit_shopify_order_payload.ts "#21796"
+```
+
+| Result | Details |
+|--------|---------|
+| **FAIL — HTTP 401** | `Invalid API key or access token` against `sureshotbooks-com.myshopify.com` |
+
+Live order lookup is **blocked until production Shopify token is valid**. Unit/orchestrator paths are green.
+
+### Sprint 2 infrastructure delivered (this release)
+
+- Unified ElevenLabs → OpenAI circuit breaker (`voiceAdapter.ts`, `ttsAdapter.ts`)
+- `/health` exposes voice failover + Postgres status fields
+- Postgres init awaited in `bootstrap()` before `startServer()`
+- `runMigrations.ts` loads `.env` via `bootstrapEnv`
+- PM2: `NODE_ENV=production`, `exp_backoff_restart_delay`
+- `.gitignore` on service root (`.env`, `dist/`, `node_modules/`)
+
+### Deployment readiness verdict (Sprint 3)
+
+| Gate | Status |
+|------|--------|
+| Unit/integration tests | **READY** (447/447) |
+| TypeScript compile | **READY** |
+| Service health endpoint | **READY** (responding) |
+| ElevenLabs primary voice | **NOT READY** (placeholder credentials) |
+| Postgres event store | **NOT READY** (`DATABASE_URL` unset in active `.env`) |
+| Shopify live order lookup | **NOT READY** (401 on Admin API) |
+| PM2 crash restart | **READY** (`ecosystem.config.cjs`) |
+
+### Validation commands (Phase 4)
+
+```powershell
+# Full regression
+cd "E:\Agents\shopify agent\services\order-lookup-voice-agent"
+npm test
+
+# Health
+Invoke-RestMethod -Uri http://localhost:8001/health | ConvertTo-Json -Depth 5
+
+# Live Shopify order audit (after token fix)
+npx tsx scripts/audit_shopify_order_payload.ts "#21796"
+
+# Postgres migrations (after DATABASE_URL set)
+npx tsx scripts/runMigrations.ts
+```
+
+### Recommended next sprint (CTO backlog)
+
+1. **Watchdog logging** — structured JSON errors to CloudWatch/Datadog aggregator
+2. **Caller memory hydration** — read `call_events` from Postgres on returning callers (cross-restart memory)
+3. **Git feature branch** — commit Sprint 2/3 changes after credential validation (manual QA gate)
+
+---
+
+## Historical — v4.0 Python twilio-voice-agent (2026-06-22)
+
+**Date:** 2026-06-22  
+**Canonical service (legacy):** `services/twilio-voice-agent`  
 **Safety branch:** `backup/pre-v4-cleanup`  
 **Pre-cleanup inventory:** `pre_cleanup_inventory.txt`
 

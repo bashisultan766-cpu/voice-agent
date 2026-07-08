@@ -2,6 +2,7 @@ import { config as loadEnv } from "dotenv";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
+import { logger } from "./utils/logger.js";
 
 const serviceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnv({ path: resolve(serviceRoot, ".env") });
@@ -86,10 +87,12 @@ function trimStrings<T extends Record<string, unknown>>(obj: T): T {
 export type AppConfig = z.infer<typeof envSchema>;
 
 let cached: AppConfig | null = null;
+let warnedNonElevenLabsProvider = false;
 
 /** @internal Test helper — clears memoized config between test cases. */
 export function resetConfigCacheForTests(): void {
   cached = null;
+  warnedNonElevenLabsProvider = false;
 }
 
 export function getConfig(): AppConfig {
@@ -100,6 +103,19 @@ export function getConfig(): AppConfig {
       throw new Error(`Invalid environment configuration: ${missing}`);
     }
     cached = parsed.data;
+
+    if (
+      !warnedNonElevenLabsProvider &&
+      cached.VOICE_TTS_PROVIDER.toLowerCase() !== "elevenlabs"
+    ) {
+      warnedNonElevenLabsProvider = true;
+      logger.warn("voice_tts_provider_not_elevenlabs", {
+        configured: cached.VOICE_TTS_PROVIDER,
+        expected: "ElevenLabs",
+        message:
+          "ElevenLabs is the primary voice identity; non-ElevenLabs provider forces OpenAI fallback.",
+      });
+    }
   }
   return cached;
 }

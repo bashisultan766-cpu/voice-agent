@@ -9,6 +9,7 @@ import { sanitizeTextForTTS } from "../utils/ttsFormatter.js";
 import { pcm16leToMulaw8k } from "../utils/telephonyAudio.js";
 import {
   ELEVENLABS_CIRCUIT_BREAKER_LOG,
+  classifyElevenLabsHttpStatus,
   clearPreferredVoiceForCall,
   getMediaStreamTtsEngine,
   getGlobalVoiceProvider,
@@ -16,9 +17,9 @@ import {
   getLockedElevenLabsVoiceId,
   getOpenAiEricFallbackVoice,
   getPreferredVoiceForCall,
-  isElevenLabsAuthError,
   logVoiceEngineSelection,
   markElevenLabsAuthFailure,
+  recordElevenLabsFailure,
   resetElevenLabsCircuitBreakerForTests,
   tripElevenLabsCircuitBreaker,
   type PreferredVoiceEngine,
@@ -26,6 +27,7 @@ import {
 
 export {
   ELEVENLABS_CIRCUIT_BREAKER_LOG,
+  classifyElevenLabsHttpStatus,
   clearPreferredVoiceForCall,
   getMediaStreamTtsEngine,
   getGlobalVoiceProvider,
@@ -34,6 +36,7 @@ export {
   getOpenAiEricFallbackVoice,
   getPreferredVoiceForCall,
   markElevenLabsAuthFailure,
+  recordElevenLabsFailure,
   resetElevenLabsCircuitBreakerForTests,
   tripElevenLabsCircuitBreaker,
   type PreferredVoiceEngine,
@@ -252,12 +255,10 @@ async function synthesizeViaElevenLabs(
     if (!res) return null;
 
     if (!res.ok) {
-      if (isElevenLabsAuthError(res.status)) {
-        markElevenLabsAuthFailure(callSid);
-      } else {
-        const body = await res.text();
-        logger.warn("elevenlabs_tts_failed", { status: res.status, body: body.slice(0, 80) });
-      }
+      recordElevenLabsFailure(classifyElevenLabsHttpStatus(res.status), {
+        status: res.status,
+        callSid,
+      });
       return null;
     }
 
@@ -269,9 +270,11 @@ async function synthesizeViaElevenLabs(
       engine: "ElevenLabs",
     };
   } catch (err) {
-    logger.warn("elevenlabs_tts_error", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout =
+      err instanceof Error &&
+      (err.name === "AbortError" || /aborted|timeout/i.test(message));
+    recordElevenLabsFailure(isTimeout ? "timeout" : "network_error", { callSid });
     return null;
   } finally {
     clearTimeout(timer);
@@ -367,8 +370,13 @@ export async function* synthesizeSpeechStream(
 
     const res = await synthesizeViaElevenLabsStream(trimmed, controller.signal, callSid);
     if (!res?.ok || !res.body) {
-      if (res && isElevenLabsAuthError(res.status)) {
-        markElevenLabsAuthFailure(callSid);
+      if (res) {
+        recordElevenLabsFailure(classifyElevenLabsHttpStatus(res.status), {
+          status: res.status,
+          callSid,
+        });
+      } else {
+        recordElevenLabsFailure("network_error", { callSid });
       }
       const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
       if (fallback) {
@@ -408,6 +416,7 @@ export async function* synthesizeSpeechStream(
         error: streamErr instanceof Error ? streamErr.message : String(streamErr),
         stage: "elevenlabs_stream_read",
       });
+      recordElevenLabsFailure("stream_crash", { callSid });
       const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
       if (fallback) {
         yield* yieldOpenAiTelephonyFrames(fallback, true);
@@ -420,6 +429,7 @@ export async function* synthesizeSpeechStream(
       error: err instanceof Error ? err.message : String(err),
       stage: "elevenlabs_stream_open",
     });
+    recordElevenLabsFailure("network_error", { callSid });
     const fallback = await synthesizeViaOpenAI(buildTtsFallbackSpeech(trimmed));
     if (fallback) {
       yield* yieldOpenAiTelephonyFrames(fallback, true);

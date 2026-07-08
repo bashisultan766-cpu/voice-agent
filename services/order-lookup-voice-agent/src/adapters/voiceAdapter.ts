@@ -1,6 +1,6 @@
 /**
  * Voice adapter — static boot-time provider selection (single process-wide engine).
- * Probes ElevenLabs once at startup; on auth/quota/timeout failure locks OpenAI for life.
+ * Probes ElevenLabs once at startup; on auth/quota/timeout/5xx failure locks OpenAI for life.
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
@@ -15,10 +15,39 @@ export type MediaStreamEngineName =
   | "Media Streams (ElevenLabs)"
   | "Media Streams (OpenAI fallback)";
 
+export type ElevenLabsFailureReason =
+  | "auth_failed"
+  | "quota_exceeded"
+  | "server_error"
+  | "timeout"
+  | "network_error"
+  | "probe_http_error"
+  | "stream_crash"
+  | "elevenlabs_not_configured";
+
+export interface ElevenLabsCircuitSnapshot {
+  open: boolean;
+  primaryEngine: "ElevenLabs";
+  activeProvider: GlobalVoiceProvider | null;
+  failoverReason: ElevenLabsFailureReason | null;
+  trippedAt: number | null;
+  lastHttpStatus: number | null;
+}
+
 export const ELEVENLABS_CIRCUIT_BREAKER_LOG =
   "ELEVENLABS CIRCUIT BREAKER: Quota exceeded. Routing to OpenAI for the duration of this process.";
 
 const ELEVENLABS_PROBE_TIMEOUT_MS = 8000;
+
+const CIRCUIT_TRIP_REASONS = new Set<ElevenLabsFailureReason>([
+  "auth_failed",
+  "quota_exceeded",
+  "server_error",
+  "timeout",
+  "network_error",
+  "probe_http_error",
+  "stream_crash",
+]);
 
 /** Process-wide static provider — set once during initializeGlobalVoiceProvider(). */
 let globalVoiceProvider: GlobalVoiceProvider | null = null;
@@ -26,6 +55,10 @@ let initPromise: Promise<GlobalVoiceProvider> | null = null;
 
 /** @deprecated Use globalVoiceProvider === "OpenAI" via getIsElevenLabsDisabled(). */
 let isElevenLabsDisabled = false;
+
+let circuitTrippedAt: number | null = null;
+let failoverReason: ElevenLabsFailureReason | null = null;
+let lastHttpStatus: number | null = null;
 
 export function getGlobalVoiceProvider(): GlobalVoiceProvider | null {
   return globalVoiceProvider;
@@ -39,18 +72,52 @@ export function getIsElevenLabsDisabled(): boolean {
   return globalVoiceProvider !== "ElevenLabs";
 }
 
+export function getElevenLabsCircuitSnapshot(): ElevenLabsCircuitSnapshot {
+  return {
+    open: getIsElevenLabsDisabled(),
+    primaryEngine: "ElevenLabs",
+    activeProvider: globalVoiceProvider,
+    failoverReason,
+    trippedAt: circuitTrippedAt,
+    lastHttpStatus,
+  };
+}
+
 /** @internal Test helper — resets process-wide voice provider state. */
 export function resetElevenLabsCircuitBreakerForTests(): void {
   globalVoiceProvider = null;
   initPromise = null;
   isElevenLabsDisabled = false;
+  circuitTrippedAt = null;
+  failoverReason = null;
+  lastHttpStatus = null;
 }
 
-export function tripElevenLabsCircuitBreaker(): void {
+export function tripElevenLabsCircuitBreaker(
+  reason?: ElevenLabsFailureReason,
+  status?: number,
+): void {
   if (globalVoiceProvider === "OpenAI") return;
+
   globalVoiceProvider = "OpenAI";
   isElevenLabsDisabled = true;
-  logger.warn(ELEVENLABS_CIRCUIT_BREAKER_LOG);
+  circuitTrippedAt = Date.now();
+
+  if (reason) {
+    failoverReason = reason;
+  }
+  if (status !== undefined) {
+    lastHttpStatus = status;
+  }
+
+  if (reason !== undefined || status !== undefined) {
+    logger.warn(ELEVENLABS_CIRCUIT_BREAKER_LOG, {
+      reason: reason ?? failoverReason,
+      status,
+    });
+  } else {
+    logger.warn(ELEVENLABS_CIRCUIT_BREAKER_LOG);
+  }
 }
 
 /** ElevenLabs voice ID locked from environment — never invented at runtime. */
@@ -71,18 +138,57 @@ export function getPreferredVoiceForCall(_callSid?: string): PreferredVoiceEngin
   return "ElevenLabs";
 }
 
-/** Permanent runtime trip — no retry back to ElevenLabs once quota/auth is confirmed. */
-export function markElevenLabsAuthFailure(_callSid?: string): void {
-  tripElevenLabsCircuitBreaker();
+export function isElevenLabsAuthError(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+export function isElevenLabsQuotaError(status: number): boolean {
+  return status === 429;
+}
+
+export function isElevenLabsServerError(status: number): boolean {
+  return status >= 500 && status < 600;
+}
+
+export function classifyElevenLabsHttpStatus(status: number): ElevenLabsFailureReason {
+  if (isElevenLabsAuthError(status)) return "auth_failed";
+  if (isElevenLabsQuotaError(status)) return "quota_exceeded";
+  if (isElevenLabsServerError(status)) return "server_error";
+  return "probe_http_error";
+}
+
+/**
+ * Unified failure reporter — logs, classifies, and trips the circuit when appropriate.
+ * All ElevenLabs failures from ttsAdapter and boot probe must route through here.
+ */
+export function recordElevenLabsFailure(
+  reason: ElevenLabsFailureReason,
+  options?: { status?: number; callSid?: string },
+): void {
+  if (options?.status !== undefined) {
+    lastHttpStatus = options.status;
+  }
+
+  logger.warn("elevenlabs_failure_recorded", {
+    reason,
+    status: options?.status,
+    callSid: options?.callSid?.slice(0, 8),
+    circuitAlreadyOpen: globalVoiceProvider === "OpenAI",
+  });
+
+  if (CIRCUIT_TRIP_REASONS.has(reason)) {
+    tripElevenLabsCircuitBreaker(reason, options?.status);
+  }
+}
+
+/** @deprecated Use recordElevenLabsFailure("auth_failed", { callSid }). */
+export function markElevenLabsAuthFailure(callSid?: string): void {
+  recordElevenLabsFailure("auth_failed", { callSid });
 }
 
 /** @deprecated Per-call voice overrides removed — provider is process-wide static. */
 export function clearPreferredVoiceForCall(_callSid: string): void {
   // no-op
-}
-
-export function isElevenLabsAuthError(status: number): boolean {
-  return status === 401 || status === 403;
 }
 
 function shouldAttemptElevenLabsAtBoot(): boolean {
@@ -97,7 +203,7 @@ function shouldAttemptElevenLabsAtBoot(): boolean {
 
 async function probeElevenLabsOnce(): Promise<{
   ok: boolean;
-  reason: string;
+  reason: ElevenLabsFailureReason | "authenticated";
   status?: number;
 }> {
   const cfg = getConfig();
@@ -116,11 +222,11 @@ async function probeElevenLabsOnce(): Promise<{
       return { ok: true, reason: "authenticated" };
     }
 
-    if (isElevenLabsAuthError(res.status)) {
-      return { ok: false, reason: "auth_failed", status: res.status };
-    }
-
-    return { ok: false, reason: "probe_http_error", status: res.status };
+    return {
+      ok: false,
+      reason: classifyElevenLabsHttpStatus(res.status),
+      status: res.status,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isTimeout =
@@ -148,6 +254,7 @@ export async function initializeGlobalVoiceProvider(): Promise<GlobalVoiceProvid
     if (!shouldAttemptElevenLabsAtBoot()) {
       globalVoiceProvider = "OpenAI";
       isElevenLabsDisabled = true;
+      failoverReason = "elevenlabs_not_configured";
       logger.info("voice_provider_static_openai", {
         reason: "elevenlabs_not_configured",
       });
@@ -161,23 +268,12 @@ export async function initializeGlobalVoiceProvider(): Promise<GlobalVoiceProvid
       isElevenLabsDisabled = false;
       logger.info("voice_provider_static_elevenlabs", { reason: probe.reason });
     } else {
-      globalVoiceProvider = "OpenAI";
-      isElevenLabsDisabled = true;
-      if (probe.reason === "auth_failed" || probe.reason === "timeout") {
-        logger.warn(ELEVENLABS_CIRCUIT_BREAKER_LOG, {
-          reason: probe.reason,
-          status: probe.status,
-        });
-      } else {
-        logger.warn("voice_provider_static_openai", {
-          reason: probe.reason,
-          status: probe.status,
-        });
-      }
+      const failureReason = probe.reason as ElevenLabsFailureReason;
+      recordElevenLabsFailure(failureReason, { status: probe.status });
     }
 
     logVoiceEngineSelection();
-    return globalVoiceProvider;
+    return globalVoiceProvider!;
   })();
 
   return initPromise;

@@ -18,13 +18,21 @@ import { handleInboundCall } from "./agents/conversationOrchestrator.js";
 
 import { handleMediaStreamSocket } from "./voice/streamHandler.js";
 
-import { initPostgresEventStore } from "./platform/postgresEventStore.js";
+import {
+  initPostgresEventStore,
+  isPostgresDisabled,
+  isPostgresEventStoreEnabled,
+} from "./platform/postgresEventStore.js";
 
 import { validateEnvironmentOnStartup } from "./platform/envValidator.js";
 
 import {
 
   ensureVoiceProviderReady,
+
+  getElevenLabsCircuitSnapshot,
+
+  getOpenAiEricFallbackVoice,
 
   initializeGlobalVoiceProvider,
 
@@ -52,6 +60,8 @@ export function createApp() {
 
     const voiceReady = ensureVoiceProviderReady();
 
+    const circuit = getElevenLabsCircuitSnapshot();
+
     res.json({
 
       ok: true,
@@ -65,6 +75,24 @@ export function createApp() {
       voiceProvider: voiceReady.ok ? voiceReady.provider : null,
 
       voiceProviderReady: voiceReady.ok,
+
+      primaryEngine: circuit.primaryEngine,
+
+      elevenLabsCircuitOpen: circuit.open,
+
+      voiceFailoverReason: circuit.failoverReason,
+
+      voiceFailoverActive: circuit.open && circuit.activeProvider === "OpenAI",
+
+      openAiFallbackVoice: circuit.open ? getOpenAiEricFallbackVoice() : undefined,
+
+      circuitTrippedAt: circuit.trippedAt,
+
+      lastElevenLabsHttpStatus: circuit.lastHttpStatus,
+
+      postgresEventStoreEnabled: isPostgresEventStoreEnabled(),
+
+      postgresDisabled: isPostgresDisabled(),
 
     });
 
@@ -117,10 +145,6 @@ export function startServer() {
   setLogLevel(cfg.LOG_LEVEL);
 
   warmPhraseCache();
-
-  void initPostgresEventStore();
-
-
 
   const app = createApp();
 
@@ -217,6 +241,8 @@ async function bootstrap(): Promise<void> {
   const provider = await initializeGlobalVoiceProvider();
 
   logger.info("voice_provider_ready", { provider });
+
+  await initPostgresEventStore();
 
   await prewarmVoiceCache();
 

@@ -1,7 +1,8 @@
 /**
  * Apply SQL migrations when DATABASE_URL is configured.
- * Usage: DATABASE_URL=postgres://... npx tsx scripts/runMigrations.ts
+ * Usage: npx tsx scripts/runMigrations.ts
  */
+import "../src/bootstrapEnv.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

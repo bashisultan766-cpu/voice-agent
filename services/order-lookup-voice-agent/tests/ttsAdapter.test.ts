@@ -130,12 +130,74 @@ describe("static global voice provider", () => {
     expect(voice.getIsElevenLabsDisabled()).toBe(true);
     expect(voice.getPreferredVoiceForCall("CA456")).toBe("openai-tts-1-hd");
     expect(voice.getMediaStreamTtsEngine()).toBe("Media Streams (OpenAI fallback)");
+    expect(voice.getElevenLabsCircuitSnapshot().failoverReason).toBe("auth_failed");
     expect(warnSpy).toHaveBeenCalledWith(
       voice.ELEVENLABS_CIRCUIT_BREAKER_LOG,
       expect.objectContaining({ reason: "auth_failed" }),
     );
 
     warnSpy.mockRestore();
+  });
+
+  it("permanently locks OpenAI when ElevenLabs quota probe returns 429", async () => {
+    mockElevenLabsProbe(false, 429);
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+
+    const provider = await voice.initializeGlobalVoiceProvider();
+
+    expect(provider).toBe("OpenAI");
+    expect(voice.getElevenLabsCircuitSnapshot()).toMatchObject({
+      open: true,
+      failoverReason: "quota_exceeded",
+      lastHttpStatus: 429,
+    });
+  });
+
+  it("permanently locks OpenAI when ElevenLabs probe returns 5xx", async () => {
+    mockElevenLabsProbe(false, 503);
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+
+    const provider = await voice.initializeGlobalVoiceProvider();
+
+    expect(provider).toBe("OpenAI");
+    expect(voice.getElevenLabsCircuitSnapshot()).toMatchObject({
+      open: true,
+      failoverReason: "server_error",
+      lastHttpStatus: 503,
+    });
+  });
+
+  it("classifies HTTP status codes for circuit trips", async () => {
+    const voice = await loadVoiceStack();
+    expect(voice.classifyElevenLabsHttpStatus(401)).toBe("auth_failed");
+    expect(voice.classifyElevenLabsHttpStatus(429)).toBe("quota_exceeded");
+    expect(voice.classifyElevenLabsHttpStatus(500)).toBe("server_error");
+    expect(voice.classifyElevenLabsHttpStatus(404)).toBe("probe_http_error");
+  });
+
+  it("trips circuit on runtime 503 TTS response", async () => {
+    mockElevenLabsProbe(true);
+    const voice = await loadVoiceStack();
+    voice.resetElevenLabsCircuitBreakerForTests();
+    await voice.initializeGlobalVoiceProvider();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("text-to-speech")) {
+          return new Response("unavailable", { status: 503 });
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    const tts = await import("../src/adapters/ttsAdapter.js");
+    await tts.synthesizeSpeech("Hello there", "CA503");
+
+    expect(voice.getIsElevenLabsDisabled()).toBe(true);
+    expect(voice.getElevenLabsCircuitSnapshot().failoverReason).toBe("server_error");
   });
 
   it("does not re-probe ElevenLabs on subsequent init calls", async () => {
