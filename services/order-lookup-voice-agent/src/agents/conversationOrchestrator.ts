@@ -683,6 +683,28 @@ async function* runOrchestratorTurnCore(
     }
   }
 
+  // If we're waiting for an order number, keep the slot but respond warmly to social greetings.
+  if (session.phase === "awaiting_order_number") {
+    const isSocialGreeting =
+      /^(hi|hello|hey)\b/i.test(text) || /\bhow\s+are\s+you\b/i.test(text);
+
+    if (isSocialGreeting) {
+      session.awaitingInput = "order_number";
+      const speech = buildGreetingResponse(text);
+      const uniqueSpeech = await ensureUniqueSpokenResponse(
+        session.callSid,
+        speech,
+        text,
+      );
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "general_help",
+      });
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
+  }
+
   yield* runLlmOrchestratorTurn(session, text, emitResponseSent);
 }
 
