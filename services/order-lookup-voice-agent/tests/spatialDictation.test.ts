@@ -5,7 +5,8 @@ import {
   resolveSpatialTurnSpeech,
 } from "../src/sovereign/spatialDictation.js";
 import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
-import { recordTrackingPayload, updateActiveSession } from "../src/sovereign/activeSession.js";
+import { recordTrackingPayload, updateActiveSession, getOrCreateActiveSession } from "../src/sovereign/activeSession.js";
+import { isTrackingRequest, isTrackingDictationCompleteIntent } from "../src/agents/trackingIntent.js";
 import type { CallSession } from "../src/types/order.js";
 
 describe("spatialDictation anchors", () => {
@@ -35,6 +36,43 @@ describe("spatialDictation anchors", () => {
     expect(turn.handled).toBe(true);
     expect(turn.speech).toMatch(/After Zero-Zero-Zero/i);
     expect((turn.speech ?? "").length).toBeLessThan(120);
+  });
+});
+
+describe("tracking dictation completion", () => {
+  it("does not treat written-down confirmation as a new tracking request", () => {
+    expect(isTrackingRequest("I have written down the tracking ID correctly")).toBe(false);
+    expect(isTrackingDictationCompleteIntent("I have written down the tracking ID correctly")).toBe(
+      true,
+    );
+  });
+
+  it("closes tracking flow instead of restarting dictation", () => {
+    const session = {
+      callSid: "CA_DONE",
+      from: "+1",
+      to: "+2",
+      phase: "follow_up",
+      orderNumberAttempts: 0,
+      createdAt: Date.now(),
+      currentOrderData: { tracking_number: "9449050105795009634765" },
+    } as CallSession;
+
+    recordTrackingPayload("CA_DONE", "9449050105795009634765");
+    updateActiveSession("CA_DONE", { isNotepadReady: true, currentState: "tracking_dictation" });
+
+    const resolution = resolveTrackingPhaseGate(
+      "ok done I have written it down thank you",
+      session,
+    );
+    expect(resolution.handled).toBe(true);
+    expect(resolution.intentKey).toBe("tracking_complete");
+    expect(resolution.speech).toContain("anything else I can help you with");
+    expect(resolution.speech).not.toMatch(/Nine\./);
+
+    const after = getOrCreateActiveSession("CA_DONE");
+    expect(after.currentState).toBe("order_active");
+    expect(after.isNotepadReady).toBe(false);
   });
 });
 

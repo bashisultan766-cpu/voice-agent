@@ -105,10 +105,12 @@ import {
   buildResumeFromLastSpokenIndex,
   buildTrackingDictationChunks,
   confirmUserNotepadReady,
+  completeTrackingDictation,
   dictateTracking,
   isUserNotepadReadyIntent,
   markTrackingAwaitingNotepad,
   promptUserForNotepad,
+  TRACKING_DICTATION_COMPLETE_SPEECH,
   USER_NOTEPAD_READY,
 } from "./dictationTool.js";
 import { isSpatialBeforeQuery, isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
@@ -190,7 +192,7 @@ import {
   buildClarifyingResponse,
   buildGreetingResponse,
 } from "../handlers/greetingHandler.js";
-import { isTrackingRequest, hasTrackingInSessionContext } from "./trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent } from "./trackingIntent.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
@@ -350,6 +352,24 @@ export function resolveTrackingPhaseGate(
         intentKey: "spatial_resume_interrupt",
       };
     }
+  }
+
+  const inTrackingFlow =
+    Boolean(refreshed.lastSpokenPayload?.trackingForTts) &&
+    (refreshed.currentState === "tracking_dictation" ||
+      refreshed.cachedIntent === "tracking");
+
+  if (inTrackingFlow && isTrackingDictationCompleteIntent(text)) {
+    completeTrackingDictation(session.callSid);
+    session.phase = "follow_up";
+    session.awaitingInput = null;
+    return {
+      handled: true,
+      speech: TRACKING_DICTATION_COMPLETE_SPEECH,
+      skipLlm: true,
+      skipTools: true,
+      intentKey: "tracking_complete",
+    };
   }
 
   if (refreshed.currentState === "awaiting_notepad_ready" && trackingPayloadReady(refreshed)) {

@@ -14,9 +14,13 @@ import {
 } from "../sovereign/spatialDictation.js";
 
 export const USER_NOTEPAD_READY = "USER_NOTEPAD_READY";
+export const TRACKING_DICTATION_COMPLETE = "TRACKING_DICTATION_COMPLETE";
+
+export const TRACKING_DICTATION_COMPLETE_SPEECH =
+  "Perfect — it sounds like you have the tracking number written down. Is there anything else I can help you with today?";
 
 const NOTEPAD_READY_RE =
-  /\b(ready|i'?m\s+ready|yes|ok|okay|go\s+ahead|all\s+set|you\s+can\s+go|note\s+it\s+down)\b/i;
+  /\b(?:ready|i'?m\s+ready|go\s+ahead|all\s+set|you\s+can\s+go)\b/i;
 
 export class NotReadyError extends Error {
   readonly code = "NOTEPAD_NOT_READY" as const;
@@ -32,7 +36,21 @@ export function promptUserForNotepad(): string {
 }
 
 export function isUserNotepadReadyIntent(callerText: string): boolean {
-  return NOTEPAD_READY_RE.test(callerText.trim());
+  const text = callerText.trim();
+  if (!text) return false;
+  if (/\b(?:written|wrote|got it|thank|done writing|copied)\b/i.test(text)) return false;
+  return NOTEPAD_READY_RE.test(text) || /^(yes|ok|okay)\.?$/i.test(text);
+}
+
+export function completeTrackingDictation(callSid: string): void {
+  updateActiveSession(callSid, {
+    currentState: "order_active",
+    awaitingClarification: null,
+    cachedIntent: "order",
+    lastSpokenIndex: -1,
+    lastDictationIndex: -1,
+    isNotepadReady: false,
+  });
 }
 
 export type DictateTrackingSuccess = {

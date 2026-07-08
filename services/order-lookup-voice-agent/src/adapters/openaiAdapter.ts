@@ -49,10 +49,10 @@ import {
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
-import { isTrackingRequest, hasTrackingInSessionContext } from "../agents/trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent } from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
-import { promptUserForNotepad } from "../agents/dictationTool.js";
+import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH } from "../agents/dictationTool.js";
 import { isTrackingDictationText } from "../utils/ttsFormatter.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -617,6 +617,25 @@ export function syncDeterministicAssistantSpeech(
 /**
  * Run one caller turn with tool-pending events for system-level filler injection.
  */
+function interceptTrackingCompleteBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  if (!isTrackingDictationCompleteIntent(input.userMessage)) return null;
+
+  const active = getOrCreateActiveSession(input.callSid);
+  const inTrackingFlow =
+    Boolean(active.lastSpokenPayload?.trackingForTts) &&
+    (active.currentState === "tracking_dictation" || active.cachedIntent === "tracking");
+
+  if (!inTrackingFlow) return null;
+
+  completeTrackingDictation(input.callSid);
+
+  return {
+    speech: TRACKING_DICTATION_COMPLETE_SPEECH,
+    toolExecutions: [],
+    responseType: "general_help",
+  };
+}
+
 function interceptSpatialBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
   if (!isSpatialResumeQuery(input.userMessage)) return null;
 
@@ -722,6 +741,12 @@ export async function* runLlmAgentTurnEvents(
   const spatialIntercept = interceptSpatialBeforeLlm(input);
   if (spatialIntercept) {
     yield { type: "result", result: spatialIntercept };
+    return;
+  }
+
+  const trackingCompleteIntercept = interceptTrackingCompleteBeforeLlm(input);
+  if (trackingCompleteIntercept) {
+    yield { type: "result", result: trackingCompleteIntercept };
     return;
   }
 

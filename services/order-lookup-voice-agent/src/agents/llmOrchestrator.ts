@@ -31,7 +31,8 @@ import {
   recordToolPayload,
   recordTrackingPayload,
 } from "../sovereign/activeSession.js";
-import { promptUserForNotepad } from "./dictationTool.js";
+import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH } from "./dictationTool.js";
+import { isTrackingDictationCompleteIntent } from "./trackingIntent.js";
 
 export { LLM_ORCHESTRATOR_TEMPERATURE } from "./llmConfig.js";
 
@@ -220,6 +221,14 @@ export async function* runLlmOrchestratorTurn(
   let speech = result.speech.trim();
   const activeSession = getOrCreateActiveSession(session.callSid);
   if (
+    isTrackingDictationCompleteIntent(text) &&
+    Boolean(activeSession.lastSpokenPayload?.trackingForTts) &&
+    (activeSession.currentState === "tracking_dictation" || activeSession.cachedIntent === "tracking")
+  ) {
+    completeTrackingDictation(session.callSid);
+    speech = TRACKING_DICTATION_COMPLETE_SPEECH;
+    session.phase = "follow_up";
+  } else if (
     !activeSession.isNotepadReady &&
     activeSession.lastSpokenPayload?.trackingForTts &&
     isTrackingDictationText(speech)
