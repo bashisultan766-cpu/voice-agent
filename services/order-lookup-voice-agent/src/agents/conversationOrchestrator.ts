@@ -191,7 +191,11 @@ import { validateTwilioSignature } from "../utils/twilioSignature.js";
 import {
   buildClarifyingResponse,
   buildGreetingResponse,
+  buildOrderNumberOfferResponse,
+  isOrderNumberOfferUtterance,
+  isSocialGreetingUtterance,
 } from "../handlers/greetingHandler.js";
+import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
 import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent } from "./trackingIntent.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
@@ -683,7 +687,37 @@ async function* runOrchestratorTurnCore(
     }
   }
 
-  // If we're waiting for an order number, keep the slot but respond warmly to social greetings.
+  // If we're waiting for an order number, try deterministic lookup before the LLM.
+  if (session.phase === "awaiting_order_number" || session.awaitingInput === "order_number") {
+    const orderHandled = yield* handleAwaitingOrderNumberPhase(session, text);
+    if (orderHandled) {
+      return;
+    }
+  }
+
+  // Warm deterministic greeting — never send pure hellos to the LLM.
+  if (
+    isSocialGreetingUtterance(text) &&
+    session.phase !== "awaiting_order_number" &&
+    session.awaitingInput !== "order_number"
+  ) {
+    const speech = buildGreetingResponse(text);
+    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    if (!session.greetedThisCall) {
+      session.greetedThisCall = true;
+    }
+    if (session.phase === "greeting") {
+      session.phase = "follow_up";
+    }
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  // If we're waiting for an order number, respond warmly to social greetings mid-slot.
   if (session.phase === "awaiting_order_number") {
     const isSocialGreeting =
       /^(hi|hello|hey)\b/i.test(text) || /\bhow\s+are\s+you\b/i.test(text);
@@ -705,7 +739,91 @@ async function* runOrchestratorTurnCore(
     }
   }
 
+  if (
+    isOrderNumberOfferUtterance(text) &&
+    !extractOrderNumberFromSpeech(text) &&
+    !extractOrderNumberFromStt(text, { awaitingSlot: true })
+  ) {
+    session.phase = "awaiting_order_number";
+    session.awaitingInput = "order_number";
+    session.lastOrchestratorIntent = "order_lookup";
+    updateActiveSession(session.callSid, { cachedIntent: "order" });
+    const speech = buildOrderNumberOfferResponse();
+    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "clarification_question",
+    });
+    emitResponseSent(session.callSid, "clarification_question", uniqueSpeech);
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return;
+  }
+
   yield* runLlmOrchestratorTurn(session, text, emitResponseSent);
+}
+
+async function* handleAwaitingOrderNumberPhase(
+  session: CallSession,
+  callerText: string,
+): AsyncGenerator<AgentStreamEvent, boolean> {
+  const text = callerText.trim();
+  if (!text) return false;
+
+  if (isSocialGreetingUtterance(text)) {
+    return false;
+  }
+
+  const orderNumber =
+    extractOrderNumberFromSpeech(text) ??
+    extractOrderNumberFromStt(text, { awaitingSlot: true });
+
+  if (orderNumber) {
+    yield chunkEvent(planInstantFiller("get_shopify_order_status"));
+    const lookup = await orderLookupTool(orderNumber);
+    if (lookup.status === "found" && lookup.order) {
+      session.currentOrder = lookup.order;
+      session.phase = "order_disclosed";
+      session.awaitingInput = null;
+      session.lastOrchestratorIntent = "order_lookup";
+      updateActiveSession(session.callSid, { cachedIntent: "order" });
+      yield chunkEvent(planInstantConfirmation(lookup.order));
+      yield* streamOrderSummary(lookup.order);
+      emitResponseSent(session.callSid, "order_found", "Order found.");
+    } else {
+      session.phase = "awaiting_order_number";
+      session.awaitingInput = "order_number";
+      const errorPlan = planLookupError(lookup);
+      const speech = errorPlan.chunks.map((c) => c.text).join(" ") || buildClarifyingResponse(1);
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: lookup.status === "invalid_format" ? "clarification_question" : "order_not_found",
+      });
+      emitResponseSent(
+        session.callSid,
+        lookup.status === "invalid_format" ? "clarification_question" : "order_not_found",
+        uniqueSpeech,
+      );
+      yield* yieldSpeech(uniqueSpeech);
+    }
+    yield doneEvent(session.phase);
+    return true;
+  }
+
+  if (isOrderNumberOfferUtterance(text)) {
+    session.phase = "awaiting_order_number";
+    session.awaitingInput = "order_number";
+    const speech = buildOrderNumberOfferResponse();
+    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "clarification_question",
+    });
+    emitResponseSent(session.callSid, "clarification_question", uniqueSpeech);
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return true;
+  }
+
+  return false;
 }
 
 async function* handleGreetingPhaseOrderLookup(
@@ -750,7 +868,7 @@ async function* handleGreetingPhaseOrderLookup(
   const intent = classifyOrchestratorIntent(text);
   const orderLookupIntent =
     intent === "order_status" ||
-    (intent === "unknown" && /\b(order|#\d|isbn|title|book)\b/i.test(text));
+    (intent === "unknown" && /\b(order|#\d|tracking|shipment|refund)\b/i.test(text));
 
   if (!orderLookupIntent) {
     return false;

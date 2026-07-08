@@ -164,10 +164,23 @@ export function normalizeSpeechForDedup(speech: string): string {
   return speech.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+const ORDER_NUMBER_ASK_RE =
+  /\b(order\s*#?|order\s+number|what(?:'s| is)\s+your\s+order|tell\s+me\s+(?:your\s+)?order)\b/i;
+
+function isSemanticallyDuplicateOrderAsk(last: string, speech: string): boolean {
+  if (!ORDER_NUMBER_ASK_RE.test(last) || !ORDER_NUMBER_ASK_RE.test(speech)) {
+    return false;
+  }
+  return true;
+}
+
 export function isDuplicateSpokenSentence(callSid: string, speech: string): boolean {
   const last = lastSpokenByCall.get(callSid);
   if (!last) return false;
-  return normalizeSpeechForDedup(last) === normalizeSpeechForDedup(speech);
+  const normalizedLast = normalizeSpeechForDedup(last);
+  const normalizedSpeech = normalizeSpeechForDedup(speech);
+  if (normalizedLast === normalizedSpeech) return true;
+  return isSemanticallyDuplicateOrderAsk(last, speech);
 }
 
 export function recordLastSpokenSentence(callSid: string, speech: string): void {

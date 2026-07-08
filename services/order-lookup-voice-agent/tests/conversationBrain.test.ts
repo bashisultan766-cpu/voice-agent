@@ -21,11 +21,11 @@ describe("conversationBrain", () => {
     expect(BRAIN_GREETING).not.toMatch(/I am SureShot Bookstore/i);
   });
 
-  it('routes "hello" to the LLM after TwiML greeting without re-asking for order number', async () => {
+  it('routes "hello" to a warm greeting after TwiML without re-asking for order number', async () => {
     const session = createCallSession("CA_BRAIN", "+1", "+2");
     session.greetedThisCall = true;
     const result = await handleBrainTurn(session, "hello");
-    expect(result.speech).toMatch(/Welcome to SureShot Books|virtual assistant/i);
+    expect(result.speech).toMatch(/doing well|Hi there/i);
     expect(result.speech).not.toMatch(/order number/i);
   });
 

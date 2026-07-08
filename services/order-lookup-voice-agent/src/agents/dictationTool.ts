@@ -17,7 +17,7 @@ export const USER_NOTEPAD_READY = "USER_NOTEPAD_READY";
 export const TRACKING_DICTATION_COMPLETE = "TRACKING_DICTATION_COMPLETE";
 
 export const TRACKING_DICTATION_COMPLETE_SPEECH =
-  "Perfect — it sounds like you have the tracking number written down. Is there anything else I can help you with today?";
+  "Great — sounds like you have the tracking number written down. Would you like help with anything else on your order, or are you looking to buy a book?";
 
 const NOTEPAD_READY_RE =
   /\b(?:ready|i'?m\s+ready|go\s+ahead|all\s+set|you\s+can\s+go)\b/i;

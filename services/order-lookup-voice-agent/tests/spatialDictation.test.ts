@@ -67,7 +67,7 @@ describe("tracking dictation completion", () => {
     );
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("tracking_complete");
-    expect(resolution.speech).toContain("anything else I can help you with");
+    expect(resolution.speech).toMatch(/written down|anything else|buy a book/i);
     expect(resolution.speech).not.toMatch(/Nine\./);
 
     const after = getOrCreateActiveSession("CA_DONE");

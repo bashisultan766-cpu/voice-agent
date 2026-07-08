@@ -41,6 +41,11 @@ import {
   shouldOfferEndCallTool,
   ensureUniqueSpokenResponse,
 } from "../services/llmService.js";
+import {
+  buildGreetingResponse,
+  isSocialGreetingUtterance,
+} from "../handlers/greetingHandler.js";
+import { stripRoboticAssistantSpeech } from "../agents/conversationBrainAgent.js";
 import { buildLockedFlowSystemMessage } from "../agents/lockedFlowState.js";
 import {
   buildActiveSessionSystemMessage,
@@ -547,16 +552,20 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
   if (!orderNumber) return null;
 
   const agentState = getAgentState(input.callSid);
-  if (
+  const orderAlreadyFound =
+    Boolean(input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) &&
     agentState.lastOrderNumber &&
-    orderNumbersMatch(agentState.lastOrderNumber, orderNumber)
-  ) {
+    orderNumbersMatch(agentState.lastOrderNumber, orderNumber);
+  if (orderAlreadyFound) {
     return null;
+  }
+
+  if (isAwaitingOrderNumberSlot(input)) {
+    return orderNumber;
   }
 
   const lower = input.userMessage.toLowerCase();
   const hasOrderIntent =
-    awaitingSlot ||
     bareOrder ||
     /\b(order|track|status|number|lookup)\b/i.test(lower);
 
@@ -567,6 +576,17 @@ const LLM_FALLBACK_SPEECH =
   "Sorry, I didn't catch that. Do you have an order number, or are you looking for a book?";
 
 /** Caller signals they have an order number but hasn't spoken digits yet. */
+function interceptGreetingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  if (!isSocialGreetingUtterance(input.userMessage)) return null;
+  if (isAwaitingOrderNumberSlot(input)) return null;
+
+  return {
+    speech: buildGreetingResponse(input.userMessage),
+    toolExecutions: [],
+    responseType: "general_help",
+  };
+}
+
 function interceptOrderNumberOfferBeforeLlm(
   input: LlmAgentTurnInput,
 ): LlmAgentTurnResult | null {
@@ -811,6 +831,12 @@ export async function* runLlmAgentTurnEvents(
   const orderOfferIntercept = interceptOrderNumberOfferBeforeLlm(input);
   if (orderOfferIntercept) {
     yield { type: "result", result: orderOfferIntercept };
+    return;
+  }
+
+  const greetingIntercept = interceptGreetingBeforeLlm(input);
+  if (greetingIntercept) {
+    yield { type: "result", result: greetingIntercept };
     return;
   }
 
@@ -1067,6 +1093,7 @@ export async function* runLlmAgentTurnEvents(
 
       let speech = (message.content ?? "").trim();
       if (speech) {
+        speech = stripRoboticAssistantSpeech(speech, input.userMessage);
         speech = enforceNotepadGateOnSpeech(input.callSid, speech);
         speech = await ensureUniqueSpokenResponse(input.callSid, speech, input.userMessage);
         const responseType = inferResponseType(speech, toolExecutions);

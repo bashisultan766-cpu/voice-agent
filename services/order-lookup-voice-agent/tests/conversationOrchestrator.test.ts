@@ -105,11 +105,11 @@ describe("conversationOrchestrator flows", () => {
     mockLiveShopifyFetch(mockCatalog);
   });
 
-  it('routes "hello" to the LLM when TwiML already greeted', async () => {
+  it('routes "hello" to a warm greeting when TwiML already greeted', async () => {
     const session = createCallSession("CA_ORCH", "+1", "+2");
     session.greetedThisCall = true;
     const speech = await collectSpeech(session, "hello");
-    expect(speech).toMatch(/Welcome to SureShot Books|virtual assistant/i);
+    expect(speech).toMatch(/doing well|Hi there/i);
     expect(speech).not.toMatch(/order number/i);
   });
 

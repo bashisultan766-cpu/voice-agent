@@ -17,6 +17,10 @@ const ROBOTIC_PHRASES = [
   /please provide (your )?order number/i,
   /valid order number/i,
   /i didn'?t hear anything/i,
+  /i am here to (?:help|assist)/i,
+  /here to assist you with (?:your )?order/i,
+  /assist you with (?:your )?order number/i,
+  /here to help with order/i,
 ];
 
 let client: OpenAI | null = null;
@@ -100,6 +104,20 @@ function buildMessages(memory: CallMemory, situationalHint?: string): OpenAI.Cha
     ...history,
     { role: "user", content: latest?.content ?? "" },
   ];
+}
+
+/** Strip robotic LLM phrasing before TTS — used on the production hot path. */
+export function stripRoboticAssistantSpeech(speech: string, userMessage: string): string {
+  let cleaned = speech.replace(/\s+/g, " ").trim();
+  if (!cleaned) return softFallback(userMessage);
+
+  for (const pattern of ROBOTIC_PHRASES) {
+    if (pattern.test(cleaned)) {
+      return softFallback(userMessage);
+    }
+  }
+
+  return cleaned;
 }
 
 /** Enforce voice-friendly output and strip robotic phrasing. */
