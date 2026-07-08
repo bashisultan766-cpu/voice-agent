@@ -15,17 +15,18 @@ describe("conversationBrain", () => {
   });
 
   it("exposes the canonical call-start greeting", () => {
-    expect(BRAIN_GREETING).toMatch(/Welcome to SureShot Books/i);
-    expect(BRAIN_GREETING).toMatch(/order/i);
-    expect(BRAIN_GREETING).toMatch(/order number/i);
+    expect(BRAIN_GREETING).toMatch(/SureShot Books assistant/i);
+    expect(BRAIN_GREETING).toMatch(/How can I help you/i);
+    expect(BRAIN_GREETING).not.toMatch(/order number/i);
     expect(BRAIN_GREETING).not.toMatch(/I am SureShot Bookstore/i);
   });
 
-  it('routes "hello" to order lookup on the first turn', async () => {
+  it('routes "hello" to the LLM after TwiML greeting without re-asking for order number', async () => {
     const session = createCallSession("CA_BRAIN", "+1", "+2");
+    session.greetedThisCall = true;
     const result = await handleBrainTurn(session, "hello");
-    expect(result.speech).toMatch(/order number/i);
-    expect(session.awaitingInput).toBe("order_number");
+    expect(result.speech).toMatch(/Welcome to SureShot Books|virtual assistant/i);
+    expect(result.speech).not.toMatch(/order number/i);
   });
 
   it('asks for order number on "where is my order"', async () => {

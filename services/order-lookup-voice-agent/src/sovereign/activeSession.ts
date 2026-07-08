@@ -247,12 +247,18 @@ export function buildActiveSessionSystemMessage(active: ActiveSession): string {
   }
 
   if (active.lastSpokenPayload) {
-    lines.push(
-      `lastSpokenPayload.kind: ${active.lastSpokenPayload.kind}`,
-      active.lastSpokenPayload.trackingForTts
-        ? `tracking_number_for_tts (verbatim): ${active.lastSpokenPayload.trackingForTts}`
-        : `lastSpoken: ${active.lastSpokenPayload.speech.slice(0, 200)}`,
-    );
+    lines.push(`lastSpokenPayload.kind: ${active.lastSpokenPayload.kind}`);
+    if (active.isNotepadReady && active.lastSpokenPayload.trackingForTts) {
+      lines.push(
+        `tracking_number_for_tts (verbatim): ${active.lastSpokenPayload.trackingForTts}`,
+      );
+    } else if (active.lastSpokenPayload.trackingForTts) {
+      lines.push(
+        "TRACKING DICTATION LOCKED: tracking_number_for_tts is withheld until caller confirms notepad ready. If they ask for tracking, use dictate_tracking or the notepad handshake ONLY — never speak digits.",
+      );
+    } else {
+      lines.push(`lastSpoken: ${active.lastSpokenPayload.speech.slice(0, 200)}`);
+    }
   }
 
   if (active.cachedIntent && active.currentState !== "idle") {

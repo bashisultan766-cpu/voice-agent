@@ -21,7 +21,7 @@ import {
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
 import { orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
-import { buildActiveOrderContextSystemMessage } from "../agents/sessionManager.js";
+import { buildActiveOrderContextSystemMessage, redactTrackingFromOrderContext } from "../agents/sessionManager.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { buildCartContextSystemMessage } from "../agents/cartManager.js";
 import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
@@ -45,9 +45,12 @@ import { buildLockedFlowSystemMessage } from "../agents/lockedFlowState.js";
 import {
   buildActiveSessionSystemMessage,
   getOrCreateActiveSession,
+  recordTrackingPayload,
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
+import { isTrackingRequest } from "../agents/trackingIntent.js";
+import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -415,9 +418,14 @@ function buildOpenAiMessages(
   ];
 
   if (input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) {
+    const active = getOrCreateActiveSession(input.callSid);
+    const orderContext = redactTrackingFromOrderContext(
+      input.activeOrderContext,
+      active.isNotepadReady,
+    );
     systemMessages.push({
       role: "system",
-      content: buildActiveOrderContextSystemMessage(input.activeOrderContext),
+      content: buildActiveOrderContextSystemMessage(orderContext),
     });
   }
 
@@ -425,6 +433,14 @@ function buildOpenAiMessages(
     const vaultMessage = buildVaultSecuritySystemMessage(input.session);
     if (vaultMessage) {
       systemMessages.push({ role: "system", content: vaultMessage });
+    }
+
+    if (input.session.greetedThisCall) {
+      systemMessages.push({
+        role: "system",
+        content:
+          "TWIML GREETING ALREADY SPOKEN: The caller already heard the opening greeting on this call. Do NOT re-introduce yourself or list services. Respond only to their current message.",
+      });
     }
 
     if (input.session.welcomeBack) {
@@ -596,6 +612,28 @@ export function syncDeterministicAssistantSpeech(
 /**
  * Run one caller turn with tool-pending events for system-level filler injection.
  */
+function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  if (!isTrackingRequest(input.userMessage)) return null;
+
+  const active = getOrCreateActiveSession(input.callSid);
+  const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
+  if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
+    recordTrackingPayload(input.callSid, trackingRaw);
+  }
+
+  const hasTracking = Boolean(
+    getOrCreateActiveSession(input.callSid).lastSpokenPayload?.trackingForTts || trackingRaw,
+  );
+  if (!hasTracking) return null;
+
+  const gate = resolveDictateTracking(input.callSid);
+  return {
+    speech: gate.speech,
+    toolExecutions: [],
+    responseType: gate.intent === "dictate_tracking" ? "order_found" : "general_help",
+  };
+}
+
 export async function* runLlmAgentTurnEvents(
   input: LlmAgentTurnInput,
 ): AsyncGenerator<LlmAgentTurnEvent> {
@@ -636,6 +674,12 @@ export async function* runLlmAgentTurnEvents(
         responseType: "general_help",
       },
     };
+    return;
+  }
+
+  const trackingIntercept = interceptTrackingBeforeLlm(input);
+  if (trackingIntercept) {
+    yield { type: "result", result: trackingIntercept };
     return;
   }
 

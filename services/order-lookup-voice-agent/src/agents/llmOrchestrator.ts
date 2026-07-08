@@ -27,6 +27,7 @@ import type { GateIntent } from "./toolDecisionGate.js";
 import { clearCallerMemory } from "../utils/callerMemory.js";
 import { clearLastSpokenSentence } from "../services/llmService.js";
 import {
+  getOrCreateActiveSession,
   recordToolPayload,
   recordTrackingPayload,
 } from "../sovereign/activeSession.js";
@@ -108,6 +109,11 @@ function persistOrderContext(
   const payload = buildActiveOrderContextFromResult(orderData, session);
   if (payload) {
     saveActiveOrderContext(session, payload);
+    const trackingRaw = String(payload.tracking_number ?? "").trim();
+    const active = getOrCreateActiveSession(session.callSid);
+    if (trackingRaw && !active.lastSpokenPayload?.trackingForTts) {
+      recordTrackingPayload(session.callSid, trackingRaw);
+    }
   }
 
   if (!("orderNumber" in orderData)) return;
@@ -232,7 +238,10 @@ export async function* runLlmOrchestratorTurn(
 
   const orderExec = result.toolExecutions.find((exec) => exec.tool === "get_shopify_order_status" && exec.ok);
   if (orderExec?.data && "trackingNumber" in orderExec.data && orderExec.data.trackingNumber) {
-    recordTrackingPayload(session.callSid, String(orderExec.data.trackingNumber), result.speech);
+    const active = getOrCreateActiveSession(session.callSid);
+    if (!active.lastSpokenPayload?.trackingForTts) {
+      recordTrackingPayload(session.callSid, String(orderExec.data.trackingNumber), result.speech);
+    }
   } else if (orderExec?.ok) {
     recordToolPayload(session.callSid, {
       kind: "order_status",

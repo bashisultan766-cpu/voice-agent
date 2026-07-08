@@ -53,9 +53,13 @@ export function extractSpatialAnchorDigits(callerText: string): string[] | null 
 
 export function isSpatialResumeQuery(callerText: string): boolean {
   if (extractSpatialAnchorDigits(callerText)) return true;
-  return /\b(what comes after|after the|continue from|pick up after|following)\b/i.test(
+  return /\b(what comes after|what comes before|after the|before the|continue from|pick up after|following|prior to|preceding)\b/i.test(
     callerText,
   );
+}
+
+export function isSpatialBeforeQuery(callerText: string): boolean {
+  return /\b(before|prior to|preceding|comes before)\b/i.test(callerText);
 }
 
 function findLatestAnchorStart(
@@ -131,4 +135,23 @@ export function buildSpatialResumeSpeech(
       : "";
 
   return `${positionHint}The following digits are: ${phonetic}`;
+}
+
+/**
+ * Build spatial speech for digits immediately before the latest anchor match.
+ */
+export function buildSpatialBeforeSpeech(
+  spatialIndex: SpatialIndexEntry[],
+  anchorDigits: string[],
+): string | null {
+  const start = findLatestAnchorStart(spatialIndex, anchorDigits);
+  if (start < 0) return null;
+  if (start === 0) {
+    return "There are no digits before that point.";
+  }
+
+  const before = spatialIndex.slice(0, start);
+  const phonetic = before.map((entry) => `${digitWord(entry.digit)}.`).join(" ");
+  const anchorSpoken = anchorDigits.map((d) => digitWord(d)).join("-");
+  return `Before ${anchorSpoken}, the digits are: ${phonetic}`;
 }

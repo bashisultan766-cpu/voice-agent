@@ -12,6 +12,27 @@ import { logger } from "../utils/logger.js";
 
 export type ActiveOrderContextData = Record<string, unknown>;
 
+const TRACKING_CONTEXT_KEYS = [
+  "tracking_number",
+  "tracking_number_for_tts",
+  "tracking_company",
+  "tracking_status",
+] as const;
+
+/** Hide tracking digits from LLM until notepad handshake completes. */
+export function redactTrackingFromOrderContext(
+  data: ActiveOrderContextData,
+  notepadReady: boolean,
+): ActiveOrderContextData {
+  if (notepadReady) return data;
+  const copy = { ...data };
+  for (const key of TRACKING_CONTEXT_KEYS) {
+    if (key in copy) copy[key] = null;
+  }
+  copy.tracking_redacted_until_notepad_ready = true;
+  return copy;
+}
+
 export function buildActiveOrderContextFromResult(
   result: OrderStatusResult,
   session?: CallSession,

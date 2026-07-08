@@ -129,6 +129,7 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
         }
 
         session = createCallSession(callSid, from, to);
+        session.greetedThisCall = true;
         logger.info("conversation_relay_setup", {
           callSid: callSid.slice(0, 8),
           from: from.slice(-4),

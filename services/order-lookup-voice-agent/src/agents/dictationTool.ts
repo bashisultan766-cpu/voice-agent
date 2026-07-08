@@ -11,7 +11,9 @@ import {
 } from "../sovereign/activeSession.js";
 import {
   buildSpatialResumeSpeech,
+  buildSpatialBeforeSpeech,
   extractSpatialAnchorDigits,
+  isSpatialBeforeQuery,
   isSpatialResumeQuery,
 } from "../sovereign/spatialDictation.js";
 
@@ -97,7 +99,7 @@ export function confirmUserNotepadReady(callSid: string): void {
   });
 }
 
-function markTrackingAwaitingNotepad(callSid: string): void {
+export function markTrackingAwaitingNotepad(callSid: string): void {
   updateActiveSession(callSid, {
     currentState: "awaiting_notepad_ready",
     awaitingClarification: "notepad_ready",
@@ -195,6 +197,9 @@ export function resolveSpatialResumeFromQuery(
   if (isSpatialResumeQuery(callerText)) {
     const anchor = extractSpatialAnchorDigits(callerText);
     if (anchor) {
+      if (isSpatialBeforeQuery(callerText)) {
+        return buildSpatialBeforeSpeech(active.spatialIndex, anchor);
+      }
       return buildSpatialResumeSpeech(
         active.spatialIndex,
         anchor,

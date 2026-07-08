@@ -93,6 +93,7 @@ import {
   clearActiveSession,
   createActiveSession,
   getOrCreateActiveSession,
+  recordTrackingPayload,
   updateActiveSession,
 } from "../sovereign/activeSession.js";
 import {
@@ -107,6 +108,7 @@ import {
   confirmUserNotepadReady,
   dictateTracking,
   isUserNotepadReadyIntent,
+  markTrackingAwaitingNotepad,
   promptUserForNotepad,
   resolveSpatialResumeFromQuery,
   USER_NOTEPAD_READY,
@@ -191,12 +193,13 @@ import {
   buildClarifyingResponse,
   buildGreetingResponse,
 } from "../handlers/greetingHandler.js";
+import { isTrackingRequest, TRACKING_REQUEST_RE } from "./trackingIntent.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
-/** Fixed greeting spoken at call start (TwiML welcomeGreeting). */
+/** Fixed greeting spoken at call start (TwiML welcomeGreeting) — keep short; brain waits for caller. */
 export const BRAIN_GREETING =
-  "This is SureShot Books. I can help with order status, book searches by ISBN or title, and payment links. How can I help you today?";
+  "Hello, I am the SureShot Books assistant. How can I help you?";
 
 /** Create a new call session — voice layer must not mutate slots/intent/phase. */
 export function createCallSession(callSid: string, from: string, to: string): CallSession {
@@ -275,8 +278,7 @@ export const LISTENING = "LISTENING";
 
 export const NOTEPAD_HANDSHAKE_PROMPT = promptUserForNotepad();
 
-const TRACKING_QUERY_RE =
-  /\b(tracking|track(?:ing)?\s*(?:id|number)|where\s+is\s+my\s+package|read\s+(?:me\s+)?(?:the\s+)?tracking)\b/i;
+const TRACKING_QUERY_RE = TRACKING_REQUEST_RE;
 
 const INTERRUPT_RESUME_RE =
   /\b(what\s+did\s+you\s+miss|missed\s+that|didn'?t\s+catch|repeat\s+from|continue\s+from|pick\s+up)\b/i;
@@ -293,6 +295,16 @@ function trackingPayloadReady(active: ReturnType<typeof getOrCreateActiveSession
   return Boolean(active.lastSpokenPayload?.trackingForTts && active.spatialIndex.length > 0);
 }
 
+function ensureTrackingPayloadFromSession(session: CallSession): void {
+  const active = getOrCreateActiveSession(session.callSid);
+  if (active.lastSpokenPayload?.trackingForTts) return;
+
+  const trackingRaw = String(session.currentOrderData?.tracking_number ?? "").trim();
+  if (trackingRaw) {
+    recordTrackingPayload(session.callSid, trackingRaw);
+  }
+}
+
 /** Sole tracking gate — notepad handshake, USER_READY, chunked dictation, spatial resume. */
 export function resolveTrackingPhaseGate(
   callerText: string,
@@ -301,6 +313,10 @@ export function resolveTrackingPhaseGate(
   const active = getOrCreateActiveSession(session.callSid);
   const text = callerText.trim();
   if (!text) return { handled: false };
+
+  if (isTrackingRequest(text) || active.currentState === "awaiting_notepad_ready") {
+    ensureTrackingPayloadFromSession(session);
+  }
 
   if (INTERRUPT_RESUME_RE.test(text) && active.spatialIndex.length > 0 && active.lastSpokenIndex >= 0) {
     const resume = buildResumeFromLastSpokenIndex(active);
@@ -365,6 +381,17 @@ export function resolveTrackingPhaseGate(
   }
 
   if (TRACKING_QUERY_RE.test(text) && active.lastSpokenPayload?.trackingForTts) {
+    if (!active.isNotepadReady) {
+      markTrackingAwaitingNotepad(session.callSid);
+      return {
+        handled: true,
+        speech: promptUserForNotepad(),
+        skipLlm: true,
+        skipTools: true,
+        intentKey: PHASE_HANDSHAKE,
+      };
+    }
+
     const dictated = dictateTracking(session.callSid);
     if (!dictated.ok) {
       return {
@@ -618,7 +645,9 @@ async function* runOrchestratorTurnCore(
   }
 
   if (session.phase === "greeting") {
-    if (!session.greetedThisCall) {
+    if (session.greetedThisCall) {
+      session.phase = "follow_up";
+    } else if (!session.greetedThisCall) {
       const orderLookupHandled = yield* handleGreetingPhaseOrderLookup(session, text);
       if (orderLookupHandled) {
         return;
@@ -672,19 +701,19 @@ async function* handleGreetingPhaseOrderLookup(
 
   const intent = classifyOrchestratorIntent(text);
   const orderLookupIntent =
-    intent === "greeting" ||
-    intent === "unknown" ||
     intent === "order_status" ||
-    classifyBrainIntent(text) === "general_help";
+    (intent === "unknown" && /\b(order|#\d|isbn|title|book)\b/i.test(text));
 
   if (!orderLookupIntent) {
     return false;
   }
 
+  if (session.greetedThisCall) {
+    return false;
+  }
+
   const speech =
-    intent === "greeting" || classifyBrainIntent(text) === "general_help"
-      ? buildGreetingResponse(text)
-      : buildClarifyingResponse();
+    intent === "order_status" ? buildClarifyingResponse() : buildGreetingResponse(text);
 
   session.phase = "awaiting_order_number";
   session.awaitingInput = "order_number";

@@ -28,7 +28,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SPATIAL TRACKING DICTATION/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/full summary/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Elite Customer Concierge and Virtual Assistant for SureShot Books/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Welcome to SureShot Books! I am your virtual assistant/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Twilio has already spoken the opening greeting/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY BANNED identity phrases/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/never claim to BE the store/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/Shoshan/i);
@@ -182,7 +182,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Did you get all of that/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Were you able to write that down/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOW-READ GUARDRAIL/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CRITICAL GAG ORDER FOR TRACKING IDs/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/GAG ORDER \(AFTER NOTEPAD READY ONLY\)/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SLOWLY OVERRIDE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/tracking_number_for_tts verbatim/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/PROACTIVE ORDER DELIVERY/i);
