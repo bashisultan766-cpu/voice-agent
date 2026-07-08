@@ -116,6 +116,8 @@ export interface CallSession {
   currentOrder?: StructuredOrder;
   /** Full sanitized Shopify order JSON for invisible LLM follow-up context. */
   currentOrderData?: Record<string, unknown>;
+  /** True only after a successful get_shopify_order_status lookup this call. */
+  orderContextConfirmed?: boolean;
   /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
   shoppingCart?: ShoppingCartLineItem[];
   /** Most recent successful catalog search — binds add_to_cart to the right variant. */

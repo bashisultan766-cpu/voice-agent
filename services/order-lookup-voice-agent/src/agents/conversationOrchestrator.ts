@@ -193,6 +193,15 @@ import {
   isSocialGreetingUtterance,
 } from "../handlers/greetingHandler.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
+import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
+import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
+import {
+  buildActiveOrderContextFromResult,
+  saveActiveOrderContext,
+} from "./sessionManager.js";
+import { applyCallerVerificationFromOrder } from "./callerVerification.js";
+import { lookupOrderStatus } from "../services/shopifyService.js";
+import { extractIsbnFromSpeech, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "./trackingIntent.js";
 import {
   resolveCallerIntent,
@@ -204,6 +213,7 @@ import {
 import {
   buildOrderFieldQuerySpeech,
   buildRefundEmailFollowUpSpeech,
+  isOrderFieldQuestion,
   isRefundNotificationEmailQuestion,
 } from "./orderFollowUpSpeech.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
@@ -242,9 +252,7 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
     if (memory.shoppingCart?.length) {
       session.shoppingCart = memory.shoppingCart.map((line) => ({ ...line }));
     }
-    if (memory.currentOrderData) {
-      session.currentOrderData = { ...memory.currentOrderData };
-    }
+    // Order context is never restored from memory — caller must provide order number again.
     if (memory.lastIntent) {
       session.lastOrchestratorIntent = memory.lastIntent;
     }
@@ -295,6 +303,29 @@ export const USER_READY = "USER_READY";
 export const LISTENING = "LISTENING";
 
 export const NOTEPAD_HANDSHAKE_PROMPT = promptUserForNotepad();
+
+function shouldRejectOrderNumberCandidate(text: string, orderNumber: string): boolean {
+  if (isCatalogShoppingUtterance(text)) return true;
+  if (extractIsbnFromSpeech(text)) return true;
+  const digits = orderNumber.replace(/\D/g, "");
+  return (
+    (digits.length === 10 || digits.length === 13) &&
+    (isValidIsbnFormat(digits) || /\b(isbn|barcode|978|979)\b/i.test(text))
+  );
+}
+
+async function persistSessionOrderContext(
+  session: CallSession,
+  orderNumber: string,
+): Promise<void> {
+  const data = await lookupOrderStatus(orderNumber, session.callSid);
+  if (data.status !== "found") return;
+  applyCallerVerificationFromOrder(session, data);
+  const payload = buildActiveOrderContextFromResult(data, session);
+  if (payload) {
+    saveActiveOrderContext(session, payload);
+  }
+}
 
 const INTERRUPT_RESUME_RE =
   /\b(what\s+did\s+you\s+miss|missed\s+that|didn'?t\s+catch|repeat\s+from|continue\s+from|pick\s+up)\b/i;
@@ -791,6 +822,27 @@ async function* runOrchestratorTurnCore(
   const callerIntent = resolveCallerIntent(text, session);
 
   if (
+    callerIntent === "order_lookup" &&
+    !hasConfirmedOrderContext(session) &&
+    !isOrderNumberOfferUtterance(text) &&
+    !extractOrderNumberFromStt(text, { awaitingSlot: true }) &&
+    !extractOrderNumberFromSpeech(text)
+  ) {
+    session.phase = "awaiting_order_number";
+    session.awaitingInput = "order_number";
+    session.lastOrchestratorIntent = "order_lookup";
+    updateActiveSession(session.callSid, { cachedIntent: "order" });
+    const speech = buildClarifyingResponse(session.orderNumberAttempts);
+    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "clarification_question",
+    });
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  if (
     callerIntent === "catalog" ||
     callerIntent === "cart" ||
     callerIntent === "support_escalation" ||
@@ -801,8 +853,7 @@ async function* runOrchestratorTurnCore(
 
   if (
     callerIntent === "order_field_query" &&
-    session.currentOrderData &&
-    Object.keys(session.currentOrderData).length > 0
+    hasConfirmedOrderContext(session)
   ) {
     if (
       session.isVerifiedCaller !== true &&
@@ -969,10 +1020,14 @@ async function* handleAwaitingOrderNumberPhase(
     extractOrderNumberFromStt(text, { awaitingSlot: true });
 
   if (orderNumber) {
+    if (shouldRejectOrderNumberCandidate(text, orderNumber)) {
+      return false;
+    }
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));
     const lookup = await orderLookupTool(orderNumber, { bypassCache: true });
     if (lookup.status === "found" && lookup.order) {
       session.currentOrder = lookup.order;
+      await persistSessionOrderContext(session, orderNumber);
       session.phase = "order_disclosed";
       session.awaitingInput = null;
       session.lastOrchestratorIntent = "order_lookup";
@@ -1025,10 +1080,14 @@ async function* handleGreetingPhaseOrderLookup(
   const orderNumber = extractOrderNumberFromSpeech(text);
 
   if (orderNumber) {
+    if (shouldRejectOrderNumberCandidate(text, orderNumber)) {
+      return false;
+    }
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));
     const lookup = await orderLookupTool(orderNumber, { bypassCache: true });
     if (lookup.status === "found" && lookup.order) {
       session.currentOrder = lookup.order;
+      await persistSessionOrderContext(session, orderNumber);
       session.phase = "order_disclosed";
       session.awaitingInput = null;
       session.lastOrchestratorIntent = "order_lookup";
@@ -1226,8 +1285,7 @@ async function* handleFollowUpPhase(
 
   if (
     callerIntent === "order_field_query" &&
-    session.currentOrderData &&
-    Object.keys(session.currentOrderData).length > 0
+    hasConfirmedOrderContext(session)
   ) {
     if (
       session.isVerifiedCaller !== true &&
@@ -1305,7 +1363,7 @@ async function* handleFollowUpPhase(
 
   if (
     session.currentOrderData &&
-    Object.keys(session.currentOrderData).length > 0 &&
+    hasConfirmedOrderContext(session) &&
     isRefundNotificationEmailQuestion(callerText)
   ) {
     const speech = buildRefundEmailFollowUpSpeech(session.currentOrderData, callerText);

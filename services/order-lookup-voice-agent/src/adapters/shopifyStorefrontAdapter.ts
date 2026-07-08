@@ -46,6 +46,48 @@ import { isPhysicalBookLineItem } from "../utils/productLineItems.js";
 import { extractTrackingInfo, isValidTrackingNumber } from "./orderFieldExtractors.js";
 import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
 import { normalizeShopifyUnitPrice } from "../utils/shopifyMoney.js";
+import { extractSpokenCatalogPrice } from "../agents/catalogShoppingIntent.js";
+
+type MappedProduct = ReturnType<typeof mapGqlProduct>;
+type CatalogVariant = MappedProduct["variants"][number];
+
+function parseVariantPriceAmount(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const value = Number.parseFloat(raw.replace(/[^0-9.]/g, ""));
+  return Number.isFinite(value) ? value : null;
+}
+
+function selectPrimaryVariant(
+  product: MappedProduct,
+  options?: { preferredPrice?: number | null },
+): CatalogVariant | undefined {
+  const variants = product.variants ?? [];
+  if (!variants.length) return undefined;
+  const inStock = variants.filter((v) => v.inStock);
+  const pool = inStock.length ? inStock : variants;
+
+  if (options?.preferredPrice != null) {
+    return [...pool].sort((a, b) => {
+      const aDiff = Math.abs(
+        (parseVariantPriceAmount(a.price) ?? Number.POSITIVE_INFINITY) - options.preferredPrice!,
+      );
+      const bDiff = Math.abs(
+        (parseVariantPriceAmount(b.price) ?? Number.POSITIVE_INFINITY) - options.preferredPrice!,
+      );
+      if (aDiff !== bDiff) return aDiff - bDiff;
+      return (
+        (parseVariantPriceAmount(a.price) ?? Number.POSITIVE_INFINITY) -
+        (parseVariantPriceAmount(b.price) ?? Number.POSITIVE_INFINITY)
+      );
+    })[0];
+  }
+
+  return [...pool].sort(
+    (a, b) =>
+      (parseVariantPriceAmount(a.price) ?? Number.POSITIVE_INFINITY) -
+      (parseVariantPriceAmount(b.price) ?? Number.POSITIVE_INFINITY),
+  )[0];
+}
 
 // Re-export formatter validation for order numbers (canonical source).
 export { isValidOrderNumberFormat } from "../utils/formatter.js";
@@ -566,10 +608,11 @@ async function graphqlProductsForQueries(
 }
 
 function productToCatalogMatch(
-  product: ReturnType<typeof mapGqlProduct>,
+  product: MappedProduct,
   exactMatch: boolean,
+  preferredPrice?: number | null,
 ): BookCatalogMatch {
-  const primaryVariant = product.variants[0];
+  const primaryVariant = selectPrimaryVariant(product, { preferredPrice });
   const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
   const inStock = product.variants.some((v) => v.inStock);
   const variantGid = parseVariantGid(primaryVariant?.id ?? "") ?? undefined;
@@ -586,15 +629,18 @@ function productToCatalogMatch(
 }
 
 function toBookResult(
-  product: ReturnType<typeof mapGqlProduct>,
+  product: MappedProduct,
   status: AdapterStatus = "found",
   meta?: {
     exactMatch?: boolean;
     queriedTitle?: string;
     similarMatches?: BookCatalogMatch[];
+    preferredPrice?: number | null;
   },
 ): BookAvailabilityResult {
-  const primaryVariant = product.variants[0];
+  const primaryVariant = selectPrimaryVariant(product, {
+    preferredPrice: meta?.preferredPrice,
+  });
   const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
   const inStock = product.variants.some((v) => v.inStock);
 
@@ -1040,6 +1086,7 @@ export async function searchByTitle(
 
   try {
     const result = await runWithGuard(callSid, "title_search", async () => {
+      const preferredPrice = extractSpokenCatalogPrice(q);
       const primaryQueries = buildTitleTruthQueries(q);
       let { nodes, hadErrors } = await graphqlProductsForQueries(primaryQueries);
 
@@ -1060,6 +1107,19 @@ export async function searchByTitle(
           const aExact = isExactTitleMatch(a.title, q) ? 1 : 0;
           const bExact = isExactTitleMatch(b.title, q) ? 1 : 0;
           if (bExact !== aExact) return bExact - aExact;
+          if (preferredPrice != null) {
+            const aVariant = selectPrimaryVariant(a, { preferredPrice });
+            const bVariant = selectPrimaryVariant(b, { preferredPrice });
+            const aDiff = Math.abs(
+              (parseVariantPriceAmount(aVariant?.price) ?? Number.POSITIVE_INFINITY) -
+                preferredPrice,
+            );
+            const bDiff = Math.abs(
+              (parseVariantPriceAmount(bVariant?.price) ?? Number.POSITIVE_INFINITY) -
+                preferredPrice,
+            );
+            if (aDiff !== bDiff) return aDiff - bDiff;
+          }
           return scoreTitleMatch(b.title, q) - scoreTitleMatch(a.title, q);
         },
       );
@@ -1072,9 +1132,9 @@ export async function searchByTitle(
       const similarMatches = rankedList
         .slice(0, 5)
         .map((product) =>
-          productToCatalogMatch(product, isExactTitleMatch(product.title, q)),
+          productToCatalogMatch(product, isExactTitleMatch(product.title, q), preferredPrice),
         );
-      return toBookResult(top, "found", { exactMatch, queriedTitle: q, similarMatches });
+      return toBookResult(top, "found", { exactMatch, queriedTitle: q, similarMatches, preferredPrice });
     });
 
     return result;

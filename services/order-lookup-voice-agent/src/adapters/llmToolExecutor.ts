@@ -569,6 +569,22 @@ export async function executeLlmTool(
       };
     }
 
+    const orderDigits = orderNumber.replace(/\D/g, "");
+    if (
+      (orderDigits.length === 10 || orderDigits.length === 13) &&
+      isValidIsbnFormat(orderDigits)
+    ) {
+      return {
+        tool,
+        args: { orderNumber: rawInput },
+        ok: false,
+        status: "blocked",
+        errorMessage:
+          "That looks like an ISBN, not an order number. Use search_shopify_book_by_isbn for book catalog lookup.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
     logger.info("Executing Shopify Lookup for Normalized Order Number: ", {
       original: rawInput,
       normalized: orderNumber,

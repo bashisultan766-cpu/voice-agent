@@ -15,6 +15,7 @@ import {
   clearActiveOrderContext,
   saveActiveOrderContext,
 } from "./sessionManager.js";
+import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
 import { applyCallerVerificationFromOrder } from "./callerVerification.js";
 import { planInstantFiller } from "./responsePlanner.js";
 import { speechChunksFromText } from "../services/voiceSmoothingEngine.js";
@@ -158,7 +159,9 @@ export async function* runLlmOrchestratorTurn(
       role: m.role,
       content: m.content,
     })),
-    activeOrderContext: session.currentOrderData,
+    activeOrderContext: hasConfirmedOrderContext(session)
+      ? session.currentOrderData
+      : undefined,
   })) {
       if (event.type === "tool_pending") {
         yield { type: "chunk", chunk: planInstantFiller(event.tools[0]) };

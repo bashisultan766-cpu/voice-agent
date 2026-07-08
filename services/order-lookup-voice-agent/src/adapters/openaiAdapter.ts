@@ -27,6 +27,7 @@ import { filterOrderContextForVerification } from "../agents/orderContextPrivacy
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { buildCartContextSystemMessage } from "../agents/cartManager.js";
 import { buildCatalogTargetSystemMessage } from "../agents/catalogTarget.js";
+import { hasConfirmedOrderContext } from "../agents/orderContextPolicy.js";
 import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
 import {
@@ -67,7 +68,13 @@ import {
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
-import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation, type TrackingDictationGateContext } from "../agents/trackingIntent.js";
+import {
+  isTrackingRequest,
+  hasTrackingInSessionContext,
+  isTrackingDictationCompleteIntent,
+  shouldStartTrackingDictation,
+  type TrackingDictationGateContext,
+} from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
 import {
@@ -461,7 +468,11 @@ function buildOpenAiMessages(
     { role: "system", content: SHOSHAN_SYSTEM_PROMPT },
   ];
 
-  if (input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) {
+  if (
+    input.activeOrderContext &&
+    Object.keys(input.activeOrderContext).length > 0 &&
+    hasConfirmedOrderContext(input.session)
+  ) {
     const active = getOrCreateActiveSession(input.callSid);
     const verified = input.session?.isVerifiedCaller === true;
     const orderContext = filterOrderContextForVerification(
@@ -594,11 +605,22 @@ function isBareOrderNumberUtterance(text: string): boolean {
 }
 
 function isCatalogBuyPivotUtterance(text: string, session?: CallSession): boolean {
+  if (isCatalogShoppingUtterance(text)) return true;
   const intent = resolveCallerIntent(text, session);
   if (intent === "catalog" || intent === "cart") return true;
   if (extractIsbnFromSpeech(text)) return true;
   return /\b(buy|purchase|isbn|looking\s+for\s+(?:a\s+)?book|add\s+to\s+cart|search\s+for\s+(?:a\s+)?book|book\s+(?:called|titled|named)|title\s+is|find\s+(?:me\s+)?(?:a\s+)?book)\b/i.test(
     text,
+  );
+}
+
+function isLikelyIsbnDigits(value: string, utterance: string): boolean {
+  const digitsOnly = value.replace(/\D/g, "");
+  if (digitsOnly.length !== 10 && digitsOnly.length !== 13) return false;
+  return (
+    Boolean(extractIsbnFromSpeech(utterance)) ||
+    isValidIsbnFormat(digitsOnly) ||
+    /\b(isbn|barcode|978|979)\b/i.test(utterance)
   );
 }
 
@@ -611,14 +633,13 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
   const insistence = isOrderLookupInsistenceUtterance(input.userMessage);
 
   if (insistence) {
-    const agentState = getAgentState(input.callSid);
-    if (agentState.lastOrderNumber) {
-      return agentState.lastOrderNumber;
-    }
     const insisted =
       extractOrderNumberFromStt(input.userMessage, { awaitingSlot: true }) ??
       extractOrderNumberFromSpeech(input.userMessage);
-    if (insisted) return insisted;
+    if (insisted && !isLikelyIsbnDigits(insisted, input.userMessage)) {
+      return insisted;
+    }
+    return null;
   }
 
   const awaitingSlot = isAwaitingOrderNumberSlot(input);
@@ -631,12 +652,7 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
 
   if (!orderNumber) return null;
 
-  // ISBN-10 (and 10-digit catalog ids) must not be treated as order numbers.
-  const digitsOnly = orderNumber.replace(/\D/g, "");
-  if (
-    (digitsOnly.length === 10 || digitsOnly.length === 13) &&
-    (/\bisbn\b/i.test(input.userMessage) || isValidIsbnFormat(digitsOnly))
-  ) {
+  if (isLikelyIsbnDigits(orderNumber, input.userMessage)) {
     return null;
   }
 
@@ -875,9 +891,13 @@ export function syncDeterministicAssistantSpeech(
  * Run one caller turn with tool-pending events for system-level filler injection.
  */
 function interceptOrderFieldQueryBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  const callerIntent = resolveCallerIntent(input.userMessage, input.session ?? undefined);
+  if (callerIntent === "catalog" || callerIntent === "cart") return null;
+  if (!hasConfirmedOrderContext(input.session)) return null;
+
   const ctx = input.activeOrderContext;
   if (!ctx || Object.keys(ctx).length === 0) return null;
-  if (!isOrderFieldQuestion(input.userMessage)) return null;
+  if (!isOrderFieldQuestion(input.userMessage, input.session)) return null;
 
   const speech = buildOrderFieldQuerySpeech(input.userMessage, ctx);
   if (!speech) return null;
@@ -1184,6 +1204,7 @@ export async function* runLlmAgentTurnEvents(
   if (
     input.activeOrderContext &&
     Object.keys(input.activeOrderContext).length > 0 &&
+    hasConfirmedOrderContext(input.session) &&
     isRefundNotificationEmailQuestion(input.userMessage)
   ) {
     const speech = buildRefundEmailFollowUpSpeech(input.activeOrderContext, input.userMessage);

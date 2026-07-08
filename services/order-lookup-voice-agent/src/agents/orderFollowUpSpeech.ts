@@ -4,9 +4,12 @@
 import {
   extractRefundNotificationEmailFromMessages,
 } from "../adapters/orderFieldExtractors.js";
+import type { CallSession } from "../types/order.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
 import { formatEmailForTTS } from "../utils/ttsFormatter.js";
 import { physicalItemCount } from "../utils/productLineItems.js";
+import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
+import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
 
 const REFUND_EMAIL_QUESTION_RE =
   /\b(refund(?:ed)?\s+(?:notification\s+)?email|email.*refund|refund.*email|refund.*notification|notification.*refund|where.*refund.*sent|which email.*refund|email on which)\b/i;
@@ -15,9 +18,11 @@ const REFUND_EMAIL_QUESTION_RE =
 export const ORDER_FIELD_QUESTION_RE =
   /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|what\s+is\s+the\s+title|what'?s\s+the\s+title|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+is\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|payment\s+method|card\s+ending|what\s+email|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
 
-export function isOrderFieldQuestion(text: string): boolean {
+export function isOrderFieldQuestion(text: string, session?: CallSession): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
+  if (isCatalogShoppingUtterance(trimmed)) return false;
+  if (!hasConfirmedOrderContext(session)) return false;
   return ORDER_FIELD_QUESTION_RE.test(trimmed) || isRefundNotificationEmailQuestion(trimmed);
 }
 

@@ -3,6 +3,7 @@ import { runOrchestratorTurn } from "../src/agents/conversationOrchestrator.js";
 import { createCallSession } from "../src/agents/orderAgent.js";
 import { getOrCreateActiveSession, recordTrackingPayload } from "../src/sovereign/activeSession.js";
 import { TRACKING_DICTATION_CONFIRM_SPEECH } from "../src/agents/dictationTool.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import { clearAllCallMemories } from "../src/memory/callMemoryStore.js";
 import { clearAllCallStates } from "../src/memory/callStateStore.js";
 import { clearAllCallEventSessions } from "../src/platform/eventDispatcher.js";
@@ -63,11 +64,11 @@ describe("enterprise orchestrator phase 3 e2e", () => {
     session.phase = "follow_up";
     session.isVerifiedCaller = true;
     session.shopifyCustomerId = "gid://shopify/Customer/12345";
-    session.currentOrderData = {
+    saveActiveOrderContext(session, {
       order_number: "21796",
       tracking_number: TRACKING,
       fulfillment_status: "fulfilled",
-    };
+    });
 
     recordTrackingPayload(session.callSid, TRACKING);
 

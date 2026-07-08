@@ -15,6 +15,10 @@ import { isUserNotepadReadyIntent, isTrackingDictationPending } from "./dictatio
 import { isRefundNotificationEmailQuestion, isOrderFieldQuestion } from "./orderFollowUpSpeech.js";
 import { extractTitleFromStt } from "../nlp/entityExtractor.js";
 import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
+import {
+  hasConfirmedOrderContext,
+  isOrderLookupRequestWithoutNumber,
+} from "./orderContextPolicy.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -55,9 +59,7 @@ const REPEAT_ORDER_RE =
   /\b(repeat|say\s+that\s+again|order\s+details|what\s+did\s+you\s+find|summary)\b/i;
 
 function hasActiveOrderContext(session?: CallSession): boolean {
-  return Boolean(
-    session?.currentOrderData && Object.keys(session.currentOrderData).length > 0,
-  );
+  return hasConfirmedOrderContext(session);
 }
 
 function isInActiveTrackingFlow(callSid: string): boolean {
@@ -85,7 +87,7 @@ export function isIntentSwitchAwayFromTracking(
   if (isCatalogShoppingUtterance(trimmed)) return true;
   if (extractIsbnFromSpeech(trimmed) || CATALOG_RE.test(trimmed)) return true;
   if (hasActiveOrderContext(session)) {
-    if (isOrderFieldQuestion(trimmed)) {
+    if (isOrderFieldQuestion(trimmed, session)) {
       return true;
     }
     if (ORDER_HISTORY_RE.test(trimmed)) return true;
@@ -122,7 +124,7 @@ export function resolveCallerIntent(
 
     if (inTrackingHandshake) {
       if (isSupportEscalationRequest(text)) return "support_escalation";
-      if (isOrderFieldQuestion(text)) {
+      if (isOrderFieldQuestion(text, session)) {
         return "order_field_query";
       }
       if (ORDER_HISTORY_RE.test(text) && hasActiveOrderContext(session)) {
@@ -151,9 +153,11 @@ export function resolveCallerIntent(
 
   // Active-order follow-ups beat catalog title sniffing ("what is the title on my order").
   if (hasActiveOrderContext(session)) {
-    if (isOrderFieldQuestion(text)) return "order_field_query";
+    if (isOrderFieldQuestion(text, session)) return "order_field_query";
     if (ORDER_HISTORY_RE.test(text)) return "order_history";
   }
+
+  if (isOrderLookupRequestWithoutNumber(text)) return "order_lookup";
 
   if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) {
     return "catalog";

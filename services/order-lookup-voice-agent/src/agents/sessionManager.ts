@@ -9,6 +9,10 @@ import type { CallSession } from "../types/order.js";
 import { orderNumbersMatch } from "../utils/formatter.js";
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import { logger } from "../utils/logger.js";
+import {
+  clearOrderContextConfirmation,
+  markOrderContextConfirmed,
+} from "./orderContextPolicy.js";
 
 export type ActiveOrderContextData = Record<string, unknown>;
 
@@ -74,10 +78,12 @@ export function saveActiveOrderContext(
   }
 
   session.currentOrderData = data;
+  markOrderContextConfirmed(session);
 }
 
 export function clearActiveOrderContext(session: CallSession): void {
   session.currentOrderData = undefined;
+  clearOrderContextConfirmation(session);
 }
 
 /** True when a newly spoken order number should replace persisted context. */

@@ -8,24 +8,26 @@ import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator
 import { getOrCreateActiveSession, updateActiveSession } from "../src/sovereign/activeSession.js";
 import { completeTrackingDictation } from "../src/agents/dictationTool.js";
 import { buildOrderFieldQuerySpeech } from "../src/agents/orderFollowUpSpeech.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 function mockSession(callSid: string): CallSession {
-  return {
+  const session = {
     callSid,
     from: "+15551234567",
     to: "+15559876543",
     phase: "follow_up",
     greetedThisCall: true,
-    currentOrderData: {
-      order_number: "21698",
-      customer_name: "Jane Doe",
-      tracking_number: "1Z999AA10123456784",
-      shipping_amount: "4.99 USD",
-      physical_items: [{ title: "Sample Book", quantity: 1, price: "19.99" }],
-    },
     isVerifiedCaller: false,
   } as CallSession;
+  saveActiveOrderContext(session, {
+    order_number: "21698",
+    customer_name: "Jane Doe",
+    tracking_number: "1Z999AA10123456784",
+    shipping_amount: "4.99 USD",
+    physical_items: [{ title: "Sample Book", quantity: 1, price: "19.99" }],
+  });
+  return session;
 }
 
 describe("intent-first switching", () => {

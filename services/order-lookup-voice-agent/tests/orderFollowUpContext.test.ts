@@ -7,6 +7,7 @@ import {
 } from "../src/adapters/openaiAdapter.js";
 import { clearAllAgentStates, getAgentState } from "../src/platform/stateProjection.js";
 import { markCallSessionActive, clearAllCallSessionLocks } from "../src/voice/callSessionLock.js";
+import type { CallSession } from "../src/types/order.js";
 
 const mockCreate = vi.fn();
 
@@ -111,6 +112,14 @@ describe("multi-turn order follow-up context injection", () => {
     const messages = buildLlmTurnMessagesForTest({
       callSid: "CA_MSG",
       userMessage: "What was the refund email?",
+      session: {
+        callSid: "CA_MSG",
+        orderContextConfirmed: true,
+        currentOrderData: {
+          order_number: "#21698-F1",
+          refund_notification_email: "btazp@yahoo.com",
+        },
+      } as CallSession,
       messages: [
         { role: "assistant", content: "I found your order. Your order status is Refunded." },
         { role: "user", content: "What was the refund email?" },

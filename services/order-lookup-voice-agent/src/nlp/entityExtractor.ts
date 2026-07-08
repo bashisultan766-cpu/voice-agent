@@ -486,13 +486,19 @@ export function extractEntities(
 
   const orderNumber = extractOrderNumberFromStt(text);
   if (orderNumber) {
-    return {
-      intent: "order_status",
-      slotType: "order_number",
-      orderNumber,
-      confidence: ORDER_CONTEXT_RE.test(text) ? 0.95 : 0.7,
-      normalizedValue: orderNumber,
-    };
+    const digits = orderNumber.replace(/\D/g, "");
+    const looksLikeIsbn =
+      (digits.length === 10 || digits.length === 13) &&
+      (isValidIsbnFormat(digits) || ISBN_CONTEXT_RE.test(text) || ISBN_COMPACT_RE.test(text));
+    if (!looksLikeIsbn) {
+      return {
+        intent: "order_status",
+        slotType: "order_number",
+        orderNumber,
+        confidence: ORDER_CONTEXT_RE.test(text) ? 0.95 : 0.7,
+        normalizedValue: orderNumber,
+      };
+    }
   }
 
   const title = extractTitleFromStt(text);

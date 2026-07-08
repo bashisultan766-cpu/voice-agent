@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { runOrchestratorTurn } from "../src/agents/conversationOrchestrator.js";
 import { createCallSession } from "../src/agents/orderAgent.js";
 import { resolveCallerIntent } from "../src/agents/callerIntent.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import { isExplicitTrackingDictationRequest } from "../src/agents/trackingIntent.js";
 import {
   getOrCreateActiveSession,
@@ -35,12 +36,12 @@ function seedOrderSession(callSid: string) {
   const session = createCallSession(callSid, "+15551234567", "+18005551212");
   session.greetedThisCall = true;
   session.phase = "follow_up";
-  session.currentOrderData = {
+  saveActiveOrderContext(session, {
     order_number: "21796",
     customer_name: "Jamaica Thompson",
     tracking_number: TRACKING,
     fulfillment_status: "fulfilled",
-  };
+  });
   updateActiveSession(callSid, { currentState: "order_active", cachedIntent: "order" });
   return session;
 }
