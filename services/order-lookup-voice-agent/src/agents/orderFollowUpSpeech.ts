@@ -6,6 +6,7 @@ import {
 } from "../adapters/orderFieldExtractors.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
 import { formatEmailForTTS } from "../utils/ttsFormatter.js";
+import { physicalItemCount } from "../utils/productLineItems.js";
 
 const REFUND_EMAIL_QUESTION_RE =
   /\b(refund(?:ed)?\s+(?:notification\s+)?email|email.*refund|refund.*email|refund.*notification|notification.*refund|where.*refund.*sent|which email.*refund|email on which)\b/i;
@@ -227,6 +228,65 @@ export function buildOrderFieldQuerySpeech(
     return buildRefundEmailFollowUpSpeech(context, callerText);
   }
 
+  const lower = callerText.trim().toLowerCase();
+  const physicalItems = Array.isArray(context.physical_items)
+    ? (context.physical_items as any[])
+    : Array.isArray(context.items)
+      ? (context.items as any[])
+      : [];
+  const safeItemCount =
+    typeof context.item_count === "number"
+      ? (context.item_count as number)
+      : physicalItemCount(physicalItems as Array<{ title: string; quantity: number }>);
+
+  const wantsItemCount = /\b(how many\s+(?:books|items)|item\s+count|total\s+product|total\s+items)\b/i.test(
+    lower,
+  );
+  const wantsTitles = /\b(product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|titles?|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i.test(
+    lower,
+  );
+  const wantsLineItemAmounts = /\b(product\s+amount|item\s+amount|book\s+price|price\s+of|amount\s+for\s+(?:each|the\s+book)|each\s+book|per\s+book)\b/i.test(
+    lower,
+  );
+  const wantsTotalAmount = /\b(total\s+amount|order\s+total|how\s+much\s+(?:was|is)\s+(?:the\s+)?order)\b/i.test(
+    lower,
+  );
+  const wantsShipping = /\b(shipping\s+(?:fee|fees|cost)|shipping\s+amount)\b/i.test(lower);
+
+  if (wantsItemCount || wantsTitles) {
+    const items = physicalItems
+      .filter((i) => String(i?.title ?? "").trim())
+      .slice(0, 3)
+      .map((i) => {
+        const title = String(i.title).trim();
+        const qty = Number(i.quantity ?? 1);
+        const price = i.price ? String(i.price).trim() : null;
+        if (wantsLineItemAmounts && price) {
+          return qty > 1 ? `${title} (qty ${qty}, ${price})` : `${title} (${price})`;
+        }
+        return qty > 1 ? `${title} (qty ${qty})` : `${title}`;
+      });
+
+    const titlePart =
+      items.length > 0 ? `You ordered ${safeItemCount} book(s): ${items.join(", ")}.` : null;
+
+    const total = wantsTotalAmount
+      ? String(context.total_amount ?? context.subtotal_amount ?? "").trim()
+      : "";
+    const shipping = wantsShipping ? String(context.shipping_amount ?? "").trim() : "";
+
+    const tailParts: string[] = [];
+    if (total) tailParts.push(`the total is ${total}`);
+    if (shipping) tailParts.push(`shipping is ${shipping}`);
+
+    if (titlePart) {
+      if (tailParts.length) {
+        return `${titlePart} ${tailParts.join(", ")}.`;
+      }
+      return titlePart;
+    }
+  }
+
   if (/\b(order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order)\b/i.test(callerText)) {
     const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
     if (status) return `Your order status is ${status}.`;
@@ -242,7 +302,7 @@ export function buildOrderFieldQuerySpeech(
     if (total) return `The total order amount is ${total}.`;
   }
 
-  if (/\b(shipping\s+(?:fee|cost)|shipping\s+amount)\b/i.test(callerText)) {
+  if (/\b(shipping\s+(?:fee|fees|cost)|shipping\s+amount)\b/i.test(callerText)) {
     const shipping = String(context.shipping_amount ?? "").trim();
     if (shipping) return `The shipping fee on this order is ${shipping}.`;
   }

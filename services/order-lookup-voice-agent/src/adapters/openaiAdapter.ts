@@ -64,6 +64,10 @@ import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
 import { promptUserForNotepad, completeTrackingDictation, TRACKING_DICTATION_COMPLETE_SPEECH, isUserNotepadReadyIntent } from "../agents/dictationTool.js";
 import { isTrackingDictationText } from "../utils/ttsFormatter.js";
+import {
+  isIntentSwitchAwayFromTracking,
+  releaseTrackingFlowForIntentSwitch,
+} from "../agents/callerIntent.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -818,6 +822,10 @@ function interceptTrackingCompleteBeforeLlm(input: LlmAgentTurnInput): LlmAgentT
 
   completeTrackingDictation(input.callSid);
 
+  if (isIntentSwitchAwayFromTracking(input.userMessage, input.session ?? undefined)) {
+    return null;
+  }
+
   return {
     speech: TRACKING_DICTATION_COMPLETE_SPEECH,
     toolExecutions: [],
@@ -842,6 +850,11 @@ function interceptTrackingDictationLockBeforeLlm(input: LlmAgentTurnInput): LlmA
       isNotepadReady: active.isNotepadReady,
     })
   ) {
+    return null;
+  }
+
+  if (isIntentSwitchAwayFromTracking(input.userMessage, input.session ?? undefined)) {
+    releaseTrackingFlowForIntentSwitch(input.callSid);
     return null;
   }
 

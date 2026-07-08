@@ -52,6 +52,15 @@ describe("tracking dictation completion", () => {
     );
   });
 
+  it("treats confirmations as completion even if the word repeat is used", () => {
+    expect(
+      isTrackingDictationCompleteIntent("I repeat your ID. I wrote it down correctly.", {
+        currentState: "tracking_dictation",
+        lastSpokenIndex: 2,
+      }),
+    ).toBe(true);
+  });
+
   it("does not treat bare thanks as completion during notepad handshake", () => {
     expect(
       isTrackingDictationCompleteIntent("thanks", {

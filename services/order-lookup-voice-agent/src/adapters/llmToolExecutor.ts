@@ -1125,12 +1125,6 @@ function shapeOrderStatusForLlm(
   }
 
   if (!verified) {
-    payload.physical_items = null;
-    payload.fee_items = null;
-    payload.items = null;
-    payload.processing_fees = null;
-    payload.shipping_fees = null;
-    payload.handling_fees = null;
     payload.events = null;
   }
 

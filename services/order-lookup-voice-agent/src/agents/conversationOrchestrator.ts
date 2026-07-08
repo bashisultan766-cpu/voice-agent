@@ -199,6 +199,7 @@ import {
   resolveCallerIntent,
   shouldRunTrackingPhaseGate,
   shouldExitTrackingHandshake,
+  isIntentSwitchAwayFromTracking,
   type CallerIntent,
 } from "./callerIntent.js";
 import {
@@ -346,6 +347,53 @@ function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
   );
 }
 
+function tryResolveTrackingCompletionTurn(
+  text: string,
+  session: CallSession,
+  active: ReturnType<typeof getOrCreateActiveSession>,
+): TrackingPhaseResolution | null {
+  const trackingDictationContext = {
+    currentState: active.currentState,
+    lastSpokenIndex: active.lastSpokenIndex,
+    isNotepadReady: active.isNotepadReady,
+  };
+
+  const inTrackingFlow =
+    Boolean(active.lastSpokenPayload?.trackingForTts) &&
+    (active.currentState === "tracking_dictation" || active.cachedIntent === "tracking");
+
+  if (!inTrackingFlow || !isTrackingDictationCompleteIntent(text, trackingDictationContext)) {
+    return null;
+  }
+
+  completeTrackingDictation(session.callSid);
+  session.phase = "follow_up";
+  session.awaitingInput = null;
+
+  const orderSpeech = buildOrderFieldQuerySpeech(text, verifiedOrderContext(session));
+  if (orderSpeech) {
+    return {
+      handled: true,
+      speech: orderSpeech,
+      skipLlm: true,
+      skipTools: true,
+      intentKey: "order_field_query",
+    };
+  }
+
+  if (isIntentSwitchAwayFromTracking(text, session)) {
+    return { handled: false };
+  }
+
+  return {
+    handled: true,
+    speech: TRACKING_DICTATION_COMPLETE_SPEECH,
+    skipLlm: true,
+    skipTools: true,
+    intentKey: "tracking_complete",
+  };
+}
+
 /** Sole tracking gate — notepad handshake, USER_READY, chunked dictation, spatial resume. */
 export function resolveTrackingPhaseGate(
   callerText: string,
@@ -358,8 +406,15 @@ export function resolveTrackingPhaseGate(
 
   const intent = callerIntent ?? resolveCallerIntent(callerText, session);
 
+  const completionTurn = tryResolveTrackingCompletionTurn(text, session, active);
+  if (completionTurn) return completionTurn;
+
   if (!shouldRunTrackingPhaseGate(intent)) {
-    if (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") {
+    if (
+      (active.currentState === "awaiting_notepad_ready" ||
+        active.currentState === "tracking_dictation") &&
+      active.cachedIntent === "tracking"
+    ) {
       updateActiveSession(session.callSid, {
         currentState: "order_active",
         cachedIntent: "order",
@@ -411,30 +466,6 @@ export function resolveTrackingPhaseGate(
         intentKey: "spatial_resume_interrupt",
       };
     }
-  }
-
-  const trackingDictationContext = {
-    currentState: refreshed.currentState,
-    lastSpokenIndex: refreshed.lastSpokenIndex,
-    isNotepadReady: refreshed.isNotepadReady,
-  };
-
-  const inTrackingFlow =
-    Boolean(refreshed.lastSpokenPayload?.trackingForTts) &&
-    (refreshed.currentState === "tracking_dictation" ||
-      refreshed.cachedIntent === "tracking");
-
-  if (inTrackingFlow && isTrackingDictationCompleteIntent(text, trackingDictationContext)) {
-    completeTrackingDictation(session.callSid);
-    session.phase = "follow_up";
-    session.awaitingInput = null;
-    return {
-      handled: true,
-      speech: TRACKING_DICTATION_COMPLETE_SPEECH,
-      skipLlm: true,
-      skipTools: true,
-      intentKey: "tracking_complete",
-    };
   }
 
   if (refreshed.currentState === "awaiting_notepad_ready" && trackingPayloadReady(refreshed)) {
@@ -751,6 +782,15 @@ async function* runOrchestratorTurnCore(
   }
 
   const callerIntent = resolveCallerIntent(text, session);
+
+  if (
+    callerIntent === "catalog" ||
+    callerIntent === "cart" ||
+    callerIntent === "support_escalation" ||
+    callerIntent === "order_history"
+  ) {
+    exitTrackingHandshakeForOrderQuery(session.callSid);
+  }
 
   if (
     callerIntent === "order_field_query" &&
@@ -1146,7 +1186,12 @@ async function* handleFollowUpPhase(
 ): AsyncGenerator<AgentStreamEvent> {
   const callerIntent = resolveCallerIntent(callerText, session);
 
-  if (callerIntent === "order_history" || callerIntent === "cart" || callerIntent === "catalog") {
+  if (
+    callerIntent === "order_history" ||
+    callerIntent === "cart" ||
+    callerIntent === "catalog" ||
+    callerIntent === "support_escalation"
+  ) {
     exitTrackingHandshakeForOrderQuery(session.callSid);
   }
 

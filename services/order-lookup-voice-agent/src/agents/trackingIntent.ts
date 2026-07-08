@@ -11,8 +11,13 @@ const TRACKING_SHORTHAND_RE =
 
 const TRACKING_ID_FRAGMENT_RE = /\btracking\s*i\.?d\.?\b/i;
 
-const TRACKING_REPEAT_RE =
-  /\b(?:didn'?t|did not|not yet|repeat|say (?:it )?again|one more time|can you repeat|read (?:it )?again|start over)\b/i;
+/**
+ * Explicit tracking repeat requests (asking the agent to repeat digits).
+ * Important: do NOT treat the word "repeat" as a completion-killer by itself,
+ * because callers often say things like "I repeated it back; it's written down".
+ */
+const TRACKING_REPEAT_REQUEST_RE =
+  /\b(?:didn'?t|did not|not yet|repeat\s+(?:after|from)|say\s+(?:it\s+)?again|one\s+more\s+time|can\s+you\s+repeat|read\s+(?:it\s+)?again|start\s+over)\b/i;
 
 export interface TrackingDictationContext {
   currentState?: string;
@@ -38,7 +43,7 @@ export function isTrackingDictationCompleteIntent(
   const text = callerText.trim();
   if (!text) return false;
   if (isSpatialResumeQuery(text)) return false;
-  if (TRACKING_REPEAT_RE.test(text)) return false;
+  if (TRACKING_REPEAT_REQUEST_RE.test(text)) return false;
   if (/\b(?:notepad|pen and paper|pen and notepad)\s+ready\b/i.test(text)) return false;
   if (/\b(?:i'?m|i am)\s+ready\b/i.test(text)) return false;
 

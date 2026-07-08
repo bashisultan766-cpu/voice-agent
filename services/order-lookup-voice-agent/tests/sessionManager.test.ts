@@ -22,14 +22,15 @@ const SAMPLE_ORDER: OrderStatusResult = {
 };
 
 describe("sessionManager active order context", () => {
-  it("strips restricted line-item detail for unverified callers", () => {
+  it("keeps line-item titles for unverified callers (privacy shield only blocks shipping address/events)", () => {
     const session = createCallSession("CA_UNVER", "+1", "+2");
     session.isVerifiedCaller = false;
     const payload = buildActiveOrderContextPayload(SAMPLE_ORDER, session);
 
     expect(payload.shipping_address).toBeNull();
-    expect(payload.physical_items).toBeNull();
-    expect(payload.items).toBeNull();
+    expect(payload.physical_items).toBeTruthy();
+    expect((payload.physical_items as any[])[0]?.title).toBe("Hidden Book Title");
+    expect(payload.items).toBeTruthy();
     expect(payload.customer_name).toBe("Joel Moore");
     expect(payload.refund_notification_email).toBe("btazp@yahoo.com");
   });
