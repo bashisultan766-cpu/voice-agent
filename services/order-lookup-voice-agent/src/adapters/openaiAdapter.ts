@@ -49,8 +49,11 @@ import {
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
-import { isTrackingRequest } from "../agents/trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext } from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
+import { isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
+import { promptUserForNotepad } from "../agents/dictationTool.js";
+import { isTrackingDictationText } from "../utils/ttsFormatter.js";
 
 export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
   {
@@ -547,11 +550,13 @@ function groundedSpeechFromOrderToolRecord(record: LlmToolExecutionRecord): stri
 function resultFromDictateTrackingExecution(
   record: LlmToolExecutionRecord,
   toolExecutions: LlmToolExecutionRecord[],
+  callSid: string,
 ): LlmAgentTurnResult {
-  const speech =
+  const rawSpeech =
     record.ok && record.data && "tracking_number_for_tts" in record.data
       ? String(record.data.tracking_number_for_tts ?? "")
       : (record.errorMessage ?? NOTEPAD_HANDSHAKE_PROMPT);
+  const speech = enforceNotepadGateOnSpeech(callSid, rawSpeech);
   return {
     speech,
     toolExecutions,
@@ -612,6 +617,42 @@ export function syncDeterministicAssistantSpeech(
 /**
  * Run one caller turn with tool-pending events for system-level filler injection.
  */
+function interceptSpatialBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
+  if (!isSpatialResumeQuery(input.userMessage)) return null;
+
+  const active = getOrCreateActiveSession(input.callSid);
+  const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
+  if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
+    recordTrackingPayload(input.callSid, trackingRaw);
+  }
+
+  const refreshed = getOrCreateActiveSession(input.callSid);
+  if (!refreshed.spatialIndex.length) return null;
+
+  const turn = resolveSpatialTurnSpeech(
+    input.userMessage,
+    refreshed.spatialIndex,
+    refreshed.lastSpokenPayload?.trackingRaw,
+  );
+  if (!turn.handled || !turn.speech) return null;
+
+  return {
+    speech: turn.speech,
+    toolExecutions: [],
+    responseType: "general_help",
+  };
+}
+
+function enforceNotepadGateOnSpeech(callSid: string, speech: string): string {
+  const active = getOrCreateActiveSession(callSid);
+  if (active.isNotepadReady) return speech;
+  if (!active.lastSpokenPayload?.trackingForTts) return speech;
+  if (isTrackingDictationText(speech)) {
+    return promptUserForNotepad();
+  }
+  return speech;
+}
+
 function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
   if (!isTrackingRequest(input.userMessage)) return null;
 
@@ -622,7 +663,8 @@ function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResul
   }
 
   const hasTracking = Boolean(
-    getOrCreateActiveSession(input.callSid).lastSpokenPayload?.trackingForTts || trackingRaw,
+    getOrCreateActiveSession(input.callSid).lastSpokenPayload?.trackingForTts ||
+      hasTrackingInSessionContext(input.session?.currentOrderData),
   );
   if (!hasTracking) return null;
 
@@ -674,6 +716,12 @@ export async function* runLlmAgentTurnEvents(
         responseType: "general_help",
       },
     };
+    return;
+  }
+
+  const spatialIntercept = interceptSpatialBeforeLlm(input);
+  if (spatialIntercept) {
+    yield { type: "result", result: spatialIntercept };
     return;
   }
 
@@ -872,7 +920,7 @@ export async function* runLlmAgentTurnEvents(
         if (dictateExec) {
           yield {
             type: "result",
-            result: resultFromDictateTrackingExecution(dictateExec, toolExecutions),
+            result: resultFromDictateTrackingExecution(dictateExec, toolExecutions, input.callSid),
           };
           return;
         }
@@ -905,6 +953,7 @@ export async function* runLlmAgentTurnEvents(
 
       let speech = (message.content ?? "").trim();
       if (speech) {
+        speech = enforceNotepadGateOnSpeech(input.callSid, speech);
         speech = await ensureUniqueSpokenResponse(input.callSid, speech, input.userMessage);
         const responseType = inferResponseType(speech, toolExecutions);
         const endCall = toolExecutions.some((t) => t.tool === "end_call" && t.ok);

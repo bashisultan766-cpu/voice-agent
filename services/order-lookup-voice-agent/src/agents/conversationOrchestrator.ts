@@ -104,17 +104,14 @@ import { resolveSovereignTurn } from "../sovereign/sovereignRouter.js";
 import {
   buildResumeFromLastSpokenIndex,
   buildTrackingDictationChunks,
-  calculateResumeOffset,
   confirmUserNotepadReady,
   dictateTracking,
   isUserNotepadReadyIntent,
   markTrackingAwaitingNotepad,
   promptUserForNotepad,
-  resolveSpatialResumeFromQuery,
   USER_NOTEPAD_READY,
 } from "./dictationTool.js";
-import { extractSpatialAnchorDigits } from "../sovereign/spatialDictation.js";
-import { analyzeBrainTurn } from "./brainAnalyzer.js";
+import { isSpatialBeforeQuery, isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
 import {
   buildToolDecisionState,
   decideToolExecution,
@@ -193,7 +190,7 @@ import {
   buildClarifyingResponse,
   buildGreetingResponse,
 } from "../handlers/greetingHandler.js";
-import { isTrackingRequest, TRACKING_REQUEST_RE } from "./trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext } from "./trackingIntent.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
@@ -278,8 +275,6 @@ export const LISTENING = "LISTENING";
 
 export const NOTEPAD_HANDSHAKE_PROMPT = promptUserForNotepad();
 
-const TRACKING_QUERY_RE = TRACKING_REQUEST_RE;
-
 const INTERRUPT_RESUME_RE =
   /\b(what\s+did\s+you\s+miss|missed\s+that|didn'?t\s+catch|repeat\s+from|continue\s+from|pick\s+up)\b/i;
 
@@ -314,12 +309,38 @@ export function resolveTrackingPhaseGate(
   const text = callerText.trim();
   if (!text) return { handled: false };
 
-  if (isTrackingRequest(text) || active.currentState === "awaiting_notepad_ready") {
+  if (isTrackingRequest(text) || active.currentState === "awaiting_notepad_ready" || isSpatialResumeQuery(text)) {
     ensureTrackingPayloadFromSession(session);
   }
 
-  if (INTERRUPT_RESUME_RE.test(text) && active.spatialIndex.length > 0 && active.lastSpokenIndex >= 0) {
-    const resume = buildResumeFromLastSpokenIndex(active);
+  const refreshed = getOrCreateActiveSession(session.callSid);
+
+  if (refreshed.spatialIndex.length > 0 && isSpatialResumeQuery(text)) {
+    const spatialTurn = resolveSpatialTurnSpeech(
+      text,
+      refreshed.spatialIndex,
+      refreshed.lastSpokenPayload?.trackingRaw,
+    );
+    if (spatialTurn.handled && spatialTurn.speech) {
+      if (spatialTurn.resumeOffset !== undefined && !isSpatialBeforeQuery(text)) {
+        updateActiveSession(session.callSid, {
+          lastSpokenIndex: Math.max(spatialTurn.resumeOffset - 1, -1),
+          currentState: "tracking_dictation",
+        });
+      } else {
+        updateActiveSession(session.callSid, { currentState: "tracking_dictation" });
+      }
+      return {
+        handled: true,
+        speech: spatialTurn.speech,
+        skipLlm: true,
+        skipTools: true,
+        intentKey: spatialTurn.anchor ? "spatial_resume" : "spatial_clarify",
+      };
+    }
+  }
+  if (INTERRUPT_RESUME_RE.test(text) && refreshed.spatialIndex.length > 0 && refreshed.lastSpokenIndex >= 0) {
+    const resume = buildResumeFromLastSpokenIndex(refreshed);
     if (resume) {
       return {
         handled: true,
@@ -331,26 +352,7 @@ export function resolveTrackingPhaseGate(
     }
   }
 
-  const spatialResume = resolveSpatialResumeFromQuery(text, active);
-  if (spatialResume) {
-    const anchor = extractSpatialAnchorDigits(text);
-    if (anchor) {
-      const offset = calculateResumeOffset(active.spatialIndex, anchor);
-      updateActiveSession(session.callSid, {
-        lastSpokenIndex: Math.max(offset - 1, -1),
-        currentState: "tracking_dictation",
-      });
-    }
-    return {
-      handled: true,
-      speech: spatialResume,
-      skipLlm: true,
-      skipTools: true,
-      intentKey: "spatial_resume",
-    };
-  }
-
-  if (active.currentState === "awaiting_notepad_ready" && trackingPayloadReady(active)) {
+  if (refreshed.currentState === "awaiting_notepad_ready" && trackingPayloadReady(refreshed)) {
     if (isUserNotepadReadyIntent(text)) {
       confirmUserNotepadReady(session.callSid);
       const dictated = dictateTracking(session.callSid);
@@ -380,8 +382,12 @@ export function resolveTrackingPhaseGate(
     };
   }
 
-  if (TRACKING_QUERY_RE.test(text) && active.lastSpokenPayload?.trackingForTts) {
-    if (!active.isNotepadReady) {
+  const trackingContextReady = Boolean(
+    refreshed.lastSpokenPayload?.trackingForTts || hasTrackingInSessionContext(session.currentOrderData),
+  );
+
+  if (isTrackingRequest(text) && trackingContextReady) {
+    if (!refreshed.isNotepadReady) {
       markTrackingAwaitingNotepad(session.callSid);
       return {
         handled: true,
@@ -747,15 +753,16 @@ async function* yieldTrackingPhaseSpeech(
   });
   session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
 
-  const dictationIntents = new Set([
-    "dictate_tracking",
-    USER_NOTEPAD_READY,
-    PHASE_DICTATION,
+  const dictationIntents = new Set([USER_NOTEPAD_READY, PHASE_DICTATION, "dictate_tracking"]);
+  const spatialIntents = new Set([
     "spatial_resume",
     "spatial_resume_interrupt",
+    "spatial_clarify",
   ]);
 
-  if (dictationIntents.has(gate.intentKey ?? "")) {
+  if (spatialIntents.has(gate.intentKey ?? "")) {
+    yield* yieldSpeech(uniqueSpeech, "dictation");
+  } else if (dictationIntents.has(gate.intentKey ?? "")) {
     const active = getOrCreateActiveSession(session.callSid);
     const startIndex = active.lastSpokenIndex + 1;
     const chunks = buildTrackingDictationChunks(active.spatialIndex, startIndex);

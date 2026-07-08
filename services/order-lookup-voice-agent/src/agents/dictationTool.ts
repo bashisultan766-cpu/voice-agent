@@ -10,11 +10,7 @@ import {
   updateActiveSession,
 } from "../sovereign/activeSession.js";
 import {
-  buildSpatialResumeSpeech,
-  buildSpatialBeforeSpeech,
-  extractSpatialAnchorDigits,
-  isSpatialBeforeQuery,
-  isSpatialResumeQuery,
+  resolveSpatialTurnSpeech,
 } from "../sovereign/spatialDictation.js";
 
 export const USER_NOTEPAD_READY = "USER_NOTEPAD_READY";
@@ -192,23 +188,12 @@ export function resolveSpatialResumeFromQuery(
   callerText: string,
   active: ActiveSession,
 ): string | null {
-  if (!active.spatialIndex.length) return null;
-
-  if (isSpatialResumeQuery(callerText)) {
-    const anchor = extractSpatialAnchorDigits(callerText);
-    if (anchor) {
-      if (isSpatialBeforeQuery(callerText)) {
-        return buildSpatialBeforeSpeech(active.spatialIndex, anchor);
-      }
-      return buildSpatialResumeSpeech(
-        active.spatialIndex,
-        anchor,
-        active.lastSpokenPayload?.trackingRaw,
-      );
-    }
-  }
-
-  return null;
+  const turn = resolveSpatialTurnSpeech(
+    callerText,
+    active.spatialIndex,
+    active.lastSpokenPayload?.trackingRaw,
+  );
+  return turn.handled ? (turn.speech ?? null) : null;
 }
 
 /**

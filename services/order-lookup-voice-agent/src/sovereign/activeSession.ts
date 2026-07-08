@@ -123,9 +123,16 @@ export function buildSpatialResumeFromIndex(
   }).join(" ");
 }
 
+/** Strip Twilio/Shopify noise (e.g. leading colons) before spatial dictation. */
+export function normalizeTrackingRaw(trackingId: string): string {
+  return trackingId.trim().replace(/^[:#\s]+/, "").trim();
+}
+
+/** Digit-only spatial index — callers anchor on spoken digits, not punctuation. */
 export function buildSpatialIndexFromTracking(trackingId: string): SpatialIndexEntry[] {
-  const normalized = trackingId.trim().toUpperCase();
-  return [...normalized].map((digit, index) => ({ index, digit }));
+  const normalized = normalizeTrackingRaw(trackingId).toUpperCase();
+  const digits = [...normalized].filter((char) => char >= "0" && char <= "9");
+  return digits.map((digit, index) => ({ index, digit }));
 }
 
 export function recordTrackingPayload(
@@ -133,11 +140,12 @@ export function recordTrackingPayload(
   trackingRaw: string,
   speech?: string,
 ): ActiveSession {
-  const trackingForTts = formatTrackingNumberForTTS(trackingRaw);
+  const normalizedRaw = normalizeTrackingRaw(trackingRaw);
+  const trackingForTts = formatTrackingNumberForTTS(normalizedRaw);
   return updateActiveSession(callSid, {
     currentState: "awaiting_notepad_ready",
     awaitingClarification: "notepad_ready",
-    spatialIndex: buildSpatialIndexFromTracking(trackingRaw),
+    spatialIndex: buildSpatialIndexFromTracking(normalizedRaw),
     cachedIntent: "tracking",
     lastDictationIndex: -1,
     lastSpokenIndex: -1,
@@ -146,7 +154,7 @@ export function recordTrackingPayload(
       kind: "tracking",
       speech: speech ?? trackingForTts,
       trackingForTts,
-      trackingRaw,
+      trackingRaw: normalizedRaw,
       toolName: "get_shopify_order_status",
       intentKey: "tracking",
       capturedAt: Date.now(),

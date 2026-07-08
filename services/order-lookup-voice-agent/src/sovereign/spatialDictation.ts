@@ -21,30 +21,51 @@ function digitWord(char: string): string {
   return DIGIT_WORD[char] ?? char;
 }
 
-/** Extract anchor digit sequence from queries like "3-9", "after 39", "what comes after 3 9". */
+function digitsFromFragment(fragment: string): string[] {
+  return fragment.replace(/\D/g, "").split("").filter(Boolean);
+}
+
+/**
+ * Extract anchor digit sequence from voice/STT queries.
+ * Supports "3-9", "3,9", "7,8,9,3,9", "after 3 9", "what comes after 0,0,0".
+ */
 export function extractSpatialAnchorDigits(callerText: string): string[] | null {
   const text = callerText.trim();
   if (!text) return null;
 
+  const afterClause = text.match(
+    /\b(?:what\s+comes\s+after|what\s+comes\s+before|after|following|past|before|prior\s+to|preceding)\s+(?:the\s+)?([\d][\d\s,.\-]{0,48}[\d])\b/i,
+  );
+  if (afterClause) {
+    const digits = digitsFromFragment(afterClause[1]);
+    if (digits.length) return digits;
+  }
+
   const hyphenMatch = text.match(/(\d(?:\s*[- ]\s*\d)+)/);
   if (hyphenMatch) {
-    const digits = hyphenMatch[1].replace(/\D/g, "").split("");
+    const digits = digitsFromFragment(hyphenMatch[1]);
     if (digits.length >= 2) return digits;
   }
 
+  const commaOrSpaceRun = text.match(/([\d](?:[\s,.-]*\d)+)\s*$/);
+  if (commaOrSpaceRun) {
+    const digits = digitsFromFragment(commaOrSpaceRun[1]);
+    if (digits.length >= 1) return digits;
+  }
+
   const afterMatch = text.match(
-    /\b(?:after|following|past)\s+(?:the\s+)?(\d[\d\s-]{1,20}\d|\d)\b/i,
+    /\b(?:after|following|past)\s+(?:the\s+)?(\d[\d\s,.\-]{0,48}\d|\d)\b/i,
   );
   if (afterMatch) {
-    const digits = afterMatch[1].replace(/\D/g, "").split("");
+    const digits = digitsFromFragment(afterMatch[1]);
     if (digits.length >= 1) return digits;
   }
 
   if (/\b(what comes after|continue from|pick up after)\b/i.test(text)) {
-    const trailing = text.match(/(\d(?:\s+\d)+|\d-\d+)\s*$/);
+    const trailing = text.match(/([\d](?:[\s,.-]*\d)+|\d-\d+)\s*$/);
     if (trailing) {
-      const digits = trailing[1].replace(/\D/g, "").split("");
-      if (digits.length >= 2) return digits;
+      const digits = digitsFromFragment(trailing[1]);
+      if (digits.length >= 1) return digits;
     }
   }
 
@@ -53,7 +74,7 @@ export function extractSpatialAnchorDigits(callerText: string): string[] | null 
 
 export function isSpatialResumeQuery(callerText: string): boolean {
   if (extractSpatialAnchorDigits(callerText)) return true;
-  return /\b(what comes after|what comes before|after the|before the|continue from|pick up after|following|prior to|preceding)\b/i.test(
+  return /\b(what comes after|what comes before|after the|before the|continue from|pick up after|following|prior to|preceding|comes after|comes before)\b/i.test(
     callerText,
   );
 }
@@ -77,6 +98,54 @@ function findLatestAnchorStart(
   }
 
   return lastStart;
+}
+
+function findLatestAnchorEnd(
+  spatialIndex: SpatialIndexEntry[],
+  anchor: string[],
+): number {
+  const contiguousStart = findLatestAnchorStart(spatialIndex, anchor);
+  if (contiguousStart >= 0) return contiguousStart + anchor.length - 1;
+
+  const digits = spatialIndex.map((entry) => entry.digit);
+  let bestEnd = -1;
+  for (let startIdx = 0; startIdx < digits.length; startIdx += 1) {
+    let anchorIdx = 0;
+    let endIdx = -1;
+    for (let i = startIdx; i < digits.length; i += 1) {
+      if (digits[i] === anchor[anchorIdx]) {
+        endIdx = i;
+        anchorIdx += 1;
+        if (anchorIdx === anchor.length) break;
+      }
+    }
+    if (anchorIdx === anchor.length && endIdx > bestEnd) {
+      bestEnd = endIdx;
+    }
+  }
+  return bestEnd;
+}
+
+/** Pick the anchor suffix that actually appears in the tracking number (prefer latest match). */
+export function resolveAnchorDigitsForSpatialIndex(
+  spatialIndex: SpatialIndexEntry[],
+  candidate: string[],
+): string[] | null {
+  if (!candidate.length || !spatialIndex.length) return null;
+
+  const attempts: string[][] = [];
+  for (let len = candidate.length; len >= 1; len -= 1) {
+    attempts.push(candidate.slice(-len));
+  }
+  if (candidate.length > 1 && !attempts.some((a) => a.length === candidate.length)) {
+    attempts.push(candidate);
+  }
+
+  for (const anchor of attempts) {
+    if (findLatestAnchorEnd(spatialIndex, anchor) >= 0) return anchor;
+  }
+
+  return candidate;
 }
 
 function countAnchorOccurrences(
@@ -112,10 +181,12 @@ export function buildSpatialResumeSpeech(
   anchorDigits: string[],
   trackingRaw?: string,
 ): string | null {
-  const start = findLatestAnchorStart(spatialIndex, anchorDigits);
-  if (start < 0) return null;
+  const anchor =
+    resolveAnchorDigitsForSpatialIndex(spatialIndex, anchorDigits) ?? anchorDigits;
+  const anchorEnd = findLatestAnchorEnd(spatialIndex, anchor);
+  if (anchorEnd < 0) return null;
 
-  const afterStart = start + anchorDigits.length;
+  const afterStart = anchorEnd + 1;
   const remaining = spatialIndex.slice(afterStart);
   if (!remaining.length) {
     return "That is the end of the tracking number.";
@@ -127,14 +198,14 @@ export function buildSpatialResumeSpeech(
       ? formatTrackingNumberForTTS(remainingRaw)
       : remaining.map((entry) => `${digitWord(entry.digit)}.`).join(" ");
 
-  const occurrenceCount = countAnchorOccurrences(spatialIndex, anchorDigits);
-  const anchorSpoken = anchorDigits.map((d) => digitWord(d)).join("-");
+  const occurrenceCount = countAnchorOccurrences(spatialIndex, anchor);
+  const anchorSpoken = anchor.map((d) => digitWord(d)).join("-");
   const positionHint =
     occurrenceCount > 1
       ? `You are at the ${ordinalLabel(occurrenceCount)} ${anchorSpoken}. `
       : "";
 
-  return `${positionHint}The following digits are: ${phonetic}`;
+  return `${positionHint}After ${anchorSpoken}, the digits are: ${phonetic}`;
 }
 
 /**
@@ -144,7 +215,9 @@ export function buildSpatialBeforeSpeech(
   spatialIndex: SpatialIndexEntry[],
   anchorDigits: string[],
 ): string | null {
-  const start = findLatestAnchorStart(spatialIndex, anchorDigits);
+  const anchor =
+    resolveAnchorDigitsForSpatialIndex(spatialIndex, anchorDigits) ?? anchorDigits;
+  const start = findLatestAnchorStart(spatialIndex, anchor);
   if (start < 0) return null;
   if (start === 0) {
     return "There are no digits before that point.";
@@ -152,6 +225,69 @@ export function buildSpatialBeforeSpeech(
 
   const before = spatialIndex.slice(0, start);
   const phonetic = before.map((entry) => `${digitWord(entry.digit)}.`).join(" ");
-  const anchorSpoken = anchorDigits.map((d) => digitWord(d)).join("-");
+  const anchorSpoken = anchor.map((d) => digitWord(d)).join("-");
   return `Before ${anchorSpoken}, the digits are: ${phonetic}`;
+}
+
+export interface SpatialTurnResolution {
+  handled: boolean;
+  speech?: string;
+  anchor?: string[];
+  resumeOffset?: number;
+}
+
+/** Deterministic spatial turn — used by orchestrator and LLM safety net. */
+export function resolveSpatialTurnSpeech(
+  callerText: string,
+  spatialIndex: SpatialIndexEntry[],
+  trackingRaw?: string,
+): SpatialTurnResolution {
+  if (!spatialIndex.length || !isSpatialResumeQuery(callerText)) {
+    return { handled: false };
+  }
+
+  const rawAnchor = extractSpatialAnchorDigits(callerText);
+  if (!rawAnchor?.length) {
+    return {
+      handled: true,
+      speech:
+        "Which digits should I continue from? For example, say what comes after 3 dash 9.",
+    };
+  }
+
+  const anchor = resolveAnchorDigitsForSpatialIndex(spatialIndex, rawAnchor) ?? rawAnchor;
+  const speech = isSpatialBeforeQuery(callerText)
+    ? buildSpatialBeforeSpeech(spatialIndex, anchor)
+    : buildSpatialResumeSpeech(spatialIndex, anchor, trackingRaw);
+
+  if (!speech) {
+    return {
+      handled: true,
+      speech:
+        "I could not find that position in the tracking number. Please repeat the digits you want me to continue from.",
+      anchor,
+    };
+  }
+
+  const start = findLatestAnchorStart(spatialIndex, anchor);
+  const anchorEnd = start >= 0 ? start + anchor.length - 1 : findLatestAnchorEnd(spatialIndex, anchor);
+  if (anchorEnd < 0) {
+    return {
+      handled: true,
+      speech:
+        "I could not find that position in the tracking number. Please repeat the digits you want me to continue from.",
+      anchor,
+    };
+  }
+
+  const resumeOffset = isSpatialBeforeQuery(callerText)
+    ? Math.max(start, 0)
+    : anchorEnd + 1;
+
+  return {
+    handled: true,
+    speech,
+    anchor,
+    resumeOffset: resumeOffset >= 0 ? resumeOffset : undefined,
+  };
 }
