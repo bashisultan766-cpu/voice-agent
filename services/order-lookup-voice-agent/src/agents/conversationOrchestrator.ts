@@ -198,6 +198,7 @@ import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationComp
 import {
   resolveCallerIntent,
   shouldRunTrackingPhaseGate,
+  shouldExitTrackingHandshake,
   type CallerIntent,
 } from "./callerIntent.js";
 import {
@@ -205,6 +206,12 @@ import {
   buildRefundEmailFollowUpSpeech,
   isRefundNotificationEmailQuestion,
 } from "./orderFollowUpSpeech.js";
+import type { ActiveOrderContextData } from "./sessionManager.js";
+import {
+  filterOrderContextForVerification,
+  isRestrictedFieldQueryForUnverified,
+  buildUnverifiedRestrictedFieldRefusal,
+} from "./orderContextPrivacy.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
@@ -316,14 +323,27 @@ function ensureTrackingPayloadFromSession(session: CallSession): void {
 
 function exitTrackingHandshakeForOrderQuery(callSid: string): void {
   const active = getOrCreateActiveSession(callSid);
-  if (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") {
-    updateActiveSession(callSid, {
-      currentState: "order_active",
-      cachedIntent: "order",
-      awaitingClarification: null,
-      isNotepadReady: false,
-    });
+  if (
+    active.currentState === "awaiting_notepad_ready" ||
+    active.currentState === "tracking_dictation"
+  ) {
+    if (active.cachedIntent === "tracking" || active.lastSpokenPayload?.kind === "tracking") {
+      updateActiveSession(callSid, {
+        currentState: "order_active",
+        cachedIntent: "order",
+        awaitingClarification: null,
+        isNotepadReady: false,
+      });
+    }
   }
+}
+
+function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
+  const raw = session.currentOrderData ?? {};
+  return filterOrderContextForVerification(
+    raw as ActiveOrderContextData,
+    session.isVerifiedCaller === true,
+  );
 }
 
 /** Sole tracking gate — notepad handshake, USER_READY, chunked dictation, spatial resume. */
@@ -418,6 +438,11 @@ export function resolveTrackingPhaseGate(
   }
 
   if (refreshed.currentState === "awaiting_notepad_ready" && trackingPayloadReady(refreshed)) {
+    if (shouldExitTrackingHandshake(intent)) {
+      exitTrackingHandshakeForOrderQuery(session.callSid);
+      return { handled: false };
+    }
+
     if (isUserNotepadReadyIntent(text)) {
       confirmUserNotepadReady(session.callSid);
       const dictated = dictateTracking(session.callSid);
@@ -464,13 +489,14 @@ export function resolveTrackingPhaseGate(
       };
     }
 
-    return {
-      handled: true,
-      speech: buildNotepadReadyNudge(),
-      skipLlm: true,
-      skipTools: true,
-      intentKey: PHASE_HANDSHAKE,
-    };
+    if (
+      !isTrackingRequest(text) &&
+      intent !== "tracking_dictation" &&
+      intent !== "tracking_flow_active"
+    ) {
+      exitTrackingHandshakeForOrderQuery(session.callSid);
+      return { handled: false };
+    }
   }
 
   const trackingContextReady = Boolean(
@@ -731,7 +757,25 @@ async function* runOrchestratorTurnCore(
     session.currentOrderData &&
     Object.keys(session.currentOrderData).length > 0
   ) {
-    const fieldSpeech = buildOrderFieldQuerySpeech(text, session.currentOrderData);
+    if (
+      session.isVerifiedCaller !== true &&
+      isRestrictedFieldQueryForUnverified(text)
+    ) {
+      exitTrackingHandshakeForOrderQuery(session.callSid);
+      const refusal = buildUnverifiedRestrictedFieldRefusal(
+        String(session.currentOrderData.customer_name ?? ""),
+      );
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, text);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "general_help",
+      });
+      session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
+
+    const fieldSpeech = buildOrderFieldQuerySpeech(text, verifiedOrderContext(session));
     if (fieldSpeech) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, text);
@@ -1102,12 +1146,34 @@ async function* handleFollowUpPhase(
 ): AsyncGenerator<AgentStreamEvent> {
   const callerIntent = resolveCallerIntent(callerText, session);
 
+  if (callerIntent === "order_history" || callerIntent === "cart" || callerIntent === "catalog") {
+    exitTrackingHandshakeForOrderQuery(session.callSid);
+  }
+
   if (
     callerIntent === "order_field_query" &&
     session.currentOrderData &&
     Object.keys(session.currentOrderData).length > 0
   ) {
-    const fieldSpeech = buildOrderFieldQuerySpeech(callerText, session.currentOrderData);
+    if (
+      session.isVerifiedCaller !== true &&
+      isRestrictedFieldQueryForUnverified(callerText)
+    ) {
+      exitTrackingHandshakeForOrderQuery(session.callSid);
+      const refusal = buildUnverifiedRestrictedFieldRefusal(
+        String(session.currentOrderData.customer_name ?? ""),
+      );
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, callerText);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "general_help",
+      });
+      session.phase = "follow_up";
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
+
+    const fieldSpeech = buildOrderFieldQuerySpeech(callerText, verifiedOrderContext(session));
     if (fieldSpeech) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, callerText);

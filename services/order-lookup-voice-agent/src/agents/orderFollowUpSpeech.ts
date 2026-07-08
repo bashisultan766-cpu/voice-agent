@@ -237,5 +237,20 @@ export function buildOrderFieldQuerySpeech(
     if (reason) return `The reason on file is: ${reason}.`;
   }
 
+  if (/\b(total\s+amount|order\s+total|how\s+much\s+(?:was|is)\s+(?:the\s+)?order)\b/i.test(callerText)) {
+    const total = String(context.total_amount ?? context.subtotal_amount ?? "").trim();
+    if (total) return `The total order amount is ${total}.`;
+  }
+
+  if (/\b(shipping\s+(?:fee|cost)|shipping\s+amount)\b/i.test(callerText)) {
+    const shipping = String(context.shipping_amount ?? "").trim();
+    if (shipping) return `The shipping fee on this order is ${shipping}.`;
+  }
+
+  if (/\b(payment\s+method|what\s+card|card\s+ending)\b/i.test(callerText)) {
+    const payment = String(context.payment_method ?? "").trim();
+    if (payment) return `The payment method on file is ${payment}.`;
+  }
+
   return null;
 }

@@ -73,6 +73,14 @@ export function extractSpatialAnchorDigits(callerText: string): string[] | null 
 }
 
 export function isSpatialResumeQuery(callerText: string): boolean {
+  const text = callerText.trim();
+  if (
+    /\b(?:order\s+number|lookup\s+(?:my\s+)?order|find\s+(?:my\s+)?order|check\s+(?:my\s+)?order|order\s+status|track\s+my\s+order)\b/i.test(
+      text,
+    )
+  ) {
+    return false;
+  }
   if (extractSpatialAnchorDigits(callerText)) return true;
   return /\b(what comes after|what comes before|after the|before the|continue from|pick up after|following|prior to|preceding|comes after|comes before)\b/i.test(
     callerText,

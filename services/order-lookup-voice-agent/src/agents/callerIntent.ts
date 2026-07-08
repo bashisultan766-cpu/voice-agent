@@ -10,6 +10,7 @@ import {
   isExplicitTrackingDictationRequest,
   isTrackingDictationCompleteIntent,
 } from "./trackingIntent.js";
+import { isUserNotepadReadyIntent } from "./dictationTool.js";
 import { isRefundNotificationEmailQuestion } from "./orderFollowUpSpeech.js";
 
 export type CallerIntent =
@@ -80,11 +81,47 @@ export function resolveCallerIntent(
       if (ORDER_FIELD_QUERY_RE.test(text) || isRefundNotificationEmailQuestion(text)) {
         return "order_field_query";
       }
-      return "tracking_flow_active";
+      if (ORDER_HISTORY_RE.test(text) && hasActiveOrderContext(session)) {
+        return "order_history";
+      }
+      if (CART_RE.test(text)) return "cart";
+      if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) return "catalog";
+      if (
+        isUserNotepadReadyIntent(text) ||
+        isExplicitTrackingDictationRequest(text) ||
+        /\b(?:ready|notepad|pen\s+and)\b/i.test(text)
+      ) {
+        return "tracking_flow_active";
+      }
+      // State exit — unrelated query while notepad handshake is pending.
     }
   }
 
   if (isExplicitGoodbyeUtterance(text)) return "goodbye";
+
+  if (isRefundNotificationEmailQuestion(text) && hasActiveOrderContext(session)) {
+    return "order_field_query";
+  }
+
+  if (ORDER_FIELD_QUERY_RE.test(text) && hasActiveOrderContext(session)) {
+    return "order_field_query";
+  }
+
+  if (ORDER_HISTORY_RE.test(text) && hasActiveOrderContext(session)) {
+    return "order_history";
+  }
+
+  if (ORDER_LOOKUP_RE.test(text)) {
+    return "order_lookup";
+  }
+
+  if (REPEAT_ORDER_RE.test(text) && session?.currentOrder) {
+    return "repeat_order";
+  }
+
+  if (CART_RE.test(text)) return "cart";
+
+  if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) return "catalog";
 
   if (
     callSid &&
@@ -105,27 +142,7 @@ export function resolveCallerIntent(
     return "tracking_dictation";
   }
 
-  if (isRefundNotificationEmailQuestion(text) && hasActiveOrderContext(session)) {
-    return "order_field_query";
-  }
-
-  if (ORDER_FIELD_QUERY_RE.test(text) && hasActiveOrderContext(session)) {
-    return "order_field_query";
-  }
-
-  if (ORDER_HISTORY_RE.test(text) && hasActiveOrderContext(session)) {
-    return "order_history";
-  }
-
-  if (REPEAT_ORDER_RE.test(text) && session?.currentOrder) {
-    return "repeat_order";
-  }
-
-  if (CART_RE.test(text)) return "cart";
-
-  if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) return "catalog";
-
-  if (ORDER_LOOKUP_RE.test(text) || (!hasActiveOrderContext(session) && /\border\b/i.test(text))) {
+  if (!hasActiveOrderContext(session) && /\border\b/i.test(text)) {
     return "order_lookup";
   }
 
@@ -141,4 +158,9 @@ export function resolveCallerIntent(
 
 export function shouldRunTrackingPhaseGate(intent: CallerIntent): boolean {
   return intent === "tracking_dictation" || intent === "tracking_flow_active";
+}
+
+/** True when an unrelated turn should tear down an in-progress notepad handshake. */
+export function shouldExitTrackingHandshake(intent: CallerIntent): boolean {
+  return !shouldRunTrackingPhaseGate(intent);
 }

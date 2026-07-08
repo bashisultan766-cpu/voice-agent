@@ -13,8 +13,10 @@ import {
 import { lookupOrderStatus } from "../services/shopifyService.js";
 import {
   addToCart,
+  ensureShoppingCart,
   getCartSummary,
   removeFromCart,
+  setCartLineQuantity,
 } from "../agents/cartManager.js";
 import { applyCallerVerificationFromOrder } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
@@ -255,7 +257,15 @@ export async function executeLlmTool(
           };
         }
       }
-      const cart = addToCart(session, items);
+      const setAbsolute = rawArgs.set_absolute_quantity === true;
+      let cart = ensureShoppingCart(session);
+      for (const item of items) {
+        if (setAbsolute && item.quantity != null) {
+          cart = setCartLineQuantity(session, item, item.quantity);
+        } else {
+          cart = addToCart(session, [item]);
+        }
+      }
       const data: CartToolResult = {
         status: "ok",
         items: cart.map((line) => ({

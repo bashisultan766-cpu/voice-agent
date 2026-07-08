@@ -162,10 +162,15 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "add_to_cart",
       description:
-        "Add one or more books to the caller's persistent shopping cart. Always pass unit_price from search results alongside variant_id when available.",
+        "Add one or more books to the caller's persistent shopping cart. Always pass unit_price from search results alongside variant_id when available. For absolute quantity changes (e.g. 'change to 5 copies'), set set_absolute_quantity to true and pass the target quantity on each item.",
       parameters: {
         type: "object",
         properties: {
+          set_absolute_quantity: {
+            type: "boolean",
+            description:
+              "When true, each item quantity replaces the current line quantity instead of adding to it.",
+          },
           items: {
             type: "array",
             items: {
@@ -1074,9 +1079,19 @@ export async function* runLlmAgentTurnEvents(
 
           const active = getOrCreateActiveSession(input.callSid);
           const intentKey = mapToolToIntentKey(call.function.name);
+          const filteredContext =
+            input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0
+              ? filterOrderContextForVerification(
+                  input.activeOrderContext,
+                  input.session?.isVerifiedCaller === true,
+                )
+              : undefined;
           if (
             intentKey &&
-            shouldSkipToolReinvoke(active, intentKey, call.function.name)
+            shouldSkipToolReinvoke(active, intentKey, call.function.name, {
+              userMessage: input.userMessage,
+              orderContext: filteredContext,
+            })
           ) {
             toolExecutions.push({
               tool: call.function.name,

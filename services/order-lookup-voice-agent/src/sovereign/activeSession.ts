@@ -5,6 +5,8 @@ import type { CallSession } from "../types/order.js";
 import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
 import type { LlmToolName } from "../adapters/llmToolExecutor.js";
 import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
+import type { ActiveOrderContextData } from "../agents/sessionManager.js";
+import { orderUtteranceNeedsFreshLookup } from "../agents/orderContextPrivacy.js";
 
 export type SovereignState =
   | "idle"
@@ -224,6 +226,10 @@ export function shouldSkipToolReinvoke(
   active: ActiveSession,
   intentKey: string,
   toolName: LlmToolName,
+  options?: {
+    userMessage?: string;
+    orderContext?: ActiveOrderContextData;
+  },
 ): boolean {
   if (!active.lastSpokenPayload) return false;
 
@@ -232,6 +238,15 @@ export function shouldSkipToolReinvoke(
     if (active.currentState === "tracking_dictation" && active.lastSpokenIndex >= 0) {
       return true;
     }
+  }
+
+  if (
+    toolName === "get_shopify_order_status" &&
+    options?.userMessage &&
+    options?.orderContext &&
+    orderUtteranceNeedsFreshLookup(options.userMessage, options.orderContext)
+  ) {
+    return false;
   }
 
   if (active.cachedIntent !== intentKey) return false;

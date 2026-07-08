@@ -112,6 +112,41 @@ export function removeFromCart(session: CallSession, items: CartItemInput[]): Sh
   return cart;
 }
 
+/** Set an absolute line quantity (e.g. "change to 5 copies") — removes the line when target is 0. */
+export function setCartLineQuantity(
+  session: CallSession,
+  item: CartItemInput,
+  targetQuantity: number,
+): ShoppingCartLineItem[] {
+  const cart = ensureShoppingCart(session);
+  const variantGid = parseVariantGid(item.variant_id ?? "");
+  const title = (item.title ?? "").trim().toLowerCase();
+  const qty = Math.max(0, Math.floor(Number(targetQuantity) || 0));
+
+  const index = cart.findIndex(
+    (line) =>
+      (variantGid && line.variantId === variantGid) ||
+      (title && line.title.toLowerCase() === title),
+  );
+
+  if (qty <= 0) {
+    if (index >= 0) cart.splice(index, 1);
+    return cart;
+  }
+
+  if (index >= 0) {
+    cart[index].quantity = qty;
+    const unitPrice = resolveUnitPrice(item);
+    if (unitPrice) {
+      cart[index].unitPrice = unitPrice;
+      cart[index].price = unitPrice;
+    }
+    return cart;
+  }
+
+  return addToCart(session, [{ ...item, quantity: qty }]);
+}
+
 export function getCartSummary(session: CallSession): {
   items: ShoppingCartLineItem[];
   totalUnits: number;

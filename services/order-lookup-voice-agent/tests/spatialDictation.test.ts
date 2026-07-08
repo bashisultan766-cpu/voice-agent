@@ -62,7 +62,7 @@ describe("tracking dictation completion", () => {
     ).toBe(false);
   });
 
-  it("nudges notepad readiness instead of restarting handshake on thanks", () => {
+  it("exits notepad handshake to LLM on unrelated thanks (no nudge loop)", () => {
     const session = {
       callSid: "CA_THANKS",
       from: "+1",
@@ -75,9 +75,7 @@ describe("tracking dictation completion", () => {
 
     recordTrackingPayload("CA_THANKS", "9250");
     const resolution = resolveTrackingPhaseGate("thanks", session);
-    expect(resolution.handled).toBe(true);
-    expect(resolution.speech).toMatch(/ready with pen and (?:paper|notepad)/i);
-    expect(resolution.speech).not.toMatch(/Nine\./);
+    expect(resolution.handled).toBe(false);
   });
 
   it("closes tracking flow instead of restarting dictation", () => {
