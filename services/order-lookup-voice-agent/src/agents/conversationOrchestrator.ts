@@ -78,7 +78,6 @@ import {
 import { clearShopifyAdapterState } from "../tools/shopifyProductAdapter.js";
 import { extractOrderNumberFromSpeech, GOODBYE_MESSAGE } from "../utils/formatter.js";
 import { runInPhase2, setSlotValidationReady, setToolExecutionPhase } from "../guards/toolExecutionGuard.js";
-import { orderLookupTool } from "../tools/orderLookupTool.js";
 import {
   getSimilarProducts,
   searchProductByCategory,
@@ -194,13 +193,11 @@ import {
 } from "../handlers/greetingHandler.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
 import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
-import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
 import {
-  buildActiveOrderContextFromResult,
-  saveActiveOrderContext,
-} from "./sessionManager.js";
-import { applyCallerVerificationFromOrder } from "./callerVerification.js";
-import { lookupOrderStatus } from "../services/shopifyService.js";
+  hasConfirmedOrderContext,
+  isOrderLookupRequestWithoutNumber,
+  executeOrderLookupForSession,
+} from "./orderContextPolicy.js";
 import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "./trackingIntent.js";
 import {
   resolveCallerIntent,
@@ -311,19 +308,6 @@ function shouldRejectOrderNumberCandidate(text: string, orderNumber: string): bo
     (digits.length === 10 || digits.length === 13) &&
     (isValidIsbnFormat(digits) || /\b(isbn|barcode|978|979)\b/i.test(text))
   );
-}
-
-async function persistSessionOrderContext(
-  session: CallSession,
-  orderNumber: string,
-): Promise<void> {
-  const data = await lookupOrderStatus(orderNumber, session.callSid);
-  if (data.status !== "found") return;
-  applyCallerVerificationFromOrder(session, data);
-  const payload = buildActiveOrderContextFromResult(data, session);
-  if (payload) {
-    saveActiveOrderContext(session, payload);
-  }
 }
 
 const INTERRUPT_RESUME_RE =
@@ -1023,10 +1007,8 @@ async function* handleAwaitingOrderNumberPhase(
       return false;
     }
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));
-    const lookup = await orderLookupTool(orderNumber, { bypassCache: true });
+    const lookup = await executeOrderLookupForSession(session, orderNumber);
     if (lookup.status === "found" && lookup.order) {
-      session.currentOrder = lookup.order;
-      await persistSessionOrderContext(session, orderNumber);
       session.phase = "order_disclosed";
       session.awaitingInput = null;
       session.lastOrchestratorIntent = "order_lookup";
@@ -1083,10 +1065,8 @@ async function* handleGreetingPhaseOrderLookup(
       return false;
     }
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));
-    const lookup = await orderLookupTool(orderNumber, { bypassCache: true });
+    const lookup = await executeOrderLookupForSession(session, orderNumber);
     if (lookup.status === "found" && lookup.order) {
-      session.currentOrder = lookup.order;
-      await persistSessionOrderContext(session, orderNumber);
       session.phase = "order_disclosed";
       session.awaitingInput = null;
       session.lastOrchestratorIntent = "order_lookup";

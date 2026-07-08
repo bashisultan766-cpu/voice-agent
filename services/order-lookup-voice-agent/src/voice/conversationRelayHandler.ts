@@ -23,8 +23,7 @@ import {
   type ConversationRelaySendFn,
 } from "./conversationRelaySender.js";
 
-const ERROR_SPEECH =
-  "Sorry, we are having a brief technical issue. Please try again in a moment.";
+import { VOICE_LAYER_ERROR_SPEECH } from "../constants/systemMessages.js";
 
 const activeTurnAborts = new Map<string, AbortController>();
 const interruptedCalls = new Set<string>();
@@ -88,7 +87,7 @@ async function runRelayTurn(
       error: err instanceof Error ? err.message : String(err),
     });
     if (!isInterrupted(callSid)) {
-      await sendSpeechToConversationRelay(send, ERROR_SPEECH);
+      await sendSpeechToConversationRelay(send, VOICE_LAYER_ERROR_SPEECH);
       send({ type: "text", token: "", last: true, interruptible: true });
     }
   } finally {

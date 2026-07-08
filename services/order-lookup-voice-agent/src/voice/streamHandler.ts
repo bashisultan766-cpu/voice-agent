@@ -52,8 +52,7 @@ import type {
 import { TWILIO_MEDIA_STREAM_PROTOCOL } from "./mediaStreamProtocol.js";
 import type { CallSession } from "../types/order.js";
 
-const ERROR_SPEECH =
-  "Sorry, we're having a brief technical issue. Please try again in a moment.";
+import { VOICE_LAYER_ERROR_SPEECH } from "../constants/systemMessages.js";
 
 const SILENCE_MS = 900;
 const MIN_INBOUND_MULAW_BYTES = 3200;
@@ -421,7 +420,7 @@ async function runStreamingTurn(
     });
     if (!abort.signal.aborted) {
       await streamChunkToMediaStream(
-        { text: ERROR_SPEECH, kind: "error" },
+        { text: VOICE_LAYER_ERROR_SPEECH, kind: "error" },
         send,
         {
           abortSignal: abort.signal,

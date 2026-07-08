@@ -348,5 +348,18 @@ export function buildOrderFieldQuerySpeech(
     if (payment) return `The payment method on file is ${payment}.`;
   }
 
+  if (/\b(order\s+details|tell\s+me\s+(?:the\s+)?details|about\s+(?:my\s+)?order)\b/i.test(lower)) {
+    const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
+    const name = String(context.customer_name ?? "").trim();
+    const orderNum = String(context.order_number ?? "").replace(/^#/, "").trim();
+    const parts: string[] = [];
+    if (orderNum) parts.push(`order ${orderNum}`);
+    if (status) parts.push(`status is ${status}`);
+    if (name) parts.push(`under ${name.split(/\s+/)[0] ?? name}`);
+    if (parts.length) {
+      return `I have your ${parts.join(", ")}. Would you like the item titles, total, shipping, or tracking?`;
+    }
+  }
+
   return null;
 }

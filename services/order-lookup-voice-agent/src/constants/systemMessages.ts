@@ -37,6 +37,10 @@ export const ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD = {
     "A transient order lookup error occurred. Say you are pulling the order up again now. Do NOT mention catalog updates or system maintenance. Do NOT invent order fields.",
 };
 
+/** Spoken when the voice WebSocket layer catches an unexpected turn error. */
+export const VOICE_LAYER_ERROR_SPEECH =
+  "Sorry, I hit a snag on that. If you're checking an order, please say your order number again and I'll pull it up right now.";
+
 /** Spoken when Shopify catalog is throttled / circuit is open — buys backoff time. */
 export const CATALOG_DEGRADED_MESSAGE =
   "Our catalog system is a bit slow right now. Let me check that again for you in just a second.";
