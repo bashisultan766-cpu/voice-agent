@@ -42,10 +42,13 @@ import {
   ensureUniqueSpokenResponse,
 } from "../services/llmService.js";
 import {
+  buildClarifyingResponse,
   buildGreetingResponse,
+  buildOrderNumberOfferResponse,
+  isOrderNumberOfferUtterance,
   isSocialGreetingUtterance,
 } from "../handlers/greetingHandler.js";
-import { stripRoboticAssistantSpeech } from "../agents/conversationBrainAgent.js";
+import { stripRoboticAssistantSpeech, softFallback } from "../agents/conversationBrainAgent.js";
 import { buildLockedFlowSystemMessage } from "../agents/lockedFlowState.js";
 import {
   buildActiveSessionSystemMessage,
@@ -575,6 +578,59 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
 const LLM_FALLBACK_SPEECH =
   "Sorry, I didn't catch that. Do you have an order number, or are you looking for a book?";
 
+/** Deterministic responses when the LLM is unavailable (quota, timeout, outage). */
+function resolveDeterministicTurnFallback(input: LlmAgentTurnInput): LlmAgentTurnResult {
+  const greeting = interceptGreetingBeforeLlm(input);
+  if (greeting) return greeting;
+
+  const orderOffer = interceptOrderNumberOfferBeforeLlm(input);
+  if (orderOffer) return orderOffer;
+
+  if (isSocialGreetingUtterance(input.userMessage)) {
+    return {
+      speech: buildGreetingResponse(input.userMessage),
+      toolExecutions: [],
+      responseType: "general_help",
+    };
+  }
+
+  if (isOrderNumberOfferUtterance(input.userMessage)) {
+    if (input.session) {
+      input.session.phase = "awaiting_order_number";
+      input.session.awaitingInput = "order_number";
+    }
+    return {
+      speech: buildOrderNumberOfferResponse(),
+      toolExecutions: [],
+      responseType: "clarification_question",
+    };
+  }
+
+  const lower = input.userMessage.toLowerCase();
+  if (
+    /\b(where\s+is\s+my\s+order|order\s+status|track\s+my\s+order|check\s+my\s+order)\b/i.test(
+      lower,
+    ) &&
+    !extractOrderNumberFromSpeech(input.userMessage)
+  ) {
+    if (input.session) {
+      input.session.phase = "awaiting_order_number";
+      input.session.awaitingInput = "order_number";
+    }
+    return {
+      speech: buildClarifyingResponse(),
+      toolExecutions: [],
+      responseType: "clarification_question",
+    };
+  }
+
+  return {
+    speech: softFallback(input.userMessage),
+    toolExecutions: [],
+    responseType: "general_help",
+  };
+}
+
 /** Caller signals they have an order number but hasn't spoken digits yet. */
 function interceptGreetingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
   if (!isSocialGreetingUtterance(input.userMessage)) return null;
@@ -799,15 +855,24 @@ export async function* runLlmAgentTurnEvents(
   input: LlmAgentTurnInput,
 ): AsyncGenerator<LlmAgentTurnEvent> {
   if (turnOverride) {
-    const result = await turnOverride(input);
-    if (result.toolExecutions.length > 0) {
-      yield {
-        type: "tool_pending",
-        tools: result.toolExecutions.map((exec) => exec.tool),
-      };
+    try {
+      const result = await turnOverride(input);
+      if (result.toolExecutions.length > 0) {
+        yield {
+          type: "tool_pending",
+          tools: result.toolExecutions.map((exec) => exec.tool),
+        };
+      }
+      yield { type: "result", result };
+      return;
+    } catch (err) {
+      logger.warn("llm_agent_turn_override_failed", {
+        callSid: input.callSid.slice(0, 8),
+        error: err instanceof Error ? err.message : String(err),
+      });
+      yield { type: "result", result: resolveDeterministicTurnFallback(input) };
+      return;
     }
-    yield { type: "result", result };
-    return;
   }
 
   const forcedOrderNumber = detectOrderNumberForForcedLookup(input);
@@ -1122,11 +1187,7 @@ export async function* runLlmAgentTurnEvents(
 
   yield {
     type: "result",
-    result: {
-      speech: LLM_FALLBACK_SPEECH,
-      toolExecutions,
-      responseType: "general_help",
-    },
+    result: resolveDeterministicTurnFallback(input),
   };
 }
 
@@ -1143,11 +1204,5 @@ export async function runLlmAgentTurn(
     }
   }
 
-  return (
-    last ?? {
-      speech: LLM_FALLBACK_SPEECH,
-      toolExecutions: [],
-      responseType: "general_help",
-    }
-  );
+  return last ?? resolveDeterministicTurnFallback(input);
 }

@@ -14,12 +14,11 @@ import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator
 import type { CallSession } from "../src/types/order.js";
 
 describe("activeSession spatial index", () => {
-  it("builds index entries for each tracking character", () => {
+  it("builds digit-only spatial index (letters stripped from carrier IDs)", () => {
     expect(buildSpatialIndexFromTracking("1Z39")).toEqual([
       { index: 0, digit: "1" },
-      { index: 1, digit: "Z" },
-      { index: 2, digit: "3" },
-      { index: 3, digit: "9" },
+      { index: 1, digit: "3" },
+      { index: 2, digit: "9" },
     ]);
   });
 
@@ -46,7 +45,7 @@ describe("spatialDictation", () => {
   it("resumes dictation after latest anchor", () => {
     const index = buildSpatialIndexFromTracking("139415");
     const speech = buildSpatialResumeSpeech(index, ["3", "9"], "139415");
-    expect(speech).toMatch(/following digits are/i);
+    expect(speech).toMatch(/the digits are/i);
     expect(speech).toMatch(/Four\./);
   });
 });

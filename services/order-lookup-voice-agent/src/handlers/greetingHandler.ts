@@ -8,6 +8,7 @@ export function isSocialGreetingUtterance(speech?: string): boolean {
   const text = (speech ?? "").trim();
   if (!text) return false;
   if (SOCIAL_GREETING_RE.test(text)) return true;
+  if (/^(hi|hello|hey)\b/i.test(text) && HOW_ARE_YOU_RE.test(text)) return true;
   if (HOW_ARE_YOU_RE.test(text)) return true;
   if (/\bhow'?s\s+it\s+going\b/i.test(text)) return true;
   if (/\b(good\s+morning|good\s+afternoon|good\s+evening)\b/i.test(text)) return true;
