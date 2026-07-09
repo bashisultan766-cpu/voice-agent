@@ -7,32 +7,90 @@ import { applyCallerVerificationFromOrder } from "./callerVerification.js";
 
 export type DisclosureTier = "public" | "vault";
 
-const PUBLIC_FIELDS = new Set([
-  "status",
-  "fulfillment_status",
-  "refund_status",
-  "tracking_number",
-  "tracking_id",
-  "masked_email",
-  "masked_phone",
-  "notification_destination",
+/** Canonical order fields for permission checks — single source of truth. */
+export type OrderRevealField =
+  | "orderNumber"
+  | "orderStatus"
+  | "fulfillmentStatus"
+  | "trackingNumber"
+  | "trackingCompany"
+  | "itemTitle"
+  | "itemQuantity"
+  | "itemPrice"
+  | "subtotalAmount"
+  | "shippingFee"
+  | "totalAmount"
+  | "paymentStatus"
+  | "paymentGateway"
+  | "notificationDestinationMasked"
+  | "previousOrderCount"
+  | "shippingAddress"
+  | "fullCustomerPhone"
+  | "fullCustomerEmail"
+  | "customerName"
+  | "fullPreviousOrderHistory"
+  | "monthWiseOrderHistory"
+  | "historicalOrderDetails"
+  | "paymentCardLast4";
+
+const PUBLIC_REVEAL_FIELDS = new Set<OrderRevealField>([
+  "orderNumber",
+  "orderStatus",
+  "fulfillmentStatus",
+  "trackingNumber",
+  "trackingCompany",
+  "itemTitle",
+  "itemQuantity",
+  "itemPrice",
+  "subtotalAmount",
+  "shippingFee",
+  "totalAmount",
+  "paymentStatus",
+  "paymentGateway",
+  "notificationDestinationMasked",
+  "previousOrderCount",
 ]);
 
-const VAULT_ONLY_FIELDS = new Set([
-  "shipping_address",
-  "billing_address",
-  "full_email",
-  "customer_email",
-  "customer_name",
-  "payment_method",
-  "card_last4",
-  "order_history",
-  "line_items",
-  "physical_items",
-  "total_amount",
-  "subtotal_amount",
-  "shipping_amount",
-]);
+/** Field-by-field disclosure — non-verified callers receive public fields only. */
+export function canRevealOrderField(
+  fieldName: OrderRevealField,
+  isVerifiedCaller: boolean,
+): boolean {
+  if (PUBLIC_REVEAL_FIELDS.has(fieldName)) return true;
+  return isVerifiedCaller;
+}
+
+const LEGACY_KEY_TO_REVEAL_FIELD: Record<string, OrderRevealField> = {
+  status: "orderStatus",
+  fulfillment_status: "fulfillmentStatus",
+  refund_status: "paymentStatus",
+  tracking_number: "trackingNumber",
+  tracking_id: "trackingNumber",
+  tracking_company: "trackingCompany",
+  masked_email: "notificationDestinationMasked",
+  masked_phone: "notificationDestinationMasked",
+  notification_destination: "notificationDestinationMasked",
+  line_items: "itemTitle",
+  physical_items: "itemTitle",
+  item_title: "itemTitle",
+  item_quantity: "itemQuantity",
+  item_price: "itemPrice",
+  subtotal_amount: "subtotalAmount",
+  shipping_amount: "shippingFee",
+  total_amount: "totalAmount",
+  payment_status: "paymentStatus",
+  payment_gateway: "paymentGateway",
+  payment_method: "paymentGateway",
+  previous_order_count: "previousOrderCount",
+  order_history: "fullPreviousOrderHistory",
+  shipping_address: "shippingAddress",
+  billing_address: "shippingAddress",
+  full_email: "fullCustomerEmail",
+  customer_email: "fullCustomerEmail",
+  customer_name: "customerName",
+  card_last4: "paymentCardLast4",
+  payment_method_last4: "paymentCardLast4",
+};
 
 /** Compare Twilio caller ID to Shopify customer phone — sets session.isVerifiedCaller. */
 export function runVerificationGate(
@@ -52,9 +110,9 @@ export function isFieldAuthorizedForCaller(
   fieldKey: string,
 ): boolean {
   const key = fieldKey.trim().toLowerCase();
-  if (PUBLIC_FIELDS.has(key)) return true;
-  if (VAULT_ONLY_FIELDS.has(key)) {
-    return session.isVerifiedCaller === true;
+  const revealField = LEGACY_KEY_TO_REVEAL_FIELD[key];
+  if (revealField) {
+    return canRevealOrderField(revealField, session.isVerifiedCaller === true);
   }
   return session.isVerifiedCaller === true;
 }

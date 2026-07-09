@@ -14,13 +14,17 @@ describe("orderContextPrivacy", () => {
         customer_email: "jamaica@example.com",
         shipping_address: "123 Main St",
         physical_items: [{ title: "Book" }],
+        total_amount: "$42.00",
+        shipping_amount: "$4.99",
         events: ["placed"],
       },
       false,
     );
     expect(filtered.customer_name).toBeNull();
     expect(filtered.shipping_address).toBeNull();
-    expect(filtered.physical_items).toBeNull();
+    expect(filtered.physical_items).toEqual([{ title: "Book" }]);
+    expect(filtered.total_amount).toBe("$42.00");
+    expect(filtered.shipping_amount).toBe("$4.99");
     expect(filtered.events).toBeNull();
     expect(filtered.masked_notification_email).toBe("...@example.com");
     expect(filtered.privacy_tier).toBe("unverified");

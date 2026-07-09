@@ -147,6 +147,9 @@ describe("verification-first protocol", () => {
     });
     expect(isFieldAuthorizedForCaller(unverifiedSession, "shipping_address")).toBe(false);
     expect(isFieldAuthorizedForCaller(unverifiedSession, "tracking_number")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "line_items")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "total_amount")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "shipping_amount")).toBe(true);
     expect(maskEmailForUnverified("user@gmail.com")).toBe("...@gmail.com");
     expect(maskPhoneForUnverified("+15551234567")).toBe("*** *** 4567");
   });

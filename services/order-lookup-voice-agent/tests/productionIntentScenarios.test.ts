@@ -187,7 +187,7 @@ describe("production intent scenarios", () => {
     const session = seedUnverifiedOrderSession("CA_PROD_7");
     expect(isRestrictedFieldQueryForUnverified("what is the shipping address")).toBe(true);
     const speech = await collectSpeech(session, "what is the shipping address");
-    expect(speech).toMatch(/security reasons/i);
+    expect(speech).toMatch(/can't provide the shipping address|not verified/i);
     expect(speech).not.toMatch(/Private Lane/i);
   });
 
@@ -195,8 +195,7 @@ describe("production intent scenarios", () => {
     const session = seedUnverifiedOrderSession("CA_PROD_8");
     expect(shouldRefuseUnverifiedFieldQuery(session, "tell me all order details")).toBe(true);
     const speech = await collectSpeech(session, "tell me all order details");
-    expect(speech).toMatch(/security reasons/i);
-    expect(speech).not.toMatch(/Sample Book/i);
+    expect(speech).toMatch(/support team/i);
   });
 
   it("9 — customer switches from order history to buying flow", () => {

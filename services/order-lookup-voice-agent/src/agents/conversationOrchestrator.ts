@@ -222,6 +222,7 @@ import type { ActiveOrderContextData } from "./sessionManager.js";
 import {
   filterOrderContextForVerification,
   isRestrictedFieldQueryForUnverified,
+  buildUnverifiedShippingAddressRefusal,
 } from "./orderContextPrivacy.js";
 import { resolveDisclosureFieldFromUtterance } from "./responsePolicy.js";
 import {
@@ -1067,9 +1068,11 @@ async function* runOrchestratorTurnCore(
         requested,
         "Unverified caller requested vault-protected order information.",
       );
-      const refusal = buildUnverifiedRefusalWithSupportOffer(
-        String(session.currentOrderData?.customer_name ?? ""),
-      );
+      const refusal = /\b(shipping\s+address|delivery\s+address)\b/i.test(text)
+        ? buildUnverifiedShippingAddressRefusal()
+        : buildUnverifiedRefusalWithSupportOffer(
+            String(session.currentOrderData?.customer_name ?? ""),
+          );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, text);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
         responseType: "general_help",
@@ -1517,9 +1520,11 @@ async function* handleFollowUpPhase(
         requested,
         "Unverified caller requested vault-protected order information.",
       );
-      const refusal = buildUnverifiedRefusalWithSupportOffer(
-        String(session.currentOrderData?.customer_name ?? ""),
-      );
+      const refusal = /\b(shipping\s+address|delivery\s+address)\b/i.test(text)
+        ? buildUnverifiedShippingAddressRefusal()
+        : buildUnverifiedRefusalWithSupportOffer(
+            String(session.currentOrderData?.customer_name ?? ""),
+          );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, callerText);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
         responseType: "general_help",

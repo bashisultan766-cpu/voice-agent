@@ -92,7 +92,7 @@ export function buildUnverifiedOrderHistorySpeech(orderCount: number): string {
     return "I do not see any previous orders on file for this customer.";
   }
   const label = count === 1 ? "1 previous order" : `${count} previous orders`;
-  return `This customer has ${label}, but I can only share detailed order history with a verified caller.`;
+  return `You have ${label}, but I can't provide detailed order history unless the caller number matches the Shopify customer phone number.`;
 }
 
 function spokenMonthLabels(monthYears: string[]): string {

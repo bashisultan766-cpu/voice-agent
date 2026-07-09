@@ -126,7 +126,7 @@ describe("order detail builder", () => {
       "what is the shipping address",
       session.currentOrderData as any,
     );
-    expect(speech).toMatch(/support team/i);
+    expect(speech).toMatch(/can't provide the shipping address/i);
   });
 });
 
