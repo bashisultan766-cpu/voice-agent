@@ -2,24 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { CallSession } from "../src/types/order.js";
 import { executeLlmTool } from "../src/adapters/llmToolExecutor.js";
 
-const { mockCreateShopifyDraftOrder, mockSendCheckoutEmail } = vi.hoisted(() => ({
-  mockCreateShopifyDraftOrder: vi.fn(),
-  mockSendCheckoutEmail: vi.fn(),
+const { mockSendCheckoutPaymentLink } = vi.hoisted(() => ({
+  mockSendCheckoutPaymentLink: vi.fn(),
 }));
 
-vi.mock("../src/adapters/shopifyStorefrontAdapter.js", () => ({
-  createShopifyDraftOrder: mockCreateShopifyDraftOrder,
-  getOrderStatus: vi.fn(),
-  searchByISBN: vi.fn(),
-  searchByTitle: vi.fn(),
-}));
-
-vi.mock("../src/utils/resendEmailService.js", () => ({
-  isResendAvailable: vi.fn(() => true),
-  // Simple RFC-ish validation for unit tests.
-  isValidCustomerEmail: vi.fn((email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
-  sendCheckoutEmail: mockSendCheckoutEmail,
-  sendSupportEscalation: vi.fn(),
+vi.mock("../src/services/checkoutEmailService.js", () => ({
+  sendCheckoutPaymentLink: mockSendCheckoutPaymentLink,
+  PAYMENT_LINK_SUCCESS_SPEECH:
+    "Your payment link has been sent successfully. Please check your inbox.",
 }));
 
 describe("send_checkout_email tool execution", () => {
@@ -53,8 +43,7 @@ describe("send_checkout_email tool execution", () => {
     expect(record.ok).toBe(false);
     expect(record.status).toBe("blocked");
     expect(record.errorMessage).toMatch(/Valid customer email/i);
-    expect(mockCreateShopifyDraftOrder).not.toHaveBeenCalled();
-    expect(mockSendCheckoutEmail).not.toHaveBeenCalled();
+    expect(mockSendCheckoutPaymentLink).not.toHaveBeenCalled();
   });
 
   it("blocks on empty cart", async () => {
@@ -78,19 +67,19 @@ describe("send_checkout_email tool execution", () => {
     expect(record.ok).toBe(false);
     expect(record.status).toBe("empty");
     expect(record.errorMessage).toMatch(/Cart is empty/i);
-    expect(mockCreateShopifyDraftOrder).not.toHaveBeenCalled();
+    expect(mockSendCheckoutPaymentLink).not.toHaveBeenCalled();
   });
 
   it("creates draft + sends checkout email on success", async () => {
-    vi.mocked(mockCreateShopifyDraftOrder).mockResolvedValue({
-      success: true,
-      status: "found",
-      invoiceUrl: "https://checkout.example/invoice/abc",
-      draftOrderName: "#DO-123",
-    });
-    vi.mocked(mockSendCheckoutEmail).mockResolvedValue({
-      ok: true,
-      messageId: "msg_1",
+    vi.mocked(mockSendCheckoutPaymentLink).mockImplementation(async (session) => {
+      session.pendingInvoiceUrl = "https://checkout.example/invoice/abc";
+      session.paymentLinkSent = true;
+      session.paymentLinkSentTo = "jane@example.com";
+      return {
+        ok: true,
+        message: "Your payment link has been sent successfully. Please check your inbox.",
+        invoiceUrl: "https://checkout.example/invoice/abc",
+      };
     });
 
     const session = {
@@ -122,9 +111,7 @@ describe("send_checkout_email tool execution", () => {
     expect(record.ok).toBe(true);
     expect(record.status).toBe("sent");
     expect(session.pendingInvoiceUrl).toBe("https://checkout.example/invoice/abc");
-    expect(session.pendingDraftOrderName).toBe("#DO-123");
-    expect(mockCreateShopifyDraftOrder).toHaveBeenCalledTimes(1);
-    expect(mockSendCheckoutEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendCheckoutPaymentLink).toHaveBeenCalledTimes(1);
   });
 });
 

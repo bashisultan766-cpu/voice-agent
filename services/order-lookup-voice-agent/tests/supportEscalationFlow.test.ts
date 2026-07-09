@@ -5,8 +5,10 @@ import { applyCallerVerificationFromOrder } from "../src/agents/callerVerificati
 import {
   armPrivateInfoBlockedEscalation,
   getSupportEscalationState,
+  getSupportEscalationEmailState,
   resolveSupportEscalationTurn,
 } from "../src/agents/supportEscalationFlow.js";
+import { resolveEmailConfirmationTurn } from "../src/agents/emailConfirmationManager.js";
 import {
   buildEmailConfirmationSpeech,
   extractEmailFromSpeech,
@@ -101,8 +103,8 @@ describe("support escalation flow", () => {
     const session = seedUnverifiedOrderSession("CA_ESC_2");
     await collectSpeech(session, "what is the shipping address");
     const speech = await collectSpeech(session, "yes, forward it to support");
-    expect(getSupportEscalationState(session)).toBe("support_escalation_pending_email");
-    expect(speech).toMatch(/email address should our support team/i);
+    expect(getSupportEscalationEmailState(session)).toBe("support_escalation_pending_email");
+    expect(speech).toMatch(/email address should we use|support team/i);
     expect(speech).not.toMatch(/tracking/i);
   });
 
@@ -114,7 +116,7 @@ describe("support escalation flow", () => {
       session,
       "Bashi Sahab sixty four at gmail dot com",
     );
-    expect(getSupportEscalationState(session)).toBe(
+    expect(getSupportEscalationEmailState(session)).toBe(
       "support_escalation_pending_email_confirmation",
     );
     expect(speech).toMatch(/bashisahab64|B-A-S-H/i);
@@ -134,7 +136,7 @@ describe("support escalation flow", () => {
     const speech = await collectSpeech(session, "yes, correct");
     expect(sendSpy).toHaveBeenCalled();
     expect(getSupportEscalationState(session)).toBe("support_escalation_submitted");
-    expect(speech).toMatch(/forwarded your request to our support team/i);
+    expect(speech).toMatch(/forwarded to our support team.*check your inbox/i);
   });
 
   it("5 — incorrect email confirmation asks again without tracking pivot", async () => {
@@ -143,7 +145,7 @@ describe("support escalation flow", () => {
     await collectSpeech(session, "yes forward it");
     await collectSpeech(session, "bashisahab64 at gmail dot com");
     const speech = await collectSpeech(session, "no that is wrong");
-    expect(getSupportEscalationState(session)).toBe("support_escalation_pending_email");
+    expect(getSupportEscalationEmailState(session)).toBe("support_escalation_pending_email");
     expect(speech).toMatch(/email address/i);
     expect(speech).not.toMatch(/tracking|notepad/i);
   });
@@ -151,7 +153,7 @@ describe("support escalation flow", () => {
   it("6 — identity claim from another phone starts escalation", async () => {
     const session = seedUnverifiedOrderSession("CA_ESC_6");
     const speech = await collectSpeech(session, "I am calling from another phone");
-    expect(getSupportEscalationState(session)).toBe("support_escalation_pending_email");
+    expect(getSupportEscalationEmailState(session)).toBe("support_escalation_pending_email");
     expect(speech).toMatch(/forward your details to our support team/i);
     expect(speech).not.toMatch(/shipping address|Private/i);
   });
@@ -161,7 +163,7 @@ describe("support escalation flow", () => {
     await collectSpeech(session, "what is the shipping address");
     await collectSpeech(session, "yes forward to support");
     const speech = await collectSpeech(session, "my tracking number is 12345");
-    expect(getSupportEscalationState(session)).toBe("support_escalation_pending_email");
+    expect(getSupportEscalationEmailState(session)).toBe("support_escalation_pending_email");
     expect(speech).toMatch(/finish your support request first/i);
     expect(speech).not.toMatch(/notepad|pen and/i);
   });
@@ -175,10 +177,10 @@ describe("support escalation flow", () => {
     );
 
     await resolveSupportEscalationTurn(session, "yes forward to support");
-    expect(getSupportEscalationState(session)).toBe("support_escalation_pending_email");
+    expect(getSupportEscalationEmailState(session)).toBe("support_escalation_pending_email");
 
-    await resolveSupportEscalationTurn(session, "bashisahab64 at gmail dot com");
-    expect(getSupportEscalationState(session)).toBe(
+    await resolveEmailConfirmationTurn(session, "bashisahab64 at gmail dot com");
+    expect(getSupportEscalationEmailState(session)).toBe(
       "support_escalation_pending_email_confirmation",
     );
     expect(buildEmailConfirmationSpeech("bashisahab64@gmail.com")).toMatch(/Is that correct/i);
@@ -187,8 +189,8 @@ describe("support escalation flow", () => {
       ok: true,
       messageId: "msg_esc_8",
     });
-    await resolveSupportEscalationTurn(session, "yes correct");
-    expect(getSupportEscalationState(session)).toBe("support_escalation_submitted");
+    await resolveEmailConfirmationTurn(session, "yes correct");
+    expect(getSupportEscalationEmailState(session)).toBe("support_escalation_submitted");
   });
 
   it("extracts typed email directly", () => {

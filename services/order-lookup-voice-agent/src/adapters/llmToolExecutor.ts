@@ -5,7 +5,6 @@ import {
   getCustomerHistory,
   searchByISBN,
   searchByTitle,
-  createShopifyDraftOrder,
   type BookAvailabilityResult,
   type CustomerHistoryResult,
   type OrderStatusResult,
@@ -18,6 +17,7 @@ import {
   removeFromCart,
   setCartLineQuantity,
 } from "../agents/cartManager.js";
+import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
 import { runVerificationGate } from "../agents/verificationGate.js";
 import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
@@ -25,7 +25,6 @@ import type { CallSession } from "../types/order.js";
 import {
   isResendAvailable,
   isValidCustomerEmail,
-  sendCheckoutEmail,
   sendSupportEscalation,
 } from "../utils/resendEmailService.js";
 import {
@@ -376,106 +375,34 @@ export async function executeLlmTool(
       };
     }
 
-    const cartValidationError = validateCartForCheckout(summary.items);
-    if (cartValidationError) {
-      return {
-        tool,
-        args: { customerEmail, customerName },
-        ok: false,
-        status: "blocked",
-        errorMessage: cartValidationError,
-        elapsedMs: Date.now() - started,
-      };
+    const result = await sendCheckoutPaymentLink(session, customerEmail, customerName);
+    let status: "sent" | "blocked" | "empty" | "error" | "failed" = result.ok ? "sent" : "failed";
+    if (!result.ok) {
+      if (/valid customer email/i.test(result.message)) status = "blocked";
+      else if (/cart is empty/i.test(result.message)) status = "empty";
+      else if (/not configured/i.test(result.message)) status = "error";
     }
+    const data: CheckoutEmailToolResult = {
+      status: result.ok ? "sent" : "failed",
+      invoice_url: result.invoiceUrl,
+      message: result.message,
+      reason: result.ok ? undefined : result.message,
+      instructions: result.ok
+        ? undefined
+        : result.invoiceUrl
+          ? "Email delivery failed but invoice_url is valid — read the checkout link aloud or offer to retry email."
+          : undefined,
+    };
 
-    if (!isResendAvailable()) {
-      return {
-        tool,
-        args: { customerEmail, customerName },
-        ok: false,
-        status: "error",
-        errorMessage: "Email service is not configured.",
-        elapsedMs: Date.now() - started,
-      };
-    }
-
-    try {
-      const draft = await createShopifyDraftOrder(
-        summary.items.map((line) => ({
-          quantity: line.quantity,
-          variantId: line.variantId.startsWith("custom:") ? undefined : line.variantId,
-          title: line.title,
-          originalUnitPrice: line.unitPrice ?? line.price,
-        })),
-        customerEmail,
-        customerName,
-        callSid,
-      );
-
-      if (!draft.success || !draft.invoiceUrl) {
-        const reason = draft.error ?? draft.message ?? "Could not create checkout link.";
-        const data: CheckoutEmailToolResult = {
-          status: "failed",
-          reason,
-          message: reason,
-        };
-        return {
-          tool,
-          args: { customerEmail, customerName },
-          ok: false,
-          status: draft.status === "throttled" ? "throttled" : "failed",
-          errorMessage: reason,
-          data,
-          elapsedMs: Date.now() - started,
-        };
-      }
-
-      session.pendingInvoiceUrl = draft.invoiceUrl;
-      session.pendingDraftOrderName = draft.draftOrderName;
-
-      const emailResult = await sendCheckoutEmail(
-        customerEmail,
-        customerName,
-        draft.invoiceUrl,
-        summary.items,
-      );
-
-      const data: CheckoutEmailToolResult = {
-        status: emailResult.ok ? "sent" : "error",
-        invoice_url: draft.invoiceUrl,
-        draft_order_name: draft.draftOrderName,
-        message: emailResult.ok
-          ? "Checkout email sent successfully."
-          : emailResult.error ?? "Could not send checkout email.",
-        instructions: emailResult.ok
-          ? undefined
-          : "Email delivery failed but invoice_url is valid — read the checkout link aloud or offer to retry email.",
-      };
-
-      if (emailResult.ok) {
-        session.paymentLinkSent = true;
-        session.paymentLinkSentTo = customerEmail;
-      }
-
-      return {
-        tool,
-        args: { customerEmail, customerName },
-        ok: emailResult.ok,
-        status: emailResult.ok ? "sent" : "error",
-        data,
-        errorMessage: emailResult.ok ? undefined : emailResult.error ?? "Could not send checkout email.",
-        elapsedMs: Date.now() - started,
-      };
-    } catch {
-      return {
-        tool,
-        args: { customerEmail, customerName },
-        ok: false,
-        status: "api_error",
-        errorMessage: "Checkout failed. Please try again.",
-        elapsedMs: Date.now() - started,
-      };
-    }
+    return {
+      tool,
+      args: { customerEmail, customerName },
+      ok: result.ok,
+      status,
+      data,
+      errorMessage: result.ok ? undefined : result.message,
+      elapsedMs: Date.now() - started,
+    };
   }
 
   if (tool === "send_support_escalation" && session) {
@@ -1063,20 +990,6 @@ function cartErrorRecord(
     errorMessage: "Cart update failed. Please try again.",
     elapsedMs: Date.now() - started,
   };
-}
-
-function validateCartForCheckout(
-  items: Array<{ title: string; variantId: string; unitPrice?: string; price?: string }>,
-): string | null {
-  for (const line of items) {
-    if (line.variantId.startsWith("custom:") && !(line.unitPrice ?? line.price)) {
-      return `Missing unit_price for custom cart line "${line.title}".`;
-    }
-    if (!line.variantId.startsWith("custom:") && !line.variantId.startsWith("gid://shopify/ProductVariant/")) {
-      return `Invalid Shopify variant on "${line.title}" — checkout blocked until variant is corrected.`;
-    }
-  }
-  return null;
 }
 
 function buildEscalationIssueSummary(

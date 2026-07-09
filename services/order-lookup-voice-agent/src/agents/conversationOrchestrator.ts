@@ -229,6 +229,11 @@ import {
   buildUnverifiedRefusalWithSupportOffer,
   resolveSupportEscalationTurn,
 } from "./supportEscalationFlow.js";
+import {
+  resolveEmailConfirmationTurn,
+} from "./emailConfirmationManager.js";
+import { resolvePaymentCheckoutTurn } from "./paymentCheckoutFlow.js";
+import { buildOrderDetailSpeech } from "./orderDetailBuilder.js";
 import { getCustomerHistory } from "../adapters/shopifyStorefrontAdapter.js";
 import {
   buildMonthDrillDownSpeech,
@@ -374,6 +379,41 @@ function exitTrackingHandshakeForOrderQuery(callSid: string): void {
   }
 }
 
+async function* yieldEmailConfirmationTurnIfActive(
+  session: CallSession,
+  callerText: string,
+): AsyncGenerator<AgentStreamEvent, boolean> {
+  const turn = await resolveEmailConfirmationTurn(session, callerText);
+  if (!turn.handled) return false;
+
+  exitTrackingHandshakeForOrderQuery(session.callSid);
+  const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, turn.speech, callerText);
+  syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+    responseType: "general_help",
+  });
+  session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+  yield* yieldSpeech(uniqueSpeech);
+  yield doneEvent(session.phase);
+  return true;
+}
+
+async function* yieldPaymentCheckoutTurnIfActive(
+  session: CallSession,
+  callerText: string,
+): AsyncGenerator<AgentStreamEvent, boolean> {
+  const turn = resolvePaymentCheckoutTurn(session, callerText);
+  if (!turn.handled) return false;
+
+  const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, turn.speech, callerText);
+  syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+    responseType: "payment",
+  });
+  session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+  yield* yieldSpeech(uniqueSpeech);
+  yield doneEvent(session.phase);
+  return true;
+}
+
 async function* yieldSupportEscalationTurnIfActive(
   session: CallSession,
   callerText: string,
@@ -398,6 +438,13 @@ function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
     raw as ActiveOrderContextData,
     session.isVerifiedCaller === true,
   );
+}
+
+function buildOrderFieldSpeech(session: CallSession, callerText: string): string | null {
+  const context = verifiedOrderContext(session);
+  const detailSpeech = buildOrderDetailSpeech(session, callerText, context);
+  if (detailSpeech) return detailSpeech;
+  return buildOrderFieldQuerySpeech(callerText, context);
 }
 
 async function resolveOrderHistorySpeech(
@@ -571,7 +618,7 @@ function tryResolveTrackingCompletionTurn(
   session.phase = "follow_up";
   session.awaitingInput = null;
 
-  const fieldAnswer = buildOrderFieldQuerySpeech(text, verifiedOrderContext(session));
+  const fieldAnswer = buildOrderFieldSpeech(session, text);
   if (fieldAnswer) {
     return {
       handled: true,
@@ -938,7 +985,15 @@ async function* runOrchestratorTurnCore(
   const text = (callerText ?? "").trim();
   ingestUserTurn(session.callSid, text);
 
+  if (yield* yieldEmailConfirmationTurnIfActive(session, text)) {
+    return;
+  }
+
   if (yield* yieldSupportEscalationTurnIfActive(session, text)) {
+    return;
+  }
+
+  if (yield* yieldPaymentCheckoutTurnIfActive(session, text)) {
     return;
   }
 
@@ -1026,7 +1081,7 @@ async function* runOrchestratorTurnCore(
     }
 
     const fieldSpeech = appendProtocolClosing(
-      buildOrderFieldQuerySpeech(text, verifiedOrderContext(session)) ?? "",
+      buildOrderFieldSpeech(session, text) ?? "",
     );
     if (fieldSpeech.trim()) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
@@ -1414,7 +1469,15 @@ async function* handleFollowUpPhase(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  if (yield* yieldEmailConfirmationTurnIfActive(session, callerText)) {
+    return;
+  }
+
   if (yield* yieldSupportEscalationTurnIfActive(session, callerText)) {
+    return;
+  }
+
+  if (yield* yieldPaymentCheckoutTurnIfActive(session, callerText)) {
     return;
   }
 
@@ -1468,7 +1531,7 @@ async function* handleFollowUpPhase(
     }
 
     const fieldSpeech = appendProtocolClosing(
-      buildOrderFieldQuerySpeech(callerText, verifiedOrderContext(session)) ?? "",
+      buildOrderFieldSpeech(session, callerText) ?? "",
     );
     if (fieldSpeech.trim()) {
       exitTrackingHandshakeForOrderQuery(session.callSid);

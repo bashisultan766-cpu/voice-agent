@@ -1,15 +1,15 @@
 /**
- * Support escalation state machine — locks intent during email capture/confirmation.
+ * Support escalation state machine — locks intent during escalation.
+ * Email capture/confirmation delegates to the central Email Confirmation Engine.
  */
 import type { CallSession } from "../types/order.js";
 import { logger } from "../utils/logger.js";
 import {
-  buildEmailConfirmationSpeech,
-  extractEmailFromSpeech,
-  isEmailConfirmation,
-  isEmailRejection,
-  looksLikePartialEmail,
-} from "../utils/emailCapture.js";
+  buildEmailCapturePrompt,
+  isEmailConfirmationActive,
+  registerEmailWorkflowExecutor,
+  startEmailCapture,
+} from "./emailConfirmationManager.js";
 import {
   isResendAvailable,
   isValidCustomerEmail,
@@ -22,29 +22,20 @@ import { isSupportEscalationRequest } from "./callerIntent.js";
 export type SupportEscalationState =
   | "normal"
   | "non_verified_private_info_blocked"
-  | "support_escalation_pending_email"
-  | "support_escalation_pending_email_confirmation"
   | "support_escalation_submitted";
 
 export interface SupportEscalationContext {
   state: SupportEscalationState;
   requestedInfo: string;
   escalationReason: string;
-  pendingEmail?: string;
-  transcriptSnippets: string[];
+  issueDescription?: string;
 }
-
-const ASK_EMAIL_SPEECH =
-  "What email address should our support team use to contact you? Please say it clearly, for example, your name at gmail dot com.";
-
-const ASK_EMAIL_AGAIN_SPEECH =
-  "I did not catch a complete email address. Please say your full email again slowly, including at and dot com.";
 
 const FORWARD_TO_SUPPORT_SPEECH =
   "I understand. Let me forward your details to our support team so they can securely verify you and follow up.";
 
 const SUCCESS_SPEECH =
-  "Thank you. I've forwarded your request to our support team. They will review the verification issue and follow up with you.";
+  "Your request has been forwarded to our support team. Please check your inbox. Our team will contact you soon.";
 
 const FINISH_SUPPORT_FIRST_SPEECH =
   "I'll finish your support request first. After that, I can help with tracking or other order questions.";
@@ -58,7 +49,6 @@ function ensureEscalation(session: CallSession): SupportEscalationContext {
       state: "normal",
       requestedInfo: "protected information",
       escalationReason: "Caller needs human support follow-up.",
-      transcriptSnippets: [],
     };
   }
   return session.supportEscalation;
@@ -68,30 +58,33 @@ export function getSupportEscalationState(session?: CallSession): SupportEscalat
   return session?.supportEscalation?.state ?? "normal";
 }
 
+/** Maps support + email-confirmation phases for observability and tests. */
+export function getSupportEscalationEmailState(session?: CallSession): string {
+  const supportState = getSupportEscalationState(session);
+  if (supportState === "support_escalation_submitted") return supportState;
+  const email = session?.emailConfirmation;
+  if (email?.workflowType === "support_escalation") {
+    if (email.phase === "collect_email") return "support_escalation_pending_email";
+    if (email.phase === "pending_confirmation") return "support_escalation_pending_email_confirmation";
+    if (email.phase === "completed") return "support_escalation_submitted";
+  }
+  return supportState;
+}
+
 export function isSupportEscalationActive(session?: CallSession): boolean {
   const state = getSupportEscalationState(session);
-  return (
-    state === "non_verified_private_info_blocked" ||
-    state === "support_escalation_pending_email" ||
-    state === "support_escalation_pending_email_confirmation"
-  );
+  if (state === "non_verified_private_info_blocked") return true;
+  if (isEmailConfirmationActive(session) && session?.emailConfirmation?.workflowType === "support_escalation") {
+    return true;
+  }
+  return false;
 }
 
 export function isSupportEscalationLocked(session?: CallSession): boolean {
-  const state = getSupportEscalationState(session);
   return (
-    state === "support_escalation_pending_email" ||
-    state === "support_escalation_pending_email_confirmation"
+    isEmailConfirmationActive(session) &&
+    session?.emailConfirmation?.workflowType === "support_escalation"
   );
-}
-
-export function appendEscalationTranscript(session: CallSession, role: "caller" | "agent", text: string): void {
-  const ctx = ensureEscalation(session);
-  const line = `${role}: ${text.trim().slice(0, 240)}`;
-  ctx.transcriptSnippets.push(line);
-  if (ctx.transcriptSnippets.length > 12) {
-    ctx.transcriptSnippets = ctx.transcriptSnippets.slice(-12);
-  }
 }
 
 export function armPrivateInfoBlockedEscalation(
@@ -103,7 +96,7 @@ export function armPrivateInfoBlockedEscalation(
   ctx.state = "non_verified_private_info_blocked";
   ctx.requestedInfo = requestedInfo;
   ctx.escalationReason = escalationReason;
-  ctx.pendingEmail = undefined;
+  ctx.issueDescription = buildIssueDescription(session, requestedInfo, escalationReason);
 }
 
 export function buildUnverifiedRefusalWithSupportOffer(customerName?: string): string {
@@ -142,50 +135,74 @@ export function isIdentityClaimEscalation(text: string): boolean {
   );
 }
 
-function beginPendingEmail(session: CallSession): string {
-  const ctx = ensureEscalation(session);
-  ctx.state = "support_escalation_pending_email";
-  ctx.pendingEmail = undefined;
-  logger.info("support_escalation_pending_email", {
-    callSid: session.callSid.slice(0, 8),
-    requestedInfo: ctx.requestedInfo,
-  });
-  return `${FORWARD_TO_SUPPORT_SPEECH} ${ASK_EMAIL_SPEECH}`;
+function buildIssueDescription(
+  session: CallSession,
+  requestedInfo: string,
+  escalationReason: string,
+): string {
+  const name = String(
+    session.currentOrderData?.customer_name ?? session.currentOrder?.customerName ?? "Customer",
+  ).trim();
+  const orderNum = String(session.currentOrderData?.order_number ?? "").replace(/^#/, "").trim();
+  const verified = session.isVerifiedCaller === true ? "verified" : "non-verified";
+  const phone = session.callerPhone ?? session.from ?? "unknown number";
+  const orderPart = orderNum ? ` for order #${orderNum}` : "";
+  return (
+    `Customer ${name} called from a ${verified} phone number requesting ${requestedInfo}${orderPart}. ` +
+    `${escalationReason} Caller phone: ${phone}.`
+  );
 }
 
-function buildEscalationDetails(session: CallSession): SupportEscalationDetails {
+function buildEscalationDetails(session: CallSession, callbackEmail: string): SupportEscalationDetails {
   const ctx = ensureEscalation(session);
   const orderData = session.currentOrderData ?? {};
-  const conversationSummary = ctx.transcriptSnippets.join(" | ") || "No transcript captured.";
   return {
     customerName: String(orderData.customer_name ?? session.currentOrder?.customerName ?? "").trim(),
-    callbackEmail: ctx.pendingEmail ?? "",
+    callbackEmail,
     callerPhone: session.callerPhone ?? session.from,
     isVerifiedCaller: session.isVerifiedCaller === true,
     orderNumber: String(orderData.order_number ?? "").replace(/^#/, "").trim() || undefined,
     orderEmail: String(orderData.customer_email ?? orderData.order_confirmation_email ?? "").trim() || undefined,
     requestedInfo: ctx.requestedInfo,
     escalationReason: ctx.escalationReason,
-    conversationSummary,
+    issueDescription:
+      ctx.issueDescription ??
+      buildIssueDescription(session, ctx.requestedInfo, ctx.escalationReason),
     recommendedAction:
-      "Contact the caller at the callback email, verify identity, then provide the requested protected order information.",
+      "Please verify the customer and follow up using the confirmed email.",
   };
 }
 
-async function submitSupportEscalation(session: CallSession): Promise<string> {
+async function executeSupportEmail(
+  session: CallSession,
+  confirmedEmail: string,
+): Promise<{ ok: boolean; successSpeech: string; failureSpeech: string }> {
   const ctx = ensureEscalation(session);
-  if (!ctx.pendingEmail || !isValidCustomerEmail(ctx.pendingEmail)) {
-    ctx.state = "support_escalation_pending_email";
-    return ASK_EMAIL_AGAIN_SPEECH;
+  if (!isValidCustomerEmail(confirmedEmail)) {
+    return {
+      ok: false,
+      successSpeech: "",
+      failureSpeech:
+        "I did not catch a complete email address. Please say your full email again slowly, including at and dot com.",
+    };
   }
   if (!isResendAvailable()) {
-    return "I am sorry, but I cannot send the support request email right now. Please call back shortly or email our support team directly.";
+    return {
+      ok: false,
+      successSpeech: "",
+      failureSpeech:
+        "I am sorry, but I cannot send the support request email right now. Please call back shortly or email our support team directly.",
+    };
   }
 
-  const details = buildEscalationDetails(session);
+  const details = buildEscalationDetails(session, confirmedEmail);
   const result = await sendSupportEscalationDetailed(details);
   if (!result.ok) {
-    return "I had trouble sending your request to support. Please say your email again and I will retry.";
+    return {
+      ok: false,
+      successSpeech: "",
+      failureSpeech: "I had trouble sending your request to support. Please say your email again and I will retry.",
+    };
   }
 
   ctx.state = "support_escalation_submitted";
@@ -196,7 +213,29 @@ async function submitSupportEscalation(session: CallSession): Promise<string> {
   logger.info("support_escalation_submitted", {
     callSid: session.callSid.slice(0, 8),
   });
-  return SUCCESS_SPEECH;
+  return { ok: true, successSpeech: SUCCESS_SPEECH, failureSpeech: "" };
+}
+
+let executorsRegistered = false;
+
+export function ensureSupportExecutors(): void {
+  if (executorsRegistered) return;
+  registerEmailWorkflowExecutor("support_escalation", executeSupportEmail);
+  executorsRegistered = true;
+}
+
+function ensureSupportExecutorsInternal(): void {
+  ensureSupportExecutors();
+}
+
+function beginSupportEmailCapture(session: CallSession): string {
+  ensureSupportExecutorsInternal();
+  startEmailCapture(session, "support_escalation");
+  logger.info("support_escalation_pending_email", {
+    callSid: session.callSid.slice(0, 8),
+    requestedInfo: session.supportEscalation?.requestedInfo,
+  });
+  return `${FORWARD_TO_SUPPORT_SPEECH} ${buildEmailCapturePrompt("support_escalation")}`;
 }
 
 /**
@@ -206,11 +245,12 @@ export async function resolveSupportEscalationTurn(
   session: CallSession,
   callerText: string,
 ): Promise<{ handled: true; speech: string } | { handled: false }> {
+  ensureSupportExecutorsInternal();
+
   const text = (callerText ?? "").trim();
   if (!text) return { handled: false };
 
   const ctx = ensureEscalation(session);
-  appendEscalationTranscript(session, "caller", text);
 
   if (ctx.state === "support_escalation_submitted") {
     return { handled: false };
@@ -220,92 +260,31 @@ export async function resolveSupportEscalationTurn(
     return { handled: true, speech: FINISH_SUPPORT_FIRST_SPEECH };
   }
 
+  if (isEmailConfirmationActive(session) && session.emailConfirmation?.workflowType === "support_escalation") {
+    return { handled: false };
+  }
+
   if (ctx.state === "non_verified_private_info_blocked") {
     if (isSupportEscalationAcceptance(text, session) || isSupportEscalationRequest(text)) {
-      const speech = beginPendingEmail(session);
-      appendEscalationTranscript(session, "agent", speech);
-      return { handled: true, speech };
+      return { handled: true, speech: beginSupportEmailCapture(session) };
     }
     return { handled: false };
   }
 
   if (isIdentityClaimEscalation(text) && session.isVerifiedCaller !== true) {
     ctx.requestedInfo = "identity verification from alternate phone";
-    ctx.escalationReason = "Caller claims identity but is not verified on this line.";
-    const speech = beginPendingEmail(session);
-    appendEscalationTranscript(session, "agent", speech);
-    return { handled: true, speech };
+    ctx.escalationReason = "Caller states they are calling from another phone.";
+    ctx.issueDescription = buildIssueDescription(session, ctx.requestedInfo, ctx.escalationReason);
+    return { handled: true, speech: beginSupportEmailCapture(session) };
   }
 
-  if (
-    (isSupportEscalationRequest(text) || (ctx.state === "normal" && isSupportEscalationAcceptance(text, session))) &&
-    ctx.state !== "support_escalation_pending_email" &&
-    ctx.state !== "support_escalation_pending_email_confirmation"
-  ) {
+  if (isSupportEscalationRequest(text) || (ctx.state === "normal" && isSupportEscalationAcceptance(text, session))) {
     if (ctx.state === "normal") {
       ctx.requestedInfo = "general support request";
       ctx.escalationReason = "Caller requested human support.";
+      ctx.issueDescription = buildIssueDescription(session, ctx.requestedInfo, ctx.escalationReason);
     }
-    const speech = beginPendingEmail(session);
-    appendEscalationTranscript(session, "agent", speech);
-    return { handled: true, speech };
-  }
-
-  if (ctx.state === "support_escalation_pending_email") {
-    const email = extractEmailFromSpeech(text);
-    if (email && isValidCustomerEmail(email)) {
-      ctx.pendingEmail = email;
-      ctx.state = "support_escalation_pending_email_confirmation";
-      logger.info("email_extracted", {
-        callSid: session.callSid.slice(0, 8),
-        emailDomain: email.split("@")[1] ?? "unknown",
-      });
-      const speech = buildEmailConfirmationSpeech(email);
-      logger.info("email_confirmation_requested", {
-        callSid: session.callSid.slice(0, 8),
-      });
-      appendEscalationTranscript(session, "agent", speech);
-      return { handled: true, speech };
-    }
-
-    if (looksLikePartialEmail(text)) {
-      const speech = ASK_EMAIL_AGAIN_SPEECH;
-      appendEscalationTranscript(session, "agent", speech);
-      return { handled: true, speech };
-    }
-
-    const speech = ASK_EMAIL_AGAIN_SPEECH;
-    appendEscalationTranscript(session, "agent", speech);
-    return { handled: true, speech };
-  }
-
-  if (ctx.state === "support_escalation_pending_email_confirmation") {
-    if (isEmailRejection(text)) {
-      ctx.state = "support_escalation_pending_email";
-      ctx.pendingEmail = undefined;
-      const speech = ASK_EMAIL_SPEECH;
-      appendEscalationTranscript(session, "agent", speech);
-      return { handled: true, speech };
-    }
-
-    if (isEmailConfirmation(text)) {
-      const speech = await submitSupportEscalation(session);
-      appendEscalationTranscript(session, "agent", speech);
-      return { handled: true, speech };
-    }
-
-    const corrected = extractEmailFromSpeech(text);
-    if (corrected && isValidCustomerEmail(corrected)) {
-      ctx.pendingEmail = corrected;
-      const speech = buildEmailConfirmationSpeech(corrected);
-      appendEscalationTranscript(session, "agent", speech);
-      return { handled: true, speech };
-    }
-
-    const speech =
-      "Please say yes if the email is correct, or no and repeat your email address.";
-    appendEscalationTranscript(session, "agent", speech);
-    return { handled: true, speech };
+    return { handled: true, speech: beginSupportEmailCapture(session) };
   }
 
   return { handled: false };

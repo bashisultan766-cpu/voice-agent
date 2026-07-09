@@ -28,6 +28,7 @@ import {
   isOrderHistoryMonthFollowUp,
   parseMonthFromUtterance,
 } from "./orderHistoryFlow.js";
+import { isEmailConfirmationLocked } from "./emailConfirmationManager.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -117,10 +118,11 @@ function resolveCallerIntentCore(
   if (!text) return "neutral_listen";
 
   const escalationState = session?.supportEscalation?.state;
-  if (
-    escalationState === "support_escalation_pending_email" ||
-    escalationState === "support_escalation_pending_email_confirmation"
-  ) {
+  if (isEmailConfirmationLocked(session)) {
+    const workflow = session?.emailConfirmation?.workflowType;
+    return workflow === "payment_link" ? "cart" : "support_escalation";
+  }
+  if (escalationState === "non_verified_private_info_blocked") {
     return "support_escalation";
   }
 

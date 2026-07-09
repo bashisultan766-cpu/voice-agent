@@ -242,7 +242,7 @@ export async function sendSupportEscalation(
     isVerifiedCaller: false,
     requestedInfo: "support request",
     escalationReason: "Voice agent escalation",
-    conversationSummary: llmSummary,
+    issueDescription: llmSummary,
     recommendedAction: "Follow up with the caller.",
   });
 }
@@ -256,7 +256,7 @@ export interface SupportEscalationDetails {
   orderEmail?: string;
   requestedInfo: string;
   escalationReason: string;
-  conversationSummary: string;
+  issueDescription: string;
   recommendedAction: string;
 }
 
@@ -270,33 +270,29 @@ export async function sendSupportEscalationDetailed(
   const subject = `Voice support escalation — ${details.customerName.trim() || "Caller"} (${verifiedLabel})`;
   const html = `
     <p><strong>Voice agent support escalation</strong></p>
+    <p><strong>Customer name:</strong> ${escapeHtml(details.customerName.trim() || "Not on file")}</p>
     <p><strong>Caller phone (Twilio):</strong> ${escapeHtml(details.callerPhone.trim() || "Not provided")}</p>
-    <p><strong>Verification status:</strong> ${escapeHtml(verifiedLabel)}</p>
+    <p><strong>Confirmed callback email:</strong> ${escapeHtml(details.callbackEmail.trim() || "Not provided")}</p>
     <p><strong>Shopify order number:</strong> ${escapeHtml(details.orderNumber ?? "Not on file")}</p>
-    <p><strong>Customer name on order:</strong> ${escapeHtml(details.customerName.trim() || "Not on file")}</p>
-    <p><strong>Order / account email:</strong> ${escapeHtml(details.orderEmail ?? "Not on file")}</p>
-    <p><strong>Caller callback email:</strong> ${escapeHtml(details.callbackEmail.trim() || "Not provided")}</p>
+    <p><strong>Verification status:</strong> ${escapeHtml(verifiedLabel)}</p>
     <p><strong>Protected information requested:</strong> ${escapeHtml(details.requestedInfo)}</p>
-    <p><strong>Why escalation is needed:</strong> ${escapeHtml(details.escalationReason)}</p>
-    <p><strong>Conversation summary:</strong></p>
-    <p>${escapeHtml(details.conversationSummary)}</p>
-    <p><strong>Recommended support action:</strong> ${escapeHtml(details.recommendedAction)}</p>
+    <p><strong>Issue summary:</strong></p>
+    <p>${escapeHtml(details.issueDescription)}</p>
+    <p><strong>Recommended action:</strong> ${escapeHtml(details.recommendedAction)}</p>
   `;
   const text = [
     "Voice agent support escalation",
+    `Customer name: ${details.customerName.trim() || "Not on file"}`,
     `Caller phone (Twilio): ${details.callerPhone.trim() || "Not provided"}`,
-    `Verification status: ${verifiedLabel}`,
+    `Confirmed callback email: ${details.callbackEmail.trim() || "Not provided"}`,
     `Shopify order number: ${details.orderNumber ?? "Not on file"}`,
-    `Customer name on order: ${details.customerName.trim() || "Not on file"}`,
-    `Order / account email: ${details.orderEmail ?? "Not on file"}`,
-    `Caller callback email: ${details.callbackEmail.trim() || "Not provided"}`,
+    `Verification status: ${verifiedLabel}`,
     `Protected information requested: ${details.requestedInfo}`,
-    `Why escalation is needed: ${details.escalationReason}`,
     "",
-    "Conversation summary:",
-    details.conversationSummary,
+    "Issue summary:",
+    details.issueDescription,
     "",
-    `Recommended support action: ${details.recommendedAction}`,
+    `Recommended action: ${details.recommendedAction}`,
   ].join("\n");
 
   return sendResendEmail({

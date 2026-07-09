@@ -175,6 +175,23 @@ export function clearShoppingCart(session: CallSession): void {
   session.pendingDraftOrderName = undefined;
 }
 
+export function validateCartForCheckout(
+  items: Array<{ title: string; variantId: string; unitPrice?: string; price?: string }>,
+): string | null {
+  for (const line of items) {
+    if (line.variantId.startsWith("custom:") && !(line.unitPrice ?? line.price)) {
+      return `Missing unit_price for custom cart line "${line.title}".`;
+    }
+    if (
+      !line.variantId.startsWith("custom:") &&
+      !line.variantId.startsWith("gid://shopify/ProductVariant/")
+    ) {
+      return `Invalid Shopify variant on "${line.title}" — checkout blocked until variant is corrected.`;
+    }
+  }
+  return null;
+}
+
 export function buildCartContextSystemMessage(session: CallSession): string {
   const summary = getCartSummary(session);
   if (summary.isEmpty) {

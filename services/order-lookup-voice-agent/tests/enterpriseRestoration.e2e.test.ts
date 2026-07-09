@@ -253,7 +253,7 @@ describe("enterprise restoration phase 2 e2e", () => {
     await collectSpeech(session, "jamaica@example.com");
     const escalationSpeech = await collectSpeech(session, "yes that is correct");
     logStep(6, "escalation-sent", session, escalationSpeech);
-    expect(escalationSpeech).toMatch(/forwarded your request to our support team/i);
+    expect(escalationSpeech).toMatch(/forwarded to our support team.*check your inbox/i);
     expect(escalationSpy).toHaveBeenCalled();
     const details = escalationSpy.mock.calls[0]?.[0];
     expect(details?.callerPhone).toMatch(/\+15551234567/);
