@@ -406,7 +406,7 @@ async function* yieldPaymentCheckoutTurnIfActive(
 
   const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, turn.speech, callerText);
   syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
-    responseType: "payment",
+    responseType: "general_help",
   });
   session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
   yield* yieldSpeech(uniqueSpeech);
