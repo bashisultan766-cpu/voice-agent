@@ -33,3 +33,58 @@ export function isCatalogShoppingUtterance(callerText: string): boolean {
   }
   return false;
 }
+
+const CART_ACTION_RE =
+  /\b(?:add\s+(?:\d+|[a-z-]+)\s*(?:more\s+)?cop(?:y|ies)|add\s+(?:it|this|that)(?:\s+to\s+(?:my\s+)?cart)?|make\s+it\s+\d+|change\s+(?:it\s+)?to\s+\d+|set\s+(?:it\s+)?to\s+\d+|remove\s+(?:that|this)\s+book|change\s+quantity\s+to\s+\d+|send\s+(?:me\s+)?(?:a\s+)?payment\s+link|checkout\s+now|pay\s+now)\b/i;
+
+/** True when the caller is changing cart quantity or checkout — not order lookup or support. */
+export function isCartActionUtterance(callerText: string): boolean {
+  const text = callerText.trim();
+  if (!text) return false;
+  if (CART_ACTION_RE.test(text)) return true;
+  if (/\b\d+\s+cop(?:y|ies)\b/i.test(text) && /\b(add|want|need|make)\b/i.test(text)) return true;
+  return false;
+}
+
+const SPOKEN_QTY: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  fifteen: 15,
+  twenty: 20,
+  twentyfive: 25,
+  "twenty-five": 25,
+};
+
+/** Parse spoken quantity from cart commands — e.g. "add 20 copies", "make it ten". */
+export function parseCartQuantityFromSpeech(text: string): number | null {
+  const t = text.trim().toLowerCase();
+  if (!t) return null;
+
+  const digitMatch =
+    t.match(/\b(?:add|want|need|make\s+it|change\s+to|set\s+to)\s+(\d+)\b/) ??
+    t.match(/\b(\d+)\s+cop(?:y|ies)\b/);
+  if (digitMatch?.[1]) {
+    const n = Number.parseInt(digitMatch[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  for (const [word, value] of Object.entries(SPOKEN_QTY)) {
+    if (new RegExp(`\\b${word}\\s+cop(?:y|ies)\\b`).test(t) || new RegExp(`\\badd\\s+${word}\\b`).test(t)) {
+      return value;
+    }
+    if (new RegExp(`\\bmake\\s+it\\s+${word}\\b`).test(t)) {
+      return value;
+    }
+  }
+  return null;
+}

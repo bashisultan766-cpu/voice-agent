@@ -14,6 +14,25 @@ export type BufferedSessionIntent =
 export interface SessionMemoryState {
   initialIntent: BufferedSessionIntent | null;
   pendingGoal: BufferedSessionIntent | null;
+  /** Latest classified intent for the brain. */
+  currentIntent?: string;
+  /** Active workflow label from agent brain. */
+  activeWorkflow?: string;
+  /** Last user utterance (trimmed). */
+  lastUserRequest?: string;
+  /** Open goal the brain is still resolving. */
+  unresolvedUserGoal?: string | null;
+  /** Last successful catalog product memory. */
+  lastProductTitle?: string;
+  lastProductId?: string;
+  lastProductPrice?: string;
+  lastProductIsbn?: string;
+  latestQuantityRequested?: number;
+  lastOrderNumber?: string;
+  verificationStatus?: "verified" | "non_verified";
+  supportEscalationStatus?: string;
+  emailConfirmationStatus?: string;
+  paymentLinkStatus?: string;
 }
 
 const EMPTY: SessionMemoryState = { initialIntent: null, pendingGoal: null };

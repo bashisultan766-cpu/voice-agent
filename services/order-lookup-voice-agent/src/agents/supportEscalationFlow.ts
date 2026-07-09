@@ -16,8 +16,10 @@ import {
   sendSupportEscalationDetailed,
   type SupportEscalationDetails,
 } from "../utils/resendEmailService.js";
-import { isConfirmKeyword } from "./conversationFlowState.js";
+import { isConfirmKeyword, isPurchaseFlowActive } from "./conversationFlowState.js";
 import { isSupportEscalationRequest } from "./callerIntent.js";
+import { isCartActionUtterance, isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
+import { resetEmailConfirmation } from "./emailConfirmationManager.js";
 
 export type SupportEscalationState =
   | "normal"
@@ -87,6 +89,23 @@ export function isSupportEscalationLocked(session?: CallSession): boolean {
   );
 }
 
+/** Cancel armed or in-progress support escalation — user pivoted away. */
+export function cancelSupportEscalation(session: CallSession): void {
+  if (session.supportEscalation) {
+    session.supportEscalation.state = "normal";
+    session.supportEscalation.requestedInfo = "protected information";
+    session.supportEscalation.escalationReason = "Caller pivoted away from support.";
+    session.supportEscalation.issueDescription = undefined;
+  }
+  if (
+    session.emailConfirmation?.workflowType === "support_escalation" &&
+    session.emailConfirmation.phase !== "completed"
+  ) {
+    resetEmailConfirmation(session);
+  }
+  logger.info("support_escalation_cancelled", { callSid: session.callSid.slice(0, 8) });
+}
+
 export function armPrivateInfoBlockedEscalation(
   session: CallSession,
   requestedInfo: string,
@@ -111,6 +130,22 @@ export function isSupportEscalationAcceptance(text: string, session?: CallSessio
   const trimmed = (text ?? "").trim();
   if (!trimmed) return false;
   const state = session?.supportEscalation?.state ?? "normal";
+
+  if (session) {
+    const callSid = session.callSid;
+    if (
+      isPurchaseFlowActive(callSid) ||
+      (session.shoppingCart?.length ?? 0) > 0 ||
+      session.lastCatalogSearch?.variantId
+    ) {
+      if (!/\b(support|forward|escalat|human|representative)\b/i.test(trimmed)) {
+        return false;
+      }
+    }
+    if (isCartActionUtterance(trimmed) || isCatalogShoppingUtterance(trimmed)) {
+      return false;
+    }
+  }
 
   if (/\b(forward\s+(?:it|this|my\s+request)|yes.{0,40}support|support\s+team|please\s+forward)\b/i.test(trimmed)) {
     return true;
@@ -253,6 +288,13 @@ export async function resolveSupportEscalationTurn(
   const ctx = ensureEscalation(session);
 
   if (ctx.state === "support_escalation_submitted") {
+    return { handled: false };
+  }
+
+  if (isCartActionUtterance(text) || isCatalogShoppingUtterance(text)) {
+    if (isSupportEscalationActive(session)) {
+      cancelSupportEscalation(session);
+    }
     return { handled: false };
   }
 

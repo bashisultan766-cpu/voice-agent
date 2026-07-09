@@ -44,6 +44,7 @@ import {
 } from "../utils/orderDataParser.js";
 import { isPhysicalBookLineItem } from "../utils/productLineItems.js";
 import { extractTrackingInfo, isValidTrackingNumber } from "./orderFieldExtractors.js";
+import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
 import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
 import { normalizeShopifyUnitPrice } from "../utils/shopifyMoney.js";
 import { extractSpokenCatalogPrice } from "../agents/catalogShoppingIntent.js";
@@ -1008,7 +1009,8 @@ export async function getOrderStatus(
         const node = findMatchingOrderNode(edges, normalized);
 
         if (node) {
-          return { status: "found" as const, ...mapOrderNode(node) };
+          const enriched = await enrichOrderNodeTimeline(node);
+          return { status: "found" as const, ...mapOrderNode(enriched) };
         }
       }
       return {

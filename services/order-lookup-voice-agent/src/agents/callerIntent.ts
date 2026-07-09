@@ -14,7 +14,7 @@ import {
 import { isUserNotepadReadyIntent, isTrackingDictationPending } from "./dictationTool.js";
 import { isRefundNotificationEmailQuestion, isOrderFieldQuestion } from "./orderFollowUpSpeech.js";
 import { extractTitleFromStt } from "../nlp/entityExtractor.js";
-import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
+import { isCatalogShoppingUtterance, isCartActionUtterance } from "./catalogShoppingIntent.js";
 import {
   hasConfirmedOrderContext,
   isOrderLookupRequestWithoutNumber,
@@ -140,6 +140,8 @@ function resolveCallerIntentCore(
   }
 
   if (session && isProductSearchContextActive(session)) {
+    if (isSupportEscalationRequest(text)) return "support_escalation";
+    if (isCartActionUtterance(text)) return "cart";
     if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text) || isCatalogShoppingUtterance(text)) {
       return "catalog";
     }
@@ -197,10 +199,13 @@ function resolveCallerIntentCore(
 
   if (isCatalogShoppingUtterance(text)) return "catalog";
 
+  if (isCartActionUtterance(text)) return "cart";
+
   if (CART_RE.test(text)) return "cart";
 
   // Active-order follow-ups beat catalog title sniffing ("what is the title on my order").
   if (hasActiveOrderContext(session)) {
+    if (isCartActionUtterance(text)) return "cart";
     if (isOrderFieldQuestion(text, session)) return "order_field_query";
     if (ORDER_HISTORY_RE.test(text) || ORDER_HISTORY_MONTH_RE.test(text)) return "order_history";
   }

@@ -1369,6 +1369,7 @@ export async function* runLlmAgentTurnEvents(
             tool_call_id: call.id,
             content: toolResultForLlm(record, {
               isVerifiedCaller: input.session?.isVerifiedCaller === true,
+              session: input.session,
             }),
           });
         }

@@ -12,6 +12,8 @@ export interface LastCatalogSearch {
   recordedAt: number;
 }
 
+import { getSessionMemory } from "./sessionMemory.js";
+
 export function recordLastCatalogSearch(
   session: CallSession,
   data: BookAvailabilityResult,
@@ -26,6 +28,12 @@ export function recordLastCatalogSearch(
     isbn: data.isbn,
     recordedAt: Date.now(),
   };
+  const memory = getSessionMemory(session);
+  memory.lastProductTitle = title;
+  memory.lastProductId = data.variantId;
+  memory.lastProductPrice = data.price;
+  memory.lastProductIsbn = data.isbn;
+  memory.unresolvedUserGoal = null;
 }
 
 export function buildCatalogTargetSystemMessage(session: CallSession): string | null {

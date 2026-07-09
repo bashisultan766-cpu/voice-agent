@@ -19,6 +19,7 @@ import {
 } from "../agents/cartManager.js";
 import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
+import { shouldSuppressCatalogEscalation } from "../agents/agentBrain.js";
 import { runVerificationGate } from "../agents/verificationGate.js";
 import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
 import type { CallSession } from "../types/order.js";
@@ -714,7 +715,7 @@ export async function executeLlmTool(
 /** Compact JSON tool result for the LLM synthesis pass. */
 export function toolResultForLlm(
   record: LlmToolExecutionRecord,
-  options?: { isVerifiedCaller?: boolean },
+  options?: { isVerifiedCaller?: boolean; session?: import("../types/order.js").CallSession },
 ): string {
   if (record.status === "blocked") {
     if (record.tool === "dictate_tracking") {
@@ -842,12 +843,15 @@ export function toolResultForLlm(
 
   if (record.tool === "search_shopify_book_by_title") {
     const data = record.data as BookAvailabilityResult;
+    const suppressEscalation = shouldSuppressCatalogEscalation(options?.session);
+    const notFoundInstruction = suppressEscalation
+      ? "Apologize that the exact book was not found. Offer to try a different title or ISBN. Do NOT escalate to support unless the customer explicitly asks for human help or a warehouse check."
+      : "Follow OMNI-CHANNEL ESCALATION S.O.P.: ask for email, verify letter-by-letter, call send_support_escalation, then say: I have sent your request to the support team. They will contact you shortly.";
     if (data.status === "not_found") {
       return JSON.stringify({
         status: "NOT_FOUND",
         queriedTitle: data.queriedTitle,
-        instructions:
-          "Follow OMNI-CHANNEL ESCALATION S.O.P.: ask for email, verify letter-by-letter, call send_support_escalation, then say: I have sent your request to the support team. They will contact you shortly.",
+        instructions: notFoundInstruction,
       });
     }
     const similar = data.similarMatches ?? [];
@@ -856,7 +860,9 @@ export function toolResultForLlm(
         ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask how many copies before add_to_cart unless the caller already stated a quantity."
         : data.exactMatch === false && similar.length > 1
           ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before add_to_cart."
-          : "If in stock, offer to add to cart using variant_id and unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
+          : suppressEscalation
+            ? "If in stock, offer to add to cart using variant_id and unit_price from this response — follow ZERO ASSUMPTION QUANTITY. If out of stock, apologize and offer similar titles — do NOT escalate unless they ask for support."
+            : "If in stock, offer to add to cart using variant_id and unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
     return JSON.stringify({
       status: data.status,
       found: data.status === "found",

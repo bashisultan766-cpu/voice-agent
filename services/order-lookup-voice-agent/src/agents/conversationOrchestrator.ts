@@ -229,8 +229,12 @@ import {
   isProductSearchContextActive,
   syncActiveWorkflowContext,
 } from "./workflowContext.js";
-import { isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 import { transitionFlowForIntent } from "./conversationFlowState.js";
+import {
+  applyBrainWorkflowControl,
+  shouldSuppressSupportEscalation,
+  tryDeterministicCartTurn,
+} from "./agentBrain.js";
 import {
   armPrivateInfoBlockedEscalation,
   buildUnverifiedRefusalWithSupportOffer,
@@ -1005,7 +1009,27 @@ async function* runOrchestratorTurnCore(
     return;
   }
 
-  if (yield* yieldSupportEscalationTurnIfActive(session, text)) {
+  const callerIntentPreview = resolveCallerIntent(text, session);
+  const brain = applyBrainWorkflowControl(session, text, callerIntentPreview);
+
+  if (brain.deterministicCartSpeech) {
+    const uniqueSpeech = await ensureUniqueSpokenResponse(
+      session.callSid,
+      brain.deterministicCartSpeech,
+      text,
+    );
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  if (
+    !shouldSuppressSupportEscalation(session, text, callerIntentPreview) &&
+    (yield* yieldSupportEscalationTurnIfActive(session, text))
+  ) {
     return;
   }
 
@@ -1029,7 +1053,7 @@ async function* runOrchestratorTurnCore(
     return;
   }
 
-  const callerIntent = resolveCallerIntent(text, session);
+  const callerIntent = callerIntentPreview;
   captureSessionIntent(session, text, callerIntent);
   if (callerIntent === "catalog") {
     session.lastOrchestratorIntent = "catalog";
@@ -1505,7 +1529,26 @@ async function* handleFollowUpPhase(
     return;
   }
 
-  if (yield* yieldSupportEscalationTurnIfActive(session, callerText)) {
+  const followIntent = resolveCallerIntent(callerText, session);
+  const followBrain = applyBrainWorkflowControl(session, callerText, followIntent);
+  if (followBrain.deterministicCartSpeech) {
+    const uniqueSpeech = await ensureUniqueSpokenResponse(
+      session.callSid,
+      followBrain.deterministicCartSpeech,
+      callerText,
+    );
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return;
+  }
+
+  if (
+    !shouldSuppressSupportEscalation(session, callerText, followIntent) &&
+    (yield* yieldSupportEscalationTurnIfActive(session, callerText))
+  ) {
     return;
   }
 
@@ -1549,7 +1592,7 @@ async function* handleFollowUpPhase(
         requested,
         "Unverified caller requested vault-protected order information.",
       );
-      const refusal = /\b(shipping\s+address|delivery\s+address)\b/i.test(text)
+      const refusal = /\b(shipping\s+address|delivery\s+address)\b/i.test(callerText)
         ? buildUnverifiedShippingAddressRefusal()
         : buildUnverifiedRefusalWithSupportOffer(
             String(session.currentOrderData?.customer_name ?? ""),

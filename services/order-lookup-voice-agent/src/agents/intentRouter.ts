@@ -2,12 +2,12 @@
  * Central intent router — strict workflow priority ownership.
  *
  * 1. Email Confirmation
- * 2. Support Escalation
- * 3. Payment Checkout
- * 4. Shopping Cart
- * 5. Order History
- * 6. Order Detail
- * 7. Product Search
+ * 2. Payment Checkout
+ * 3. Shopping Cart
+ * 4. Product Search
+ * 5. Support Escalation
+ * 6. Order History
+ * 7. Order Detail
  * 8. Tracking
  * 9. General Help
  */
@@ -40,11 +40,11 @@ export enum WorkflowPriority {
 
 export function resolveActiveWorkflowPriority(session: CallSession): WorkflowPriority {
   if (isEmailConfirmationLocked(session)) return WorkflowPriority.EmailConfirmation;
-  if (isSupportEscalationActive(session)) return WorkflowPriority.SupportEscalation;
   if (isPaymentCheckoutLocked(session)) return WorkflowPriority.PaymentCheckout;
   if ((session.shoppingCart?.length ?? 0) > 0) return WorkflowPriority.ShoppingCart;
-  if (isOrderHistoryContextActive(session)) return WorkflowPriority.OrderHistory;
   if (isProductSearchContextActive(session)) return WorkflowPriority.ProductSearch;
+  if (isSupportEscalationActive(session)) return WorkflowPriority.SupportEscalation;
+  if (isOrderHistoryContextActive(session)) return WorkflowPriority.OrderHistory;
   if (isOrderLookupContextActive(session)) return WorkflowPriority.OrderDetail;
   if (hasActiveOrderContext(session)) return WorkflowPriority.OrderDetail;
   return WorkflowPriority.GeneralHelp;
