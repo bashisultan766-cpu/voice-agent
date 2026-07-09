@@ -83,6 +83,91 @@ export function looksLikePartialEmail(text: string): boolean {
   return markers.some((m) => t.includes(m));
 }
 
+export function isPartialEmailCorrection(text: string): boolean {
+  const t = (text ?? "").trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\breplace\s+\w\s+with\s+\w/i.test(t) ||
+    /\bdouble\s+[a-z]\b/i.test(t) ||
+    /\b(use|switch\s+to|instead\s+of)\b.*\b(yahoo|gmail|outlook|hotmail|icloud)\b/i.test(t) ||
+    /\bnot\s+sultan\b/i.test(t) ||
+    /\bsultaan\b/i.test(t) ||
+    /\bcompany\s+email\b/i.test(t) ||
+    /\bletter\s+by\s+letter\b/i.test(t) ||
+    /\brepeat\s+(?:it\s+)?slowly\b/i.test(t)
+  );
+}
+
+export function isRequestSlowEmailRepeat(text: string): boolean {
+  const t = (text ?? "").trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\bletter\s+by\s+letter\b/i.test(t) ||
+    /\brepeat\s+(?:it\s+)?slowly\b/i.test(t) ||
+    /\bsay\s+it\s+again\s+slowly\b/i.test(t)
+  );
+}
+
+/** Apply spoken partial corrections to the current email — latest correction wins. */
+export function applyPartialEmailCorrection(
+  currentEmail: string,
+  text: string,
+): string | null {
+  const base = (currentEmail ?? "").trim().toLowerCase();
+  if (!base.includes("@")) return null;
+
+  const fullReplacement = extractEmailFromSpeech(text);
+  if (fullReplacement) return fullReplacement;
+
+  let [localPart, domainPart] = base.split("@", 2);
+  const t = (text ?? "").trim().toLowerCase();
+
+  const replaceMatch = t.match(/\breplace\s+([a-z0-9])\s+with\s+([a-z0-9])/i);
+  if (replaceMatch) {
+    const from = replaceMatch[1].toLowerCase();
+    const to = replaceMatch[2].toLowerCase();
+    localPart = localPart.split(from).join(to);
+  }
+
+  const doubleMatch = t.match(/\bdouble\s+([a-z])'?s?\b/i);
+  if (doubleMatch) {
+    const ch = doubleMatch[1].toLowerCase();
+    const occurrences = (localPart.match(new RegExp(ch, "gi")) ?? []).length;
+    if (occurrences === 1) {
+      localPart = `${localPart}${ch}`;
+    } else {
+      localPart = localPart.replace(new RegExp(`${ch}(?!${ch})`, "i"), `${ch}${ch}`);
+    }
+  }
+
+  if (/\bsultaan\b/i.test(t)) {
+    localPart = localPart.replace(/sultan/gi, "sultaan");
+  }
+
+  if (/\b(use\s+)?yahoo\b/i.test(t) && /\b(instead\s+of|not)\b.*\bgmail\b/i.test(t)) {
+    domainPart = domainPart.replace(/gmail\.com/i, "yahoo.com").replace(/^gmail$/i, "yahoo.com");
+  } else if (/\b(use\s+)?gmail\b/i.test(t) && /\b(instead\s+of|not)\b.*\byahoo\b/i.test(t)) {
+    domainPart = domainPart.replace(/yahoo\.com/i, "gmail.com").replace(/^yahoo$/i, "gmail.com");
+  } else if (/\b(use\s+)?yahoo\b/i.test(t) && !/\bgmail\b/i.test(t)) {
+    domainPart = domainPart.replace(/gmail\.com/i, "yahoo.com").replace(/^gmail$/i, "yahoo.com");
+  } else if (/\b(use\s+)?gmail\b/i.test(t) && !/\byahoo\b/i.test(t)) {
+    domainPart = domainPart.replace(/yahoo\.com/i, "gmail.com").replace(/^yahoo$/i, "gmail.com");
+  }
+  if (/\boutlook\b/i.test(t)) domainPart = "outlook.com";
+  if (/\bhotmail\b/i.test(t)) domainPart = "hotmail.com";
+
+  const hyphenLocal = t.match(/\b([a-z0-9](?:-[a-z0-9])+)\b/i);
+  if (hyphenLocal?.[1] && t.includes("@")) {
+    const rebuilt = hyphenLocal[1].replace(/-/g, "");
+    if (rebuilt) localPart = rebuilt;
+  }
+
+  const candidate = `${localPart}@${domainPart}`.replace(/\s+/g, "");
+  if (candidate === base.replace(/\s+/g, "")) return null;
+  if (!isValidCustomerEmail(candidate)) return null;
+  return candidate.toLowerCase();
+}
+
 /** Extract typed email if present in speech. */
 function extractTypedEmail(text: string): string | null {
   const match = text.match(TYPED_EMAIL_RE);
@@ -207,4 +292,9 @@ export function spellEmailHyphenForTTS(email: string): string {
 export function buildEmailConfirmationSpeech(email: string): string {
   const spelled = spellEmailHyphenForTTS(email);
   return `I have your email as ${spelled}. Is that correct?`;
+}
+
+export function buildUpdatedEmailConfirmationSpeech(email: string): string {
+  const spelled = spellEmailHyphenForTTS(email);
+  return `Thank you. I have updated it. Your email is ${spelled}. Is that correct?`;
 }

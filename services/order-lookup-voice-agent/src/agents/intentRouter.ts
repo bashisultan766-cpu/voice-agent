@@ -21,6 +21,10 @@ import { isOrderFieldQuestion } from "./orderFollowUpSpeech.js";
 import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
 import { getOrCreateActiveSession } from "../sovereign/activeSession.js";
 import { isTrackingDictationPending } from "./dictationTool.js";
+import {
+  isProductSearchContextActive,
+  isOrderLookupContextActive,
+} from "./workflowContext.js";
 
 export enum WorkflowPriority {
   EmailConfirmation = 1,
@@ -40,6 +44,8 @@ export function resolveActiveWorkflowPriority(session: CallSession): WorkflowPri
   if (isPaymentCheckoutLocked(session)) return WorkflowPriority.PaymentCheckout;
   if ((session.shoppingCart?.length ?? 0) > 0) return WorkflowPriority.ShoppingCart;
   if (isOrderHistoryContextActive(session)) return WorkflowPriority.OrderHistory;
+  if (isProductSearchContextActive(session)) return WorkflowPriority.ProductSearch;
+  if (isOrderLookupContextActive(session)) return WorkflowPriority.OrderDetail;
   if (hasActiveOrderContext(session)) return WorkflowPriority.OrderDetail;
   return WorkflowPriority.GeneralHelp;
 }

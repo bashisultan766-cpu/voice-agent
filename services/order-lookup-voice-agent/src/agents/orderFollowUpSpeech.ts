@@ -12,6 +12,8 @@ import { formatEmailForTTS } from "../utils/ttsFormatter.js";
 import { physicalItemCount } from "../utils/productLineItems.js";
 import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
 import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
+import { buildUnverifiedShippingAddressRefusal } from "./orderContextPrivacy.js";
+import { maskEmailForUnverified } from "./verificationGate.js";
 
 const REFUND_EMAIL_QUESTION_RE =
   /\b(refund(?:ed)?\s+(?:notification\s+)?email|email.*refund|refund.*email|refund.*notification|notification.*refund|where.*refund.*sent|which email.*refund|email on which)\b/i;
@@ -241,6 +243,7 @@ export function buildCustomerNameSpeech(context: ActiveOrderContextData): string
 export function buildOrderFieldQuerySpeech(
   callerText: string,
   context: ActiveOrderContextData,
+  isVerifiedCaller = true,
 ): string | null {
   if (isCustomerNameQuestion(callerText)) {
     return buildCustomerNameSpeech(context);
@@ -270,16 +273,31 @@ export function buildOrderFieldQuerySpeech(
   }
 
   if (/\b(shipping\s+address|delivery\s+address|where\s+(?:was|is)\s+it\s+shipped)\b/i.test(lower)) {
+    if (!isVerifiedCaller) {
+      return buildUnverifiedShippingAddressRefusal();
+    }
     const address = String(context.shipping_address ?? "").trim();
     if (address) return `The shipping address on file is ${address}.`;
     return "I checked this order, but I do not have a shipping address on file.";
   }
 
   if (/\b(where\s+(?:was|is)\s+(?:the\s+)?confirmation\s+sent|confirmation\s+(?:sent|delivery))\b/i.test(lower)) {
+    if (!isVerifiedCaller) {
+      const masked = String(context.masked_notification_email ?? "").trim();
+      if (masked) {
+        return `The notification was sent by email to a masked address ending in ${masked.replace(/^\.\.\./, "")}.`;
+      }
+    }
     const email = String(
       context.order_confirmation_email ?? context.customer_email ?? "",
     ).trim();
     if (email) {
+      if (!isVerifiedCaller) {
+        const masked = maskEmailForUnverified(email);
+        if (masked) {
+          return `The notification was sent by email to a masked address ending in ${masked.replace(/^\.\.\./, "")}.`;
+        }
+      }
       return `The order confirmation was sent to ${formatEmailForTTS(email) ?? email}.`;
     }
     return "I checked this order, but I do not have a confirmation delivery channel on file.";

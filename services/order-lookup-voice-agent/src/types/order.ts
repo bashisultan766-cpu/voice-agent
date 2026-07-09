@@ -164,6 +164,14 @@ export interface CallSession {
   /** Prior call dropped — welcome-back greeting and context restore. */
   welcomeBack?: boolean;
   lastOrchestratorIntent?: string;
+  /** Highest-priority workflow context for numeric routing (ISBN vs order number). */
+  activeWorkflowContext?:
+    | "idle"
+    | "email_confirmation"
+    | "support_escalation"
+    | "payment_checkout"
+    | "product_search"
+    | "order_lookup";
   /** True after order disclosure offers to read tracking — waits for caller yes. */
   awaitingTrackingOffer?: boolean;
 }

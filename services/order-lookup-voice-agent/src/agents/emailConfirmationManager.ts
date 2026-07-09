@@ -5,10 +5,14 @@
 import type { CallSession } from "../types/order.js";
 import { logger } from "../utils/logger.js";
 import {
+  applyPartialEmailCorrection,
   buildEmailConfirmationSpeech,
+  buildUpdatedEmailConfirmationSpeech,
   extractEmailFromSpeech,
   isEmailConfirmation,
   isEmailRejection,
+  isPartialEmailCorrection,
+  isRequestSlowEmailRepeat,
   looksLikePartialEmail,
 } from "../utils/emailCapture.js";
 import { isValidCustomerEmail } from "../utils/resendEmailService.js";
@@ -50,11 +54,20 @@ const FINISH_EMAIL_FIRST_SPEECH =
 const FINISH_SUPPORT_FIRST_SPEECH =
   "I'll finish your support request first. After that, I can help with tracking or other order questions.";
 
+function isEmailPhaseUtterance(text: string): boolean {
+  return (
+    isEmailConfirmation(text) ||
+    isEmailRejection(text) ||
+    extractEmailFromSpeech(text) != null ||
+    looksLikePartialEmail(text) ||
+    isPartialEmailCorrection(text) ||
+    isRequestSlowEmailRepeat(text)
+  );
+}
+
 function blockInterruptionDuringEmailCapture(session: CallSession, text: string): string | null {
   if (!isEmailConfirmationActive(session)) return null;
-  if (!/\b(tracking|order number|order history|buy|book|isbn|checkout|cart)\b/i.test(text)) {
-    return null;
-  }
+  if (isEmailPhaseUtterance(text)) return null;
   if (session.emailConfirmation?.workflowType === "support_escalation") {
     return FINISH_SUPPORT_FIRST_SPEECH;
   }
@@ -233,6 +246,17 @@ export async function resolveEmailConfirmationTurn(
 
   if (ctx.phase === "pending_confirmation") {
     if (isEmailRejection(text)) {
+      const corrected =
+        extractEmailFromSpeech(text) ??
+        (ctx.normalizedEmail
+          ? applyPartialEmailCorrection(ctx.normalizedEmail, text)
+          : null);
+      if (corrected && isValidCustomerEmail(corrected)) {
+        ctx.latestRawEmail = text;
+        ctx.normalizedEmail = corrected;
+        ctx.confirmationStatus = "pending";
+        return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
+      }
       ctx.phase = "collect_email";
       ctx.normalizedEmail = undefined;
       ctx.latestRawEmail = undefined;
@@ -244,11 +268,29 @@ export async function resolveEmailConfirmationTurn(
       return confirmAndSend(session);
     }
 
+    if (isRequestSlowEmailRepeat(text) && ctx.normalizedEmail) {
+      return { handled: true, speech: buildEmailConfirmationSpeech(ctx.normalizedEmail) };
+    }
+
+    if (isPartialEmailCorrection(text) && ctx.normalizedEmail) {
+      const corrected =
+        applyPartialEmailCorrection(ctx.normalizedEmail, text) ?? extractEmailFromSpeech(text);
+      if (corrected && isValidCustomerEmail(corrected)) {
+        ctx.latestRawEmail = text;
+        ctx.normalizedEmail = corrected;
+        return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
+      }
+      return {
+        handled: true,
+        speech: "Please repeat your full email slowly, letter by letter.",
+      };
+    }
+
     const corrected = extractEmailFromSpeech(text);
     if (corrected && isValidCustomerEmail(corrected)) {
       ctx.latestRawEmail = text;
       ctx.normalizedEmail = corrected;
-      return { handled: true, speech: buildEmailConfirmationSpeech(corrected) };
+      return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
     }
 
     return {
@@ -266,8 +308,6 @@ export function blockDuringEmailConfirmation(
   callerText: string,
 ): string | null {
   if (!isEmailConfirmationLocked(session)) return null;
-  if (/\b(tracking|order number|order history|buy|book|isbn|checkout|cart)\b/i.test(callerText)) {
-    return FINISH_EMAIL_FIRST_SPEECH;
-  }
-  return null;
+  if (isEmailPhaseUtterance(callerText)) return null;
+  return FINISH_EMAIL_FIRST_SPEECH;
 }

@@ -226,6 +226,12 @@ import {
 } from "./orderContextPrivacy.js";
 import { resolveDisclosureFieldFromUtterance } from "./responsePolicy.js";
 import {
+  isProductSearchContextActive,
+  syncActiveWorkflowContext,
+} from "./workflowContext.js";
+import { isValidIsbnFormat } from "../utils/productSearchNormalize.js";
+import { transitionFlowForIntent } from "./conversationFlowState.js";
+import {
   armPrivateInfoBlockedEscalation,
   buildUnverifiedRefusalWithSupportOffer,
   resolveSupportEscalationTurn,
@@ -328,13 +334,21 @@ export const LISTENING = "LISTENING";
 
 export const NOTEPAD_HANDSHAKE_PROMPT = promptUserForNotepad();
 
-function shouldRejectOrderNumberCandidate(text: string, orderNumber: string): boolean {
+function shouldRejectOrderNumberCandidate(
+  text: string,
+  orderNumber: string,
+  session?: CallSession,
+): boolean {
   if (isCatalogShoppingUtterance(text)) return true;
   if (extractIsbnFromSpeech(text)) return true;
+  if (session && isProductSearchContextActive(session)) return true;
   const digits = orderNumber.replace(/\D/g, "");
+  if ((digits.length === 10 || digits.length === 13) && isValidIsbnFormat(digits)) {
+    return true;
+  }
   return (
     (digits.length === 10 || digits.length === 13) &&
-    (isValidIsbnFormat(digits) || /\b(isbn|barcode|978|979)\b/i.test(text))
+    /\b(isbn|barcode|978|979)\b/i.test(text)
   );
 }
 
@@ -445,7 +459,7 @@ function buildOrderFieldSpeech(session: CallSession, callerText: string): string
   const context = verifiedOrderContext(session);
   const detailSpeech = buildOrderDetailSpeech(session, callerText, context);
   if (detailSpeech) return detailSpeech;
-  return buildOrderFieldQuerySpeech(callerText, context);
+  return buildOrderFieldQuerySpeech(callerText, context, session.isVerifiedCaller === true);
 }
 
 async function resolveOrderHistorySpeech(
@@ -985,6 +999,7 @@ async function* runOrchestratorTurnCore(
   setSlotValidationReady(session.callSid, false);
   const text = (callerText ?? "").trim();
   ingestUserTurn(session.callSid, text);
+  syncActiveWorkflowContext(session);
 
   if (yield* yieldEmailConfirmationTurnIfActive(session, text)) {
     return;
@@ -1016,9 +1031,15 @@ async function* runOrchestratorTurnCore(
 
   const callerIntent = resolveCallerIntent(text, session);
   captureSessionIntent(session, text, callerIntent);
+  if (callerIntent === "catalog") {
+    session.lastOrchestratorIntent = "catalog";
+  }
+  syncActiveWorkflowContext(session);
 
   const needsOrderNumberBeforeLookup =
     !hasConfirmedOrderContext(session) &&
+    callerIntent !== "catalog" &&
+    !isProductSearchContextActive(session) &&
     !isOrderNumberOfferUtterance(text) &&
     !extractOrderNumberFromStt(text, { awaitingSlot: true }) &&
     !extractOrderNumberFromSpeech(text) &&
@@ -1236,7 +1257,11 @@ async function* handleAwaitingOrderNumberPhase(
     extractOrderNumberFromStt(text, { awaitingSlot: true });
 
   if (orderNumber) {
-    if (shouldRejectOrderNumberCandidate(text, orderNumber)) {
+    if (shouldRejectOrderNumberCandidate(text, orderNumber, session)) {
+      session.phase = "follow_up";
+      session.awaitingInput = null;
+      transitionFlowForIntent(session.callSid, "catalog");
+      session.lastOrchestratorIntent = "catalog";
       return false;
     }
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));
@@ -1293,7 +1318,11 @@ async function* handleGreetingPhaseOrderLookup(
   const orderNumber = extractOrderNumberFromSpeech(text);
 
   if (orderNumber) {
-    if (shouldRejectOrderNumberCandidate(text, orderNumber)) {
+    if (shouldRejectOrderNumberCandidate(text, orderNumber, session)) {
+      session.phase = "follow_up";
+      session.awaitingInput = null;
+      transitionFlowForIntent(session.callSid, "catalog");
+      session.lastOrchestratorIntent = "catalog";
       return false;
     }
     yield chunkEvent(planInstantFiller("get_shopify_order_status"));

@@ -29,6 +29,8 @@ import {
   parseMonthFromUtterance,
 } from "./orderHistoryFlow.js";
 import { isEmailConfirmationLocked } from "./emailConfirmationManager.js";
+import { isProductSearchContextActive, isOrderLookupContextActive } from "./workflowContext.js";
+import { isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -54,7 +56,7 @@ const ORDER_HISTORY_MONTH_RE =
   /\b(?:tell\s+me\s+about|what\s+about|what\s+did\s+i\s+order\s+in|give\s+me\s+details\s+(?:of|for|on))\s+(?:my\s+)?(?:the\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/i;
 
 const ORDER_LOOKUP_RE =
-  /\b(order\s+number|lookup\s+(?:my\s+)?order|find\s+(?:my\s+)?order|track\s+my\s+order|check\s+(?:an?\s+)?order)\b/i;
+  /\b(order\s+number|lookup\s+(?:my\s+)?order|find\s+(?:my\s+)?order|track\s+my\s+order|check\s+(?:my\s+)?(?:an?\s+)?order|where\s+is\s+my\s+order|my\s+order\s+status|order\s+status)\b/i;
 
 const CATALOG_RE =
   /\b(book|books|isbn|magazine|good\s+books?|looking\s+for\s+(?:a\s+)?(?:book|product)|buy\s+(?:a\s+)?(?:book|product|books)|purchase\s+(?:a\s+)?(?:book|product)|how\s+(?:can|do)\s+i\s+buy|want\s+to\s+buy|i\s+want\s+(?:a\s+)?product|add\s+to\s+cart|recommend\s+(?:a\s+)?book|search\s+for\s+(?:a\s+)?book|book\s+(?:called|titled|named)|title\s+is|find\s+(?:me\s+)?(?:a\s+)?book)\b/i;
@@ -133,6 +135,26 @@ function resolveCallerIntentCore(
     return "catalog";
   }
 
+  if (session && isEmailConfirmationLocked(session)) {
+    return "general_help";
+  }
+
+  if (session && isProductSearchContextActive(session)) {
+    if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text) || isCatalogShoppingUtterance(text)) {
+      return "catalog";
+    }
+    const productTitle = extractTitleFromStt(text);
+    if (productTitle) return "catalog";
+    const digitsOnly = text.replace(/\D/g, "");
+    if (
+      digitsOnly.length >= 10 &&
+      digitsOnly.length <= 13 &&
+      (isValidIsbnFormat(digitsOnly) || !isOrderLookupContextActive(session))
+    ) {
+      return "catalog";
+    }
+  }
+
   if (
     callSid &&
     active &&
@@ -196,7 +218,9 @@ function resolveCallerIntentCore(
   }
 
   if (!hasActiveOrderContext(session) && isOrderLookupRequestWithoutNumber(text)) {
-    return "order_lookup";
+    if (!isProductSearchContextActive(session)) {
+      return "order_lookup";
+    }
   }
 
   if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) {
@@ -261,6 +285,7 @@ function resolveCallerIntentCore(
   // "I want to order a book" is catalog, not order lookup.
   if (
     !hasActiveOrderContext(session) &&
+    !isProductSearchContextActive(session) &&
     /\border\b/i.test(text) &&
     !/\b(book|books|isbn|title|product|magazine)\b/i.test(text)
   ) {
