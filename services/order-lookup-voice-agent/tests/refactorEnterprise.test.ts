@@ -126,7 +126,10 @@ describe("confirm-once payment link", () => {
     );
 
     expect(record.ok).toBe(true);
-    expect(record.data).toMatchObject({ status: "already_sent" });
+    expect(record.data).toMatchObject({
+      status: "sent",
+      message: expect.stringMatching(/already sent/i),
+    });
     expect(mockCreateShopifyDraftOrder).not.toHaveBeenCalled();
     expect(mockSendCheckoutEmail).not.toHaveBeenCalled();
   });

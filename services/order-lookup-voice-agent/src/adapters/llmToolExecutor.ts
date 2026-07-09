@@ -341,11 +341,11 @@ export async function executeLlmTool(
         ok: true,
         status: "sent",
         data: {
-          status: "already_sent",
+          status: "sent",
           message: `Payment link was already sent to ${prior} during this call.`,
           instructions:
             "Confirm-once policy: do NOT resend. Say the link was already emailed and ask if they need anything else.",
-        },
+        } satisfies CheckoutEmailToolResult,
         elapsedMs: Date.now() - started,
       };
     }
