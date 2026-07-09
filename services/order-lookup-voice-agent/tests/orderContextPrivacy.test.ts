@@ -11,16 +11,18 @@ describe("orderContextPrivacy", () => {
     const filtered = filterOrderContextForVerification(
       {
         customer_name: "Jamaica Thompson",
+        customer_email: "jamaica@example.com",
         shipping_address: "123 Main St",
         physical_items: [{ title: "Book" }],
         events: ["placed"],
       },
       false,
     );
-    expect(filtered.customer_name).toBe("Jamaica Thompson");
+    expect(filtered.customer_name).toBeNull();
     expect(filtered.shipping_address).toBeNull();
-    expect(filtered.physical_items).toEqual([{ title: "Book" }]);
+    expect(filtered.physical_items).toBeNull();
     expect(filtered.events).toBeNull();
+    expect(filtered.masked_notification_email).toBe("...@example.com");
     expect(filtered.privacy_tier).toBe("unverified");
   });
 

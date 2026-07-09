@@ -19,6 +19,7 @@ import {
   type OrderTransactionNode,
 } from "../adapters/orderFieldExtractors.js";
 import { physicalItemCount, splitLineItems } from "./productLineItems.js";
+import { buildVerificationFirstOrderSpeech } from "../agents/orderLookupProtocol.js";
 import { fulfillmentStatusPhrase, speakMoney } from "./formatter.js";
 
 export interface DeepOrderGraphqlNode {
@@ -128,6 +129,7 @@ export interface ParsedOrderData {
   paymentGateway?: string;
   financialStatus?: string;
   customerPhone?: string;
+  trackingNumber?: string;
   shippingPhone?: string;
   billingPhone?: string;
   customerId?: string;
@@ -388,6 +390,7 @@ export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrde
     cardBrand: result.cardBrand,
     paymentGateway: result.paymentGateway,
     financialStatus: result.financialStatus,
+    trackingNumber: result.trackingNumber,
   };
 }
 
@@ -485,34 +488,12 @@ export function buildProactiveOrderSummarySpeech(data: ParsedOrderData): string 
 }
 
 /**
- * Concise initial order response — progressive disclosure (status + date only).
- * Template: "Your order [ID] is [Status] as of [Date]."
+ * Concise initial order response — delegates to verification-first protocol.
  */
 export function buildProgressiveDisclosureOrderSpeech(
   data: ParsedOrderData,
-  options?: { verified?: boolean },
+  options?: { verified?: boolean; session?: import("../types/order.js").CallSession },
 ): string {
-  const verified = options?.verified !== false;
-  const orderId = data.orderNumber?.replace(/^#/, "") ?? "unknown";
-
-  let statusPhrase: string;
-  if (data.isRefunded) {
-    statusPhrase = "Refunded";
-  } else if (data.fulfillmentStatus?.trim()) {
-    statusPhrase = fulfillmentStatusPhrase(data.fulfillmentStatus);
-  } else {
-    statusPhrase = "being processed";
-  }
-
-  const asOfDate =
-    data.refundDate?.trim() ||
-    data.orderPlacedAtSpoken?.trim() ||
-    data.orderPlacedAt?.trim() ||
-    "today";
-
-  if (!verified) {
-    return `Your order ${orderId} is ${statusPhrase} as of ${asOfDate}.`;
-  }
-
-  return `Your order ${orderId} is ${statusPhrase} as of ${asOfDate}.`;
+  void options?.verified;
+  return buildVerificationFirstOrderSpeech(data, options?.session);
 }

@@ -34,10 +34,8 @@ import {
   ORDER_LOOKUP_MAINTENANCE_SPOKEN,
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
-import {
-  buildProgressiveDisclosureOrderSpeech,
-  parsedDataFromOrderResult,
-} from "../utils/orderDataParser.js";
+import { buildVerificationFirstOrderSpeech } from "./orderLookupProtocol.js";
+import { parsedDataFromOrderResult } from "../utils/orderDataParser.js";
 import { filterPhysicalLineItems, physicalItemCount } from "../utils/productLineItems.js";
 import { speakMoney } from "../utils/formatter.js";
 import { logger } from "../utils/logger.js";
@@ -123,7 +121,10 @@ function isRefundedOrder(result: OrderStatusResult): boolean {
  * Build concise initial order response — progressive disclosure (status only).
  * Full deep-fetch data stays in LLM/session memory for follow-up questions.
  */
-export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
+export function buildOrderStatusTts(
+  result: OrderStatusResult,
+  session?: import("../types/order.js").CallSession,
+): TtsPayload {
   if (result.status !== "found" || !result.orderNumber) {
     return buildOrderFallbackTts(result);
   }
@@ -134,9 +135,10 @@ export function buildOrderStatusTts(result: OrderStatusResult): TtsPayload {
   parsed.trackingStatus = result.trackingStatus;
   parsed.estimatedDeliveryDays = result.estimatedDeliveryDays;
   parsed.fulfillmentStatus = result.fulfillmentStatus;
+  parsed.trackingNumber = result.trackingNumber;
 
   return {
-    text: buildProgressiveDisclosureOrderSpeech(parsed),
+    text: buildVerificationFirstOrderSpeech(parsed, session),
     awaitingSlot: null,
   };
 }
@@ -216,9 +218,12 @@ function buildOrderFallbackTts(result: OrderStatusResult): TtsPayload {
 }
 
 /** Deterministic order speech — never use LLM paraphrase for Shopify order facts. */
-export function groundedOrderSpeech(result: OrderStatusResult): string {
+export function groundedOrderSpeech(
+  result: OrderStatusResult,
+  session?: import("../types/order.js").CallSession,
+): string {
   if (result.status === "found" && result.orderNumber) {
-    return buildOrderStatusTts(result).text;
+    return buildOrderStatusTts(result, session).text;
   }
   return buildOrderFallbackTts(result).text;
 }

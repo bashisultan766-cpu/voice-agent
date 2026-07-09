@@ -7,6 +7,7 @@ import {
   ORDER_LOOKUP_RETRY_SPOKEN,
   ORDER_NOT_FOUND_STRICT_SPOKEN,
 } from "../constants/systemMessages.js";
+import type { CallSession } from "../types/order.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
 
 export function isOrderLookupInsistenceUtterance(text: string): boolean {
@@ -35,7 +36,7 @@ export function isStableOrderLookupStatus(
 /** Deterministic spoken response for any order lookup tool result — one workflow, no LLM paraphrase. */
 export function speechForOrderLookupResult(
   result: OrderStatusResult,
-  options?: { insistence?: boolean },
+  options?: { insistence?: boolean; session?: CallSession },
 ): string {
   if (options?.insistence && isTransientOrderLookupStatus(result.status)) {
     return ORDER_LOOKUP_RETRY_SPOKEN;
@@ -44,12 +45,12 @@ export function speechForOrderLookupResult(
     return ORDER_LOOKUP_MAINTENANCE_SPOKEN;
   }
   if (result.status === "found") {
-    return groundedOrderSpeech(result);
+    return groundedOrderSpeech(result, options?.session);
   }
   if (result.status === "not_found") {
     return ORDER_NOT_FOUND_STRICT_SPOKEN;
   }
-  return groundedOrderSpeech(result);
+  return groundedOrderSpeech(result, options?.session);
 }
 
 export function isRetriableOrderLookupMiss(

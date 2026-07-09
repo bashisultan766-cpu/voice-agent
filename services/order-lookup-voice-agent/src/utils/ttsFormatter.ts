@@ -1,7 +1,4 @@
-/**
- * TTS formatting helpers — slow dictation for alphanumeric IDs on voice calls.
- */
-
+import { normalizeTrackingIdRawSequence } from "./trackingIdSequence.js";
 /**
  * Voice-friendly email handle for refund/confirmation readout.
  * Returns the local part before @ with trailing digits stripped
@@ -151,7 +148,7 @@ export function formatTrackingNumberForTTS(
   _speed: TrackingDictationSpeed = "slow",
   options?: FormatTrackingNumberOptions,
 ): string {
-  const normalized = trackingId.trim().toUpperCase();
+  const normalized = normalizeTrackingIdRawSequence(trackingId);
   if (!normalized) return "";
 
   const chars = [...normalized];

@@ -36,6 +36,7 @@ function seedOrderSession(callSid: string) {
   const session = createCallSession(callSid, "+15551234567", "+18005551212");
   session.greetedThisCall = true;
   session.phase = "follow_up";
+  session.isVerifiedCaller = true;
   saveActiveOrderContext(session, {
     order_number: "21796",
     customer_name: "Jamaica Thompson",

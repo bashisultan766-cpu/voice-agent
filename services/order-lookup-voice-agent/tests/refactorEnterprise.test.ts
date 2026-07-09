@@ -60,9 +60,8 @@ describe("concise order lookup disclosure", () => {
       fulfillmentStatus: "fulfilled",
       orderPlacedAtSpoken: "March 10th, 2025",
     } as any);
-    expect(speech).toBe("Your order 21698 is fulfilled as of March 10th, 2025.");
-    expect(speech).not.toContain("shipping");
-    expect(speech).not.toContain("total");
+    expect(speech).toMatch(/^I have found your order 21698\. It was placed on March 10th, 2025 and the status is fulfilled\./);
+    expect(speech).toContain("I have provided that, how else can I help you today?");
   });
 });
 

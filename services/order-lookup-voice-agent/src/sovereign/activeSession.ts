@@ -2,6 +2,7 @@
  * Sovereign State Machine — single source of truth per call.
  */
 import type { CallSession } from "../types/order.js";
+import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
 import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
 import type { LlmToolName } from "../adapters/llmToolExecutor.js";
 import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
@@ -129,9 +130,9 @@ export function buildSpatialResumeFromIndex(
   }).join(" ");
 }
 
-/** Strip Twilio/Shopify noise (e.g. leading colons) before spatial dictation. */
+/** Strip Twilio/Shopify noise and decimal artifacts before spatial dictation. */
 export function normalizeTrackingRaw(trackingId: string): string {
-  return trackingId.trim().replace(/^[:#\s]+/, "").trim();
+  return normalizeTrackingIdRawSequence(trackingId);
 }
 
 /** Digit-only spatial index — callers anchor on spoken digits, not punctuation. */

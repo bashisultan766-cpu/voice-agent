@@ -43,7 +43,7 @@ describe("toolResultForLlm order shaping", () => {
       },
     };
 
-    const parsed = JSON.parse(toolResultForLlm(record)) as {
+    const parsed = JSON.parse(toolResultForLlm(record, { isVerifiedCaller: true })) as {
       data: Record<string, unknown>;
       instructions: string;
     };
@@ -92,7 +92,7 @@ describe("toolResultForLlm order shaping", () => {
       },
     };
 
-    const parsed = JSON.parse(toolResultForLlm(record)) as {
+    const parsed = JSON.parse(toolResultForLlm(record, { isVerifiedCaller: true })) as {
       data: Record<string, unknown>;
     };
     expect(parsed.data.customer_name).toBe("Jamaica Thompson");
@@ -129,7 +129,7 @@ describe("toolResultForLlm order shaping", () => {
       },
     };
 
-    const parsed = JSON.parse(toolResultForLlm(record)) as {
+    const parsed = JSON.parse(toolResultForLlm(record, { isVerifiedCaller: true })) as {
       data: Record<string, unknown>;
     };
 
@@ -238,7 +238,7 @@ describe("executeLlmTool error boundary", () => {
     );
 
     expect(record.status).toBe("system_maintenance");
-    const parsed = JSON.parse(toolResultForLlm(record)) as { error: string };
+    const parsed = JSON.parse(toolResultForLlm(record, { isVerifiedCaller: true })) as { error: string };
     expect(parsed.error).toBe("ORDER_LOOKUP_RETRY");
   });
 

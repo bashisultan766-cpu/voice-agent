@@ -123,10 +123,8 @@ import {
   type ToolAction,
 } from "./toolDecisionGate.js";
 import {
-  planInstantConfirmation,
   planInstantFiller,
   planLookupError,
-  planOrderLookupResponse,
   planGoodbye,
   planRepeatIntro,
 } from "./responsePlanner.js";
@@ -212,6 +210,12 @@ import {
   isOrderFieldQuestion,
   isRefundNotificationEmailQuestion,
 } from "./orderFollowUpSpeech.js";
+import {
+  appendProtocolClosing,
+  ORDER_NUMBER_PREFLIGHT_SPEECH,
+} from "./orderLookupProtocol.js";
+import { captureSessionIntent } from "./sessionMemory.js";
+import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
 import {
   filterOrderContextForVerification,
@@ -406,11 +410,11 @@ function tryResolveTrackingCompletionTurn(
   session.phase = "follow_up";
   session.awaitingInput = null;
 
-  const orderSpeech = buildOrderFieldQuerySpeech(text, verifiedOrderContext(session));
-  if (orderSpeech) {
+  const fieldAnswer = buildOrderFieldQuerySpeech(text, verifiedOrderContext(session));
+  if (fieldAnswer) {
     return {
       handled: true,
-      speech: orderSpeech,
+      speech: appendProtocolClosing(fieldAnswer),
       skipLlm: true,
       skipTools: true,
       intentKey: "order_field_query",
@@ -803,6 +807,7 @@ async function* runOrchestratorTurnCore(
   }
 
   const callerIntent = resolveCallerIntent(text, session);
+  captureSessionIntent(session, text, callerIntent);
 
   if (
     callerIntent === "order_lookup" &&
@@ -815,7 +820,10 @@ async function* runOrchestratorTurnCore(
     session.awaitingInput = "order_number";
     session.lastOrchestratorIntent = "order_lookup";
     updateActiveSession(session.callSid, { cachedIntent: "order" });
-    const speech = buildClarifyingResponse(session.orderNumberAttempts);
+    const speech =
+      session.orderNumberAttempts === 0
+        ? ORDER_NUMBER_PREFLIGHT_SPEECH
+        : buildClarifyingResponse(session.orderNumberAttempts);
     const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
     syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
       responseType: "clarification_question",
@@ -856,8 +864,10 @@ async function* runOrchestratorTurnCore(
       return;
     }
 
-    const fieldSpeech = buildOrderFieldQuerySpeech(text, verifiedOrderContext(session));
-    if (fieldSpeech) {
+    const fieldSpeech = appendProtocolClosing(
+      buildOrderFieldQuerySpeech(text, verifiedOrderContext(session)) ?? "",
+    );
+    if (fieldSpeech.trim()) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, text);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
@@ -1013,8 +1023,7 @@ async function* handleAwaitingOrderNumberPhase(
       session.awaitingInput = null;
       session.lastOrchestratorIntent = "order_lookup";
       updateActiveSession(session.callSid, { cachedIntent: "order" });
-      yield chunkEvent(planInstantConfirmation(lookup.order));
-      yield* streamOrderSummary(lookup.order);
+      yield* streamOrderSummary(lookup.order, session);
       emitResponseSent(session.callSid, "order_found", "Order found.");
     } else {
       session.phase = "awaiting_order_number";
@@ -1071,8 +1080,7 @@ async function* handleGreetingPhaseOrderLookup(
       session.awaitingInput = null;
       session.lastOrchestratorIntent = "order_lookup";
       updateActiveSession(session.callSid, { cachedIntent: "order" });
-      yield chunkEvent(planInstantConfirmation(lookup.order));
-      yield* streamOrderSummary(lookup.order);
+      yield* streamOrderSummary(lookup.order, session);
       emitResponseSent(session.callSid, "order_found", "Order found.");
     } else {
       session.phase = "awaiting_order_number";
@@ -1284,8 +1292,10 @@ async function* handleFollowUpPhase(
       return;
     }
 
-    const fieldSpeech = buildOrderFieldQuerySpeech(callerText, verifiedOrderContext(session));
-    if (fieldSpeech) {
+    const fieldSpeech = appendProtocolClosing(
+      buildOrderFieldQuerySpeech(callerText, verifiedOrderContext(session)) ?? "",
+    );
+    if (fieldSpeech.trim()) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, callerText);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
@@ -1333,7 +1343,7 @@ async function* handleFollowUpPhase(
       }
     } else {
       yield chunkEvent(planRepeatIntro());
-      yield* streamOrderSummary(session.currentOrder);
+      yield* streamOrderSummary(session.currentOrder, session);
       session.phase = "follow_up";
       yield doneEvent(session.phase);
       return;
@@ -1361,11 +1371,18 @@ async function* handleFollowUpPhase(
   yield* runLlmOrchestratorTurn(session, callerText, emitResponseSent);
 }
 
-async function* streamOrderSummary(order: StructuredOrder): AsyncGenerator<AgentStreamEvent> {
-  yield chunkEvent(planInstantConfirmation(order));
-  for (const chunk of planOrderLookupResponse(order).chunks) {
-    yield { type: "chunk", chunk };
+async function* streamOrderSummary(
+  order: StructuredOrder,
+  session: CallSession,
+): AsyncGenerator<AgentStreamEvent> {
+  const result = session.lastOrderStatusResult;
+  if (result?.status === "found") {
+    const speech = groundedOrderSpeech(result, session);
+    yield* yieldSpeech(speech);
+    return;
   }
+  void order;
+  yield* yieldSpeech("I could not load your order summary. Please try again.");
 }
 
 function* yieldSpeech(text: string, kind: SpeechChunk["kind"] = "summary"): Generator<AgentStreamEvent> {

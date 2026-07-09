@@ -4,7 +4,7 @@
 import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import { lookupOrderStatus } from "../services/shopifyService.js";
 import type { CallSession, OrderLookupResult } from "../types/order.js";
-import { applyCallerVerificationFromOrder } from "./callerVerification.js";
+import { runVerificationGate } from "./verificationGate.js";
 import { orderStatusToStructuredOrder } from "./fulfillmentHandlers.js";
 import { buildActiveOrderContextFromResult, saveActiveOrderContext } from "./sessionManager.js";
 
@@ -60,7 +60,8 @@ export async function executeOrderLookupForSession(
       return { status: "api_error", message: "Order lookup returned incomplete data." };
     }
     session.currentOrder = structured;
-    applyCallerVerificationFromOrder(session, data);
+    session.lastOrderStatusResult = data;
+    runVerificationGate(session, data);
     const payload = buildActiveOrderContextFromResult(data, session);
     if (payload) {
       saveActiveOrderContext(session, payload);

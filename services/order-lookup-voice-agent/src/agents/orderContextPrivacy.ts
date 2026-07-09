@@ -2,6 +2,7 @@
  * PII guardrails for LLM-injected order context — unverified callers get a reduced payload.
  */
 import type { ActiveOrderContextData } from "./sessionManager.js";
+import { maskEmailForUnverified, maskPhoneForUnverified } from "./verificationGate.js";
 
 /** Vault-only fields — unverified callers still receive line items, totals, and fees. */
 const UNVERIFIED_STRIPPED_CONTEXT_KEYS = [
@@ -9,6 +10,17 @@ const UNVERIFIED_STRIPPED_CONTEXT_KEYS = [
   "events",
   "order_confirmation_email",
   "order_confirmation_email_for_tts",
+  "customer_email",
+  "customer_email_for_tts",
+  "customer_name",
+  "payment_method",
+  "payment_method_last4",
+  "card_brand",
+  "physical_items",
+  "fee_items",
+  "subtotal_amount",
+  "total_amount",
+  "shipping_amount",
 ] as const;
 
 /** Strip vault fields from order JSON before LLM injection for unverified callers. */
@@ -18,12 +30,21 @@ export function filterOrderContextForVerification(
 ): ActiveOrderContextData {
   if (isVerified) return data;
 
+  const email = String(data.customer_email ?? data.order_confirmation_email ?? "");
+  const phone = String(data.customer_phone ?? data.shopify_customer_phone ?? "");
+
   const copy: ActiveOrderContextData = { ...data };
   for (const key of UNVERIFIED_STRIPPED_CONTEXT_KEYS) {
     if (key in copy) copy[key] = null;
   }
   copy.privacy_tier = "unverified";
   copy.vault_access = "restricted";
+  if (email) {
+    copy.masked_notification_email = maskEmailForUnverified(email);
+  }
+  if (phone) {
+    copy.masked_notification_phone = maskPhoneForUnverified(phone);
+  }
   return copy;
 }
 

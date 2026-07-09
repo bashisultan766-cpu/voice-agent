@@ -2,13 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getOrderStatus } from "../src/adapters/shopifyStorefrontAdapter.js";
 import { lookupOrder, clearOrderCache } from "../src/services/shopifyService.js";
 
-vi.mock("../src/adapters/shopifyStorefrontAdapter.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/adapters/shopifyStorefrontAdapter.js")>();
-  return {
-    ...actual,
-    getOrderStatus: vi.fn(),
-  };
-});
+vi.mock("../src/adapters/shopifyStorefrontAdapter.js", () => ({
+  getOrderStatus: vi.fn(),
+}));
 
 describe("shopifyService", () => {
   beforeEach(() => {

@@ -31,6 +31,9 @@ import { hasConfirmedOrderContext } from "../agents/orderContextPolicy.js";
 import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
 import type { CallSession } from "../types/order.js";
 import {
+  appendProtocolClosing,
+} from "../agents/orderLookupProtocol.js";
+import {
   buildOrderFieldQuerySpeech,
   buildRefundEmailFollowUpSpeech,
   isOrderFieldQuestion,
@@ -794,7 +797,7 @@ function interceptOrderNumberOfferBeforeLlm(
 
 function groundedSpeechFromOrderToolRecord(
   record: LlmToolExecutionRecord,
-  options?: { insistence?: boolean },
+  options?: { insistence?: boolean; session?: CallSession },
 ): string {
   if (record.status === "blocked") {
     return record.errorMessage ?? "What's your order number?";
@@ -839,7 +842,7 @@ function resultFromDictateTrackingExecution(
 function resultFromOrderToolExecution(
   record: LlmToolExecutionRecord,
   toolExecutions: LlmToolExecutionRecord[],
-  options?: { insistence?: boolean },
+  options?: { insistence?: boolean; session?: CallSession },
 ): LlmAgentTurnResult {
   const speech = groundedSpeechFromOrderToolRecord(record, options);
   return {
@@ -899,8 +902,10 @@ function interceptOrderFieldQueryBeforeLlm(input: LlmAgentTurnInput): LlmAgentTu
   if (!ctx || Object.keys(ctx).length === 0) return null;
   if (!isOrderFieldQuestion(input.userMessage, input.session)) return null;
 
-  const speech = buildOrderFieldQuerySpeech(input.userMessage, ctx);
-  if (!speech) return null;
+  const speech = appendProtocolClosing(
+    buildOrderFieldQuerySpeech(input.userMessage, ctx) ?? "",
+  );
+  if (!speech.trim()) return null;
 
   return {
     speech,
@@ -1109,7 +1114,10 @@ export async function* runLlmAgentTurnEvents(
     );
     yield {
       type: "result",
-      result: resultFromOrderToolExecution(record, [record], { insistence }),
+      result: resultFromOrderToolExecution(record, [record], {
+        insistence,
+        session: input.session,
+      }),
     };
     return;
   }
@@ -1379,7 +1387,9 @@ export async function* runLlmAgentTurnEvents(
         if (lastOrderExec && !lastCatalogExec) {
           yield {
             type: "result",
-            result: resultFromOrderToolExecution(lastOrderExec, toolExecutions),
+            result: resultFromOrderToolExecution(lastOrderExec, toolExecutions, {
+              session: input.session,
+            }),
           };
           return;
         }

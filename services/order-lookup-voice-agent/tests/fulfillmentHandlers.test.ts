@@ -72,8 +72,8 @@ describe("buildOrderStatusTts", () => {
       cardLast4: "4242",
       cardBrand: "Visa",
     });
-    expect(tts.text).toMatch(/^Your order 12345 is /);
-    expect(tts.text).toMatch(/as of /);
+    expect(tts.text).toMatch(/^I have found your order 12345\./);
+    expect(tts.text).toMatch(/placed on /);
     expect(tts.text).not.toContain("Jane Doe");
     expect(tts.text).not.toContain("jane.doe@example.com");
     expect(tts.text).not.toContain("Your order contains");
@@ -88,7 +88,8 @@ describe("buildOrderStatusTts", () => {
       ...ORDER_21698_F1_EXPECTED,
     });
 
-    expect(tts.text).toMatch(/^Your order 21698-F1 is Refunded as of /);
+    expect(tts.text).toMatch(/^I have found your order 21698-F1\./);
+    expect(tts.text).toMatch(/status is Refunded/);
     expect(tts.text).not.toContain("Joel Moore");
     expect(tts.text).not.toContain("OUT OF STOCK");
     expect(tts.text).not.toContain("zzyxx2002@yahoo.com");
@@ -126,8 +127,8 @@ describe("handleFulfillmentTurn", () => {
       callSid: "CA_TEST",
     });
 
-    expect(result.tts.text).toMatch(/^Your order 54321 is /);
-    expect(result.tts.text).toMatch(/as of /);
+    expect(result.tts.text).toMatch(/^I have found your order 54321\./);
+    expect(result.tts.text).toMatch(/placed on /);
   });
 
   it("returns title search fallback on not found", async () => {

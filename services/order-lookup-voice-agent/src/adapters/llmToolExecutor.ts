@@ -19,7 +19,8 @@ import {
   setCartLineQuantity,
 } from "../agents/cartManager.js";
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
-import { applyCallerVerificationFromOrder } from "../agents/callerVerification.js";
+import { runVerificationGate } from "../agents/verificationGate.js";
+import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
 import type { CallSession } from "../types/order.js";
 import {
   isResendAvailable,
@@ -617,7 +618,8 @@ export async function executeLlmTool(
         bypassCache: true,
       });
       if (session && data.status === "found") {
-        applyCallerVerificationFromOrder(session, data);
+        session.lastOrderStatusResult = data;
+        runVerificationGate(session, data);
       }
       // After a miss, keep the order-number slot so the next turn bypasses cache
       // and retries live instead of replaying a stale not_found.
@@ -1106,7 +1108,7 @@ function shapeOrderStatusForLlm(
 ): Record<string, unknown> {
   const trackingNumber =
     data.trackingNumber && isValidTrackingNumber(data.trackingNumber)
-      ? data.trackingNumber
+      ? normalizeTrackingIdRawSequence(data.trackingNumber)
       : null;
   const refundNotificationEmail =
     data.refundNotificationEmail ??

@@ -134,6 +134,13 @@ export interface CallSession {
   /** True after checkout email was sent this call — confirm-once policy. */
   paymentLinkSent?: boolean;
   paymentLinkSentTo?: string;
+  /** Preserves initial caller goal (e.g. tracking) across the conversation. */
+  sessionMemory?: {
+    initialIntent: "order_lookup" | "tracking_id" | "order_status" | "general" | null;
+    pendingGoal: "order_lookup" | "tracking_id" | "order_status" | "general" | null;
+  };
+  /** Last successful Shopify lookup — drives verification-first disclosure speech. */
+  lastOrderStatusResult?: import("../adapters/shopifyStorefrontAdapter.js").OrderStatusResult;
   createdAt: number;
   /** Phase 1 slots — filled before any Shopify product API call. */
   productSlots?: IncomingProductSlots;

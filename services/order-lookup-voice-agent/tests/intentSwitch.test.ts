@@ -18,7 +18,7 @@ function mockSession(callSid: string): CallSession {
     to: "+15559876543",
     phase: "follow_up",
     greetedThisCall: true,
-    isVerifiedCaller: false,
+    isVerifiedCaller: true,
   } as CallSession;
   saveActiveOrderContext(session, {
     order_number: "21698",

@@ -166,7 +166,8 @@ describe("buildProgressiveDisclosureOrderSpeech", () => {
   it("returns concise status-only initial response for refunded orders", () => {
     const parsed = parseDeepOrderData(DEEP_FETCH_GQL_NODE);
     const speech = buildProgressiveDisclosureOrderSpeech(parsed);
-    expect(speech).toMatch(/^Your order 18420 is Refunded as of /);
+    expect(speech).toMatch(/^I have found your order 18420\./);
+    expect(speech).toMatch(/status is Refunded/);
     expect(speech).not.toContain("Sarah Chen");
     expect(speech).not.toContain("items");
   });
@@ -182,6 +183,7 @@ describe("buildProactiveOrderSummarySpeech", () => {
   it("buildOrderStatusTts produces progressive disclosure summary end-to-end", () => {
     const mapped = mapGqlOrderNode(DEEP_FETCH_GQL_NODE);
     const tts = buildOrderStatusTts({ status: "found", ...mapped });
-    expect(tts.text).toMatch(/^Your order 18420 is Refunded as of /);
+    expect(tts.text).toMatch(/^I have found your order 18420\./);
+    expect(tts.text).toMatch(/status is Refunded/);
   });
 });
