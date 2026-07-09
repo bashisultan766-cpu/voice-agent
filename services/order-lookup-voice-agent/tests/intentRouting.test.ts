@@ -53,11 +53,16 @@ describe("resolveCallerIntent", () => {
     expect(resolveCallerIntent("what is the customer name", session)).toBe("order_field_query");
   });
 
-  it("classifies explicit tracking requests as tracking_dictation", () => {
+  it("classifies explicit tracking requests as tracking_dictation when order is on file", () => {
     const session = seedOrderSession("CA_INTENT_TRACK");
     expect(resolveCallerIntent("give me the tracking id number", session)).toBe(
       "tracking_dictation",
     );
+  });
+
+  it("classifies tracking requests as order_lookup when no order is on file", () => {
+    const session = createCallSession("CA_INTENT_TRACK_COLD", "+15551234567", "+18005551212");
+    expect(resolveCallerIntent("I want my order tracking IT number", session)).toBe("order_lookup");
   });
 
   it("does not treat where is my order as tracking when context exists", () => {

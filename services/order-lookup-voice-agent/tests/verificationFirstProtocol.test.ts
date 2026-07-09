@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ORDER_NUMBER_PREFLIGHT_SPEECH,
+  TRACKING_ORDER_NUMBER_PREFLIGHT_SPEECH,
   POST_INFORMATION_CLOSING_SPEECH,
   TRACKING_ID_OFFER_SPEECH,
   appendProtocolClosing,
+  buildOrderNumberPreflightSpeech,
   buildVerificationFirstOrderSpeech,
   requiresOrderNumberPreflight,
 } from "../src/agents/orderLookupProtocol.js";
@@ -44,12 +46,36 @@ describe("verification-first protocol", () => {
       }),
     ).toBe(true);
     expect(
+      requiresOrderNumberPreflight("tracking_dictation", {
+        hasOrderNumberInUtterance: false,
+        hasConfirmedContext: false,
+        wantsTracking: true,
+      }),
+    ).toBe(true);
+    expect(
       requiresOrderNumberPreflight("order_lookup", {
         hasOrderNumberInUtterance: true,
         hasConfirmedContext: false,
       }),
     ).toBe(false);
     expect(ORDER_NUMBER_PREFLIGHT_SPEECH).toContain("order number");
+    expect(TRACKING_ORDER_NUMBER_PREFLIGHT_SPEECH).toContain("tracking ID");
+  });
+
+  it("classifies tracking request without order context as order lookup", async () => {
+    const { resolveCallerIntent } = await import("../src/agents/callerIntent.js");
+    const { isOrderLookupRequestWithoutNumber } = await import(
+      "../src/agents/orderContextPolicy.js"
+    );
+    const utterance = "I want to take my order tracking IT number";
+    expect(isOrderLookupRequestWithoutNumber(utterance)).toBe(true);
+    expect(resolveCallerIntent(utterance)).toBe("order_lookup");
+  });
+
+  it("uses tracking-specific preflight when caller asked for tracking ID", () => {
+    const session = baseSession();
+    captureSessionIntent(session, "I want my order tracking ID number", "order_lookup");
+    expect(buildOrderNumberPreflightSpeech(session)).toBe(TRACKING_ORDER_NUMBER_PREFLIGHT_SPEECH);
   });
 
   it("preserves tracking intent in session memory", () => {

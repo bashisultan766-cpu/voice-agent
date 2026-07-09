@@ -6,7 +6,7 @@ import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
 import { isSpatialResumeQuery } from "../sovereign/spatialDictation.js";
 
 export const TRACKING_REQUEST_RE =
-  /\b(?:tracking(?:\s*(?:id|number|#))?|track(?:ing)?\s*(?:id|number)|where\s+is\s+my\s+(?:package|shipment)|read\s+(?:me\s+)?(?:the\s+)?(?:tracking|track)|(?:give|tell|say|speak|repeat)\s+(?:me\s+)?(?:the\s+)?(?:tracking|track)|(?:what\s+is|what'?s)\s+(?:the\s+)?(?:tracking|track)|shipping\s+(?:tracking|number)|carrier\s+(?:number|tracking)|package\s+location)\b/i;
+  /\b(?:tracking(?:\s*(?:id|it|i\.?t\.?|number|#))?|track(?:ing)?\s*(?:id|it|i\.?t\.?|number)|where\s+is\s+my\s+(?:package|shipment)|read\s+(?:me\s+)?(?:the\s+)?(?:tracking|track)|(?:give|tell|say|speak|repeat)\s+(?:me\s+)?(?:the\s+)?(?:tracking|track)|(?:what\s+is|what'?s)\s+(?:the\s+)?(?:tracking|track)|shipping\s+(?:tracking|number)|carrier\s+(?:number|tracking)|package\s+location)\b/i;
 
 const TRACKING_SHORTHAND_RE =
   /\b(?:give|tell|read|say|speak|repeat)\s+(?:me\s+)?(?:the\s+)?(?:id|i\.?d\.?)\s*(?:number)?\b/i;
@@ -151,6 +151,15 @@ export function shouldStartTrackingDictation(
   );
   const orderIdShorthand =
     isOrderTrackingIdShorthand(callerText) && hasOrderTracking && !cartActive;
+
+  const hasOrderContext = Boolean(
+    gate?.session?.orderContextConfirmed &&
+      gate.session.currentOrderData &&
+      Object.keys(gate.session.currentOrderData).length > 0,
+  );
+  if (!hasOrderContext && !hasOrderTracking) {
+    return false;
+  }
 
   if (!trackingDictationComplete) {
     return isExplicitTrackingDictationRequest(callerText) || orderIdShorthand;

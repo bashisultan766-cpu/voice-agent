@@ -10,24 +10,43 @@ import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
 export const ORDER_NUMBER_PREFLIGHT_SPEECH =
   "I can look that up for you. Please tell me your order number first.";
 
+export const TRACKING_ORDER_NUMBER_PREFLIGHT_SPEECH =
+  "I can help you with your tracking ID. Please tell me your order number first.";
+
 export const TRACKING_ID_OFFER_SPEECH = "Would you like me to read the tracking ID?";
 
 export const POST_INFORMATION_CLOSING_SPEECH =
   "I have provided that, how else can I help you today?";
 
-/** ORDER_LOOKUP must not hit Shopify until an order number is collected. */
+/** ORDER_LOOKUP / tracking goals must not hit Shopify until an order number is collected. */
 export function requiresOrderNumberPreflight(
   intent: string,
   options: {
     hasOrderNumberInUtterance: boolean;
     hasConfirmedContext: boolean;
     awaitingOrderNumber?: boolean;
+    wantsTracking?: boolean;
   },
 ): boolean {
   if (options.hasConfirmedContext) return false;
-  if (intent !== "order_lookup" && intent !== "order_status") return false;
   if (options.hasOrderNumberInUtterance) return false;
-  return true;
+  if (
+    intent === "order_lookup" ||
+    intent === "order_status" ||
+    intent === "tracking_dictation" ||
+    intent === "tracking_id" ||
+    options.wantsTracking
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function buildOrderNumberPreflightSpeech(session?: CallSession): string {
+  if (session && callerAskedForTracking(session)) {
+    return TRACKING_ORDER_NUMBER_PREFLIGHT_SPEECH;
+  }
+  return ORDER_NUMBER_PREFLIGHT_SPEECH;
 }
 
 export function buildVerificationFirstOrderSpeech(

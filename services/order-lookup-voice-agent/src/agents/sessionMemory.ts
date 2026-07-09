@@ -37,7 +37,7 @@ export function inferBufferedIntentFromSpeech(
   const trimmed = (text ?? "").trim();
   if (!trimmed) return null;
 
-  if (TRACKING_REQUEST_RE.test(trimmed) || /\btracking\s*i\.?d\.?\b/i.test(trimmed)) {
+  if (TRACKING_REQUEST_RE.test(trimmed) || /\btracking\s*(?:i\.?d\.?|it|i\s*t)\b/i.test(trimmed)) {
     return "tracking_id";
   }
   if (

@@ -212,9 +212,9 @@ import {
 } from "./orderFollowUpSpeech.js";
 import {
   appendProtocolClosing,
-  ORDER_NUMBER_PREFLIGHT_SPEECH,
+  buildOrderNumberPreflightSpeech,
 } from "./orderLookupProtocol.js";
-import { captureSessionIntent } from "./sessionMemory.js";
+import { captureSessionIntent, callerAskedForTracking } from "./sessionMemory.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
 import {
@@ -809,20 +809,23 @@ async function* runOrchestratorTurnCore(
   const callerIntent = resolveCallerIntent(text, session);
   captureSessionIntent(session, text, callerIntent);
 
-  if (
-    callerIntent === "order_lookup" &&
+  const needsOrderNumberBeforeLookup =
     !hasConfirmedOrderContext(session) &&
     !isOrderNumberOfferUtterance(text) &&
     !extractOrderNumberFromStt(text, { awaitingSlot: true }) &&
-    !extractOrderNumberFromSpeech(text)
-  ) {
+    !extractOrderNumberFromSpeech(text) &&
+    (callerIntent === "order_lookup" ||
+      callerIntent === "tracking_dictation" ||
+      callerAskedForTracking(session));
+
+  if (needsOrderNumberBeforeLookup) {
     session.phase = "awaiting_order_number";
     session.awaitingInput = "order_number";
     session.lastOrchestratorIntent = "order_lookup";
     updateActiveSession(session.callSid, { cachedIntent: "order" });
     const speech =
       session.orderNumberAttempts === 0
-        ? ORDER_NUMBER_PREFLIGHT_SPEECH
+        ? buildOrderNumberPreflightSpeech(session)
         : buildClarifyingResponse(session.orderNumberAttempts);
     const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
     syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {

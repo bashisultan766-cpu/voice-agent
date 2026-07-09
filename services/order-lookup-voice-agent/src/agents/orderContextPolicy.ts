@@ -1,6 +1,7 @@
 /**
  * Order context is only actionable after an explicit order-number lookup this call.
  */
+import { TRACKING_REQUEST_RE } from "./trackingIntent.js";
 import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import { lookupOrderStatus } from "../services/shopifyService.js";
 import type { CallSession, OrderLookupResult } from "../types/order.js";
@@ -29,6 +30,16 @@ export function isOrderLookupRequestWithoutNumber(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   if (/\b\d{4,}\b/.test(trimmed)) return false;
+  if (TRACKING_REQUEST_RE.test(trimmed) || /\btracking\s*(?:i\.?d\.?|it|i\s*t)\b/i.test(trimmed)) {
+    return true;
+  }
+  if (
+    /\b(?:my\s+)?order\b/i.test(trimmed) &&
+    /\b(?:tracking|track)\b/i.test(trimmed) &&
+    !/\b(book|books|isbn|title|product|buy|purchase|cart)\b/i.test(trimmed)
+  ) {
+    return true;
+  }
   return (
     /\b(?:how\s+can\s+i\s+get|want\s+(?:to\s+)?know|need\s+(?:to\s+)?know|tell\s+me\s+about)\b.*\b(?:my\s+)?order\b/i.test(
       trimmed,

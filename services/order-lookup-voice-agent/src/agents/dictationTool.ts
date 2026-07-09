@@ -144,7 +144,7 @@ export function dictateTracking(callSid: string): DictateTrackingResult {
     return {
       ok: false,
       error: new NotReadyError(
-        "I do not have a tracking number on file yet. Would you like me to look up your order?",
+        "I can help you with your tracking ID. Please tell me your order number first.",
       ),
     };
   }

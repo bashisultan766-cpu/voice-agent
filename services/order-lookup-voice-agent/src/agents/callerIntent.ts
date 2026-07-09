@@ -165,7 +165,9 @@ function resolveCallerIntentCore(
     if (ORDER_HISTORY_RE.test(text)) return "order_history";
   }
 
-  if (isOrderLookupRequestWithoutNumber(text)) return "order_lookup";
+  if (!hasActiveOrderContext(session) && isOrderLookupRequestWithoutNumber(text)) {
+    return "order_lookup";
+  }
 
   if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) {
     return "catalog";
@@ -212,6 +214,9 @@ function resolveCallerIntentCore(
   }
 
   if (isExplicitTrackingDictationRequest(text)) {
+    if (!hasActiveOrderContext(session)) {
+      return "order_lookup";
+    }
     return "tracking_dictation";
   }
 
