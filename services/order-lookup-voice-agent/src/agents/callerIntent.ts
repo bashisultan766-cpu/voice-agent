@@ -116,6 +116,14 @@ function resolveCallerIntentCore(
   const text = callerText.trim();
   if (!text) return "neutral_listen";
 
+  const escalationState = session?.supportEscalation?.state;
+  if (
+    escalationState === "support_escalation_pending_email" ||
+    escalationState === "support_escalation_pending_email_confirmation"
+  ) {
+    return "support_escalation";
+  }
+
   const callSid = session?.callSid ?? "";
   const active = callSid ? getOrCreateActiveSession(callSid) : undefined;
 

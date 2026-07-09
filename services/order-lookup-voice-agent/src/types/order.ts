@@ -143,6 +143,8 @@ export interface CallSession {
   lastOrderStatusResult?: import("../adapters/shopifyStorefrontAdapter.js").OrderStatusResult;
   /** Active order-history drill-down context for verified callers. */
   orderHistoryContext?: import("../agents/orderHistoryFlow.js").OrderHistoryContext;
+  /** Support escalation state machine — locks routing during email capture. */
+  supportEscalation?: import("../agents/supportEscalationFlow.js").SupportEscalationContext;
   createdAt: number;
   /** Phase 1 slots — filled before any Shopify product API call. */
   productSlots?: IncomingProductSlots;

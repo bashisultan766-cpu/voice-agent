@@ -139,7 +139,8 @@ describe("production intent scenarios", () => {
   it("2 — non-verified caller asks for previous order history (count only)", async () => {
     const session = seedUnverifiedOrderSession("CA_PROD_2");
     const speech = await collectSpeech(session, "tell me previous order history");
-    expect(speech).toBe(buildUnverifiedOrderHistorySpeech(10));
+    expect(speech).toContain(buildUnverifiedOrderHistorySpeech(10));
+    expect(speech).toMatch(/forward your request to our support team/i);
     expect(speech).not.toMatch(/June|September|Sample Book/i);
   });
 

@@ -171,11 +171,6 @@ describe("enterprise restoration phase 2 e2e", () => {
       ],
     });
 
-    const escalationSpy = vi.spyOn(resendEmailService, "sendSupportEscalation").mockResolvedValue({
-      ok: true,
-      messageId: "msg_restore_test",
-    });
-
     // Step 1 — Verify caller (silent Twilio ↔ Shopify match)
     applyCallerVerificationFromOrder(session, {
       status: "found",
@@ -237,23 +232,32 @@ describe("enterprise restoration phase 2 e2e", () => {
     expect(cartSpeech).toMatch(/5 copies/i);
     expect(getCartSummary(session).items[0]?.quantity).toBe(5);
 
-    // Step 6 — Escalation with transcript in email body
+    // Step 6 — Escalation with email capture + detailed support email
+    const escalationSpy = vi
+      .spyOn(resendEmailService, "sendSupportEscalationDetailed")
+      .mockResolvedValue({
+        ok: true,
+        messageId: "msg_restore_test",
+      });
     getAgentState(session.callSid).messages.push(
       { role: "user", content: "I need a human please" },
       { role: "assistant", content: "Let me forward your details to support." },
     );
-    const escalationSpeech = await collectSpeech(
+    const askEmailSpeech = await collectSpeech(
       session,
       "please escalate this to the support team",
     );
-    logStep(6, "escalation", session, escalationSpeech);
-    expect(escalationSpeech).toMatch(/support team/i);
+    logStep(6, "escalation-ask-email", session, askEmailSpeech);
+    expect(askEmailSpeech).toMatch(/email address/i);
+
+    await collectSpeech(session, "jamaica@example.com");
+    const escalationSpeech = await collectSpeech(session, "yes that is correct");
+    logStep(6, "escalation-sent", session, escalationSpeech);
+    expect(escalationSpeech).toMatch(/forwarded your request to our support team/i);
     expect(escalationSpy).toHaveBeenCalled();
-    const summary = escalationSpy.mock.calls[0]?.[3] ?? "";
-    expect(summary).toMatch(/human please|support/i);
-    expect(summary).toMatch(/\+15551234567/);
-    expect(summary).toMatch(/Order 21796/);
-    expect(summary).not.toMatch(/Recent transcript/i);
-    expect(summary.split("\n").length).toBeLessThanOrEqual(3);
+    const details = escalationSpy.mock.calls[0]?.[0];
+    expect(details?.callerPhone).toMatch(/\+15551234567/);
+    expect(details?.orderNumber).toBe("21796");
+    expect(details?.callbackEmail).toBe("jamaica@example.com");
   });
 });

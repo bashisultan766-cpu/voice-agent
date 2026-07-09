@@ -222,8 +222,13 @@ import type { ActiveOrderContextData } from "./sessionManager.js";
 import {
   filterOrderContextForVerification,
   isRestrictedFieldQueryForUnverified,
-  buildUnverifiedRestrictedFieldRefusal,
 } from "./orderContextPrivacy.js";
+import { resolveDisclosureFieldFromUtterance } from "./responsePolicy.js";
+import {
+  armPrivateInfoBlockedEscalation,
+  buildUnverifiedRefusalWithSupportOffer,
+  resolveSupportEscalationTurn,
+} from "./supportEscalationFlow.js";
 import { getCustomerHistory } from "../adapters/shopifyStorefrontAdapter.js";
 import {
   buildMonthDrillDownSpeech,
@@ -369,6 +374,24 @@ function exitTrackingHandshakeForOrderQuery(callSid: string): void {
   }
 }
 
+async function* yieldSupportEscalationTurnIfActive(
+  session: CallSession,
+  callerText: string,
+): AsyncGenerator<AgentStreamEvent, boolean> {
+  const turn = await resolveSupportEscalationTurn(session, callerText);
+  if (!turn.handled) return false;
+
+  exitTrackingHandshakeForOrderQuery(session.callSid);
+  const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, turn.speech, callerText);
+  syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+    responseType: "general_help",
+  });
+  session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+  yield* yieldSpeech(uniqueSpeech);
+  yield doneEvent(session.phase);
+  return true;
+}
+
 function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
   const raw = session.currentOrderData ?? {};
   return filterOrderContextForVerification(
@@ -393,7 +416,12 @@ async function resolveOrderHistorySpeech(
       session.totalOrderCount ??
       (session.currentOrderData?.total_order_count as number | undefined) ??
       0;
-    return buildUnverifiedOrderHistorySpeech(count);
+    armPrivateInfoBlockedEscalation(
+      session,
+      "order history",
+      "Unverified caller requested detailed order history.",
+    );
+    return `${buildUnverifiedOrderHistorySpeech(count)} Would you like me to forward your request to our support team so they can verify you and follow up?`;
   }
 
   const monthToken = parseMonthFromUtterance(callerText);
@@ -910,6 +938,10 @@ async function* runOrchestratorTurnCore(
   const text = (callerText ?? "").trim();
   ingestUserTurn(session.callSid, text);
 
+  if (yield* yieldSupportEscalationTurnIfActive(session, text)) {
+    return;
+  }
+
   if (text === USER_INTERRUPTED_DICTATION_SIGNAL) {
     const active = getOrCreateActiveSession(session.callSid);
     const speech = buildDictationInterruptSpeech(active.lastSpokenIndex);
@@ -974,7 +1006,13 @@ async function* runOrchestratorTurnCore(
       isRestrictedFieldQueryForUnverified(text)
     ) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
-      const refusal = buildUnverifiedRestrictedFieldRefusal(
+      const requested = resolveDisclosureFieldFromUtterance(text) ?? "protected order information";
+      armPrivateInfoBlockedEscalation(
+        session,
+        requested,
+        "Unverified caller requested vault-protected order information.",
+      );
+      const refusal = buildUnverifiedRefusalWithSupportOffer(
         String(session.currentOrderData?.customer_name ?? ""),
       );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, text);
@@ -1376,6 +1414,10 @@ async function* handleFollowUpPhase(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  if (yield* yieldSupportEscalationTurnIfActive(session, callerText)) {
+    return;
+  }
+
   const callerIntent = resolveCallerIntent(callerText, session);
 
   if (
@@ -1406,7 +1448,13 @@ async function* handleFollowUpPhase(
       isRestrictedFieldQueryForUnverified(callerText)
     ) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
-      const refusal = buildUnverifiedRestrictedFieldRefusal(
+      const requested = resolveDisclosureFieldFromUtterance(callerText) ?? "protected order information";
+      armPrivateInfoBlockedEscalation(
+        session,
+        requested,
+        "Unverified caller requested vault-protected order information.",
+      );
+      const refusal = buildUnverifiedRefusalWithSupportOffer(
         String(session.currentOrderData?.customer_name ?? ""),
       );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, callerText);
