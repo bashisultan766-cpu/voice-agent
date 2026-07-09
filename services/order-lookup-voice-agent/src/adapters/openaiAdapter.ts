@@ -915,7 +915,7 @@ function interceptOrderFieldQueryBeforeLlm(input: LlmAgentTurnInput): LlmAgentTu
 }
 
 function interceptNotepadReadyBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  if (!isUserNotepadReadyIntent(input.userMessage)) return null;
+  if (!isUserNotepadReadyIntent(input.userMessage, input.callSid)) return null;
 
   const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
   const active = getOrCreateActiveSession(input.callSid);
@@ -972,7 +972,7 @@ function interceptTrackingDictationLockBeforeLlm(input: LlmAgentTurnInput): LlmA
   if (!inTracking) return null;
 
   if (isSpatialResumeQuery(input.userMessage)) return null;
-  if (isUserNotepadReadyIntent(input.userMessage)) return null;
+  if (isUserNotepadReadyIntent(input.userMessage, input.callSid)) return null;
   if (isTrackingRequest(input.userMessage)) return null;
   if (
     isTrackingDictationCompleteIntent(input.userMessage, {

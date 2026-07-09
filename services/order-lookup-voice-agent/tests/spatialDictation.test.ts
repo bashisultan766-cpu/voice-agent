@@ -42,6 +42,15 @@ describe("spatialDictation anchors", () => {
     expect(turn.speech).toMatch(/After Zero-Zero-Zero/i);
     expect((turn.speech ?? "").length).toBeLessThan(120);
   });
+
+  it("speaks digit words only after spatial anchor — never decimal points", () => {
+    const localTracking = "9904530123";
+    const localIndex = buildSpatialIndexFromTracking(localTracking);
+    const turn = resolveSpatialTurnSpeech("what comes after 45", localIndex, localTracking);
+    expect(turn.handled).toBe(true);
+    expect(turn.speech).toMatch(/Three\./i);
+    expect(turn.speech).not.toMatch(/3\.0|point/i);
+  });
 });
 
 describe("tracking dictation completion", () => {
@@ -112,7 +121,7 @@ describe("tracking dictation completion", () => {
     );
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("tracking_complete");
-    expect(resolution.speech).toMatch(/written down|anything else|buy a book/i);
+    expect(resolution.speech).toMatch(/how else can I help you today/i);
     expect(resolution.speech).not.toMatch(/Nine\./);
 
     const after = getOrCreateActiveSession("CA_DONE");
@@ -152,11 +161,46 @@ describe("tracking gate shorthand", () => {
     } as CallSession;
 
     recordTrackingPayload("CA_SPATIAL", "9449050105795009634765");
-    updateActiveSession("CA_SPATIAL", { isNotepadReady: true });
+    updateActiveSession("CA_SPATIAL", {
+      isNotepadReady: true,
+      currentState: "tracking_dictation",
+      cachedIntent: "tracking",
+    });
 
     const resolution = resolveTrackingPhaseGate("what comes after 6,3", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("spatial_resume");
     expect(resolution.speech).toMatch(/After Six-Three/i);
+    expect(resolution.speech).not.toContain("pen and notepad");
+  });
+
+  it("does not restart notepad handshake on spatial query mid-dictation", () => {
+    const session = {
+      callSid: "CA_SPATIAL2",
+      from: "+1",
+      to: "+2",
+      phase: "follow_up",
+      orderNumberAttempts: 0,
+      createdAt: Date.now(),
+      currentOrderData: { tracking_number: "9449050105795009634765" },
+    } as CallSession;
+
+    recordTrackingPayload("CA_SPATIAL2", "9449050105795009634765");
+    updateActiveSession("CA_SPATIAL2", {
+      isNotepadReady: true,
+      currentState: "tracking_dictation",
+      cachedIntent: "tracking",
+      lastSpokenIndex: 4,
+    });
+
+    const resolution = resolveTrackingPhaseGate("what comes after 4.5", session);
+    expect(resolution.handled).toBe(true);
+    expect(resolution.intentKey).toBe("spatial_resume");
+    expect(resolution.speech).not.toMatch(/pen and notepad|let me know when you are ready/i);
+    expect(resolution.speech).not.toMatch(/3\.0|point/i);
+
+    const active = getOrCreateActiveSession("CA_SPATIAL2");
+    expect(active.currentState).toBe("tracking_dictation");
+    expect(active.isNotepadReady).toBe(true);
   });
 });

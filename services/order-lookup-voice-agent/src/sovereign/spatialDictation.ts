@@ -2,7 +2,6 @@
  * Spatial tracking dictation — resume from anchor digits in spatialIndex.
  */
 import type { SpatialIndexEntry } from "./activeSession.js";
-import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
 
 const DIGIT_WORD: Record<string, string> = {
   "0": "Zero",
@@ -191,7 +190,7 @@ function ordinalLabel(n: number): string {
 export function buildSpatialResumeSpeech(
   spatialIndex: SpatialIndexEntry[],
   anchorDigits: string[],
-  trackingRaw?: string,
+  _trackingRaw?: string,
 ): string | null {
   const anchor =
     resolveAnchorDigitsForSpatialIndex(spatialIndex, anchorDigits) ?? anchorDigits;
@@ -204,11 +203,7 @@ export function buildSpatialResumeSpeech(
     return "That is the end of the tracking number.";
   }
 
-  const remainingRaw = remaining.map((entry) => entry.digit).join("");
-  const phonetic =
-    trackingRaw && remainingRaw
-      ? formatTrackingNumberForTTS(remainingRaw)
-      : remaining.map((entry) => `${digitWord(entry.digit)}.`).join(" ");
+  const phonetic = remaining.map((entry) => `${digitWord(entry.digit)}.`).join(" ");
 
   const occurrenceCount = countAnchorOccurrences(spatialIndex, anchor);
   const anchorSpoken = anchor.map((d) => digitWord(d)).join("-");

@@ -156,6 +156,8 @@ export interface CallSession {
   /** Prior call dropped — welcome-back greeting and context restore. */
   welcomeBack?: boolean;
   lastOrchestratorIntent?: string;
+  /** True after order disclosure offers to read tracking — waits for caller yes. */
+  awaitingTrackingOffer?: boolean;
 }
 
 export interface TwilioRelayInboundMessage {

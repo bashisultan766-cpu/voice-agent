@@ -118,7 +118,7 @@ function resolveCallerIntentCore(
   if (
     callSid &&
     active &&
-    isUserNotepadReadyIntent(text) &&
+    isUserNotepadReadyIntent(text, callSid) &&
     isTrackingDictationPending(callSid, session?.currentOrderData)
   ) {
     return "tracking_flow_active";
@@ -141,7 +141,7 @@ function resolveCallerIntentCore(
       if (CART_RE.test(text)) return "cart";
       if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) return "catalog";
       if (
-        isUserNotepadReadyIntent(text) ||
+        isUserNotepadReadyIntent(text, callSid) ||
         isExplicitTrackingDictationRequest(text) ||
         /\b(?:ready|notepad|pen\s+and)\b/i.test(text)
       ) {

@@ -86,6 +86,13 @@ export function buildVerificationFirstOrderSpeech(
   return segments.join(" ");
 }
 
+/** Arm tracking-offer acceptance when disclosure speech includes the read-tracking prompt. */
+export function syncTrackingOfferState(speech: string, session: CallSession): void {
+  if (speech.includes(TRACKING_ID_OFFER_SPEECH)) {
+    session.awaitingTrackingOffer = true;
+  }
+}
+
 export function appendProtocolClosing(speech: string): string {
   const trimmed = speech.trim();
   if (!trimmed) return POST_INFORMATION_CLOSING_SPEECH;

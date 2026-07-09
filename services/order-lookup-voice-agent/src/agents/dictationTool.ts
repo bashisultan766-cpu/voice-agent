@@ -1,7 +1,7 @@
 /**
  * Tracking dictation — chunked playback, lastSpokenIndex, spatial resume, and notepad gate.
  */
-import type { SpeechChunk } from "../types/order.js";
+import type { SpeechChunk, CallSession } from "../types/order.js";
 import type { ActiveSession, SpatialIndexEntry } from "../sovereign/activeSession.js";
 import {
   buildSpatialResumeFromIndex,
@@ -16,8 +16,9 @@ import {
 export const USER_NOTEPAD_READY = "USER_NOTEPAD_READY";
 export const TRACKING_DICTATION_COMPLETE = "TRACKING_DICTATION_COMPLETE";
 
+/** Keep in sync with orderLookupProtocol.POST_INFORMATION_CLOSING_SPEECH — no import (circular dep). */
 export const TRACKING_DICTATION_COMPLETE_SPEECH =
-  "Great — sounds like you have the tracking number written down. Would you like help with anything else on your order, or are you looking to buy a book?";
+  "I have provided that, how else can I help you today?";
 
 export const TRACKING_DICTATION_CONFIRM_SPEECH =
   "Did you write that correctly, or should I repeat it?";
@@ -49,12 +50,33 @@ export function appendTrackingDictationConfirm(speech: string): string {
   return `${trimmed} ${TRACKING_DICTATION_CONFIRM_SPEECH}`;
 }
 
-export function isUserNotepadReadyIntent(callerText: string): boolean {
+export function isAffirmativeUtterance(callerText: string): boolean {
+  const text = callerText.trim();
+  if (!text) return false;
+  if (/^(yes|yeah|yep|yup|sure|ok|okay|please|go ahead)\.?$/i.test(text)) return true;
+  return /^yes\b/i.test(text) && /\b(read|tracking|please)\b/i.test(text);
+}
+
+/** Caller accepted "Would you like me to read the tracking ID?" after order disclosure. */
+export function isTrackingOfferAcceptance(callerText: string, session: CallSession): boolean {
+  if (!session.awaitingTrackingOffer) return false;
+  const text = callerText.trim();
+  if (!text) return false;
+  if (isAffirmativeUtterance(text)) return true;
+  return /\b(read|tracking)\b/i.test(text) && /\b(yes|please|sure|ok|okay)\b/i.test(text);
+}
+
+export function isUserNotepadReadyIntent(callerText: string, callSid?: string): boolean {
   const text = callerText.trim();
   if (!text) return false;
   if (/\b(?:written|wrote|got it|thank|done writing|copied)\b/i.test(text)) return false;
   if (NOTEPAD_READY_RE.test(text)) return true;
-  return /^(yes|ok|okay)\.?$/i.test(text);
+  if (/^(yes|ok|okay)\.?$/i.test(text)) {
+    if (!callSid) return false;
+    const active = getOrCreateActiveSession(callSid);
+    return active.currentState === "awaiting_notepad_ready";
+  }
+  return false;
 }
 
 /** Caller has tracking on file and has not finished dictation yet. */
@@ -69,14 +91,13 @@ export function isTrackingDictationPending(
 }
 
 /**
- * Confirm notepad readiness and begin tracking dictation speech.
+ * Begin tracking dictation after caller confirmed pen and notepad are ready.
  * Used by orchestrator and LLM intercepts so both paths share one handshake.
  */
 export function beginTrackingDictationAfterNotepadReady(callSid: string): {
   ok: boolean;
   speech: string;
 } {
-  markTrackingAwaitingNotepad(callSid);
   confirmUserNotepadReady(callSid);
   const dictated = dictateTracking(callSid);
   if (!dictated.ok) {

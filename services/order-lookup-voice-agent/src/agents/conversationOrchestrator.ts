@@ -107,6 +107,7 @@ import {
   buildResumeFromLastSpokenIndex,
   buildTrackingDictationChunks,
   completeTrackingDictation,
+  isTrackingOfferAcceptance,
   isUserNotepadReadyIntent,
   buildNotepadReadyNudge,
   appendTrackingDictationConfirm,
@@ -213,6 +214,7 @@ import {
 import {
   appendProtocolClosing,
   buildOrderNumberPreflightSpeech,
+  syncTrackingOfferState,
 } from "./orderLookupProtocol.js";
 import { captureSessionIntent, callerAskedForTracking } from "./sessionMemory.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
@@ -368,7 +370,7 @@ function tryResolveNotepadReadyTurn(
   text: string,
   session: CallSession,
 ): TrackingPhaseResolution | null {
-  if (!isUserNotepadReadyIntent(text)) return null;
+  if (!isUserNotepadReadyIntent(text, session.callSid)) return null;
 
   ensureTrackingPayloadFromSession(session);
   const active = getOrCreateActiveSession(session.callSid);
@@ -384,6 +386,64 @@ function tryResolveNotepadReadyTurn(
     skipLlm: true,
     skipTools: true,
     intentKey: turn.ok ? USER_NOTEPAD_READY : PHASE_HANDSHAKE,
+  };
+}
+
+function tryResolveTrackingOfferTurn(
+  text: string,
+  session: CallSession,
+): TrackingPhaseResolution | null {
+  if (!isTrackingOfferAcceptance(text, session)) return null;
+
+  session.awaitingTrackingOffer = false;
+  ensureTrackingPayloadFromSession(session);
+  return {
+    handled: true,
+    speech: beginTrackingNotepadHandshake(session.callSid),
+    skipLlm: true,
+    skipTools: true,
+    intentKey: PHASE_HANDSHAKE,
+  };
+}
+
+function tryResolveSpatialTrackingTurn(
+  text: string,
+  session: CallSession,
+): TrackingPhaseResolution | null {
+  if (!isSpatialResumeQuery(text)) return null;
+
+  ensureTrackingPayloadFromSession(session);
+  const refreshed = getOrCreateActiveSession(session.callSid);
+  if (!refreshed.spatialIndex.length) return null;
+
+  const spatialTurn = resolveSpatialTurnSpeech(
+    text,
+    refreshed.spatialIndex,
+    refreshed.lastSpokenPayload?.trackingRaw,
+  );
+  if (!spatialTurn.handled || !spatialTurn.speech) return null;
+
+  if (spatialTurn.resumeOffset !== undefined && !isSpatialBeforeQuery(text)) {
+    updateActiveSession(session.callSid, {
+      lastSpokenIndex: Math.max(spatialTurn.resumeOffset - 1, -1),
+      currentState: "tracking_dictation",
+      cachedIntent: "tracking",
+      isNotepadReady: true,
+    });
+  } else {
+    updateActiveSession(session.callSid, {
+      currentState: "tracking_dictation",
+      cachedIntent: "tracking",
+      isNotepadReady: true,
+    });
+  }
+
+  return {
+    handled: true,
+    speech: spatialTurn.speech,
+    skipLlm: true,
+    skipTools: true,
+    intentKey: spatialTurn.anchor ? "spatial_resume" : "spatial_clarify",
   };
 }
 
@@ -449,11 +509,21 @@ export function resolveTrackingPhaseGate(
   const completionTurn = tryResolveTrackingCompletionTurn(text, session, active);
   if (completionTurn) return completionTurn;
 
+  const trackingOfferTurn = tryResolveTrackingOfferTurn(text, session);
+  if (trackingOfferTurn) return trackingOfferTurn;
+
+  const spatialTurn = tryResolveSpatialTrackingTurn(text, session);
+  if (spatialTurn) return spatialTurn;
+
   const notepadReadyTurn = tryResolveNotepadReadyTurn(text, session);
   if (notepadReadyTurn) return notepadReadyTurn;
 
   if (!shouldRunTrackingPhaseGate(intent)) {
+    const preserveTrackingMidDictation =
+      isSpatialResumeQuery(text) ||
+      (active.currentState === "tracking_dictation" && active.spatialIndex.length > 0);
     if (
+      !preserveTrackingMidDictation &&
       (active.currentState === "awaiting_notepad_ready" ||
         active.currentState === "tracking_dictation") &&
       active.cachedIntent === "tracking"
@@ -475,35 +545,11 @@ export function resolveTrackingPhaseGate(
     { session },
   );
 
-  if (wantsTrackingDictation || isSpatialResumeQuery(text)) {
+  if (wantsTrackingDictation) {
     ensureTrackingPayloadFromSession(session);
     refreshed = getOrCreateActiveSession(session.callSid);
   }
 
-  if (refreshed.spatialIndex.length > 0 && isSpatialResumeQuery(text)) {
-    const spatialTurn = resolveSpatialTurnSpeech(
-      text,
-      refreshed.spatialIndex,
-      refreshed.lastSpokenPayload?.trackingRaw,
-    );
-    if (spatialTurn.handled && spatialTurn.speech) {
-      if (spatialTurn.resumeOffset !== undefined && !isSpatialBeforeQuery(text)) {
-        updateActiveSession(session.callSid, {
-          lastSpokenIndex: Math.max(spatialTurn.resumeOffset - 1, -1),
-          currentState: "tracking_dictation",
-        });
-      } else {
-        updateActiveSession(session.callSid, { currentState: "tracking_dictation" });
-      }
-      return {
-        handled: true,
-        speech: spatialTurn.speech,
-        skipLlm: true,
-        skipTools: true,
-        intentKey: spatialTurn.anchor ? "spatial_resume" : "spatial_clarify",
-      };
-    }
-  }
   if (INTERRUPT_RESUME_RE.test(text) && refreshed.spatialIndex.length > 0 && refreshed.lastSpokenIndex >= 0) {
     const resume = buildResumeFromLastSpokenIndex(refreshed);
     if (resume) {
@@ -523,7 +569,7 @@ export function resolveTrackingPhaseGate(
       return { handled: false };
     }
 
-    if (isUserNotepadReadyIntent(text)) {
+    if (isUserNotepadReadyIntent(text, session.callSid)) {
       const turn = beginTrackingDictationAfterNotepadReady(session.callSid);
       return {
         handled: true,
@@ -574,6 +620,7 @@ export function resolveTrackingPhaseGate(
   );
 
   if (wantsTrackingDictation && trackingContextReady) {
+    session.awaitingTrackingOffer = false;
     if (!refreshed.isNotepadReady) {
       return {
         handled: true,
@@ -1381,6 +1428,7 @@ async function* streamOrderSummary(
   const result = session.lastOrderStatusResult;
   if (result?.status === "found") {
     const speech = groundedOrderSpeech(result, session);
+    syncTrackingOfferState(speech, session);
     yield* yieldSpeech(speech);
     return;
   }

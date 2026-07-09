@@ -85,7 +85,7 @@ describe("enterprise orchestrator phase 3 e2e", () => {
 
     const complete = await collectSpeech(session, "yes I have written it down thank you");
     logPhase("3-tracking-complete", session, complete);
-    expect(complete).toMatch(/written down|anything else|buy a book/i);
+    expect(complete).toMatch(/how else can I help you today/i);
     expect(complete).not.toMatch(/pen and notepad/i);
     const afterComplete = getOrCreateActiveSession(session.callSid);
     expect(afterComplete.currentState).toBe("order_active");
