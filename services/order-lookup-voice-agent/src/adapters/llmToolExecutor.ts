@@ -333,6 +333,23 @@ export async function executeLlmTool(
     const customerEmail = (args.customerEmail ?? args.email ?? "").trim();
     const customerName = (args.customerName ?? args.name ?? "").trim();
 
+    if (session.paymentLinkSent) {
+      const prior = session.paymentLinkSentTo ?? customerEmail ?? "your email";
+      return {
+        tool,
+        args: { customerEmail, customerName },
+        ok: true,
+        status: "sent",
+        data: {
+          status: "already_sent",
+          message: `Payment link was already sent to ${prior} during this call.`,
+          instructions:
+            "Confirm-once policy: do NOT resend. Say the link was already emailed and ask if they need anything else.",
+        },
+        elapsedMs: Date.now() - started,
+      };
+    }
+
     if (!isValidCustomerEmail(customerEmail)) {
       return {
         tool,
@@ -431,6 +448,11 @@ export async function executeLlmTool(
           ? undefined
           : "Email delivery failed but invoice_url is valid — read the checkout link aloud or offer to retry email.",
       };
+
+      if (emailResult.ok) {
+        session.paymentLinkSent = true;
+        session.paymentLinkSentTo = customerEmail;
+      }
 
       return {
         tool,

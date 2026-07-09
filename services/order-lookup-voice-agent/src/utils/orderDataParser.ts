@@ -485,10 +485,16 @@ export function buildProactiveOrderSummarySpeech(data: ParsedOrderData): string 
 }
 
 /**
- * Concise initial order response — progressive disclosure (status only).
- * Template: "I found your order. Your order status is [Status/Refunded]. Do you need any more information about your order?"
+ * Concise initial order response — progressive disclosure (status + date only).
+ * Template: "Your order [ID] is [Status] as of [Date]."
  */
-export function buildProgressiveDisclosureOrderSpeech(data: ParsedOrderData): string {
+export function buildProgressiveDisclosureOrderSpeech(
+  data: ParsedOrderData,
+  options?: { verified?: boolean },
+): string {
+  const verified = options?.verified !== false;
+  const orderId = data.orderNumber?.replace(/^#/, "") ?? "unknown";
+
   let statusPhrase: string;
   if (data.isRefunded) {
     statusPhrase = "Refunded";
@@ -498,5 +504,15 @@ export function buildProgressiveDisclosureOrderSpeech(data: ParsedOrderData): st
     statusPhrase = "being processed";
   }
 
-  return `I found your order. Your order status is ${statusPhrase}. Do you need any more information about your order?`;
+  const asOfDate =
+    data.refundDate?.trim() ||
+    data.orderPlacedAtSpoken?.trim() ||
+    data.orderPlacedAt?.trim() ||
+    "today";
+
+  if (!verified) {
+    return `Your order ${orderId} is ${statusPhrase} as of ${asOfDate}.`;
+  }
+
+  return `Your order ${orderId} is ${statusPhrase} as of ${asOfDate}.`;
 }

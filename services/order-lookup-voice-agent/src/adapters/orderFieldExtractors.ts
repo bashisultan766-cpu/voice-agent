@@ -201,6 +201,54 @@ export function extractRefundNotificationEmailFromMessages(
   return extractRefundNotificationEmail(events, []);
 }
 
+const SMS_PHONE_RE =
+  /(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}|\b\d{10,11}\b/;
+
+const SMS_NOTIFICATION_RE =
+  /\b(sms|text(?:\s+message)?|sent\s+(?:an?\s+)?sms|sms\s+(?:was\s+)?sent|texted|text\s+message)\b/i;
+
+function phoneFromTimelineMessage(message: string): string | undefined {
+  const match = message.match(SMS_PHONE_RE);
+  return match?.[0]?.trim();
+}
+
+export interface NotificationDelivery {
+  channel: "sms" | "email";
+  destination: string;
+}
+
+/**
+ * Parse Shopify timeline/metadata for how a notification was delivered.
+ * SMS → phone number; Email → address.
+ */
+export function extractNotificationDeliveryFromMessages(
+  messages: string[],
+): NotificationDelivery | null {
+  for (const raw of [...messages].reverse()) {
+    const message = (raw ?? "").trim();
+    if (!message || !/notification|sent|confirm|refund/i.test(message)) continue;
+
+    if (SMS_NOTIFICATION_RE.test(message)) {
+      const phone = phoneFromTimelineMessage(message);
+      if (phone) return { channel: "sms", destination: phone };
+    }
+
+    const email = emailFromTimelineMessage(message);
+    if (email && /notification|sent|email|refund|confirm/i.test(message)) {
+      return { channel: "email", destination: email };
+    }
+  }
+  return null;
+}
+
+/** Spoken disclosure for notification delivery channel. */
+export function formatNotificationDeliverySpeech(delivery: NotificationDelivery): string {
+  if (delivery.channel === "sms") {
+    return `The notification was sent to ${delivery.destination}.`;
+  }
+  return `The notification was sent to ${delivery.destination}.`;
+}
+
 /** Exact staff timeline reason — e.g. "OUT OF STOCK - ISSUE REFUND VIA PAYPAL". */
 export function extractTimelineRefundReason(
   events: OrderTimelineEvent[],

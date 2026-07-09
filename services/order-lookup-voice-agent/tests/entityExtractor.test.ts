@@ -25,6 +25,11 @@ describe("normalizeSpokenNumericSequence", () => {
     expect(normalizeSpokenNumericSequence("o o seven")).toBe("007");
   });
 
+  it("maps compound tens (twenty → 20, not 2.0)", () => {
+    expect(normalizeSpokenNumericSequence("twenty")).toBe("20");
+    expect(normalizeSpokenNumericSequence("twenty one six nine eight")).toBe("21698");
+  });
+
   it("maps A/ate to eight", () => {
     expect(normalizeSpokenNumericSequence("ate five")).toBe("85");
     expect(normalizeSpokenNumericSequence("a five")).toBe("85");

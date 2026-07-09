@@ -50,12 +50,10 @@ const TENS: Record<string, number> = {
 };
 
 const FILLER_WORDS = new Set([
-  "a",
   "an",
   "and",
   "at",
   "for",
-  "i",
   "im",
   "is",
   "it",
@@ -76,6 +74,18 @@ const FILLER_WORDS = new Set([
   "you",
   "your",
 ]);
+
+/** Single-letter STT homophones in numeric order-ID context. */
+const LETTER_DIGIT_CONFUSIONS: Record<string, string> = {
+  o: "0",
+  i: "1",
+  l: "1",
+  z: "2",
+  a: "8",
+  b: "8",
+  g: "8",
+  f: "5",
+};
 
 const SUFFIX_SEPARATOR_RE = /\b(dash|hyphen|minus|stroke|line)\b/i;
 
@@ -142,10 +152,18 @@ function consumeNumberChunk(
     return { value: String(ONES[token]), nextIndex: index + 1 };
   }
 
+  if (token.length === 1) {
+    const mapped = LETTER_DIGIT_CONFUSIONS[token];
+    if (mapped) {
+      return { value: mapped, nextIndex: index + 1 };
+    }
+  }
+
   return { value: "", nextIndex: index + 1 };
 }
 
-function parseSpokenDigitSequence(text: string): string {
+/** Collapse spoken or spaced digits into a continuous numeric string (no decimals). */
+export function parseSpokenDigitSequence(text: string): string {
   const tokens = stripFillers(tokenize(text));
   let index = 0;
   let digits = "";

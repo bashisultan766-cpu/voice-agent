@@ -4,6 +4,10 @@
 export const EXACT_MATCH_NOT_FOUND_MESSAGE =
   "I could not find an exact match in the system.";
 
+/** Spoken when semantic search returns close but non-exact title matches. */
+export const SIMILAR_MATCHES_PREFIX =
+  "I couldn't find the exact title, but I found these similar matches:";
+
 export const ORDER_NOT_FOUND_MESSAGE =
   "I could not find an exact match in the system. Could you double-check the order number and try again?";
 

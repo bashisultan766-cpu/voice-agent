@@ -131,6 +131,9 @@ export interface CallSession {
   /** Last generated Shopify invoice URL for checkout email. */
   pendingInvoiceUrl?: string;
   pendingDraftOrderName?: string;
+  /** True after checkout email was sent this call — confirm-once policy. */
+  paymentLinkSent?: boolean;
+  paymentLinkSentTo?: string;
   createdAt: number;
   /** Phase 1 slots — filled before any Shopify product API call. */
   productSlots?: IncomingProductSlots;

@@ -2,6 +2,13 @@ import OpenAI from "openai";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { extractIsbnFromSpeech } from "../tools/shopifyProductTools.js";
+import {
+  getConversationFlowMode,
+  isConfirmKeyword,
+  isIntentAllowedInCurrentFlow,
+  transitionFlowForIntent,
+  type ConversationFlowMode,
+} from "./conversationFlowState.js";
 
 export type CallerIntent =
   | "greeting"
@@ -16,6 +23,54 @@ export interface IntentClassification {
   intent: CallerIntent;
   confidence: number;
   source: "regex" | "openai" | "default";
+  flowMode?: ConversationFlowMode;
+}
+
+export interface ClassifyCallerIntentOptions {
+  callSid?: string;
+  inPurchaseFlow?: boolean;
+}
+
+export async function classifyCallerIntent(
+  speech: string,
+  options: ClassifyCallerIntentOptions = {},
+): Promise<IntentClassification> {
+  const text = (speech ?? "").trim();
+  if (!text) {
+    return { intent: "unknown", confidence: 0, source: "default" };
+  }
+
+  const callSid = options.callSid ?? "";
+  const flowMode = callSid ? getConversationFlowMode(callSid) : "idle";
+  const purchaseFlow = options.inPurchaseFlow ?? flowMode === "PURCHASE_FLOW";
+
+  if (purchaseFlow && isConfirmKeyword(text)) {
+    return {
+      intent: "product_search",
+      confidence: 0.92,
+      source: "regex",
+      flowMode: "PURCHASE_FLOW",
+    };
+  }
+
+  const regexResult = classifyWithRegex(text, callSid);
+  if (regexResult) {
+    if (callSid) transitionFlowForIntent(callSid, regexResult.intent);
+    return { ...regexResult, flowMode: callSid ? getConversationFlowMode(callSid) : undefined };
+  }
+
+  const llmResult = await classifyWithOpenAi(text, callSid);
+  if (llmResult) {
+    if (callSid) transitionFlowForIntent(callSid, llmResult.intent);
+    return { ...llmResult, flowMode: callSid ? getConversationFlowMode(callSid) : undefined };
+  }
+
+  return {
+    intent: "unknown",
+    confidence: 0.35,
+    source: "default",
+    flowMode: callSid ? getConversationFlowMode(callSid) : undefined,
+  };
 }
 
 const ISBN_IN_SPEECH = /\b(isbn|97[89][\d-]{10,17}|[\d-]{9,}[\dXx])\b/i;
@@ -30,35 +85,32 @@ const GREETING_ONLY_RE =
 const GREETING_PHRASE_RE =
   /\b(how\s+are\s+you|how'?s\s+it\s+going|how\s+are\s+ya|what'?s\s+up|nice\s+to\s+(meet|talk)\s+you)\b/i;
 
-export async function classifyCallerIntent(speech: string): Promise<IntentClassification> {
-  const text = (speech ?? "").trim();
-  if (!text) {
-    return { intent: "unknown", confidence: 0, source: "default" };
-  }
-
-  const regexResult = classifyWithRegex(text);
-  if (regexResult) return regexResult;
-
-  const llmResult = await classifyWithOpenAi(text);
-  if (llmResult) return llmResult;
-
-  return { intent: "unknown", confidence: 0.35, source: "default" };
-}
-
-function classifyWithRegex(text: string): IntentClassification | null {
+function classifyWithRegex(text: string, callSid = ""): IntentClassification | null {
   if (extractIsbnFromSpeech(text) || ISBN_IN_SPEECH.test(text)) {
+    if (callSid && !isIntentAllowedInCurrentFlow(callSid, "isbn_query")) {
+      return null;
+    }
     return { intent: "isbn_query", confidence: 0.95, source: "regex" };
   }
 
   if (PRODUCT_SEARCH_RE.test(text) && !ORDER_INTENT_RE.test(text)) {
+    if (callSid && !isIntentAllowedInCurrentFlow(callSid, "product_search")) {
+      return null;
+    }
     return { intent: "product_search", confidence: 0.9, source: "regex" };
   }
 
   if (ORDER_NUMBER_RE.test(text) || ORDER_INTENT_RE.test(text)) {
+    if (callSid && !isIntentAllowedInCurrentFlow(callSid, "order_lookup")) {
+      return null;
+    }
     return { intent: "order_lookup", confidence: 0.95, source: "regex" };
   }
 
   if (REFUND_INTENT_RE.test(text)) {
+    if (callSid && !isIntentAllowedInCurrentFlow(callSid, "order_lookup")) {
+      return null;
+    }
     return { intent: "order_lookup", confidence: 0.9, source: "regex" };
   }
 
@@ -69,7 +121,7 @@ function classifyWithRegex(text: string): IntentClassification | null {
   return null;
 }
 
-async function classifyWithOpenAi(speech: string): Promise<IntentClassification | null> {
+async function classifyWithOpenAi(speech: string, callSid = ""): Promise<IntentClassification | null> {
   try {
     const client = new OpenAI({
       apiKey: getConfig().OPENAI_API_KEY,
@@ -110,6 +162,10 @@ Classify intent only. Never call Shopify or search tools.`,
       "unknown",
     ];
     if (!parsed.intent || !intents.includes(parsed.intent as CallerIntent)) return null;
+
+    if (callSid && !isIntentAllowedInCurrentFlow(callSid, parsed.intent)) {
+      return null;
+    }
 
     return {
       intent: parsed.intent as CallerIntent,

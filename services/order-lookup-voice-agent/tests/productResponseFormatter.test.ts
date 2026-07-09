@@ -41,8 +41,8 @@ describe("formatProductResults", () => {
       { ...sample, id: "2", title: "Inmate Reading Guide" },
     ];
     const speech = formatProductResults(similar, true);
-    expect(speech).toMatch(/could not find an exact match/i);
-    expect(speech).toMatch(/closest valid alternatives/i);
+    expect(speech).toMatch(/couldn't find the exact title/i);
+    expect(speech).toMatch(/similar matches/i);
   });
 
   it("never returns empty when products exist", () => {

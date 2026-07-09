@@ -79,7 +79,7 @@ describe("multi-turn order follow-up context injection", () => {
 
     const turn1Speech = await collectOrchestratorSpeech(session, "Order 21698");
 
-    expect(turn1Speech).toContain("I found your order");
+    expect(turn1Speech).toMatch(/Your order 21698-F1 is Refunded as of /);
     expect(turn1Speech).not.toContain("btazp@yahoo.com");
     expect(session.currentOrderData?.refund_notification_email).toBe("btazp@yahoo.com");
     expect(session.phase).toBe("order_disclosed");

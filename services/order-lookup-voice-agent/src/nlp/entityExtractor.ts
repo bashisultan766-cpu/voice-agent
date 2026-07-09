@@ -13,6 +13,7 @@ import {
   isValidOrderNumberFormat,
   normalizeOrderNumber,
 } from "../utils/formatter.js";
+import { parseSpokenDigitSequence } from "../utils/inputNormalizer.js";
 
 /** Primary fulfillment intents routed by the voice agent. */
 export type FulfillmentIntent = "order_status" | "title_search" | "isbn_search" | "unknown";
@@ -151,43 +152,10 @@ function isVagueTitleCandidate(title: string): boolean {
 
 /**
  * Collapse spoken or spaced digits into a continuous numeric string.
- * Example: "one two three four S five" → "12345"
+ * Example: "one two three four S five" → "12345"; "twenty one" → "21" (not "2.0").
  */
 export function normalizeSpokenNumericSequence(text: string): string {
-  const tokens = text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s#]/gi, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-
-  let out = "";
-  for (const token of tokens) {
-    if (SPOKEN_NUMERIC_SKIP.has(token)) {
-      continue;
-    }
-    if (/^\d+$/.test(token)) {
-      out += token;
-      continue;
-    }
-
-    const spoken = SPOKEN_DIGIT_WORDS[token];
-    if (spoken !== undefined) {
-      out += spoken;
-      continue;
-    }
-
-    // Single-letter STT noise or homophone in numeric context.
-    if (token.length === 1) {
-      const mapped = LETTER_DIGIT_CONFUSIONS[token];
-      if (mapped) {
-        out += mapped;
-      }
-      // Unmapped single letters (e.g. stray "s") are dropped — see QA test case.
-      continue;
-    }
-  }
-
-  return out;
+  return parseSpokenDigitSequence(text);
 }
 
 /**

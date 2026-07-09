@@ -4,7 +4,7 @@
 
  */
 
-import { EXACT_MATCH_NOT_FOUND_MESSAGE } from "../constants/systemMessages.js";
+import { EXACT_MATCH_NOT_FOUND_MESSAGE, SIMILAR_MATCHES_PREFIX } from "../constants/systemMessages.js";
 
 import type { CanonicalProduct } from "./productRetrievalPolicy.js";
 
@@ -100,7 +100,7 @@ export function formatProductResults(
 
   if (usedAlternatives) {
 
-    const picks = products.slice(0, 3).map(formatOneProduct);
+    const picks = products.slice(0, 3).map((p) => `"${p.title}"`);
 
     if (picks.length === 0) {
 
@@ -108,11 +108,7 @@ export function formatProductResults(
 
     }
 
-    const countLabel =
-
-      picks.length === 1 ? "one option" : picks.length === 2 ? "two options" : "three options";
-
-    return `${EXACT_MATCH_NOT_FOUND_MESSAGE} Here are the closest valid alternatives — ${countLabel}: ${picks.join(". ")}.`;
+    return `${SIMILAR_MATCHES_PREFIX} ${picks.join(", ")}.`;
 
   }
 

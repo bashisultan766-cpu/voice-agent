@@ -45,7 +45,7 @@ describe("orderFollowUpSpeech refund notification email", () => {
       "What was the refund email?",
     );
     expect(speech.toLowerCase()).toMatch(/btazp.*yahoo/);
-    expect(speech).toContain("inbox and spam folder");
+    expect(speech).toMatch(/The notification was sent to/i);
     expect(speech).not.toMatch(/Darren|Herrington/i);
   });
 

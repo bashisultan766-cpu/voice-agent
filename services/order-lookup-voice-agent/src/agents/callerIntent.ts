@@ -19,6 +19,10 @@ import {
   hasConfirmedOrderContext,
   isOrderLookupRequestWithoutNumber,
 } from "./orderContextPolicy.js";
+import {
+  shouldBlockSupportCrossReference,
+  transitionFlowForIntent,
+} from "./conversationFlowState.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -97,7 +101,7 @@ export function isIntentSwitchAwayFromTracking(
 }
 
 /** Classify caller intent before phase gates — tracking only when explicit or mid-flow. */
-export function resolveCallerIntent(
+function resolveCallerIntentCore(
   callerText: string,
   session?: CallSession,
 ): CallerIntent {
@@ -106,6 +110,10 @@ export function resolveCallerIntent(
 
   const callSid = session?.callSid ?? "";
   const active = callSid ? getOrCreateActiveSession(callSid) : undefined;
+
+  if (callSid && shouldBlockSupportCrossReference(callSid, text)) {
+    return "catalog";
+  }
 
   if (
     callSid &&
@@ -232,6 +240,16 @@ export function resolveCallerIntent(
   }
 
   return "general_help";
+}
+
+export function resolveCallerIntent(
+  callerText: string,
+  session?: CallSession,
+): CallerIntent {
+  const intent = resolveCallerIntentCore(callerText, session);
+  const callSid = session?.callSid ?? "";
+  if (callSid) transitionFlowForIntent(callSid, intent);
+  return intent;
 }
 
 export function shouldRunTrackingPhaseGate(intent: CallerIntent): boolean {

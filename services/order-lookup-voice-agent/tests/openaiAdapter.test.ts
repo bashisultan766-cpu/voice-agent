@@ -63,9 +63,7 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
       "CA_GROUND",
       undefined,
     );
-    expect(speech).toContain("I found your order");
-    expect(speech).toMatch(/Your order status is Refunded/i);
-    expect(speech).toContain("Do you need any more information about your order");
+    expect(speech).toMatch(/^Your order 21698-F1 is Refunded as of /);
     expect(speech).not.toContain("Joel Moore");
     expect(speech).not.toContain("joel.moore@gmail.com");
     expect(speech).not.toContain("zzyxx2002@yahoo.com");

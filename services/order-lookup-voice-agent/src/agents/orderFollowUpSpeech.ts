@@ -3,6 +3,8 @@
  */
 import {
   extractRefundNotificationEmailFromMessages,
+  extractNotificationDeliveryFromMessages,
+  formatNotificationDeliverySpeech,
 } from "../adapters/orderFieldExtractors.js";
 import type { CallSession } from "../types/order.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
@@ -151,6 +153,11 @@ export function isRefundNotificationDeliveryComplaint(text: string): boolean {
 export function buildRefundNotificationEmailSpeech(
   context: ActiveOrderContextData,
 ): string {
+  const delivery = extractNotificationDeliveryFromMessages(timelineMessagesFromContext(context));
+  if (delivery) {
+    return formatNotificationDeliverySpeech(delivery);
+  }
+
   const raw = resolveRefundNotificationEmail(context);
   const spoken = formatEmailForTTS(raw);
 

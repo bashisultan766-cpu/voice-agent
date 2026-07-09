@@ -14,6 +14,10 @@ import type { ExecutionContextSnapshot } from "../runtime/executionContextSnapsh
 import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
 import { pipelineTrace } from "../utils/pipelineTrace.js";
 import type { ProductSearchSlots } from "../types/order.js";
+import {
+  getConversationFlowMode,
+  isIntentAllowedInCurrentFlow,
+} from "./conversationFlowState.js";
 
 export function computeMissingSlots(
   slots: Pick<ProductSearchSlots, "isbn" | "title">,
@@ -43,6 +47,7 @@ export interface ToolDecisionState {
   explicitRepeat: boolean;
   wantsRecommendations: boolean;
   orderNumber?: string | null;
+  callSid?: string;
 }
 
 export interface ToolDecisionResult {
@@ -74,11 +79,24 @@ export function decideToolExecutionWithReason(state: ToolDecisionState): ToolDec
 }
 
 function decideToolExecutionCore(state: ToolDecisionState): ToolDecisionResult {
+  const callSid = state.callSid ?? "";
+  const flowMode = callSid ? getConversationFlowMode(callSid) : "idle";
+
+  if (flowMode === "PURCHASE_FLOW" && state.intent === "order") {
+    return { action: "conversationOnly", reason: "non_product_intent" };
+  }
+  if (flowMode === "SUPPORT_FLOW" && state.intent === "product") {
+    return { action: "conversationOnly", reason: "non_product_intent" };
+  }
+
   if (state.intent === "general" || state.intent === "unknown") {
     return { action: "conversationOnly", reason: "non_product_intent" };
   }
 
   if (state.intent === "order") {
+    if (callSid && !isIntentAllowedInCurrentFlow(callSid, "order_lookup")) {
+      return { action: "conversationOnly", reason: "non_product_intent" };
+    }
     if (state.orderNumber) {
       return { action: "orderLookupTool", reason: "order_number_present" };
     }
@@ -86,6 +104,9 @@ function decideToolExecutionCore(state: ToolDecisionState): ToolDecisionResult {
   }
 
   if (state.intent === "product") {
+    if (callSid && !isIntentAllowedInCurrentFlow(callSid, "product_search")) {
+      return { action: "conversationOnly", reason: "non_product_intent" };
+    }
     const resolved = resolveProductToolAction(
       state.productMemory,
       state.validationReady,
@@ -107,6 +128,7 @@ export function buildToolDecisionState(input: {
   explicitRepeat: boolean;
   wantsRecommendations?: boolean;
   orderNumber?: string | null;
+  callSid?: string;
 }): ToolDecisionState {
   return {
     intent: input.intent,
@@ -117,6 +139,7 @@ export function buildToolDecisionState(input: {
     explicitRepeat: input.explicitRepeat,
     wantsRecommendations: Boolean(input.wantsRecommendations),
     orderNumber: input.orderNumber,
+    callSid: input.callSid,
   };
 }
 
