@@ -55,3 +55,7 @@ export const CATALOG_RETRY_MESSAGE =
 
 /** @deprecated Use EXACT_MATCH_NOT_FOUND_MESSAGE */
 export const STORE_NOT_FOUND_MESSAGE = EXACT_MATCH_NOT_FOUND_MESSAGE;
+
+/** Spoken when an ISBN match exists in Shopify but is not available online. */
+export const OUT_OF_STOCK_ISBN_MESSAGE =
+  "This item is not currently available online. I can send your request to the warehouse team so they can check if it is available in storage.";

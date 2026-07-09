@@ -36,7 +36,9 @@ import { normalizeIsbn, isValidIsbnFormat } from "../utils/productSearchNormaliz
 import { parseVariantGid } from "../utils/shopifyGid.js";
 import { getAgentState } from "../platform/eventDispatcher.js";
 import { filterOrderContextForVerification } from "../agents/orderContextPrivacy.js";
+import { setOrderHistoryContext } from "../agents/orderHistoryFlow.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
+import { OUT_OF_STOCK_ISBN_MESSAGE } from "../constants/systemMessages.js";
 import {
   isValidOrderNumberFormat,
 } from "../utils/formatter.js";
@@ -693,6 +695,13 @@ export async function executeLlmTool(
 
     try {
       const data = await getCustomerHistory(customerId, callSid);
+      if (session && data.status === "found") {
+        setOrderHistoryContext(
+          session,
+          data.orders ?? [],
+          data.orderCount ?? data.orders?.length ?? 0,
+        );
+      }
       return {
         tool,
         args: { customerId },
@@ -986,7 +995,13 @@ export function toolResultForLlm(
     variant_id: "variantId" in record.data ? record.data.variantId : undefined,
     instructions:
       record.tool === "search_shopify_book_by_isbn"
-        ? "If in stock, offer to add to cart using variant_id and unit_price (from the price field) from this response. If out of stock, follow GRACEFUL ESCALATION."
+        ? (() => {
+            const isbnData = record.data as BookAvailabilityResult;
+            if (isbnData.status === "found" && isbnData.inStock === false) {
+              return `Say exactly: "${OUT_OF_STOCK_ISBN_MESSAGE}" Then offer warehouse follow-up via OMNI-CHANNEL ESCALATION S.O.P. if they want storage checked.`;
+            }
+            return "If in stock, offer to add to cart using variant_id and unit_price (from the price field) from this response. If out of stock, follow GRACEFUL ESCALATION.";
+          })()
         : undefined,
   });
 }

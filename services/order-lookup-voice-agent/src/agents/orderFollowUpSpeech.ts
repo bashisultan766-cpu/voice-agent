@@ -18,7 +18,7 @@ const REFUND_EMAIL_QUESTION_RE =
 
 /** Shared patterns — callerIntent and deterministic speech use the same detector. */
 export const ORDER_FIELD_QUESTION_RE =
-  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|what\s+is\s+the\s+title|what'?s\s+the\s+title|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+is\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|payment\s+method|card\s+ending|what\s+email|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
+  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|book\s+titles|what\s+is\s+the\s+title|what'?s\s+the\s+title|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+(?:is|was)\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|shipping\s+address|delivery\s+address|payment\s+method|card\s+ending|what\s+email|where\s+(?:was|is)\s+(?:the\s+)?confirmation\s+sent|confirmation\s+(?:sent|delivery)|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
 
 export function isOrderFieldQuestion(text: string, session?: CallSession): boolean {
   const trimmed = text.trim();
@@ -251,6 +251,40 @@ export function buildOrderFieldQuerySpeech(
   }
 
   const lower = callerText.trim().toLowerCase();
+
+  if (
+    /\b(all\s+(?:the\s+)?(?:order\s+)?details|tell\s+me\s+(?:all\s+)?(?:the\s+)?details|every\s+detail)\b/i.test(
+      lower,
+    )
+  ) {
+    const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
+    const name = String(context.customer_name ?? "").trim();
+    const orderNum = String(context.order_number ?? "").replace(/^#/, "").trim();
+    const parts: string[] = [];
+    if (orderNum) parts.push(`order ${orderNum}`);
+    if (status) parts.push(`status is ${status}`);
+    if (name) parts.push(`under ${name.split(/\s+/)[0] ?? name}`);
+    if (parts.length) {
+      return `I have your ${parts.join(", ")}. Would you like the item titles, total, shipping, or tracking?`;
+    }
+  }
+
+  if (/\b(shipping\s+address|delivery\s+address|where\s+(?:was|is)\s+it\s+shipped)\b/i.test(lower)) {
+    const address = String(context.shipping_address ?? "").trim();
+    if (address) return `The shipping address on file is ${address}.`;
+    return "I checked this order, but I do not have a shipping address on file.";
+  }
+
+  if (/\b(where\s+(?:was|is)\s+(?:the\s+)?confirmation\s+sent|confirmation\s+(?:sent|delivery))\b/i.test(lower)) {
+    const email = String(
+      context.order_confirmation_email ?? context.customer_email ?? "",
+    ).trim();
+    if (email) {
+      return `The order confirmation was sent to ${formatEmailForTTS(email) ?? email}.`;
+    }
+    return "I checked this order, but I do not have a confirmation delivery channel on file.";
+  }
+
   const physicalItems = Array.isArray(context.physical_items)
     ? (context.physical_items as any[])
     : Array.isArray(context.items)
@@ -274,7 +308,7 @@ export function buildOrderFieldQuerySpeech(
       lower,
     );
   const wantsTotalAmount =
-    /\b(total\s+amount|order\s+total|what\s+is\s+the\s+total|how\s+much\s+(?:was|is)\s+(?:the\s+)?order)\b/i.test(
+    /\b(total\s+amount|order\s+total|what\s+(?:is|was)\s+the\s+total|how\s+much\s+(?:was|is)\s+(?:the\s+)?order)\b/i.test(
       lower,
     );
   const wantsShipping = /\b(shipping\s+(?:fee|fees|cost)|shipping\s+amount|shipping)\b/i.test(
@@ -283,6 +317,52 @@ export function buildOrderFieldQuerySpeech(
 
   const wantsAnyProductInfo =
     wantsItemCount || wantsTitles || wantsLineItemAmounts || wantsTotalAmount || wantsShipping;
+
+  const requestedCount =
+    [wantsItemCount, wantsTitles, wantsLineItemAmounts, wantsTotalAmount, wantsShipping].filter(
+      Boolean,
+    ).length;
+
+  if (wantsAnyProductInfo && requestedCount === 1) {
+    if (wantsItemCount) {
+      return `You ordered ${safeItemCount} book(s) on this order.`;
+    }
+    if (wantsTitles) {
+      const items = physicalItems
+        .filter((i) => String(i?.title ?? "").trim())
+        .slice(0, 3)
+        .map((i) => {
+          const title = String(i.title).trim();
+          const qty = Number(i.quantity ?? 1);
+          return qty > 1 ? `${title} (qty ${qty})` : title;
+        });
+      if (items.length > 0) {
+        return `You ordered ${safeItemCount} book(s): ${items.join(", ")}.`;
+      }
+      return `You ordered ${safeItemCount} book(s) on this order.`;
+    }
+    if (wantsLineItemAmounts) {
+      const priced = physicalItems
+        .filter((i) => String(i?.title ?? "").trim())
+        .slice(0, 3)
+        .map((i) => {
+          const title = String(i.title).trim();
+          const qty = Number(i.quantity ?? 1);
+          const price = i.price ? String(i.price).trim() : null;
+          if (!price) return title;
+          return qty > 1 ? `${title} (qty ${qty}, ${price})` : `${title} (${price})`;
+        });
+      if (priced.length > 0) return `The item amounts are: ${priced.join(", ")}.`;
+    }
+    if (wantsTotalAmount) {
+      const total = String(context.total_amount ?? context.subtotal_amount ?? "").trim();
+      if (total) return `The total order amount is ${total}.`;
+    }
+    if (wantsShipping) {
+      const shipping = String(context.shipping_amount ?? "").trim();
+      if (shipping) return `The shipping fee on this order is ${shipping}.`;
+    }
+  }
 
   if (wantsAnyProductInfo) {
     const items = physicalItems

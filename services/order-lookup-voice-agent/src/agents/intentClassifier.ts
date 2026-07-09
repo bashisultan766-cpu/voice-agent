@@ -1,3 +1,7 @@
+/**
+ * @deprecated Legacy LLM intent classifier — production routing uses callerIntent.ts (resolveCallerIntent).
+ * Retained for conversationFlowState regression tests only.
+ */
 import OpenAI from "openai";
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";

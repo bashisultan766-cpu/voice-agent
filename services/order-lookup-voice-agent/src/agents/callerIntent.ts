@@ -23,6 +23,11 @@ import {
   shouldBlockSupportCrossReference,
   transitionFlowForIntent,
 } from "./conversationFlowState.js";
+import {
+  isOrderHistoryContextActive,
+  isOrderHistoryMonthFollowUp,
+  parseMonthFromUtterance,
+} from "./orderHistoryFlow.js";
 
 export type CallerIntent =
   | "goodbye"
@@ -39,10 +44,13 @@ export type CallerIntent =
   | "general_help";
 
 const ORDER_FIELD_QUERY_RE =
-  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|what\s+is\s+the\s+title|what'?s\s+the\s+title|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+is\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|payment\s+method|card\s+ending|what\s+email|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
+  /\b(customer\s+name|name\s+on\s+(?:the\s+)?order|who\s+is\s+this\s+order\s+for|who\s+ordered|what\s+is\s+the\s+name|refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled)|how\s+many\s+(?:books|items|products)|item\s+count|quantity|total\s+product|total\s+products|total\s+items|total\s+order\s+number|number\s+of\s+(?:books|items|products)|product\s+title|item\s+title|book\s+title|product\s+titles|what\s+is\s+the\s+title|what'?s\s+the\s+title|product\s+amount|item\s+amount|book\s+price|(?:their|the|each)\s+price|prices?|how\s+much|total\s+amount|order\s+total|what\s+(?:is|was)\s+the\s+total|shipping\s+(?:cost|fee|fees|amount)|shipping\s+address|delivery\s+address|payment\s+method|card\s+ending|what\s+email|where\s+(?:was|is)\s+(?:the\s+)?confirmation\s+sent|confirmation\s+(?:sent|delivery)|order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order|order\s+details|product\s+detail|item\s+detail|tell\s+me\s+(?:the\s+)?details|tell\s+me\s+about\s+(?:the\s+)?(?:product|order|items|books)|what\s+did\s+(?:i|you)\s+order|which\s+books?)\b/i;
 
 const ORDER_HISTORY_RE =
   /\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders|orders\s+in\s+\w+)\b/i;
+
+const ORDER_HISTORY_MONTH_RE =
+  /\b(?:tell\s+me\s+about|what\s+about|what\s+did\s+i\s+order\s+in|give\s+me\s+details\s+(?:of|for|on))\s+(?:my\s+)?(?:the\s+)?(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/i;
 
 const ORDER_LOOKUP_RE =
   /\b(order\s+number|lookup\s+(?:my\s+)?order|find\s+(?:my\s+)?order|track\s+my\s+order|check\s+(?:an?\s+)?order)\b/i;
@@ -162,7 +170,19 @@ function resolveCallerIntentCore(
   // Active-order follow-ups beat catalog title sniffing ("what is the title on my order").
   if (hasActiveOrderContext(session)) {
     if (isOrderFieldQuestion(text, session)) return "order_field_query";
-    if (ORDER_HISTORY_RE.test(text)) return "order_history";
+    if (ORDER_HISTORY_RE.test(text) || ORDER_HISTORY_MONTH_RE.test(text)) return "order_history";
+  }
+
+  if (isOrderHistoryContextActive(session)) {
+    if (isCatalogShoppingUtterance(text) || extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) {
+      return "catalog";
+    }
+    if (isOrderHistoryMonthFollowUp(text, session) || parseMonthFromUtterance(text)) {
+      return "order_history";
+    }
+    if (/\b(that order|those orders|what was the total|shipping fee)\b/i.test(text)) {
+      return "order_history";
+    }
   }
 
   if (!hasActiveOrderContext(session) && isOrderLookupRequestWithoutNumber(text)) {

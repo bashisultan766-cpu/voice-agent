@@ -59,6 +59,13 @@ export function isRestrictedFieldQueryForUnverified(callerText: string): boolean
   if (/\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders|what\s+did\s+i\s+order\s+in)\b/i.test(text)) {
     return true;
   }
+  if (
+    /\b(all\s+(?:the\s+)?(?:order\s+)?details|every\s+detail|full\s+order\s+details|tell\s+me\s+everything\s+about|everything\s+about\s+(?:the\s+)?order)\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 

@@ -141,6 +141,8 @@ export interface CallSession {
   };
   /** Last successful Shopify lookup — drives verification-first disclosure speech. */
   lastOrderStatusResult?: import("../adapters/shopifyStorefrontAdapter.js").OrderStatusResult;
+  /** Active order-history drill-down context for verified callers. */
+  orderHistoryContext?: import("../agents/orderHistoryFlow.js").OrderHistoryContext;
   createdAt: number;
   /** Phase 1 slots — filled before any Shopify product API call. */
   productSlots?: IncomingProductSlots;

@@ -224,6 +224,17 @@ import {
   isRestrictedFieldQueryForUnverified,
   buildUnverifiedRestrictedFieldRefusal,
 } from "./orderContextPrivacy.js";
+import { getCustomerHistory } from "../adapters/shopifyStorefrontAdapter.js";
+import {
+  buildMonthDrillDownSpeech,
+  buildUnverifiedOrderHistorySpeech,
+  buildVerifiedHistoryOverviewSpeech,
+  isOrderHistoryContextActive,
+  isOrderHistoryMonthFollowUp,
+  parseMonthFromUtterance,
+  selectMonthInHistoryContext,
+  setOrderHistoryContext,
+} from "./orderHistoryFlow.js";
 
 export type BrainIntent = "order_status" | "product_search" | "general_help" | "unknown";
 
@@ -364,6 +375,68 @@ function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
     raw as ActiveOrderContextData,
     session.isVerifiedCaller === true,
   );
+}
+
+async function resolveOrderHistorySpeech(
+  session: CallSession,
+  callerText: string,
+  callerIntent: CallerIntent,
+): Promise<string | null> {
+  const inHistoryFlow =
+    callerIntent === "order_history" ||
+    (isOrderHistoryContextActive(session) && isOrderHistoryMonthFollowUp(callerText, session));
+
+  if (!inHistoryFlow) return null;
+
+  if (session.isVerifiedCaller !== true) {
+    const count =
+      session.totalOrderCount ??
+      (session.currentOrderData?.total_order_count as number | undefined) ??
+      0;
+    return buildUnverifiedOrderHistorySpeech(count);
+  }
+
+  const monthToken = parseMonthFromUtterance(callerText);
+  if (monthToken && isOrderHistoryContextActive(session) && session.orderHistoryContext) {
+    selectMonthInHistoryContext(session, monthToken);
+    return buildMonthDrillDownSpeech(session.orderHistoryContext, monthToken);
+  }
+
+  if (callerIntent === "order_history") {
+    const customerId = session.shopifyCustomerId?.trim();
+    if (!customerId) return null;
+    const data = await getCustomerHistory(customerId, session.callSid);
+    if (data.status !== "found") {
+      return "I could not pull your order history right now. Please try again in a moment.";
+    }
+    const ctx = setOrderHistoryContext(
+      session,
+      data.orders ?? [],
+      data.orderCount ?? data.orders?.length ?? 0,
+    );
+    return buildVerifiedHistoryOverviewSpeech(ctx);
+  }
+
+  return null;
+}
+
+async function* yieldOrderHistoryTurnIfReady(
+  session: CallSession,
+  callerText: string,
+  callerIntent: CallerIntent,
+): AsyncGenerator<AgentStreamEvent, boolean> {
+  const speech = await resolveOrderHistorySpeech(session, callerText, callerIntent);
+  if (!speech?.trim()) return false;
+
+  exitTrackingHandshakeForOrderQuery(session.callSid);
+  const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, callerText);
+  syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+    responseType: "general_help",
+  });
+  session.phase = session.phase === "greeting" ? "follow_up" : session.phase;
+  yield* yieldSpeech(uniqueSpeech);
+  yield doneEvent(session.phase);
+  return true;
 }
 
 function tryResolveNotepadReadyTurn(
@@ -1032,6 +1105,10 @@ async function* runOrchestratorTurnCore(
     return;
   }
 
+  if (yield* yieldOrderHistoryTurnIfReady(session, text, callerIntent)) {
+    return;
+  }
+
   yield* runLlmOrchestratorTurn(session, text, emitResponseSent);
 }
 
@@ -1418,6 +1495,9 @@ async function* handleFollowUpPhase(
   }
 
   session.phase = "follow_up";
+  if (yield* yieldOrderHistoryTurnIfReady(session, callerText, callerIntent)) {
+    return;
+  }
   yield* runLlmOrchestratorTurn(session, callerText, emitResponseSent);
 }
 
