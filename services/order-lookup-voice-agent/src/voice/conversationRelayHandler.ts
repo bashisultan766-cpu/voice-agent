@@ -6,6 +6,7 @@ import type { WebSocket } from "ws";
 
 import {
   createCallSession,
+  createOrHydrateCallSession,
   endCallSession,
   runOrchestratorTurn,
 } from "../agents/conversationOrchestrator.js";
@@ -127,12 +128,13 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
           return;
         }
 
-        session = createCallSession(callSid, from, to);
+        session = await createOrHydrateCallSession(callSid, from, to);
         session.greetedThisCall = true;
         logger.info("conversation_relay_setup", {
           callSid: callSid.slice(0, 8),
           from: from.slice(-4),
           to: to.slice(-4),
+          hydrated: Boolean(session.persistenceVersion && session.persistenceVersion > 1),
         });
         return;
       }

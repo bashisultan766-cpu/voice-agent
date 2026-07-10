@@ -95,6 +95,7 @@ import {
   ensureTrackingPayload,
   recordTrackingPayload,
   updateActiveSession,
+  syncActiveSessionFromCallSession,
 } from "../sovereign/activeSession.js";
 import {
   clearPreferredVoiceForCall,
@@ -229,12 +230,14 @@ import {
   isProductSearchContextActive,
   syncActiveWorkflowContext,
 } from "./workflowContext.js";
-import { transitionFlowForIntent, clearConversationFlowMode } from "./conversationFlowState.js";
+import { transitionFlowForIntent, clearConversationFlowMode, setConversationFlowMode } from "./conversationFlowState.js";
 import {
   registerUnifiedSession,
   unregisterUnifiedSession,
   applyUnifiedWorkflowTransition,
   ensureUnifiedDefaults,
+  getOrHydrateUnifiedSession,
+  touchUnifiedSession,
 } from "./unifiedCallSession.js";
 import { clearLastSpokenSentence } from "../services/llmService.js";
 import {
@@ -309,6 +312,36 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
   createActiveSession(callSid);
 
   return session;
+}
+
+/**
+ * Resolve a live call session: L1 registry → L2 Postgres hydrate → fresh create.
+ * Twilio WS setup / reconnect must use this so restarts do not drop in-flight state.
+ */
+export async function createOrHydrateCallSession(
+  callSid: string,
+  from: string,
+  to: string,
+): Promise<CallSession> {
+  const hydrated = await getOrHydrateUnifiedSession(callSid);
+  if (hydrated) {
+    markCallSessionActive(callSid);
+    if (from && from !== "unknown") {
+      hydrated.from = from;
+      hydrated.callerPhone = hydrated.callerPhone ?? from;
+    }
+    if (to && to !== "unknown") {
+      hydrated.to = to;
+    }
+    createActiveSession(callSid);
+    if (hydrated.flowMode) {
+      setConversationFlowMode(callSid, hydrated.flowMode);
+    }
+    syncActiveSessionFromCallSession(hydrated);
+    touchUnifiedSession(hydrated);
+    return hydrated;
+  }
+  return createCallSession(callSid, from, to);
 }
 
 /** Tear down all per-call resources when the relay socket closes. */
@@ -1017,6 +1050,7 @@ export async function* runOrchestratorTurn(
   try {
     yield* runOrchestratorTurnCore(session, callerText);
   } finally {
+    touchUnifiedSession(session);
     if (!pipelineNested) {
       endOrchestratorTurn();
     }

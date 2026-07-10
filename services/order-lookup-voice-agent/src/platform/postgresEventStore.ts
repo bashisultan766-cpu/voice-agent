@@ -96,6 +96,27 @@ async function getPool(): Promise<import("pg").Pool | null> {
   }
 }
 
+/**
+ * Shared query helper for dual-write modules (events, session snapshots).
+ * Returns null when Postgres is disabled / unreachable.
+ */
+export async function queryPostgres<T extends import("pg").QueryResultRow = import("pg").QueryResultRow>(
+  sql: string,
+  params: unknown[] = [],
+): Promise<import("pg").QueryResult<T> | null> {
+  if (POSTGRES_DISABLED || !postgresEnabled) return null;
+
+  const db = await getPool();
+  if (!db) return null;
+
+  try {
+    return await db.query<T>(sql, params);
+  } catch (err) {
+    disablePostgresAfterFailure(err);
+    return null;
+  }
+}
+
 function disablePostgresAfterFailure(err: unknown): void {
   POSTGRES_DISABLED = true;
   postgresEnabled = false;

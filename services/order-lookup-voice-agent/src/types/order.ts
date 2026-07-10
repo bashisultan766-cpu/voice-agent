@@ -157,6 +157,8 @@ export interface CallSession {
     | "tracking_dictation"
     | "awaiting_notepad_ready"
     | "awaiting_clarification";
+  /** Optimistic concurrency token for L2 Postgres session snapshots. */
+  persistenceVersion?: number;
   /** Last successful Shopify lookup — drives verification-first disclosure speech. */
   lastOrderStatusResult?: import("../adapters/shopifyStorefrontAdapter.js").OrderStatusResult;
   /** Active order-history drill-down context for verified callers. */

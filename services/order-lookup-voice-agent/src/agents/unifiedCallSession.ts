@@ -4,11 +4,23 @@
  * Parallel Maps (ActiveSession, CallState, CallMemory, conversationFlowMode)
  * remain as thin adapters for legacy call sites, but authoritative workflow
  * fields live on CallSession and are kept in sync through this module.
+ *
+ * Persistence (Priority 5):
+ *   L1 = sessionRegistry Map (hot path)
+ *   L2 = Postgres call_sessions via sessionPersistence (restart / HA)
+ *   Mutations that change workflow state fire-and-forget persist to L2.
+ *   Hydration pulls L2 → L1 when a process misses the in-memory entry.
  */
 import type { CallSession } from "../types/order.js";
 import type { ConversationFlowMode } from "./conversationFlowState.js";
 import type { ActiveWorkflowContext } from "./workflowContext.js";
 import { logger } from "../utils/logger.js";
+import {
+  archivePersistedSessionAsync,
+  loadPersistedSession,
+  persistSessionAsync,
+} from "../platform/sessionPersistence.js";
+import { withCallSessionLock } from "../platform/sessionLock.js";
 
 /** Sovereign surface mirrored onto CallSession to prevent Map desync. */
 export type UnifiedSovereignState =
@@ -32,6 +44,7 @@ const sessionRegistry = new Map<string, CallSession>();
 export function registerUnifiedSession(session: CallSession): CallSession {
   ensureUnifiedDefaults(session);
   sessionRegistry.set(session.callSid, session);
+  persistSessionAsync(session);
   return session;
 }
 
@@ -39,8 +52,45 @@ export function getUnifiedSession(callSid: string): CallSession | undefined {
   return sessionRegistry.get(callSid);
 }
 
+/**
+ * L1 hit, else L2 hydrate from Postgres into the registry.
+ * Use on Twilio WS setup / reconnect so restarts do not drop live calls.
+ */
+export async function getOrHydrateUnifiedSession(
+  callSid: string,
+): Promise<CallSession | undefined> {
+  const cached = sessionRegistry.get(callSid);
+  if (cached) return cached;
+
+  return withCallSessionLock(callSid, async () => {
+    const again = sessionRegistry.get(callSid);
+    if (again) return again;
+
+    const record = await loadPersistedSession(callSid);
+    if (!record) return undefined;
+
+    ensureUnifiedDefaults(record.session);
+    sessionRegistry.set(callSid, record.session);
+    logger.info("unified_session_hydrated", {
+      callSid: callSid.slice(0, 8),
+      version: record.version,
+      phase: record.session.phase,
+      flowMode: record.session.flowMode,
+    });
+    return record.session;
+  });
+}
+
+export function touchUnifiedSession(session: CallSession): void {
+  ensureUnifiedDefaults(session);
+  sessionRegistry.set(session.callSid, session);
+  persistSessionAsync(session);
+}
+
 export function unregisterUnifiedSession(callSid: string): void {
+  const session = sessionRegistry.get(callSid);
   sessionRegistry.delete(callSid);
+  archivePersistedSessionAsync(callSid, session);
 }
 
 export function clearAllUnifiedSessions(): void {
@@ -148,6 +198,7 @@ export function applyUnifiedWorkflowTransition(
     ...slice,
   });
 
+  touchUnifiedSession(session);
   return slice;
 }
 
@@ -160,4 +211,19 @@ export function projectUnifiedOntoSession(session: CallSession): UnifiedSessionS
     sovereignState: session.sovereignState,
     workflowContext: session.activeWorkflowContext ?? "idle",
   };
+}
+
+/**
+ * Atomic mutation helper — holds the per-call mutex, runs work, then persists.
+ * Use for any multi-step session write that must not interleave with another frame.
+ */
+export async function mutateUnifiedSession<T>(
+  session: CallSession,
+  work: (session: CallSession) => Promise<T> | T,
+): Promise<T> {
+  return withCallSessionLock(session.callSid, async () => {
+    const result = await work(session);
+    touchUnifiedSession(session);
+    return result;
+  });
 }

@@ -31,6 +31,11 @@ import {
   isPostgresEventStoreEnabled,
 } from "./platform/postgresEventStore.js";
 
+import {
+  initSessionPersistence,
+  isSessionPersistenceEnabled,
+} from "./platform/sessionPersistence.js";
+
 import { validateEnvironmentOnStartup } from "./platform/envValidator.js";
 
 import {
@@ -81,6 +86,7 @@ export function createApp() {
       lastElevenLabsHttpStatus: circuit.lastHttpStatus,
       postgresEventStoreEnabled: isPostgresEventStoreEnabled(),
       postgresDisabled: isPostgresDisabled(),
+      sessionPersistenceEnabled: isSessionPersistenceEnabled(),
     });
   });
 
@@ -174,6 +180,7 @@ async function bootstrap(): Promise<void> {
   logger.info("voice_provider_ready", { provider });
 
   await initPostgresEventStore();
+  await initSessionPersistence();
 
   if (!isConversationRelayRuntime()) {
     await prewarmVoiceCache();

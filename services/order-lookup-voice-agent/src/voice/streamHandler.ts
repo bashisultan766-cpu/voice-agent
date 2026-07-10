@@ -3,7 +3,7 @@ import type { WebSocket } from "ws";
 import { logger } from "../utils/logger.js";
 import { pipelineTrace } from "../utils/pipelineTrace.js";
 import {
-  createCallSession,
+  createOrHydrateCallSession,
   endCallSession,
   process,
   USER_INTERRUPTED_DICTATION_SIGNAL,
@@ -246,7 +246,7 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
           const from = startMsg.start.customParameters?.from ?? "unknown";
           const to = startMsg.start.customParameters?.to ?? "unknown";
 
-          session = createCallSession(callSid, from, to);
+          session = await createOrHydrateCallSession(callSid, from, to);
           session.callerPhone = from;
           registerStreamSend(callSid, send, streamSid);
           startStreamHeartbeat(callSid);
@@ -254,6 +254,7 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
           logger.info("media_stream_start", {
             callSid: callSid.slice(0, 8),
             streamSid: streamSid.slice(0, 8),
+            hydrated: Boolean(session.persistenceVersion && session.persistenceVersion > 1),
           });
 
           const routerSpeech = (startMsg.start.customParameters?.routerSpeech ?? "").trim();
