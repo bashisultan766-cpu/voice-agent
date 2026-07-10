@@ -73,6 +73,7 @@ import {
   ensureTrackingPayload,
   shouldSkipToolReinvoke,
 } from "../sovereign/activeSession.js";
+import { buildEmailConfirmationSystemMessage } from "../agents/emailConfirmationManager.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
 import {
   isTrackingRequest,
@@ -268,6 +269,7 @@ function isToolName(name: string): name is LlmToolName {
     name === "get_cart_summary" ||
     name === "send_checkout_email" ||
     name === "send_support_escalation" ||
+    name === "update_pending_email" ||
     name === "end_call"
   );
 }
@@ -418,6 +420,11 @@ function buildOpenAiMessages(
       role: "system",
       content: buildActiveSessionSystemMessage(getOrCreateActiveSession(input.callSid)),
     });
+
+    const emailConfirmMessage = buildEmailConfirmationSystemMessage(input.session);
+    if (emailConfirmMessage) {
+      systemMessages.push({ role: "system", content: emailConfirmMessage });
+    }
   }
 
   return [

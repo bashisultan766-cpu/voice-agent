@@ -126,12 +126,12 @@ describe("email confirmation — full flow", () => {
     expect(again.handled).toBe(false);
   });
 
-  it("blocks unrelated questions during email capture", async () => {
+  it("defers unrelated questions during email capture to the LLM", async () => {
     const session = createCallSession("EM_4", "+1", "+1");
     startEmailCapture(session, "support_escalation");
-    const blocked = await resolveEmailConfirmationTurn(session, "what is the weather today");
-    expect(blocked.handled).toBe(true);
-    expect(blocked.speech).toMatch(/finish (confirming your email|your support request)/i);
+    const deferred = await resolveEmailConfirmationTurn(session, "what is the weather today");
+    expect(deferred.handled).toBe(false);
+    expect(session.emailConfirmation?.phase).toBe("collect_email");
   });
 
   it("aborts email capture when caller pivots to tracking", async () => {

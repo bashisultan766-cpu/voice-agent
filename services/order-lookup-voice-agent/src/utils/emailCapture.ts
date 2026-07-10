@@ -265,95 +265,52 @@ const COMMON_DOMAINS: Record<string, string> = {
   "icloud.com": "icloud dot com",
 };
 
-/** Clear phone-friendly cue words for letter-by-letter email verification. */
-const LETTER_AS_IN: Record<string, string> = {
-  a: "Apple",
-  b: "Boy",
-  c: "Charlie",
-  d: "David",
-  e: "Edward",
-  f: "Frank",
-  g: "George",
-  h: "Henry",
-  i: "Isaac",
-  j: "John",
-  k: "King",
-  l: "Larry",
-  m: "Mary",
-  n: "Nancy",
-  o: "Oscar",
-  p: "Paul",
-  q: "Queen",
-  r: "Robert",
-  s: "Sam",
-  t: "Tom",
-  u: "Uncle",
-  v: "Victor",
-  w: "William",
-  x: "X-ray",
-  y: "Yellow",
-  z: "Zebra",
-};
-
 function domainVoicePart(domain: string): string {
   const lower = domain.toLowerCase();
   if (COMMON_DOMAINS[lower]) return COMMON_DOMAINS[lower];
   return lower.split(".").join(" dot ");
 }
 
-/** Hyphen letter spelling — e.g. B-A-S-H-I at gmail dot com (legacy / compact). */
-export function spellEmailHyphenForTTS(email: string): string {
-  const normalized = email.trim().toLowerCase();
-  if (!normalized.includes("@")) return normalized;
-  const [local, domain] = normalized.split("@", 2);
-  const localSpelled = [...local]
+function spellLocalPartForTts(local: string, joiner: string): string {
+  return [...local]
     .map((ch) => {
-      if (/[a-z]/.test(ch)) return ch.toUpperCase();
+      if (/[a-z]/i.test(ch)) return ch.toUpperCase();
       if (/[0-9]/.test(ch)) return ch;
       if (ch === ".") return "dot";
       if (ch === "-") return "dash";
       if (ch === "_") return "underscore";
       return ch;
     })
-    .join("-");
-  return `${localSpelled} at ${domainVoicePart(domain)}`;
+    .join(joiner);
 }
 
 /**
- * Letter-by-letter phonetic email for phone confirmation.
- * e.g. "B as in Boy, A as in Apple, S as in Sam at gmail dot com"
+ * Letter-by-letter email for phone confirmation with natural pauses.
+ * e.g. "B, A, S, H, I, 7, 6, 6, at gmail dot com"
+ * (No "A as in Apple" phonetic cue words.)
  */
-export function spellEmailPhoneticForTTS(email: string): string {
+export function spellEmailLetterByLetterForTTS(email: string): string {
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) return normalized;
   const [local, domain] = normalized.split("@", 2);
-  const parts: string[] = [];
-  for (const ch of local) {
-    if (/[a-z]/.test(ch)) {
-      const word = LETTER_AS_IN[ch] ?? ch.toUpperCase();
-      parts.push(`${ch.toUpperCase()} as in ${word}`);
-    } else if (/[0-9]/.test(ch)) {
-      parts.push(ch);
-    } else if (ch === ".") {
-      parts.push("dot");
-    } else if (ch === "-") {
-      parts.push("dash");
-    } else if (ch === "_") {
-      parts.push("underscore");
-    } else {
-      parts.push(ch);
-    }
-  }
-  return `${parts.join(", ")} at ${domainVoicePart(domain)}`;
+  return `${spellLocalPartForTts(local, ", ")} at ${domainVoicePart(domain)}`;
+}
+
+/** Compact hyphen spelling — e.g. B-A-S-H-I at gmail dot com. */
+export function spellEmailHyphenForTTS(email: string): string {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@")) return normalized;
+  const [local, domain] = normalized.split("@", 2);
+  return `${spellLocalPartForTts(local, "-")} at ${domainVoicePart(domain)}`;
 }
 
 export function buildEmailConfirmationSpeech(email: string): string {
-  const spelled = spellEmailPhoneticForTTS(email);
+  const spelled = spellEmailLetterByLetterForTTS(email);
   return `I have your email as ${spelled}. Is that correct?`;
 }
 
 export function buildUpdatedEmailConfirmationSpeech(email: string): string {
-  const spelled = spellEmailPhoneticForTTS(email);
+  const spelled = spellEmailLetterByLetterForTTS(email);
   return `Thank you. I have updated it. Your email is ${spelled}. Is that correct?`;
 }
 

@@ -187,6 +187,22 @@ const trackingGuardSchema = z
     }
   });
 
+const updatePendingEmailSchema = z
+  .object({
+    email: z.string().optional(),
+    customerEmail: z.string().optional(),
+  })
+  .passthrough()
+  .superRefine((data, ctx) => {
+    const email = String(data.email ?? data.customerEmail ?? "").trim();
+    if (!email || !isValidCustomerEmail(email)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: validationMessage("email must be a valid customer email address"),
+      });
+    }
+  });
+
 const TOOL_SCHEMAS: Record<LlmToolName, z.ZodTypeAny> = {
   get_shopify_order_status: orderStatusSchema,
   get_customer_history: customerHistorySchema,
@@ -198,6 +214,7 @@ const TOOL_SCHEMAS: Record<LlmToolName, z.ZodTypeAny> = {
   get_cart_summary: emptyArgsSchema,
   send_checkout_email: checkoutEmailSchema,
   send_support_escalation: supportEscalationSchema,
+  update_pending_email: updatePendingEmailSchema,
   end_call: emptyArgsSchema,
 };
 

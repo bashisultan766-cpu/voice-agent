@@ -237,6 +237,25 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "update_pending_email",
+      description:
+        "During collect_email or pending_confirmation, update the pending email on UnifiedCallSession when the caller corrects spelling, a letter, the domain, or asks to start over with a new address. Pass the full corrected email. Then read it back letter-by-letter (no phonetic 'as in' cues) and ask for confirmation.",
+      parameters: {
+        type: "object",
+        properties: {
+          email: {
+            type: "string",
+            description: "Full corrected email address (e.g. bashisultan766@gmail.com).",
+          },
+        },
+        required: ["email"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "end_call",
       description:
         "Invoke ONLY when the caller is explicitly done: goodbye, thank you, okay bye, or 'no' after you asked if they need anything else. NEVER use during cart modifications, quantity changes, or partial-title shopping. Say the SureShot goodbye line first, then call this tool.",

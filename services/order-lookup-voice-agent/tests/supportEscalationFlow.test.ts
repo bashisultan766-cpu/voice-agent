@@ -119,7 +119,7 @@ describe("support escalation flow", () => {
     expect(getSupportEscalationEmailState(session)).toBe(
       "support_escalation_pending_email_confirmation",
     );
-    expect(speech).toMatch(/bashisahab64|B-A-S-H|B as in Boy/i);
+    expect(speech).toMatch(/bashisahab64|B, A, S, H|B-A-S-H/i);
     expect(speech).toMatch(/Is that correct/i);
     expect(speech).not.toMatch(/tracking/i);
   });
@@ -158,13 +158,13 @@ describe("support escalation flow", () => {
     expect(speech).not.toMatch(/shipping address|Private/i);
   });
 
-  it("7 — accidental tracking mention during escalation stays in support flow", async () => {
+  it("7 — accidental tracking mention during escalation defers to LLM without rigid lock", async () => {
     const session = seedUnverifiedOrderSession("CA_ESC_7");
     await collectSpeech(session, "what is the shipping address");
     await collectSpeech(session, "yes forward to support");
     const speech = await collectSpeech(session, "my tracking number is 12345");
     expect(getSupportEscalationEmailState(session)).toBe("support_escalation_pending_email");
-    expect(speech).toMatch(/finish your support request first/i);
+    expect(speech).not.toMatch(/finish your support request first/i);
     expect(speech).not.toMatch(/notepad|pen and/i);
   });
 

@@ -1,6 +1,9 @@
 /**
  * Central Email Confirmation Engine — single state machine for all email workflows.
  * Used by support escalation and payment-link checkout (separate business flows).
+ *
+ * Clear yes / email extract / structured corrections stay deterministic for the
+ * tool pipeline. Meta-instructions and ambiguous turns fall through to the LLM.
  */
 import type { CallSession } from "../types/order.js";
 import { logger } from "../utils/logger.js";
@@ -16,6 +19,7 @@ import {
   looksLikePartialEmail,
   shouldAbortEmailConfirmation,
   isOrderContextSwitchUtterance,
+  spellEmailLetterByLetterForTTS,
 } from "../utils/emailCapture.js";
 import { isValidCustomerEmail } from "../utils/resendEmailService.js";
 
@@ -50,12 +54,6 @@ const ASK_EMAIL_SPEECH =
 const ASK_EMAIL_AGAIN_SPEECH =
   "I did not catch a complete email address. Please say your full email again slowly, including at and dot com.";
 
-const FINISH_EMAIL_FIRST_SPEECH =
-  "I need to finish confirming your email first. After that, I can help with your other question.";
-
-const FINISH_SUPPORT_FIRST_SPEECH =
-  "I'll finish your support request first. After that, I can help with tracking or other order questions.";
-
 function isEmailPhaseUtterance(text: string): boolean {
   return (
     isEmailConfirmation(text) ||
@@ -65,15 +63,6 @@ function isEmailPhaseUtterance(text: string): boolean {
     isPartialEmailCorrection(text) ||
     isRequestSlowEmailRepeat(text)
   );
-}
-
-function blockInterruptionDuringEmailCapture(session: CallSession, text: string): string | null {
-  if (!isEmailConfirmationActive(session)) return null;
-  if (isEmailPhaseUtterance(text)) return null;
-  if (session.emailConfirmation?.workflowType === "support_escalation") {
-    return FINISH_SUPPORT_FIRST_SPEECH;
-  }
-  return FINISH_EMAIL_FIRST_SPEECH;
 }
 
 const workflowExecutors = new Map<EmailWorkflowType, EmailWorkflowExecutor>();
@@ -112,9 +101,7 @@ export function isEmailConfirmationLocked(session?: CallSession): boolean {
 
 export function getActiveEmailWorkflowType(session?: CallSession): EmailWorkflowType | null {
   if (!session?.emailConfirmation || session.emailConfirmation.phase === "idle") return null;
-  return session.emailConfirmation.phase === "completed"
-    ? session.emailConfirmation.workflowType
-    : session.emailConfirmation.workflowType;
+  return session.emailConfirmation.workflowType;
 }
 
 export function startEmailCapture(
@@ -172,6 +159,42 @@ export function buildEmailCapturePrompt(workflowType: EmailWorkflowType): string
   return ASK_EMAIL_SPEECH;
 }
 
+/**
+ * LLM / tool path — update pending email on UnifiedCallSession without restarting
+ * the support_escalation or payment_link workflow.
+ */
+export function updatePendingEmail(
+  session: CallSession,
+  email: string,
+  rawUtterance?: string,
+): { ok: true; email: string; spelled: string } | { ok: false; error: string } {
+  const normalized = email.trim().toLowerCase();
+  if (!isValidCustomerEmail(normalized)) {
+    return { ok: false, error: "Valid email address required." };
+  }
+  const ctx = ensureEmailConfirmation(session);
+  if (ctx.phase === "idle" || ctx.phase === "completed") {
+    // Keep the active workflow type if present; otherwise leave as-is for tool callers.
+    ctx.phase = "pending_confirmation";
+  } else {
+    ctx.phase = "pending_confirmation";
+  }
+  ctx.latestRawEmail = (rawUtterance ?? email).trim();
+  ctx.normalizedEmail = normalized;
+  ctx.confirmedEmail = undefined;
+  ctx.confirmationStatus = "pending";
+  logger.info("email_pending_updated", {
+    callSid: session.callSid.slice(0, 8),
+    workflowType: ctx.workflowType,
+    emailDomain: normalized.split("@")[1] ?? "unknown",
+  });
+  return {
+    ok: true,
+    email: normalized,
+    spelled: spellEmailLetterByLetterForTTS(normalized),
+  };
+}
+
 function captureEmailFromSpeech(
   session: CallSession,
   text: string,
@@ -194,10 +217,11 @@ function captureEmailFromSpeech(
     });
     return { handled: true, speech };
   }
-  if (looksLikePartialEmail(text)) {
+  if (looksLikePartialEmail(text) || isPartialEmailCorrection(text)) {
     return { handled: true, speech: ASK_EMAIL_AGAIN_SPEECH };
   }
-  return { handled: true, speech: ASK_EMAIL_AGAIN_SPEECH };
+  // Meta-instructions / unrelated turns → LLM (no rigid "finish first" lock).
+  return { handled: false };
 }
 
 async function confirmAndSend(
@@ -243,7 +267,8 @@ async function confirmAndSend(
 }
 
 /**
- * Deterministic email-confirmation turn — highest routing priority.
+ * Email-confirmation turn — handles clear capture / confirm / structured corrections.
+ * Ambiguous and meta utterances return handled:false so the LLM receives raw input.
  */
 export async function resolveEmailConfirmationTurn(
   session: CallSession,
@@ -260,11 +285,6 @@ export async function resolveEmailConfirmationTurn(
   if (shouldAbortEmailConfirmation(text) || isOrderContextSwitchUtterance(text)) {
     abortEmailConfirmationFlow(session);
     return { handled: false };
-  }
-
-  const interruption = blockInterruptionDuringEmailCapture(session, text);
-  if (interruption) {
-    return { handled: true, speech: interruption };
   }
 
   if (ctx.phase === "collect_email") {
@@ -307,10 +327,8 @@ export async function resolveEmailConfirmationTurn(
         ctx.normalizedEmail = corrected;
         return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
       }
-      return {
-        handled: true,
-        speech: "Please repeat your full email slowly, letter by letter.",
-      };
+      // Unstructured correction ("Bashi not Basi", "don't read it like that") → LLM.
+      return { handled: false };
     }
 
     const corrected = extractEmailFromSpeech(text);
@@ -320,21 +338,45 @@ export async function resolveEmailConfirmationTurn(
       return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
     }
 
-    return {
-      handled: true,
-      speech: "Please say yes if the email is correct, or no and repeat your email address.",
-    };
+    // Meta-instructions, formatting complaints, fuzzy name fixes → LLM.
+    return { handled: false };
   }
 
   return { handled: false };
 }
 
-/** Block lower-priority workflows while email confirmation is active. */
+/**
+ * @deprecated Interruption lock removed — meta turns defer to the LLM.
+ * Kept as a no-op for callers that still import it.
+ */
 export function blockDuringEmailConfirmation(
-  session: CallSession,
-  callerText: string,
+  _session: CallSession,
+  _callerText: string,
 ): string | null {
-  if (!isEmailConfirmationLocked(session)) return null;
-  if (isEmailPhaseUtterance(callerText)) return null;
-  return FINISH_EMAIL_FIRST_SPEECH;
+  return null;
 }
+
+/** System context for the LLM while email capture is active. */
+export function buildEmailConfirmationSystemMessage(session: CallSession): string | null {
+  if (!isEmailConfirmationActive(session) || !session.emailConfirmation) return null;
+  const ctx = session.emailConfirmation;
+  const pending = ctx.normalizedEmail?.trim() ?? "";
+  const spelled = pending ? spellEmailLetterByLetterForTTS(pending) : "(none yet)";
+  const workflow =
+    ctx.workflowType === "payment_link" ? "payment_link checkout" : "support_escalation";
+
+  return [
+    "EMAIL CONFIRMATION IN PROGRESS (MANDATORY — LLM-DRIVEN)",
+    `workflow: ${workflow}`,
+    `phase: ${ctx.phase}`,
+    `pendingEmail: ${pending || "(awaiting address)"}`,
+    `pendingEmailSpelled: ${spelled}`,
+    "The caller's raw utterance is authoritative. Honor meta-instructions (e.g. change formatting, fix a letter, start over, 'don't read it like that').",
+    "When confirming an email, read it STRICTLY letter-by-letter with short pauses (e.g. B, A, S, H, I at gmail dot com). NEVER use 'A as in Apple' phonetic cue words for email.",
+    "If the caller corrects the email, call update_pending_email with the full corrected address, apologize briefly, then read the updated email back letter-by-letter exactly how they asked.",
+    "Do NOT say you must finish confirming email before helping — apply their correction or instruction immediately.",
+    "Only after they explicitly confirm the spelled email, call send_checkout_email or send_support_escalation as appropriate for this workflow.",
+  ].join("\n");
+}
+
+export { isEmailPhaseUtterance };

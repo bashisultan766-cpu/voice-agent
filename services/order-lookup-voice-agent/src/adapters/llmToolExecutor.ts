@@ -81,6 +81,7 @@ export type LlmToolName =
   | "get_cart_summary"
   | "send_checkout_email"
   | "send_support_escalation"
+  | "update_pending_email"
   | "end_call";
 
 export interface CartToolResult {
@@ -242,7 +243,8 @@ export async function executeLlmTool(
     tool === "remove_from_cart" ||
     tool === "get_cart_summary" ||
     tool === "send_checkout_email" ||
-    tool === "send_support_escalation"
+    tool === "send_support_escalation" ||
+    tool === "update_pending_email"
   )) {
     return {
       tool,
@@ -250,6 +252,33 @@ export async function executeLlmTool(
       ok: false,
       status: "blocked",
       errorMessage: "Session unavailable for cart operation.",
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  if (tool === "update_pending_email" && session) {
+    const { updatePendingEmail } = await import("../agents/emailConfirmationManager.js");
+    const email = (args.email ?? args.customerEmail ?? "").trim();
+    const result = updatePendingEmail(session, email, email);
+    if (!result.ok) {
+      return {
+        tool,
+        args: { email },
+        ok: false,
+        status: "blocked",
+        errorMessage: result.error,
+        elapsedMs: Date.now() - started,
+      };
+    }
+    return {
+      tool,
+      args: { email: result.email },
+      ok: true,
+      status: "ok",
+      data: {
+        status: "ok",
+        message: `Pending email updated to ${result.email}. spelled_for_tts: ${result.spelled}`,
+      } satisfies CartToolResult,
       elapsedMs: Date.now() - started,
     };
   }
@@ -864,6 +893,18 @@ export function toolResultForLlm(
       instructions: record.ok
         ? 'Say exactly: "I have sent your request to the support team. They will contact you shortly."'
         : "Apologize and offer to try again or take their callback number.",
+    });
+  }
+
+  if (record.tool === "update_pending_email") {
+    return JSON.stringify({
+      status: record.status,
+      ok: record.ok,
+      result: record.data,
+      error: record.errorMessage,
+      instructions: record.ok
+        ? "Apologize if needed, speak spelled_for_tts letter-by-letter with pauses (B, A, S, H — never 'A as in Apple'), then ask if that is correct."
+        : "Ask the caller to repeat the full email slowly.",
     });
   }
 

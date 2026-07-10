@@ -303,6 +303,11 @@ export async function resolveSupportEscalationTurn(
     return { handled: false };
   }
 
+  if (isEmailConfirmationActive(session) && session.emailConfirmation?.workflowType === "support_escalation") {
+    // Email capture is LLM-driven for meta/corrections — do not trap here.
+    return { handled: false };
+  }
+
   if (isSupportEscalationLocked(session) && /\b(tracking|order number|order history|buy|book|isbn)\b/i.test(text)) {
     if (shouldAbortEmailConfirmation(text) || isOrderContextSwitchUtterance(text)) {
       abortEmailConfirmationFlow(session);
@@ -310,10 +315,6 @@ export async function resolveSupportEscalationTurn(
       return { handled: false };
     }
     return { handled: true, speech: FINISH_SUPPORT_FIRST_SPEECH };
-  }
-
-  if (isEmailConfirmationActive(session) && session.emailConfirmation?.workflowType === "support_escalation") {
-    return { handled: false };
   }
 
   if (ctx.state === "non_verified_private_info_blocked") {
