@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildIsbnTruthQueries,
+  buildTitleSegmentFallbackQueries,
   buildTitleTruthQueries,
+  extractPossessiveBrandTokens,
   truthSearchByIsbn,
   truthSearchByTitle,
 } from "../src/tools/shopifyTruthSearch.js";
@@ -48,6 +50,22 @@ describe("shopifyTruthSearch query builders", () => {
   it("builds AND queries for multi-token precision", () => {
     const queries = buildTitleTruthQueries("Rich Dad Poor Dad");
     expect(queries.some((q) => /title:\*rich\* AND title:\*dad\*/i.test(q))).toBe(true);
+  });
+
+  it("includes possessive brand and vendor queries", () => {
+    const queries = buildTitleTruthQueries("Lindy's 2026 National College Football");
+    expect(queries.some((q) => /vendor:\*lindy/i.test(q))).toBe(true);
+    expect(extractPossessiveBrandTokens("Lindy's Preview")).toEqual(
+      expect.arrayContaining(["Lindy's", "Lindy", "Lindys"]),
+    );
+  });
+
+  it("builds segment fallback queries for complex titles", () => {
+    const queries = buildTitleSegmentFallbackQueries(
+      "Lindy's 2026 to 2027 National College Football",
+    );
+    expect(queries.some((q) => /lindy/i.test(q))).toBe(true);
+    expect(queries.some((q) => /national/i.test(q) && /college/i.test(q))).toBe(true);
   });
 });
 

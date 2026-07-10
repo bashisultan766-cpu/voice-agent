@@ -161,14 +161,14 @@ export const SHOPIFY_LLM_TOOLS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "search_shopify_book_by_title",
       description:
-        "Search the SureShot Books catalog by book title. Returns up to 5 similar volume/variant matches. Never pass conversational filler — extract ONLY core title keywords (e.g. 'Harry Potter' not 'uhh I want a book called Harry Potter please'). Translate non-English titles to English before calling.",
+        "Search the SureShot Books catalog by book title. Returns up to 5 similar volume/variant matches. Strip conversational filler only — preserve brand names, apostrophes (Lindy's), and year ranges in the title argument. Translate non-English titles to English before calling.",
       parameters: {
         type: "object",
         properties: {
           title: {
             type: "string",
             description:
-              "Core book title keywords only — no filler, punctuation, or full sentences. Example: caller says 'Uhh I am looking for a book called Harry Potter please' → pass 'Harry Potter'.",
+              "The caller's full semantic book title phrase — keep brand/vendor names, possessives, apostrophes, and edition years. Example: caller says 'Do you have Lindy's 2026 to 2027 National College Football' → pass that exact phrase (not a shortened keyword subset).",
           },
         },
         required: ["title"],

@@ -117,6 +117,14 @@ const ISBN_COMPACT_RE = /\b97[89]\d{9}[\dXx]\b|\b\d{9}[\dXx]\b/;
 const VAGUE_TITLE_RE =
   /^(i\s+)?(need|want|looking\s+for)\s+(a\s+)?(book|books|magazine|magazines)?\.?$/i;
 
+/** Leading conversational filler stripped before catalog search — never brand/title tokens. */
+const TITLE_LEAD_FILLER_PATTERNS = [
+  /^(?:uh+h?m*|um+|er+|like|so|well|okay|ok)[,.\s]+/gi,
+  /^(?:i\s+am\s+|i'?m\s+)?(?:looking\s+for|search(?:ing)?\s+for|trying\s+to\s+find|do\s+you\s+(?:have|carry|sell)|can\s+(?:you|i)\s+(?:get|find)|find(?:\s+me)?|i\s+need|i\s+want)\s+(?:(?:the|a)\s+book\s+(?:called\s+|titled\s+|named\s+)?)?/i,
+  /^(?:(?:the|a)\s+)?book\s+(?:called|titled|named)\s+/i,
+  /^(?:the\s+)?title\s+is\s+/i,
+];
+
 const MULTI_INTENT_ORDER_RE =
   /\b(order\s+status|check\s+my\s+order|track(ing)?\s+(my\s+)?order|where\s+is\s+my\s+order)\b/i;
 const MULTI_INTENT_PRODUCT_RE =
@@ -148,6 +156,38 @@ export const CLARIFICATION_BY_REASON: Record<ShopifyGateBlockReason, string> = {
 function isVagueTitleCandidate(title: string): boolean {
   const t = title.trim();
   return !t || t.length < 3 || VAGUE_TITLE_RE.test(t);
+}
+
+/**
+ * Strip conversational lead/trail filler while preserving brand names, apostrophes,
+ * year ranges, and the full semantic title phrase the caller intended.
+ */
+export function sanitizeCatalogTitlePhrase(text: string): string {
+  let t = (text ?? "").trim();
+  if (!t) return "";
+
+  for (const re of TITLE_LEAD_FILLER_PATTERNS) {
+    t = t.replace(re, "");
+  }
+
+  return t
+    .replace(/\b(please|thanks|thank\s+you)\s*$/gi, "")
+    .replace(/\?+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Four-digit years inside long title phrases are not order numbers. */
+function hasLikelyOrderNumberDigits(text: string): boolean {
+  if (!ORDER_NUMBER_INLINE_RE.test(text)) return false;
+  if (ORDER_CONTEXT_RE.test(text)) return true;
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length >= 4 && /\b(19|20)\d{2}\b/.test(text)) {
+    return false;
+  }
+
+  return false;
 }
 
 /**
@@ -282,37 +322,30 @@ export function extractTitleFromStt(text: string): string | null {
     return null;
   }
 
-  const patterns = [
-    /(?:looking\s+for|search(?:ing)?\s+for|find(?:\s+the)?|do\s+you\s+have)\s+(?:the\s+book\s+)?(.+)/i,
+  const capturePatterns = [
+    /(?:looking\s+for|search(?:ing)?\s+for|find(?:\s+(?:me\s+)?)?|do\s+you\s+(?:have|carry|sell)|can\s+(?:you|i)\s+(?:get|find))\s+(?:(?:the|a)\s+book\s+(?:called\s+|titled\s+|named\s+)?)?(.+)/i,
     /(?:book\s+(?:called|titled|named))\s+(.+)/i,
     /(?:title\s+is)\s+(.+)/i,
   ];
 
-  for (const re of patterns) {
+  for (const re of capturePatterns) {
     const match = trimmed.match(re);
     if (match?.[1]) {
-      const title = match[1].replace(/\?+$/, "").trim();
+      const title = sanitizeCatalogTitlePhrase(match[1]);
       if (!isVagueTitleCandidate(title)) return title;
     }
   }
 
-  if (TITLE_CONTEXT_RE.test(trimmed)) {
-    const stripped = trimmed
-      .replace(TITLE_CONTEXT_RE, "")
-      .replace(/\b(please|thanks|thank\s+you)\b/gi, "")
-      .trim();
-    if (!isVagueTitleCandidate(stripped)) return stripped;
-  }
-
-  // Bare title utterance when no order/ISBN signals.
+  // Bare semantic title — preserve full phrase; do not regex-strip keywords or brands.
   if (
     !ORDER_CONTEXT_RE.test(trimmed) &&
     !ISBN_CONTEXT_RE.test(trimmed) &&
-    !ORDER_NUMBER_INLINE_RE.test(trimmed) &&
+    !hasLikelyOrderNumberDigits(trimmed) &&
     !ISBN_COMPACT_RE.test(trimmed) &&
     trimmed.split(/\s+/).length >= 2
   ) {
-    return trimmed;
+    const title = sanitizeCatalogTitlePhrase(trimmed);
+    if (!isVagueTitleCandidate(title)) return title;
   }
 
   return null;

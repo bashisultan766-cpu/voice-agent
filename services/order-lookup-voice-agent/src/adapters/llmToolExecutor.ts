@@ -30,6 +30,7 @@ import {
 } from "../utils/resendEmailService.js";
 import {
   validateShopifyExecutionGate,
+  sanitizeCatalogTitlePhrase,
   type EntityExtractionResult,
 } from "../nlp/entityExtractor.js";
 import { normalizeIsbn, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
@@ -678,7 +679,7 @@ export async function executeLlmTool(
     }
   }
 
-  const title = (args.title ?? "").trim();
+  const title = sanitizeCatalogTitlePhrase((args.title ?? "").trim());
   const gate = validateShopifyExecutionGate(
     "title_search",
     gateExtraction("title_search", { title, slotType: "title" }),

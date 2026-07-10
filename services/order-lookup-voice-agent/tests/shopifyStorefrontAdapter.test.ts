@@ -414,6 +414,58 @@ describe("searchByTitle", () => {
     expect(result.status).toBe("not_found");
   });
 
+  it("segment-fallback finds possessive brand titles when full phrase misses", async () => {
+    vi.mocked(shopifyGraphql).mockImplementation(async (_query, vars) => {
+      const q = String(vars?.query ?? "").toLowerCase();
+      if (/lindy|national.*college|college.*football/.test(q)) {
+        return {
+          products: {
+            edges: [
+              {
+                node: {
+                  ...SAMPLE_PRODUCT_NODE,
+                  title: "Lindy's 2026 to 2027 National College Football Preview",
+                },
+              },
+            ],
+          },
+        };
+      }
+      return { products: { edges: [] } };
+    });
+
+    const result = await searchByTitle("2026 to 2027 National College Football");
+    expect(result.status).toBe("found");
+    expect(result.bookName).toMatch(/Lindy/i);
+    expect(result.similarMatches?.length).toBeGreaterThan(0);
+  });
+
+  it("preserves possessive brand in direct title search", async () => {
+    vi.mocked(shopifyGraphql).mockImplementation(async (_query, vars) => {
+      const q = String(vars?.query ?? "").toLowerCase();
+      if (/lindy|2026|national/.test(q)) {
+        return {
+          products: {
+            edges: [
+              {
+                node: {
+                  ...SAMPLE_PRODUCT_NODE,
+                  title: "Lindy's 2026 to 2027 National College Football Preview",
+                },
+              },
+            ],
+          },
+        };
+      }
+      return { products: { edges: [] } };
+    });
+
+    const result = await searchByTitle("Lindy's 2026 to 2027 National College Football");
+    expect(result.status).toBe("found");
+    expect(result.bookName).toMatch(/Lindy/i);
+    expect(result.exactMatch).toBe(true);
+  });
+
   it("returns system_maintenance when GraphQL fails", async () => {
     vi.mocked(shopifyGraphql).mockRejectedValue(new Error("graphql exploded"));
 

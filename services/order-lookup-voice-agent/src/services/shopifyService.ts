@@ -224,3 +224,5 @@ export async function lookupOrder(
 export function clearOrderCache(): void {
   clearOrderStatusCache();
 }
+
+export { searchByTitle } from "../adapters/shopifyStorefrontAdapter.js";

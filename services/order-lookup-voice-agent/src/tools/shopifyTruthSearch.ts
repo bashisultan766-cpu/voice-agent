@@ -55,6 +55,50 @@ export function buildIsbnTruthQueries(isbn: string): string[] {
   return [...queries];
 }
 
+/** Escape a token for Shopify product search query strings. */
+export function escapeShopifySearchToken(token: string): string {
+  return token.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/** Possessive brand tokens (e.g. Lindy's) and bare vendor forms. */
+export function extractPossessiveBrandTokens(query: string): string[] {
+  const tokens = new Set<string>();
+  for (const match of query.matchAll(/\b([\p{L}]+(?:'s|'s))\b/giu)) {
+    const possessive = match[1]?.trim();
+    if (!possessive) continue;
+    tokens.add(possessive);
+    tokens.add(possessive.replace(/'s$/i, ""));
+    tokens.add(possessive.replace(/'/g, ""));
+  }
+  return [...tokens].filter((t) => t.length >= 2);
+}
+
+/** Split a title into independent search segments for fuzzy fallback. */
+export function splitTitleSearchSegments(query: string): string[] {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  const segments = new Set<string>([trimmed]);
+
+  const brandMatch = trimmed.match(/^([\p{L}]+(?:'s|'s))\b/iu);
+  if (brandMatch?.[1]) {
+    segments.add(brandMatch[1]);
+    segments.add(brandMatch[1].replace(/'s$/i, ""));
+    const tail = trimmed.slice(brandMatch[0].length).trim();
+    if (tail) segments.add(tail);
+  }
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length >= 3) {
+    segments.add(words.slice(-Math.min(4, words.length)).join(" "));
+  }
+  if (words.length >= 4) {
+    segments.add(words.slice(0, Math.min(3, words.length)).join(" "));
+  }
+
+  return [...segments].filter((s) => s.length >= 2);
+}
+
 /** Title: token OR / AND queries — required Shopify query syntax. */
 export function buildTitleTruthQueries(query: string): string[] {
   const q = query.trim();
@@ -64,14 +108,14 @@ export function buildTitleTruthQueries(query: string): string[] {
   const queries = new Set<string>();
 
   if (tokens.length >= 2) {
-    queries.add(tokens.map((t) => `title:*${t}*`).join(" OR "));
-    queries.add(tokens.map((t) => `title:*${t}*`).join(" AND "));
+    queries.add(tokens.map((t) => `title:*${escapeShopifySearchToken(t)}*`).join(" OR "));
+    queries.add(tokens.map((t) => `title:*${escapeShopifySearchToken(t)}*`).join(" AND "));
   }
   if (tokens.length === 1) {
-    queries.add(`title:*${tokens[0]}*`);
+    queries.add(`title:*${escapeShopifySearchToken(tokens[0]!)}*`);
   }
 
-  queries.add(`title:*${q}*`);
+  queries.add(`title:*${escapeShopifySearchToken(q)}*`);
   queries.add(q);
 
   const normalized = normalizeSearchText(q);
@@ -79,6 +123,26 @@ export function buildTitleTruthQueries(query: string): string[] {
     queries.add(`title:*${tokens.join("*")}*`);
   }
 
+  for (const brand of extractPossessiveBrandTokens(q)) {
+    queries.add(`title:*${escapeShopifySearchToken(brand)}*`);
+    queries.add(`vendor:*${escapeShopifySearchToken(brand)}*`);
+    queries.add(brand);
+  }
+
+  return [...queries];
+}
+
+/** Segment-split fallback when a full phrase returns zero or weak matches. */
+export function buildTitleSegmentFallbackQueries(query: string): string[] {
+  const queries = new Set<string>();
+  for (const segment of splitTitleSearchSegments(query)) {
+    for (const q of buildTitleTruthQueries(segment)) {
+      queries.add(q);
+    }
+    for (const q of buildTitleExpansionQueries(segment)) {
+      queries.add(q);
+    }
+  }
   return [...queries];
 }
 

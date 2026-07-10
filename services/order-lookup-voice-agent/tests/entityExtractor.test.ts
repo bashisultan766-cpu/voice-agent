@@ -8,6 +8,7 @@ import {
   normalizeAlphanumericOrderId,
   normalizeIsbnFromStt,
   normalizeSpokenNumericSequence,
+  sanitizeCatalogTitlePhrase,
   validateShopifyExecutionGate,
 } from "../src/nlp/entityExtractor.js";
 
@@ -92,8 +93,30 @@ describe("extractTitleFromStt", () => {
     );
   });
 
+  it("preserves brand possessives and year ranges", () => {
+    expect(
+      extractTitleFromStt("I'm looking for Lindy's 2026 to 2027 National College Football"),
+    ).toBe("Lindy's 2026 to 2027 National College Football");
+    expect(
+      extractTitleFromStt("Lindy's 2026 to 2027 National College Football"),
+    ).toBe("Lindy's 2026 to 2027 National College Football");
+    expect(
+      extractTitleFromStt("do you have Lindy's 2026 to 2027 National College Football"),
+    ).toBe("Lindy's 2026 to 2027 National College Football");
+  });
+
   it("returns null for order-only utterance", () => {
     expect(extractTitleFromStt("where is my order 12345")).toBeNull();
+  });
+});
+
+describe("sanitizeCatalogTitlePhrase", () => {
+  it("strips filler but keeps apostrophes and years", () => {
+    expect(
+      sanitizeCatalogTitlePhrase(
+        "uhh I am looking for a book called Lindy's 2026 to 2027 National College Football please",
+      ),
+    ).toBe("Lindy's 2026 to 2027 National College Football");
   });
 });
 

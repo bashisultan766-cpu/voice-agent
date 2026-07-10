@@ -36,6 +36,7 @@ import {
 import {
   buildIsbnTruthQueries,
   buildTitleExpansionQueries,
+  buildTitleSegmentFallbackQueries,
   buildTitleTruthQueries,
 } from "../tools/shopifyTruthSearch.js";
 import {
@@ -88,6 +89,29 @@ function selectPrimaryVariant(
       (parseVariantPriceAmount(a.price) ?? Number.POSITIVE_INFINITY) -
       (parseVariantPriceAmount(b.price) ?? Number.POSITIVE_INFINITY),
   )[0];
+}
+
+function rankTitleCandidates(
+  a: MappedProduct,
+  b: MappedProduct,
+  query: string,
+  preferredPrice?: number | null,
+): number {
+  const aExact = isExactTitleMatch(a.title, query) ? 1 : 0;
+  const bExact = isExactTitleMatch(b.title, query) ? 1 : 0;
+  if (bExact !== aExact) return bExact - aExact;
+  if (preferredPrice != null) {
+    const aVariant = selectPrimaryVariant(a, { preferredPrice });
+    const bVariant = selectPrimaryVariant(b, { preferredPrice });
+    const aDiff = Math.abs(
+      (parseVariantPriceAmount(aVariant?.price) ?? Number.POSITIVE_INFINITY) - preferredPrice,
+    );
+    const bDiff = Math.abs(
+      (parseVariantPriceAmount(bVariant?.price) ?? Number.POSITIVE_INFINITY) - preferredPrice,
+    );
+    if (aDiff !== bDiff) return aDiff - bDiff;
+  }
+  return scoreTitleMatch(b.title, query) - scoreTitleMatch(a.title, query);
 }
 
 // Re-export formatter validation for order numbers (canonical source).
@@ -1148,33 +1172,27 @@ export async function searchByTitle(
         hadErrors = hadErrors || expanded.hadErrors;
       }
 
+      let products = nodes.map((n) => mapGqlProduct(n));
+      let ranked = rankBySearchScore(products, q, 0.5);
+      let rankedList = (ranked.length ? ranked : rankLiveProducts(products, q)).sort(
+        (a, b) => rankTitleCandidates(a, b, q, preferredPrice),
+      );
+
+      if (!rankedList.length) {
+        const fallback = await graphqlProductsForQueries(buildTitleSegmentFallbackQueries(q));
+        nodes = dedupeGqlProductNodes([...nodes, ...fallback.nodes]);
+        hadErrors = hadErrors || fallback.hadErrors;
+        products = nodes.map((n) => mapGqlProduct(n));
+        ranked = rankBySearchScore(products, q, 0.25);
+        rankedList = (ranked.length ? ranked : rankLiveProducts(products, q)).sort((a, b) =>
+          rankTitleCandidates(a, b, q, preferredPrice),
+        );
+      }
+
       if (hadErrors && nodes.length === 0) {
         return { status: "system_maintenance" as const, message: "Catalog temporarily unavailable" };
       }
-      const products = nodes.map((n) => mapGqlProduct(n));
 
-      const ranked = rankBySearchScore(products, q, 0.5);
-      const rankedList = (ranked.length ? ranked : rankLiveProducts(products, q)).sort(
-        (a, b) => {
-          const aExact = isExactTitleMatch(a.title, q) ? 1 : 0;
-          const bExact = isExactTitleMatch(b.title, q) ? 1 : 0;
-          if (bExact !== aExact) return bExact - aExact;
-          if (preferredPrice != null) {
-            const aVariant = selectPrimaryVariant(a, { preferredPrice });
-            const bVariant = selectPrimaryVariant(b, { preferredPrice });
-            const aDiff = Math.abs(
-              (parseVariantPriceAmount(aVariant?.price) ?? Number.POSITIVE_INFINITY) -
-                preferredPrice,
-            );
-            const bDiff = Math.abs(
-              (parseVariantPriceAmount(bVariant?.price) ?? Number.POSITIVE_INFINITY) -
-                preferredPrice,
-            );
-            if (aDiff !== bDiff) return aDiff - bDiff;
-          }
-          return scoreTitleMatch(b.title, q) - scoreTitleMatch(a.title, q);
-        },
-      );
       const top = rankedList[0];
       if (!top) {
         return { status: "not_found" as const, queriedTitle: q };

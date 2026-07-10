@@ -236,11 +236,11 @@ function resolveCallerIntentCore(
   if (extractIsbnFromSpeech(text) || CATALOG_RE.test(text)) {
     return "catalog";
   }
-  // Named-title searches only — never treat "customer name" / multi-word questions as titles.
+  // Named-title searches — route to catalog when title + product-hunt signals are present.
   const spokenTitle = extractTitleFromStt(text);
   if (
     spokenTitle &&
-    /\b(book|books|isbn|title|looking\s+for|search|buy|purchase|find\s+(?:me\s+)?(?:a\s+)?book)\b/i.test(
+    /\b(book|books|isbn|title|looking\s+for|search|buy|purchase|find\s+(?:me\s+)?(?:a\s+)?book|magazine|football|college|preview|annual|magazine|preview)\b/i.test(
       text,
     )
   ) {

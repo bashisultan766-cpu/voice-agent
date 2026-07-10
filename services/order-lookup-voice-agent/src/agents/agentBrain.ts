@@ -66,10 +66,18 @@ export function shouldPreferLlmPrimaryRouting(
   text: string,
   callerIntent: CallerIntent,
 ): boolean {
-  if (!session.orderContextConfirmed || !session.currentOrderData) return false;
   if (isEmailConfirmationActive(session)) return false;
   if (shouldAbortEmailConfirmation(text) || isWorkflowCancellationUtterance(text)) return true;
   if (isOrderContextSwitchUtterance(text)) return true;
+
+  // Catalog title hunts must reach the LLM tool layer with the full semantic phrase.
+  if (callerIntent === "catalog") {
+    return /\b(book|books|isbn|title|looking\s+for|search|buy|purchase|find\s+(?:me\s+)?(?:a\s+)?book|magazine|football|college|preview|annual)\b/i.test(
+      text,
+    );
+  }
+
+  if (!session.orderContextConfirmed || !session.currentOrderData) return false;
   return (
     callerIntent === "order_field_query" ||
     callerIntent === "general_help" ||
