@@ -27,11 +27,11 @@ const sampleOrder: StructuredOrder = {
 describe("responsePlanner", () => {
   it("emits tool-specific instant filler", () => {
     const orderFiller = planInstantFiller("get_shopify_order_status");
-    expect(orderFiller.text).toContain("pull up your order details");
+    expect(orderFiller.text).toContain("pull that up");
     expect(orderFiller.kind).toBe("filler");
 
     const searchFiller = planInstantFiller("search_shopify_book_by_title");
-    expect(searchFiller.text).toContain("search the catalog");
+    expect(searchFiller.text).toContain("check the catalog");
   });
 
   it("emits instant confirmation with first name", () => {

@@ -143,3 +143,41 @@ export function speechChunksFromText(
     preserveFull: options?.preserveFull,
   }));
 }
+
+/**
+ * Pull completed sentence / natural-phrase units from a streaming buffer.
+ * Leaves an incomplete trailing fragment in `rest` for the next delta.
+ */
+export function pullCompletedSpeechPhrases(buffer: string): {
+  phrases: string[];
+  rest: string;
+} {
+  const text = buffer.replace(/\s+/g, " ");
+  if (!text.trim()) return { phrases: [], rest: "" };
+
+  const phrases: string[] = [];
+  let rest = text;
+
+  // Prefer hard sentence boundaries first.
+  const sentenceRe = /^(.*?[.!?])(\s+|$)(.*)$/s;
+  while (true) {
+    const match = rest.match(sentenceRe);
+    if (!match) break;
+    const phrase = match[1].trim();
+    if (phrase) phrases.push(phrase);
+    rest = (match[3] ?? "").trimStart();
+    if (!rest) break;
+  }
+
+  // Soft break on comma / semicolon once we have enough words for natural TTS.
+  const softBreak = rest.match(/^(.{24,}?[,;])\s+(.*)$/s);
+  if (softBreak) {
+    const head = softBreak[1].trim();
+    if (head.split(/\s+/).length >= 5) {
+      phrases.push(head);
+      rest = softBreak[2] ?? "";
+    }
+  }
+
+  return { phrases, rest };
+}

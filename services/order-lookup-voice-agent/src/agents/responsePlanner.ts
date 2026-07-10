@@ -45,17 +45,20 @@ function planToolTransitionPhrase(tool?: string): string {
   switch (tool) {
     case "search_shopify_book_by_isbn":
     case "search_shopify_book_by_title":
-      return "Give me just a second to search the catalog for you.";
+      return "One second while I check the catalog.";
     case "send_checkout_email":
-      return "I am preparing your secure payment link right now.";
+      return "One second while I prepare your secure payment link.";
     case "get_shopify_order_status":
-      return "Let me pull up your order details.";
+      return "Let me pull that up for you.";
     case "get_customer_history":
-      return "Let me pull up your order history.";
+      return "Let me pull that up for you.";
+    case "add_to_cart":
+    case "remove_from_cart":
+      return "One second while I update your cart.";
     case "dictate_tracking":
       return "I'll read your tracking number now.";
     default:
-      return "One moment, please.";
+      return "One second while I check on that.";
   }
 }
 

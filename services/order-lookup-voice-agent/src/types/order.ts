@@ -213,5 +213,7 @@ export interface TwilioRelayOutboundMessage {
   token?: string;
   last?: boolean;
   interruptible?: boolean;
+  /** When true, a later text/play from us stops current TTS playback. */
+  preemptible?: boolean;
   handoffData?: string;
 }

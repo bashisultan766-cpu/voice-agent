@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   conversationalize,
+  pullCompletedSpeechPhrases,
   smoothForVoice,
   splitIntoSmoothedChunks,
 } from "../src/services/voiceSmoothingEngine.js";
@@ -25,5 +26,15 @@ describe("voiceSmoothingEngine", () => {
   it("keeps one idea per sentence", () => {
     const out = smoothForVoice("Found order.   Three items.  Total forty-two.");
     expect(out.split(/[.!?]/).filter(Boolean).length).toBeLessThanOrEqual(4);
+  });
+
+  it("pulls completed sentences from a streaming buffer", () => {
+    const first = pullCompletedSpeechPhrases("I found your order. It has");
+    expect(first.phrases).toEqual(["I found your order."]);
+    expect(first.rest).toBe("It has");
+
+    const second = pullCompletedSpeechPhrases(first.rest + " three items.");
+    expect(second.phrases).toEqual(["It has three items."]);
+    expect(second.rest).toBe("");
   });
 });

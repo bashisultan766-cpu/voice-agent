@@ -150,6 +150,7 @@ export async function* runLlmOrchestratorTurn(
   const agentState = getAgentState(session.callSid);
 
   let result: LlmAgentTurnResult | undefined;
+  let streamedSpeech = false;
 
   for await (const event of runLlmAgentTurnEvents({
     callSid: session.callSid,
@@ -164,7 +165,23 @@ export async function* runLlmOrchestratorTurn(
       : undefined,
   })) {
       if (event.type === "tool_pending") {
-        yield { type: "chunk", chunk: planInstantFiller(event.tools[0]) };
+        // Speak filler BEFORE Shopify/tool awaits resume in the adapter generator.
+        const heavy =
+          event.tools.find((t) =>
+            t === "search_shopify_book_by_title" ||
+            t === "search_shopify_book_by_isbn" ||
+            t === "get_shopify_order_status" ||
+            t === "get_customer_history" ||
+            t === "send_checkout_email" ||
+            t === "add_to_cart" ||
+            t === "remove_from_cart",
+          ) ?? event.tools[0];
+        yield { type: "chunk", chunk: planInstantFiller(heavy) };
+        continue;
+      }
+      if (event.type === "speech_delta") {
+        streamedSpeech = true;
+        yield* yieldSpeech(event.text);
         continue;
       }
     result = event.result;
@@ -231,7 +248,8 @@ export async function* runLlmOrchestratorTurn(
   const preserveFullSpeech =
     result.responseType === "order_found" ||
     result.toolExecutions.some((exec) => exec.tool === "dictate_tracking" && exec.ok);
-  let speech = result.speech.trim();
+  const rawResultSpeech = result.speech.trim();
+  let speech = rawResultSpeech;
   const activeSession = getOrCreateActiveSession(session.callSid);
   const trackingDictationContext = {
     currentState: activeSession.currentState,
@@ -304,7 +322,11 @@ export async function* runLlmOrchestratorTurn(
     clearLastSpokenSentence(session.callSid);
   }
 
-  yield* yieldSpeech(speech, preserveFullSpeech);
+  // Token streaming already spoke sentence chunks; only speak full speech when not streamed.
+  // If orchestrator overrode speech after stream (notepad / tracking complete), speak the override.
+  if (!streamedSpeech || speech !== rawResultSpeech) {
+    yield* yieldSpeech(speech, preserveFullSpeech);
+  }
   syncSessionFromCallState(session, getOrCreateCallState(session.callSid));
   yield doneEvent(session.phase, result.endCall ?? false);
 }

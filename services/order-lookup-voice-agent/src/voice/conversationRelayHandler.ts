@@ -5,12 +5,16 @@
 import type { WebSocket } from "ws";
 
 import {
-  createCallSession,
   createOrHydrateCallSession,
   endCallSession,
   runOrchestratorTurn,
 } from "../agents/conversationOrchestrator.js";
 import { enqueueStreamTurn } from "../runtime/streamTurnBarrier.js";
+import {
+  abortActiveTurn,
+  beginTurnAbort,
+  clearTurnAbort,
+} from "../runtime/turnAbortRegistry.js";
 import { logger } from "../utils/logger.js";
 import { isNoiseTranscript } from "../utils/noiseGate.js";
 import {
@@ -19,6 +23,7 @@ import {
 } from "./callSessionLock.js";
 import type { CallSession, TwilioRelayInboundMessage } from "../types/order.js";
 import {
+  flushConversationRelaySpeech,
   sendEndCall,
   sendSpeechToConversationRelay,
   type ConversationRelaySendFn,
@@ -26,7 +31,6 @@ import {
 
 import { VOICE_LAYER_ERROR_SPEECH } from "../constants/systemMessages.js";
 
-const activeTurnAborts = new Map<string, AbortController>();
 const interruptedCalls = new Set<string>();
 
 function setInterrupted(callSid: string, value: boolean): void {
@@ -38,12 +42,22 @@ function isInterrupted(callSid: string): boolean {
   return interruptedCalls.has(callSid);
 }
 
-function abortActiveTurn(callSid: string): void {
-  const controller = activeTurnAborts.get(callSid);
-  if (controller && !controller.signal.aborted) {
-    controller.abort();
+/** Halt generation + flush TTS; keep UnifiedCallSession intact. */
+function handleBargeIn(callSid: string, send: ConversationRelaySendFn, reason: string): void {
+  logger.info("conversation_relay_barge_in", {
+    callSid: callSid.slice(0, 8),
+    reason,
+  });
+  setInterrupted(callSid, true);
+  abortActiveTurn(callSid);
+  try {
+    flushConversationRelaySpeech(send);
+  } catch (err) {
+    logger.warn("conversation_relay_flush_failed", {
+      callSid: callSid.slice(0, 8),
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
-  activeTurnAborts.delete(callSid);
 }
 
 async function runRelayTurn(
@@ -54,8 +68,7 @@ async function runRelayTurn(
   const callSid = session.callSid;
   setInterrupted(callSid, false);
 
-  const controller = new AbortController();
-  activeTurnAborts.set(callSid, controller);
+  const controller = beginTurnAbort(callSid);
 
   let endCall = false;
 
@@ -67,6 +80,7 @@ async function runRelayTurn(
       if (event.type === "chunk" && event.chunk.text?.trim()) {
         await sendSpeechToConversationRelay(send, event.chunk.text, {
           preserveFull: event.chunk.preserveFull,
+          endOfTurn: false,
           interrupted: () => controller.signal.aborted || isInterrupted(callSid),
         });
       }
@@ -76,7 +90,13 @@ async function runRelayTurn(
     }
 
     if (!controller.signal.aborted && !isInterrupted(callSid)) {
-      send({ type: "text", token: "", last: true, interruptible: true });
+      send({
+        type: "text",
+        token: "",
+        last: true,
+        interruptible: true,
+        preemptible: true,
+      });
     }
 
     if (endCall && !isInterrupted(callSid)) {
@@ -88,11 +108,12 @@ async function runRelayTurn(
       error: err instanceof Error ? err.message : String(err),
     });
     if (!isInterrupted(callSid)) {
-      await sendSpeechToConversationRelay(send, VOICE_LAYER_ERROR_SPEECH);
-      send({ type: "text", token: "", last: true, interruptible: true });
+      await sendSpeechToConversationRelay(send, VOICE_LAYER_ERROR_SPEECH, {
+        endOfTurn: true,
+      });
     }
   } finally {
-    activeTurnAborts.delete(callSid);
+    clearTurnAbort(callSid);
   }
 }
 
@@ -166,9 +187,13 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
       }
 
       if (type === "interrupt") {
-        logger.info("conversation_relay_interrupt", { callSid: callSid.slice(0, 8) });
-        setInterrupted(callSid, true);
-        abortActiveTurn(callSid);
+        handleBargeIn(callSid, send, "interrupt");
+        return;
+      }
+
+      if (type === "dtmf") {
+        // DTMF barge-in: halt TTS / generation; session state is preserved.
+        handleBargeIn(callSid, send, `dtmf:${message.digit ?? "?"}`);
         return;
       }
 

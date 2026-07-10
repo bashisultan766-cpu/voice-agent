@@ -51,6 +51,8 @@ import {
   shouldOfferEndCallTool,
   ensureUniqueSpokenResponse,
 } from "../services/llmService.js";
+import { pullCompletedSpeechPhrases } from "../services/voiceSmoothingEngine.js";
+import { getTurnAbortSignal, isTurnAborted } from "../runtime/turnAbortRegistry.js";
 import {
   buildClarifyingResponse,
   buildGreetingResponse,
@@ -125,6 +127,7 @@ export interface LlmAgentTurnResult {
 
 export type LlmAgentTurnEvent =
   | { type: "tool_pending"; tools: LlmToolName[] }
+  | { type: "speech_delta"; text: string }
   | { type: "result"; result: LlmAgentTurnResult };
 
 type TurnOverride = (input: LlmAgentTurnInput) => Promise<LlmAgentTurnResult>;
@@ -152,6 +155,106 @@ function getClient(): OpenAI {
 }
 
 const MAX_TOOL_ROUNDS = 4;
+
+type StreamedAssistantRound = {
+  content: string;
+  toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[];
+  finishReason: string | null | undefined;
+  streamedSpeech: boolean;
+};
+
+/**
+ * Stream one OpenAI chat round. Emits speech_delta on sentence/phrase boundaries
+ * for text-only replies; accumulates tool_calls without speaking.
+ */
+async function* streamAssistantRound(
+  messages: OpenAI.Chat.ChatCompletionMessageParam[],
+  input: LlmAgentTurnInput,
+): AsyncGenerator<
+  { type: "speech_delta"; text: string } | { type: "round"; round: StreamedAssistantRound }
+> {
+  const signal = getTurnAbortSignal(input.callSid);
+  const stream = await getClient().chat.completions.create(
+    {
+      model: getConfig().CONVERSATION_BRAIN_MODEL,
+      temperature: LLM_ORCHESTRATOR_TEMPERATURE,
+      max_tokens: 450,
+      tools: resolveToolsForTurn(input),
+      tool_choice: "auto",
+      messages,
+      stream: true,
+    },
+    signal ? { signal } : undefined,
+  );
+
+  let content = "";
+  let phraseBuffer = "";
+  let streamedSpeech = false;
+  let sawToolCalls = false;
+  const toolCallAcc = new Map<number, { id: string; name: string; arguments: string }>();
+  let finishReason: string | null | undefined;
+
+  for await (const part of stream) {
+    if (isTurnAborted(input.callSid)) {
+      break;
+    }
+    const choice = part.choices[0];
+    if (!choice) continue;
+    if (choice.finish_reason) {
+      finishReason = choice.finish_reason;
+    }
+    const delta = choice.delta;
+    if (!delta) continue;
+
+    if (delta.tool_calls?.length) {
+      sawToolCalls = true;
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0;
+        const prev = toolCallAcc.get(idx) ?? { id: "", name: "", arguments: "" };
+        if (tc.id) prev.id = tc.id;
+        if (tc.function?.name) prev.name = prev.name ? prev.name + tc.function.name : tc.function.name;
+        if (tc.function?.arguments) prev.arguments += tc.function.arguments;
+        toolCallAcc.set(idx, prev);
+      }
+      continue;
+    }
+
+    if (typeof delta.content === "string" && delta.content.length > 0 && !sawToolCalls) {
+      content += delta.content;
+      phraseBuffer += delta.content;
+      const pulled = pullCompletedSpeechPhrases(phraseBuffer);
+      phraseBuffer = pulled.rest;
+      for (const phrase of pulled.phrases) {
+        streamedSpeech = true;
+        yield { type: "speech_delta", text: phrase };
+      }
+    }
+  }
+
+  if (!sawToolCalls && phraseBuffer.trim()) {
+    streamedSpeech = true;
+    yield { type: "speech_delta", text: phraseBuffer.trim() };
+  }
+
+  const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] = [...toolCallAcc.entries()]
+    .sort(([a], [b]) => a - b)
+    .filter(([, tc]) => Boolean(tc.name))
+    .map(([, tc]) => ({
+      id: tc.id || `call_${tc.name}`,
+      type: "function" as const,
+      function: { name: tc.name, arguments: tc.arguments || "{}" },
+    }));
+
+  yield {
+    type: "round",
+    round: {
+      content,
+      toolCalls,
+      finishReason: finishReason ?? (toolCalls.length > 0 ? "tool_calls" : "stop"),
+      streamedSpeech: streamedSpeech && !sawToolCalls,
+    },
+  };
+}
 
 function isToolName(name: string): name is LlmToolName {
   return (
@@ -1015,21 +1118,24 @@ export async function* runLlmAgentTurnEvents(
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-      const response = await getClient().chat.completions.create({
-        model: getConfig().CONVERSATION_BRAIN_MODEL,
-        temperature: LLM_ORCHESTRATOR_TEMPERATURE,
-        max_tokens: 450,
-        tools: resolveToolsForTurn(input),
-        tool_choice: "auto",
-        messages,
-      });
+      if (isTurnAborted(input.callSid)) {
+        break;
+      }
 
-      const choice = response.choices[0];
-      const message = choice?.message;
-      if (!message) break;
+      let streamedRound: StreamedAssistantRound | undefined;
+      for await (const streamEvent of streamAssistantRound(messages, input)) {
+        if (streamEvent.type === "speech_delta") {
+          yield { type: "speech_delta", text: streamEvent.text };
+          continue;
+        }
+        streamedRound = streamEvent.round;
+      }
 
-      const toolCalls = message.tool_calls ?? [];
-      const finishReason = choice.finish_reason;
+      if (!streamedRound) break;
+
+      const toolCalls = streamedRound.toolCalls;
+      const finishReason = streamedRound.finishReason;
+      const messageContent = streamedRound.content;
 
       if (toolCalls.length > 0 && finishReason === "tool_calls") {
         yield {
@@ -1045,12 +1151,15 @@ export async function* runLlmAgentTurnEvents(
           ...messages,
           {
             role: "assistant",
-            content: message.content ?? "",
+            content: messageContent ?? "",
             tool_calls: toolCalls,
           },
         ];
 
         for (const call of toolCalls) {
+          if (isTurnAborted(input.callSid)) {
+            break;
+          }
           if (call.type !== "function" || !isToolName(call.function.name)) {
             continue;
           }
@@ -1196,7 +1305,7 @@ export async function* runLlmAgentTurnEvents(
           yield {
             type: "result",
             result: {
-              speech: (message.content ?? "").trim() || SURESHOT_GOODBYE_SPEECH,
+              speech: (messageContent ?? "").trim() || SURESHOT_GOODBYE_SPEECH,
               toolExecutions,
               responseType: "general_help",
               endCall: true,
@@ -1215,13 +1324,14 @@ export async function* runLlmAgentTurnEvents(
         continue;
       }
 
-      let speech = (message.content ?? "").trim();
+      let speech = (messageContent ?? "").trim();
       if (speech) {
         speech = stripRoboticAssistantSpeech(speech, input.userMessage);
         speech = enforceNotepadGateOnSpeech(input.callSid, speech);
         speech = await ensureUniqueSpokenResponse(input.callSid, speech, input.userMessage);
         const responseType = inferResponseType(speech, toolExecutions);
         const endCall = toolExecutions.some((t) => t.tool === "end_call" && t.ok);
+        // When tokens were already streamed as speech_delta, still emit result for session sync.
         yield {
           type: "result",
           result: {
