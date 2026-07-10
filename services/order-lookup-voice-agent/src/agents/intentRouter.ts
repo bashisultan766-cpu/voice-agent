@@ -1,6 +1,12 @@
 /**
  * Central intent router — strict workflow priority ownership.
  *
+ * DEPRECATED as a competing semantic brain (Architectural Audit Priority 6).
+ * Ownership locks (email / payment / cart) remain; utterance classification
+ * is LLM-primary via agentBrain.shouldPreferLlmPrimaryRouting + OpenAI tools.
+ * Do not add new regex intercepts here — extend the LLM tool surface instead.
+ *
+ * Priority order (locks only):
  * 1. Email Confirmation
  * 2. Payment Checkout
  * 3. Shopping Cart
@@ -85,8 +91,12 @@ export function shouldDeferToHigherPriorityWorkflow(
   }
 
   const callSid = session.callSid;
+  // Prefer unified sovereign surface; fall back to ActiveSession Map adapter.
+  const sovereignState = session.sovereignState;
   const sovereign = getOrCreateActiveSession(callSid);
   const inTracking =
+    sovereignState === "tracking_dictation" ||
+    sovereignState === "awaiting_notepad_ready" ||
     sovereign.currentState === "tracking_dictation" ||
     (sovereign.currentState === "awaiting_notepad_ready" && sovereign.cachedIntent === "tracking") ||
     isTrackingDictationPending(callSid, session.currentOrderData);

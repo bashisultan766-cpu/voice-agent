@@ -134,11 +134,29 @@ export interface CallSession {
   /** True after checkout email was sent this call — confirm-once policy. */
   paymentLinkSent?: boolean;
   paymentLinkSentTo?: string;
-  /** Preserves initial caller goal (e.g. tracking) across the conversation. */
-  sessionMemory?: {
-    initialIntent: "order_lookup" | "tracking_id" | "order_status" | "general" | null;
-    pendingGoal: "order_lookup" | "tracking_id" | "order_status" | "general" | null;
-  };
+  /**
+   * Unified session memory — single brain buffer for intent, workflow, and product facts.
+   * Extra runtime fields are written by agentBrain / sessionMemory helpers.
+   */
+  sessionMemory?: import("../agents/sessionMemory.js").SessionMemoryState;
+  /**
+   * Unified conversation flow mode (PURCHASE vs SUPPORT).
+   * Authoritative copy — conversationFlowState Map mirrors this when session is registered.
+   */
+  flowMode?: import("../agents/conversationFlowState.js").ConversationFlowMode;
+  /**
+   * Unified sovereign surface (catalog_active / order_active / tracking / …).
+   * Authoritative copy — ActiveSession Map projects from this via sync.
+   */
+  sovereignState?:
+    | "idle"
+    | "order_active"
+    | "catalog_active"
+    | "cart_active"
+    | "checkout_active"
+    | "tracking_dictation"
+    | "awaiting_notepad_ready"
+    | "awaiting_clarification";
   /** Last successful Shopify lookup — drives verification-first disclosure speech. */
   lastOrderStatusResult?: import("../adapters/shopifyStorefrontAdapter.js").OrderStatusResult;
   /** Active order-history drill-down context for verified callers. */

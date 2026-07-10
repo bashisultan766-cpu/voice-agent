@@ -229,7 +229,14 @@ import {
   isProductSearchContextActive,
   syncActiveWorkflowContext,
 } from "./workflowContext.js";
-import { transitionFlowForIntent } from "./conversationFlowState.js";
+import { transitionFlowForIntent, clearConversationFlowMode } from "./conversationFlowState.js";
+import {
+  registerUnifiedSession,
+  unregisterUnifiedSession,
+  applyUnifiedWorkflowTransition,
+  ensureUnifiedDefaults,
+} from "./unifiedCallSession.js";
+import { clearLastSpokenSentence } from "../services/llmService.js";
 import {
   applyBrainWorkflowControl,
   shouldPreferLlmPrimaryRouting,
@@ -281,6 +288,10 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
     greetedThisCall: false,
     welcomeBack: Boolean(memory),
     productSlots: undefined,
+    flowMode: "idle",
+    sovereignState: "idle",
+    activeWorkflowContext: "idle",
+    sessionMemory: { initialIntent: null, pendingGoal: null },
   };
 
   if (memory) {
@@ -293,6 +304,8 @@ export function createCallSession(callSid: string, from: string, to: string): Ca
     }
   }
 
+  ensureUnifiedDefaults(session);
+  registerUnifiedSession(session);
   createActiveSession(callSid);
 
   return session;
@@ -322,6 +335,9 @@ export function endCallSession(callSid: string, session?: CallSession): void {
   clearCallSessionLock(callSid);
   clearActiveSession(callSid);
   clearPreferredVoiceForCall(callSid);
+  clearConversationFlowMode(callSid);
+  clearLastSpokenSentence(callSid);
+  unregisterUnifiedSession(callSid);
 }
 
 /**
@@ -1069,13 +1085,19 @@ async function* runOrchestratorTurnCore(
   captureSessionIntent(session, text, callerIntent);
   if (callerIntent === "catalog") {
     session.lastOrchestratorIntent = "catalog";
+    applyUnifiedWorkflowTransition(session, "product_search", {
+      reason: "orchestrator_catalog_intent",
+    });
   }
   syncActiveWorkflowContext(session);
 
+  // LLM-primary: never trap catalog/product turns in the order-number preflight.
   const needsOrderNumberBeforeLookup =
     !hasConfirmedOrderContext(session) &&
     callerIntent !== "catalog" &&
+    callerIntent !== "cart" &&
     !isProductSearchContextActive(session) &&
+    !shouldPreferLlmPrimaryRouting(session, text, callerIntent) &&
     !isOrderNumberOfferUtterance(text) &&
     !extractOrderNumberFromStt(text, { awaitingSlot: true }) &&
     !extractOrderNumberFromSpeech(text) &&
@@ -1578,6 +1600,9 @@ async function* handleFollowUpPhase(
   ) {
     exitTrackingHandshakeForOrderQuery(session.callSid);
     if (callerIntent === "catalog" || callerIntent === "cart") {
+      applyUnifiedWorkflowTransition(session, "product_search", {
+        reason: "followup_catalog_pivot",
+      });
       session.awaitingInput = null;
       if (session.phase === "awaiting_order_number") {
         session.phase = "follow_up";
@@ -1622,7 +1647,8 @@ async function* handleFollowUpPhase(
     const fieldSpeech = appendProtocolClosing(
       buildOrderFieldSpeech(session, callerText) ?? "",
     );
-    if (fieldSpeech.trim()) {
+    // Supreme semantic router: skip deterministic field speech when LLM-primary.
+    if (fieldSpeech.trim() && !shouldPreferLlmPrimaryRouting(session, callerText, callerIntent)) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, callerText);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {

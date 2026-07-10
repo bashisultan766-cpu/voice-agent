@@ -1,5 +1,6 @@
 /**
  * Active workflow context — numeric utterances route to ISBN vs order number.
+ * Reads unified CallSession.flowMode first to avoid Map desync.
  */
 import type { CallSession } from "../types/order.js";
 import { isPurchaseFlowActive } from "./conversationFlowState.js";
@@ -20,7 +21,9 @@ export function resolveActiveWorkflowContext(session: CallSession): ActiveWorkfl
   if (isSupportEscalationActive(session)) return "support_escalation";
   if (isPaymentCheckoutLocked(session)) return "payment_checkout";
   if (
+    session.flowMode === "PURCHASE_FLOW" ||
     isPurchaseFlowActive(session.callSid) ||
+    session.sovereignState === "catalog_active" ||
     (session.awaitingInput?.startsWith("product_") ?? false) ||
     session.lastOrchestratorIntent === "catalog" ||
     session.lastOrchestratorIntent === "product_search"

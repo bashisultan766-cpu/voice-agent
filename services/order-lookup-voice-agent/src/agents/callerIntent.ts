@@ -1,5 +1,11 @@
 /**
  * Intent-first router — classifies caller utterances before phase gates or tools.
+ *
+ * DEPRECATED as the supreme semantic brain (Architectural Audit Priority 6).
+ * Regex classification remains for safety locks (email, tracking handshake, goodbye)
+ * and coarse catalog/order hints. Tool selection and title/order semantics belong
+ * to the OpenAI LLM via shouldPreferLlmPrimaryRouting + tool calling.
+ * Do not add new brittle intercepts that answer before the LLM sees the transcript.
  */
 import type { CallSession } from "../types/order.js";
 import { isExplicitGoodbyeUtterance } from "../services/llmService.js";

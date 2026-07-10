@@ -23,7 +23,8 @@ import { syncActiveWorkflowContext } from "./workflowContext.js";
 import { captureSessionIntent, getSessionMemory, type BufferedSessionIntent } from "./sessionMemory.js";
 import { isSupportEscalationRequest, type CallerIntent } from "./callerIntent.js";
 import { isEmailConfirmationActive } from "./emailConfirmationManager.js";
-import { shouldAbortEmailConfirmation, isOrderContextSwitchUtterance } from "../utils/emailCapture.js";
+import { shouldAbortEmailConfirmation } from "../utils/emailCapture.js";
+import { applyUnifiedWorkflowTransition } from "./unifiedCallSession.js";
 
 export type AgentWorkflow =
   | "idle"
@@ -58,8 +59,10 @@ export function isWorkflowCancellationUtterance(text: string): boolean {
 }
 
 /**
- * When true, defer regex/deterministic order-field speech to the LLM (single-brain routing).
+ * When true, defer regex/deterministic speech to the LLM (supreme semantic router).
  * Safety gates (email capture, notepad, privacy refusal) still run first.
+ * Catalog / cart / general pivots reach the LLM tool layer.
+ * Grounded order-field answers stay deterministic when ACTIVE ORDER CONTEXT exists.
  */
 export function shouldPreferLlmPrimaryRouting(
   session: CallSession,
@@ -68,21 +71,23 @@ export function shouldPreferLlmPrimaryRouting(
 ): boolean {
   if (isEmailConfirmationActive(session)) return false;
   if (shouldAbortEmailConfirmation(text) || isWorkflowCancellationUtterance(text)) return true;
-  if (isOrderContextSwitchUtterance(text)) return true;
 
-  // Catalog title hunts must reach the LLM tool layer with the full semantic phrase.
-  if (callerIntent === "catalog") {
-    return /\b(book|books|isbn|title|looking\s+for|search|buy|purchase|find\s+(?:me\s+)?(?:a\s+)?book|magazine|football|college|preview|annual)\b/i.test(
-      text,
-    );
+  // Product hunting and cart work — LLM owns tool selection and title strings.
+  if (
+    callerIntent === "catalog" ||
+    callerIntent === "cart" ||
+    isCatalogShoppingUtterance(text)
+  ) {
+    return true;
   }
 
-  if (!session.orderContextConfirmed || !session.currentOrderData) return false;
-  return (
-    callerIntent === "order_field_query" ||
-    callerIntent === "general_help" ||
-    callerIntent === "neutral_listen"
-  );
+  // Ambiguous / general turns — do not let brittle regex invent a path.
+  if (callerIntent === "general_help" || callerIntent === "neutral_listen") {
+    return true;
+  }
+
+  // order_field_query / order_lookup keep grounded deterministic speech.
+  return false;
 }
 
 export function resolveAgentWorkflow(session: CallSession): AgentWorkflow {
@@ -155,11 +160,30 @@ export function applyBrainWorkflowControl(
     cancelSupportEscalation(session);
     cancelledSupport = true;
     if (pivotToPurchase) {
+      applyUnifiedWorkflowTransition(session, "product_search", {
+        reason: "support_cancelled_purchase_pivot",
+      });
       setConversationFlowMode(session.callSid, "PURCHASE_FLOW");
     }
     logger.info("support_escalation_cancelled_by_user", {
       callSid: session.callSid.slice(0, 8),
       pivotIntent: callerIntent,
+    });
+  }
+
+  // Keep unified state aligned when caller pivots catalog ↔ order without escalation.
+  if (pivotToPurchase && !isSupportEscalationActive(session)) {
+    applyUnifiedWorkflowTransition(session, "product_search", {
+      reason: "brain_catalog_pivot",
+    });
+  } else if (
+    (callerIntent === "order_lookup" || callerIntent === "order_field_query") &&
+    session.flowMode === "PURCHASE_FLOW" &&
+    !isCatalogShoppingUtterance(text) &&
+    !isCartActionUtterance(text)
+  ) {
+    applyUnifiedWorkflowTransition(session, "order_lookup", {
+      reason: "brain_order_pivot",
     });
   }
 

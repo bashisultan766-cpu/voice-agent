@@ -9,6 +9,7 @@ import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { orderUtteranceNeedsFreshLookup } from "../agents/orderContextPrivacy.js";
 import { isOrderLookupInsistenceUtterance } from "../agents/orderLookupWorkflow.js";
+import { getUnifiedSession } from "../agents/unifiedCallSession.js";
 
 export type SovereignState =
   | "idle"
@@ -91,6 +92,12 @@ export function updateActiveSession(
   const current = getOrCreateActiveSession(callSid);
   const next = { ...current, ...patch };
   store.set(callSid, next);
+
+  const session = getUnifiedSession(callSid);
+  if (session && patch.currentState) {
+    session.sovereignState = patch.currentState;
+  }
+
   return next;
 }
 
@@ -287,7 +294,17 @@ export function shouldSkipToolReinvoke(
 export function syncActiveSessionFromCallSession(callSession: CallSession): ActiveSession {
   const active = getOrCreateActiveSession(callSession.callSid);
 
+  // Never clobber an in-progress tracking handshake.
+  if (
+    active.currentState === "tracking_dictation" ||
+    (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking")
+  ) {
+    callSession.sovereignState = active.currentState;
+    return active;
+  }
+
   if (callSession.shoppingCart?.length) {
+    callSession.sovereignState = "cart_active";
     return updateActiveSession(callSession.callSid, {
       currentState: "cart_active",
       cachedIntent: "cart",
@@ -295,37 +312,63 @@ export function syncActiveSessionFromCallSession(callSession: CallSession): Acti
   }
 
   if (callSession.pendingInvoiceUrl) {
+    callSession.sovereignState = "checkout_active";
     return updateActiveSession(callSession.callSid, {
       currentState: "checkout_active",
       cachedIntent: "checkout",
     });
   }
 
+  // Catalog / purchase context must win over stale order_active (Priority 3 desync fix).
+  const inProductSearch =
+    callSession.flowMode === "PURCHASE_FLOW" ||
+    callSession.activeWorkflowContext === "product_search" ||
+    callSession.lastOrchestratorIntent === "catalog" ||
+    callSession.lastOrchestratorIntent === "product_search" ||
+    callSession.sovereignState === "catalog_active" ||
+    (callSession.awaitingInput?.startsWith("product_") ?? false);
+
+  if (inProductSearch) {
+    callSession.sovereignState = "catalog_active";
+    return updateActiveSession(callSession.callSid, {
+      currentState: "catalog_active",
+      cachedIntent: "catalog",
+    });
+  }
+
   if (callSession.currentOrderData && Object.keys(callSession.currentOrderData).length > 0) {
-    const active = getOrCreateActiveSession(callSession.callSid);
-    if (
-      active.currentState === "tracking_dictation" ||
-      (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking")
-    ) {
-      return active;
-    }
+    callSession.sovereignState = "order_active";
     return updateActiveSession(callSession.callSid, {
       currentState: "order_active",
       cachedIntent: "order",
     });
   }
 
+  callSession.sovereignState = active.currentState;
   return active;
 }
 
 export function buildActiveSessionSystemMessage(active: ActiveSession): string {
+  const session = getUnifiedSession(active.callSid);
   const lines = [
     "SOVEREIGN ACTIVE SESSION (MANDATORY — SINGLE SOURCE OF TRUTH)",
-    `currentState: ${active.currentState}`,
+    `currentState: ${session?.sovereignState ?? active.currentState}`,
+    `flowMode: ${session?.flowMode ?? "idle"}`,
+    `activeWorkflowContext: ${session?.activeWorkflowContext ?? "idle"}`,
     `cachedIntent: ${active.cachedIntent ?? "none"}`,
     `awaitingClarification: ${active.awaitingClarification ?? "none"}`,
     `isNotepadReady: ${active.isNotepadReady}`,
   ];
+
+  if (session?.flowMode === "PURCHASE_FLOW" || session?.sovereignState === "catalog_active") {
+    lines.push(
+      "UNIFIED STATE: Product search is active. Prefer search_shopify_book_by_title / ISBN tools. Do not re-enter order-number collection unless the caller explicitly asks to look up an order.",
+    );
+  } else if (session?.activeWorkflowContext === "order_lookup") {
+    lines.push(
+      "UNIFIED STATE: Order lookup is active. Prefer get_shopify_order_status. Clear product-search assumptions if the caller pivoted away from catalog.",
+    );
+  }
 
   if (active.spatialIndex.length > 0) {
     lines.push(

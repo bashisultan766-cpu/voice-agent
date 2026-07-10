@@ -3,7 +3,12 @@
  *
  * PURCHASE_FLOW: product search, similarity matching, cart additions only.
  * SUPPORT_FLOW: existing order lookups and order follow-ups only.
+ *
+ * Authoritative value lives on CallSession.flowMode when the session is
+ * registered; the Map is a thin fallback for call sites without a session ref.
  */
+import { getUnifiedSession } from "./unifiedCallSession.js";
+
 export type ConversationFlowMode = "idle" | "PURCHASE_FLOW" | "SUPPORT_FLOW";
 
 const PURCHASE_INTENTS = new Set([
@@ -33,6 +38,8 @@ const CONFIRM_KEYWORD_RE =
 const flowByCall = new Map<string, ConversationFlowMode>();
 
 export function getConversationFlowMode(callSid: string): ConversationFlowMode {
+  const session = getUnifiedSession(callSid);
+  if (session?.flowMode) return session.flowMode;
   return flowByCall.get(callSid) ?? "idle";
 }
 
@@ -41,11 +48,15 @@ export function setConversationFlowMode(
   mode: ConversationFlowMode,
 ): ConversationFlowMode {
   flowByCall.set(callSid, mode);
+  const session = getUnifiedSession(callSid);
+  if (session) session.flowMode = mode;
   return mode;
 }
 
 export function clearConversationFlowMode(callSid: string): void {
   flowByCall.delete(callSid);
+  const session = getUnifiedSession(callSid);
+  if (session) session.flowMode = "idle";
 }
 
 export function clearAllConversationFlowModes(): void {
