@@ -18,7 +18,7 @@ STRICT RULES:
 - Sound warm and professional, not robotic
 - Include every factual element from the required script
 - Do not add greetings or extra offers
-- Return plain speech text only — no JSON, no markdown`;
+- Return plain speech text only — no JSON, no markdown, no asterisks, no bullet lists`;
 
 export const ORDER_AGENT_SYSTEM_PROMPT = `You are the SureShot Books order lookup voice agent (Eric).
 

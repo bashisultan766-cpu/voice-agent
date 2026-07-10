@@ -158,6 +158,17 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping_address/i);
   });
 
+  it("enforces voice-native output, phonetic email, and multi-item checkout loop", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/VOICE-NATIVE OUTPUT/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER output Markdown/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UnifiedCallSession/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Let me pull that up for you/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MULTI-ITEM CHECKOUT LOOP/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/adjust the quantity, search for another book/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/B as in Boy, A as in Apple/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER say the address is "not found"/i);
+  });
+
   it("requires dynamic topic Polite Pivot instruction", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MUST dynamically use the user's specific requested topic/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DO NOT literally repeat the "football" example/i);

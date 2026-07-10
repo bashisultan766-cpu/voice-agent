@@ -265,13 +265,43 @@ const COMMON_DOMAINS: Record<string, string> = {
   "icloud.com": "icloud dot com",
 };
 
+/** Clear phone-friendly cue words for letter-by-letter email verification. */
+const LETTER_AS_IN: Record<string, string> = {
+  a: "Apple",
+  b: "Boy",
+  c: "Charlie",
+  d: "David",
+  e: "Edward",
+  f: "Frank",
+  g: "George",
+  h: "Henry",
+  i: "Isaac",
+  j: "John",
+  k: "King",
+  l: "Larry",
+  m: "Mary",
+  n: "Nancy",
+  o: "Oscar",
+  p: "Paul",
+  q: "Queen",
+  r: "Robert",
+  s: "Sam",
+  t: "Tom",
+  u: "Uncle",
+  v: "Victor",
+  w: "William",
+  x: "X-ray",
+  y: "Yellow",
+  z: "Zebra",
+};
+
 function domainVoicePart(domain: string): string {
   const lower = domain.toLowerCase();
   if (COMMON_DOMAINS[lower]) return COMMON_DOMAINS[lower];
   return lower.split(".").join(" dot ");
 }
 
-/** Hyphen letter spelling for confirmation — e.g. B-A-S-H-I at gmail dot com */
+/** Hyphen letter spelling — e.g. B-A-S-H-I at gmail dot com (legacy / compact). */
 export function spellEmailHyphenForTTS(email: string): string {
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) return normalized;
@@ -289,13 +319,41 @@ export function spellEmailHyphenForTTS(email: string): string {
   return `${localSpelled} at ${domainVoicePart(domain)}`;
 }
 
+/**
+ * Letter-by-letter phonetic email for phone confirmation.
+ * e.g. "B as in Boy, A as in Apple, S as in Sam at gmail dot com"
+ */
+export function spellEmailPhoneticForTTS(email: string): string {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized.includes("@")) return normalized;
+  const [local, domain] = normalized.split("@", 2);
+  const parts: string[] = [];
+  for (const ch of local) {
+    if (/[a-z]/.test(ch)) {
+      const word = LETTER_AS_IN[ch] ?? ch.toUpperCase();
+      parts.push(`${ch.toUpperCase()} as in ${word}`);
+    } else if (/[0-9]/.test(ch)) {
+      parts.push(ch);
+    } else if (ch === ".") {
+      parts.push("dot");
+    } else if (ch === "-") {
+      parts.push("dash");
+    } else if (ch === "_") {
+      parts.push("underscore");
+    } else {
+      parts.push(ch);
+    }
+  }
+  return `${parts.join(", ")} at ${domainVoicePart(domain)}`;
+}
+
 export function buildEmailConfirmationSpeech(email: string): string {
-  const spelled = spellEmailHyphenForTTS(email);
+  const spelled = spellEmailPhoneticForTTS(email);
   return `I have your email as ${spelled}. Is that correct?`;
 }
 
 export function buildUpdatedEmailConfirmationSpeech(email: string): string {
-  const spelled = spellEmailHyphenForTTS(email);
+  const spelled = spellEmailPhoneticForTTS(email);
   return `Thank you. I have updated it. Your email is ${spelled}. Is that correct?`;
 }
 

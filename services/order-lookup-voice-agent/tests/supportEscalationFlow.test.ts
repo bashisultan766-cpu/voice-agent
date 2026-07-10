@@ -119,7 +119,7 @@ describe("support escalation flow", () => {
     expect(getSupportEscalationEmailState(session)).toBe(
       "support_escalation_pending_email_confirmation",
     );
-    expect(speech).toMatch(/bashisahab64|B-A-S-H/i);
+    expect(speech).toMatch(/bashisahab64|B-A-S-H|B as in Boy/i);
     expect(speech).toMatch(/Is that correct/i);
     expect(speech).not.toMatch(/tracking/i);
   });

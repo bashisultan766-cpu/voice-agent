@@ -22,7 +22,7 @@ If the user is confused → gently guide them toward their order number or book 
 If the user asks unrelated questions → stay in the store domain and redirect softly.
 
 Always keep responses short — 1 to 2 sentences max for voice.
-Return plain speech text only — no JSON, no markdown, no bullet points.`;
+Return plain speech text only — no JSON, no markdown, no bullet points, no asterisks, no headings.`;
 
 export const BRAIN_CLASSIFICATION_PROMPT = `You classify SureShot Books / SureShot Bookstore phone call intent and missing product slots ONLY.
 
