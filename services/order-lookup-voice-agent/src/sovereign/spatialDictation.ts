@@ -23,6 +23,8 @@ function digitWord(char: string): string {
 function digitsFromFragment(fragment: string): string[] {
   return fragment
     .replace(/\band\b/gi, " ")
+    .replace(/\bpoint\b/gi, " ")
+    .replace(/(\d)\.(\d)/g, "$1$2")
     .replace(/\D/g, "")
     .split("")
     .filter(Boolean);
@@ -297,4 +299,14 @@ export function resolveSpatialTurnSpeech(
     anchor,
     resumeOffset: resumeOffset >= 0 ? resumeOffset : undefined,
   };
+}
+
+/** After an "after" spatial resume, all digits from resumeOffset onward were spoken. */
+export function computeLastSpokenIndexAfterSpatialResume(
+  spatialIndex: SpatialIndexEntry[],
+  resumeOffset: number,
+): number {
+  if (!spatialIndex.length || resumeOffset < 0) return -1;
+  if (resumeOffset >= spatialIndex.length) return spatialIndex.length - 1;
+  return spatialIndex.length - 1;
 }

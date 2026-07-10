@@ -126,11 +126,34 @@ describe("email confirmation — full flow", () => {
     expect(again.handled).toBe(false);
   });
 
-  it("blocks order lookup during email capture", async () => {
+  it("blocks unrelated questions during email capture", async () => {
     const session = createCallSession("EM_4", "+1", "+1");
     startEmailCapture(session, "support_escalation");
-    const blocked = await resolveEmailConfirmationTurn(session, "check my order number");
+    const blocked = await resolveEmailConfirmationTurn(session, "what is the weather today");
+    expect(blocked.handled).toBe(true);
     expect(blocked.speech).toMatch(/finish (confirming your email|your support request)/i);
+  });
+
+  it("aborts email capture when caller pivots to tracking", async () => {
+    const session = createCallSession("EM_ABORT", "+1", "+1");
+    session.supportEscalation = {
+      state: "non_verified_private_info_blocked",
+      requestedInfo: "customer name",
+      escalationReason: "vault request",
+    };
+    startEmailCapture(session, "support_escalation");
+    const released = await resolveEmailConfirmationTurn(session, "never mind just give me my tracking ID");
+    expect(released.handled).toBe(false);
+    expect(session.emailConfirmation?.phase).toBe("idle");
+    expect(session.supportEscalation?.state).toBe("normal");
+  });
+
+  it("aborts email capture on order lookup pivot", async () => {
+    const session = createCallSession("EM_PIVOT", "+1", "+1");
+    startEmailCapture(session, "support_escalation");
+    const released = await resolveEmailConfirmationTurn(session, "check my order number");
+    expect(released.handled).toBe(false);
+    expect(session.emailConfirmation?.phase).toBe("idle");
   });
 });
 

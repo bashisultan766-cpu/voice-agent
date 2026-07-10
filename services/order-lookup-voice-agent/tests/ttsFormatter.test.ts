@@ -7,6 +7,7 @@ import {
   parseSsmlBreakTimeMs,
   sanitizeSsmlForTTS,
   sanitizeTextForTTS,
+  sanitizeTrackingDictationSpeech,
   SSML_BREAK_MAX_MS,
   SSML_BREAK_SAFE_MS,
 } from "../src/utils/ttsFormatter.js";
@@ -79,6 +80,13 @@ describe("sanitizeSsmlForTTS", () => {
 
   it("sanitizes via sanitizeTextForTTS entry point", () => {
     expect(sanitizeTextForTTS('  1<break time="10s"/>  ')).toBe('1<break time="1s"/>');
+  });
+
+  it("rewrites point-decimal tracking speech into phonetic digits", () => {
+    expect(sanitizeTrackingDictationSpeech("After 47, the digits are: point 02")).toBe(
+      "After 47, the digits are: Zero. Two.",
+    );
+    expect(sanitizeTrackingDictationSpeech("point zero two")).toBe("Zero. Two.");
   });
 });
 

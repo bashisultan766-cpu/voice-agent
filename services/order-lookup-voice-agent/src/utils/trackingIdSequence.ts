@@ -8,6 +8,7 @@ export function normalizeTrackingIdRawSequence(raw: string): string {
   if (!value) return "";
 
   // Collapse mistaken decimal insertion between digits (e.g. "2.0" → "20").
+  value = value.replace(/\bpoint\b/gi, "");
   value = value.replace(/(\d)\.(\d)/g, "$1$2");
 
   // Remove currency / unit suffixes if STT glued them on.

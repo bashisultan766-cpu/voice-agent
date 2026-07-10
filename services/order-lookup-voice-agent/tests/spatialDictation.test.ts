@@ -51,6 +51,20 @@ describe("spatialDictation anchors", () => {
     expect(turn.speech).toMatch(/Three\./i);
     expect(turn.speech).not.toMatch(/3\.0|point/i);
   });
+
+  it("resumes after 47 with leading-zero digits spoken phonetically", () => {
+    const localTracking = "9904702123";
+    const localIndex = buildSpatialIndexFromTracking(localTracking);
+    const turn = resolveSpatialTurnSpeech("what comes after 47?", localIndex, localTracking);
+    expect(turn.handled).toBe(true);
+    expect(turn.speech).toMatch(/Zero\.\s*Two\./i);
+    expect(turn.speech).not.toMatch(/point/i);
+    expect(turn.resumeOffset).toBe(5);
+  });
+
+  it("parses spoken point between anchor digits without decimal math", () => {
+    expect(extractSpatialAnchorDigits("what comes after 4 point 7")).toEqual(["4", "7"]);
+  });
 });
 
 describe("tracking dictation completion", () => {

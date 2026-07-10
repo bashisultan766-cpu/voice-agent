@@ -121,7 +121,55 @@ export function sanitizeSsmlForTTS(text: string): string {
 /** Sanitize all text destined for TTS engines (SSML breaks + strip unknown tags). */
 export function sanitizeTextForTTS(text: string): string {
   if (!text?.trim()) return "";
-  return sanitizeSsmlForTTS(text.trim());
+  return sanitizeTrackingDictationSpeech(sanitizeSsmlForTTS(text.trim()));
+}
+
+const SPOKEN_DIGIT_TO_CHAR: Record<string, string> = {
+  zero: "0",
+  oh: "0",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+};
+
+function spokenDigitRunToPhonetic(digitRun: string): string {
+  const tokens = digitRun
+    .toLowerCase()
+    .replace(/\./g, " ")
+    .split(/[\s,]+/)
+    .filter(Boolean);
+  const chars: string[] = [];
+  for (const token of tokens) {
+    if (/^\d+$/.test(token)) {
+      chars.push(...token.split(""));
+      continue;
+    }
+    const mapped = SPOKEN_DIGIT_TO_CHAR[token];
+    if (mapped) chars.push(mapped);
+  }
+  return chars.map((ch) => charToPhoneticPacing(ch)).join(" ");
+}
+
+/** Remove decimal/math phrasing from tracking dictation speech (e.g. "point 02" → "Zero. Two."). */
+export function sanitizeTrackingDictationSpeech(text: string): string {
+  if (!text?.trim()) return "";
+
+  let out = text.replace(/(\d)\.(\d)/g, "$1 $2");
+
+  out = out.replace(
+    /\bpoint\s+((?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\.?[\s,.]*)+|\d[\d\s,.]*)/gi,
+    (_match, digitRun: string) => spokenDigitRunToPhonetic(digitRun),
+  );
+
+  out = out.replace(/\bpoint\s+(?=\d)/gi, "");
+
+  return out.trim();
 }
 
 /** True when speech contains intentional tracking-number dictation formatting. */

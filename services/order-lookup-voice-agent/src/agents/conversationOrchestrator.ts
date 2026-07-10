@@ -115,7 +115,7 @@ import {
   TRACKING_DICTATION_COMPLETE_SPEECH,
   USER_NOTEPAD_READY,
 } from "./dictationTool.js";
-import { isSpatialBeforeQuery, isSpatialResumeQuery, resolveSpatialTurnSpeech } from "../sovereign/spatialDictation.js";
+import { isSpatialBeforeQuery, isSpatialResumeQuery, resolveSpatialTurnSpeech, computeLastSpokenIndexAfterSpatialResume } from "../sovereign/spatialDictation.js";
 import {
   buildToolDecisionState,
   decideToolExecution,
@@ -165,7 +165,7 @@ import {
   pickProductSlotQuestionForAwaiting,
 } from "./productSlotPhase.js";
 import { smoothForVoice, speechChunksFromText } from "../services/voiceSmoothingEngine.js";
-import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
+import { isTrackingDictationText, sanitizeTextForTTS, sanitizeTrackingDictationSpeech } from "../utils/ttsFormatter.js";
 import type { StructuredProduct } from "../types/product.js";
 import type {
   AgentStreamEvent,
@@ -600,7 +600,10 @@ function tryResolveSpatialTrackingTurn(
 
   if (spatialTurn.resumeOffset !== undefined && !isSpatialBeforeQuery(text)) {
     updateActiveSession(session.callSid, {
-      lastSpokenIndex: Math.max(spatialTurn.resumeOffset - 1, -1),
+      lastSpokenIndex: computeLastSpokenIndexAfterSpatialResume(
+        refreshed.spatialIndex,
+        spatialTurn.resumeOffset,
+      ),
       currentState: "tracking_dictation",
       cachedIntent: "tracking",
       isNotepadReady: true,
@@ -615,7 +618,7 @@ function tryResolveSpatialTrackingTurn(
 
   return {
     handled: true,
-    speech: spatialTurn.speech,
+    speech: sanitizeTrackingDictationSpeech(spatialTurn.speech),
     skipLlm: true,
     skipTools: true,
     intentKey: spatialTurn.anchor ? "spatial_resume" : "spatial_clarify",

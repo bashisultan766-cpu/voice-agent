@@ -14,6 +14,7 @@ import {
   isPartialEmailCorrection,
   isRequestSlowEmailRepeat,
   looksLikePartialEmail,
+  shouldAbortEmailConfirmation,
 } from "../utils/emailCapture.js";
 import { isValidCustomerEmail } from "../utils/resendEmailService.js";
 
@@ -143,6 +144,26 @@ export function resetEmailConfirmation(session: CallSession): void {
   };
 }
 
+/** Clear email capture and release any locked workflow without scolding the caller. */
+export function abortEmailConfirmationFlow(session: CallSession): void {
+  const workflow = session.emailConfirmation?.workflowType;
+  resetEmailConfirmation(session);
+
+  if (workflow === "support_escalation" && session.supportEscalation) {
+    session.supportEscalation.state = "normal";
+    session.supportEscalation.requestedInfo = "protected information";
+    session.supportEscalation.escalationReason = "Caller pivoted away from support.";
+    session.supportEscalation.issueDescription = undefined;
+    logger.info("support_escalation_cancelled_via_email_abort", {
+      callSid: session.callSid.slice(0, 8),
+    });
+  }
+
+  if (workflow === "payment_link" && session.paymentCheckout?.state === "awaiting_email") {
+    session.paymentCheckout.state = "idle";
+  }
+}
+
 export function buildEmailCapturePrompt(workflowType: EmailWorkflowType): string {
   if (workflowType === "payment_link") {
     return `To send your secure payment link, ${ASK_EMAIL_SPEECH}`;
@@ -232,6 +253,11 @@ export async function resolveEmailConfirmationTurn(
 
   const ctx = session.emailConfirmation;
   if (!ctx || ctx.phase === "idle" || ctx.phase === "completed") {
+    return { handled: false };
+  }
+
+  if (shouldAbortEmailConfirmation(text)) {
+    abortEmailConfirmationFlow(session);
     return { handled: false };
   }
 

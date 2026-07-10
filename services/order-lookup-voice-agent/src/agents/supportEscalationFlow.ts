@@ -19,7 +19,11 @@ import {
 import { isConfirmKeyword, isPurchaseFlowActive } from "./conversationFlowState.js";
 import { isSupportEscalationRequest } from "./callerIntent.js";
 import { isCartActionUtterance, isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
-import { resetEmailConfirmation } from "./emailConfirmationManager.js";
+import {
+  abortEmailConfirmationFlow,
+  resetEmailConfirmation,
+} from "./emailConfirmationManager.js";
+import { shouldAbortEmailConfirmation } from "../utils/emailCapture.js";
 
 export type SupportEscalationState =
   | "normal"
@@ -300,6 +304,11 @@ export async function resolveSupportEscalationTurn(
   }
 
   if (isSupportEscalationLocked(session) && /\b(tracking|order number|order history|buy|book|isbn)\b/i.test(text)) {
+    if (shouldAbortEmailConfirmation(text)) {
+      abortEmailConfirmationFlow(session);
+      cancelSupportEscalation(session);
+      return { handled: false };
+    }
     return { handled: true, speech: FINISH_SUPPORT_FIRST_SPEECH };
   }
 

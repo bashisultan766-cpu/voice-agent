@@ -298,3 +298,16 @@ export function buildUpdatedEmailConfirmationSpeech(email: string): string {
   const spelled = spellEmailHyphenForTTS(email);
   return `Thank you. I have updated it. Your email is ${spelled}. Is that correct?`;
 }
+
+const EMAIL_WORKFLOW_ABORT_RE =
+  /\b(?:never\s*mind|forget\s+(?:it|that|about\s+(?:that|this|support))|cancel(?:\s+(?:that|this|support))?|stop\s+(?:that|this)|don'?t\s+(?:send|bother|want\s+(?:support|that)))\b/i;
+
+const EMAIL_WORKFLOW_PIVOT_ORDER_RE =
+  /\b(?:give\s+me\s+(?:the\s+)?tracking|just\s+(?:give|tell)\s+me(?:\s+(?:my\s+)?(?:tracking|the\s+tracking))?(?:\s+id)?|where\s+is\s+my\s+(?:tracking|order)|check\s+my\s+order|what\s+about\s+my\s+order|look\s+up\s+my\s+order|order\s+status|(?:want|need)\s+(?:my\s+)?tracking)\b/i;
+
+/** Caller wants to exit email capture and return to order / tracking help. */
+export function shouldAbortEmailConfirmation(text: string): boolean {
+  const t = (text ?? "").trim();
+  if (!t) return false;
+  return EMAIL_WORKFLOW_ABORT_RE.test(t) || EMAIL_WORKFLOW_PIVOT_ORDER_RE.test(t);
+}

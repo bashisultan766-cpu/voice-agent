@@ -22,6 +22,7 @@ import {
 import { syncActiveWorkflowContext } from "./workflowContext.js";
 import { captureSessionIntent, getSessionMemory, type BufferedSessionIntent } from "./sessionMemory.js";
 import { isSupportEscalationRequest, type CallerIntent } from "./callerIntent.js";
+import { shouldAbortEmailConfirmation } from "../utils/emailCapture.js";
 
 export type AgentWorkflow =
   | "idle"
@@ -44,11 +45,13 @@ export interface BrainControlResult {
 
 /** User explicitly cancels or overrides a stale support escalation. */
 export function isWorkflowCancellationUtterance(text: string): boolean {
-  const t = (text ?? "").trim().toLowerCase();
+  const t = (text ?? "").trim();
   if (!t) return false;
+  if (shouldAbortEmailConfirmation(t)) return true;
+  const lower = t.toLowerCase();
   return (
-    /\b(no.{0,30}(?:don'?t|do not)\s+(?:send|want|need).{0,30}support)\b/i.test(t) ||
-    /\b(don'?t\s+want\s+support|forget\s+support|cancel\s+(?:that|this|support)|stop\s+that)\b/i.test(t) ||
+    /\b(no.{0,30}(?:don'?t|do not)\s+(?:send|want|need).{0,30}support)\b/i.test(lower) ||
+    /\b(don'?t\s+want\s+support|forget\s+support|cancel\s+(?:that|this|support)|stop\s+that)\b/i.test(lower) ||
     /\b(i\s+want\s+to\s+buy|add\s+\d+\s+cop|add\s+(?:twenty|ten|five)\s+cop)/i.test(t)
   );
 }
