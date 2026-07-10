@@ -62,6 +62,7 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
       expect.objectContaining({ orderNumber: expect.any(String) }),
       "CA_GROUND",
       undefined,
+      expect.objectContaining({ skipPolicy: true }),
     );
     expect(speech).toMatch(/^I have found your order 21698-F1\./);
     expect(speech).toMatch(/status is Refunded/);

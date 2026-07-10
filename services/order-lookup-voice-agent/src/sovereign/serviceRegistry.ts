@@ -1,12 +1,13 @@
 /**
  * ServiceRegistry — single entry point for all agent tool execution.
+ * Routes through executeUnifiedTool (Zod + secure session inject + Shopify/Resend).
  */
 import {
-  executeLlmTool,
-  toolResultForLlm,
+  executeUnifiedTool,
   type LlmToolExecutionRecord,
   type LlmToolName,
-} from "../adapters/llmToolExecutor.js";
+} from "../adapters/unifiedToolRegistry.js";
+import { toolResultForLlm } from "../adapters/llmToolExecutor.js";
 import type { CallSession } from "../types/order.js";
 
 export type { LlmToolExecutionRecord, LlmToolName };
@@ -18,7 +19,7 @@ export const ServiceRegistry = {
     callSid: string,
     session?: CallSession,
   ): Promise<LlmToolExecutionRecord> {
-    return executeLlmTool(tool, args, callSid, session);
+    return executeUnifiedTool(tool, args, callSid, session);
   },
 
   formatToolResult(record: LlmToolExecutionRecord): string {

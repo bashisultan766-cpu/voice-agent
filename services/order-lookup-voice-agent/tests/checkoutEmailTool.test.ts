@@ -41,8 +41,8 @@ describe("send_checkout_email tool execution", () => {
     );
 
     expect(record.ok).toBe(false);
-    expect(record.status).toBe("blocked");
-    expect(record.errorMessage).toMatch(/Valid customer email/i);
+    expect(record.status).toBe("invalid_format");
+    expect(record.errorMessage).toMatch(/Validation Error:.*customerEmail|Valid customer email/i);
     expect(mockSendCheckoutPaymentLink).not.toHaveBeenCalled();
   });
 

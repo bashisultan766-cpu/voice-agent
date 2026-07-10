@@ -1,4 +1,8 @@
 /**
+ * @deprecated Legacy deterministic product/order tool gate (Audit §4.2 / §6.4).
+ * Production LLM turns use UnifiedToolRegistry.executeUnifiedTool via ServiceRegistry.
+ * Kept for unit tests and re-exports only — do not add new call sites.
+ *
  * Tool Decision Gate — deterministic only. SessionProductMemory is authoritative.
  */
 import type {

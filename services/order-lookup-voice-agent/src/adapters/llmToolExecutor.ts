@@ -61,8 +61,14 @@ import {
   ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
   SYSTEM_MAINTENANCE_LLM_PAYLOAD,
 } from "../constants/systemMessages.js";
+import { prepareUnifiedToolArgs } from "./toolExecutionPolicy.js";
 
 export { SYSTEM_MAINTENANCE_LLM_PAYLOAD };
+
+export interface ExecuteLlmToolOptions {
+  /** When true, Zod + secure inject already ran (executeUnifiedTool). */
+  skipPolicy?: boolean;
+}
 
 export type LlmToolName =
   | "get_shopify_order_status"
@@ -192,11 +198,34 @@ export async function executeLlmTool(
   rawArgs: Record<string, unknown>,
   callSid: string,
   session?: CallSession,
+  options?: ExecuteLlmToolOptions,
 ): Promise<LlmToolExecutionRecord> {
   const started = Date.now();
+
+  let effectiveArgs = rawArgs ?? {};
+  let effectiveSession = session;
+  if (!options?.skipPolicy) {
+    const prepared = prepareUnifiedToolArgs(tool, effectiveArgs, callSid, effectiveSession);
+    if (!prepared.ok) {
+      return prepared.record;
+    }
+    effectiveArgs = prepared.args;
+    effectiveSession = prepared.session;
+  }
+
   const args = Object.fromEntries(
-    Object.entries(rawArgs).map(([k, v]) => [k, String(v ?? "").trim()]),
+    Object.entries(effectiveArgs).map(([k, v]) => [
+      k,
+      typeof v === "string" || typeof v === "number" || typeof v === "boolean"
+        ? String(v).trim()
+        : v == null
+          ? ""
+          : JSON.stringify(v),
+    ]),
   );
+  // Preserve structured cart payloads for downstream parsers
+  const rawArgsForCart = effectiveArgs;
+  session = effectiveSession;
 
   if (tool === "end_call") {
     return {
@@ -227,7 +256,7 @@ export async function executeLlmTool(
 
   if (tool === "add_to_cart" && session) {
     try {
-      const items = reconcileAddToCartItems(session, parseCartItemsArg(rawArgs.items));
+      const items = reconcileAddToCartItems(session, parseCartItemsArg(rawArgsForCart.items));
       if (!items.length) {
         return {
           tool,
@@ -261,7 +290,7 @@ export async function executeLlmTool(
           };
         }
       }
-      const setAbsolute = rawArgs.set_absolute_quantity === true;
+      const setAbsolute = rawArgsForCart.set_absolute_quantity === true;
       let cart = ensureShoppingCart(session);
       for (const item of items) {
         if (setAbsolute && item.quantity != null) {
@@ -290,7 +319,7 @@ export async function executeLlmTool(
 
   if (tool === "remove_from_cart" && session) {
     try {
-      const items = parseCartItemsArg(rawArgs.items);
+      const items = parseCartItemsArg(rawArgsForCart.items);
       const cart = removeFromCart(session, items);
       const data: CartToolResult = {
         status: cart.length ? "ok" : "empty",
@@ -718,8 +747,8 @@ export function toolResultForLlm(
   record: LlmToolExecutionRecord,
   options?: { isVerifiedCaller?: boolean; session?: import("../types/order.js").CallSession },
 ): string {
-  if (record.status === "blocked") {
-    if (record.tool === "dictate_tracking") {
+  if (record.status === "blocked" || record.status === "invalid_format") {
+    if (record.tool === "dictate_tracking" && record.status === "blocked") {
       return JSON.stringify({
         intent:
           record.data && typeof record.data === "object" && "intent" in record.data
@@ -730,10 +759,14 @@ export function toolResultForLlm(
           "Caller has not confirmed notepad readiness. Speak the readiness request exactly — do NOT dictate the tracking number.",
       });
     }
+    const isValidation = record.status === "invalid_format"
+      || Boolean(record.errorMessage?.startsWith("Validation Error:"));
     return JSON.stringify({
-      error: "missing_or_invalid_slot",
+      error: isValidation ? "validation_error" : "missing_or_invalid_slot",
       message: record.errorMessage,
-      hint: "Ask the caller naturally for the missing information. Do not invent data.",
+      hint: isValidation
+        ? "Correct the tool arguments or ask the caller for clarification. Do not invent data or retry with the same invalid values."
+        : "Ask the caller naturally for the missing information. Do not invent data.",
     });
   }
 

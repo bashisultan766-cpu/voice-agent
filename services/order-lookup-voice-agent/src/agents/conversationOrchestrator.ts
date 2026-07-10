@@ -118,13 +118,6 @@ import {
 } from "./dictationTool.js";
 import { isSpatialBeforeQuery, isSpatialResumeQuery, resolveSpatialTurnSpeech, computeLastSpokenIndexAfterSpatialResume } from "../sovereign/spatialDictation.js";
 import {
-  buildToolDecisionState,
-  decideToolExecution,
-  decideToolExecutionWithReason,
-  type GateIntent,
-  type ToolAction,
-} from "./toolDecisionGate.js";
-import {
   planInstantFiller,
   planLookupError,
   planGoodbye,
@@ -256,7 +249,7 @@ import {
 } from "./emailConfirmationManager.js";
 import { resolvePaymentCheckoutTurn } from "./paymentCheckoutFlow.js";
 import { buildOrderDetailSpeech } from "./orderDetailBuilder.js";
-import { getCustomerHistory } from "../adapters/shopifyStorefrontAdapter.js";
+import { executeUnifiedTool } from "../adapters/unifiedToolRegistry.js";
 import {
   buildMonthDrillDownSpeech,
   buildUnverifiedOrderHistorySpeech,
@@ -557,8 +550,16 @@ async function resolveOrderHistorySpeech(
   if (callerIntent === "order_history") {
     const customerId = session.shopifyCustomerId?.trim();
     if (!customerId) return null;
-    const data = await getCustomerHistory(customerId, session.callSid);
-    if (data.status !== "found") {
+    const record = await executeUnifiedTool(
+      "get_customer_history",
+      {},
+      session.callSid,
+      session,
+    );
+    const data = record.data as
+      | { status?: string; orders?: import("../adapters/shopifyStorefrontAdapter.js").CustomerHistoryOrderSummary[]; orderCount?: number }
+      | undefined;
+    if (!record.ok || data?.status !== "found") {
       return "I could not pull your order history right now. Please try again in a moment.";
     }
     const ctx = setOrderHistoryContext(
@@ -1968,7 +1969,7 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
   res.type("application/xml").send(twiml);
 }
 
-// Re-export slot helpers and gate for tests
+// Re-export slot helpers and legacy gate for tests (gate is deprecated — use UnifiedToolRegistry)
 export { analyzeBrainTurn } from "./brainAnalyzer.js";
 export {
   buildToolDecisionState,
