@@ -49,6 +49,9 @@ const PUBLIC_REVEAL_FIELDS = new Set<OrderRevealField>([
   "paymentGateway",
   "notificationDestinationMasked",
   "previousOrderCount",
+  "paymentCardLast4",
+  "fullCustomerEmail",
+  "customerName",
 ]);
 
 /** Field-by-field disclosure — non-verified callers receive public fields only. */

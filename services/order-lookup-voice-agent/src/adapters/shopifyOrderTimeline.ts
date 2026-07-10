@@ -9,8 +9,9 @@ import { ShopifyAuthError } from "../platform/shopifyErrors.js";
 import { shopifyGraphql } from "../tools/shopifyLiveSearch.js";
 import type { OrderTimelineEvent } from "./orderFieldExtractors.js";
 import type { DeepOrderGraphqlNode } from "../utils/orderDataParser.js";
+import { transactionNodesFromConnection } from "../utils/orderDataParser.js";
 
-const ORDER_TIMELINE_BY_ID_QUERY = `query OrderTimelineById($id: ID!) {
+const ORDER_DEEP_BY_ID_QUERY = `query OrderDeepById($id: ID!) {
   order(id: $id) {
     events(first: 100) {
       nodes {
@@ -37,6 +38,24 @@ const ORDER_TIMELINE_BY_ID_QUERY = `query OrderTimelineById($id: ID!) {
             message
             createdAt
           }
+        }
+      }
+    }
+    transactions(first: 20) {
+      id
+      kind
+      status
+      gateway
+      paymentDetails {
+        ... on CardPaymentDetails {
+          company
+          number
+        }
+      }
+      amountSet {
+        shopMoney {
+          amount
+          currencyCode
         }
       }
     }
@@ -96,25 +115,39 @@ function messagesFromRestEvents(events: RestShopifyEvent[]): OrderTimelineEvent[
   return out;
 }
 
-async function fetchTimelineGraphqlByOrderGid(
+async function fetchDeepOrderByGid(
   orderGid: string,
-): Promise<OrderTimelineEvent[]> {
+): Promise<{
+  events: OrderTimelineEvent[];
+  transactions: DeepOrderGraphqlNode["transactions"];
+}> {
   const data = await shopifyGraphql<{
     order?: {
       events?: {
         nodes?: OrderTimelineEvent[];
         edges?: Array<{ node?: OrderTimelineEvent }>;
       };
+      transactions?: DeepOrderGraphqlNode["transactions"];
     };
-  }>(ORDER_TIMELINE_BY_ID_QUERY, { id: orderGid });
+  }>(ORDER_DEEP_BY_ID_QUERY, { id: orderGid });
 
   const fromNodes = normalizeTimelineNodes(data.order?.events?.nodes);
-  if (fromNodes.length) return fromNodes;
-
   const fromEdges = (data.order?.events?.edges ?? [])
     .map((edge) => edge.node)
     .filter((node): node is OrderTimelineEvent => Boolean(node?.message?.trim()));
-  return fromEdges;
+  const events = fromNodes.length ? fromNodes : fromEdges;
+
+  return {
+    events,
+    transactions: data.order?.transactions,
+  };
+}
+
+async function fetchTimelineGraphqlByOrderGid(
+  orderGid: string,
+): Promise<OrderTimelineEvent[]> {
+  const deep = await fetchDeepOrderByGid(orderGid);
+  return deep.events;
 }
 
 async function fetchTimelineRestByNumericId(
@@ -158,7 +191,9 @@ async function fetchTimelineRestByNumericId(
 export async function enrichOrderNodeTimeline(
   node: DeepOrderGraphqlNode,
 ): Promise<DeepOrderGraphqlNode> {
-  if (timelineEventCount(node) > 0) {
+  const hasEvents = timelineEventCount(node) > 0;
+  const hasTransactions = transactionNodesFromConnection(node.transactions).length > 0;
+  if (hasEvents && hasTransactions) {
     return node;
   }
 
@@ -174,14 +209,32 @@ export async function enrichOrderNodeTimeline(
   }
 
   try {
-    const gqlEvents = await fetchTimelineGraphqlByOrderGid(orderGid);
-    if (gqlEvents.length) {
+    const deep = await fetchDeepOrderByGid(orderGid);
+    let enriched: DeepOrderGraphqlNode = { ...node };
+
+    if (!hasEvents && deep.events.length) {
       logger.info("shopify_timeline_enriched", {
         orderNumber: node.name,
         source: "graphql_order_by_id",
-        eventCount: gqlEvents.length,
+        eventCount: deep.events.length,
       });
-      return { ...node, events: toTimelineEdges(gqlEvents) };
+      enriched = { ...enriched, events: toTimelineEdges(deep.events) };
+    }
+
+    if (!hasTransactions && deep.transactions) {
+      const txCount = transactionNodesFromConnection(deep.transactions).length;
+      if (txCount > 0) {
+        logger.info("shopify_transactions_enriched", {
+          orderNumber: node.name,
+          source: "graphql_order_by_id",
+          transactionCount: txCount,
+        });
+        enriched = { ...enriched, transactions: deep.transactions };
+      }
+    }
+
+    if (timelineEventCount(enriched) > 0 || transactionNodesFromConnection(enriched.transactions).length > 0) {
+      return enriched;
     }
   } catch (err) {
     logger.warn("shopify_timeline_graphql_by_id_failed", {
@@ -192,7 +245,7 @@ export async function enrichOrderNodeTimeline(
     });
   }
 
-  if (numericId) {
+  if (!hasEvents && numericId) {
     try {
       const restEvents = await fetchTimelineRestByNumericId(numericId);
       if (restEvents.length) {

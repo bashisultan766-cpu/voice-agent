@@ -232,6 +232,7 @@ import {
 import { transitionFlowForIntent } from "./conversationFlowState.js";
 import {
   applyBrainWorkflowControl,
+  shouldPreferLlmPrimaryRouting,
   shouldSuppressSupportEscalation,
   tryDeterministicCartTurn,
 } from "./agentBrain.js";
@@ -1016,12 +1017,12 @@ async function* runOrchestratorTurnCore(
   ingestUserTurn(session.callSid, text);
   syncActiveWorkflowContext(session);
 
+  const callerIntentPreview = resolveCallerIntent(text, session);
+  const brain = applyBrainWorkflowControl(session, text, callerIntentPreview);
+
   if (yield* yieldEmailConfirmationTurnIfActive(session, text)) {
     return;
   }
-
-  const callerIntentPreview = resolveCallerIntent(text, session);
-  const brain = applyBrainWorkflowControl(session, text, callerIntentPreview);
 
   if (brain.deterministicCartSpeech) {
     const uniqueSpeech = await ensureUniqueSpokenResponse(
@@ -1142,7 +1143,7 @@ async function* runOrchestratorTurnCore(
     const fieldSpeech = appendProtocolClosing(
       buildOrderFieldSpeech(session, text) ?? "",
     );
-    if (fieldSpeech.trim()) {
+    if (fieldSpeech.trim() && !shouldPreferLlmPrimaryRouting(session, text, callerIntent)) {
       exitTrackingHandshakeForOrderQuery(session.callSid);
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, fieldSpeech, text);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {

@@ -52,6 +52,33 @@ export function speakCardLast4(last4: string): string {
     .join(", ");
 }
 
+const TRACKING_DIGIT_WORD: Record<string, string> = {
+  "0": "zero",
+  "1": "one",
+  "2": "two",
+  "3": "three",
+  "4": "four",
+  "5": "five",
+  "6": "six",
+  "7": "seven",
+  "8": "eight",
+  "9": "nine",
+};
+
+/** Literal digit sequence for tracking chunks — never raw "02" (avoids decimal TTS). */
+export function formatTrackingDigitSequenceForSpeech(sequence: string): string {
+  const digits = [...sequence.replace(/\D/g, "")];
+  if (!digits.length) return "";
+  return digits.map((d) => TRACKING_DIGIT_WORD[d] ?? d).join(", ");
+}
+
+/** Optional SSML character interpretation for relays that support say-as. */
+export function wrapTrackingChunkSsml(sequence: string): string {
+  const digits = sequence.replace(/\D/g, "");
+  if (!digits) return "";
+  return `<say-as interpret-as="characters">${digits}</say-as>`;
+}
+
 export function speakMoney(amount: string): string {
   const cleaned = amount.trim();
   if (!cleaned) return "an unknown amount";

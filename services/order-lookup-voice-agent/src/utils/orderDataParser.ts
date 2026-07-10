@@ -60,6 +60,8 @@ export interface DeepOrderGraphqlNode {
   subtotalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   totalShippingPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  totalTaxSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
+  totalDiscountsSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   customAttributes?: OrderCustomAttribute[];
   paymentGatewayNames?: string[];
   events?: {
@@ -108,6 +110,8 @@ export interface ParsedOrderData {
   subtotalAmount?: string;
   shippingFee?: string;
   totalAmount?: string;
+  totalTax?: string;
+  totalDiscounts?: string;
   itemCount: number;
   lineItems: Array<{ title: string; quantity: number; price?: string }>;
   feeLineItems: Array<{ title: string; quantity: number; price?: string }>;
@@ -330,6 +334,8 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     subtotalAmount: subtotalFromNode(node),
     shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
     totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
+    totalTax: formatMoneyAmount(node.totalTaxSet?.shopMoney),
+    totalDiscounts: formatMoneyAmount(node.totalDiscountsSet?.shopMoney),
     itemCount: itemCount || physicalItems.length,
     lineItems: physicalItems,
     feeLineItems: feeItems,

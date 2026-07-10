@@ -12,6 +12,7 @@ import {
 import {
   resolveSpatialTurnSpeech,
 } from "../sovereign/spatialDictation.js";
+import { formatTrackingChunkPhonetic } from "../utils/ttsFormatter.js";
 
 export const USER_NOTEPAD_READY = "USER_NOTEPAD_READY";
 export const TRACKING_DICTATION_COMPLETE = "TRACKING_DICTATION_COMPLETE";
@@ -265,7 +266,11 @@ export function buildTrackingDictationChunks(
   const chunks: SpeechChunk[] = [];
   for (let i = startIndex; i < spatialIndex.length; i += chunkSize) {
     const slice = spatialIndex.slice(i, i + chunkSize);
-    const text = slice.map(entryToSpeech).join(" ");
+    const digitRun = slice.map((entry) => entry.digit).join("");
+    const text =
+      slice.length > 1
+        ? formatTrackingChunkPhonetic(digitRun)
+        : slice.map(entryToSpeech).join(" ");
     const endIndex = Math.min(i + chunkSize - 1, spatialIndex.length - 1);
     const isLast = i + chunkSize >= spatialIndex.length;
     chunks.push({

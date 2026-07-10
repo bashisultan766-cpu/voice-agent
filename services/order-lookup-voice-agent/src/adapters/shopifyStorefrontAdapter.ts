@@ -125,6 +125,8 @@ export interface OrderStatusResult {
   subtotalAmount?: string;
   totalAmount?: string;
   shippingFee?: string;
+  totalTax?: string;
+  totalDiscounts?: string;
   itemCount?: number;
   lineItems?: Array<{ title: string; quantity: number; price?: string }>;
   orderNote?: string;
@@ -361,6 +363,52 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
             url
           }
         }
+        events(first: 100) {
+          edges {
+            node {
+              __typename
+              ... on BasicEvent {
+                message
+                action
+                createdAt
+              }
+              ... on CommentEvent {
+                message
+                createdAt
+              }
+            }
+          }
+        }
+        transactions(first: 20) {
+          id
+          kind
+          status
+          gateway
+          paymentDetails {
+            ... on CardPaymentDetails {
+              company
+              number
+            }
+          }
+          amountSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
+        totalTaxSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        totalDiscountsSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
       }
     }
   }
@@ -493,6 +541,8 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     subtotalAmount: parsed.subtotalAmount,
     totalAmount: parsed.totalAmount,
     shippingFee: parsed.shippingFee,
+    totalTax: parsed.totalTax,
+    totalDiscounts: parsed.totalDiscounts,
     itemCount: parsed.itemCount || undefined,
     lineItems: parsed.lineItems.length ? parsed.lineItems : undefined,
     orderNote: node.note?.trim() || undefined,

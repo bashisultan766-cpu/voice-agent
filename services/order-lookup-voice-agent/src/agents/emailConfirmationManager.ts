@@ -15,6 +15,7 @@ import {
   isRequestSlowEmailRepeat,
   looksLikePartialEmail,
   shouldAbortEmailConfirmation,
+  isOrderContextSwitchUtterance,
 } from "../utils/emailCapture.js";
 import { isValidCustomerEmail } from "../utils/resendEmailService.js";
 
@@ -256,7 +257,7 @@ export async function resolveEmailConfirmationTurn(
     return { handled: false };
   }
 
-  if (shouldAbortEmailConfirmation(text)) {
+  if (shouldAbortEmailConfirmation(text) || isOrderContextSwitchUtterance(text)) {
     abortEmailConfirmationFlow(session);
     return { handled: false };
   }

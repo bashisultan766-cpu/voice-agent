@@ -66,15 +66,14 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/repeat ONLY shipping/i);
   });
 
-  it("requires strict unverified caller denial naming the verified customer", () => {
+  it("requires shipping and history refusal for unverified callers", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /For security purposes, since you are calling from an unverified number/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /I can only share that information with the verified account holder/i,
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NO HALF-ANSWERS/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/not on file/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping address or past order history/i);
   });
 
   it("requires dynamic cart math and hangup prevention during shopping", () => {
@@ -151,11 +150,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method/i);
   });
 
-  it("authorizes unverified callers for refund reason but not vault payment or name fields", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — PRIVACY SHIELD/i);
+  it("authorizes unverified callers for deep current-order fields", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — CURRENT ORDER ACCESS/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/cancel_reason or refund_reason/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MUST NOT provide Customer Name/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment card details/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method_last4/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICT LOCK \(UNVERIFIED\)/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping_address/i);
   });
 
   it("requires dynamic topic Polite Pivot instruction", () => {

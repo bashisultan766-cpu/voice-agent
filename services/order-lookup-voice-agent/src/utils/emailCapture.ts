@@ -311,3 +311,17 @@ export function shouldAbortEmailConfirmation(text: string): boolean {
   if (!t) return false;
   return EMAIL_WORKFLOW_ABORT_RE.test(t) || EMAIL_WORKFLOW_PIVOT_ORDER_RE.test(t);
 }
+
+const ORDER_CONTEXT_SWITCH_RE =
+  /\b(?:give\s+me|want|need|check|tell\s+me|what\s+(?:is|was)|where\s+is|how\s+much|how\s+many)\b[\s\S]{0,40}\b(tracking|order|refund|payment|notification|timeline|total|fee|card|confirmation\s+email|processing\s+fee)\b/i;
+
+/** Caller pivots from a locked workflow back to current-order questions (LLM should answer). */
+export function isOrderContextSwitchUtterance(text: string): boolean {
+  const t = (text ?? "").trim();
+  if (!t) return false;
+  if (shouldAbortEmailConfirmation(t)) return true;
+  if (/\bmy\s+tracking\s+number\s+is\b/i.test(t)) return false;
+  if (looksLikePartialEmail(t) || extractEmailFromSpeech(t)) return false;
+  if (isEmailConfirmation(t) || isEmailRejection(t)) return false;
+  return ORDER_CONTEXT_SWITCH_RE.test(t);
+}

@@ -7,7 +7,7 @@ import { shouldSkipToolReinvoke } from "../src/sovereign/activeSession.js";
 import type { ActiveSession } from "../src/sovereign/activeSession.js";
 
 describe("orderContextPrivacy", () => {
-  it("strips vault fields for unverified callers", () => {
+  it("strips only shipping address for unverified callers", () => {
     const filtered = filterOrderContextForVerification(
       {
         customer_name: "Jamaica Thompson",
@@ -16,17 +16,19 @@ describe("orderContextPrivacy", () => {
         physical_items: [{ title: "Book" }],
         total_amount: "$42.00",
         shipping_amount: "$4.99",
-        events: ["placed"],
+        events: ["Order confirmation email was sent"],
+        payment_method: "Visa ending in 1302",
+        payment_method_last4: "1302",
       },
       false,
     );
-    expect(filtered.customer_name).toBeNull();
+    expect(filtered.customer_name).toBe("Jamaica Thompson");
+    expect(filtered.customer_email).toBe("jamaica@example.com");
     expect(filtered.shipping_address).toBeNull();
     expect(filtered.physical_items).toEqual([{ title: "Book" }]);
     expect(filtered.total_amount).toBe("$42.00");
-    expect(filtered.shipping_amount).toBe("$4.99");
-    expect(filtered.events).toBeNull();
-    expect(filtered.masked_notification_email).toBe("...@example.com");
+    expect(filtered.events).toEqual(["Order confirmation email was sent"]);
+    expect(filtered.payment_method_last4).toBe("1302");
     expect(filtered.privacy_tier).toBe("unverified");
   });
 

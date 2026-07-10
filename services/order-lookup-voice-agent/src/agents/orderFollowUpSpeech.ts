@@ -237,12 +237,9 @@ export function isCustomerNameQuestion(text: string): boolean {
 
 export function buildCustomerNameSpeech(
   context: ActiveOrderContextData,
-  isVerifiedCaller = true,
-  registeredCustomerName?: string,
+  _isVerifiedCaller = true,
+  _registeredCustomerName?: string,
 ): string | null {
-  if (!isVerifiedCaller) {
-    return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
-  }
   const name = String(context.customer_name ?? "").trim();
   if (!name) {
     return "I checked this order, but I do not have a customer name on file.";
@@ -279,9 +276,6 @@ export function buildOrderFieldQuerySpeech(
       lower,
     )
   ) {
-    if (!isVerifiedCaller) {
-      return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
-    }
     const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
     const name = String(context.customer_name ?? "").trim();
     const orderNum = String(context.order_number ?? "").replace(/^#/, "").trim();
@@ -304,22 +298,10 @@ export function buildOrderFieldQuerySpeech(
   }
 
   if (/\b(where\s+(?:was|is)\s+(?:the\s+)?confirmation\s+sent|confirmation\s+(?:sent|delivery))\b/i.test(lower)) {
-    if (!isVerifiedCaller) {
-      const masked = String(context.masked_notification_email ?? "").trim();
-      if (masked) {
-        return `The notification was sent by email to a masked address ending in ${masked.replace(/^\.\.\./, "")}.`;
-      }
-    }
     const email = String(
       context.order_confirmation_email ?? context.customer_email ?? "",
     ).trim();
     if (email) {
-      if (!isVerifiedCaller) {
-        const masked = maskEmailForUnverified(email);
-        if (masked) {
-          return `The notification was sent by email to a masked address ending in ${masked.replace(/^\.\.\./, "")}.`;
-        }
-      }
       return `The order confirmation was sent to ${formatEmailForTTS(email) ?? email}.`;
     }
     return "I checked this order, but I do not have a confirmation delivery channel on file.";

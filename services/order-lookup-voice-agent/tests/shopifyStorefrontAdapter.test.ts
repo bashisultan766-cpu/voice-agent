@@ -305,18 +305,17 @@ describe("getOrderStatus", () => {
     expect(result.status).toBe("system_maintenance");
   });
 
-  it("enriches order timeline after lookup without bloating LOOKUP_ORDER_QUERY", () => {
+  it("includes events and transactions in LOOKUP_ORDER_QUERY for deep order context", () => {
     const src = readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/adapters/shopifyStorefrontAdapter.ts"),
       "utf8",
     );
     expect(src).toContain("enrichOrderNodeTimeline");
-    expect(src).not.toContain("LOOKUP_ORDER_QUERY_MINIMAL");
     const deepQueryMatch = src.match(/const LOOKUP_ORDER_QUERY = `([\s\S]*?)`;/);
     expect(deepQueryMatch).toBeTruthy();
     const deepQuery = deepQueryMatch![1];
-    expect(deepQuery).not.toMatch(/\bevents\s*\(/);
-    expect(deepQuery).not.toMatch(/\btransactions\s*\(/);
+    expect(deepQuery).toMatch(/\bevents\s*\(/);
+    expect(deepQuery).toMatch(/\btransactions\s*\(/);
   });
 });
 

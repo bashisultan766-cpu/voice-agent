@@ -1079,6 +1079,8 @@ function shapeOrderStatusForLlm(
     total_amount: data.totalAmount ?? null,
     shipping_amount: data.shippingFee ?? null,
     subtotal_amount: data.subtotalAmount ?? null,
+    total_tax: data.totalTax ?? null,
+    total_discounts: data.totalDiscounts ?? null,
     payment_method: paymentMethod,
     payment_method_last4: data.cardLast4 ?? null,
     payment_gateway: data.paymentGateway ?? null,
@@ -1109,10 +1111,6 @@ function shapeOrderStatusForLlm(
     if (!(key in payload)) {
       payload[key] = null;
     }
-  }
-
-  if (!verified) {
-    payload.events = null;
   }
 
   return payload;

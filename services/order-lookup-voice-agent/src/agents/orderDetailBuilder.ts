@@ -182,27 +182,13 @@ function fieldSpeech(
       const raw = String(
         context.order_confirmation_email ?? context.customer_email ?? "",
       ).trim();
-      const masked =
-        String(context.masked_notification_email ?? "").trim() ||
-        maskEmailForUnverified(raw) ||
-        "";
-      if (!masked && !raw) return null;
-      if (!isVerified) {
-        return `The order confirmation was sent to ${masked || "a masked email address on file"}.`;
-      }
+      if (!raw) return null;
       const spoken = formatEmailForTTS(raw) ?? raw;
       return `The notification email on this order is ${spoken}.`;
     }
     case "notification_phone": {
       const raw = String(context.customer_phone ?? context.notification_phone ?? "").trim();
-      const masked =
-        String(context.masked_notification_phone ?? "").trim() ||
-        maskPhoneForUnverified(raw) ||
-        "";
-      if (!masked && !raw) return null;
-      if (!isVerified) {
-        return `The order notification phone on file ends in ${masked?.replace(/\D/g, "").slice(-4) || "the number on file"}.`;
-      }
+      if (!raw) return null;
       return `The notification phone on this order is ${raw}.`;
     }
     case "shipping_address": {

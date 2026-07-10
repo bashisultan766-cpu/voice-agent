@@ -1,4 +1,5 @@
 import { normalizeTrackingIdRawSequence } from "./trackingIdSequence.js";
+import { formatTrackingDigitSequenceForSpeech, wrapTrackingChunkSsml } from "./formatter.js";
 /**
  * Voice-friendly email handle for refund/confirmation readout.
  * Returns the local part before @ with trailing digits stripped
@@ -68,6 +69,31 @@ function charToPhoneticPacing(char: string): string {
   if (/[A-Z]/.test(char)) return `${char}.`;
   if (char === "-") return "Dash.";
   return `${char}.`;
+}
+
+/** Phonetic pacing for a raw digit run (e.g. spatial resume chunk "02" → "Zero. Two."). */
+export function formatTrackingChunkPhonetic(sequence: string): string {
+  const normalized = normalizeTrackingIdRawSequence(sequence);
+  if (!normalized) return "";
+  const commaForm = formatTrackingDigitSequenceForSpeech(normalized);
+  if (!commaForm) return "";
+  return commaForm
+    .split(", ")
+    .map((word) => {
+      const title = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      return `${title}.`;
+    })
+    .join(" ");
+}
+
+export function formatTrackingChunkForTts(
+  sequence: string,
+  options?: { useCharacterSsml?: boolean },
+): string {
+  if (options?.useCharacterSsml) {
+    return wrapTrackingChunkSsml(sequence);
+  }
+  return formatTrackingChunkPhonetic(sequence);
 }
 
 function formatPhoneticAcousticPacing(chars: string[]): string {

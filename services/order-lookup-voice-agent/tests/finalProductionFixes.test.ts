@@ -253,25 +253,24 @@ describe("non-verified order detail disclosure", () => {
     expect(speech).toMatch(/\$17\.00/i);
   });
 
-  it("30-31 — masked notification destination", () => {
+  it("30-31 — full notification email for unverified callers", () => {
     const session = seedSession("NV_3", false);
     const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
     const speech = buildOrderDetailSpeech(session, "where was the confirmation sent", ctx);
-    expect(speech).toMatch(/masked|@\w+\.com/i);
-    expect(speech).not.toMatch(/fred@example\.com/i);
+    expect(speech).toMatch(/fred@example\.com|fred at example/i);
     const legacy = buildOrderFieldQuerySpeech(
       "where was the confirmation sent",
       ctx,
       false,
     );
-    expect(legacy).toMatch(/masked/i);
+    expect(legacy).toMatch(/fred@example\.com|fred at example/i);
   });
 
   it("32-33 — refuses shipping address", () => {
     const session = seedSession("NV_4", false);
     const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
     const speech = buildOrderDetailSpeech(session, "what is the shipping address", ctx);
-    expect(speech).toMatch(/can't provide the shipping address/i);
+    expect(speech).toMatch(/cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);
     expect(speech).not.toMatch(/123 Main St/i);
   });
 

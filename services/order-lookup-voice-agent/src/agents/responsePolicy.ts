@@ -9,7 +9,7 @@ import {
   type DisclosureTier,
   type OrderRevealField,
 } from "./verificationGate.js";
-import { buildUnverifiedRestrictedFieldRefusal } from "./orderContextPrivacy.js";
+import { buildUnverifiedRestrictedFieldRefusal, isRestrictedFieldQueryForUnverified } from "./orderContextPrivacy.js";
 
 export type OrderDisclosureField =
   | "shipping_address"
@@ -104,9 +104,7 @@ export function shouldRefuseUnverifiedFieldQuery(
   callerText: string,
 ): boolean {
   if (isCallerVerified(session)) return false;
-  const field = resolveDisclosureFieldFromUtterance(callerText);
-  if (!field) return false;
-  return !isFieldDisclosureAllowed(session, field);
+  return isRestrictedFieldQueryForUnverified(callerText);
 }
 
 export function buildVerificationRefusalSpeech(session: CallSession): string {

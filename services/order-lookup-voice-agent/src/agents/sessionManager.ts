@@ -118,8 +118,8 @@ export function buildActiveOrderContextSystemMessage(
   return (
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +
-    "When privacy_tier is \"unverified\" or vault_access is \"restricted\", null vault fields mean access is restricted — " +
-    "NEVER say that data is \"not on file\" or missing for those fields; explain that the caller is unverified and apply CRYPTOGRAPHIC PRIVACY PROTOCOL refusals instead. " +
+    "When privacy_tier is \"unverified\", shipping_address and billing_address are restricted — all other current-order fields in this JSON are available. " +
+    "NEVER say that non-null fields are \"not on file\". Refuse only shipping address or past order history per CRYPTOGRAPHIC PRIVACY PROTOCOL. " +
     "You have the full order timeline in events plus order_placed_at, customer_email, customer_email_for_tts, customer_name, payment_method, payment_method_last4, " +
     "card_brand, cancel_reason, refund_reason, refund_notification_email, refund_notification_email_for_tts, " +
     "order_confirmation_email, and refund_reason — " +
@@ -127,7 +127,7 @@ export function buildActiveOrderContextSystemMessage(
     "For refund/confirmation email questions, use refund_notification_email_for_tts when present. " +
     "If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK with customer_email_for_tts. " +
     "Never claim you lack access or say information is not on file when those fields are non-null for verified callers. " +
-    "For unverified callers, stripped null vault fields are intentional — refuse per RULE 1.1, do not treat them as absent data. " +
+    "For unverified callers, only shipping_address is stripped — refuse ship-to questions per RULE 1.1, not missing-data fallbacks. " +
     "For refund status, notification, or payment method questions, follow INTERNATIONAL PROTOCOL. " +
     "Do not call get_shopify_order_status again unless the user provides a different order number. " +
     `JSON: ${JSON.stringify(data)}`

@@ -29,6 +29,7 @@ import {
   parseMonthFromUtterance,
 } from "./orderHistoryFlow.js";
 import { isEmailConfirmationLocked } from "./emailConfirmationManager.js";
+import { shouldAbortEmailConfirmation, isOrderContextSwitchUtterance } from "../utils/emailCapture.js";
 import { isProductSearchContextActive, isOrderLookupContextActive } from "./workflowContext.js";
 import { isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 
@@ -121,8 +122,12 @@ function resolveCallerIntentCore(
 
   const escalationState = session?.supportEscalation?.state;
   if (isEmailConfirmationLocked(session)) {
-    const workflow = session?.emailConfirmation?.workflowType;
-    return workflow === "payment_link" ? "cart" : "support_escalation";
+    if (shouldAbortEmailConfirmation(text) || isOrderContextSwitchUtterance(text)) {
+      // Release intent lock — orchestrator routes to LLM / order flow.
+    } else {
+      const workflow = session?.emailConfirmation?.workflowType;
+      return workflow === "payment_link" ? "cart" : "support_escalation";
+    }
   }
   if (escalationState === "non_verified_private_info_blocked") {
     return "support_escalation";

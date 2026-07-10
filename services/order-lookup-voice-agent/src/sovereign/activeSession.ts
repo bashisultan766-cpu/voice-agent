@@ -3,7 +3,7 @@
  */
 import type { CallSession } from "../types/order.js";
 import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
-import { formatTrackingNumberForTTS } from "../utils/ttsFormatter.js";
+import { formatTrackingNumberForTTS, formatTrackingChunkPhonetic } from "../utils/ttsFormatter.js";
 import type { LlmToolName } from "../adapters/llmToolExecutor.js";
 import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";

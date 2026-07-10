@@ -22,7 +22,8 @@ import {
 import { syncActiveWorkflowContext } from "./workflowContext.js";
 import { captureSessionIntent, getSessionMemory, type BufferedSessionIntent } from "./sessionMemory.js";
 import { isSupportEscalationRequest, type CallerIntent } from "./callerIntent.js";
-import { shouldAbortEmailConfirmation } from "../utils/emailCapture.js";
+import { isEmailConfirmationActive } from "./emailConfirmationManager.js";
+import { shouldAbortEmailConfirmation, isOrderContextSwitchUtterance } from "../utils/emailCapture.js";
 
 export type AgentWorkflow =
   | "idle"
@@ -53,6 +54,26 @@ export function isWorkflowCancellationUtterance(text: string): boolean {
     /\b(no.{0,30}(?:don'?t|do not)\s+(?:send|want|need).{0,30}support)\b/i.test(lower) ||
     /\b(don'?t\s+want\s+support|forget\s+support|cancel\s+(?:that|this|support)|stop\s+that)\b/i.test(lower) ||
     /\b(i\s+want\s+to\s+buy|add\s+\d+\s+cop|add\s+(?:twenty|ten|five)\s+cop)/i.test(t)
+  );
+}
+
+/**
+ * When true, defer regex/deterministic order-field speech to the LLM (single-brain routing).
+ * Safety gates (email capture, notepad, privacy refusal) still run first.
+ */
+export function shouldPreferLlmPrimaryRouting(
+  session: CallSession,
+  text: string,
+  callerIntent: CallerIntent,
+): boolean {
+  if (!session.orderContextConfirmed || !session.currentOrderData) return false;
+  if (isEmailConfirmationActive(session)) return false;
+  if (shouldAbortEmailConfirmation(text) || isWorkflowCancellationUtterance(text)) return true;
+  if (isOrderContextSwitchUtterance(text)) return true;
+  return (
+    callerIntent === "order_field_query" ||
+    callerIntent === "general_help" ||
+    callerIntent === "neutral_listen"
   );
 }
 

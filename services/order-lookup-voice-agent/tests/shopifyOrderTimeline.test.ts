@@ -21,13 +21,14 @@ describe("enrichOrderNodeTimeline", () => {
     vi.mocked(shopifyGraphql).mockReset();
   });
 
-  it("skips enrichment when search query already returned events", async () => {
+  it("skips enrichment when search query already returned events and transactions", async () => {
     const node = {
       id: "gid://shopify/Order/1",
       name: "#21883",
       events: {
         edges: [{ node: { message: "Refund notification was sent to a@b.com" } }],
       },
+      transactions: [{ gateway: "shopify_payments", paymentDetails: { company: "Visa", number: "•••• 4242" } }],
     };
 
     const enriched = await enrichOrderNodeTimeline(node);

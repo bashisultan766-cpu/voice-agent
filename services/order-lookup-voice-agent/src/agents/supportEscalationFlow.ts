@@ -23,7 +23,7 @@ import {
   abortEmailConfirmationFlow,
   resetEmailConfirmation,
 } from "./emailConfirmationManager.js";
-import { shouldAbortEmailConfirmation } from "../utils/emailCapture.js";
+import { shouldAbortEmailConfirmation, isOrderContextSwitchUtterance } from "../utils/emailCapture.js";
 
 export type SupportEscalationState =
   | "normal"
@@ -304,7 +304,7 @@ export async function resolveSupportEscalationTurn(
   }
 
   if (isSupportEscalationLocked(session) && /\b(tracking|order number|order history|buy|book|isbn)\b/i.test(text)) {
-    if (shouldAbortEmailConfirmation(text)) {
+    if (shouldAbortEmailConfirmation(text) || isOrderContextSwitchUtterance(text)) {
       abortEmailConfirmationFlow(session);
       cancelSupportEscalation(session);
       return { handled: false };

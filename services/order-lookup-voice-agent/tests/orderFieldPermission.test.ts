@@ -69,9 +69,12 @@ describe("canRevealOrderField", () => {
     expect(canRevealOrderField("notificationDestinationMasked", false)).toBe(true);
   });
 
-  it("blocks vault fields for non-verified callers", () => {
+  it("blocks shipping and history for non-verified callers", () => {
     expect(canRevealOrderField("shippingAddress", false)).toBe(false);
     expect(canRevealOrderField("fullPreviousOrderHistory", false)).toBe(false);
+    expect(canRevealOrderField("paymentCardLast4", false)).toBe(true);
+    expect(canRevealOrderField("customerName", false)).toBe(true);
+    expect(canRevealOrderField("fullCustomerEmail", false)).toBe(true);
   });
 });
 
@@ -113,15 +116,14 @@ describe("non-verified order field disclosure", () => {
     expect(speech).toMatch(/\$17\.00/i);
   });
 
-  it("5 — answers masked notification destination", () => {
+  it("5 — answers confirmation email for unverified callers", () => {
     const session = seedSession("NF_5", false);
     const speech = buildOrderDetailSpeech(
       session,
       "where was the confirmation sent",
       filteredContext(session),
     );
-    expect(speech).toMatch(/@\w+\.com|masked email/i);
-    expect(speech).not.toMatch(/fred@example\.com/i);
+    expect(speech).toMatch(/fred@example\.com|fred at example/i);
   });
 
   it("6 — refuses shipping address and offers support", () => {
@@ -131,7 +133,7 @@ describe("non-verified order field disclosure", () => {
       "what is the shipping address",
       filteredContext(session),
     );
-    expect(speech).toMatch(/can't provide the shipping address/i);
+    expect(speech).toMatch(/cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);
     expect(speech).toMatch(/support/i);
     expect(speech).not.toMatch(/123 Main St/i);
   });
