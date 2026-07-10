@@ -115,4 +115,4 @@ export function buildVerificationRefusalSpeech(session: CallSession): string {
   ).trim();
   return buildUnverifiedRestrictedFieldRefusal(name || undefined);
 }
-
+

@@ -269,7 +269,11 @@ export function shouldSkipToolReinvoke(
     if (
       options?.userMessage &&
       options?.orderContext &&
-      orderUtteranceNeedsFreshLookup(options.userMessage, options.orderContext)
+      orderUtteranceNeedsFreshLookup(
+        options.userMessage,
+        options.orderContext,
+        options.orderContext.privacy_tier !== "unverified",
+      )
     ) {
       return false;
     }

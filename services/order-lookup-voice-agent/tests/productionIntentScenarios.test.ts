@@ -186,9 +186,21 @@ describe("production intent scenarios", () => {
   it("7 — non-verified caller asks for shipping address", async () => {
     const session = seedUnverifiedOrderSession("CA_PROD_7");
     expect(isRestrictedFieldQueryForUnverified("what is the shipping address")).toBe(true);
+    expect(isRestrictedFieldQueryForUnverified("what is the customer name")).toBe(true);
+    expect(isRestrictedFieldQueryForUnverified("what is the payment method")).toBe(true);
     const speech = await collectSpeech(session, "what is the shipping address");
-    expect(speech).toMatch(/can't provide the shipping address|not verified/i);
+    expect(speech).toMatch(/can't provide the shipping address|not verified|unverified number/i);
     expect(speech).not.toMatch(/Private Lane/i);
+    expect(speech).not.toMatch(/not on file/i);
+  });
+
+  it("7b — non-verified caller asking customer name gets security refusal not missing data", async () => {
+    const session = seedUnverifiedOrderSession("CA_PROD_7B");
+    const speech = await collectSpeech(session, "what is the customer name on this order");
+    expect(speech).toMatch(/unverified number|verified account holder/i);
+    expect(speech).toMatch(/Jane Doe/i);
+    expect(speech).not.toMatch(/not on file/i);
+    expect(speech).not.toMatch(/do not have a customer name/i);
   });
 
   it("8 — non-verified caller asks for all order details", async () => {
@@ -286,6 +298,8 @@ describe("production intent scenarios", () => {
   it("unverified refusal uses registered customer name", () => {
     const refusal = buildUnverifiedRestrictedFieldRefusal("Jane Doe");
     expect(refusal).toContain("Jane Doe");
+    expect(refusal).toMatch(/unverified number/i);
+    expect(refusal).not.toMatch(/not on file/i);
   });
 
   it("verified history overview groups months without dumping items", () => {

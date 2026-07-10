@@ -68,9 +68,13 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
 
   it("requires strict unverified caller denial naming the verified customer", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I am sorry, but for security reasons, I can only share that information with the verified account holder/i,
+      /For security purposes, since you are calling from an unverified number/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I can only share that information with the verified account holder/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NO HALF-ANSWERS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/not on file/i);
   });
 
   it("requires dynamic cart math and hangup prevention during shopping", () => {
@@ -147,11 +151,11 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method/i);
   });
 
-  it("authorizes unverified callers for payment method and refund reason", () => {
+  it("authorizes unverified callers for refund reason but not vault payment or name fields", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — PRIVACY SHIELD/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Payment Method/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/cancel_reason or refund_reason/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Visa ending in 1234/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MUST NOT provide Customer Name/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment card details/i);
   });
 
   it("requires dynamic topic Polite Pivot instruction", () => {

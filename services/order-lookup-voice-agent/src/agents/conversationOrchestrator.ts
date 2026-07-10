@@ -461,9 +461,17 @@ function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
 
 function buildOrderFieldSpeech(session: CallSession, callerText: string): string | null {
   const context = verifiedOrderContext(session);
+  const registeredCustomerName = String(
+    session.currentOrderData?.customer_name ?? session.currentOrder?.customerName ?? "",
+  ).trim();
   const detailSpeech = buildOrderDetailSpeech(session, callerText, context);
   if (detailSpeech) return detailSpeech;
-  return buildOrderFieldQuerySpeech(callerText, context, session.isVerifiedCaller === true);
+  return buildOrderFieldQuerySpeech(
+    callerText,
+    context,
+    session.isVerifiedCaller === true,
+    registeredCustomerName || undefined,
+  );
 }
 
 async function resolveOrderHistorySpeech(

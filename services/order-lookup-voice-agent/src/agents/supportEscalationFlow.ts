@@ -121,7 +121,8 @@ export function armPrivateInfoBlockedEscalation(
 export function buildUnverifiedRefusalWithSupportOffer(customerName?: string): string {
   const name = String(customerName ?? "the registered customer").trim() || "the registered customer";
   return (
-    `I am sorry, but for security reasons, I can only share that information with the verified account holder, ${name}.` +
+    "For security purposes, since you are calling from an unverified number, I can only provide basic order status and tracking details. " +
+    `I am sorry, but I can only share that information with the verified account holder, ${name}.` +
     SUPPORT_OFFER_SUFFIX
   );
 }

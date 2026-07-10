@@ -12,7 +12,11 @@ import { formatEmailForTTS } from "../utils/ttsFormatter.js";
 import { physicalItemCount } from "../utils/productLineItems.js";
 import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
 import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
-import { buildUnverifiedShippingAddressRefusal } from "./orderContextPrivacy.js";
+import {
+  buildUnverifiedRestrictedFieldRefusal,
+  buildUnverifiedShippingAddressRefusal,
+  isRestrictedFieldQueryForUnverified,
+} from "./orderContextPrivacy.js";
 import { maskEmailForUnverified } from "./verificationGate.js";
 
 const REFUND_EMAIL_QUESTION_RE =
@@ -231,7 +235,14 @@ export function isCustomerNameQuestion(text: string): boolean {
   );
 }
 
-export function buildCustomerNameSpeech(context: ActiveOrderContextData): string | null {
+export function buildCustomerNameSpeech(
+  context: ActiveOrderContextData,
+  isVerifiedCaller = true,
+  registeredCustomerName?: string,
+): string | null {
+  if (!isVerifiedCaller) {
+    return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
+  }
   const name = String(context.customer_name ?? "").trim();
   if (!name) {
     return "I checked this order, but I do not have a customer name on file.";
@@ -244,9 +255,17 @@ export function buildOrderFieldQuerySpeech(
   callerText: string,
   context: ActiveOrderContextData,
   isVerifiedCaller = true,
+  registeredCustomerName?: string,
 ): string | null {
+  if (!isVerifiedCaller && isRestrictedFieldQueryForUnverified(callerText)) {
+    if (/\b(shipping\s+address|delivery\s+address|where\s+(?:was|is)\s+it\s+shipped)\b/i.test(callerText)) {
+      return buildUnverifiedShippingAddressRefusal();
+    }
+    return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
+  }
+
   if (isCustomerNameQuestion(callerText)) {
-    return buildCustomerNameSpeech(context);
+    return buildCustomerNameSpeech(context, isVerifiedCaller, registeredCustomerName);
   }
 
   if (isRefundNotificationEmailQuestion(callerText)) {
@@ -260,6 +279,9 @@ export function buildOrderFieldQuerySpeech(
       lower,
     )
   ) {
+    if (!isVerifiedCaller) {
+      return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
+    }
     const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
     const name = String(context.customer_name ?? "").trim();
     const orderNum = String(context.order_number ?? "").replace(/^#/, "").trim();
@@ -449,11 +471,27 @@ export function buildOrderFieldQuerySpeech(
   }
 
   if (/\b(payment\s+method|what\s+card|card\s+ending)\b/i.test(callerText)) {
+    if (!isVerifiedCaller) {
+      return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
+    }
     const payment = String(context.payment_method ?? "").trim();
     if (payment) return `The payment method on file is ${payment}.`;
   }
 
+  if (/\b(customer\s+email|what\s+email|email\s+on\s+(?:the\s+)?order)\b/i.test(callerText)) {
+    if (!isVerifiedCaller) {
+      return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
+    }
+    const email = String(context.customer_email ?? context.order_confirmation_email ?? "").trim();
+    if (email) {
+      return `The email on this order is ${formatEmailForTTS(email) ?? email}.`;
+    }
+  }
+
   if (/\b(order\s+details|tell\s+me\s+(?:the\s+)?details|about\s+(?:my\s+)?order)\b/i.test(lower)) {
+    if (!isVerifiedCaller) {
+      return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
+    }
     const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
     const name = String(context.customer_name ?? "").trim();
     const orderNum = String(context.order_number ?? "").replace(/^#/, "").trim();
