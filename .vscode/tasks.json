@@ -2,21 +2,31 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "twilio-voice-agent: test",
+      "label": "order-lookup-voice-agent: test",
       "type": "shell",
-      "command": "python -m pytest -q",
+      "command": "npm test",
       "options": {
-        "cwd": "${workspaceFolder}/services/twilio-voice-agent"
+        "cwd": "${workspaceFolder}/services/order-lookup-voice-agent"
       },
       "group": "test",
       "problemMatcher": []
     },
     {
-      "label": "twilio-voice-agent: dev server",
+      "label": "order-lookup-voice-agent: build",
       "type": "shell",
-      "command": "python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
+      "command": "npm run build",
       "options": {
-        "cwd": "${workspaceFolder}/services/twilio-voice-agent"
+        "cwd": "${workspaceFolder}/services/order-lookup-voice-agent"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "order-lookup-voice-agent: dev",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/services/order-lookup-voice-agent"
       },
       "group": "build",
       "problemMatcher": []

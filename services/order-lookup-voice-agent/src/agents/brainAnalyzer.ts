@@ -7,16 +7,24 @@ import { logger } from "../utils/logger.js";
 import { extractOrderNumberFromSpeech } from "../utils/formatter.js";
 import { extractIsbnFromSpeech } from "../utils/productSearchNormalize.js";
 import { BRAIN_CLASSIFICATION_PROMPT } from "./conversationBrainPrompt.js";
-import {
-  computeMissingSlots,
-  type GateIntent,
-} from "./toolDecisionGate.js";
+import type { GateIntent } from "./toolGateTypes.js";
 import type { CallState } from "../memory/callStateStore.js";
 import {
   mergeProductSlots,
   parseProductSlotsFromSpeech,
 } from "./productSlotPhase.js";
 import type { CallSession, IncomingProductSlots, ProductSearchSlots } from "../types/order.js";
+
+export type { GateIntent } from "./toolGateTypes.js";
+
+export function computeMissingSlots(
+  slots: Pick<ProductSearchSlots, "isbn" | "title">,
+): Array<"isbn" | "title"> {
+  const missing: Array<"isbn" | "title"> = [];
+  if (!slots.isbn) missing.push("isbn");
+  if (!slots.title) missing.push("title");
+  return missing;
+}
 
 export interface BrainAnalysis {
   intent: GateIntent;

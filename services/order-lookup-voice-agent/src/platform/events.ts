@@ -5,8 +5,8 @@
  * Every event is a discriminated union validated at dispatch time via Zod.
  */
 import { z } from "zod";
-import type { GateIntent } from "../agents/toolDecisionGate.js";
-import type { ToolAction } from "../agents/toolDecisionGate.js";
+import type { GateIntent } from "../agents/toolGateTypes.js";
+import type { ToolAction } from "../agents/toolGateTypes.js";
 import type { SessionProductMemory } from "../memory/callMemoryStore.js";
 import type { CallStateAwaitingInput, CallStatePhase, CallStateSlots, CallStateSlotFlags } from "../memory/callStateStore.js";
 

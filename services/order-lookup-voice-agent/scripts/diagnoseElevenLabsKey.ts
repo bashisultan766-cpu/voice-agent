@@ -47,14 +47,3 @@ const voiceId = (process.env.VOICE_ID ?? "").trim();
 const orderKey = process.env.ELEVENLABS_API_KEY ?? "";
 
 await probe("order-lookup-voice-agent", orderKey, voiceId);
-
-// Fresh env — twilio-voice-agent may hold the working production key.
-const twilioOnly: Record<string, string> = {};
-loadEnv({
-  path: resolve(serviceRoot, "../twilio-voice-agent/.env"),
-  processEnv: twilioOnly,
-});
-const twilioKey = twilioOnly.ELEVENLABS_API_KEY ?? "";
-if (twilioKey && twilioKey.trim() !== orderKey.trim()) {
-  await probe("twilio-voice-agent", twilioKey, voiceId);
-}

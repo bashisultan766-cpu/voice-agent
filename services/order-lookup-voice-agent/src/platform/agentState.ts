@@ -3,7 +3,7 @@
  *
  * Phase 2: orchestrator reads via projected stores; writes only through dispatch → reducer.
  */
-import type { GateIntent } from "../agents/toolDecisionGate.js";
+import type { GateIntent } from "../agents/toolGateTypes.js";
 import type {
   CallMemoryMessage,
   SessionProductMemory,

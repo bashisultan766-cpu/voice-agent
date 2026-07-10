@@ -8,11 +8,6 @@ import {
   shouldBlockSupportCrossReference,
   transitionFlowForIntent,
 } from "../src/agents/conversationFlowState.js";
-import { classifyCallerIntent } from "../src/agents/intentClassifier.js";
-import { decideToolExecutionWithReason } from "../src/agents/toolDecisionGate.js";
-import type { SessionProductMemory } from "../src/memory/callMemoryStore.js";
-
-const emptyMemory = {} as SessionProductMemory;
 
 describe("conversationFlowState", () => {
   const callSid = "CA_FLOW_TEST";
@@ -42,36 +37,5 @@ describe("conversationFlowState", () => {
     setConversationFlowMode(callSid, "PURCHASE_FLOW");
     expect(isConfirmKeyword("yes")).toBe(true);
     expect(shouldBlockSupportCrossReference(callSid, "yes")).toBe(true);
-  });
-
-  it("classifies yes as product_search during PURCHASE_FLOW", async () => {
-    setConversationFlowMode(callSid, "PURCHASE_FLOW");
-    const result = await classifyCallerIntent("yes", { callSid });
-    expect(result.intent).toBe("product_search");
-    expect(result.flowMode).toBe("PURCHASE_FLOW");
-  });
-
-  it("tool gate blocks order lookup during PURCHASE_FLOW", async () => {
-    setConversationFlowMode(callSid, "PURCHASE_FLOW");
-    const { beginOrchestratorTurn, endOrchestratorTurn } = await import(
-      "../src/guards/pipelineGuard.js"
-    );
-    beginOrchestratorTurn(callSid);
-    try {
-      const decision = decideToolExecutionWithReason({
-        intent: "order",
-        phase: "follow_up",
-        awaitingInput: null,
-        productMemory: emptyMemory,
-        validationReady: false,
-        explicitRepeat: false,
-        wantsRecommendations: false,
-        orderNumber: "21698",
-        callSid,
-      });
-      expect(decision.action).toBe("conversationOnly");
-    } finally {
-      endOrchestratorTurn();
-    }
   });
 });

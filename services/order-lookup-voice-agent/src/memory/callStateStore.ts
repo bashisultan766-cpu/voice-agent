@@ -1,7 +1,7 @@
 /**
  * Per-call state machine — single source of truth for slots, phase, and intent.
  */
-import type { GateIntent } from "../agents/toolDecisionGate.js";
+import type { GateIntent } from "../agents/toolGateTypes.js";
 import { advanceProductAwaiting } from "../agents/productSlotPhase.js";
 import { assertOrchestratorOnly } from "../guards/pipelineGuard.js";
 import {

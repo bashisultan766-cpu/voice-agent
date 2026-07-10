@@ -4,7 +4,7 @@
  * NO side effects, NO I/O. Conflict resolution priority:
  * explicit_override (collected slot flags) > collected_slot > memory > raw_stt
  */
-import type { GateIntent } from "../agents/toolDecisionGate.js";
+import type { GateIntent } from "../agents/toolGateTypes.js";
 import {
   buildProductSearchKey,
   normalizeTitle,

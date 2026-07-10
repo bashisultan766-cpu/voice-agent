@@ -1969,15 +1969,9 @@ export async function handleInboundCall(req: Request, res: Response): Promise<vo
   res.type("application/xml").send(twiml);
 }
 
-// Re-export slot helpers and legacy gate for tests (gate is deprecated — use UnifiedToolRegistry)
+// Re-export slot helpers for tests
 export { analyzeBrainTurn } from "./brainAnalyzer.js";
-export {
-  buildToolDecisionState,
-  decideToolExecution,
-  type ToolAction,
-} from "./toolDecisionGate.js";
-export {
-  mergeProductSlots,
+export { mergeProductSlots,
   parseProductSlotsFromSpeech,
   pickProductSlotQuestion,
 } from "./productSlotPhase.js";

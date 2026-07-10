@@ -1,3 +1,0 @@
-facility_name,state,city,allowed_books,allowed_magazines,allowed_newspapers,restricted_content,policy_summary,policy_url,aliases
-Smith State Prison,TX,Huntsville,yes,no,yes,"hardcover,gang,explicit","Paperback books allowed. Magazines are not accepted. Newspapers are allowed on weekdays.",https://example.com/smith-state-prison-mail,"Smith Prison,Smith Correctional"
-Bayview Magazine Facility,CA,San Francisco,yes,no,no,"magazine,periodical","Books paperback only. All magazines and newspapers are restricted at this facility.",https://example.com/bayview-policy,Bayview CF

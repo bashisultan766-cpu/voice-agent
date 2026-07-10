@@ -1,135 +1,124 @@
-# Twilio Shopify Voice Agent
+# ShoreShot Bookstore Voice Agent
 
-AI phone sales agent for Shopify bookstores. Inbound calls hit **Twilio ConversationRelay** (managed STT/TTS); this service handles plain-text JSON over WebSocket, orchestrates **OpenAI**, calls **Shopify Admin API** tools, sends email via **Resend**, and stores caller memory in **Redis**.
+Production AI phone agent for SureShot Books. Inbound Twilio calls use **ConversationRelay** (managed STT/TTS). This repo’s sole live service is a **Node.js / TypeScript** agent that orchestrates **OpenAI**, calls **Shopify Admin API** tools through a unified Zod-validated registry, sends email via **Resend**, and persists call sessions in **Postgres**.
 
 ## Architecture
 
 ```
 Twilio phone call (+12512554549)
     → POST /conversationBrain/inbound
-    → Order Lookup Voice Agent (Node, port 8001)
+    → order-lookup-voice-agent (Node 20+, port 8001, PM2)
     → ConversationRelay + Eric voice
-    → Shopify order lookup + streamed response
+    → UnifiedCallSession (L1 memory + L2 Postgres)
+    → UnifiedToolRegistry → Shopify / Resend
 ```
 
 **Production service:** [`services/order-lookup-voice-agent/`](services/order-lookup-voice-agent/)
 
-**Twilio webhook:** `POST /conversationBrain/inbound`
-
 | Endpoint | Purpose |
 |----------|---------|
-| `POST /conversationBrain/inbound` | Twilio voice webhook |
+| `POST /conversationBrain/inbound` | Twilio voice webhook (TwiML → ConversationRelay) |
 | `WS /conversationBrain/ws` | ConversationRelay WebSocket |
 | `GET /health` | Health check |
 
-The legacy Python commerce agent (`services/twilio-voice-agent/`) remains in the repo for reference but is **not** started in production PM2.
+PM2 starts **only** `order-lookup-voice-agent` (see [`ecosystem.config.cjs`](ecosystem.config.cjs)).
 
 ## Prerequisites
 
-- Python **3.11+**
-- Redis (recommended; in-memory fallback for single instance)
+- Node.js **20+**
+- Postgres (session persistence / HA; optional — agent falls back to in-memory L1)
 - Twilio account with a phone number
 - OpenAI API key
 - Shopify Admin API token
-- Resend API key (for payment-link email tool)
+- Resend API key (checkout / support email)
+- ElevenLabs voice id (ConversationRelay TTS via Twilio)
 
 ## Environment variables
 
-Copy the service template and fill in values:
+```bash
+cd services/order-lookup-voice-agent
+cp .env.example .env   # if present; otherwise create .env
+```
+
+Key variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `PUBLIC_BASE_URL` | Public HTTPS origin Twilio can reach |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | Twilio auth |
+| `OPENAI_API_KEY` | LLM orchestration + tools |
+| `SHOPIFY_SHOP_DOMAIN` / `SHOPIFY_ADMIN_ACCESS_TOKEN` | Catalog + orders |
+| `DATABASE_URL` | Postgres for `call_sessions` L2 persistence |
+| `RESEND_API_KEY` / `RESEND_FROM_EMAIL` | Checkout + escalation email |
+| `VOICE_ID` | ElevenLabs voice for ConversationRelay |
+| `VOICE_RUNTIME` | Default `twilio_conversation_relay` |
+
+## Local development
 
 ```bash
-cd services/twilio-voice-agent
-cp .env.example .env
+cd services/order-lookup-voice-agent
+npm ci
+npm run build
+npm run dev
 ```
 
-Key variables: `PUBLIC_BASE_URL`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `OPENAI_API_KEY`, `SHOPIFY_SHOP_DOMAIN`, `SHOPIFY_ADMIN_ACCESS_TOKEN`, `REDIS_URL`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`.
+Point Twilio (or ngrok) at:
 
-See [`services/twilio-voice-agent/README.md`](services/twilio-voice-agent/README.md) for the full list.
-
-## Local development (Windows)
-
-```powershell
-cd "E:\Agents\shopify agent\services\twilio-voice-agent"
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
-# Edit .env — set PUBLIC_BASE_URL to your ngrok HTTPS URL
-# Set VALIDATE_TWILIO_SIGNATURES=false for local ngrok testing
-
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+```
+Voice webhook:  https://<public-host>/conversationBrain/inbound
+WebSocket:      wss://<public-host>/conversationBrain/ws
 ```
 
-Start Redis locally (optional):
+Set `PUBLIC_BASE_URL=https://<public-host>` in `.env`.
+
+### Postgres (optional locally)
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up -d
+# Example local URL
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent_db
+
+npx tsx scripts/runMigrations.ts
 ```
 
-### Twilio webhook URLs (local via ngrok)
-
-```
-Voice webhook:  https://<ngrok-id>.ngrok.io/conversationBrain/inbound  (POST)
-WebSocket:      wss://<ngrok-id>.ngrok.io/conversationBrain/ws
-```
-
-Set `PUBLIC_BASE_URL=https://<ngrok-id>.ngrok.io` in `.env`.
+Without `DATABASE_URL`, sessions stay in-process only.
 
 ## Linux VPS (production)
 
 ```bash
-cd /var/www/voice-agent/services/twilio-voice-agent
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with production secrets and PUBLIC_BASE_URL
+cd /var/www/voice-agent
+git pull origin production-ready
+
+cd services/order-lookup-voice-agent
+npm ci
+npm run build
+npx tsx scripts/runMigrations.ts   # requires DATABASE_URL in .env
 
 cd /var/www/voice-agent
-pm2 start ecosystem.config.cjs
-pm2 save
+pm2 restart order-lookup-voice-agent --update-env
+# or first boot:
+# pm2 start ecosystem.config.cjs && pm2 save
+
+curl -sS http://127.0.0.1:8001/health
 ```
 
-Production paths in `ecosystem.config.cjs`:
-
-- **cwd:** `services/twilio-voice-agent`
-- **script:** `.venv/bin/uvicorn`
-- **args:** `app.main:app --host 0.0.0.0 --port 8001 --workers 1`
-
-Nginx should proxy `/conversationBrain/inbound`, `/conversationBrain/ws`, `/conversationBrain/relay-action`, and `/health` to port **8001**. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
-
-### Twilio webhook URLs (production)
-
-```
-Voice webhook:  https://your-domain.com/conversationBrain/inbound  (POST)
-WebSocket:      wss://your-domain.com/conversationBrain/ws
-```
+Nginx should proxy `/conversationBrain/inbound`, `/conversationBrain/ws`, and `/health` to port **8001**. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## Tests
 
-```powershell
-cd services/twilio-voice-agent
-.\.venv\Scripts\Activate.ps1
-python -m pytest -q
-python -m compileall app
+```bash
+cd services/order-lookup-voice-agent
+npm test
 ```
 
-142 tests — all mocked, no live API calls required.
+All Shopify / OpenAI / Resend calls are mocked in unit tests.
 
 ## Health check
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8001/health
+```bash
+curl -sS http://127.0.0.1:8001/health
 ```
 
-Expected:
-
-```json
-{ "ok": true, "service": "twilio-voice-agent", "runtime": "twilio_conversation_relay" }
-```
-
-## Deployment
-
-See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for VPS setup, Nginx, PM2, and Redis.
+Expect `ok: true` for `order-lookup-voice-agent`. With Postgres configured, session persistence should report enabled.
 
 ## License
 

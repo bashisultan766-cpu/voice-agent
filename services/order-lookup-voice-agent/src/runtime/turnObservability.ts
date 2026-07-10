@@ -3,8 +3,8 @@
  */
 import { logger } from "../utils/logger.js";
 import type { SessionProductMemory } from "../memory/callMemoryStore.js";
-import type { GateIntent } from "../agents/toolDecisionGate.js";
-import type { ToolAction } from "../agents/toolDecisionGate.js";
+import type { GateIntent } from "../agents/toolGateTypes.js";
+import type { ToolAction } from "../agents/toolGateTypes.js";
 
 export type ExecutionFlow = "PRODUCT_FLOW" | "ORDER_FLOW" | "MIXED_FLOW" | "UNKNOWN_FLOW";
 

@@ -24,7 +24,7 @@ import { getOrCreateCallState } from "../memory/callStateStore.js";
 import { syncSessionFromCallState } from "../memory/callStateSessionSync.js";
 import { logFinalResponseType } from "../runtime/turnObservability.js";
 import type { FinalResponseType } from "../runtime/turnObservability.js";
-import type { GateIntent } from "./toolDecisionGate.js";
+import type { GateIntent } from "./toolGateTypes.js";
 import { clearCallerMemory } from "../utils/callerMemory.js";
 import { clearLastSpokenSentence } from "../services/llmService.js";
 import {

@@ -5,7 +5,7 @@
  *   POST /conversationBrain/inbound  → order-lookup-voice-agent :8001
  *   WS   /conversationBrain/ws       → order-lookup-voice-agent :8001
  *
- * Legacy Python commerce agent (services/twilio-voice-agent) is NOT started in production.
+ * Sole production app: services/order-lookup-voice-agent
  */
 const path = require('path');
 
