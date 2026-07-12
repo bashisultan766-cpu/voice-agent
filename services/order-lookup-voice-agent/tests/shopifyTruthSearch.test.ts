@@ -60,6 +60,16 @@ describe("shopifyTruthSearch query builders", () => {
     );
   });
 
+  it("orders title queries strict-first (phrase/AND before broad OR)", () => {
+    const queries = buildTitleTruthQueries("Rich Dad Poor Dad");
+    const andIdx = queries.findIndex((q) => / AND /i.test(q));
+    const orIdx = queries.findIndex((q) => / OR /i.test(q));
+    expect(andIdx).toBeGreaterThanOrEqual(0);
+    expect(orIdx).toBeGreaterThanOrEqual(0);
+    expect(andIdx).toBeLessThan(orIdx);
+    expect(queries[0]).toMatch(/^title:\*/i);
+  });
+
   it("builds segment fallback queries for complex titles", () => {
     const queries = buildTitleSegmentFallbackQueries(
       "Lindy's 2026 to 2027 National College Football",

@@ -97,6 +97,10 @@ function rankTitleCandidates(
   query: string,
   preferredPrice?: number | null,
 ): number {
+  const aStock = a.variants.some((v) => v.inStock) ? 1 : 0;
+  const bStock = b.variants.some((v) => v.inStock) ? 1 : 0;
+  if (bStock !== aStock) return bStock - aStock;
+
   const aExact = isExactTitleMatch(a.title, query) ? 1 : 0;
   const bExact = isExactTitleMatch(b.title, query) ? 1 : 0;
   if (bExact !== aExact) return bExact - aExact;
@@ -112,6 +116,28 @@ function rankTitleCandidates(
     if (aDiff !== bDiff) return aDiff - bDiff;
   }
   return scoreTitleMatch(b.title, query) - scoreTitleMatch(a.title, query);
+}
+
+function productHasStock(product: MappedProduct): boolean {
+  return product.variants.some((v) => v.inStock);
+}
+
+/** High-confidence in-stock title hit — safe to stop further GraphQL fan-out. */
+function isStrongInStockTitleHit(
+  product: MappedProduct,
+  query: string,
+): boolean {
+  if (!productHasStock(product)) return false;
+  if (isExactTitleMatch(product.title, query)) return true;
+  return scoreTitleMatch(product.title, query) >= 5;
+}
+
+function pickBestTitleCandidate(
+  products: MappedProduct[],
+  query: string,
+  preferredPrice?: number | null,
+): MappedProduct[] {
+  return [...products].sort((a, b) => rankTitleCandidates(a, b, query, preferredPrice));
 }
 
 // Re-export formatter validation for order numbers (canonical source).
@@ -642,10 +668,18 @@ async function runWithGuard<T>(
 
 async function graphqlProductsForQueries(
   queries: string[],
-): Promise<{ nodes: GqlProductNode[]; hadErrors: boolean }> {
+  options?: {
+    /**
+     * After each sequential query, inspect accumulated nodes.
+     * Return true to stop further Shopify calls (stop-on-first-strong-hit).
+     */
+    shouldStop?: (nodes: GqlProductNode[]) => boolean;
+  },
+): Promise<{ nodes: GqlProductNode[]; hadErrors: boolean; stoppedEarly: boolean }> {
   const unique = [...new Set(queries.filter(Boolean))];
   const nodes: GqlProductNode[] = [];
   let hadErrors = false;
+  let stoppedEarly = false;
 
   for (const q of unique) {
     try {
@@ -669,6 +703,10 @@ async function graphqlProductsForQueries(
       for (const edge of data.products?.edges ?? []) {
         if (edge.node) nodes.push(edge.node);
       }
+      if (options?.shouldStop?.(dedupeGqlProductNodes(nodes))) {
+        stoppedEarly = true;
+        break;
+      }
     } catch (err) {
       if (isShopifyThrottleError(err)) throw err;
       hadErrors = true;
@@ -679,7 +717,7 @@ async function graphqlProductsForQueries(
     }
   }
 
-  return { nodes, hadErrors };
+  return { nodes: dedupeGqlProductNodes(nodes), hadErrors, stoppedEarly };
 }
 
 function productToCatalogMatch(
@@ -1145,7 +1183,7 @@ export async function searchByISBN(
 }
 
 /**
- * Fuzzy title search — returns top-ranked catalog match.
+ * Fuzzy title search — sequential queries, stop on first strong in-stock hit.
  */
 export async function searchByTitle(
   title: string,
@@ -1163,43 +1201,72 @@ export async function searchByTitle(
   try {
     const result = await runWithGuard(callSid, "title_search", async () => {
       const preferredPrice = extractSpokenCatalogPrice(q);
-      const primaryQueries = buildTitleTruthQueries(q);
-      let { nodes, hadErrors } = await graphqlProductsForQueries(primaryQueries);
 
-      if (nodes.length < 5) {
-        const expanded = await graphqlProductsForQueries(buildTitleExpansionQueries(q));
+      const strongHitStop = (gqlNodes: GqlProductNode[]): boolean => {
+        const products = gqlNodes.map((n) => mapGqlProduct(n));
+        const ranked = pickBestTitleCandidate(products, q, preferredPrice);
+        const top = ranked[0];
+        return Boolean(top && isStrongInStockTitleHit(top, q));
+      };
+
+      const primaryQueries = buildTitleTruthQueries(q);
+      let { nodes, hadErrors, stoppedEarly } = await graphqlProductsForQueries(primaryQueries, {
+        shouldStop: strongHitStop,
+      });
+
+      // Total primary failure — do not fan out expansion/fallback queries.
+      if (hadErrors && nodes.length === 0) {
+        return { status: "system_maintenance" as const, message: "Catalog temporarily unavailable" };
+      }
+
+      if (!stoppedEarly && nodes.length < 5) {
+        const expanded = await graphqlProductsForQueries(buildTitleExpansionQueries(q), {
+          shouldStop: strongHitStop,
+        });
         nodes = dedupeGqlProductNodes([...nodes, ...expanded.nodes]);
         hadErrors = hadErrors || expanded.hadErrors;
+        stoppedEarly = stoppedEarly || expanded.stoppedEarly;
       }
 
       let products = nodes.map((n) => mapGqlProduct(n));
       let ranked = rankBySearchScore(products, q, 0.5);
-      let rankedList = (ranked.length ? ranked : rankLiveProducts(products, q)).sort(
-        (a, b) => rankTitleCandidates(a, b, q, preferredPrice),
+      let rankedList = pickBestTitleCandidate(
+        ranked.length ? ranked : rankLiveProducts(products, q),
+        q,
+        preferredPrice,
       );
 
-      if (!rankedList.length) {
-        const fallback = await graphqlProductsForQueries(buildTitleSegmentFallbackQueries(q));
-        nodes = dedupeGqlProductNodes([...nodes, ...fallback.nodes]);
-        hadErrors = hadErrors || fallback.hadErrors;
-        products = nodes.map((n) => mapGqlProduct(n));
-        ranked = rankBySearchScore(products, q, 0.25);
-        rankedList = (ranked.length ? ranked : rankLiveProducts(products, q)).sort((a, b) =>
-          rankTitleCandidates(a, b, q, preferredPrice),
-        );
+      if (!rankedList.length || !rankedList.some((p) => productHasStock(p) && isStrongInStockTitleHit(p, q))) {
+        if (!stoppedEarly && !rankedList.length) {
+          const fallback = await graphqlProductsForQueries(buildTitleSegmentFallbackQueries(q), {
+            shouldStop: strongHitStop,
+          });
+          nodes = dedupeGqlProductNodes([...nodes, ...fallback.nodes]);
+          hadErrors = hadErrors || fallback.hadErrors;
+          products = nodes.map((n) => mapGqlProduct(n));
+          ranked = rankBySearchScore(products, q, 0.25);
+          rankedList = pickBestTitleCandidate(
+            ranked.length ? ranked : rankLiveProducts(products, q),
+            q,
+            preferredPrice,
+          );
+        }
       }
 
       if (hadErrors && nodes.length === 0) {
         return { status: "system_maintenance" as const, message: "Catalog temporarily unavailable" };
       }
 
-      const top = rankedList[0];
+      // Prefer in-stock candidates so a stocked book is never discarded for an OOS hit.
+      const inStockList = rankedList.filter((p) => productHasStock(p));
+      const top = inStockList[0] ?? rankedList[0];
       if (!top) {
         return { status: "not_found" as const, queriedTitle: q };
       }
 
       const exactMatch = isExactTitleMatch(top.title, q);
-      const similarMatches = rankedList
+      const similarSource = inStockList.length ? inStockList : rankedList;
+      const similarMatches = similarSource
         .slice(0, 5)
         .map((product) =>
           productToCatalogMatch(product, isExactTitleMatch(product.title, q), preferredPrice),

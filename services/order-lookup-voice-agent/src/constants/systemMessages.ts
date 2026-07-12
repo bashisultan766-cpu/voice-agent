@@ -53,6 +53,24 @@ export const SHOPIFY_TIMEOUT_LLM_PAYLOAD = {
     'Do NOT invent order or catalog data. Say exactly: "My system is running a bit slow right now, let\'s try that again in a moment." Then wait for the caller.',
 };
 
+/** LLM payload when L2 session persistence exhausts / fails — stop looping. */
+export const SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD = {
+  status: "error" as const,
+  reason: "Database locked, please retry or escalate",
+  error: "SESSION_PERSISTENCE_EXHAUSTED" as const,
+  instructions:
+    "Apologize briefly. Do NOT repeat the same question. Offer to try once more or escalate to support. Never invent order or catalog data.",
+};
+
+/** LLM payload for unexpected catalog/search tool failures. */
+export const CATALOG_TOOL_ERROR_LLM_PAYLOAD = {
+  status: "error" as const,
+  reason: "Catalog search failed, please retry or escalate",
+  error: "CATALOG_SEARCH_ERROR" as const,
+  instructions:
+    "Apologize briefly that the book search hit a snag. Offer to retry once with the title or ISBN, or escalate. Do NOT loop the same ask. Never invent stock or prices.",
+};
+
 /** Lightweight ConversationRelay prompt when STT is empty or unintelligible. */
 export const ARE_YOU_STILL_THERE_SPEECH = "Are you still there?";
 

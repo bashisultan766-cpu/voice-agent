@@ -85,4 +85,18 @@ describe("session persistence wrapper (Priority 5)", () => {
     endCallSession(callSid, session);
     expect(getUnifiedSession(callSid)).toBeUndefined();
   });
+
+  it("touchUnifiedSession marks dirty without requiring Postgres", async () => {
+    const {
+      touchUnifiedSession,
+      flushUnifiedSessionToL2,
+      isUnifiedSessionDirty,
+    } = await import("../src/agents/unifiedCallSession.js");
+    const session = createCallSession(callSid, "+15551110000", "+15552220000");
+    touchUnifiedSession(session);
+    expect(isUnifiedSessionDirty(callSid)).toBe(true);
+    const flush = await flushUnifiedSessionToL2(session);
+    expect(flush.ok).toBe(true);
+    expect(isUnifiedSessionDirty(callSid)).toBe(false);
+  });
 });

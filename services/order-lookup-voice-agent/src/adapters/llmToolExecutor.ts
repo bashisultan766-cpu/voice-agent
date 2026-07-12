@@ -59,11 +59,17 @@ import {
 import { SURESHOT_GOODBYE_SPEECH } from "../utils/callerMemory.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import {
+  CATALOG_TOOL_ERROR_LLM_PAYLOAD,
   ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
+  SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD,
   SHOPIFY_TIMEOUT_LLM_PAYLOAD,
   SYSTEM_MAINTENANCE_LLM_PAYLOAD,
 } from "../constants/systemMessages.js";
 import { prepareUnifiedToolArgs } from "./toolExecutionPolicy.js";
+import {
+  flushUnifiedSessionToL2,
+  touchUnifiedSession,
+} from "../agents/unifiedCallSession.js";
 
 export { SYSTEM_MAINTENANCE_LLM_PAYLOAD };
 
@@ -194,6 +200,61 @@ function maintenanceRecord(
     },
     elapsedMs: Date.now() - started,
   };
+}
+
+function catalogErrorRecord(
+  tool: LlmToolName,
+  args: Record<string, string>,
+  started: number,
+  reason: string,
+): LlmToolExecutionRecord {
+  return {
+    tool,
+    args,
+    ok: false,
+    status: "api_error",
+    errorMessage: reason,
+    data: {
+      status: "system_maintenance",
+      message: reason,
+    },
+    elapsedMs: Date.now() - started,
+  };
+}
+
+function persistenceErrorRecord(
+  tool: LlmToolName,
+  args: Record<string, string>,
+  started: number,
+): LlmToolExecutionRecord {
+  return {
+    tool,
+    args,
+    ok: false,
+    status: "api_error",
+    errorMessage: SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD.reason,
+    data: {
+      status: "system_maintenance",
+      message: SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD.reason,
+    },
+    elapsedMs: Date.now() - started,
+  };
+}
+
+/** After catalog mutations, one locked L2 flush — surfaces persistence exhaustion to the LLM. */
+async function flushSessionAfterCatalogMutation(
+  session: CallSession | undefined,
+  tool: LlmToolName,
+  args: Record<string, string>,
+  started: number,
+): Promise<LlmToolExecutionRecord | null> {
+  if (!session) return null;
+  touchUnifiedSession(session);
+  const flush = await flushUnifiedSessionToL2(session);
+  if (!flush.ok) {
+    return persistenceErrorRecord(tool, args, started);
+  }
+  return null;
 }
 
 export async function executeLlmTool(
@@ -735,6 +796,13 @@ export async function executeLlmTool(
       const data = await searchByISBN(isbn, callSid);
       if (session && data.status === "found") {
         recordLastCatalogSearch(session, data);
+        const persistError = await flushSessionAfterCatalogMutation(
+          session,
+          tool,
+          { isbn },
+          started,
+        );
+        if (persistError) return persistError;
       }
       return {
         tool,
@@ -744,8 +812,10 @@ export async function executeLlmTool(
         data,
         elapsedMs: Date.now() - started,
       };
-    } catch {
-      return maintenanceRecord(tool, { isbn }, started);
+    } catch (err) {
+      const reason =
+        err instanceof Error ? err.message : CATALOG_TOOL_ERROR_LLM_PAYLOAD.reason;
+      return catalogErrorRecord(tool, { isbn }, started, reason);
     }
   }
 
@@ -769,6 +839,13 @@ export async function executeLlmTool(
     const data = await searchByTitle(title, callSid);
     if (session && data.status === "found") {
       recordLastCatalogSearch(session, data);
+      const persistError = await flushSessionAfterCatalogMutation(
+        session,
+        tool,
+        { title },
+        started,
+      );
+      if (persistError) return persistError;
     }
     return {
       tool,
@@ -778,8 +855,10 @@ export async function executeLlmTool(
       data,
       elapsedMs: Date.now() - started,
     };
-  } catch {
-    return maintenanceRecord(tool, { title }, started);
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : CATALOG_TOOL_ERROR_LLM_PAYLOAD.reason;
+    return catalogErrorRecord(tool, { title }, started, reason);
   }
 }
 
@@ -814,6 +893,25 @@ export function toolResultForLlm(
   if (isMaintenanceToolStatus(record.status)) {
     if (record.errorMessage === "Shopify API timeout" || record.data && "message" in record.data && record.data.message === "Shopify API timeout") {
       return JSON.stringify(SHOPIFY_TIMEOUT_LLM_PAYLOAD);
+    }
+    if (
+      record.errorMessage === SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD.reason ||
+      (record.data &&
+        "message" in record.data &&
+        record.data.message === SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD.reason)
+    ) {
+      return JSON.stringify(SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD);
+    }
+    if (
+      record.tool === "search_shopify_book_by_title" ||
+      record.tool === "search_shopify_book_by_isbn"
+    ) {
+      if (record.status === "api_error") {
+        return JSON.stringify({
+          ...CATALOG_TOOL_ERROR_LLM_PAYLOAD,
+          reason: record.errorMessage ?? CATALOG_TOOL_ERROR_LLM_PAYLOAD.reason,
+        });
+      }
     }
     if (record.tool === "get_shopify_order_status") {
       return JSON.stringify(ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD);

@@ -150,12 +150,28 @@ export async function loadPersistedSession(
   }
 }
 
+export type SessionPersistResult =
+  | { ok: true; version: number | null; skipped?: boolean }
+  | { ok: false; reason: "optimistic_exhausted" | "save_failed" };
+
 /**
  * Upsert active session with optimistic concurrency.
- * Returns the new version, or null when persistence is disabled / failed.
+ * Caller MUST hold withCallSessionLock(callSid) — do not fire this from hot mid-turn paths.
+ * Returns the new version, or null when persistence is disabled.
  */
 export async function savePersistedSession(session: CallSession): Promise<number | null> {
-  if (!isSessionPersistenceEnabled()) return null;
+  const result = await savePersistedSessionDetailed(session);
+  if (result.ok) return result.version;
+  return null;
+}
+
+/** Same as savePersistedSession but surfaces exhaustion vs hard failure for the LLM brain. */
+export async function savePersistedSessionDetailed(
+  session: CallSession,
+): Promise<SessionPersistResult> {
+  if (!isSessionPersistenceEnabled()) {
+    return { ok: true, version: null, skipped: true };
+  }
 
   let expected = readVersion(session);
   for (let attempt = 0; attempt < MAX_OPTIMISTIC_RETRIES; attempt += 1) {
@@ -191,7 +207,7 @@ export async function savePersistedSession(session: CallSession): Promise<number
       const rowCount = result?.rowCount ?? 0;
       if (rowCount > 0) {
         writeVersion(session, nextVersion);
-        return nextVersion;
+        return { ok: true, version: nextVersion };
       }
 
       // Version conflict — reload and retry with latest version.
@@ -207,20 +223,23 @@ export async function savePersistedSession(session: CallSession): Promise<number
         callSid: session.callSid.slice(0, 8),
         error: err instanceof Error ? err.message : String(err),
       });
-      return null;
+      return { ok: false, reason: "save_failed" };
     }
   }
 
   logger.warn("session_persistence_optimistic_exhausted", {
     callSid: session.callSid.slice(0, 8),
   });
-  return null;
+  return { ok: false, reason: "optimistic_exhausted" };
 }
 
-/** Fire-and-forget persist — never blocks the voice path. */
-export function persistSessionAsync(session: CallSession): void {
-  if (!isSessionPersistenceEnabled()) return;
-  void savePersistedSession(session).catch(() => undefined);
+/**
+ * @deprecated Mid-turn fire-and-forget persists caused optimistic_exhausted under load.
+ * Prefer touchUnifiedSession (L1 only) + flushUnifiedSessionToL2 (locked) at turn/tool boundaries.
+ * This is intentionally a no-op so legacy call sites cannot fan out concurrent L2 writers.
+ */
+export function persistSessionAsync(_session: CallSession): void {
+  // no-op — see flushUnifiedSessionToL2
 }
 
 /** Mark session completed/archived so it cannot be hydrated as live. */

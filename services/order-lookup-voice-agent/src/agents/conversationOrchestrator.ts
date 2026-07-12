@@ -231,6 +231,7 @@ import {
   ensureUnifiedDefaults,
   getOrHydrateUnifiedSession,
   touchUnifiedSession,
+  flushUnifiedSessionToL2,
 } from "./unifiedCallSession.js";
 import { clearLastSpokenSentence } from "../services/llmService.js";
 import {
@@ -332,6 +333,7 @@ export async function createOrHydrateCallSession(
     }
     syncActiveSessionFromCallSession(hydrated);
     touchUnifiedSession(hydrated);
+    await flushUnifiedSessionToL2(hydrated);
     return hydrated;
   }
   return createCallSession(callSid, from, to);
@@ -1052,6 +1054,14 @@ export async function* runOrchestratorTurn(
     yield* runOrchestratorTurnCore(session, callerText);
   } finally {
     touchUnifiedSession(session);
+    try {
+      await flushUnifiedSessionToL2(session);
+    } catch (err) {
+      logger.warn("orchestrator_turn_flush_failed", {
+        callSid: session.callSid.slice(0, 8),
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     if (!pipelineNested) {
       endOrchestratorTurn();
     }

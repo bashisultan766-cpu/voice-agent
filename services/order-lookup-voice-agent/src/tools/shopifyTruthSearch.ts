@@ -12,6 +12,7 @@ import {
   normalizeSearchText,
   productMatchesIsbn,
   rankLiveProducts,
+  scoreTitleMatch,
   tokenize,
 } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
@@ -99,37 +100,47 @@ export function splitTitleSearchSegments(query: string): string[] {
   return [...segments].filter((s) => s.length >= 2);
 }
 
-/** Title: token OR / AND queries — required Shopify query syntax. */
+/** Title queries — strictest / most specific first, broad OR / brand last. */
 export function buildTitleTruthQueries(query: string): string[] {
   const q = query.trim();
   if (!q) return [];
 
   const tokens = tokenize(q);
-  const queries = new Set<string>();
+  const ordered: string[] = [];
+  const add = (value: string): void => {
+    const next = value.trim();
+    if (!next || ordered.includes(next)) return;
+    ordered.push(next);
+  };
+
+  // Phrase-level (strict)
+  add(`title:*${escapeShopifySearchToken(q)}*`);
+  add(q);
 
   if (tokens.length >= 2) {
-    queries.add(tokens.map((t) => `title:*${escapeShopifySearchToken(t)}*`).join(" OR "));
-    queries.add(tokens.map((t) => `title:*${escapeShopifySearchToken(t)}*`).join(" AND "));
+    add(tokens.map((t) => `title:*${escapeShopifySearchToken(t)}*`).join(" AND "));
+    const normalized = normalizeSearchText(q);
+    if (normalized) {
+      add(`title:*${tokens.join("*")}*`);
+    }
   }
+
   if (tokens.length === 1) {
-    queries.add(`title:*${escapeShopifySearchToken(tokens[0]!)}*`);
+    add(`title:*${escapeShopifySearchToken(tokens[0]!)}*`);
   }
 
-  queries.add(`title:*${escapeShopifySearchToken(q)}*`);
-  queries.add(q);
-
-  const normalized = normalizeSearchText(q);
-  if (normalized && tokens.length >= 2) {
-    queries.add(`title:*${tokens.join("*")}*`);
+  // Broad OR only after strict forms fail downstream stop-on-first-hit
+  if (tokens.length >= 2) {
+    add(tokens.map((t) => `title:*${escapeShopifySearchToken(t)}*`).join(" OR "));
   }
 
   for (const brand of extractPossessiveBrandTokens(q)) {
-    queries.add(`title:*${escapeShopifySearchToken(brand)}*`);
-    queries.add(`vendor:*${escapeShopifySearchToken(brand)}*`);
-    queries.add(brand);
+    add(`title:*${escapeShopifySearchToken(brand)}*`);
+    add(`vendor:*${escapeShopifySearchToken(brand)}*`);
+    add(brand);
   }
 
-  return [...queries];
+  return ordered;
 }
 
 /** Segment-split fallback when a full phrase returns zero or weak matches. */
@@ -178,30 +189,39 @@ export function buildCategoryTruthQueries(categoryQuery: string): string[] {
   return [...queries];
 }
 
-async function runTruthQueries(queries: string[]): Promise<StructuredProduct[]> {
+async function runTruthQueries(
+  queries: string[],
+  options?: {
+    /** Stop after first batch that yields a high-confidence in-stock title match. */
+    stopOnStrongHit?: (products: StructuredProduct[]) => boolean;
+  },
+): Promise<StructuredProduct[]> {
   const unique = [...new Set(queries.filter(Boolean))];
   if (unique.length === 0) return [];
 
-  const batches = await Promise.all(
-    unique.map(async (q) => {
-      try {
-        const [byProduct, byVariant] = await Promise.all([
-          searchShopifyProducts(q),
-          liveSearchVariants(q),
-        ]);
-        return [...byProduct, ...byVariant];
-      } catch (err) {
-        if (isShopifyThrottleError(err)) throw err;
-        logger.warn("shopify_truth_query_failed", {
-          query: q,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return [];
-      }
-    }),
-  );
+  const collected: StructuredProduct[] = [];
 
-  return dedupeProducts(batches.flat());
+  for (const q of unique) {
+    try {
+      // Sequential — never Promise.all fan-out across title variants.
+      const byProduct = await searchShopifyProducts(q);
+      const byVariant = await liveSearchVariants(q);
+      const batch = dedupeProducts([...byProduct, ...byVariant]);
+      collected.push(...batch);
+      const merged = dedupeProducts(collected);
+      if (options?.stopOnStrongHit?.(merged)) {
+        return merged;
+      }
+    } catch (err) {
+      if (isShopifyThrottleError(err)) throw err;
+      logger.warn("shopify_truth_query_failed", {
+        query: q,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return dedupeProducts(collected);
 }
 
 async function expandUntilSufficient(
@@ -277,13 +297,30 @@ export async function truthSearchByTitle(query: string): Promise<StructuredProdu
   }
 
   const started = Date.now();
-  let live = await runTruthQueries(buildTitleTruthQueries(q));
+  const hasStrongInStockHit = (products: StructuredProduct[]): boolean => {
+    const ranked = rankLiveProducts(products, q);
+    const top = ranked[0];
+    if (!top) return false;
+    const inStock = top.variants?.some((v) => v.inStock) === true;
+    if (!inStock) return false;
+    return scoreTitleMatch(top.title, q) >= 5;
+  };
 
-  if (live.length < MIN_RESULTS_BEFORE_EXPAND) {
+  let live = await runTruthQueries(buildTitleTruthQueries(q), {
+    stopOnStrongHit: hasStrongInStockHit,
+  });
+
+  if (!hasStrongInStockHit(live) && live.length < MIN_RESULTS_BEFORE_EXPAND) {
     live = await expandUntilSufficient(live, buildTitleExpansionQueries(q));
   }
 
   const ranked = rankLiveProducts(live, q);
+  // Prefer in-stock winners so we never report a stocked book as missing.
+  ranked.sort((a, b) => {
+    const aStock = a.variants?.some((v) => v.inStock) ? 1 : 0;
+    const bStock = b.variants?.some((v) => v.inStock) ? 1 : 0;
+    return bStock - aStock;
+  });
 
   logger.info("shopify_truth_title", {
     query: q,

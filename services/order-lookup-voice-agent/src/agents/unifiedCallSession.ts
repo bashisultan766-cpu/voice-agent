@@ -5,11 +5,11 @@
  * remain as thin adapters for legacy call sites, but authoritative workflow
  * fields live on CallSession and are kept in sync through this module.
  *
- * Persistence (Priority 5):
- *   L1 = sessionRegistry Map (hot path)
+ * Persistence:
+ *   L1 = sessionRegistry Map (hot path) — mid-turn mutations update L1 only
  *   L2 = Postgres call_sessions via sessionPersistence (restart / HA)
- *   Mutations that change workflow state fire-and-forget persist to L2.
- *   Hydration pulls L2 → L1 when a process misses the in-memory entry.
+ *   L2 writes happen once per turn/tool boundary under withCallSessionLock
+ *   (never fire-and-forget from touchUnifiedSession).
  */
 import type { CallSession } from "../types/order.js";
 import type { ConversationFlowMode } from "./conversationFlowState.js";
@@ -17,8 +17,10 @@ import type { ActiveWorkflowContext } from "./workflowContext.js";
 import { logger } from "../utils/logger.js";
 import {
   archivePersistedSessionAsync,
+  isSessionPersistenceEnabled,
   loadPersistedSession,
-  persistSessionAsync,
+  savePersistedSessionDetailed,
+  type SessionPersistResult,
 } from "../platform/sessionPersistence.js";
 import { withCallSessionLock } from "../platform/sessionLock.js";
 
@@ -39,12 +41,34 @@ export interface UnifiedSessionSlice {
   workflowContext: ActiveWorkflowContext;
 }
 
+export type UnifiedFlushResult = SessionPersistResult;
+
 const sessionRegistry = new Map<string, CallSession>();
+/** CallSids with L1 mutations pending a locked L2 flush. */
+const dirtySessions = new Set<string>();
+
+function markSessionDirty(callSid: string): void {
+  if (callSid) dirtySessions.add(callSid);
+}
+
+function clearSessionDirty(callSid: string): void {
+  dirtySessions.delete(callSid);
+}
+
+export function isUnifiedSessionDirty(callSid: string): boolean {
+  return dirtySessions.has(callSid);
+}
 
 export function registerUnifiedSession(session: CallSession): CallSession {
   ensureUnifiedDefaults(session);
   sessionRegistry.set(session.callSid, session);
-  persistSessionAsync(session);
+  markSessionDirty(session.callSid);
+  if (isSessionPersistenceEnabled()) {
+    // Session create is a critical boundary — one locked flush (async, non-blocking).
+    void flushUnifiedSessionToL2(session).catch(() => undefined);
+  } else {
+    clearSessionDirty(session.callSid);
+  }
   return session;
 }
 
@@ -71,6 +95,7 @@ export async function getOrHydrateUnifiedSession(
 
     ensureUnifiedDefaults(record.session);
     sessionRegistry.set(callSid, record.session);
+    clearSessionDirty(callSid);
     logger.info("unified_session_hydrated", {
       callSid: callSid.slice(0, 8),
       version: record.version,
@@ -81,20 +106,64 @@ export async function getOrHydrateUnifiedSession(
   });
 }
 
+/**
+ * Mid-turn L1 update only — does NOT write Postgres.
+ * Call flushUnifiedSessionToL2 at end-of-turn or a critical tool boundary.
+ */
 export function touchUnifiedSession(session: CallSession): void {
   ensureUnifiedDefaults(session);
   sessionRegistry.set(session.callSid, session);
-  persistSessionAsync(session);
+  markSessionDirty(session.callSid);
+}
+
+/**
+ * Single locked L2 flush for the call. Coalesces mid-turn L1 mutations into one upsert.
+ * Safe to call when persistence is disabled (returns ok/skipped).
+ */
+export async function flushUnifiedSessionToL2(
+  session: CallSession,
+  options?: { force?: boolean },
+): Promise<UnifiedFlushResult> {
+  ensureUnifiedDefaults(session);
+  sessionRegistry.set(session.callSid, session);
+
+  if (!isSessionPersistenceEnabled()) {
+    clearSessionDirty(session.callSid);
+    return { ok: true, version: null, skipped: true };
+  }
+
+  if (!options?.force && !dirtySessions.has(session.callSid)) {
+    return { ok: true, version: session.persistenceVersion ?? null, skipped: true };
+  }
+
+  return withCallSessionLock(session.callSid, async () => {
+    if (!options?.force && !dirtySessions.has(session.callSid)) {
+      return { ok: true, version: session.persistenceVersion ?? null, skipped: true };
+    }
+
+    const result = await savePersistedSessionDetailed(session);
+    if (result.ok) {
+      clearSessionDirty(session.callSid);
+    } else {
+      logger.warn("unified_session_flush_failed", {
+        callSid: session.callSid.slice(0, 8),
+        reason: result.reason,
+      });
+    }
+    return result;
+  });
 }
 
 export function unregisterUnifiedSession(callSid: string): void {
   const session = sessionRegistry.get(callSid);
   sessionRegistry.delete(callSid);
+  clearSessionDirty(callSid);
   archivePersistedSessionAsync(callSid, session);
 }
 
 export function clearAllUnifiedSessions(): void {
   sessionRegistry.clear();
+  dirtySessions.clear();
 }
 
 export function ensureUnifiedDefaults(session: CallSession): void {
@@ -214,7 +283,7 @@ export function projectUnifiedOntoSession(session: CallSession): UnifiedSessionS
 }
 
 /**
- * Atomic mutation helper — holds the per-call mutex, runs work, then persists.
+ * Atomic mutation helper — holds the per-call mutex, runs work, then one L2 flush.
  * Use for any multi-step session write that must not interleave with another frame.
  */
 export async function mutateUnifiedSession<T>(
@@ -223,7 +292,24 @@ export async function mutateUnifiedSession<T>(
 ): Promise<T> {
   return withCallSessionLock(session.callSid, async () => {
     const result = await work(session);
-    touchUnifiedSession(session);
+    ensureUnifiedDefaults(session);
+    sessionRegistry.set(session.callSid, session);
+    markSessionDirty(session.callSid);
+
+    if (isSessionPersistenceEnabled()) {
+      const flush = await savePersistedSessionDetailed(session);
+      if (flush.ok) {
+        clearSessionDirty(session.callSid);
+      } else {
+        logger.warn("unified_session_mutate_flush_failed", {
+          callSid: session.callSid.slice(0, 8),
+          reason: flush.reason,
+        });
+      }
+    } else {
+      clearSessionDirty(session.callSid);
+    }
+
     return result;
   });
 }

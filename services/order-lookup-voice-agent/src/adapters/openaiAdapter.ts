@@ -1285,13 +1285,28 @@ export async function* runLlmAgentTurnEvents(
 
           toolExecutions.push(record);
 
+          const toolContent = toolResultForLlm(record, {
+            isVerifiedCaller: input.session?.isVerifiedCaller === true,
+            session: input.session,
+          });
+
+          if (
+            record.status === "api_error" ||
+            record.status === "system_maintenance" ||
+            record.status === "throttled"
+          ) {
+            logger.warn("llm_tool_error_surfaced_to_brain", {
+              callSid: input.callSid.slice(0, 8),
+              tool: call.function.name,
+              status: record.status,
+              errorMessage: record.errorMessage ?? null,
+            });
+          }
+
           messages.push({
             role: "tool",
             tool_call_id: call.id,
-            content: toolResultForLlm(record, {
-              isVerifiedCaller: input.session?.isVerifiedCaller === true,
-              session: input.session,
-            }),
+            content: toolContent,
           });
         }
 
