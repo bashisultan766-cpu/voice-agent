@@ -41,7 +41,7 @@ curl -s http://127.0.0.1:8001/health
 - `PUBLIC_BASE_URL` — your HTTPS domain
 - `TWILIO_AUTH_TOKEN` — same as Twilio Console
 - `OPENAI_API_KEY`
-- `SHOPIFY_SHOP_DOMAIN`, `SHOPIFY_ADMIN_ACCESS_TOKEN`
+- `SHOPIFY_SHOP_DOMAIN`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` (or legacy `SHOPIFY_ADMIN_ACCESS_TOKEN`)
 - `VOICE_ID` + `VOICE_MODEL` (ElevenLabs via Twilio ConversationRelay, e.g. `abc123-eleven_turbo_v2_5`)
 
 ## Tests

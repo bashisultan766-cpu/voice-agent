@@ -8,10 +8,21 @@ import {
   isRetriableOrderLookupMiss,
 } from "../agents/orderLookupWorkflow.js";
 import { getConfig } from "../config.js";
+import {
+  getShopifyAdminAccessToken,
+  resetShopifyAccessTokenCacheForTests,
+} from "../platform/shopifyAccessToken.js";
 import { logger } from "../utils/logger.js";
 import type { OrderLookupResult, StructuredOrder } from "../types/order.js";
 import { isValidOrderNumberFormat, normalizeOrderNumber } from "../utils/formatter.js";
 import { TimeoutError, withTimeout } from "../utils/promiseTimeout.js";
+
+/** Dynamic Admin API token (Client Credentials Grant or static fallback). */
+export async function getAccessToken(): Promise<string> {
+  return getShopifyAdminAccessToken();
+}
+
+export { resetShopifyAccessTokenCacheForTests };
 
 interface CacheEntry {
   expiresAt: number;

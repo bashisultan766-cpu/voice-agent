@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { logger } from "./utils/logger.js";
+import { normalizeShopifyEnvAliases } from "./platform/envAliases.js";
 
 const serviceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnv({ path: resolve(serviceRoot, ".env") });
@@ -25,7 +26,11 @@ const envSchema = z.object({
   OPENAI_TIMEOUT_MS: z.coerce.number().default(8000),
 
   SHOPIFY_SHOP_DOMAIN: z.string().min(1),
-  SHOPIFY_ADMIN_ACCESS_TOKEN: z.string().min(1),
+  /** Preferred: Dev Dashboard Client Credentials Grant (expires ~24h). */
+  SHOPIFY_CLIENT_ID: z.string().optional().default(""),
+  SHOPIFY_CLIENT_SECRET: z.string().optional().default(""),
+  /** Legacy static Admin API token — used only when client credentials are unset. */
+  SHOPIFY_ADMIN_ACCESS_TOKEN: z.string().optional().default(""),
   SHOPIFY_API_VERSION: z.string().default("2024-01"),
   /** Hard ceiling for Shopify HTTP / GraphQL calls (voice must not hang). */
   SHOPIFY_TIMEOUT_MS: z.coerce.number().default(6000),
@@ -113,12 +118,25 @@ export function resetConfigCacheForTests(): void {
 
 export function getConfig(): AppConfig {
   if (!cached) {
+    normalizeShopifyEnvAliases();
     const parsed = envSchema.safeParse(trimStrings(process.env as Record<string, unknown>));
     if (!parsed.success) {
       const missing = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
       throw new Error(`Invalid environment configuration: ${missing}`);
     }
-    cached = parsed.data;
+
+    const data = parsed.data;
+    const hasClientCredentials = Boolean(
+      data.SHOPIFY_CLIENT_ID?.trim() && data.SHOPIFY_CLIENT_SECRET?.trim(),
+    );
+    const hasStaticToken = Boolean(data.SHOPIFY_ADMIN_ACCESS_TOKEN?.trim());
+    if (!hasClientCredentials && !hasStaticToken) {
+      throw new Error(
+        "Invalid environment configuration: Shopify auth required (SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET, or SHOPIFY_ADMIN_ACCESS_TOKEN)",
+      );
+    }
+
+    cached = data;
 
     if (
       !warnedNonElevenLabsProvider &&

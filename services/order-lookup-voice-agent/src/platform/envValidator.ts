@@ -4,32 +4,25 @@
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { maskShopifyToken } from "../utils/security.js";
+import { normalizeShopifyEnvAliases } from "./envAliases.js";
+import { getShopifyAdminAccessToken } from "./shopifyAccessToken.js";
 import { ShopifyAuthError } from "./shopifyErrors.js";
+
+export { normalizeShopifyEnvAliases } from "./envAliases.js";
 
 const SHOP_DOMAIN_RE =
   /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)?myshopify\.com$/;
 
 const ADMIN_TOKEN_RE = /^(shpat_|shpca_|shpss_)[A-Za-z0-9]+$/;
 
-/** Map common deployment aliases onto canonical config env keys. */
-export function normalizeShopifyEnvAliases(): void {
-  if (!process.env.SHOPIFY_SHOP_DOMAIN?.trim()) {
-    const alias =
-      process.env.SHOPIFY_STORE_DOMAIN?.trim() ??
-      process.env.SHOPIFY_SHOP?.trim();
-    if (alias) process.env.SHOPIFY_SHOP_DOMAIN = alias;
-  }
-
-  if (!process.env.SHOPIFY_ADMIN_ACCESS_TOKEN?.trim()) {
-    const alias =
-      process.env.SHOPIFY_ACCESS_TOKEN?.trim() ??
-      process.env.SHOPIFY_ADMIN_API_TOKEN?.trim();
-    if (alias) process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = alias;
-  }
-}
-
 function normalizeShopDomain(raw: string): string {
   return raw.replace(/^https?:\/\//, "").replace(/\/$/, "").trim().toLowerCase();
+}
+
+function hasClientCredentialsEnv(): boolean {
+  return Boolean(
+    process.env.SHOPIFY_CLIENT_ID?.trim() && process.env.SHOPIFY_CLIENT_SECRET?.trim(),
+  );
 }
 
 /** Validate Shopify credentials exist and match expected formats. */
@@ -41,7 +34,7 @@ export function validateShopifyEnvFormat(): void {
 
   if (!domain) {
     throw new Error(
-      "SHOPIFY_SHOP_DOMAIN is required (alias: SHOPIFY_STORE_DOMAIN)",
+      "SHOPIFY_SHOP_DOMAIN is required (alias: SHOPIFY_STORE_DOMAIN / SHOPIFY_SHOP)",
     );
   }
 
@@ -52,9 +45,13 @@ export function validateShopifyEnvFormat(): void {
     );
   }
 
+  if (hasClientCredentialsEnv()) {
+    return;
+  }
+
   if (!token) {
     throw new Error(
-      "SHOPIFY_ADMIN_ACCESS_TOKEN is required (alias: SHOPIFY_ACCESS_TOKEN)",
+      "Shopify auth required: set SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET, or SHOPIFY_ADMIN_ACCESS_TOKEN",
     );
   }
 
@@ -80,6 +77,17 @@ const SHOP_PING_QUERY = `query StartupShopPing { shop { name } }`;
 export async function pingShopifyAdminApi(): Promise<string> {
   validateShopifyEnvFormat();
   const cfg = getConfig();
+  let accessToken: string;
+  try {
+    accessToken = await getShopifyAdminAccessToken();
+  } catch (err) {
+    logger.error("SHOPIFY_AUTH_FAILED: Client credentials handshake failed", {
+      shop: cfg.SHOPIFY_SHOP_DOMAIN,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
 
@@ -87,7 +95,7 @@ export async function pingShopifyAdminApi(): Promise<string> {
     const res = await fetch(shopifyGraphqlUrl(), {
       method: "POST",
       headers: {
-        "X-Shopify-Access-Token": cfg.SHOPIFY_ADMIN_ACCESS_TOKEN,
+        "X-Shopify-Access-Token": accessToken,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ query: SHOP_PING_QUERY }),
@@ -97,13 +105,17 @@ export async function pingShopifyAdminApi(): Promise<string> {
     if (res.status === 401 || res.status === 403) {
       logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
         httpStatus: res.status,
-        token: maskShopifyToken(cfg.SHOPIFY_ADMIN_ACCESS_TOKEN),
+        token: maskShopifyToken(accessToken),
         shop: cfg.SHOPIFY_SHOP_DOMAIN,
       });
       throw new ShopifyAuthError(res.status);
     }
 
     if (!res.ok) {
+      logger.error("SHOPIFY_AUTH_FAILED: Shop ping HTTP error", {
+        httpStatus: res.status,
+        shop: cfg.SHOPIFY_SHOP_DOMAIN,
+      });
       throw new Error(`shopify_startup_ping_http_${res.status}`);
     }
 
@@ -121,8 +133,9 @@ export async function pingShopifyAdminApi(): Promise<string> {
     if (authDenied) {
       logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
         httpStatus: res.status,
-        token: maskShopifyToken(cfg.SHOPIFY_ADMIN_ACCESS_TOKEN),
+        token: maskShopifyToken(accessToken),
         shop: cfg.SHOPIFY_SHOP_DOMAIN,
+        userErrors: body.errors,
       });
       throw new ShopifyAuthError(403);
     }
@@ -134,7 +147,8 @@ export async function pingShopifyAdminApi(): Promise<string> {
 
     logger.info("shopify_startup_ping_ok", {
       shop: shopName,
-      token: maskShopifyToken(cfg.SHOPIFY_ADMIN_ACCESS_TOKEN),
+      token: maskShopifyToken(accessToken),
+      authMode: hasClientCredentialsEnv() ? "client_credentials" : "static_token",
     });
 
     return shopName;

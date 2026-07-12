@@ -5,6 +5,7 @@ import {
   pingShopifyAdminApi,
   validateShopifyEnvFormat,
 } from "../src/platform/envValidator.js";
+import { resetShopifyAccessTokenCacheForTests } from "../src/platform/shopifyAccessToken.js";
 import { ShopifyAuthError } from "../src/platform/shopifyErrors.js";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -21,7 +22,12 @@ describe("envValidator", () => {
       SHOPIFY_ADMIN_ACCESS_TOKEN: "shpat_validtoken123456",
       SHOPIFY_API_VERSION: "2024-01",
     };
+    delete process.env.SHOPIFY_CLIENT_ID;
+    delete process.env.SHOPIFY_CLIENT_SECRET;
+    delete process.env.SHOPIFY_API_KEY;
+    delete process.env.SHOPIFY_API_SECRET;
     resetConfigCacheForTests();
+    resetShopifyAccessTokenCacheForTests();
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -29,6 +35,7 @@ describe("envValidator", () => {
     process.env = { ...ORIGINAL_ENV };
     vi.unstubAllGlobals();
     vi.resetModules();
+    resetShopifyAccessTokenCacheForTests();
   });
 
   it("maps SHOPIFY_STORE_DOMAIN alias to SHOPIFY_SHOP_DOMAIN", () => {
@@ -46,6 +53,13 @@ describe("envValidator", () => {
   it("rejects malformed admin tokens", () => {
     process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = "bad-token";
     expect(() => validateShopifyEnvFormat()).toThrow(/SHOPIFY_ADMIN_ACCESS_TOKEN/);
+  });
+
+  it("accepts client credentials without static admin token", () => {
+    delete process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+    process.env.SHOPIFY_CLIENT_ID = "cid";
+    process.env.SHOPIFY_CLIENT_SECRET = "csecret";
+    expect(() => validateShopifyEnvFormat()).not.toThrow();
   });
 
   it("throws ShopifyAuthError on 401 startup ping", async () => {

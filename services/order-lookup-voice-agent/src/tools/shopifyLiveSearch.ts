@@ -12,6 +12,7 @@ import {
 } from "../platform/shopifyErrors.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
+import { getShopifyAdminAccessToken } from "../platform/shopifyAccessToken.js";
 import { ensureShopifyProductScopes, SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR } from "./shopifyScopeCheck.js";
 import { maskShopifyToken } from "../utils/security.js";
 
@@ -157,6 +158,7 @@ export async function shopifyGraphql<T>(
   variables?: Record<string, unknown>,
 ): Promise<T> {
   const cfg = getConfig();
+  const accessToken = await getShopifyAdminAccessToken();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
 
@@ -166,7 +168,7 @@ export async function shopifyGraphql<T>(
     const res = await fetch(`${shopifyBaseUrl()}/graphql.json`, {
       method: "POST",
       headers: {
-        "X-Shopify-Access-Token": cfg.SHOPIFY_ADMIN_ACCESS_TOKEN,
+        "X-Shopify-Access-Token": accessToken,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ query, variables }),
@@ -177,7 +179,7 @@ export async function shopifyGraphql<T>(
       if (res.status === 401 || res.status === 403) {
         logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
           httpStatus: res.status,
-          token: maskShopifyToken(cfg.SHOPIFY_ADMIN_ACCESS_TOKEN),
+          token: maskShopifyToken(accessToken),
           shop: cfg.SHOPIFY_SHOP_DOMAIN,
         });
         throw new ShopifyAuthError(res.status);
@@ -198,7 +200,7 @@ export async function shopifyGraphql<T>(
       );
       if (authDenied) {
         logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
-          token: maskShopifyToken(cfg.SHOPIFY_ADMIN_ACCESS_TOKEN),
+          token: maskShopifyToken(accessToken),
           shop: cfg.SHOPIFY_SHOP_DOMAIN,
         });
         throw new ShopifyAuthError(403);
