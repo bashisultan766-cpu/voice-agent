@@ -231,15 +231,19 @@ describe("product ISBN / title intent", () => {
 });
 
 describe("non-verified order detail disclosure", () => {
-  it("22-27 — title, price, shipping fee for non-verified caller", () => {
+  it("22-27 — title public; price and shipping fee refused for non-verified", () => {
     const session = seedSession("NV_1", false);
     const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
     expect(buildOrderDetailSpeech(session, "what is the item title", ctx)).toMatch(/Healing Book/i);
-    expect(buildOrderDetailSpeech(session, "what is the item price", ctx)).toMatch(/\$12\.00/i);
-    expect(buildOrderDetailSpeech(session, "what is the shipping fee", ctx)).toMatch(/\$5\.00/i);
+    expect(buildOrderDetailSpeech(session, "what is the item price", ctx)).toMatch(
+      /unverified number|public order status and tracking|verified account holder/i,
+    );
+    expect(buildOrderDetailSpeech(session, "what is the shipping fee", ctx)).toMatch(
+      /unverified number|public order status and tracking|verified account holder/i,
+    );
   });
 
-  it("28-29 — combined title, price, shipping, total", () => {
+  it("28-29 — combined price/shipping/total refused for unverified", () => {
     const session = seedSession("NV_2", false);
     const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
     const speech = buildOrderDetailSpeech(
@@ -247,23 +251,25 @@ describe("non-verified order detail disclosure", () => {
       "tell me item title, item price, shipping fee, and total amount",
       ctx,
     );
-    expect(speech).toMatch(/Healing Book/i);
-    expect(speech).toMatch(/\$12\.00/i);
-    expect(speech).toMatch(/\$5\.00/i);
-    expect(speech).toMatch(/\$17\.00/i);
+    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
+    expect(speech).not.toMatch(/\$12\.00|\$5\.00|\$17\.00/i);
   });
 
-  it("30-31 — full notification email for unverified callers", () => {
+  it("30-31 — refuses confirmation email for unverified callers", () => {
     const session = seedSession("NV_3", false);
     const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
     const speech = buildOrderDetailSpeech(session, "where was the confirmation sent", ctx);
-    expect(speech).toMatch(/fred@example\.com|fred at example/i);
+    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
+    expect(speech).not.toMatch(/fred@example\.com|fred at example/i);
     const legacy = buildOrderFieldQuerySpeech(
       "where was the confirmation sent",
       ctx,
       false,
     );
-    expect(legacy).toMatch(/fred@example\.com|fred at example/i);
+    expect(legacy).not.toMatch(/fred@example\.com|fred at example/i);
+    expect(legacy).toMatch(
+      /unverified number|public order status and tracking|verified account holder|not have a confirmation|not on file/i,
+    );
   });
 
   it("32-33 — refuses shipping address", () => {

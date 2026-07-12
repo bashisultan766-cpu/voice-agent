@@ -45,21 +45,6 @@ const PUBLIC_REVEAL_FIELDS = new Set<OrderRevealField>([
   "trackingCompany",
   "itemTitle",
   "itemQuantity",
-  "itemPrice",
-  "subtotalAmount",
-  "shippingFee",
-  "totalAmount",
-  "paymentStatus",
-  "paymentGateway",
-  "notificationDestinationMasked",
-  "previousOrderCount",
-  "paymentCardLast4",
-  "fullCustomerEmail",
-  "customerName",
-  "orderNote",
-  "orderTags",
-  "timelineEvents",
-  "transactions",
 ]);
 
 /** Field-by-field disclosure — non-verified callers receive public fields only. */

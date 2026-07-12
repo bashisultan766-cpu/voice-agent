@@ -1,36 +1,67 @@
 /**
- * PII guardrails for LLM-injected order context — unverified callers get deep current-order data.
- * Strict lock: shipping address and detailed past order history only.
- * Notes, tags, timeline events, staff comments, and transactions stay available.
+ * PII guardrails for LLM-injected order context.
+ * Unverified callers receive public_data only; secure_data stays null/restricted.
  */
 import type { ActiveOrderContextData } from "./sessionManager.js";
 
-/** Vault-only fields stripped from LLM context for unverified callers. */
+/** Secure / vault fields stripped from flat context for unverified callers. */
 const UNVERIFIED_STRIPPED_CONTEXT_KEYS = [
+  "secure_data",
   "shipping_address",
   "billing_address",
-] as const;
-
-/**
- * Deep current-order keys that MUST remain for unverified callers.
- * Documented so future filters do not accidentally strip A-to-Z context.
- */
-export const UNVERIFIED_ALLOWED_DEEP_CONTEXT_KEYS = [
-  "note",
-  "order_note",
-  "tags",
-  "events",
-  "transactions",
-  "custom_attributes",
-  "source_name",
-  "channel_name",
-  "publication_name",
-  "is_draft_order_origin",
+  "customer_email",
+  "customer_email_for_tts",
+  "customer_name",
+  "customer_phone",
   "payment_method",
   "payment_method_last4",
   "payment_gateway",
   "card_brand",
+  "total_amount",
+  "shipping_amount",
+  "subtotal_amount",
+  "total_tax",
+  "total_discounts",
+  "fee_items",
+  "processing_fees",
+  "shipping_fees",
+  "handling_fees",
+  "refund_status",
+  "refund_reason",
+  "cancel_reason",
+  "refund_amount",
+  "refund_notification_email",
+  "refund_notification_email_for_tts",
+  "order_confirmation_email",
+  "order_confirmation_email_for_tts",
+  "events",
+  "note",
+  "order_note",
+  "tags",
+  "source_name",
+  "channel_name",
+  "publication_name",
+  "custom_attributes",
+  "transactions",
+  "order_placed_at",
+  "refund_date",
   "total_order_count",
+] as const;
+
+/** Public keys that remain available for unverified callers. */
+export const UNVERIFIED_ALLOWED_PUBLIC_CONTEXT_KEYS = [
+  "public_data",
+  "order_number",
+  "fulfillment_status",
+  "estimated_delivery_days",
+  "tracking_number",
+  "tracking_company",
+  "tracking_number_for_tts",
+  "tracking_status",
+  "item_count",
+  "physical_items",
+  "items",
+  "is_verified_caller",
 ] as const;
 
 /** Strip vault fields from order JSON before LLM injection for unverified callers. */
@@ -38,16 +69,25 @@ export function filterOrderContextForVerification(
   data: ActiveOrderContextData,
   isVerified: boolean,
 ): ActiveOrderContextData {
-  if (isVerified) return data;
+  if (isVerified) {
+    const granted: ActiveOrderContextData = { ...data };
+    granted.privacy_tier = "verified";
+    granted.vault_access = "granted";
+    return granted;
+  }
 
   const copy: ActiveOrderContextData = { ...data };
   for (const key of UNVERIFIED_STRIPPED_CONTEXT_KEYS) {
-    if (key in copy) copy[key] = null;
+    if (key === "events" || key === "tags" || key === "transactions" || key === "custom_attributes") {
+      copy[key] = [];
+    } else {
+      copy[key] = null;
+    }
   }
-  // Explicitly preserve deep current-order context (do not strip).
-  for (const key of UNVERIFIED_ALLOWED_DEEP_CONTEXT_KEYS) {
+  for (const key of UNVERIFIED_ALLOWED_PUBLIC_CONTEXT_KEYS) {
     if (key in data) copy[key] = data[key];
   }
+  copy.secure_data = null;
   copy.privacy_tier = "unverified";
   copy.vault_access = "restricted";
   return copy;
@@ -59,20 +99,24 @@ const SHIPPING_ADDRESS_RE =
 const DETAILED_ORDER_HISTORY_RE =
   /\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders|what\s+did\s+i\s+order\s+in|orders?\s+in\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)|get_customer_history|customer\s+history)\b/i;
 
+const SECURE_FIELD_RE =
+  /\b(email|card\s+(?:ending|last)|last\s*4|payment\s+method|total\s+amount|order\s+total|how\s+much|staff\s+note|order\s+note|tags?|transaction|account\s+deposit)\b/i;
+
 /** Vault-only queries an unverified caller must not receive via deterministic speech. */
 export function isRestrictedFieldQueryForUnverified(callerText: string): boolean {
   const text = callerText.trim();
   if (!text) return false;
   if (SHIPPING_ADDRESS_RE.test(text)) return true;
   if (DETAILED_ORDER_HISTORY_RE.test(text)) return true;
+  if (SECURE_FIELD_RE.test(text)) return true;
   return false;
 }
 
 export function buildUnverifiedRestrictedFieldRefusal(customerName?: string): string {
   const name = String(customerName ?? "the registered customer").trim() || "the registered customer";
   return (
-    "For security purposes, since you are calling from an unverified number, I cannot share the shipping address or your past order history on this call. " +
-    `I am sorry, but I can only share that information with the verified account holder, ${name}.`
+    "For security purposes, since you are calling from an unverified number, I can only share public order status and tracking details on this call. " +
+    `I am sorry, but I can only share private account details with the verified account holder, ${name}.`
   );
 }
 
@@ -120,22 +164,8 @@ export function orderUtteranceNeedsFreshLookup(
       !String(context.refund_notification_email ?? "").trim()
     );
   }
-  if (/\b(refund\s+reason|cancel\s+reason|why\s+(?:was|is)\s+(?:it|my\s+order)\s+(?:refunded|cancelled))\b/i.test(text)) {
-    return !String(context.cancel_reason ?? context.refund_reason ?? "").trim();
+  if (/\b(tracking|track\s+(?:my\s+)?(?:package|order|shipment))\b/i.test(text)) {
+    return !String(context.tracking_number ?? "").trim();
   }
-  if (/\b(order\s+status|where\s+is\s+my\s+order|status\s+of\s+my\s+order)\b/i.test(text)) {
-    return !String(context.fulfillment_status ?? context.refund_status ?? "").trim();
-  }
-  if (/\b(how\s+many\s+books|item\s+count)\b/i.test(text)) {
-    return context.item_count == null;
-  }
-  if (/\b(note|notes|tag|tags|timeline|staff\s+comment|draft\s+order)\b/i.test(text)) {
-    return (
-      !String(context.note ?? context.order_note ?? "").trim() &&
-      !(Array.isArray(context.tags) && context.tags.length > 0) &&
-      !(Array.isArray(context.events) && context.events.length > 0)
-    );
-  }
-
   return false;
 }

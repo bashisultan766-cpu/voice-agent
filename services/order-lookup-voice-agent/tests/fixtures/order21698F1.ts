@@ -74,7 +74,13 @@ export const ORDER_21698_F1_EXPECTED = {
   totalAmount: "96.00 USD",
   shippingFee: "5.00 USD",
   subtotalAmount: "91.00 USD",
-  lineItems: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
+  lineItems: [
+    {
+      title: "The Holy Bible - King James Version",
+      quantity: 1,
+      fulfillmentStatus: "unfulfilled",
+    },
+  ],
   refundStatus: "REFUNDED",
   refundReason: "OUT OF STOCK",
   refundAmount: "96.00 USD",

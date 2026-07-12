@@ -146,6 +146,7 @@ describe("order #21796 deep timeline extraction", () => {
     expect(injected).toContain("jamaicathompson87 at gmail dot com");
     expect(injected).toContain("refund_notification_email_for_tts");
     expect(injected).toContain("Customer Cancel Order");
-    expect(injected).toMatch(/never read timeline text verbatim/i);
+    expect(injected).toMatch(/public_data|secure_data/i);
+    expect(injected).toMatch(/NEVER say that restricted secure fields are "not on file"/i);
   });
 });

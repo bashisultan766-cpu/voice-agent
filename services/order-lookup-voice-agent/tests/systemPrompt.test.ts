@@ -78,9 +78,14 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
       /For security purposes, since you are calling from an unverified number/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I can only share that information with the verified account holder/i,
+      /I can only share private account details with the verified account holder/i,
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping address or past order history/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I can only share public order status and tracking details on this call/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /shipping address, email, card last4, payment details, totals, tags, staff notes, or past order history/i,
+    );
   });
 
   it("requires dynamic cart math and hangup prevention during shopping", () => {
@@ -153,16 +158,18 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/VIP ORDER HISTORY DRILL-DOWN S\.O\.P\./i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Which month would you like to hear about/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/monthYear/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/inmate numbers or facility details/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/facility and inmate information/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method/i);
   });
 
-  it("authorizes unverified callers for deep current-order fields", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — CURRENT ORDER ACCESS/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/cancel_reason or refund_reason/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method_last4/i);
+  it("restricts unverified callers to public_data only", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — PUBLIC DATA ONLY/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/answer only from public_data/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/no prices or fees/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICT LOCK \(UNVERIFIED\)/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping_address/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT read secure_data/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping\/billing address/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method_last4/i);
   });
 
   it("enforces voice-native output, letter-by-letter email, and multi-item checkout loop", () => {
@@ -175,7 +182,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/B, A, S, H, I/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER use "A as in Apple"/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/update_pending_email/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER say the address is "not found"/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER say private data is "not found"/i);
   });
 
   it("requires dynamic topic Polite Pivot instruction", () => {

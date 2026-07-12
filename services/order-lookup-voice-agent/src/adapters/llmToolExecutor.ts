@@ -1230,8 +1230,8 @@ export function buildActiveOrderContextPayload(
 
 /**
  * Snake_case order payload — matches system prompt field names exactly.
- * Omni-Extractor keys (customer_name, payment_method_last4, card_brand,
- * refund_notification_email) are always present — never dropped or sanitized out.
+ * Includes public_data (safe for unverified) and secure_data (verified only).
+ * Omni-Extractor keys are always present on the flat payload — never dropped.
  */
 function shapeOrderStatusForLlm(
   data: OrderStatusResult,
@@ -1259,50 +1259,131 @@ function shapeOrderStatusForLlm(
   const processingFees = feeItems.filter((line) => /\bfee\b/i.test(line.title));
   const shippingFees = feeItems.filter((line) => /\bshipping\b/i.test(line.title));
   const handlingFees = feeItems.filter((line) => /\bhandling\b/i.test(line.title));
-  const payload: Record<string, unknown> = {
+
+  const publicItems = physicalItems.map((item) => ({
+    title: item.title,
+    quantity: item.quantity,
+    ...(item.variantTitle ? { variant_title: item.variantTitle } : {}),
+    ...(item.fulfillmentStatus ? { fulfillment_status: item.fulfillmentStatus } : {}),
+  }));
+
+  const publicData: Record<string, unknown> = {
     order_number: data.orderNumber ?? null,
-    customer_name: data.customerName ?? null,
-    customer_email: data.customerEmail ?? null,
-    customer_email_for_tts: formatEmailForTTS(data.customerEmail ?? null),
-    is_verified_caller: verified,
-    total_order_count: data.totalOrderCount ?? session?.totalOrderCount ?? null,
-    shipping_address: verified ? (data.shippingAddress ?? null) : null,
-    physical_items: physicalItems.length ? physicalItems : null,
-    fee_items: feeItems.length ? feeItems : null,
+    fulfillment_status: data.fulfillmentStatus ?? null,
+    financial_status: data.financialStatus ?? null,
+    tracking_number: trackingNumber,
+    tracking_company: data.trackingCompany ?? null,
+    tracking_url: data.trackingUrl ?? null,
+    tracking_status: data.trackingStatus ?? null,
+    estimated_delivery_days: data.estimatedDeliveryDays ?? null,
+    estimated_delivery_date: data.estimatedDeliveryDate ?? null,
+    shipping_timeframe:
+      typeof data.estimatedDeliveryDays === "number"
+        ? data.estimatedDeliveryDays <= 0
+          ? "Delivered or shipping today"
+          : `About ${data.estimatedDeliveryDays} day(s)`
+        : null,
     item_count: itemCount,
-    items: physicalItems.length ? physicalItems : null,
-    processing_fees: processingFees.length ? processingFees : null,
-    shipping_fees: shippingFees.length ? shippingFees : null,
-    handling_fees: handlingFees.length ? handlingFees : null,
-    total_amount: data.totalAmount ?? null,
-    shipping_amount: data.shippingFee ?? null,
-    subtotal_amount: data.subtotalAmount ?? null,
-    total_tax: data.totalTax ?? null,
-    total_discounts: data.totalDiscounts ?? null,
-    payment_method: paymentMethod,
-    payment_method_last4: data.cardLast4 ?? null,
-    payment_gateway: data.paymentGateway ?? null,
-    card_brand: data.cardBrand ?? null,
-    refund_status: data.refundStatus ?? null,
-    refund_reason: data.refundReason ?? null,
-    cancel_reason: cancelReason,
-    refund_amount: data.refundAmount ?? null,
-    refund_notification_email: refundNotificationEmail,
-    refund_notification_email_for_tts: formatEmailForTTS(refundNotificationEmail),
-    order_confirmation_email: orderConfirmationEmail,
-    order_confirmation_email_for_tts: formatEmailForTTS(orderConfirmationEmail),
-    events: data.events ?? [],
-    note: data.orderNote ?? null,
-    order_note: data.orderNote ?? null,
-    tags: data.tags ?? [],
-    source_name: data.sourceName ?? null,
-    channel_name: data.channelName ?? null,
-    publication_name: data.publicationName ?? null,
-    is_draft_order_origin: data.isDraftOrderOrigin === true,
-    custom_attributes: data.customAttributes ?? [],
-    transactions: data.transactions ?? [],
-    order_placed_at: data.orderPlacedAt ?? null,
-    refund_date: data.refundDate ?? null,
+    physical_items: publicItems.length ? publicItems : null,
+  };
+
+  const secureData: Record<string, unknown> | null = verified
+    ? {
+        customer_name: data.customerName ?? null,
+        customer_email: data.customerEmail ?? null,
+        customer_email_for_tts: formatEmailForTTS(data.customerEmail ?? null),
+        customer_phone: data.customerPhone ?? null,
+        shipping_address: data.shippingAddress ?? null,
+        total_order_count: data.totalOrderCount ?? session?.totalOrderCount ?? null,
+        physical_items: physicalItems.length ? physicalItems : null,
+        fee_items: feeItems.length ? feeItems : null,
+        processing_fees: processingFees.length ? processingFees : null,
+        shipping_fees: shippingFees.length ? shippingFees : null,
+        handling_fees: handlingFees.length ? handlingFees : null,
+        total_amount: data.totalAmount ?? null,
+        shipping_amount: data.shippingFee ?? null,
+        subtotal_amount: data.subtotalAmount ?? null,
+        total_tax: data.totalTax ?? null,
+        total_discounts: data.totalDiscounts ?? null,
+        payment_method: paymentMethod,
+        payment_method_last4: data.cardLast4 ?? null,
+        payment_gateway: data.paymentGateway ?? null,
+        card_brand: data.cardBrand ?? null,
+        refund_status: data.refundStatus ?? null,
+        refund_reason: data.refundReason ?? null,
+        cancel_reason: cancelReason,
+        refund_amount: data.refundAmount ?? null,
+        refund_notification_email: refundNotificationEmail,
+        refund_notification_email_for_tts: formatEmailForTTS(refundNotificationEmail),
+        order_confirmation_email: orderConfirmationEmail,
+        order_confirmation_email_for_tts: formatEmailForTTS(orderConfirmationEmail),
+        events: data.events ?? [],
+        note: data.orderNote ?? null,
+        order_note: data.orderNote ?? null,
+        tags: data.tags ?? [],
+        source_name: data.sourceName ?? null,
+        channel_name: data.channelName ?? null,
+        publication_name: data.publicationName ?? null,
+        is_draft_order_origin: data.isDraftOrderOrigin === true,
+        custom_attributes: data.customAttributes ?? [],
+        transactions: data.transactions ?? [],
+        order_placed_at: data.orderPlacedAt ?? null,
+        refund_date: data.refundDate ?? null,
+      }
+    : null;
+
+  const payload: Record<string, unknown> = {
+    public_data: publicData,
+    secure_data: secureData,
+    order_number: data.orderNumber ?? null,
+    customer_name: verified ? (data.customerName ?? null) : null,
+    customer_email: verified ? (data.customerEmail ?? null) : null,
+    customer_email_for_tts: verified ? formatEmailForTTS(data.customerEmail ?? null) : null,
+    is_verified_caller: verified,
+    total_order_count: verified
+      ? (data.totalOrderCount ?? session?.totalOrderCount ?? null)
+      : null,
+    shipping_address: verified ? (data.shippingAddress ?? null) : null,
+    physical_items: publicItems.length ? publicItems : null,
+    fee_items: verified && feeItems.length ? feeItems : null,
+    item_count: itemCount,
+    items: publicItems.length ? publicItems : null,
+    processing_fees: verified && processingFees.length ? processingFees : null,
+    shipping_fees: verified && shippingFees.length ? shippingFees : null,
+    handling_fees: verified && handlingFees.length ? handlingFees : null,
+    total_amount: verified ? (data.totalAmount ?? null) : null,
+    shipping_amount: verified ? (data.shippingFee ?? null) : null,
+    subtotal_amount: verified ? (data.subtotalAmount ?? null) : null,
+    total_tax: verified ? (data.totalTax ?? null) : null,
+    total_discounts: verified ? (data.totalDiscounts ?? null) : null,
+    payment_method: verified ? paymentMethod : null,
+    payment_method_last4: verified ? (data.cardLast4 ?? null) : null,
+    payment_gateway: verified ? (data.paymentGateway ?? null) : null,
+    card_brand: verified ? (data.cardBrand ?? null) : null,
+    refund_status: verified ? (data.refundStatus ?? null) : null,
+    refund_reason: verified ? (data.refundReason ?? null) : null,
+    cancel_reason: verified ? cancelReason : null,
+    refund_amount: verified ? (data.refundAmount ?? null) : null,
+    refund_notification_email: verified ? refundNotificationEmail : null,
+    refund_notification_email_for_tts: verified
+      ? formatEmailForTTS(refundNotificationEmail)
+      : null,
+    order_confirmation_email: verified ? orderConfirmationEmail : null,
+    order_confirmation_email_for_tts: verified
+      ? formatEmailForTTS(orderConfirmationEmail)
+      : null,
+    events: verified ? (data.events ?? []) : [],
+    note: verified ? (data.orderNote ?? null) : null,
+    order_note: verified ? (data.orderNote ?? null) : null,
+    tags: verified ? (data.tags ?? []) : [],
+    source_name: verified ? (data.sourceName ?? null) : null,
+    channel_name: verified ? (data.channelName ?? null) : null,
+    publication_name: verified ? (data.publicationName ?? null) : null,
+    is_draft_order_origin: verified ? data.isDraftOrderOrigin === true : false,
+    custom_attributes: verified ? (data.customAttributes ?? []) : [],
+    transactions: verified ? (data.transactions ?? []) : [],
+    order_placed_at: verified ? (data.orderPlacedAt ?? null) : null,
+    refund_date: verified ? (data.refundDate ?? null) : null,
     fulfillment_status: data.fulfillmentStatus ?? null,
     estimated_delivery_days: data.estimatedDeliveryDays ?? null,
     tracking_number: trackingNumber,
@@ -1311,6 +1392,8 @@ function shapeOrderStatusForLlm(
       ? formatTrackingNumberForTTS(trackingNumber)
       : null,
     tracking_status: data.trackingStatus ?? null,
+    privacy_tier: verified ? "verified" : "unverified",
+    vault_access: verified ? "granted" : "restricted",
   };
 
   // Payload synchronization guard — these keys must never be omitted.

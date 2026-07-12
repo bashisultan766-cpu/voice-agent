@@ -1,7 +1,6 @@
 /** @deprecated Search uses live Shopify GraphQL per query (shopifyLiveSearch.ts). Kept for reference only. */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { getShopifyAdminAccessToken } from "../platform/shopifyAccessToken.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
 
@@ -19,9 +18,9 @@ function shopifyBaseUrl(): string {
   return `https://${domain}/admin/api/${cfg.SHOPIFY_API_VERSION}`;
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
+function authHeaders(): Record<string, string> {
   return {
-    "X-Shopify-Access-Token": await getShopifyAdminAccessToken(),
+    "X-Shopify-Access-Token": getConfig().SHOPIFY_ADMIN_ACCESS_TOKEN,
     "Content-Type": "application/json",
   };
 }
@@ -56,7 +55,7 @@ async function shopifyGraphql<T>(query: string, variables?: Record<string, unkno
   try {
     const res = await fetch(`${shopifyBaseUrl()}/graphql.json`, {
       method: "POST",
-      headers: await authHeaders(),
+      headers: authHeaders(),
       body: JSON.stringify({ query, variables }),
       signal: controller.signal,
     });

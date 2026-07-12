@@ -181,17 +181,18 @@ describe("shopify timeline and payment details", () => {
 });
 
 describe("order detail permissions", () => {
-  it("26-29 — non-verified gets title/price/shipping, refuses address", () => {
+  it("26-29 — non-verified gets title only; refuses price/shipping/address", () => {
     const session = seedSession("OD_1", false);
     const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
+    expect(buildOrderDetailSpeech(session, "what is the item title", ctx)).toMatch(/Healing Book/i);
+
     const speech = buildOrderDetailSpeech(
       session,
       "tell me item title, item price, and shipping fee",
       ctx,
     );
-    expect(speech).toMatch(/Healing Book/i);
-    expect(speech).toMatch(/\$12\.00/i);
-    expect(speech).toMatch(/\$5\.00/i);
+    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
+    expect(speech).not.toMatch(/\$12\.00|\$5\.00/i);
 
     const addr = buildOrderDetailSpeech(session, "what is the shipping address", ctx);
     expect(addr).toMatch(/cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);

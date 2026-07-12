@@ -162,7 +162,9 @@ describe("getOrderStatus", () => {
     expect(result.customerName).toBe("Jane Doe");
     expect(result.subtotalAmount).toBe("40.00 USD");
     expect(result.shippingFee).toBe("5.99 USD");
-    expect(result.lineItems).toEqual([{ title: "Sample Book", quantity: 2 }]);
+    expect(result.lineItems).toEqual([
+      { title: "Sample Book", quantity: 2, fulfillmentStatus: "unfulfilled" },
+    ]);
     expect(result.cardLast4).toBe("4242");
     expect(result.paymentGateway).toBe("Shopify Payments");
     expect(result.fulfillmentStatus).toBe("Delivered");

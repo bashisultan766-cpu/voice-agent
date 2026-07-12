@@ -118,18 +118,12 @@ export function buildActiveOrderContextSystemMessage(
   return (
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +
-    "When privacy_tier is \"unverified\", shipping_address and billing_address are restricted — all other current-order fields in this JSON are available. " +
-    "NEVER say that non-null fields are \"not on file\". Refuse only shipping address or past order history per CRYPTOGRAPHIC PRIVACY PROTOCOL. " +
-    "You have the full order timeline in events plus note/order_note, tags, transactions (including manual payments and receipt summaries), " +
-    "source_name, channel_name, publication_name, is_draft_order_origin, custom_attributes, order_placed_at, customer_email, customer_email_for_tts, customer_name, payment_method, payment_method_last4, " +
-    "card_brand, cancel_reason, refund_reason, refund_notification_email, refund_notification_email_for_tts, " +
-    "order_confirmation_email, and refund_reason — " +
-    "never read timeline text verbatim or invent staff actions; you MAY summarize staff comments and payment notes for the caller. " +
-    "For refund/confirmation email questions, use refund_notification_email_for_tts when present. " +
+    "The payload includes public_data (safe for all callers) and secure_data (verified callers only; null when unverified). " +
+    "When privacy_tier is \"unverified\", answer only from public_data / public flat fields (status, tracking, shipping timeframe, item titles/quantities). " +
+    "NEVER say that restricted secure fields are \"not on file\" — refuse per CRYPTOGRAPHIC PRIVACY PROTOCOL RULE 1.1. " +
+    "When verified, secure_data includes customer_email, shipping_address, payment_method_last4, tags, staff notes/events, transactions, and financial totals. " +
+    "For refund/confirmation email questions (verified only), use refund_notification_email_for_tts when present. " +
     "If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK with customer_email_for_tts. " +
-    "Never claim you lack access or say information is not on file when those fields are non-null for verified callers. " +
-    "For unverified callers, only shipping_address/billing_address are stripped — notes, tags, events, transactions, and payment logic remain available; refuse ship-to and detailed past history per RULE 1.1. " +
-    "For refund status, notification, or payment method questions, follow INTERNATIONAL PROTOCOL. " +
     "Do not call get_shopify_order_status again unless the user provides a different order number. " +
     `JSON: ${JSON.stringify(data)}`
   );

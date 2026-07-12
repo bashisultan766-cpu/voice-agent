@@ -92,6 +92,9 @@ export interface DeepOrderGraphqlNode {
       node?: {
         title?: string;
         quantity?: number;
+        currentQuantity?: number | null;
+        unfulfilledQuantity?: number | null;
+        variant?: { title?: string | null; sku?: string | null } | null;
         originalUnitPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
       };
     }>;
@@ -131,8 +134,22 @@ export interface ParsedOrderData {
   totalTax?: string;
   totalDiscounts?: string;
   itemCount: number;
-  lineItems: Array<{ title: string; quantity: number; price?: string }>;
-  feeLineItems: Array<{ title: string; quantity: number; price?: string }>;
+  lineItems: Array<{
+    title: string;
+    quantity: number;
+    price?: string;
+    variantTitle?: string;
+    sku?: string;
+    fulfillmentStatus?: string;
+  }>;
+  feeLineItems: Array<{
+    title: string;
+    quantity: number;
+    price?: string;
+    variantTitle?: string;
+    sku?: string;
+    fulfillmentStatus?: string;
+  }>;
   isRefunded: boolean;
   refundReason?: string;
   /** Shopify cancelReason enum or timeline-derived cancellation cause. */
@@ -309,30 +326,54 @@ function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
   });
 }
 
-function parseRawLineItems(
-  node: DeepOrderGraphqlNode,
-): Array<{ title: string; quantity: number; price?: string }> {
-  return (
-    node.lineItems?.edges
-      ?.map((e) => {
-        const title = e.node?.title?.trim();
-        if (!title) return null;
-        const price = formatMoneyAmount(e.node?.originalUnitPriceSet?.shopMoney);
-        return {
-          title,
-          quantity: e.node?.quantity ?? 1,
-          ...(price ? { price } : {}),
-        };
-      })
-      .filter(
-        (li): li is { title: string; quantity: number; price?: string } => li !== null,
-      ) ?? []
-  );
+function lineItemFulfillmentStatus(
+  quantity: number,
+  unfulfilledQuantity: number | null | undefined,
+): string {
+  const unfulfilled =
+    typeof unfulfilledQuantity === "number" && Number.isFinite(unfulfilledQuantity)
+      ? Math.max(0, unfulfilledQuantity)
+      : quantity;
+  if (unfulfilled <= 0) return "fulfilled";
+  if (unfulfilled < quantity) return "partial";
+  return "unfulfilled";
 }
 
-function parseLineItems(
-  node: DeepOrderGraphqlNode,
-): Array<{ title: string; quantity: number; price?: string }> {
+export type ParsedLineItem = {
+  title: string;
+  quantity: number;
+  price?: string;
+  variantTitle?: string;
+  sku?: string;
+  fulfillmentStatus?: string;
+};
+
+function parseRawLineItems(node: DeepOrderGraphqlNode): ParsedLineItem[] {
+  const items: ParsedLineItem[] = [];
+  for (const edge of node.lineItems?.edges ?? []) {
+    const title = edge.node?.title?.trim();
+    if (!title) continue;
+    const quantity = edge.node?.quantity ?? 1;
+    const price = formatMoneyAmount(edge.node?.originalUnitPriceSet?.shopMoney);
+    const variantTitle = edge.node?.variant?.title?.trim() || undefined;
+    const sku = edge.node?.variant?.sku?.trim() || undefined;
+    const fulfillmentStatus = lineItemFulfillmentStatus(
+      quantity,
+      edge.node?.unfulfilledQuantity,
+    );
+    items.push({
+      title,
+      quantity,
+      ...(price ? { price } : {}),
+      ...(variantTitle ? { variantTitle } : {}),
+      ...(sku ? { sku } : {}),
+      fulfillmentStatus,
+    });
+  }
+  return items;
+}
+
+function parseLineItems(node: DeepOrderGraphqlNode): ParsedLineItem[] {
   return splitLineItems(parseRawLineItems(node)).physicalItems;
 }
 

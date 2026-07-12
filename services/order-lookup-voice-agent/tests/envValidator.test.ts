@@ -5,7 +5,6 @@ import {
   pingShopifyAdminApi,
   validateShopifyEnvFormat,
 } from "../src/platform/envValidator.js";
-import { resetShopifyAccessTokenCacheForTests } from "../src/platform/shopifyAccessToken.js";
 import { ShopifyAuthError } from "../src/platform/shopifyErrors.js";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -20,14 +19,11 @@ describe("envValidator", () => {
       OPENAI_API_KEY: "sk-test",
       SHOPIFY_SHOP_DOMAIN: "sureshot-books.myshopify.com",
       SHOPIFY_ADMIN_ACCESS_TOKEN: "shpat_validtoken123456",
-      SHOPIFY_API_VERSION: "2024-01",
+      SHOPIFY_API_VERSION: "2025-07",
     };
     delete process.env.SHOPIFY_CLIENT_ID;
     delete process.env.SHOPIFY_CLIENT_SECRET;
-    delete process.env.SHOPIFY_API_KEY;
-    delete process.env.SHOPIFY_API_SECRET;
     resetConfigCacheForTests();
-    resetShopifyAccessTokenCacheForTests();
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -35,7 +31,6 @@ describe("envValidator", () => {
     process.env = { ...ORIGINAL_ENV };
     vi.unstubAllGlobals();
     vi.resetModules();
-    resetShopifyAccessTokenCacheForTests();
   });
 
   it("maps SHOPIFY_STORE_DOMAIN alias to SHOPIFY_SHOP_DOMAIN", () => {
@@ -55,11 +50,9 @@ describe("envValidator", () => {
     expect(() => validateShopifyEnvFormat()).toThrow(/SHOPIFY_ADMIN_ACCESS_TOKEN/);
   });
 
-  it("accepts client credentials without static admin token", () => {
+  it("requires static admin token", () => {
     delete process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
-    process.env.SHOPIFY_CLIENT_ID = "cid";
-    process.env.SHOPIFY_CLIENT_SECRET = "csecret";
-    expect(() => validateShopifyEnvFormat()).not.toThrow();
+    expect(() => validateShopifyEnvFormat()).toThrow(/SHOPIFY_ADMIN_ACCESS_TOKEN/);
   });
 
   it("throws ShopifyAuthError on 401 startup ping", async () => {

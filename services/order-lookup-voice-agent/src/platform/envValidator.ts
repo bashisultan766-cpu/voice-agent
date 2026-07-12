@@ -5,7 +5,6 @@ import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { maskShopifyToken } from "../utils/security.js";
 import { normalizeShopifyEnvAliases } from "./envAliases.js";
-import { getShopifyAdminAccessToken } from "./shopifyAccessToken.js";
 import { ShopifyAuthError } from "./shopifyErrors.js";
 
 export { normalizeShopifyEnvAliases } from "./envAliases.js";
@@ -17,12 +16,6 @@ const ADMIN_TOKEN_RE = /^(shpat_|shpca_|shpss_)[A-Za-z0-9]+$/;
 
 function normalizeShopDomain(raw: string): string {
   return raw.replace(/^https?:\/\//, "").replace(/\/$/, "").trim().toLowerCase();
-}
-
-function hasClientCredentialsEnv(): boolean {
-  return Boolean(
-    process.env.SHOPIFY_CLIENT_ID?.trim() && process.env.SHOPIFY_CLIENT_SECRET?.trim(),
-  );
 }
 
 /** Validate Shopify credentials exist and match expected formats. */
@@ -45,14 +38,8 @@ export function validateShopifyEnvFormat(): void {
     );
   }
 
-  if (hasClientCredentialsEnv()) {
-    return;
-  }
-
   if (!token) {
-    throw new Error(
-      "Shopify auth required: set SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET, or SHOPIFY_ADMIN_ACCESS_TOKEN",
-    );
+    throw new Error("SHOPIFY_ADMIN_ACCESS_TOKEN is required");
   }
 
   if (!ADMIN_TOKEN_RE.test(token)) {
@@ -71,23 +58,13 @@ function shopifyGraphqlUrl(): string {
 const SHOP_PING_QUERY = `query StartupShopPing { shop { name } }`;
 
 /**
- * Lightweight Admin GraphQL ping — verifies token and shop reachability.
+ * Fail-fast Admin GraphQL ping — verifies static Admin token and shop reachability.
  * @throws ShopifyAuthError on 401/403
  */
 export async function pingShopifyAdminApi(): Promise<string> {
   validateShopifyEnvFormat();
   const cfg = getConfig();
-  let accessToken: string;
-  try {
-    accessToken = await getShopifyAdminAccessToken();
-  } catch (err) {
-    logger.error("SHOPIFY_AUTH_FAILED: Client credentials handshake failed", {
-      shop: cfg.SHOPIFY_SHOP_DOMAIN,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
-
+  const accessToken = cfg.SHOPIFY_ADMIN_ACCESS_TOKEN;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
 
@@ -103,7 +80,7 @@ export async function pingShopifyAdminApi(): Promise<string> {
     });
 
     if (res.status === 401 || res.status === 403) {
-      logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
+      logger.error("[FATAL] Invalid Shopify Admin Token", {
         httpStatus: res.status,
         token: maskShopifyToken(accessToken),
         shop: cfg.SHOPIFY_SHOP_DOMAIN,
@@ -112,7 +89,7 @@ export async function pingShopifyAdminApi(): Promise<string> {
     }
 
     if (!res.ok) {
-      logger.error("SHOPIFY_AUTH_FAILED: Shop ping HTTP error", {
+      logger.error("[FATAL] Invalid Shopify Admin Token", {
         httpStatus: res.status,
         shop: cfg.SHOPIFY_SHOP_DOMAIN,
       });
@@ -131,7 +108,7 @@ export async function pingShopifyAdminApi(): Promise<string> {
         ) || e.extensions?.code === "ACCESS_DENIED",
     );
     if (authDenied) {
-      logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
+      logger.error("[FATAL] Invalid Shopify Admin Token", {
         httpStatus: res.status,
         token: maskShopifyToken(accessToken),
         shop: cfg.SHOPIFY_SHOP_DOMAIN,
@@ -148,7 +125,7 @@ export async function pingShopifyAdminApi(): Promise<string> {
     logger.info("shopify_startup_ping_ok", {
       shop: shopName,
       token: maskShopifyToken(accessToken),
-      authMode: hasClientCredentialsEnv() ? "client_credentials" : "static_token",
+      authMode: "static_token",
     });
 
     return shopName;
@@ -157,10 +134,13 @@ export async function pingShopifyAdminApi(): Promise<string> {
   }
 }
 
+/** Alias for fail-fast boot check. */
+export const startupPing = pingShopifyAdminApi;
+
 /**
  * Fatal startup guard — refuse to serve calls with broken Shopify credentials.
  */
 export async function validateEnvironmentOnStartup(): Promise<void> {
   validateShopifyEnvFormat();
-  await pingShopifyAdminApi();
+  await startupPing();
 }

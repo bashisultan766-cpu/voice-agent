@@ -21,18 +21,4 @@ export function normalizeShopifyEnvAliases(): void {
       process.env.SHOPIFY_ADMIN_API_TOKEN?.trim();
     if (alias) process.env.SHOPIFY_ADMIN_ACCESS_TOKEN = alias;
   }
-
-  if (!process.env.SHOPIFY_CLIENT_ID?.trim()) {
-    const alias =
-      process.env.SHOPIFY_API_KEY?.trim() ??
-      process.env.SHOPIFY_APP_CLIENT_ID?.trim();
-    if (alias) process.env.SHOPIFY_CLIENT_ID = alias;
-  }
-
-  if (!process.env.SHOPIFY_CLIENT_SECRET?.trim()) {
-    const alias =
-      process.env.SHOPIFY_API_SECRET?.trim() ??
-      process.env.SHOPIFY_APP_CLIENT_SECRET?.trim();
-    if (alias) process.env.SHOPIFY_CLIENT_SECRET = alias;
-  }
 }

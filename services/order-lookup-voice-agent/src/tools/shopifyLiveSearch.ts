@@ -12,7 +12,6 @@ import {
 } from "../platform/shopifyErrors.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
-import { getShopifyAdminAccessToken } from "../platform/shopifyAccessToken.js";
 import { ensureShopifyProductScopes, SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR } from "./shopifyScopeCheck.js";
 import { maskShopifyToken } from "../utils/security.js";
 
@@ -158,7 +157,7 @@ export async function shopifyGraphql<T>(
   variables?: Record<string, unknown>,
 ): Promise<T> {
   const cfg = getConfig();
-  const accessToken = await getShopifyAdminAccessToken();
+  const accessToken = cfg.SHOPIFY_ADMIN_ACCESS_TOKEN;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
 

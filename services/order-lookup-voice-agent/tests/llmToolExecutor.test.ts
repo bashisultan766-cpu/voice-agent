@@ -56,6 +56,15 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.payment_method).toBe("PayPal");
     expect(parsed.data.payment_method_last4).toBeNull();
     expect(parsed.data.card_brand).toBeNull();
+    expect(parsed.data.public_data).toMatchObject({
+      order_number: "#21698-F1",
+      physical_items: [{ title: "The Holy Bible - King James Version", quantity: 1 }],
+    });
+    expect(parsed.data.secure_data).toMatchObject({
+      customer_name: "Joel Moore",
+      total_amount: "96.00 USD",
+      cancel_reason: "Out of stock",
+    });
     // Omni-Extractor payload keys must always be present (null allowed).
     for (const key of [
       "customer_name",
@@ -103,14 +112,28 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.refund_notification_email_for_tts).toBe(
       "jamaicathompson87 at gmail dot com",
     );
+    expect(parsed.data.secure_data).toMatchObject({
+      customer_name: "Jamaica Thompson",
+      payment_method_last4: "4242",
+      card_brand: "Visa",
+    });
 
-    const sessionPayload = buildActiveOrderContextPayload(record.data);
+    const verifiedSession = {
+      isVerifiedCaller: true,
+    } as import("../src/types/order.js").CallSession;
+    const sessionPayload = buildActiveOrderContextPayload(record.data, verifiedSession);
     expect(sessionPayload.customer_name).toBe("Jamaica Thompson");
     expect(sessionPayload.payment_method_last4).toBe("4242");
     expect(sessionPayload.card_brand).toBe("Visa");
     expect(sessionPayload.refund_notification_email).toBe(
       "jamaicathompson87@gmail.com",
     );
+
+    const unverifiedPayload = buildActiveOrderContextPayload(record.data);
+    expect(unverifiedPayload.customer_name).toBeNull();
+    expect(unverifiedPayload.payment_method_last4).toBeNull();
+    expect(unverifiedPayload.secure_data).toBeNull();
+    expect(unverifiedPayload.privacy_tier).toBe("unverified");
   });
 
   it("includes tracking_number and tracking_number_for_tts in order payload", () => {
@@ -166,16 +189,35 @@ describe("toolResultForLlm order shaping", () => {
 
     expect(parsed.data.item_count).toBe(1);
     expect(parsed.data.physical_items).toEqual([
-      { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
+      { title: "The Holy Bible", quantity: 1 },
     ]);
     expect(parsed.data.items).toEqual([
-      { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
+      { title: "The Holy Bible", quantity: 1 },
     ]);
+    expect(parsed.data.public_data).toMatchObject({
+      item_count: 1,
+      physical_items: [{ title: "The Holy Bible", quantity: 1 }],
+    });
+    expect(parsed.data.secure_data).toMatchObject({
+      physical_items: [{ title: "The Holy Bible", quantity: 1, price: "12.99 USD" }],
+      processing_fees: [{ title: "Processing Fee", quantity: 1, price: "3.00 USD" }],
+      shipping_fees: [{ title: "Shipping", quantity: 1, price: "5.50 USD" }],
+    });
     expect(parsed.data.processing_fees).toEqual([
       { title: "Processing Fee", quantity: 1, price: "3.00 USD" },
     ]);
     expect(parsed.data.shipping_fees).toEqual([
       { title: "Shipping", quantity: 1, price: "5.50 USD" },
+    ]);
+
+    const unverified = JSON.parse(
+      toolResultForLlm(record, { isVerifiedCaller: false }),
+    ) as { data: Record<string, unknown> };
+    expect(unverified.data.secure_data).toBeNull();
+    expect(unverified.data.processing_fees).toBeNull();
+    expect(unverified.data.shipping_fees).toBeNull();
+    expect(unverified.data.physical_items).toEqual([
+      { title: "The Holy Bible", quantity: 1 },
     ]);
   });
 

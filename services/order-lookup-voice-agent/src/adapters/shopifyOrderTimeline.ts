@@ -5,7 +5,6 @@
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { maskShopifyToken } from "../utils/security.js";
-import { getShopifyAdminAccessToken } from "../platform/shopifyAccessToken.js";
 import { ShopifyAuthError } from "../platform/shopifyErrors.js";
 import { shopifyGraphql } from "../tools/shopifyLiveSearch.js";
 import type { OrderTimelineEvent } from "./orderFieldExtractors.js";
@@ -214,7 +213,7 @@ async function fetchTimelineRestByNumericId(
   numericId: string,
 ): Promise<OrderTimelineEvent[]> {
   const cfg = getConfig();
-  const accessToken = await getShopifyAdminAccessToken();
+  const accessToken = cfg.SHOPIFY_ADMIN_ACCESS_TOKEN;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
 
@@ -306,12 +305,11 @@ export async function enrichOrderNodeTimeline(
       return enriched;
     }
   } catch (err) {
-    const accessToken = await getShopifyAdminAccessToken().catch(() => "");
     logger.warn("shopify_timeline_graphql_by_id_failed", {
       orderNumber: node.name,
       orderGid,
       error: err instanceof Error ? err.message : String(err),
-      token: accessToken ? maskShopifyToken(accessToken) : "****",
+      token: maskShopifyToken(getConfig().SHOPIFY_ADMIN_ACCESS_TOKEN),
     });
   }
 

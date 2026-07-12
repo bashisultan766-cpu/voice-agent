@@ -178,7 +178,14 @@ export interface OrderStatusResult {
   totalTax?: string;
   totalDiscounts?: string;
   itemCount?: number;
-  lineItems?: Array<{ title: string; quantity: number; price?: string }>;
+  lineItems?: Array<{
+    title: string;
+    quantity: number;
+    price?: string;
+    variantTitle?: string;
+    sku?: string;
+    fulfillmentStatus?: string;
+  }>;
   orderNote?: string;
   cardLast4?: string;
   cardBrand?: string;
@@ -396,6 +403,12 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
             node {
               title
               quantity
+              currentQuantity
+              unfulfilledQuantity
+              variant {
+                title
+                sku
+              }
               originalUnitPriceSet {
                 shopMoney {
                   amount

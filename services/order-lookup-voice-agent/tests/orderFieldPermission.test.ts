@@ -61,20 +61,28 @@ function filteredContext(session: CallSession) {
 }
 
 describe("canRevealOrderField", () => {
-  it("allows normal order fields for non-verified callers", () => {
+  it("allows only public reveal fields for non-verified callers", () => {
+    expect(canRevealOrderField("orderNumber", false)).toBe(true);
+    expect(canRevealOrderField("orderStatus", false)).toBe(true);
+    expect(canRevealOrderField("fulfillmentStatus", false)).toBe(true);
+    expect(canRevealOrderField("trackingNumber", false)).toBe(true);
+    expect(canRevealOrderField("trackingCompany", false)).toBe(true);
     expect(canRevealOrderField("itemTitle", false)).toBe(true);
-    expect(canRevealOrderField("itemPrice", false)).toBe(true);
-    expect(canRevealOrderField("shippingFee", false)).toBe(true);
-    expect(canRevealOrderField("totalAmount", false)).toBe(true);
-    expect(canRevealOrderField("notificationDestinationMasked", false)).toBe(true);
+    expect(canRevealOrderField("itemQuantity", false)).toBe(true);
+    expect(canRevealOrderField("itemPrice", false)).toBe(false);
+    expect(canRevealOrderField("shippingFee", false)).toBe(false);
+    expect(canRevealOrderField("totalAmount", false)).toBe(false);
+    expect(canRevealOrderField("notificationDestinationMasked", false)).toBe(false);
   });
 
-  it("blocks shipping and history for non-verified callers", () => {
+  it("blocks secure fields for non-verified callers", () => {
     expect(canRevealOrderField("shippingAddress", false)).toBe(false);
     expect(canRevealOrderField("fullPreviousOrderHistory", false)).toBe(false);
-    expect(canRevealOrderField("paymentCardLast4", false)).toBe(true);
-    expect(canRevealOrderField("customerName", false)).toBe(true);
-    expect(canRevealOrderField("fullCustomerEmail", false)).toBe(true);
+    expect(canRevealOrderField("paymentCardLast4", false)).toBe(false);
+    expect(canRevealOrderField("customerName", false)).toBe(false);
+    expect(canRevealOrderField("fullCustomerEmail", false)).toBe(false);
+    expect(canRevealOrderField("orderNote", false)).toBe(false);
+    expect(canRevealOrderField("timelineEvents", false)).toBe(false);
   });
 });
 
@@ -85,19 +93,21 @@ describe("non-verified order field disclosure", () => {
     expect(speech).toMatch(/Healing Book/i);
   });
 
-  it("2 — provides item price", () => {
+  it("2 — refuses item price for unverified callers", () => {
     const session = seedSession("NF_2", false);
     const speech = buildOrderDetailSpeech(session, "what is the item price", filteredContext(session));
-    expect(speech).toMatch(/\$12\.00/i);
+    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
+    expect(speech).not.toMatch(/\$12\.00/i);
   });
 
-  it("3 — provides shipping fee", () => {
+  it("3 — refuses shipping fee for unverified callers", () => {
     const session = seedSession("NF_3", false);
     const speech = buildOrderDetailSpeech(session, "what is the shipping fee", filteredContext(session));
-    expect(speech).toMatch(/\$5\.00/i);
+    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
+    expect(speech).not.toMatch(/\$5\.00/i);
   });
 
-  it("4 — provides title, price, shipping fee, and total together", () => {
+  it("4 — refuses price, shipping fee, and total together for unverified callers", () => {
     const session = seedSession("NF_4", false);
     const fields = detectRequestedOrderFields(
       "tell me item title, item price, shipping fee, and total amount",
@@ -110,20 +120,19 @@ describe("non-verified order field disclosure", () => {
       "tell me item title, item price, shipping fee, and total amount",
       filteredContext(session),
     );
-    expect(speech).toMatch(/Healing Book/i);
-    expect(speech).toMatch(/\$12\.00/i);
-    expect(speech).toMatch(/\$5\.00/i);
-    expect(speech).toMatch(/\$17\.00/i);
+    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
+    expect(speech).not.toMatch(/\$12\.00|\$5\.00|\$17\.00/i);
   });
 
-  it("5 — answers confirmation email for unverified callers", () => {
+  it("5 — refuses confirmation email for unverified callers", () => {
     const session = seedSession("NF_5", false);
     const speech = buildOrderDetailSpeech(
       session,
       "where was the confirmation sent",
       filteredContext(session),
     );
-    expect(speech).toMatch(/fred@example\.com|fred at example/i);
+    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
+    expect(speech).not.toMatch(/fred@example\.com|fred at example/i);
   });
 
   it("6 — refuses shipping address and offers support", () => {

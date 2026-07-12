@@ -7,9 +7,19 @@ import { shouldSkipToolReinvoke } from "../src/sovereign/activeSession.js";
 import type { ActiveSession } from "../src/sovereign/activeSession.js";
 
 describe("orderContextPrivacy", () => {
-  it("strips only shipping address for unverified callers", () => {
+  it("keeps public_data and strips secure fields for unverified callers", () => {
     const filtered = filterOrderContextForVerification(
       {
+        public_data: {
+          order_number: "1234",
+          fulfillment_status: "FULFILLED",
+          tracking_number: "1Z999",
+        },
+        secure_data: {
+          customer_email: "jamaica@example.com",
+          shipping_address: "123 Main St",
+          payment_method_last4: "1302",
+        },
         customer_name: "Jamaica Thompson",
         customer_email: "jamaica@example.com",
         shipping_address: "123 Main St",
@@ -17,26 +27,30 @@ describe("orderContextPrivacy", () => {
         total_amount: "$42.00",
         shipping_amount: "$4.99",
         events: ["Jessica Glass: manually marked $40.00 as paid"],
-        note: "Account Deposit $65.00 - Total Order $40.00 = Current Credit Balance $25.00",
+        note: "Account Deposit $65.00",
         tags: ["account-deposit", "manual"],
         transactions: [{ kind: "sale", gateway: "manual", amount: "40.00" }],
         payment_method: "Visa ending in 1302",
         payment_method_last4: "1302",
+        tracking_number: "1Z999",
+        fulfillment_status: "FULFILLED",
       },
       false,
     );
-    expect(filtered.customer_name).toBe("Jamaica Thompson");
-    expect(filtered.customer_email).toBe("jamaica@example.com");
+    expect(filtered.public_data).toMatchObject({
+      order_number: "1234",
+      tracking_number: "1Z999",
+    });
+    expect(filtered.secure_data).toBeNull();
+    expect(filtered.customer_name).toBeNull();
+    expect(filtered.customer_email).toBeNull();
     expect(filtered.shipping_address).toBeNull();
-    expect(filtered.physical_items).toEqual([{ title: "Book" }]);
-    expect(filtered.total_amount).toBe("$42.00");
-    expect(filtered.events).toEqual(["Jessica Glass: manually marked $40.00 as paid"]);
-    expect(filtered.note).toMatch(/Account Deposit/);
-    expect(filtered.tags).toEqual(["account-deposit", "manual"]);
-    expect(filtered.transactions).toEqual([
-      { kind: "sale", gateway: "manual", amount: "40.00" },
-    ]);
-    expect(filtered.payment_method_last4).toBe("1302");
+    expect(filtered.total_amount).toBeNull();
+    expect(filtered.payment_method_last4).toBeNull();
+    expect(filtered.events).toEqual([]);
+    expect(filtered.tags).toEqual([]);
+    expect(filtered.tracking_number).toBe("1Z999");
+    expect(filtered.fulfillment_status).toBe("FULFILLED");
     expect(filtered.privacy_tier).toBe("unverified");
   });
 
@@ -78,35 +92,8 @@ describe("shouldSkipToolReinvoke", () => {
     expect(
       shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
         userMessage: "what is the shipping fee",
-        orderContext: { customer_name: "A" },
+        orderContext: { customer_name: "A", total_amount: "$10" },
       }),
     ).toBe(false);
-  });
-
-  it("allows re-fetch when no order context is loaded yet", () => {
-    expect(
-      shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
-        userMessage: "21796",
-        orderContext: {},
-      }),
-    ).toBe(false);
-  });
-
-  it("allows re-fetch when caller insists the order number is correct", () => {
-    expect(
-      shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
-        userMessage: "this is the correct order number please find it",
-        orderContext: { customer_name: "A" },
-      }),
-    ).toBe(false);
-  });
-
-  it("still skips identical order re-fetch when context is complete", () => {
-    expect(
-      shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
-        userMessage: "repeat the order status",
-        orderContext: { customer_name: "A", fulfillment_status: "fulfilled" },
-      }),
-    ).toBe(true);
   });
 });

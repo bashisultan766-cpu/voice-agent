@@ -68,6 +68,7 @@ describe("multi-turn order follow-up context injection", () => {
         status: "found",
         orderNumber: "#21698-F1",
         customerName: "Joel Moore",
+        customerPhone: "+15551234567",
         refundStatus: "REFUNDED",
         refundReason: "OUT OF STOCK",
         refundNotificationEmail: "btazp@yahoo.com",
@@ -75,13 +76,14 @@ describe("multi-turn order follow-up context injection", () => {
       },
     });
 
-    const session = createCallSession("CA_MULTI", "+1", "+2");
+    const session = createCallSession("CA_MULTI", "+15551234567", "+2");
 
     const turn1Speech = await collectOrchestratorSpeech(session, "Order 21698");
 
     expect(turn1Speech).toMatch(/I have found your order 21698-F1\./);
     expect(turn1Speech).toMatch(/status is Refunded/);
     expect(turn1Speech).not.toContain("btazp@yahoo.com");
+    expect(session.isVerifiedCaller).toBe(true);
     expect(session.currentOrderData?.refund_notification_email).toBe("btazp@yahoo.com");
     expect(session.phase).toBe("order_disclosed");
 
@@ -116,6 +118,7 @@ describe("multi-turn order follow-up context injection", () => {
       session: {
         callSid: "CA_MSG",
         orderContextConfirmed: true,
+        isVerifiedCaller: true,
         currentOrderData: {
           order_number: "#21698-F1",
           refund_notification_email: "btazp@yahoo.com",

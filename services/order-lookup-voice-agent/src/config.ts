@@ -26,12 +26,9 @@ const envSchema = z.object({
   OPENAI_TIMEOUT_MS: z.coerce.number().default(8000),
 
   SHOPIFY_SHOP_DOMAIN: z.string().min(1),
-  /** Preferred: Dev Dashboard Client Credentials Grant (expires ~24h). */
-  SHOPIFY_CLIENT_ID: z.string().optional().default(""),
-  SHOPIFY_CLIENT_SECRET: z.string().optional().default(""),
-  /** Legacy static Admin API token — used only when client credentials are unset. */
-  SHOPIFY_ADMIN_ACCESS_TOKEN: z.string().optional().default(""),
-  SHOPIFY_API_VERSION: z.string().default("2024-01"),
+  /** Static Custom App Admin API token (required). */
+  SHOPIFY_ADMIN_ACCESS_TOKEN: z.string().min(1),
+  SHOPIFY_API_VERSION: z.string().default("2025-07"),
   /** Hard ceiling for Shopify HTTP / GraphQL calls (voice must not hang). */
   SHOPIFY_TIMEOUT_MS: z.coerce.number().default(6000),
   /** Hard ceiling for any UnifiedToolRegistry execution (Shopify, Resend, etc.). */
@@ -126,13 +123,9 @@ export function getConfig(): AppConfig {
     }
 
     const data = parsed.data;
-    const hasClientCredentials = Boolean(
-      data.SHOPIFY_CLIENT_ID?.trim() && data.SHOPIFY_CLIENT_SECRET?.trim(),
-    );
-    const hasStaticToken = Boolean(data.SHOPIFY_ADMIN_ACCESS_TOKEN?.trim());
-    if (!hasClientCredentials && !hasStaticToken) {
+    if (!data.SHOPIFY_ADMIN_ACCESS_TOKEN?.trim()) {
       throw new Error(
-        "Invalid environment configuration: Shopify auth required (SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET, or SHOPIFY_ADMIN_ACCESS_TOKEN)",
+        "Invalid environment configuration: SHOPIFY_ADMIN_ACCESS_TOKEN is required",
       );
     }
 

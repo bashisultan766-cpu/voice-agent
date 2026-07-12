@@ -186,28 +186,30 @@ describe("production intent scenarios", () => {
   it("7 — non-verified caller asks for shipping address", async () => {
     const session = seedUnverifiedOrderSession("CA_PROD_7");
     expect(isRestrictedFieldQueryForUnverified("what is the shipping address")).toBe(true);
-    expect(isRestrictedFieldQueryForUnverified("what is the customer name")).toBe(false);
-    expect(isRestrictedFieldQueryForUnverified("what is the payment method")).toBe(false);
+    expect(isRestrictedFieldQueryForUnverified("what is the payment method")).toBe(true);
+    expect(isRestrictedFieldQueryForUnverified("what is the total amount")).toBe(true);
     const speech = await collectSpeech(session, "what is the shipping address");
     expect(speech).toMatch(/can't provide the shipping address|cannot share the shipping address|not verified|unverified number/i);
     expect(speech).not.toMatch(/Private Lane/i);
     expect(speech).not.toMatch(/not on file/i);
   });
 
-  it("7b — non-verified caller can hear customer name from order context", async () => {
+  it("7b — non-verified caller cannot hear customer name (secure field)", async () => {
     const session = seedUnverifiedOrderSession("CA_PROD_7B");
     const speech = await collectSpeech(session, "what is the customer name on this order");
-    expect(speech).toMatch(/Jane Doe|under the name/i);
-    expect(speech).not.toMatch(/verified account holder/i);
-    expect(speech).not.toMatch(/not on file/i);
+    expect(speech).toMatch(/unverified number|verified account holder|public order status|not on file/i);
+    expect(speech).not.toMatch(/under the name Jane Doe/i);
+    expect(speech).not.toMatch(/This order is under the name/i);
   });
 
-  it("8 — non-verified caller can ask for all current order details", async () => {
+  it("8 — non-verified caller can ask for public order status details only", async () => {
     const session = seedUnverifiedOrderSession("CA_PROD_8");
-    expect(shouldRefuseUnverifiedFieldQuery(session, "tell me all order details")).toBe(false);
-    const speech = await collectSpeech(session, "tell me all order details");
-    expect(speech).toMatch(/order|status|Jane|item|total|tracking/i);
-    expect(speech).not.toMatch(/cannot share the shipping address/i);
+    expect(shouldRefuseUnverifiedFieldQuery(session, "what is the tracking number")).toBe(false);
+    expect(shouldRefuseUnverifiedFieldQuery(session, "what is the total amount")).toBe(true);
+    const speech = await collectSpeech(session, "what is the order status");
+    expect(speech).toMatch(/order|status|fulfilled|tracking|item|Sample Book/i);
+    expect(speech).not.toMatch(/Private Lane/i);
+    expect(speech).not.toMatch(/\$42\.00/i);
   });
 
   it("9 — customer switches from order history to buying flow", () => {

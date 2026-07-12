@@ -1,6 +1,5 @@
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import { getShopifyAdminAccessToken } from "../platform/shopifyAccessToken.js";
 
 export const SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR = "SHOPIFY TOKEN MISSING read_products SCOPE";
 
@@ -11,9 +10,9 @@ function shopOrigin(): string {
   return `https://${domain}`;
 }
 
-async function authHeaders(): Promise<Record<string, string>> {
+function authHeaders(): Record<string, string> {
   return {
-    "X-Shopify-Access-Token": await getShopifyAdminAccessToken(),
+    "X-Shopify-Access-Token": getConfig().SHOPIFY_ADMIN_ACCESS_TOKEN,
     "Content-Type": "application/json",
   };
 }
@@ -26,7 +25,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { headers: await authHeaders(), signal: controller.signal });
+    return await fetch(url, { headers: authHeaders(), signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
