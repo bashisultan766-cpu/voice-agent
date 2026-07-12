@@ -34,9 +34,6 @@ const ORDER_DEEP_BY_ID_QUERY = `query OrderDeepById($id: ID!) {
         ... on CommentEvent {
           message
           createdAt
-          author {
-            name
-          }
         }
       }
       edges {
@@ -50,9 +47,6 @@ const ORDER_DEEP_BY_ID_QUERY = `query OrderDeepById($id: ID!) {
           ... on CommentEvent {
             message
             createdAt
-            author {
-              name
-            }
           }
         }
       }
@@ -117,20 +111,12 @@ function toTimelineEdges(
 }
 
 function normalizeTimelineNodes(
-  nodes: Array<
-    | (OrderTimelineEvent & {
-        author?: { name?: string | null } | null;
-        attributeToUser?: { name?: string | null } | null;
-      })
-    | null
-    | undefined
-  > | undefined,
+  nodes: Array<OrderTimelineEvent | null | undefined> | undefined,
 ): OrderTimelineEvent[] {
   return (nodes ?? [])
     .filter((node): node is NonNullable<typeof node> => Boolean(node?.message?.trim()))
     .map((node) => {
-      const authorName =
-        node.authorName ?? node.staffName ?? node.author?.name ?? node.attributeToUser?.name ?? null;
+      const authorName = node.authorName ?? node.staffName ?? null;
       return {
         message: node.message,
         action: node.action,
@@ -163,22 +149,7 @@ async function fetchDeepOrderByGid(
   patch: Partial<DeepOrderGraphqlNode>;
 }> {
   const data = await shopifyGraphql<{
-    order?: DeepOrderGraphqlNode & {
-      events?: {
-        nodes?: Array<
-          OrderTimelineEvent & {
-            author?: { name?: string | null } | null;
-            attributeToUser?: { name?: string | null } | null;
-          }
-        >;
-        edges?: Array<{
-          node?: OrderTimelineEvent & {
-            author?: { name?: string | null } | null;
-            attributeToUser?: { name?: string | null } | null;
-          };
-        }>;
-      };
-    };
+    order?: DeepOrderGraphqlNode;
   }>(ORDER_DEEP_BY_ID_QUERY, { id: orderGid });
 
   const order = data.order;

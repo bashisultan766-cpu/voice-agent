@@ -455,9 +455,6 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
               ... on CommentEvent {
                 message
                 createdAt
-                author {
-                  name
-                }
               }
             }
           }

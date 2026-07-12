@@ -322,7 +322,7 @@ describe("getOrderStatus", () => {
     expect(deepQuery).toMatch(/\bsourceName\b/);
     expect(deepQuery).toMatch(/\breceiptJson\b/);
     expect(deepQuery).toMatch(/\bCommentEvent\b/);
-    expect(deepQuery).toMatch(/\bauthor\s*\{/);
+    expect(deepQuery).not.toMatch(/\bauthor\s*\{/);
   });
 });
 

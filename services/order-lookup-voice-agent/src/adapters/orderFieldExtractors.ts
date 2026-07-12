@@ -7,7 +7,7 @@ export interface OrderTimelineEvent {
   message?: string | null;
   action?: string | null;
   createdAt?: string | null;
-  /** Staff / author display name when present on CommentEvent / attributed events. */
+  /** Optional staff / author display name when provided by REST enrichment. */
   authorName?: string | null;
   staffName?: string | null;
 }

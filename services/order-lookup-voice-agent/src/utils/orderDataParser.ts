@@ -73,19 +73,9 @@ export interface DeepOrderGraphqlNode {
   paymentGatewayNames?: string[];
   events?: {
     edges?: Array<{
-      node?: OrderTimelineEvent & {
-        author?: { name?: string | null } | null;
-        attributeToUser?: { name?: string | null } | null;
-      };
+      node?: OrderTimelineEvent;
     }>;
-    nodes?: Array<
-      | (OrderTimelineEvent & {
-          author?: { name?: string | null } | null;
-          attributeToUser?: { name?: string | null } | null;
-        })
-      | null
-      | undefined
-    >;
+    nodes?: Array<OrderTimelineEvent | null | undefined>;
   };
   lineItems?: {
     edges?: Array<{
@@ -310,12 +300,7 @@ function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
   );
   const raw = fromEdges.length ? fromEdges : fromNodes;
   return raw.map((event) => {
-    const authorName =
-      event.authorName ??
-      event.staffName ??
-      event.author?.name ??
-      event.attributeToUser?.name ??
-      null;
+    const authorName = event.authorName ?? event.staffName ?? null;
     return {
       message: event.message,
       action: event.action,
