@@ -218,6 +218,18 @@ export interface OrderStatusResult {
   shippingAddress?: string;
   /** Lifetime order count for the Shopify customer. */
   totalOrderCount?: number;
+  /** Order tags from Shopify Admin. */
+  tags?: string[];
+  /** Origin channel / app source (e.g. shopify_draft_order). */
+  sourceName?: string;
+  channelName?: string;
+  publicationName?: string;
+  /** True when channel/source/tags indicate a draft-order origin. */
+  isDraftOrderOrigin?: boolean;
+  /** Custom attributes key/value pairs. */
+  customAttributes?: Array<{ key: string; value: string }>;
+  /** Structured transactions including manual payment / account deposit receipts. */
+  transactions?: Array<Record<string, unknown>>;
 }
 
 export interface BookCatalogMatch {
@@ -323,6 +335,11 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
         processedAt
         updatedAt
         note
+        tags
+        sourceName
+        publication {
+          name
+        }
         displayFulfillmentStatus
         displayFinancialStatus
         cancelledAt
@@ -421,19 +438,32 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
                 message
                 action
                 createdAt
+                attributeToUser {
+                  ... on StaffMember {
+                    name
+                  }
+                }
               }
               ... on CommentEvent {
                 message
                 createdAt
+                author {
+                  name
+                }
               }
             }
           }
         }
-        transactions(first: 20) {
+        transactions(first: 40) {
           id
           kind
           status
           gateway
+          formattedGateway
+          processedAt
+          accountNumber
+          manualPaymentGateway
+          receiptJson
           paymentDetails {
             ... on CardPaymentDetails {
               company
@@ -595,7 +625,14 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     totalDiscounts: parsed.totalDiscounts,
     itemCount: parsed.itemCount || undefined,
     lineItems: parsed.lineItems.length ? parsed.lineItems : undefined,
-    orderNote: node.note?.trim() || undefined,
+    orderNote: parsed.orderNote ?? (node.note?.trim() || undefined),
+    tags: parsed.tags,
+    sourceName: parsed.sourceName,
+    channelName: parsed.channelName,
+    publicationName: parsed.publicationName,
+    isDraftOrderOrigin: parsed.isDraftOrderOrigin,
+    customAttributes: parsed.customAttributes,
+    transactions: parsed.transactions,
     cardLast4: parsed.cardLast4,
     cardBrand: parsed.cardBrand,
     paymentGateway: parsed.paymentGateway,

@@ -13,6 +13,7 @@ import {
   extractRefundReason,
   extractTimelineRefundReason,
   timelineEventMessages,
+  summarizeTransactionForLlm,
   type OrderCustomAttribute,
   type OrderRefundNode,
   type OrderTimelineEvent,
@@ -31,6 +32,12 @@ export interface DeepOrderGraphqlNode {
   email?: string | null;
   phone?: string | null;
   note?: string | null;
+  tags?: string[] | string | null;
+  sourceName?: string | null;
+  publication?: { name?: string | null } | null;
+  channelInformation?: {
+    channelDefinition?: { channelName?: string | null; handle?: string | null } | null;
+  } | null;
   displayFulfillmentStatus?: string;
   displayFinancialStatus?: string;
   cancelledAt?: string | null;
@@ -66,8 +73,19 @@ export interface DeepOrderGraphqlNode {
   paymentGatewayNames?: string[];
   events?: {
     edges?: Array<{
-      node?: OrderTimelineEvent;
+      node?: OrderTimelineEvent & {
+        author?: { name?: string | null } | null;
+        attributeToUser?: { name?: string | null } | null;
+      };
     }>;
+    nodes?: Array<
+      | (OrderTimelineEvent & {
+          author?: { name?: string | null } | null;
+          attributeToUser?: { name?: string | null } | null;
+        })
+      | null
+      | undefined
+    >;
   };
   lineItems?: {
     edges?: Array<{
@@ -123,6 +141,16 @@ export interface ParsedOrderData {
   orderConfirmationEmail?: string;
   /** Raw timeline messages — injected into LLM session memory for follow-ups. */
   events: string[];
+  /** Order note / memo (often account deposits, credits, staff instructions). */
+  orderNote?: string;
+  tags?: string[];
+  sourceName?: string;
+  channelName?: string;
+  publicationName?: string;
+  isDraftOrderOrigin?: boolean;
+  customAttributes?: Array<{ key: string; value: string }>;
+  /** Structured payment / manual-mark transactions for LLM A-to-Z context. */
+  transactions?: Array<Record<string, unknown>>;
   refundDate?: string;
   refundAmount?: string;
   fulfillmentStatus?: string;
@@ -227,10 +255,58 @@ function formatShippingAddress(
   return parts.length ? parts.join(", ") : undefined;
 }
 
+function normalizeOrderTags(tags: DeepOrderGraphqlNode["tags"]): string[] {
+  if (!tags) return [];
+  if (Array.isArray(tags)) {
+    return tags.map((t) => String(t).trim()).filter(Boolean);
+  }
+  return String(tags)
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function detectDraftOrderOrigin(node: DeepOrderGraphqlNode): boolean {
+  const source = (node.sourceName ?? "").toLowerCase();
+  const channel = (
+    node.channelInformation?.channelDefinition?.channelName ??
+    node.channelInformation?.channelDefinition?.handle ??
+    ""
+  ).toLowerCase();
+  const publication = (node.publication?.name ?? "").toLowerCase();
+  const tags = normalizeOrderTags(node.tags).map((t) => t.toLowerCase());
+  return (
+    /draft/.test(source) ||
+    source.includes("shopify_draft_order") ||
+    /draft/.test(channel) ||
+    /draft/.test(publication) ||
+    tags.some((t) => t.includes("draft"))
+  );
+}
+
 function timelineEvents(node: DeepOrderGraphqlNode): OrderTimelineEvent[] {
-  return (node.events?.edges ?? [])
+  const fromEdges = (node.events?.edges ?? [])
     .map((e) => e.node)
-    .filter((n): n is OrderTimelineEvent => Boolean(n));
+    .filter((n): n is NonNullable<typeof n> => Boolean(n));
+  const fromNodes = (node.events?.nodes ?? []).filter(
+    (n): n is NonNullable<typeof n> => Boolean(n),
+  );
+  const raw = fromEdges.length ? fromEdges : fromNodes;
+  return raw.map((event) => {
+    const authorName =
+      event.authorName ??
+      event.staffName ??
+      event.author?.name ??
+      event.attributeToUser?.name ??
+      null;
+    return {
+      message: event.message,
+      action: event.action,
+      createdAt: event.createdAt,
+      authorName,
+      staffName: authorName,
+    };
+  });
 }
 
 function parseRawLineItems(
@@ -324,6 +400,22 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     node.refunds,
   );
   const orderPlacedAt = node.createdAt;
+  const tags = normalizeOrderTags(node.tags);
+  const channelName =
+    node.channelInformation?.channelDefinition?.channelName?.trim() ||
+    node.channelInformation?.channelDefinition?.handle?.trim() ||
+    undefined;
+  const publicationName = node.publication?.name?.trim() || undefined;
+  const sourceName = node.sourceName?.trim() || undefined;
+  const customAttributes = (node.customAttributes ?? [])
+    .map((attr) => ({
+      key: String(attr.key ?? "").trim(),
+      value: String(attr.value ?? "").trim(),
+    }))
+    .filter((attr) => attr.key.length > 0);
+  const transactions = transactionNodesFromConnection(node.transactions).map(
+    summarizeTransactionForLlm,
+  );
 
   return {
     orderNumber: node.name,
@@ -345,6 +437,14 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     refundNotificationEmail,
     orderConfirmationEmail,
     events: eventMessages,
+    orderNote: node.note?.trim() || undefined,
+    tags: tags.length ? tags : undefined,
+    sourceName,
+    channelName,
+    publicationName,
+    isDraftOrderOrigin: detectDraftOrderOrigin(node),
+    customAttributes: customAttributes.length ? customAttributes : undefined,
+    transactions: transactions.length ? transactions : undefined,
     refundDate,
     refundAmount,
     fulfillmentStatus: node.displayFulfillmentStatus,

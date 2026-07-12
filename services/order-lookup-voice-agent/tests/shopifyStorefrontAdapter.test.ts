@@ -316,6 +316,11 @@ describe("getOrderStatus", () => {
     const deepQuery = deepQueryMatch![1];
     expect(deepQuery).toMatch(/\bevents\s*\(/);
     expect(deepQuery).toMatch(/\btransactions\s*\(/);
+    expect(deepQuery).toMatch(/\btags\b/);
+    expect(deepQuery).toMatch(/\bsourceName\b/);
+    expect(deepQuery).toMatch(/\breceiptJson\b/);
+    expect(deepQuery).toMatch(/\bCommentEvent\b/);
+    expect(deepQuery).toMatch(/\bauthor\s*\{/);
   });
 });
 

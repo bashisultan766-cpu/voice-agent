@@ -7,6 +7,9 @@ export interface OrderTimelineEvent {
   message?: string | null;
   action?: string | null;
   createdAt?: string | null;
+  /** Staff / author display name when present on CommentEvent / attributed events. */
+  authorName?: string | null;
+  staffName?: string | null;
 }
 
 export interface OrderCustomAttribute {
@@ -38,11 +41,16 @@ export interface OrderRefundNode {
 }
 
 export interface OrderTransactionNode {
+  id?: string;
   kind?: string;
   status?: string;
   gateway?: string;
   formattedGateway?: string;
+  processedAt?: string | null;
+  accountNumber?: string | null;
+  manualPaymentGateway?: boolean | null;
   paymentDetails?: OrderPaymentDetails;
+  amountSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   /** Shopify Admin GraphQL receipt blob (JSON string). */
   receiptJson?: string | null;
   /** REST-style receipt object or JSON string. */
@@ -77,8 +85,51 @@ function stripReasonQuotes(raw: string): string {
 /** Flatten timeline nodes to non-empty message strings for LLM memory. */
 export function timelineEventMessages(events: OrderTimelineEvent[]): string[] {
   return events
-    .map((event) => (event.message ?? "").trim())
+    .map((event) => {
+      const message = (event.message ?? "").trim();
+      if (!message) return "";
+      const staff = (event.authorName ?? event.staffName ?? "").trim();
+      if (staff) return `${staff}: ${message}`;
+      return message;
+    })
     .filter((message) => message.length > 0);
+}
+
+/** Compact transaction row for ACTIVE ORDER CONTEXT / LLM follow-ups. */
+export function summarizeTransactionForLlm(
+  txn: OrderTransactionNode,
+): Record<string, unknown> {
+  const amount = txn.amountSet?.shopMoney?.amount ?? null;
+  const currency = txn.amountSet?.shopMoney?.currencyCode ?? null;
+  const gateway =
+    formatGatewayLabel(txn.formattedGateway) ??
+    formatGatewayLabel(txn.gateway) ??
+    txn.gateway ??
+    null;
+  const receipt = extractCardFromReceipt(txn.receiptJson ?? txn.receipt);
+  const receiptSummary =
+    typeof txn.receiptJson === "string" && txn.receiptJson.trim()
+      ? txn.receiptJson.trim().slice(0, 500)
+      : typeof txn.receipt === "string"
+        ? txn.receipt.trim().slice(0, 500)
+        : txn.receipt && typeof txn.receipt === "object"
+          ? JSON.stringify(txn.receipt).slice(0, 500)
+          : null;
+
+  return {
+    id: txn.id ?? null,
+    kind: txn.kind ?? null,
+    status: txn.status ?? null,
+    gateway,
+    amount,
+    currency,
+    processed_at: txn.processedAt ?? null,
+    account_number: txn.accountNumber ?? null,
+    manual_payment_gateway: txn.manualPaymentGateway === true,
+    card_last4: receipt.last4 ?? txn.paymentDetails?.number ?? txn.paymentDetails?.last4 ?? null,
+    card_brand: receipt.brand ?? txn.paymentDetails?.company ?? txn.paymentDetails?.brand ?? null,
+    receipt_summary: receiptSummary,
+  };
 }
 
 export function formatGatewayLabel(raw?: string): string | undefined {

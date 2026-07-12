@@ -31,7 +31,11 @@ export type OrderRevealField =
   | "fullPreviousOrderHistory"
   | "monthWiseOrderHistory"
   | "historicalOrderDetails"
-  | "paymentCardLast4";
+  | "paymentCardLast4"
+  | "orderNote"
+  | "orderTags"
+  | "timelineEvents"
+  | "transactions";
 
 const PUBLIC_REVEAL_FIELDS = new Set<OrderRevealField>([
   "orderNumber",
@@ -52,6 +56,10 @@ const PUBLIC_REVEAL_FIELDS = new Set<OrderRevealField>([
   "paymentCardLast4",
   "fullCustomerEmail",
   "customerName",
+  "orderNote",
+  "orderTags",
+  "timelineEvents",
+  "transactions",
 ]);
 
 /** Field-by-field disclosure — non-verified callers receive public fields only. */
@@ -93,6 +101,11 @@ const LEGACY_KEY_TO_REVEAL_FIELD: Record<string, OrderRevealField> = {
   customer_name: "customerName",
   card_last4: "paymentCardLast4",
   payment_method_last4: "paymentCardLast4",
+  note: "orderNote",
+  order_note: "orderNote",
+  tags: "orderTags",
+  events: "timelineEvents",
+  transactions: "transactions",
 };
 
 /** Compare Twilio caller ID to Shopify customer phone — sets session.isVerifiedCaller. */

@@ -16,7 +16,10 @@ describe("orderContextPrivacy", () => {
         physical_items: [{ title: "Book" }],
         total_amount: "$42.00",
         shipping_amount: "$4.99",
-        events: ["Order confirmation email was sent"],
+        events: ["Jessica Glass: manually marked $40.00 as paid"],
+        note: "Account Deposit $65.00 - Total Order $40.00 = Current Credit Balance $25.00",
+        tags: ["account-deposit", "manual"],
+        transactions: [{ kind: "sale", gateway: "manual", amount: "40.00" }],
         payment_method: "Visa ending in 1302",
         payment_method_last4: "1302",
       },
@@ -27,7 +30,12 @@ describe("orderContextPrivacy", () => {
     expect(filtered.shipping_address).toBeNull();
     expect(filtered.physical_items).toEqual([{ title: "Book" }]);
     expect(filtered.total_amount).toBe("$42.00");
-    expect(filtered.events).toEqual(["Order confirmation email was sent"]);
+    expect(filtered.events).toEqual(["Jessica Glass: manually marked $40.00 as paid"]);
+    expect(filtered.note).toMatch(/Account Deposit/);
+    expect(filtered.tags).toEqual(["account-deposit", "manual"]);
+    expect(filtered.transactions).toEqual([
+      { kind: "sale", gateway: "manual", amount: "40.00" },
+    ]);
     expect(filtered.payment_method_last4).toBe("1302");
     expect(filtered.privacy_tier).toBe("unverified");
   });
