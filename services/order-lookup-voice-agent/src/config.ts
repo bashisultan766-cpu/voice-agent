@@ -27,7 +27,10 @@ const envSchema = z.object({
   SHOPIFY_SHOP_DOMAIN: z.string().min(1),
   SHOPIFY_ADMIN_ACCESS_TOKEN: z.string().min(1),
   SHOPIFY_API_VERSION: z.string().default("2024-01"),
-  SHOPIFY_TIMEOUT_MS: z.coerce.number().default(10000),
+  /** Hard ceiling for Shopify HTTP / GraphQL calls (voice must not hang). */
+  SHOPIFY_TIMEOUT_MS: z.coerce.number().default(6000),
+  /** Hard ceiling for any UnifiedToolRegistry execution (Shopify, Resend, etc.). */
+  TOOL_EXECUTION_TIMEOUT_MS: z.coerce.number().default(6000),
   SHOPIFY_CACHE_TTL_SECS: z.coerce.number().default(60),
 
   ELEVENLABS_API_KEY: z.string().optional(),

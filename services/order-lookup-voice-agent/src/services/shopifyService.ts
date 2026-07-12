@@ -11,6 +11,7 @@ import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import type { OrderLookupResult, StructuredOrder } from "../types/order.js";
 import { isValidOrderNumberFormat, normalizeOrderNumber } from "../utils/formatter.js";
+import { TimeoutError, withTimeout } from "../utils/promiseTimeout.js";
 
 interface CacheEntry {
   expiresAt: number;
@@ -161,7 +162,11 @@ export async function lookupOrderStatus(
     }
 
     try {
-      const data = await getOrderStatus(orderNumber, callSid);
+      const data = await withTimeout(
+        getOrderStatus(orderNumber, callSid),
+        Math.min(getConfig().SHOPIFY_TIMEOUT_MS, getConfig().TOOL_EXECUTION_TIMEOUT_MS),
+        "shopify_order_lookup",
+      );
       lastResult = data;
 
       if (isStableOrderLookupStatus(data.status)) {
@@ -187,14 +192,18 @@ export async function lookupOrderStatus(
         return data;
       }
     } catch (err) {
+      const timedOut = err instanceof TimeoutError || /timed out/i.test(
+        err instanceof Error ? err.message : String(err),
+      );
       logger.error("shopify_status_lookup_failed", {
         orderNumber,
         attempt,
+        timedOut,
         error: err instanceof Error ? err.message : String(err),
       });
       lastResult = {
         status: "api_error",
-        message: "Shopify API unavailable",
+        message: timedOut ? "Shopify API timeout" : "Shopify API unavailable",
       };
       if (attempt >= maxRetries) {
         return lastResult;

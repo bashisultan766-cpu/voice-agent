@@ -16,7 +16,7 @@ import {
   clearTurnAbort,
 } from "../runtime/turnAbortRegistry.js";
 import { logger } from "../utils/logger.js";
-import { isNoiseTranscript } from "../utils/noiseGate.js";
+import { shouldPromptAreYouStillThere } from "../utils/noiseGate.js";
 import {
   isCallSessionActive,
   markCallSessionClosed,
@@ -29,7 +29,10 @@ import {
   type ConversationRelaySendFn,
 } from "./conversationRelaySender.js";
 
-import { VOICE_LAYER_ERROR_SPEECH } from "../constants/systemMessages.js";
+import {
+  ARE_YOU_STILL_THERE_SPEECH,
+  VOICE_LAYER_ERROR_SPEECH,
+} from "../constants/systemMessages.js";
 
 const interruptedCalls = new Set<string>();
 
@@ -171,7 +174,29 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
         if (message.last === false) return;
 
         const voicePrompt = (message.voicePrompt ?? "").trim();
-        if (!voicePrompt || isNoiseTranscript(voicePrompt)) return;
+        const confidenceRaw = (message as { confidence?: number | string }).confidence;
+        const confidence =
+          confidenceRaw == null || confidenceRaw === ""
+            ? undefined
+            : Number(confidenceRaw);
+        const lowConfidence =
+          typeof confidence === "number" &&
+          Number.isFinite(confidence) &&
+          confidence > 0 &&
+          confidence < 0.4;
+
+        if (!voicePrompt || shouldPromptAreYouStillThere(voicePrompt) || lowConfidence) {
+          if (!isCallSessionActive(callSid)) return;
+          logger.info("conversation_relay_silence_or_noise", {
+            callSid: callSid.slice(0, 8),
+            chars: voicePrompt.length,
+            lowConfidence,
+          });
+          await sendSpeechToConversationRelay(send, ARE_YOU_STILL_THERE_SPEECH, {
+            endOfTurn: true,
+          });
+          return;
+        }
 
         if (!isCallSessionActive(callSid)) return;
 

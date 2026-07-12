@@ -201,6 +201,8 @@ export interface TwilioRelayInboundMessage {
   callSid?: string;
   voicePrompt?: string;
   last?: boolean;
+  /** Optional STT confidence from ConversationRelay (0–1). */
+  confidence?: number | string;
   from?: string;
   to?: string;
   customParameters?: Record<string, string>;

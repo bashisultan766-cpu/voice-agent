@@ -19,7 +19,7 @@ import {
 } from "../agents/orderLookupWorkflow.js";
 import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
-import { ORDER_NOT_FOUND_STRICT_SPOKEN } from "../constants/systemMessages.js";
+import { ORDER_NOT_FOUND_STRICT_SPOKEN, SHOPIFY_TIMEOUT_SPOKEN } from "../constants/systemMessages.js";
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
 import { extractOrderNumberFromSpeech, orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
@@ -52,7 +52,7 @@ import {
   ensureUniqueSpokenResponse,
 } from "../services/llmService.js";
 import { pullCompletedSpeechPhrases } from "../services/voiceSmoothingEngine.js";
-import { getTurnAbortSignal, isTurnAborted } from "../runtime/turnAbortRegistry.js";
+import { getTurnAbortSignal, getTurnGeneration, isStaleTurnGeneration, isTurnAborted } from "../runtime/turnAbortRegistry.js";
 import {
   buildClarifyingResponse,
   buildGreetingResponse,
@@ -707,6 +707,14 @@ function groundedSpeechFromOrderToolRecord(
     record.status === "api_error" ||
     record.status === "throttled"
   ) {
+    if (
+      record.errorMessage === "Shopify API timeout" ||
+      (record.data &&
+        "message" in record.data &&
+        record.data.message === "Shopify API timeout")
+    ) {
+      return SHOPIFY_TIMEOUT_SPOKEN;
+    }
     return speechForOrderLookupResult(
       { status: record.status, message: record.errorMessage },
       options,
@@ -1255,12 +1263,26 @@ export async function* runLlmAgentTurnEvents(
             continue;
           }
 
+          const generation = getTurnGeneration(input.callSid);
           const record = await ServiceRegistry.executeTool(
             call.function.name,
             parsedArgs,
             input.callSid,
             input.session,
           );
+
+          if (
+            isStaleTurnGeneration(input.callSid, generation) ||
+            record.errorMessage === "Turn aborted — tool result discarded"
+          ) {
+            logger.info("llm_tool_result_discarded_after_barge_in", {
+              callSid: input.callSid.slice(0, 8),
+              tool: call.function.name,
+            });
+            // Drop late tool output so it cannot corrupt UnifiedCallSession / TTS.
+            return;
+          }
+
           toolExecutions.push(record);
 
           messages.push({
@@ -1273,6 +1295,9 @@ export async function* runLlmAgentTurnEvents(
           });
         }
 
+        if (isTurnAborted(input.callSid)) {
+          return;
+        }
         const lastCatalogExec = [...toolExecutions].reverse().find(
           (exec) =>
             exec.tool === "search_shopify_book_by_title" ||

@@ -6,6 +6,13 @@
  */
 import type OpenAI from "openai";
 import type { CallSession } from "../types/order.js";
+import { getConfig } from "../config.js";
+import { logger } from "../utils/logger.js";
+import {
+  getTurnGeneration,
+  isStaleTurnGeneration,
+} from "../runtime/turnAbortRegistry.js";
+import { TimeoutError, withTimeout } from "../utils/promiseTimeout.js";
 import {
   executeLlmTool,
   type LlmToolExecutionRecord,
@@ -288,6 +295,7 @@ export const UnifiedToolRegistry: ReadonlyMap<LlmToolName, UnifiedToolRegistryEn
 /**
  * Single impenetrable pipeline for every LLM-triggered tool execution.
  * Validates with Zod, injects UnifiedCallSession secrets, then runs Shopify/Resend logic.
+ * Hard-capped so a hung Shopify call cannot silence the voice stream.
  */
 export async function executeUnifiedTool(
   tool: LlmToolName,
@@ -299,7 +307,77 @@ export async function executeUnifiedTool(
   if (!prepared.ok) {
     return prepared.record;
   }
-  return executeLlmTool(tool, prepared.args, callSid, prepared.session, {
-    skipPolicy: true,
-  });
+
+  const started = Date.now();
+  const generation = getTurnGeneration(callSid);
+  const timeoutMs = getConfig().TOOL_EXECUTION_TIMEOUT_MS;
+
+  try {
+    const record = await withTimeout(
+      executeLlmTool(tool, prepared.args, callSid, prepared.session, {
+        skipPolicy: true,
+      }),
+      timeoutMs,
+      `tool:${tool}`,
+    );
+
+    if (isStaleTurnGeneration(callSid, generation)) {
+      logger.info("tool_result_discarded_stale_turn", {
+        callSid: callSid.slice(0, 8),
+        tool,
+        generation,
+      });
+      return {
+        tool,
+        args: Object.fromEntries(
+          Object.entries(prepared.args).map(([k, v]) => [k, String(v ?? "")]),
+        ),
+        ok: false,
+        status: "blocked",
+        errorMessage: "Turn aborted — tool result discarded",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    return record;
+  } catch (err) {
+    if (isStaleTurnGeneration(callSid, generation)) {
+      return {
+        tool,
+        args: Object.fromEntries(
+          Object.entries(prepared.args).map(([k, v]) => [k, String(v ?? "")]),
+        ),
+        ok: false,
+        status: "blocked",
+        errorMessage: "Turn aborted — tool result discarded",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const timedOut =
+      err instanceof TimeoutError ||
+      /timed out/i.test(err instanceof Error ? err.message : String(err));
+
+    logger.warn("unified_tool_execution_failed", {
+      callSid: callSid.slice(0, 8),
+      tool,
+      timedOut,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return {
+      tool,
+      args: Object.fromEntries(
+        Object.entries(prepared.args).map(([k, v]) => [k, String(v ?? "")]),
+      ),
+      ok: false,
+      status: "api_error",
+      errorMessage: timedOut ? "Shopify API timeout" : "Tool execution failed",
+      data: {
+        status: "api_error",
+        message: timedOut ? "Shopify API timeout" : "Tool execution failed",
+      },
+      elapsedMs: Date.now() - started,
+    };
+  }
 }

@@ -41,6 +41,21 @@ export const ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD = {
     "A transient order lookup error occurred. Say you are pulling the order up again now. Do NOT mention catalog updates or system maintenance. Do NOT invent order fields.",
 };
 
+/** Spoken when Shopify / tool execution hits the hard timeout ceiling. */
+export const SHOPIFY_TIMEOUT_SPOKEN =
+  "My system is running a bit slow right now, let's try that again in a moment.";
+
+/** LLM payload when a tool times out — never invent Shopify data. */
+export const SHOPIFY_TIMEOUT_LLM_PAYLOAD = {
+  error: "Shopify API timeout" as const,
+  status: "api_error" as const,
+  instructions:
+    'Do NOT invent order or catalog data. Say exactly: "My system is running a bit slow right now, let\'s try that again in a moment." Then wait for the caller.',
+};
+
+/** Lightweight ConversationRelay prompt when STT is empty or unintelligible. */
+export const ARE_YOU_STILL_THERE_SPEECH = "Are you still there?";
+
 /** Spoken when the voice WebSocket layer catches an unexpected turn error. */
 export const VOICE_LAYER_ERROR_SPEECH =
   "Sorry, I hit a snag on that. If you're checking an order, please say your order number again and I'll pull it up right now.";

@@ -45,6 +45,7 @@ import {
 } from "../utils/formatter.js";
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import { logger } from "../utils/logger.js";
+import { isTurnAborted } from "../runtime/turnAbortRegistry.js";
 import {
   extractRefundNotificationEmailFromMessages,
   formatPaymentMethodLabel,
@@ -59,6 +60,7 @@ import { SURESHOT_GOODBYE_SPEECH } from "../utils/callerMemory.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
 import {
   ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
+  SHOPIFY_TIMEOUT_LLM_PAYLOAD,
   SYSTEM_MAINTENANCE_LLM_PAYLOAD,
 } from "../constants/systemMessages.js";
 import { prepareUnifiedToolArgs } from "./toolExecutionPolicy.js";
@@ -606,6 +608,16 @@ export async function executeLlmTool(
       const data = await lookupOrderStatus(orderNumber, callSid, {
         bypassCache: true,
       });
+      if (isTurnAborted(callSid)) {
+        return {
+          tool,
+          args: { orderNumber },
+          ok: false,
+          status: "blocked",
+          errorMessage: "Turn aborted — tool result discarded",
+          elapsedMs: Date.now() - started,
+        };
+      }
       if (session && data.status === "found") {
         session.lastOrderStatusResult = data;
         runVerificationGate(session, data);
@@ -800,10 +812,23 @@ export function toolResultForLlm(
   }
 
   if (isMaintenanceToolStatus(record.status)) {
+    if (record.errorMessage === "Shopify API timeout" || record.data && "message" in record.data && record.data.message === "Shopify API timeout") {
+      return JSON.stringify(SHOPIFY_TIMEOUT_LLM_PAYLOAD);
+    }
     if (record.tool === "get_shopify_order_status") {
       return JSON.stringify(ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD);
     }
     return JSON.stringify(SYSTEM_MAINTENANCE_LLM_PAYLOAD);
+  }
+
+  if (
+    record.status === "api_error" &&
+    (record.errorMessage === "Shopify API timeout" ||
+      (record.data &&
+        "message" in record.data &&
+        record.data.message === "Shopify API timeout"))
+  ) {
+    return JSON.stringify(SHOPIFY_TIMEOUT_LLM_PAYLOAD);
   }
 
   if (record.data && "status" in record.data && isMaintenanceToolStatus(record.data.status)) {

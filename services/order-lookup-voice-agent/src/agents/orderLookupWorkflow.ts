@@ -6,6 +6,7 @@ import {
   ORDER_LOOKUP_MAINTENANCE_SPOKEN,
   ORDER_LOOKUP_RETRY_SPOKEN,
   ORDER_NOT_FOUND_STRICT_SPOKEN,
+  SHOPIFY_TIMEOUT_SPOKEN,
 } from "../constants/systemMessages.js";
 import type { CallSession } from "../types/order.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
@@ -38,6 +39,12 @@ export function speechForOrderLookupResult(
   result: OrderStatusResult,
   options?: { insistence?: boolean; session?: CallSession },
 ): string {
+  if (
+    result.status === "api_error" &&
+    /timeout/i.test(String(result.message ?? ""))
+  ) {
+    return SHOPIFY_TIMEOUT_SPOKEN;
+  }
   if (options?.insistence && isTransientOrderLookupStatus(result.status)) {
     return ORDER_LOOKUP_RETRY_SPOKEN;
   }
