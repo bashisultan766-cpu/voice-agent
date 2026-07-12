@@ -126,8 +126,16 @@ export function summarizeTransactionForLlm(
     processed_at: txn.processedAt ?? null,
     account_number: txn.accountNumber ?? null,
     manual_payment_gateway: txn.manualPaymentGateway === true,
-    card_last4: receipt.last4 ?? txn.paymentDetails?.number ?? txn.paymentDetails?.last4 ?? null,
-    card_brand: receipt.brand ?? txn.paymentDetails?.company ?? txn.paymentDetails?.brand ?? null,
+    card_last4:
+      receipt.cardLast4 ??
+      txn.paymentDetails?.number ??
+      txn.paymentDetails?.last4 ??
+      null,
+    card_brand:
+      receipt.cardBrand ??
+      txn.paymentDetails?.company ??
+      txn.paymentDetails?.brand ??
+      null,
     receipt_summary: receiptSummary,
   };
 }

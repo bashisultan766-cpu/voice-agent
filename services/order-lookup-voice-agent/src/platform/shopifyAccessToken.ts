@@ -40,22 +40,27 @@ function tokenStillValid(entry: CachedAccessToken): boolean {
 
 async function fetchClientCredentialsToken(): Promise<CachedAccessToken> {
   const cfg = getConfig();
-  const clientId = cfg.SHOPIFY_CLIENT_ID!.trim();
-  const clientSecret = cfg.SHOPIFY_CLIENT_SECRET!.trim();
+  const clientId = cfg.SHOPIFY_CLIENT_ID!.trim().replace(/^["']|["']$/g, "");
+  const clientSecret = cfg.SHOPIFY_CLIENT_SECRET!.trim().replace(/^["']|["']$/g, "");
   const url = `https://${shopHost()}/admin/oauth/access_token`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
 
   try {
+    const formBody = new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+    }).toString();
+
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: formBody,
       signal: controller.signal,
     });
 

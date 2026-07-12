@@ -72,6 +72,10 @@ describe("shopifyAccessToken", () => {
       "https://sureshot-books.myshopify.com/admin/oauth/access_token",
     );
     expect(init?.method).toBe("POST");
+    expect(init?.headers).toMatchObject({
+      "Content-Type": "application/x-www-form-urlencoded",
+    });
+    expect(typeof init?.body).toBe("string");
     expect(String(init?.body)).toContain("grant_type=client_credentials");
     expect(String(init?.body)).toContain("client_secret=client-secret");
   });
