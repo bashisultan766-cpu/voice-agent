@@ -438,11 +438,6 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
                 message
                 action
                 createdAt
-                attributeToUser {
-                  ... on StaffMember {
-                    name
-                  }
-                }
               }
               ... on CommentEvent {
                 message

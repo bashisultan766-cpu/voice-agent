@@ -30,11 +30,6 @@ const ORDER_DEEP_BY_ID_QUERY = `query OrderDeepById($id: ID!) {
           message
           action
           createdAt
-          attributeToUser {
-            ... on StaffMember {
-              name
-            }
-          }
         }
         ... on CommentEvent {
           message
@@ -51,11 +46,6 @@ const ORDER_DEEP_BY_ID_QUERY = `query OrderDeepById($id: ID!) {
             message
             action
             createdAt
-            attributeToUser {
-              ... on StaffMember {
-                name
-              }
-            }
           }
           ... on CommentEvent {
             message
