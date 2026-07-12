@@ -43,8 +43,14 @@ describe("conversationBrainAgent shaping", () => {
     expect(softFallback("how are you")).not.toMatch(/valid order number|didn't catch/i);
   });
 
-  it("soft fallback for what do you do explains store", () => {
-    expect(softFallback("what do you do")).toMatch(/track|order/i);
+  it("soft fallback for what do you do is brief without identity dump", () => {
+    expect(softFallback("what do you do")).toMatch(/look up|order|book/i);
+    expect(softFallback("what do you do")).not.toMatch(/SureShot Books order/i);
+  });
+
+  it("default soft fallback is neutral filler", () => {
+    expect(softFallback("asdf")).toMatch(/try that again|help/i);
+    expect(softFallback("asdf")).not.toMatch(/I'm here to help with your SureShot/i);
   });
 
   it("strips robotic phrases", () => {

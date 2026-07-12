@@ -156,14 +156,15 @@ export function softFallback(userMessage: string): string {
     return "Hi there! What can I help you with today?";
   }
   if (/\bwhat do you do\b/.test(lower)) {
-    return "I help you track and manage your book orders. If you have an order number, I can check it instantly.";
+    return "I can look up an order or help you find a book — what do you need?";
   }
   if (/^(ok|okay|sure|yeah|yep)\b/.test(lower)) {
     return "Sure — just tell me what you need.";
   }
   if (!lower) {
-    return "No worries — whenever you're ready, I'm here to help.";
+    return "I missed that last part — could you say that again?";
   }
 
-  return "I'm here to help with your SureShot Books order. What would you like to know?";
+  // Neutral filler only — never re-inject identity / capability charter.
+  return "Let's try that again — what can I help you with?";
 }

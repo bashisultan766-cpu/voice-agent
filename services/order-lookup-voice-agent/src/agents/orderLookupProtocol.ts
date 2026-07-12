@@ -13,6 +13,13 @@ export const ORDER_NUMBER_PREFLIGHT_SPEECH =
 export const TRACKING_ORDER_NUMBER_PREFLIGHT_SPEECH =
   "I can help you with your tracking ID. Please tell me your order number first.";
 
+/** Hard stop — after this many failed order-number captures, stop re-asking. */
+export const MAX_ORDER_NUMBER_ATTEMPTS = 3;
+
+/** Injected into the next LLM turn when order-number capture is exhausted. */
+export const ORDER_NUMBER_ATTEMPTS_EXHAUSTED_SYSTEM_NOTE =
+  "[SYSTEM: Order number failed 3 times. Apologize and ask if they want to search by title or speak to support. Do not ask for the order number again unless they volunteer digits.]";
+
 export const TRACKING_ID_OFFER_SPEECH = "Would you like me to read the tracking ID?";
 
 export const POST_INFORMATION_CLOSING_SPEECH =

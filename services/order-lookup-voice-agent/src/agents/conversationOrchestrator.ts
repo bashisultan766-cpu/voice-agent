@@ -208,6 +208,8 @@ import {
 import {
   appendProtocolClosing,
   buildOrderNumberPreflightSpeech,
+  MAX_ORDER_NUMBER_ATTEMPTS,
+  ORDER_NUMBER_ATTEMPTS_EXHAUSTED_SYSTEM_NOTE,
   syncTrackingOfferState,
 } from "./orderLookupProtocol.js";
 import { captureSessionIntent, callerAskedForTracking } from "./sessionMemory.js";
@@ -1020,6 +1022,32 @@ function recordAssistant(_callSid: string, speech: string): string {
   return smoothForVoice(speech);
 }
 
+/**
+ * Hard escapement after MAX_ORDER_NUMBER_ATTEMPTS failed captures.
+ * Clears the order-number slot, updates UnifiedCallSession, and arms an LLM system note.
+ */
+function escapeOrderNumberCaptureLoop(session: CallSession): void {
+  session.orderNumberAttempts = Math.max(
+    session.orderNumberAttempts,
+    MAX_ORDER_NUMBER_ATTEMPTS,
+  );
+  session.phase = "follow_up";
+  session.awaitingInput = null;
+  session.pendingLlmSystemNote = ORDER_NUMBER_ATTEMPTS_EXHAUSTED_SYSTEM_NOTE;
+  applyUnifiedWorkflowTransition(session, "idle", {
+    reason: "order_number_attempts_exhausted",
+  });
+  updateActiveSession(session.callSid, {
+    currentState: "awaiting_clarification",
+    cachedIntent: null,
+  });
+  touchUnifiedSession(session);
+  logger.info("order_number_attempts_exhausted", {
+    callSid: session.callSid.slice(0, 8),
+    attempts: session.orderNumberAttempts,
+  });
+}
+
 /** Phase 2: user utterance enters state only via TURN_INGESTED → reducer. */
 function ingestUserTurn(callSid: string, text: string): number {
   const turnSeq = beginCallTurn(callSid);
@@ -1151,21 +1179,28 @@ async function* runOrchestratorTurnCore(
       callerAskedForTracking(session));
 
   if (needsOrderNumberBeforeLookup) {
-    session.phase = "awaiting_order_number";
-    session.awaitingInput = "order_number";
-    session.lastOrchestratorIntent = "order_lookup";
-    updateActiveSession(session.callSid, { cachedIntent: "order" });
-    const speech =
-      session.orderNumberAttempts === 0
-        ? buildOrderNumberPreflightSpeech(session)
-        : buildClarifyingResponse(session.orderNumberAttempts);
-    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
-    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
-      responseType: "clarification_question",
-    });
-    yield* yieldSpeech(uniqueSpeech);
-    yield doneEvent(session.phase);
-    return;
+    // Hard escapement: stop re-asking after MAX attempts; fall through to LLM.
+    if (session.orderNumberAttempts >= MAX_ORDER_NUMBER_ATTEMPTS) {
+      escapeOrderNumberCaptureLoop(session);
+    } else {
+      session.orderNumberAttempts += 1;
+      session.phase = "awaiting_order_number";
+      session.awaitingInput = "order_number";
+      session.lastOrchestratorIntent = "order_lookup";
+      updateActiveSession(session.callSid, { cachedIntent: "order" });
+      touchUnifiedSession(session);
+      const speech =
+        session.orderNumberAttempts === 1
+          ? buildOrderNumberPreflightSpeech(session)
+          : buildClarifyingResponse(session.orderNumberAttempts - 1);
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "clarification_question",
+      });
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
   }
 
   if (
@@ -1310,19 +1345,25 @@ async function* runOrchestratorTurnCore(
     !extractOrderNumberFromSpeech(text) &&
     !extractOrderNumberFromStt(text, { awaitingSlot: true })
   ) {
-    session.phase = "awaiting_order_number";
-    session.awaitingInput = "order_number";
-    session.lastOrchestratorIntent = "order_lookup";
-    updateActiveSession(session.callSid, { cachedIntent: "order" });
-    const speech = buildOrderNumberOfferResponse();
-    const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
-    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
-      responseType: "clarification_question",
-    });
-    emitResponseSent(session.callSid, "clarification_question", uniqueSpeech);
-    yield* yieldSpeech(uniqueSpeech);
-    yield doneEvent(session.phase);
-    return;
+    if (session.orderNumberAttempts >= MAX_ORDER_NUMBER_ATTEMPTS) {
+      escapeOrderNumberCaptureLoop(session);
+    } else {
+      session.orderNumberAttempts += 1;
+      session.phase = "awaiting_order_number";
+      session.awaitingInput = "order_number";
+      session.lastOrchestratorIntent = "order_lookup";
+      updateActiveSession(session.callSid, { cachedIntent: "order" });
+      touchUnifiedSession(session);
+      const speech = buildOrderNumberOfferResponse();
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "clarification_question",
+      });
+      emitResponseSent(session.callSid, "clarification_question", uniqueSpeech);
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
   }
 
   if (yield* yieldOrderHistoryTurnIfReady(session, text, callerIntent)) {
@@ -1372,13 +1413,23 @@ async function* handleAwaitingOrderNumberPhase(
     if (lookup.status === "found" && lookup.order) {
       session.phase = "order_disclosed";
       session.awaitingInput = null;
+      session.orderNumberAttempts = 0;
+      session.pendingLlmSystemNote = undefined;
       session.lastOrchestratorIntent = "order_lookup";
       updateActiveSession(session.callSid, { cachedIntent: "order" });
+      touchUnifiedSession(session);
       yield* streamOrderSummary(lookup.order, session);
       emitResponseSent(session.callSid, "order_found", "Order found.");
     } else {
+      session.orderNumberAttempts += 1;
+      if (session.orderNumberAttempts >= MAX_ORDER_NUMBER_ATTEMPTS) {
+        escapeOrderNumberCaptureLoop(session);
+        // Fall through to general LLM with system note — do not re-ask.
+        return false;
+      }
       session.phase = "awaiting_order_number";
       session.awaitingInput = "order_number";
+      touchUnifiedSession(session);
       const errorPlan = planLookupError(lookup);
       const speech = errorPlan.chunks.map((c) => c.text).join(" ") || buildClarifyingResponse(1);
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
@@ -1397,8 +1448,14 @@ async function* handleAwaitingOrderNumberPhase(
   }
 
   if (isOrderNumberOfferUtterance(text)) {
+    if (session.orderNumberAttempts >= MAX_ORDER_NUMBER_ATTEMPTS) {
+      escapeOrderNumberCaptureLoop(session);
+      return false;
+    }
+    session.orderNumberAttempts += 1;
     session.phase = "awaiting_order_number";
     session.awaitingInput = "order_number";
+    touchUnifiedSession(session);
     const speech = buildOrderNumberOfferResponse();
     const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
     syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
@@ -1433,13 +1490,22 @@ async function* handleGreetingPhaseOrderLookup(
     if (lookup.status === "found" && lookup.order) {
       session.phase = "order_disclosed";
       session.awaitingInput = null;
+      session.orderNumberAttempts = 0;
+      session.pendingLlmSystemNote = undefined;
       session.lastOrchestratorIntent = "order_lookup";
       updateActiveSession(session.callSid, { cachedIntent: "order" });
+      touchUnifiedSession(session);
       yield* streamOrderSummary(lookup.order, session);
       emitResponseSent(session.callSid, "order_found", "Order found.");
     } else {
+      session.orderNumberAttempts += 1;
+      if (session.orderNumberAttempts >= MAX_ORDER_NUMBER_ATTEMPTS) {
+        escapeOrderNumberCaptureLoop(session);
+        return false;
+      }
       session.phase = "awaiting_order_number";
       session.awaitingInput = "order_number";
+      touchUnifiedSession(session);
       const errorPlan = planLookupError(lookup);
       const speech = errorPlan.chunks.map((c) => c.text).join(" ") || buildClarifyingResponse();
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
@@ -1473,11 +1539,13 @@ async function* handleGreetingPhaseOrderLookup(
   const speech =
     intent === "order_status" ? buildClarifyingResponse() : buildGreetingResponse(text);
 
+  session.orderNumberAttempts += 1;
   session.phase = "awaiting_order_number";
   session.awaitingInput = "order_number";
   session.lastOrchestratorIntent = "order_lookup";
   session.greetedThisCall = true;
   updateActiveSession(session.callSid, { cachedIntent: "order" });
+  touchUnifiedSession(session);
 
   const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, text);
   syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {

@@ -167,7 +167,7 @@ describe("isExplicitEndCallIntent", () => {
 });
 
 describe("ensureUniqueSpokenResponse", () => {
-  it("rewrites verbatim duplicate speech", async () => {
+  it("allows verbatim duplicate speech without rewrite oscillation", async () => {
     clearLastSpokenSentence("CA_DEDUP");
     const first = await ensureUniqueSpokenResponse("CA_DEDUP", "Your order is on the way.");
     expect(first).toBe("Your order is on the way.");
@@ -176,7 +176,7 @@ describe("ensureUniqueSpokenResponse", () => {
       "Your order is on the way.",
       "repeat that",
     );
-    expect(second).not.toBe(first);
+    expect(second).toBe(first);
     clearLastSpokenSentence("CA_DEDUP");
   });
 });

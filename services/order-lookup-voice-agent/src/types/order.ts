@@ -113,6 +113,11 @@ export interface CallSession {
   totalOrderCount?: number;
   phase: CallPhase;
   orderNumberAttempts: number;
+  /**
+   * One-shot directive injected into the next OpenAI system messages, then cleared.
+   * Used for loop escapement (e.g. order-number attempts exhausted).
+   */
+  pendingLlmSystemNote?: string;
   currentOrder?: StructuredOrder;
   /** Full sanitized Shopify order JSON for invisible LLM follow-up context. */
   currentOrderData?: Record<string, unknown>;

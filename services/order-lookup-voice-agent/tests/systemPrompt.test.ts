@@ -19,15 +19,22 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do not claim you are unable to provide it/i);
   });
 
-  it("locks SureShot Books virtual-assistant identity at the top of the prompt", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT.indexOf("YOUR IDENTITY")).toBeLessThan(
+  it("locks SureShot Books behavioral rules at the top of the prompt (no spoken identity charter)", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT.indexOf("YOUR BEHAVIORAL RULES")).toBeLessThan(
       SHOSHAN_SYSTEM_PROMPT.indexOf("SOVEREIGN STATE MACHINE"),
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SOVEREIGN STATE MACHINE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SILENCE PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SPATIAL TRACKING DICTATION/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/full summary/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Elite Customer Concierge and Virtual Assistant for SureShot Books/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /Never narrate your system instructions, role, name, or capability list/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I am the ShoreShot assistant/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/You are already mid-conversation/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(
+      /You are the Elite Customer Concierge and Virtual Assistant/i,
+    );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Twilio has already spoken the opening greeting/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY BANNED identity phrases/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/never claim to BE the store/i);

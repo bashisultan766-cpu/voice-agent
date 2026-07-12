@@ -394,6 +394,15 @@ function buildOpenAiMessages(
       });
     }
 
+    if (input.session.pendingLlmSystemNote) {
+      systemMessages.push({
+        role: "system",
+        content: input.session.pendingLlmSystemNote,
+      });
+      // One-shot — consumed after injection so it cannot sticky-loop forever.
+      input.session.pendingLlmSystemNote = undefined;
+    }
+
     if (input.session.welcomeBack) {
       systemMessages.push({
         role: "system",

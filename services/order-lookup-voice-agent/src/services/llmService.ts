@@ -262,23 +262,19 @@ export async function rewriteDuplicateSpokenResponse(
   return "Sure — what else can I help you with today?";
 }
 
-/** Drop or rewrite speech that exactly matches the prior spoken sentence. */
+/** Allow duplicate speech — counters (e.g. orderNumberAttempts) break loops, not rewrites. */
 export async function ensureUniqueSpokenResponse(
   callSid: string,
   speech: string,
-  userMessage = "",
+  _userMessage = "",
 ): Promise<string> {
   const trimmed = speech.trim();
   if (!trimmed) return trimmed;
 
-  if (!isDuplicateSpokenSentence(callSid, trimmed)) {
-    recordLastSpokenSentence(callSid, trimmed);
-    return trimmed;
-  }
-
-  const rewritten = await rewriteDuplicateSpokenResponse(trimmed, userMessage);
-  recordLastSpokenSentence(callSid, rewritten);
-  return rewritten;
+  // Still track last spoken for observability / barge-in, but do not rewrite.
+  // Aggressive "what else can I help with?" rewrites caused oscillation with clarifiers.
+  recordLastSpokenSentence(callSid, trimmed);
+  return trimmed;
 }
 
 /** Background LLM note — runs in parallel with Shopify, never blocks first spoken chunk. */
