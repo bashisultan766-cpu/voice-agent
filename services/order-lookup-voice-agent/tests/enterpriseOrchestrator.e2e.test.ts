@@ -79,7 +79,7 @@ describe("enterprise orchestrator phase 3 e2e", () => {
 
     const dictation = await collectSpeech(session, "ready");
     logPhase("2-dictation", session, dictation);
-    expect(dictation).toMatch(/get all of that|write that correctly|should I repeat/i);
+    expect(dictation).toMatch(/get all that|get all of that|write that correctly|should I repeat/i);
     expect(dictation).toContain(TRACKING_DICTATION_CONFIRM_SPEECH);
     expect(getOrCreateActiveSession(session.callSid).currentState).toBe("tracking_dictation");
 

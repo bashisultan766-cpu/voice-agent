@@ -19,7 +19,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do not claim you are unable to provide it/i);
   });
 
-  it("locks SureShot Books behavioral rules at the top of the prompt (no spoken identity charter)", () => {
+  it("locks SureShot Books behavioral rules at the top of the prompt (Eric concierge, no spoken identity dump)", () => {
     expect(SHOSHAN_SYSTEM_PROMPT.indexOf("YOUR BEHAVIORAL RULES")).toBeLessThan(
       SHOSHAN_SYSTEM_PROMPT.indexOf("SOVEREIGN STATE MACHINE"),
     );
@@ -40,6 +40,10 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/never claim to BE the store/i);
     expect(SHOSHAN_SYSTEM_PROMPT).not.toMatch(/Shoshan/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/not a general AI assistant/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Your name is Eric/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/IDENTITY & CONTEXT/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ships books directly to inmates/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ElevenLabs-level fluidity/i);
   });
 
   it("requires explicit goodbye before ending the call", () => {
@@ -87,10 +91,10 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
       /shipping address or past order history/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I can't read out the exact shipping address for security reasons/i,
+      /I can't read the exact shipping address/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /confirm your payment was processed and tell you exactly how the order was handled/i,
+      /confirm your payment went through and tell you where the package is right now|confirm your payment was processed and tell you exactly how the order was handled/i,
     );
   });
 
@@ -141,7 +145,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/search_shopify_book_by_title with the extracted English title/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Never summarize books, processing fees, shipping fees/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/HUMAN SPATIAL DICTATION/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/After the 9, it is/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/After 3 5, the next numbers are|After the 9/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/physical_items/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/processing_fees/i);
   });
@@ -177,7 +181,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/VIP ORDER HISTORY DRILL-DOWN S\.O\.P\./i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Which month would you like to hear about/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/monthYear/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/facility and inmate information/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/facility and inmate information|Inmate Facility details/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method/i);
   });
 

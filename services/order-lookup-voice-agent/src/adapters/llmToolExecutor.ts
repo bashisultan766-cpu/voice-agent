@@ -987,8 +987,8 @@ export function toolResultForLlm(
           ? record.data.tracking_number_for_tts
           : null,
       instructions: readiness
-        ? "NOTEPAD-FIRST RULE: Speak ONLY the readiness handshake verbatim — 'I have your tracking number here. Let me know when you have a pen and paper ready, or if you're ready for me to read it.' Do NOT read any tracking digits."
-        : "DATA DICTATION PROTOCOL: Speak tracking_number_for_tts verbatim with slow dashed pacing (e.g. '9 - 4 - 4 - 9 - 0 - 1' or phonetic 'Nine - Four'). Append 'Did you get all of that, or should I repeat any part of it?' Never mention items, fees, payment, or other order fields. On 'repeat that' / 'say it slower', re-speak ONLY tracking_number_for_tts even slower — never the full order. If the caller confirms they wrote it down, stop dictating and ask if they need anything else.",
+        ? "NOTEPAD-FIRST RULE: Speak ONLY the readiness handshake verbatim — 'I have your tracking number right here. Let me know when you have a pen and paper ready.' Do NOT read any tracking digits."
+        : "DATA DICTATION PROTOCOL: Speak tracking_number_for_tts verbatim with slow dashed pacing (e.g. '9 - 4 - 4 - 9 - 0 - 1'). Append 'Did you get all that, or should I repeat any part of it?' Never mention items, fees, payment, or other order fields. On 'repeat that' / 'say it slower', re-speak ONLY tracking_number_for_tts even slower — never the full order. If the caller confirms they wrote it down, stop dictating and ask if they need anything else.",
     });
   }
 
@@ -1042,7 +1042,7 @@ export function toolResultForLlm(
       ok: record.ok,
       checkout: record.data,
       instructions:
-        'Say: "I am sending the payment link to your email now. Is there anything else I can help you with?" then WAIT — do NOT invoke end_call or say goodbye. Optionally remind them to click the email link to complete facility/inmate details.',
+        'Say: "I have sent the secure payment link to your inbox. Once you open it, you will be able to enter your loved one\'s specific Inmate Facility details and complete your purchase securely. Is there anything else I can help you with?" (Short form OK: "I am sending the payment link to your email now. Is there anything else I can help you with?") then WAIT — do NOT invoke end_call, say goodbye, or send another link unless they ask to resend.',
     });
   }
 

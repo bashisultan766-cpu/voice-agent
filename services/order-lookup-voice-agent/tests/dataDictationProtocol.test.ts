@@ -46,11 +46,11 @@ describe("Data Dictation Protocol", () => {
   it("system prompt includes notepad check, dashed TTS, and contextual repeat rules", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DATA DICTATION PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I have your tracking number here\. Let me know when you have a pen and paper ready/i,
+      /I have your tracking number right here\. Let me know when you have a pen and paper ready/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/9 - 4 - 4 - 9 - 0 - 1/);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /Did you get all of that, or should I repeat any part of it/i,
+      /Did you get all that, or should I repeat any part of it/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/lastSpokenDataPoint/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/orderNote \/ note/i);
@@ -66,9 +66,9 @@ describe("Data Dictation Protocol", () => {
   });
 
   it("notepad handshake uses the Data Dictation Protocol script", () => {
+    expect(promptUserForNotepad()).toMatch(/tracking number right here/i);
     expect(promptUserForNotepad()).toMatch(/pen and paper ready/i);
-    expect(promptUserForNotepad()).toMatch(/ready for me to read it/i);
-    expect(TRACKING_DICTATION_CONFIRM_SPEECH).toMatch(/Did you get all of that/i);
+    expect(TRACKING_DICTATION_CONFIRM_SPEECH).toMatch(/Did you get all that/i);
   });
 
   it("extracts tracking digits from orderNote text", () => {
@@ -102,7 +102,7 @@ describe("Data Dictation Protocol", () => {
     expect(repeat.handled).toBe(true);
     expect(repeat.speech).toContain("9 -  - 4");
     expect(repeat.speech).not.toMatch(/physical_items|shipping_amount|full summary/i);
-    expect(appendTrackingDictationConfirm(repeat.speech ?? "")).toMatch(/get all of that/i);
+    expect(appendTrackingDictationConfirm(repeat.speech ?? "")).toMatch(/get all that/i);
 
     const slower = buildSlowerTrackingReplaySpeech(CALL_SID);
     expect(slower).toContain("9 -  - 4");
@@ -113,7 +113,7 @@ describe("Data Dictation Protocol", () => {
     const session = baseSession();
     const repeat = resolveTrackingPhaseGate("repeat that", session);
     expect(repeat.handled).toBe(true);
-    expect(repeat.speech).toMatch(/pen and paper ready|ready for me to read/i);
+    expect(repeat.speech).toMatch(/pen and paper ready/i);
     expect(repeat.speech).not.toMatch(/9 - 4/);
   });
 });

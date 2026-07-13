@@ -22,7 +22,7 @@ export const TRACKING_DICTATION_COMPLETE_SPEECH =
   "I have provided that, how else can I help you today?";
 
 export const TRACKING_DICTATION_CONFIRM_SPEECH =
-  "Did you get all of that, or should I repeat any part of it?";
+  "Did you get all that, or should I repeat any part of it?";
 
 const NOTEPAD_READY_RE =
   /\b(?:i'?m\s+ready|i am ready|we'?re ready|(?:have|got)\s+(?:it|my\s+(?:pen|notepad|paper))\s+ready|notepad\s+ready|pen\s+ready|go\s+ahead|all\s+set|you\s+can\s+go|have\s+my\s+pen|got\s+my\s+pen|paper\s+ready|pen\s+and\s+paper|ready\s+for\s+(?:me\s+to\s+)?read|\bready\b)/i;
@@ -37,7 +37,7 @@ export class NotReadyError extends Error {
 }
 
 export function promptUserForNotepad(): string {
-  return "I have your tracking number here. Let me know when you have a pen and paper ready, or if you're ready for me to read it.";
+  return "I have your tracking number right here. Let me know when you have a pen and paper ready.";
 }
 
 export function buildNotepadReadyNudge(): string {
@@ -47,7 +47,7 @@ export function buildNotepadReadyNudge(): string {
 export function appendTrackingDictationConfirm(speech: string): string {
   const trimmed = speech.trim();
   if (!trimmed) return TRACKING_DICTATION_CONFIRM_SPEECH;
-  if (/get all of that|repeat any part|write that correctly|should I repeat/i.test(trimmed)) {
+  if (/get all that|get all of that|repeat any part|write that correctly|should I repeat/i.test(trimmed)) {
     return trimmed;
   }
   return `${trimmed} ${TRACKING_DICTATION_CONFIRM_SPEECH}`;
