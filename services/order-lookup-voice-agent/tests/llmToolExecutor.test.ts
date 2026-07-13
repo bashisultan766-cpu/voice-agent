@@ -80,6 +80,10 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.instructions).toMatch(/progressive disclosure|ORDER LOOKUP S\.O\.P/i);
     expect(parsed.instructions).toMatch(/INTERNATIONAL PROTOCOL/i);
     expect(parsed.instructions).toMatch(/SECURITY OVERRIDE FOR UNVERIFIED CALLERS/i);
+    expect(parsed.instructions).toMatch(/UNVERIFIED CALLER WHITELIST \(UNBREAKABLE\)/i);
+    expect(parsed.instructions).toMatch(/LEGACY DATA INTERPRETATION/i);
+    expect(parsed.instructions).toMatch(/DICTATION & INTERRUPTION PROTOCOL/i);
+    expect(parsed.instructions).toMatch(/After 47, the remaining numbers are/i);
     expect(parsed.instructions).toMatch(/ABSOLUTE BLACKLIST/i);
     expect(parsed.instructions).toMatch(/ABSOLUTE WHITELIST/i);
     expect(parsed.instructions).toMatch(/9, 4, 4, 9, 0, 1/);

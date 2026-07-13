@@ -151,9 +151,32 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/search_shopify_book_by_title with the extracted English title/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Never summarize books, processing fees, shipping fees/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/HUMAN SPATIAL DICTATION/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DICTATION & INTERRUPTION PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/There are two 88s in the number/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /After 47, the remaining numbers are 1, 8, 8, 3, 0, 0/i,
+    );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/After 68, the next numbers are|After Holy/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/physical_items/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/processing_fees/i);
+  });
+
+  it("requires legacy Litextension data interpretation for notes and null card digits", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/LEGACY DATA INTERPRETATION/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Litextension/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/thoroughly scan the orderNote or note fields/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/older migrated order/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /exact card digits are hidden for security/i,
+    );
+  });
+
+  it("requires unbreakable unverified caller whitelist", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER WHITELIST \(UNBREAKABLE\)/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /ONLY things you are forbidden from sharing are the EXACT SHIPPING ADDRESS and PAST ORDER HISTORY/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Over-redaction of totals, items, taxes, or timeline/i);
   });
 
   it("requires volume alternative suggestions for title search", () => {
