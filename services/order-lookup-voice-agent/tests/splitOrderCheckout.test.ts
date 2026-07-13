@@ -5,6 +5,13 @@ import {
   deductCheckedOutItems,
   ensureShoppingCart,
 } from "../src/agents/cartManager.js";
+import {
+  startMultiBatchCheckout,
+  getCheckoutSession,
+  setCurrentCheckoutBatch,
+  remainingUnits,
+  buildPostBatchRemainingSpeech,
+} from "../src/agents/paymentCheckoutFlow.js";
 import { sendCheckoutPaymentLink } from "../src/services/checkoutEmailService.js";
 import { SHOSHAN_SYSTEM_PROMPT } from "../src/prompts/systemPrompt.js";
 
@@ -24,7 +31,7 @@ vi.mock("../src/utils/resendEmailService.js", () => ({
   sendCheckoutEmail: mockSendEmail,
 }));
 
-function sessionWithCart(callSid: string): CallSession {
+function sessionWithSixUnits(callSid: string): CallSession {
   return {
     callSid,
     from: "+1",
@@ -45,7 +52,7 @@ function sessionWithCart(callSid: string): CallSession {
         variantId: "gid://shopify/ProductVariant/2",
         productId: "gid://shopify/Product/2",
         title: "Book B",
-        quantity: 2,
+        quantity: 3,
         unitPrice: "12.00",
         price: "12.00",
       },
@@ -53,7 +60,7 @@ function sessionWithCart(callSid: string): CallSession {
         variantId: "gid://shopify/ProductVariant/3",
         productId: "gid://shopify/Product/3",
         title: "Book C",
-        quantity: 2,
+        quantity: 1,
         unitPrice: "8.00",
         price: "8.00",
       },
@@ -61,7 +68,7 @@ function sessionWithCart(callSid: string): CallSession {
   } as CallSession;
 }
 
-describe("split-order checkout", () => {
+describe("split-order / multi-batch checkout", () => {
   beforeEach(() => {
     mockCreateDraft.mockReset();
     mockSendEmail.mockReset();
@@ -74,17 +81,18 @@ describe("split-order checkout", () => {
     mockSendEmail.mockResolvedValue({ ok: true });
   });
 
-  it("system prompt includes THE SPLIT-ORDER CHECKOUT PROTOCOL", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE SPLIT-ORDER CHECKOUT PROTOCOL/i);
+  it("system prompt includes MULTI-BATCH PAYMENT ORCHESTRATOR", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MULTI-BATCH PAYMENT ORCHESTRATOR/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /Let's do this one step at a time so nothing gets mixed up/i,
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER collect all emails at the same time/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/one batch, one email, one link/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER collect all emails at once/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/You have \[Y\] items remaining/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONTEXTUAL REPAIR/i);
   });
 
   it("resolves a subset of cart lines without touching the rest", () => {
-    const session = sessionWithCart("CA_SPLIT_RESOLVE");
+    const session = sessionWithSixUnits("CA_SPLIT_RESOLVE");
     const resolved = resolveCheckoutLineItems(session, [
       { title: "Book A", quantity: 2 },
       { variant_id: "gid://shopify/ProductVariant/2", quantity: 1 },
@@ -99,8 +107,19 @@ describe("split-order checkout", () => {
     expect(ensureShoppingCart(session)).toHaveLength(3);
   });
 
+  it("resolves books by 1-based cart position", () => {
+    const session = sessionWithSixUnits("CA_SPLIT_POS");
+    const resolved = resolveCheckoutLineItems(session, [
+      { position: 1, quantity: 2 },
+      { position: 2, quantity: 3 },
+    ]);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.items.map((line) => line.title)).toEqual(["Book A", "Book B"]);
+  });
+
   it("deducts only checked-out quantities from the cart", () => {
-    const session = sessionWithCart("CA_SPLIT_DEDCT");
+    const session = sessionWithSixUnits("CA_SPLIT_DEDCT");
     deductCheckedOutItems(session, [
       {
         variantId: "gid://shopify/ProductVariant/1",
@@ -114,43 +133,55 @@ describe("split-order checkout", () => {
     expect(cart).toHaveLength(2);
   });
 
-  it("sends a split batch then leaves remaining books for the next email", async () => {
-    const session = sessionWithCart("CA_SPLIT_SEND");
-    session.emailConfirmation = {
-      workflowType: "payment_link",
-      phase: "confirmed",
-      confirmationStatus: "confirmed",
-      sentStatus: "pending",
-      confirmedEmail: "a@example.com",
-      normalizedEmail: "a@example.com",
-    } as CallSession["emailConfirmation"];
+  it("CheckoutSession tracks 2 → 3 → 1 across three emails", async () => {
+    const session = sessionWithSixUnits("CA_SPLIT_FSM");
+    const started = startMultiBatchCheckout(session);
+    expect(started.phase).toBe("selecting_batch");
+    expect(remainingUnits(session)).toBe(6);
+    expect(started.completedBatches).toHaveLength(0);
+
+    const batch1 = setCurrentCheckoutBatch(session, [{ title: "Book A", quantity: 2 }]);
+    expect(batch1.ok).toBe(true);
+    expect(getCheckoutSession(session)?.phase).toBe("awaiting_batch_email");
 
     const first = await sendCheckoutPaymentLink(session, "a@example.com", {
       customerName: "Caller",
       items: [{ title: "Book A", quantity: 2 }],
     });
-
     expect(first.ok).toBe(true);
     expect(first.splitBatch).toBe(true);
     expect(first.remainingCartUnits).toBe(4);
-    expect(session.shoppingCart?.some((line) => line.title === "Book A")).toBe(false);
+    expect(getCheckoutSession(session)?.completedBatches).toHaveLength(1);
+    expect(getCheckoutSession(session)?.phase).toBe("confirming_continue");
+    expect(buildPostBatchRemainingSpeech(session, "a@example.com")).toMatch(/4 items remaining/i);
     expect(session.paymentLinkSent).not.toBe(true);
-    expect(session.emailConfirmation?.phase).toBe("idle");
 
     const second = await sendCheckoutPaymentLink(session, "b@example.com", {
       customerName: "Caller",
-      items: [{ title: "Book B", quantity: 2 }],
+      items: [{ title: "Book B", quantity: 3 }],
     });
     expect(second.ok).toBe(true);
-    expect(second.remainingCartUnits).toBe(2);
+    expect(second.remainingCartUnits).toBe(1);
+    expect(getCheckoutSession(session)?.completedBatches).toHaveLength(2);
+    expect(getCheckoutSession(session)?.remainingItems).toEqual([
+      { variantId: "gid://shopify/ProductVariant/3", title: "Book C", quantity: 1 },
+    ]);
 
     const third = await sendCheckoutPaymentLink(session, "c@example.com", {
       customerName: "Caller",
-      items: [{ title: "Book C", quantity: 2 }],
+      items: [{ position: 1, quantity: 1 }],
     });
     expect(third.ok).toBe(true);
     expect(third.remainingCartUnits).toBe(0);
     expect(session.paymentLinkSent).toBe(true);
+    expect(getCheckoutSession(session)?.phase).toBe("completed");
+    expect(getCheckoutSession(session)?.active).toBe(false);
+    expect(getCheckoutSession(session)?.completedBatches).toHaveLength(3);
+    expect(getCheckoutSession(session)?.completedBatches.map((b) => b.email)).toEqual([
+      "a@example.com",
+      "b@example.com",
+      "c@example.com",
+    ]);
     expect(mockCreateDraft).toHaveBeenCalledTimes(3);
   });
 });

@@ -48,6 +48,8 @@ function normalizeCheckoutSelectors(
     sku: entry.sku,
     title: entry.title,
     quantity: entry.quantity,
+    position: entry.position,
+    cart_index: entry.cart_index ?? entry.position,
   }));
 }
 
@@ -138,16 +140,28 @@ export async function sendCheckoutPaymentLink(
       deductCheckedOutItems(session, checkoutItems);
       // Next split batch needs a fresh letter-by-letter email verification.
       resetEmailConfirmation(session);
-      if (session.paymentCheckout) {
-        session.paymentCheckout.state = "awaiting_email";
+      // Keep CheckoutSession in sync with cart math (remaining / completed batches).
+      const { recordCompletedCheckoutBatch, startMultiBatchCheckout } = await import(
+        "../agents/paymentCheckoutFlow.js"
+      );
+      if (!session.paymentCheckout?.checkoutSession?.active) {
+        startMultiBatchCheckout(session);
       }
+      recordCompletedCheckoutBatch(session, customerEmail, checkoutItems, draft.invoiceUrl);
     } else {
       // Full-cart checkout — clear remaining lines and lock confirm-once.
       session.shoppingCart = [];
+      session.currentSessionCart = {};
       session.paymentLinkSent = true;
       session.paymentLinkSentTo = customerEmail;
       if (session.paymentCheckout) {
         session.paymentCheckout.state = "completed";
+        if (session.paymentCheckout.checkoutSession) {
+          session.paymentCheckout.checkoutSession.active = false;
+          session.paymentCheckout.checkoutSession.phase = "completed";
+          session.paymentCheckout.checkoutSession.remainingItems = [];
+          session.paymentCheckout.checkoutSession.currentBatch = [];
+        }
       }
     }
 
@@ -157,6 +171,12 @@ export async function sendCheckoutPaymentLink(
       session.paymentLinkSentTo = customerEmail;
       if (session.paymentCheckout) {
         session.paymentCheckout.state = "completed";
+        if (session.paymentCheckout.checkoutSession) {
+          session.paymentCheckout.checkoutSession.active = false;
+          session.paymentCheckout.checkoutSession.phase = "completed";
+          session.paymentCheckout.checkoutSession.remainingItems = [];
+          session.paymentCheckout.checkoutSession.currentBatch = [];
+        }
       }
     }
 

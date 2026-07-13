@@ -93,7 +93,9 @@ function normalizeCheckoutItemArgs(args: Record<string, unknown>): CheckoutItemS
         (typeof row.sku === "string" && row.sku.trim()) ||
         "";
       const title = typeof row.title === "string" ? row.title.trim() : "";
-      if (!variantIdRaw && !title) return null;
+      const positionRaw = Number(row.position ?? row.cart_index ?? row.cartIndex);
+      const hasPosition = Number.isFinite(positionRaw) && positionRaw >= 1;
+      if (!variantIdRaw && !title && !hasPosition) return null;
 
       const quantityRaw = row.quantity;
       const parsedQuantity =
@@ -111,6 +113,8 @@ function normalizeCheckoutItemArgs(args: Record<string, unknown>): CheckoutItemS
         sku: typeof row.sku === "string" ? row.sku.trim() || undefined : undefined,
         title: title || undefined,
         quantity,
+        position: hasPosition ? Math.floor(positionRaw) : undefined,
+        cart_index: hasPosition ? Math.floor(positionRaw) : undefined,
       };
       return selector;
     });
@@ -180,6 +184,15 @@ export interface CheckoutEmailToolResult {
   reason?: string;
   message?: string;
   instructions?: string;
+  splitBatch?: boolean;
+  remainingCartUnits?: number;
+  checkoutSession?: {
+    phase: string;
+    remainingItems: Array<{ title: string; quantity: number; variantId: string }>;
+    currentBatch: Array<{ title: string; quantity: number; variantId: string }>;
+    completedBatches: number;
+    batchNumber: number;
+  };
 }
 
 export interface SupportEscalationToolResult {
@@ -662,14 +675,28 @@ export async function executeLlmTool(
       else if (/cart is empty|could not find/i.test(result.message)) status = "empty";
       else if (/not configured/i.test(result.message)) status = "error";
     }
+
+    const cs = session.paymentCheckout?.checkoutSession;
+    const remainingUnits = result.remainingCartUnits ?? 0;
     const data: CheckoutEmailToolResult = {
       status: result.ok ? "sent" : "failed",
       invoice_url: result.invoiceUrl,
       message: result.message,
       reason: result.ok ? undefined : result.message,
+      splitBatch: result.splitBatch,
+      remainingCartUnits: result.remainingCartUnits,
+      checkoutSession: cs
+        ? {
+            phase: cs.phase,
+            remainingItems: cs.remainingItems,
+            currentBatch: cs.currentBatch,
+            completedBatches: cs.completedBatches.length,
+            batchNumber: cs.batchNumber,
+          }
+        : undefined,
       instructions: result.ok
-        ? result.splitBatch && (result.remainingCartUnits ?? 0) > 0
-          ? "SPLIT BATCH SENT: Confirm this link was emailed. Then ask which remaining books go to the NEXT email. Re-run letter-by-letter email verification for the next address before calling send_checkout_email again with the next items subset. Do NOT collect all emails at once."
+        ? result.splitBatch && remainingUnits > 0
+          ? `MULTI-BATCH PAYMENT: Link sent. Tell the caller remaining count is exactly ${remainingUnits}. Ask if remaining items go to a different email. Then: (1) ask how many copies of the next title / which books by title or position, (2) letter-by-letter verify that email via CONTEXTUAL REPAIR as needed, (3) call send_checkout_email again with items for ONLY that batch. Do NOT dump a full cart summary. Do NOT collect all emails at once.`
           : result.splitBatch
             ? "SPLIT COMPLETE: All cart batches have been emailed. Ask if they need anything else — do NOT auto hang up."
             : undefined

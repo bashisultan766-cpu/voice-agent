@@ -222,9 +222,10 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "send_checkout_email",
       description:
-        "After letter-by-letter email verification, create a Shopify draft order and email the secure checkout link. " +
+        "After letter-by-letter email verification, create a Shopify draft order and email the secure checkout link (generate_payment_link). " +
         "For a normal checkout, omit items to use the full cart. " +
-        "For SPLIT-ORDER / multi-recipient checkout, pass items as an array of {variant_id|title, quantity} for ONLY this batch — remaining cart lines stay for the next email. " +
+        "For MULTI-BATCH / SPLIT-ORDER checkout, pass items as {variant_id|title|position, quantity} for ONLY the current batch — remaining cart lines stay for the next email. " +
+        "position is 1-based among remaining cart titles (e.g. position:1 = first remaining book). " +
         "NEVER collect multiple emails at once; one batch → one verified email → one link. Prefer the session-confirmed email when injected.",
       parameters: {
         type: "object",
@@ -237,7 +238,7 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
           items: {
             type: "array",
             description:
-              "Optional subset of cart lines for this payment link (split checkout). Each entry needs variant_id or title plus quantity. Omit to check out the entire cart.",
+              "Optional subset of cart lines for this payment link (multi-batch split). Each entry needs variant_id, title, or 1-based position plus quantity. Omit to check out the entire cart.",
             items: {
               type: "object",
               properties: {
@@ -251,7 +252,12 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
                 },
                 title: {
                   type: "string",
-                  description: "Book title as it appears in the cart (used when variant_id is unknown).",
+                  description: "Book title as it appears in the cart (fuzzy match allowed).",
+                },
+                position: {
+                  type: "number",
+                  description:
+                    "1-based position in the remaining cart (1 = first title). Use for 'the first two books'.",
                 },
                 quantity: {
                   type: "number",

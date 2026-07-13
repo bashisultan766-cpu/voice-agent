@@ -164,6 +164,8 @@ const checkoutEmailSchema = z
             sku: z.string().optional(),
             title: z.string().optional(),
             quantity: z.number().optional(),
+            position: z.number().optional(),
+            cart_index: z.number().optional(),
           })
           .passthrough(),
       )

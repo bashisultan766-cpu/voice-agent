@@ -37,11 +37,20 @@ function resolveVariantHint(raw: CartItemInput): string {
 function findCartLineIndex(cart: ShoppingCartLineItem[], raw: CartItemInput): number {
   const variantGid = parseVariantGid(resolveVariantHint(raw));
   const title = (raw.title ?? "").trim().toLowerCase();
-  return cart.findIndex(
+  const exact = cart.findIndex(
     (line) =>
       (variantGid && line.variantId === variantGid) ||
       (title && line.title.toLowerCase() === title),
   );
+  if (exact >= 0) return exact;
+  // Fuzzy title — STT partials / "the first book I mentioned" follow-ups.
+  if (title.length >= 3) {
+    return cart.findIndex((line) => {
+      const lineTitle = line.title.toLowerCase();
+      return lineTitle.includes(title) || title.includes(lineTitle);
+    });
+  }
+  return -1;
 }
 
 export function ensureShoppingCart(session: CallSession): ShoppingCartLineItem[] {
@@ -216,6 +225,9 @@ export interface CheckoutItemSelector {
   sku?: string;
   title?: string;
   quantity?: number;
+  /** 1-based cart position ("the first book", "book 2"). */
+  position?: number;
+  cart_index?: number;
 }
 
 function cloneCartLine(line: ShoppingCartLineItem, quantity: number): ShoppingCartLineItem {
@@ -254,20 +266,33 @@ export function resolveCheckoutLineItems(
 
   const selected: ShoppingCartLineItem[] = [];
   for (const raw of selectors) {
-    const input: CartItemInput = {
-      variant_id: raw.variant_id ?? raw.variantId ?? raw.item_id ?? raw.sku,
-      item_id: raw.item_id,
-      sku: raw.sku,
-      title: raw.title,
-      quantity: raw.quantity,
-    };
-    const index = findCartLineIndex(cart, input);
-    if (index < 0) {
-      const label = (raw.title ?? raw.variant_id ?? raw.variantId ?? raw.item_id ?? "item").toString();
-      return {
-        ok: false,
-        message: `Could not find "${label}" in the cart for this checkout batch. Ask which books belong to this email.`,
+    const positionRaw = Number(raw.position ?? raw.cart_index);
+    const hasPosition = Number.isFinite(positionRaw) && positionRaw >= 1;
+    let index = -1;
+    if (hasPosition) {
+      index = Math.floor(positionRaw) - 1;
+      if (index < 0 || index >= cart.length) {
+        return {
+          ok: false,
+          message: `Cart position ${Math.floor(positionRaw)} is out of range. There are ${cart.length} title(s) remaining.`,
+        };
+      }
+    } else {
+      const input: CartItemInput = {
+        variant_id: raw.variant_id ?? raw.variantId ?? raw.item_id ?? raw.sku,
+        item_id: raw.item_id,
+        sku: raw.sku,
+        title: raw.title,
+        quantity: raw.quantity,
       };
+      index = findCartLineIndex(cart, input);
+      if (index < 0) {
+        const label = (raw.title ?? raw.variant_id ?? raw.variantId ?? raw.item_id ?? "item").toString();
+        return {
+          ok: false,
+          message: `Could not find "${label}" in the cart for this checkout batch. Ask which books belong to this email, or use cart position (1 = first remaining title).`,
+        };
+      }
     }
     const line = cart[index]!;
     const requested = Math.floor(Number(raw.quantity ?? line.quantity) || line.quantity);
@@ -305,7 +330,8 @@ export function buildCartContextSystemMessage(session: CallSession): string {
     "ACTIVE SHOPPING CART: The caller's current cart is persisted for this call. " +
     "Use update_cart_item_quantity with action_type add | remove | set_exact, and variant_id / unit_price from search results " +
     "(full gid://shopify/ProductVariant/...). Use get_cart_summary to read the cart. " +
-    "For split-order checkout, pass the subset items array into send_checkout_email so remaining cart lines stay for the next email. " +
-    `JSON: ${JSON.stringify(summary.items)}`
+    "For multi-batch split checkout, pass items into send_checkout_email (alias: generate_payment_link) with title, variant_id, or 1-based position plus quantity. " +
+    "Tell the caller exactly how many units remain after every batch. " +
+    `JSON: ${JSON.stringify(summary.items.map((line, i) => ({ position: i + 1, ...line })))}`
   );
 }
