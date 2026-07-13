@@ -1,6 +1,6 @@
 /**
  * Normalize phone numbers for cryptographic caller-ID verification.
- * Strips formatting and US country code (+1) so equivalent numbers match.
+ * Strips formatting and leading country codes so equivalent numbers match.
  */
 const BLOCKED_CALLER_LABELS = new Set([
   "anonymous",
@@ -19,8 +19,13 @@ export function normalizePhoneNumber(raw: string | undefined | null): string {
 
   let digits = trimmed.replace(/\D/g, "");
   if (!digits) return "";
+  // US/CA +1
   if (digits.length === 11 && digits.startsWith("1")) {
     digits = digits.slice(1);
+  }
+  // International 00-prefix dialing
+  if (digits.startsWith("00") && digits.length > 11) {
+    digits = digits.slice(2);
   }
   return digits;
 }
@@ -33,7 +38,12 @@ export function phoneNumbersMatch(
   const left = normalizePhoneNumber(a);
   const right = normalizePhoneNumber(b);
   if (!left || !right) return false;
-  return left === right;
+  if (left === right) return true;
+  // Match national numbers across country-code prefixes (last 10 digits).
+  if (left.length >= 10 && right.length >= 10) {
+    return left.slice(-10) === right.slice(-10);
+  }
+  return false;
 }
 
 /** True when caller phone matches any normalized Shopify verification phone. */

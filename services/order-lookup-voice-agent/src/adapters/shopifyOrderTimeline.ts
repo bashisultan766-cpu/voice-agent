@@ -74,6 +74,15 @@ const ORDER_DEEP_BY_ID_QUERY = `query OrderDeepById($id: ID!) {
         }
       }
     }
+    metafields(first: 20) {
+      edges {
+        node {
+          namespace
+          key
+          value
+        }
+      }
+    }
   }
 }`;
 
@@ -169,6 +178,7 @@ async function fetchDeepOrderByGid(
       publication: order?.publication,
       channelInformation: order?.channelInformation,
       customAttributes: order?.customAttributes,
+      metafields: order?.metafields,
     },
   };
 }
@@ -249,6 +259,7 @@ export async function enrichOrderNodeTimeline(
       publication: node.publication ?? deep.patch.publication,
       channelInformation: node.channelInformation ?? deep.patch.channelInformation,
       customAttributes: node.customAttributes ?? deep.patch.customAttributes,
+      metafields: node.metafields ?? deep.patch.metafields,
     };
 
     if (!hasEvents && deep.events.length) {

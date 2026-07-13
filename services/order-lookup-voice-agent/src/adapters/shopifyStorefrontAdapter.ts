@@ -237,6 +237,10 @@ export interface OrderStatusResult {
   customAttributes?: Array<{ key: string; value: string }>;
   /** Structured transactions including manual payment / account deposit receipts. */
   transactions?: Array<Record<string, unknown>>;
+  /** Order-level metafields from Shopify Admin. */
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
+  /** Customer's recent order history (attached by aggregation engine). */
+  pastOrderHistory?: CustomerHistoryOrderSummary[];
 }
 
 export interface BookCatalogMatch {
@@ -494,6 +498,15 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
             currencyCode
           }
         }
+        metafields(first: 20) {
+          edges {
+            node {
+              namespace
+              key
+              value
+            }
+          }
+        }
       }
     }
   }
@@ -638,6 +651,7 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     isDraftOrderOrigin: parsed.isDraftOrderOrigin,
     customAttributes: parsed.customAttributes,
     transactions: parsed.transactions,
+    metafields: parsed.metafields,
     cardLast4: parsed.cardLast4,
     cardBrand: parsed.cardBrand,
     paymentGateway: parsed.paymentGateway,

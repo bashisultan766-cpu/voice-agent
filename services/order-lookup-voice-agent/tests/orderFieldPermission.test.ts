@@ -81,8 +81,12 @@ describe("canRevealOrderField", () => {
     expect(canRevealOrderField("paymentCardLast4", false)).toBe(false);
     expect(canRevealOrderField("customerName", false)).toBe(false);
     expect(canRevealOrderField("fullCustomerEmail", false)).toBe(false);
-    expect(canRevealOrderField("orderNote", false)).toBe(false);
-    expect(canRevealOrderField("timelineEvents", false)).toBe(false);
+  });
+
+  it("allows timeline, tags, and notes for non-verified callers", () => {
+    expect(canRevealOrderField("orderNote", false)).toBe(true);
+    expect(canRevealOrderField("orderTags", false)).toBe(true);
+    expect(canRevealOrderField("timelineEvents", false)).toBe(true);
   });
 });
 

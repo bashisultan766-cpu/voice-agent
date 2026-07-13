@@ -119,9 +119,11 @@ export function buildActiveOrderContextSystemMessage(
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +
     "The payload includes public_data (safe for all callers) and secure_data (verified callers only; null when unverified). " +
-    "When privacy_tier is \"unverified\", answer only from public_data / public flat fields (status, tracking, shipping timeframe, item titles/quantities). " +
+    "When privacy_tier is \"unverified\", answer from public_data / public flat fields " +
+    "(status, tracking, shipping timeframe, item titles/quantities, timeline events, tags, and notes). " +
+    "Never reveal shipping_address or past_order_history when unverified. " +
     "NEVER say that restricted secure fields are \"not on file\" — refuse per CRYPTOGRAPHIC PRIVACY PROTOCOL RULE 1.1. " +
-    "When verified, secure_data includes customer_email, shipping_address, payment_method_last4, tags, staff notes/events, transactions, and financial totals. " +
+    "When verified, secure_data includes customer_email, shipping_address, past_order_history, payment_method_last4, transactions, and financial totals. " +
     "For refund/confirmation email questions (verified only), use refund_notification_email_for_tts when present. " +
     "If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK with customer_email_for_tts. " +
     "Do not call get_shopify_order_status again unless the user provides a different order number. " +

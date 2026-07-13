@@ -109,6 +109,11 @@ export interface DeepOrderGraphqlNode {
     deliveredAt?: string | null;
     trackingInfo?: Array<{ company?: string; number?: string; url?: string }>;
   }>;
+  metafields?: {
+    edges?: Array<{
+      node?: { namespace?: string; key?: string; value?: string };
+    }>;
+  };
 }
 
 /** Strict typed order context — no field may be silently dropped at parse time. */
@@ -174,6 +179,7 @@ export interface ParsedOrderData {
   customerId?: string;
   shippingAddress?: string;
   totalOrderCount?: number;
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
 }
 
 function ordinalSuffix(day: number): string {
@@ -271,6 +277,21 @@ function normalizeOrderTags(tags: DeepOrderGraphqlNode["tags"]): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+}
+
+function normalizeOrderMetafields(
+  metafields: DeepOrderGraphqlNode["metafields"],
+): Array<{ namespace: string; key: string; value: string }> {
+  const out: Array<{ namespace: string; key: string; value: string }> = [];
+  for (const edge of metafields?.edges ?? []) {
+    const node = edge.node;
+    const namespace = String(node?.namespace ?? "").trim();
+    const key = String(node?.key ?? "").trim();
+    const value = String(node?.value ?? "").trim();
+    if (!namespace || !key) continue;
+    out.push({ namespace, key, value });
+  }
+  return out;
 }
 
 function detectDraftOrderOrigin(node: DeepOrderGraphqlNode): boolean {
@@ -427,6 +448,7 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   );
   const orderPlacedAt = node.createdAt;
   const tags = normalizeOrderTags(node.tags);
+  const metafields = normalizeOrderMetafields(node.metafields);
   const channelName =
     node.channelInformation?.channelDefinition?.channelName?.trim() ||
     node.channelInformation?.channelDefinition?.handle?.trim() ||
@@ -484,6 +506,7 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     customerId: node.customer?.id,
     shippingAddress: formatShippingAddress(node.shippingAddress),
     totalOrderCount: node.customer?.numberOfOrders,
+    metafields: metafields.length ? metafields : undefined,
   };
 }
 

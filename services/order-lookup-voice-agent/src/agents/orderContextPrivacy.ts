@@ -9,6 +9,7 @@ const UNVERIFIED_STRIPPED_CONTEXT_KEYS = [
   "secure_data",
   "shipping_address",
   "billing_address",
+  "past_order_history",
   "customer_email",
   "customer_email_for_tts",
   "customer_name",
@@ -34,10 +35,7 @@ const UNVERIFIED_STRIPPED_CONTEXT_KEYS = [
   "refund_notification_email_for_tts",
   "order_confirmation_email",
   "order_confirmation_email_for_tts",
-  "events",
-  "note",
-  "order_note",
-  "tags",
+  // Timeline/tags/notes stay available for unverified general order-state queries.
   "source_name",
   "channel_name",
   "publication_name",
@@ -62,6 +60,11 @@ export const UNVERIFIED_ALLOWED_PUBLIC_CONTEXT_KEYS = [
   "physical_items",
   "items",
   "is_verified_caller",
+  "events",
+  "note",
+  "order_note",
+  "tags",
+  "metafields",
 ] as const;
 
 /** Strip vault fields from order JSON before LLM injection for unverified callers. */
@@ -78,7 +81,7 @@ export function filterOrderContextForVerification(
 
   const copy: ActiveOrderContextData = { ...data };
   for (const key of UNVERIFIED_STRIPPED_CONTEXT_KEYS) {
-    if (key === "events" || key === "tags" || key === "transactions" || key === "custom_attributes") {
+    if (key === "transactions" || key === "custom_attributes") {
       copy[key] = [];
     } else {
       copy[key] = null;
@@ -88,6 +91,8 @@ export function filterOrderContextForVerification(
     if (key in data) copy[key] = data[key];
   }
   copy.secure_data = null;
+  copy.shipping_address = null;
+  copy.past_order_history = null;
   copy.privacy_tier = "unverified";
   copy.vault_access = "restricted";
   return copy;
@@ -100,7 +105,7 @@ const DETAILED_ORDER_HISTORY_RE =
   /\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders|what\s+did\s+i\s+order\s+in|orders?\s+in\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)|get_customer_history|customer\s+history)\b/i;
 
 const SECURE_FIELD_RE =
-  /\b(email|card\s+(?:ending|last)|last\s*4|payment\s+method|total\s+amount|order\s+total|how\s+much|staff\s+note|order\s+note|tags?|transaction|account\s+deposit)\b/i;
+  /\b(email|card\s+(?:ending|last)|last\s*4|payment\s+method|total\s+amount|order\s+total|how\s+much|transaction|account\s+deposit)\b/i;
 
 /** Vault-only queries an unverified caller must not receive via deterministic speech. */
 export function isRestrictedFieldQueryForUnverified(callerText: string): boolean {

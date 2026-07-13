@@ -45,6 +45,10 @@ const PUBLIC_REVEAL_FIELDS = new Set<OrderRevealField>([
   "trackingCompany",
   "itemTitle",
   "itemQuantity",
+  // Unverified callers may receive general order-state context.
+  "orderNote",
+  "orderTags",
+  "timelineEvents",
 ]);
 
 /** Field-by-field disclosure — non-verified callers receive public fields only. */

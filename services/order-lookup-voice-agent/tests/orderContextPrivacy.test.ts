@@ -47,8 +47,10 @@ describe("orderContextPrivacy", () => {
     expect(filtered.shipping_address).toBeNull();
     expect(filtered.total_amount).toBeNull();
     expect(filtered.payment_method_last4).toBeNull();
-    expect(filtered.events).toEqual([]);
-    expect(filtered.tags).toEqual([]);
+    expect(filtered.events).toEqual(["Jessica Glass: manually marked $40.00 as paid"]);
+    expect(filtered.tags).toEqual(["account-deposit", "manual"]);
+    expect(filtered.note).toBe("Account Deposit $65.00");
+    expect(filtered.past_order_history).toBeNull();
     expect(filtered.tracking_number).toBe("1Z999");
     expect(filtered.fulfillment_status).toBe("FULFILLED");
     expect(filtered.privacy_tier).toBe("unverified");

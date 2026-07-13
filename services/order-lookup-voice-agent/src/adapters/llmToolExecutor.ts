@@ -10,6 +10,7 @@ import {
   type OrderStatusResult,
 } from "./shopifyStorefrontAdapter.js";
 import { lookupOrderStatus, clearOrderStatusCache } from "../services/shopifyService.js";
+import { aggregateOrderForCaller } from "./orderAggregationEngine.js";
 import {
   addToCart,
   ensureShoppingCart,
@@ -666,9 +667,39 @@ export async function executeLlmTool(
     });
 
     try {
-      const data = await lookupOrderStatus(orderNumber, callSid, {
-        bypassCache: true,
-      });
+      const callerPhone = session?.callerPhone ?? session?.from ?? "";
+      let data: OrderStatusResult;
+
+      if (callerPhone) {
+        const aggregated = await aggregateOrderForCaller(orderNumber, callerPhone, callSid);
+        if (aggregated.status === "found" && aggregated.order) {
+          data = aggregated.order;
+          if (session) {
+            session.lastOrderStatusResult = data;
+            session.isVerifiedCaller = aggregated.is_verified_caller;
+            session.callerPhone = callerPhone;
+            session.shopifyCustomerPhone = data.customerPhone;
+            session.shopifyCustomerId = data.customerId;
+            session.totalOrderCount = data.totalOrderCount;
+          }
+        } else {
+          data = {
+            status: aggregated.status,
+            message: aggregated.message,
+            error: aggregated.error,
+            searchedNumber: aggregated.searchedNumber ?? orderNumber,
+          };
+        }
+      } else {
+        data = await lookupOrderStatus(orderNumber, callSid, {
+          bypassCache: true,
+        });
+        if (session && data.status === "found") {
+          session.lastOrderStatusResult = data;
+          runVerificationGate(session, data);
+        }
+      }
+
       if (isTurnAborted(callSid)) {
         return {
           tool,
@@ -678,10 +709,6 @@ export async function executeLlmTool(
           errorMessage: "Turn aborted — tool result discarded",
           elapsedMs: Date.now() - started,
         };
-      }
-      if (session && data.status === "found") {
-        session.lastOrderStatusResult = data;
-        runVerificationGate(session, data);
       }
       // After a miss, keep the order-number slot so the next turn bypasses cache
       // and retries live instead of replaying a stale not_found.
@@ -1285,6 +1312,12 @@ function shapeOrderStatusForLlm(
         : null,
     item_count: itemCount,
     physical_items: publicItems.length ? publicItems : null,
+    // General order-state fields available to unverified callers.
+    events: data.events ?? [],
+    note: data.orderNote ?? null,
+    order_note: data.orderNote ?? null,
+    tags: data.tags ?? [],
+    metafields: data.metafields ?? [],
   };
 
   const secureData: Record<string, unknown> | null = verified
@@ -1294,6 +1327,7 @@ function shapeOrderStatusForLlm(
         customer_email_for_tts: formatEmailForTTS(data.customerEmail ?? null),
         customer_phone: data.customerPhone ?? null,
         shipping_address: data.shippingAddress ?? null,
+        past_order_history: data.pastOrderHistory ?? [],
         total_order_count: data.totalOrderCount ?? session?.totalOrderCount ?? null,
         physical_items: physicalItems.length ? physicalItems : null,
         fee_items: feeItems.length ? feeItems : null,
@@ -1321,6 +1355,7 @@ function shapeOrderStatusForLlm(
         note: data.orderNote ?? null,
         order_note: data.orderNote ?? null,
         tags: data.tags ?? [],
+        metafields: data.metafields ?? [],
         source_name: data.sourceName ?? null,
         channel_name: data.channelName ?? null,
         publication_name: data.publicationName ?? null,
@@ -1344,6 +1379,7 @@ function shapeOrderStatusForLlm(
       ? (data.totalOrderCount ?? session?.totalOrderCount ?? null)
       : null,
     shipping_address: verified ? (data.shippingAddress ?? null) : null,
+    past_order_history: verified ? (data.pastOrderHistory ?? []) : null,
     physical_items: publicItems.length ? publicItems : null,
     fee_items: verified && feeItems.length ? feeItems : null,
     item_count: itemCount,
@@ -1372,10 +1408,11 @@ function shapeOrderStatusForLlm(
     order_confirmation_email_for_tts: verified
       ? formatEmailForTTS(orderConfirmationEmail)
       : null,
-    events: verified ? (data.events ?? []) : [],
-    note: verified ? (data.orderNote ?? null) : null,
-    order_note: verified ? (data.orderNote ?? null) : null,
-    tags: verified ? (data.tags ?? []) : [],
+    events: data.events ?? [],
+    note: data.orderNote ?? null,
+    order_note: data.orderNote ?? null,
+    tags: data.tags ?? [],
+    metafields: data.metafields ?? [],
     source_name: verified ? (data.sourceName ?? null) : null,
     channel_name: verified ? (data.channelName ?? null) : null,
     publication_name: verified ? (data.publicationName ?? null) : null,
