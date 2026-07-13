@@ -118,7 +118,7 @@ function isRefundedOrder(result: OrderStatusResult): boolean {
 }
 
 /**
- * Build concise initial order response — progressive disclosure (status only).
+ * Build human-concierge order response — conversational summarization after deep fetch.
  * Full deep-fetch data stays in LLM/session memory for follow-up questions.
  */
 export function buildOrderStatusTts(

@@ -271,11 +271,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/strictly forbidden from answering general knowledge/i);
   });
 
-  it("requires progressive disclosure for initial order lookup", () => {
+  it("requires conversational summarization for initial order lookup", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MULTILINGUAL PROTOCOL|Match the caller's language/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ORDER LOOKUP S\.O\.P\./i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I found your order/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do you need any more information about your order/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONVERSATIONAL SUMMARIZATION/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Never act like a database/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Because this is a legacy order, the specific payment card details are hidden/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ACTIVE ORDER CONTEXT/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I don't have that specific detail on file|that specific detail is not on file/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID \(TOOL-SCOPED\)/i);

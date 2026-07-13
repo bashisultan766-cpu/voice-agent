@@ -1,8 +1,8 @@
 /**
- * Verification-first order lookup protocol — deterministic speech, no LLM choice.
+ * Verification-first / conversational order lookup protocol — deterministic speech.
  */
 import type { ParsedOrderData } from "../utils/orderDataParser.js";
-import { fulfillmentStatusPhrase } from "../utils/formatter.js";
+import { fulfillmentStatusPhrase, speakMoney } from "../utils/formatter.js";
 import type { CallSession } from "../types/order.js";
 import { callerAskedForTracking } from "./sessionMemory.js";
 import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
@@ -56,6 +56,10 @@ export function buildOrderNumberPreflightSpeech(session?: CallSession): string {
   return ORDER_NUMBER_PREFLIGHT_SPEECH;
 }
 
+/**
+ * Human concierge summary after a successful deep order fetch.
+ * Never just say "Order found."
+ */
 export function buildVerificationFirstOrderSpeech(
   data: ParsedOrderData,
   session?: CallSession,
@@ -71,14 +75,50 @@ export function buildVerificationFirstOrderSpeech(
     statusPhrase = "being processed";
   }
 
-  const placedOn =
-    data.orderPlacedAtSpoken?.trim() ||
-    data.orderPlacedAt?.trim() ||
-    "the date on file";
+  const books = (data.lineItems ?? []).filter((item) => item.title?.trim());
+  const bookPhrase =
+    books.length === 0
+      ? "your items"
+      : books.length === 1
+        ? books[0]!.title.trim()
+        : books.length === 2
+          ? `${books[0]!.title.trim()} and ${books[1]!.title.trim()}`
+          : `${books[0]!.title.trim()} and ${books.length - 1} other books`;
+
+  const total = data.totalAmount?.trim();
+  const financial = (data.financialStatus ?? "").trim();
+  const paidPhrase = data.isRefunded
+    ? "the payment was refunded"
+    : /paid|partially_paid/i.test(financial)
+      ? "payment is marked paid"
+      : financial
+        ? `payment status is ${financial.toLowerCase().replace(/_/g, " ")}`
+        : "payment was recorded";
+
+  const notifyEmail =
+    data.orderConfirmationEmail?.trim() ||
+    data.customerEmail?.trim() ||
+    data.refundNotificationEmail?.trim() ||
+    "";
 
   const segments: string[] = [
-    `I have found your order ${orderId}. It was placed on ${placedOn} and the status is ${statusPhrase}.`,
+    `I found your order ${orderId}. ${bookPhrase} ${books.length === 1 ? "is" : "are"} currently ${statusPhrase}.`,
+    total
+      ? `I can confirm ${paidPhrase} for ${speakMoney(total)}.`
+      : `I can confirm ${paidPhrase}.`,
   ];
+
+  if (notifyEmail) {
+    segments.push(
+      `All system notifications, shipping updates, and receipts were automatically routed to ${notifyEmail}.`,
+    );
+  }
+
+  if (!data.cardLast4?.trim()) {
+    segments.push(
+      "Because this is a legacy order, the specific payment card details are hidden for security, but the transaction was successfully processed.",
+    );
+  }
 
   const askedForTracking = Boolean(session && callerAskedForTracking(session));
   if (askedForTracking && !data.trackingNumber?.trim()) {

@@ -85,19 +85,26 @@ describe("verification-first protocol", () => {
     expect(callerAskedForTracking(session)).toBe(true);
   });
 
-  it("emits strict disclosure plus closing phrase", () => {
+  it("emits conversational summarization plus closing phrase", () => {
     const speech = buildVerificationFirstOrderSpeech({
       orderNumber: "#21698",
       orderPlacedAtSpoken: "March 10th, 2025",
       fulfillmentStatus: "FULFILLED",
       isRefunded: false,
       itemCount: 1,
-      lineItems: [],
+      lineItems: [{ title: "SureShot Guide", quantity: 1 }],
       feeLineItems: [],
       events: [],
+      totalAmount: "25.00 USD",
+      financialStatus: "PAID",
+      customerEmail: "caller@example.com",
     });
-    expect(speech).toMatch(
-      /^I have found your order 21698\. It was placed on March 10th, 2025 and the status is /,
+    expect(speech).toMatch(/^I found your order 21698\./);
+    expect(speech).toMatch(/SureShot Guide is currently fulfilled/i);
+    expect(speech).toMatch(/payment is marked paid/i);
+    expect(speech).toContain("caller@example.com");
+    expect(speech).toContain(
+      "Because this is a legacy order, the specific payment card details are hidden for security",
     );
     expect(speech).toContain(POST_INFORMATION_CLOSING_SPEECH);
   });
@@ -167,7 +174,7 @@ describe("verification-first protocol", () => {
       orderPlacedAt: "2025-03-10T00:00:00Z",
       fulfillmentStatus: "FULFILLED",
     });
-    expect(tts.text).toMatch(/^I have found your order 12345\./);
+    expect(tts.text).toMatch(/^I found your order 12345\./);
     expect(tts.text).toContain(POST_INFORMATION_CLOSING_SPEECH);
   });
 

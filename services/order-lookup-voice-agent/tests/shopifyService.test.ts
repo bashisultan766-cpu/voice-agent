@@ -16,29 +16,24 @@ describe("shopifyService", () => {
     vi.clearAllMocks();
   });
 
-  it("returns not_found when Shopify has no matching order after retry", async () => {
+  it("returns not_found without retrying when Shopify has no matching order", async () => {
     vi.mocked(getOrderStatus).mockResolvedValue({ status: "not_found" });
 
     const result = await lookupOrder("99999");
     expect(result.status).toBe("not_found");
-    expect(getOrderStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(getOrderStatus).toHaveBeenCalledWith("#99999", "fulfillment");
+    expect(getOrderStatus).toHaveBeenCalledTimes(1);
+    expect(getOrderStatus).toHaveBeenCalledWith("99999", "fulfillment");
   });
 
-  it("retries once when Shopify initially returns not_found then finds the order", async () => {
-    vi.mocked(getOrderStatus)
-      .mockResolvedValueOnce({ status: "not_found", searchedNumber: "#21698" })
-      .mockResolvedValueOnce({
-        status: "found",
-        orderNumber: "#21698-F1",
-        customerName: "Joel Moore",
-      });
+  it("does not retry not_found when the first deep fetch misses", async () => {
+    vi.mocked(getOrderStatus).mockResolvedValue({
+      status: "not_found",
+      searchedNumber: "#21698",
+    });
 
     const result = await lookupOrder("21698");
-    expect(result.status).toBe("found");
-    if (result.status !== "found") throw new Error("expected found");
-    expect(result.order.orderNumber).toBe("#21698-F1");
-    expect(getOrderStatus.mock.calls.length).toBe(2);
+    expect(result.status).toBe("not_found");
+    expect(getOrderStatus).toHaveBeenCalledTimes(1);
   });
 
   it("returns api_error when Shopify lookup fails", async () => {

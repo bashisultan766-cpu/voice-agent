@@ -77,7 +77,7 @@ describe("toolResultForLlm order shaping", () => {
     ]) {
       expect(key in parsed.data).toBe(true);
     }
-    expect(parsed.instructions).toMatch(/progressive disclosure|ORDER LOOKUP S\.O\.P/i);
+    expect(parsed.instructions).toMatch(/CONVERSATIONAL SUMMARIZATION|ORDER LOOKUP S\.O\.P/i);
     expect(parsed.instructions).toMatch(/SECURITY CLEARANCE \(UNBREAKABLE RULE\)/i);
     expect(parsed.instructions).toMatch(/CONTEXT LOCK & TOOL GUARDRAILS/i);
     expect(parsed.instructions).toMatch(/EXPLAINING PAYMENTS & NOTIFICATIONS/i);

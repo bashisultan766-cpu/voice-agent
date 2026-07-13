@@ -227,17 +227,12 @@ async function fetchTimelineRestByNumericId(
 }
 
 /**
- * Enrich order node with timeline when the list/search query returned zero events.
+ * Always deep-fetch by order GID after a search match.
+ * Search edges are identity only — full timeline/transactions come from GraphQL deep lookup.
  */
 export async function enrichOrderNodeTimeline(
   node: DeepOrderGraphqlNode,
 ): Promise<DeepOrderGraphqlNode> {
-  const hasEvents = timelineEventCount(node) > 0;
-  const hasTransactions = transactionNodesFromConnection(node.transactions).length > 0;
-  if (hasEvents && hasTransactions) {
-    return node;
-  }
-
   const orderGid = node.id;
   const numericId = orderGidToNumericId(orderGid);
 
@@ -253,16 +248,16 @@ export async function enrichOrderNodeTimeline(
     const deep = await fetchDeepOrderByGid(orderGid);
     let enriched: DeepOrderGraphqlNode = {
       ...node,
-      note: node.note ?? deep.patch.note,
-      tags: node.tags ?? deep.patch.tags,
-      sourceName: node.sourceName ?? deep.patch.sourceName,
-      publication: node.publication ?? deep.patch.publication,
-      channelInformation: node.channelInformation ?? deep.patch.channelInformation,
-      customAttributes: node.customAttributes ?? deep.patch.customAttributes,
-      metafields: node.metafields ?? deep.patch.metafields,
+      note: deep.patch.note ?? node.note,
+      tags: deep.patch.tags ?? node.tags,
+      sourceName: deep.patch.sourceName ?? node.sourceName,
+      publication: deep.patch.publication ?? node.publication,
+      channelInformation: deep.patch.channelInformation ?? node.channelInformation,
+      customAttributes: deep.patch.customAttributes ?? node.customAttributes,
+      metafields: deep.patch.metafields ?? node.metafields,
     };
 
-    if (!hasEvents && deep.events.length) {
+    if (deep.events.length) {
       logger.info("shopify_timeline_enriched", {
         orderNumber: node.name,
         source: "graphql_order_by_id",
@@ -271,7 +266,7 @@ export async function enrichOrderNodeTimeline(
       enriched = { ...enriched, events: toTimelineEdges(deep.events) };
     }
 
-    if (!hasTransactions && deep.transactions) {
+    if (deep.transactions) {
       const txCount = transactionNodesFromConnection(deep.transactions).length;
       if (txCount > 0) {
         logger.info("shopify_transactions_enriched", {
@@ -283,7 +278,10 @@ export async function enrichOrderNodeTimeline(
       }
     }
 
-    if (timelineEventCount(enriched) > 0 || transactionNodesFromConnection(enriched.transactions).length > 0) {
+    if (
+      timelineEventCount(enriched) > 0 ||
+      transactionNodesFromConnection(enriched.transactions).length > 0
+    ) {
       return enriched;
     }
   } catch (err) {
@@ -295,7 +293,7 @@ export async function enrichOrderNodeTimeline(
     });
   }
 
-  if (!hasEvents && numericId) {
+  if (numericId) {
     try {
       const restEvents = await fetchTimelineRestByNumericId(numericId);
       if (restEvents.length) {

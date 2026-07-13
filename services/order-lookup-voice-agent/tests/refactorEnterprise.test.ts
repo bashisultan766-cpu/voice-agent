@@ -53,14 +53,21 @@ describe("semantic product search disclosure", () => {
 });
 
 describe("concise order lookup disclosure", () => {
-  it("returns status and date only template", () => {
+  it("returns conversational summarization template", () => {
     const speech = buildProgressiveDisclosureOrderSpeech({
       orderNumber: "#21698",
       isRefunded: false,
       fulfillmentStatus: "fulfilled",
       orderPlacedAtSpoken: "March 10th, 2025",
+      lineItems: [{ title: "SureShot Guide", quantity: 1 }],
+      totalAmount: "25.00 USD",
+      financialStatus: "PAID",
+      customerEmail: "caller@example.com",
     } as any);
-    expect(speech).toMatch(/^I have found your order 21698\. It was placed on March 10th, 2025 and the status is fulfilled\./);
+    expect(speech).toMatch(/^I found your order 21698\./);
+    expect(speech).toMatch(/SureShot Guide is currently fulfilled/i);
+    expect(speech).toMatch(/payment is marked paid/i);
+    expect(speech).toContain("caller@example.com");
     expect(speech).toContain("I have provided that, how else can I help you today?");
   });
 });

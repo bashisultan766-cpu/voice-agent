@@ -232,3 +232,37 @@ export function normalizeOrderNumber(spokenInput: string): string {
 
   return `#${baseDigits}`;
 }
+
+/**
+ * Fuzzy order-number candidates for Shopify lookup.
+ * Primary normalized form first, then digit-only / STT-artifact variants
+ * (e.g. "Is 40088" → "140088" → also try "40088").
+ */
+export function fuzzyOrderNumberCandidates(rawInput: string): string[] {
+  const out: string[] = [];
+  const push = (value: string) => {
+    const normalized = normalizeOrderNumber(value) || value;
+    const candidate = normalized.startsWith("#") ? normalized : `#${normalized.replace(/^#/, "")}`;
+    const bare = candidate.replace(/^#/, "");
+    if (!/^\d{4,10}(?:-[A-Za-z0-9]{1,6})?$/i.test(bare)) return;
+    if (!out.includes(candidate)) out.push(candidate);
+  };
+
+  push(rawInput);
+
+  const digitsOnly = rawInput.replace(/\D/g, "");
+  if (digitsOnly.length >= 4 && digitsOnly.length <= 10) {
+    push(digitsOnly);
+  }
+
+  // Strip glued leading "1" / "11" artifacts from words like "is" / "it's".
+  let stripped = digitsOnly;
+  while (stripped.length > 4 && /^1/.test(stripped) && stripped.length <= 12) {
+    stripped = stripped.slice(1);
+    if (stripped.length >= 4 && stripped.length <= 10) {
+      push(stripped);
+    }
+  }
+
+  return out;
+}

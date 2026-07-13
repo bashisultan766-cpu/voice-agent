@@ -80,9 +80,9 @@ describe("multi-turn order follow-up context injection", () => {
 
     const turn1Speech = await collectOrchestratorSpeech(session, "Order 21698");
 
-    expect(turn1Speech).toMatch(/I have found your order 21698-F1\./);
-    expect(turn1Speech).toMatch(/status is Refunded/);
-    expect(turn1Speech).not.toContain("btazp@yahoo.com");
+    expect(turn1Speech).toMatch(/I found your order 21698-F1\./);
+    expect(turn1Speech).toMatch(/currently Refunded/);
+    expect(turn1Speech).toContain("btazp@yahoo.com");
     expect(session.isVerifiedCaller).toBe(true);
     expect(session.currentOrderData?.refund_notification_email).toBe("btazp@yahoo.com");
     expect(session.phase).toBe("order_disclosed");
@@ -179,7 +179,7 @@ describe("syncDeterministicAssistantSpeech with agent state", () => {
     markCallSessionActive("CA_SYNC2");
   });
 
-  it("keeps progressive disclosure speech in history without full JSON", () => {
+  it("keeps initial order speech in history without full JSON", () => {
     syncDeterministicAssistantSpeech(
       "CA_SYNC2",
       "I found your order. Your order status is Refunded. Do you need any more information about your order?",

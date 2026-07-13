@@ -116,7 +116,7 @@ export interface LlmAgentTurnInput {
   userMessage: string;
   messages: LlmChatMessage[];
   session?: CallSession;
-  /** Injected on follow-up turns — full order JSON not spoken during progressive disclosure. */
+  /** Injected on follow-up turns — full order JSON for field answers after the initial summary. */
   activeOrderContext?: ActiveOrderContextData;
 }
 
@@ -537,16 +537,18 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
     return null;
   }
 
-  // CONTEXT LOCK: tracking resume / mid-dictation digits are NOT a new order number.
-  if (isSpatialResumeQuery(input.userMessage)) {
-    return null;
-  }
+  // CONTEXT LOCK: mid-dictation spatial resumes are NOT a new order number.
+  // Only apply when already in tracking dictation — bare order digits must still force lookup.
   const active = getOrCreateActiveSession(input.callSid);
   const inTrackingDictation =
     active.currentState === "tracking_dictation" ||
     (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") ||
-    active.cachedIntent === "tracking";
-  if (inTrackingDictation) {
+    (active.cachedIntent === "tracking" && Boolean(active.lastSpokenPayload?.trackingForTts));
+  if (inTrackingDictation && isSpatialResumeQuery(input.userMessage)) {
+    return null;
+  }
+  if (inTrackingDictation && isBareOrderNumberUtterance(input.userMessage)) {
+    // Digits during active tracking dictation are anchors / confirmations, not new orders.
     return null;
   }
 
@@ -596,7 +598,8 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
     /\b(order\s+number|track\s+(?:my\s+)?order|order\s+status|lookup\s+(?:my\s+)?order|check\s+(?:my\s+)?order)\b/i.test(
       lower,
     ) ||
-    (/\border\b/i.test(lower) && /\b(number|status|track|lookup|check|find)\b/i.test(lower));
+    (/\border\b/i.test(lower) &&
+      (/\b(number|status|track|lookup|check|find)\b/i.test(lower) || /\d{4,}/.test(lower)));
 
   return hasOrderIntent ? orderNumber : null;
 }

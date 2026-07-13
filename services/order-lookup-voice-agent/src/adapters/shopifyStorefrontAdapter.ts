@@ -27,7 +27,7 @@ import {
   isValidOrderNumberFormat,
   orderNumbersMatch,
 } from "../utils/formatter.js";
-import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
+import { fuzzyOrderNumberCandidates, normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import {
   mapGqlProduct,
   shopifyGraphql,
@@ -1155,14 +1155,19 @@ export async function getCustomerHistory(
 }
 
 /**
- * Query Shopify for order fulfillment status, tracking, and estimated delivery.
+ * Query Shopify for full order status — always deep-fetches by GID after identity match.
+ * Tries fuzzy STT digit candidates so "Is 40088" does not die as "140088".
  */
 export async function getOrderStatus(
   orderNumber: string,
   callSid = "fulfillment",
 ): Promise<OrderStatusResult> {
-  const normalized = normalizeOrderNumber(orderNumber);
-  if (!normalized || !isValidOrderNumberFormat(normalized)) {
+  const candidates = fuzzyOrderNumberCandidates(orderNumber);
+  const primary =
+    candidates[0] ??
+    normalizeOrderNumber(orderNumber) ??
+    "";
+  if (!primary || !isValidOrderNumberFormat(primary)) {
     return {
       status: "invalid_format",
       message: "Order number must be 4 to 10 digits.",
@@ -1171,20 +1176,23 @@ export async function getOrderStatus(
 
   try {
     const result = await runWithGuard(callSid, "order_status", async () => {
-      for (const query of orderLookupQueries(normalized)) {
-        const data = await lookupOrdersGraphql(query, { query, first: 5 });
+      for (const candidate of candidates.length ? candidates : [primary]) {
+        for (const query of orderLookupQueries(candidate)) {
+          const data = await lookupOrdersGraphql(query, { query, first: 5 });
 
-        const edges = data.orders?.edges ?? [];
-        const node = findMatchingOrderNode(edges, normalized);
+          const edges = data.orders?.edges ?? [];
+          const node = findMatchingOrderNode(edges, candidate);
 
-        if (node) {
-          const enriched = await enrichOrderNodeTimeline(node);
-          return { status: "found" as const, ...mapOrderNode(enriched) };
+          if (node) {
+            // Unified deep path — never return search-edge shallow rows alone.
+            const enriched = await enrichOrderNodeTimeline(node);
+            return { status: "found" as const, ...mapOrderNode(enriched) };
+          }
         }
       }
       return {
         status: "not_found" as const,
-        searchedNumber: normalized,
+        searchedNumber: primary,
         error: "No exact match found in Shopify.",
       };
     });
@@ -1192,7 +1200,7 @@ export async function getOrderStatus(
     return result;
   } catch (err) {
     return adapterFailureFromError(err, "shopify_order_status_failed", {
-      orderNumber: normalized,
+      orderNumber: primary,
     });
   }
 }

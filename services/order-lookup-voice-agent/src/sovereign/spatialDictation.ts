@@ -38,6 +38,12 @@ export function extractSpatialAnchorDigits(callerText: string): string[] | null 
   const text = callerText.trim();
   if (!text) return null;
 
+  // Compact order numbers (e.g. "21698") are never spatial anchors — require separators
+  // or explicit spatial language so CONTEXT LOCK does not block order lookup.
+  if (/^#?\d{4,10}(?:-[A-Za-z0-9]{1,6})?$/i.test(text)) {
+    return null;
+  }
+
   const afterClause = text.match(
     /\b(?:what\s+comes\s+after|what\s+comes\s+before|after|following|past|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\?|$)/i,
   );
@@ -52,7 +58,8 @@ export function extractSpatialAnchorDigits(callerText: string): string[] | null 
     if (digits.length >= 2) return digits;
   }
 
-  const commaOrSpaceRun = text.match(/([\d](?:[\s,.-]*\d)+)\s*$/);
+  // Require at least one separator between digits (spaces/commas/dots/hyphens).
+  const commaOrSpaceRun = text.match(/([\d](?:[\s,.-]+\d)+)\s*$/);
   if (commaOrSpaceRun) {
     const digits = digitsFromFragment(commaOrSpaceRun[1]);
     if (digits.length >= 1) return digits;
@@ -79,6 +86,9 @@ export function extractSpatialAnchorDigits(callerText: string): string[] | null 
 
 export function isSpatialResumeQuery(callerText: string): boolean {
   const text = callerText.trim();
+  if (/^#?\d{4,10}(?:-[A-Za-z0-9]{1,6})?$/i.test(text)) {
+    return false;
+  }
   if (
     /\b(?:order\s+number|lookup\s+(?:my\s+)?order|find\s+(?:my\s+)?order|check\s+(?:my\s+)?order|order\s+status|track\s+my\s+order)\b/i.test(
       text,

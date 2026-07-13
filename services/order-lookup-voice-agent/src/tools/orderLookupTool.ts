@@ -1,5 +1,6 @@
 /**
- * Order lookup tool — returns data only; no user-facing speech.
+ * Order lookup tool — unified deep GraphQL path via lookupOrderStatus.
+ * Legacy shallow/quick-search wrappers were removed; this is a thin alias only.
  */
 import { assertToolAccessAuthorized } from "../guards/toolAccessGuard.js";
 import { assertToolExecutionAllowed } from "../guards/toolExecutionGuard.js";
@@ -15,5 +16,5 @@ export async function orderLookupTool(
   return lookupOrder(orderNumber, options);
 }
 
-/** Spec alias — order ID → Shopify lookup (deterministic tool mapping). */
+/** Spec alias — order ID → unified deep Shopify lookup. */
 export const searchOrderById = orderLookupTool;
