@@ -159,6 +159,26 @@ export interface CallSession {
     title: string;
     currentQuantity: number;
   };
+  /**
+   * Titles / variant IDs the caller declined as proactive upsells this call —
+   * never re-suggest within the same session.
+   */
+  sessionDeclinedRecommendations?: string[];
+  /** In-memory catalog candidates for Smart Suggest (tests + optional seed). */
+  recommendationCatalog?: Array<{
+    title: string;
+    variantId: string;
+    tags?: string[];
+    metafields?: Array<{ namespace: string; key: string; value: string }>;
+    price?: string;
+  }>;
+  /** Pending one-book upsell awaiting yes/no after a successful cart add. */
+  pendingProactiveRecommendation?: {
+    title: string;
+    variantId: string;
+    addedTitle: string;
+    matchReason: "series" | "genre" | "author";
+  };
   /** Most recent successful catalog search — binds update_cart_item_quantity to the right variant. */
   lastCatalogSearch?: {
     title: string;
@@ -168,6 +188,13 @@ export interface CallSession {
     recordedAt: number;
     tags?: string[];
     metafields?: Array<{ namespace: string; key: string; value: string }>;
+    similarMatches?: Array<{
+      title: string;
+      variantId: string;
+      tags?: string[];
+      metafields?: Array<{ namespace: string; key: string; value: string }>;
+      price?: string;
+    }>;
   };
   /** Last generated Shopify invoice URL for checkout email. */
   pendingInvoiceUrl?: string;

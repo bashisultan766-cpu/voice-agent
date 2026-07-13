@@ -12,6 +12,13 @@ export interface LastCatalogSearch {
   recordedAt: number;
   tags?: string[];
   metafields?: Array<{ namespace: string; key: string; value: string }>;
+  similarMatches?: Array<{
+    title: string;
+    variantId: string;
+    tags?: string[];
+    metafields?: Array<{ namespace: string; key: string; value: string }>;
+    price?: string;
+  }>;
 }
 
 import { getSessionMemory } from "./sessionMemory.js";
@@ -31,6 +38,15 @@ export function recordLastCatalogSearch(
     recordedAt: Date.now(),
     tags: data.tags ?? [],
     metafields: data.metafields ?? [],
+    similarMatches: (data.similarMatches ?? [])
+      .filter((m) => Boolean(m.variantId && m.bookName))
+      .map((m) => ({
+        title: m.bookName,
+        variantId: m.variantId!,
+        tags: m.tags,
+        metafields: m.metafields,
+        price: m.price,
+      })),
   };
   const memory = getSessionMemory(session);
   memory.lastProductTitle = title;

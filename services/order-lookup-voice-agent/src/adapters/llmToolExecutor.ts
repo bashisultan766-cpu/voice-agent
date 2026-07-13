@@ -165,6 +165,12 @@ export interface CartToolResult {
   confirmationSpeech?: string;
   complianceBlocked?: boolean;
   needsFacilityInfo?: boolean;
+  proactiveRecommendation?: {
+    title: string;
+    variantId: string;
+    matchReason?: string;
+    speech?: string;
+  };
 }
 
 export interface CheckoutEmailToolResult {
@@ -561,6 +567,7 @@ export async function executeLlmTool(
         confirmationSpeech: lastResult.confirmationSpeech ?? lastResult.message,
         complianceBlocked: lastResult.complianceBlocked,
         needsFacilityInfo: lastResult.needsFacilityInfo,
+        proactiveRecommendation: lastResult.proactiveRecommendation,
       };
       return {
         tool,

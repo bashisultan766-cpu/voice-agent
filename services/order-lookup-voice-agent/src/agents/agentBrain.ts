@@ -14,6 +14,11 @@ import {
   resolveCartActionTypeFromSpeech,
 } from "./catalogShoppingIntent.js";
 import { applySessionCartQuantity } from "./orderLookupWorkflow.js";
+import {
+  isProactiveRecommendationAccept,
+  isProactiveRecommendationDecline,
+  recordDeclinedRecommendation,
+} from "./recommendationEngine.js";
 import { isPurchaseFlowActive, setConversationFlowMode } from "./conversationFlowState.js";
 import {
   cancelSupportEscalation,
@@ -226,11 +231,41 @@ export function shouldSuppressCatalogEscalation(session?: CallSession): boolean 
 
 /**
  * Deterministic cart update for "Add 20 copies" / "Make it 10" / "don't add, just want 5 total".
+ * Also resolves yes/no for a pending proactive recommendation.
  */
 export function tryDeterministicCartTurn(
   session: CallSession,
   text: string,
 ): { handled: true; speech: string } | null {
+  const pendingUpsell = session.pendingProactiveRecommendation;
+  if (pendingUpsell) {
+    if (isProactiveRecommendationDecline(text)) {
+      recordDeclinedRecommendation(session, pendingUpsell.variantId);
+      recordDeclinedRecommendation(session, pendingUpsell.title);
+      return { handled: true, speech: "No problem at all." };
+    }
+    if (isProactiveRecommendationAccept(text)) {
+      session.pendingProactiveRecommendation = undefined;
+      const result = applySessionCartQuantity(
+        session,
+        {
+          variant_id: pendingUpsell.variantId,
+          title: pendingUpsell.title,
+        },
+        1,
+        "add",
+        { facilityType: session.facilityType },
+      );
+      if (result.complianceBlocked) {
+        return {
+          handled: true,
+          speech: result.confirmationSpeech ?? result.message,
+        };
+      }
+      return { handled: true, speech: result.message };
+    }
+  }
+
   if (!isCartActionUtterance(text)) return null;
 
   const target = session.lastCatalogSearch;

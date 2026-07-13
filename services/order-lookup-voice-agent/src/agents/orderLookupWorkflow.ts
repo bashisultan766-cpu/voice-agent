@@ -21,6 +21,7 @@ import {
   ensureShoppingCart,
   updateCartItemQuantity,
 } from "./cartManager.js";
+import { attachProactiveRecommendationAfterAdd } from "./recommendationEngine.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
 import {
   ORDER_FOUND_PASSIVE_SPEECH,
@@ -59,6 +60,13 @@ export interface SessionCartUpdateResult {
   complianceBlocked?: boolean;
   /** True when facility type/state is required before add. */
   needsFacilityInfo?: boolean;
+  /** One Smart Suggest cross-sell after a successful quantity increase. */
+  proactiveRecommendation?: {
+    title: string;
+    variantId: string;
+    matchReason: "series" | "genre" | "author";
+    speech: string;
+  };
   message: string;
 }
 
@@ -372,11 +380,16 @@ export function applySessionCartQuantity(
       item.title?.trim() ||
       session.lastCatalogSearch?.title ||
       (index >= 0 ? cart[index]!.title : "that book");
+    const catalog = session.lastCatalogSearch;
+    const sameAsCatalogTarget =
+      Boolean(catalog?.variantId) &&
+      (variantHint === catalog?.variantId ||
+        (title && catalog?.title?.toLowerCase() === title));
     const compliance = checkFacilityCompliance({
       bookTitle,
       facilityType: session.facilityType,
-      tags: session.lastCatalogSearch?.tags,
-      metafields: session.lastCatalogSearch?.metafields,
+      tags: sameAsCatalogTarget ? catalog?.tags : undefined,
+      metafields: sameAsCatalogTarget ? catalog?.metafields : undefined,
     });
     if (compliance.status === "facility_unknown") {
       return {
@@ -450,14 +463,48 @@ export function applySessionCartQuantity(
         (variantHint && line.variantId === variantHint) ||
         (title && line.title.toLowerCase() === title),
     )?.quantity ?? newTotal;
+
+  let message = isIncreasing
+    ? `I've added ${addedTitle} to your cart.`
+    : `Cart updated with action_type=${actionType}.`;
+
+  let proactiveRecommendation: SessionCartUpdateResult["proactiveRecommendation"];
+  if (isIncreasing && !options?.confirmRemoval) {
+    const addedSku =
+      parseVariantHint(variantHint) ||
+      updated.find((line) => line.title.toLowerCase() === (item.title ?? "").trim().toLowerCase())
+        ?.variantId ||
+      variantHint;
+    const recommendation = attachProactiveRecommendationAfterAdd(session, {
+      sku: addedSku,
+      title: addedTitle,
+      tags: session.lastCatalogSearch?.tags,
+      metafields: session.lastCatalogSearch?.metafields,
+    });
+    if (recommendation) {
+      proactiveRecommendation = {
+        title: recommendation.title,
+        variantId: recommendation.variantId,
+        matchReason: recommendation.matchReason,
+        speech: recommendation.speech,
+      };
+      message = recommendation.speech;
+    } else if (isIncreasing) {
+      message = `I've updated your cart to ${finalQty} ${finalQty === 1 ? "copy" : "copies"} of ${addedTitle}.`;
+    }
+  }
+
   return {
     cart: updated,
     currentSessionCart,
     actionType,
-    message: isIncreasing
-      ? `I've updated your cart to ${finalQty} ${finalQty === 1 ? "copy" : "copies"} of ${addedTitle}.`
-      : `Cart updated with action_type=${actionType}.`,
+    proactiveRecommendation,
+    message,
   };
+}
+
+function parseVariantHint(hint: string): string {
+  return (hint ?? "").trim();
 }
 
 /** Confirm a pending full-line removal after the agent asked. */
