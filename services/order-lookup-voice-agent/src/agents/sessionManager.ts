@@ -79,10 +79,27 @@ export function saveActiveOrderContext(
 
   session.currentOrderData = data;
   markOrderContextConfirmed(session);
+  const orderNumber = String(data.order_number ?? "")
+    .replace(/^#/, "")
+    .trim();
+  if (orderNumber) {
+    session.currentSessionOrder = {
+      orderNumber,
+      customerName:
+        typeof data.customer_name === "string" ? data.customer_name : undefined,
+      fulfillmentStatus:
+        typeof data.fulfillment_status === "string"
+          ? data.fulfillment_status
+          : undefined,
+      financialStatus:
+        typeof data.financial_status === "string" ? data.financial_status : undefined,
+    };
+  }
 }
 
 export function clearActiveOrderContext(session: CallSession): void {
   session.currentOrderData = undefined;
+  session.currentSessionOrder = undefined;
   clearOrderContextConfirmation(session);
 }
 

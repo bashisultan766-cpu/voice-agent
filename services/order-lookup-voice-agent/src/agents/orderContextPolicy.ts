@@ -8,6 +8,8 @@ import type { CallSession, OrderLookupResult } from "../types/order.js";
 import { runVerificationGate } from "./verificationGate.js";
 import { orderStatusToStructuredOrder } from "./fulfillmentHandlers.js";
 import { buildActiveOrderContextFromResult, saveActiveOrderContext } from "./sessionManager.js";
+import { orderNumbersMatch } from "../utils/formatter.js";
+import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 
 export function hasConfirmedOrderContext(session?: CallSession): boolean {
   return Boolean(
@@ -25,6 +27,7 @@ export function markOrderContextConfirmed(session: CallSession): void {
 export function clearOrderContextConfirmation(session: CallSession): void {
   session.orderContextConfirmed = false;
   session.orderLookupComplete = false;
+  session.currentSessionOrder = undefined;
 }
 
 /** Caller wants order help but has not supplied an order number yet. */
@@ -63,6 +66,38 @@ export async function executeOrderLookupForSession(
   session: CallSession,
   orderNumber: string,
 ): Promise<OrderLookupResult> {
+  // Sticky session: reuse cached order when the same number is already open.
+  const stickyReady =
+    Boolean(session.orderLookupComplete) ||
+    Boolean(session.currentSessionOrder?.orderNumber) ||
+    hasConfirmedOrderContext(session);
+  if (stickyReady) {
+    const cachedNumber = String(
+      session.currentSessionOrder?.orderNumber ??
+        session.currentOrderData?.order_number ??
+        session.currentOrder?.orderNumber ??
+        session.lastOrderStatusResult?.orderNumber ??
+        "",
+    );
+    const requested = normalizeOrderNumber(orderNumber);
+    if (
+      cachedNumber &&
+      (!requested || orderNumbersMatch(cachedNumber, requested))
+    ) {
+      const cached = session.lastOrderStatusResult;
+      if (cached?.status === "found") {
+        const structured =
+          session.currentOrder ?? orderStatusToStructuredOrder(cached);
+        if (structured) {
+          return { status: "found", order: structured };
+        }
+      }
+      if (session.currentOrder) {
+        return { status: "found", order: session.currentOrder };
+      }
+    }
+  }
+
   const data: OrderStatusResult = await lookupOrderStatus(orderNumber, session.callSid, {
     bypassCache: true,
   });
@@ -78,6 +113,16 @@ export async function executeOrderLookupForSession(
     const payload = buildActiveOrderContextFromResult(data, session);
     if (payload) {
       saveActiveOrderContext(session, payload);
+    } else {
+      // Ensure sticky memory even if payload shaping returns null.
+      session.currentSessionOrder = {
+        orderNumber: String(data.orderNumber ?? "").replace(/^#/, "").trim(),
+        customerName: data.customerName,
+        fulfillmentStatus: data.fulfillmentStatus,
+        financialStatus: data.financialStatus,
+      };
+      session.orderLookupComplete = true;
+      session.orderContextConfirmed = true;
     }
     return { status: "found", order: structured };
   }

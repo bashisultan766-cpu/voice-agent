@@ -153,7 +153,9 @@ export function orderUtteranceNeedsFreshLookup(
     );
   }
   if (/\b(tracking|track\s+(?:my\s+)?(?:package|order|shipment))\b/i.test(text)) {
-    return !String(context.tracking_number ?? "").trim();
+    // Tracking may be notepad-redacted in the LLM view — never force a Shopify re-fetch for it.
+    // Dictation / notepad path must serve tracking from sticky session cache.
+    return false;
   }
   return false;
 }

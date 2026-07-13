@@ -14,7 +14,10 @@ import { UNIFIED_OPENAI_TOOL_SCHEMAS } from "./unifiedToolRegistry.js";
 import type { OrderStatusResult } from "./shopifyStorefrontAdapter.js";
 import { ServiceRegistry } from "../sovereign/serviceRegistry.js";
 import {
+  getCurrentSessionOrderNumber,
+  isOrderLookupComplete,
   isOrderLookupInsistenceUtterance,
+  shouldBlockOrderLookupReinvoke,
   speechForOrderLookupResult,
 } from "../agents/orderLookupWorkflow.js";
 import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
@@ -33,6 +36,7 @@ import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js
 import type { CallSession } from "../types/order.js";
 import {
   appendProtocolClosing,
+  buildStickyOrderStillOpenSpeech,
 } from "../agents/orderLookupProtocol.js";
 import {
   buildOrderFieldQuerySpeech,
@@ -581,9 +585,10 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
   const agentState = getAgentState(input.callSid);
   const orderAlreadyFound =
     !insistence &&
-    Boolean(input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) &&
-    agentState.lastOrderNumber &&
-    orderNumbersMatch(agentState.lastOrderNumber, orderNumber);
+    (shouldBlockOrderLookupReinvoke(input.session, orderNumber) ||
+      (Boolean(input.activeOrderContext && Object.keys(input.activeOrderContext).length > 0) &&
+        agentState.lastOrderNumber &&
+        orderNumbersMatch(agentState.lastOrderNumber, orderNumber)));
   if (orderAlreadyFound) {
     return null;
   }
@@ -1023,7 +1028,11 @@ function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResul
   ) {
     return null;
   }
-  const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
+  const trackingRaw = String(
+    input.session?.currentOrderData?.tracking_number ??
+      input.session?.lastOrderStatusResult?.trackingNumber ??
+      "",
+  ).trim();
   if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
     ensureTrackingPayload(input.callSid, trackingRaw);
   }
@@ -1045,6 +1054,8 @@ function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResul
 export async function* runLlmAgentTurnEvents(
   input: LlmAgentTurnInput,
 ): AsyncGenerator<LlmAgentTurnEvent> {
+  const stickyOrderAtTurnStart = isOrderLookupComplete(input.session);
+
   if (turnOverride) {
     try {
       const result = await turnOverride(input);
@@ -1066,8 +1077,71 @@ export async function* runLlmAgentTurnEvents(
     }
   }
 
+  // Tracking / spatial follow-ups before any forced Shopify re-lookup.
+  ensureCatalogPivotClearsTracking(input);
+
+  const spatialInterceptEarly = interceptSpatialBeforeLlm(input);
+  if (spatialInterceptEarly) {
+    yield { type: "result", result: spatialInterceptEarly };
+    return;
+  }
+
+  const contextualRepeatEarly = interceptContextualDictationRepeatBeforeLlm(input);
+  if (contextualRepeatEarly) {
+    yield { type: "result", result: contextualRepeatEarly };
+    return;
+  }
+
+  const trackingInterceptEarly = interceptTrackingBeforeLlm(input);
+  if (trackingInterceptEarly) {
+    yield { type: "result", result: trackingInterceptEarly };
+    return;
+  }
+
+  // Same order already sticky — acknowledge without re-fetching or re-speaking gateway.
+  if (
+    stickyOrderAtTurnStart &&
+    input.session &&
+    !isOrderLookupInsistenceUtterance(input.userMessage)
+  ) {
+    const mentioned =
+      extractOrderNumberFromStt(input.userMessage, { awaitingSlot: true }) ??
+      extractOrderNumberFromSpeech(input.userMessage);
+    if (
+      mentioned &&
+      shouldBlockOrderLookupReinvoke(input.session, mentioned) &&
+      !isTrackingRequest(input.userMessage) &&
+      !isOrderFieldQuestion(input.userMessage) &&
+      !isRefundNotificationEmailQuestion(input.userMessage)
+    ) {
+      yield {
+        type: "result",
+        result: {
+          speech: buildStickyOrderStillOpenSpeech(getCurrentSessionOrderNumber(input.session)),
+          toolExecutions: [],
+          responseType: "order_found",
+        },
+      };
+      return;
+    }
+  }
+
   const forcedOrderNumber = detectOrderNumberForForcedLookup(input);
   if (forcedOrderNumber) {
+    if (
+      input.session &&
+      shouldBlockOrderLookupReinvoke(input.session, forcedOrderNumber)
+    ) {
+      yield {
+        type: "result",
+        result: {
+          speech: buildStickyOrderStillOpenSpeech(getCurrentSessionOrderNumber(input.session)),
+          toolExecutions: [],
+          responseType: "order_found",
+        },
+      };
+      return;
+    }
     const insistence = isOrderLookupInsistenceUtterance(input.userMessage);
     if (input.session) {
       // Always keep miss/retry turns in the order-number slot so bypassCache works.
@@ -1121,18 +1195,6 @@ export async function* runLlmAgentTurnEvents(
 
   ensureCatalogPivotClearsTracking(input);
 
-  const spatialIntercept = interceptSpatialBeforeLlm(input);
-  if (spatialIntercept) {
-    yield { type: "result", result: spatialIntercept };
-    return;
-  }
-
-  const contextualRepeatIntercept = interceptContextualDictationRepeatBeforeLlm(input);
-  if (contextualRepeatIntercept) {
-    yield { type: "result", result: contextualRepeatIntercept };
-    return;
-  }
-
   const trackingDictationLock = interceptTrackingDictationLockBeforeLlm(input);
   if (trackingDictationLock) {
     yield { type: "result", result: trackingDictationLock };
@@ -1148,12 +1210,6 @@ export async function* runLlmAgentTurnEvents(
   const trackingCompleteIntercept = interceptTrackingCompleteBeforeLlm(input);
   if (trackingCompleteIntercept) {
     yield { type: "result", result: trackingCompleteIntercept };
-    return;
-  }
-
-  const trackingIntercept = interceptTrackingBeforeLlm(input);
-  if (trackingIntercept) {
-    yield { type: "result", result: trackingIntercept };
     return;
   }
 
@@ -1416,7 +1472,8 @@ export async function* runLlmAgentTurnEvents(
           .reverse()
           .find((exec) => exec.tool === "get_shopify_order_status");
         // Catalog/buy tools win when the caller pivoted away from order status.
-        if (lastOrderExec && !lastCatalogExec) {
+        // Sticky follow-ups: never re-speak Concierge Gateway — let LLM / dictate answer the field.
+        if (lastOrderExec && !lastCatalogExec && !stickyOrderAtTurnStart) {
           yield {
             type: "result",
             result: resultFromOrderToolExecution(lastOrderExec, toolExecutions, {

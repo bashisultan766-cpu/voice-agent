@@ -28,6 +28,15 @@ export const POST_INFORMATION_CLOSING_SPEECH =
 export const ORDER_FOUND_FOLLOW_UP =
   "How can I assist you further with this order?";
 
+/** Same-order sticky acknowledge — never re-speak gateway / full summary. */
+export function buildStickyOrderStillOpenSpeech(orderNumber?: string): string {
+  const num =
+    String(orderNumber ?? "")
+      .replace(/^#/, "")
+      .trim() || "your order";
+  return `I still have your order ${num} open. How can I help you with it?`;
+}
+
 /**
  * Concierge Gateway — status only after successful lookup.
  * Never auto-read tracking, address, or items.

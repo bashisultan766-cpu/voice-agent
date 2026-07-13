@@ -301,6 +301,14 @@ export function shouldSkipToolReinvoke(
     if (options?.userMessage && isOrderLookupInsistenceUtterance(options.userMessage)) {
       return false;
     }
+
+    // Sticky session lock FIRST — never let redacted tracking / intent mismatch force a re-fetch.
+    if (
+      shouldBlockOrderLookupReinvoke(options?.session, options?.requestedOrderNumber)
+    ) {
+      return true;
+    }
+
     if (
       options?.orderContext &&
       Object.keys(options.orderContext).length === 0
@@ -317,12 +325,6 @@ export function shouldSkipToolReinvoke(
       )
     ) {
       return false;
-    }
-    // Context lock: order_lookup_complete forbids re-invoke for the same order.
-    if (
-      shouldBlockOrderLookupReinvoke(options?.session, options?.requestedOrderNumber)
-    ) {
-      return true;
     }
   }
 

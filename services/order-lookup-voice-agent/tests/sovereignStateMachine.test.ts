@@ -35,7 +35,31 @@ describe("activeSession spatial index", () => {
     recordTrackingPayload("CA2", "9250");
     const active = ensureTrackingPayload("CA2", "9250");
     expect(shouldSkipToolReinvoke(active, "tracking", "get_shopify_order_status")).toBe(true);
+    // Without sticky session, order intent alone does not skip.
     expect(shouldSkipToolReinvoke(active, "order", "get_shopify_order_status")).toBe(false);
+  });
+
+  it("skips order tool when sticky session lock is set", () => {
+    const active = createActiveSession("CA_STICKY");
+    const session = {
+      callSid: "CA_STICKY",
+      from: "+1",
+      to: "+2",
+      phase: "follow_up",
+      orderNumberAttempts: 0,
+      createdAt: Date.now(),
+      orderLookupComplete: true,
+      currentSessionOrder: { orderNumber: "21698" },
+      currentOrderData: { order_number: "21698", tracking_number: "9250" },
+    } as CallSession;
+    expect(
+      shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
+        session,
+        userMessage: "What is the tracking ID?",
+        orderContext: { tracking_number: null, order_number: "21698" },
+        requestedOrderNumber: "21698",
+      }),
+    ).toBe(true);
   });
 
   it("ensureTrackingPayload preserves notepad progress on sync", () => {

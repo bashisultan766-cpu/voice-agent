@@ -128,6 +128,16 @@ export interface CallSession {
    * re-invoke get_shopify_order_status for the same order — use cached JSON only.
    */
   orderLookupComplete?: boolean;
+  /**
+   * Sticky session order memory for this call — set after the first successful lookup.
+   * Follow-ups must read from this instead of re-calling Shopify.
+   */
+  currentSessionOrder?: {
+    orderNumber: string;
+    customerName?: string;
+    fulfillmentStatus?: string;
+    financialStatus?: string;
+  };
   /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
   shoppingCart?: ShoppingCartLineItem[];
   /** Most recent successful catalog search — binds update_cart_item_quantity to the right variant. */

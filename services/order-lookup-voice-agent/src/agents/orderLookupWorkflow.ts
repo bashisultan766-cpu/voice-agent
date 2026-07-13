@@ -16,14 +16,41 @@ import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
 import {
   ORDER_FOUND_PASSIVE_SPEECH,
   buildOrderFoundGatewaySpeech,
+  buildStickyOrderStillOpenSpeech,
 } from "./orderLookupProtocol.js";
 import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
 
-export { ORDER_FOUND_PASSIVE_SPEECH, buildOrderFoundGatewaySpeech };
+export {
+  ORDER_FOUND_PASSIVE_SPEECH,
+  buildOrderFoundGatewaySpeech,
+  buildStickyOrderStillOpenSpeech,
+};
+
+/** Sticky session memory — order already loaded for this call. */
+export type CurrentSessionOrder = {
+  orderNumber: string;
+  customerName?: string;
+  fulfillmentStatus?: string;
+  financialStatus?: string;
+};
 
 /** True when this call session already completed a successful order lookup. */
 export function isOrderLookupComplete(session?: CallSession): boolean {
-  return Boolean(session?.orderLookupComplete) || hasConfirmedOrderContext(session);
+  return (
+    Boolean(session?.orderLookupComplete) ||
+    Boolean(session?.currentSessionOrder?.orderNumber) ||
+    hasConfirmedOrderContext(session)
+  );
+}
+
+export function getCurrentSessionOrderNumber(session?: CallSession): string {
+  return String(
+    session?.currentSessionOrder?.orderNumber ??
+      session?.currentOrderData?.order_number ??
+      session?.currentOrder?.orderNumber ??
+      session?.lastOrderStatusResult?.orderNumber ??
+      "",
+  );
 }
 
 /**
@@ -36,12 +63,7 @@ export function shouldBlockOrderLookupReinvoke(
 ): boolean {
   if (!isOrderLookupComplete(session)) return false;
 
-  const cached = String(
-    session?.currentOrderData?.order_number ??
-      session?.currentOrder?.orderNumber ??
-      session?.lastOrderStatusResult?.orderNumber ??
-      "",
-  );
+  const cached = getCurrentSessionOrderNumber(session);
   if (!cached) return true;
 
   const requested = normalizeOrderNumber(requestedOrderNumber ?? "");
@@ -50,12 +72,41 @@ export function shouldBlockOrderLookupReinvoke(
   return orderNumbersMatch(cached, requested);
 }
 
+/** Persist sticky CurrentSessionOrder from a found Shopify result. */
+export function syncCurrentSessionOrder(
+  session: CallSession,
+  data: {
+    orderNumber?: string;
+    customerName?: string;
+    fulfillmentStatus?: string;
+    financialStatus?: string;
+  },
+): void {
+  const orderNumber = String(data.orderNumber ?? "")
+    .replace(/^#/, "")
+    .trim();
+  if (!orderNumber) return;
+  session.currentSessionOrder = {
+    orderNumber,
+    customerName: data.customerName,
+    fulfillmentStatus: data.fulfillmentStatus,
+    financialStatus: data.financialStatus,
+  };
+  session.orderLookupComplete = true;
+}
+
+export function clearCurrentSessionOrder(session: CallSession): void {
+  session.currentSessionOrder = undefined;
+  session.orderLookupComplete = false;
+}
+
 export function markOrderLookupComplete(session: CallSession): void {
   session.orderLookupComplete = true;
 }
 
 export function clearOrderLookupComplete(session: CallSession): void {
   session.orderLookupComplete = false;
+  session.currentSessionOrder = undefined;
 }
 
 export function isOrderLookupInsistenceUtterance(text: string): boolean {
