@@ -131,59 +131,65 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "add_to_cart",
+      name: "update_cart_item_quantity",
       description:
-        "Add one or more books to the caller's persistent shopping cart. Always pass unit_price from search results alongside variant_id when available. For absolute quantity changes (e.g. 'change to 5 copies'), set set_absolute_quantity to true and pass the target quantity on each item.",
+        "Unified cart updater for SureShot Books. ALWAYS use this tool for cart changes — never invent separate add/remove tools. " +
+        "Parameters: item_id or variant_id (or sku/title), quantity (integer), action_type enum add | remove | set_exact. " +
+        "RULE 1 ABSOLUTE ASSIGNMENT: If the caller says 'Make it X', 'I want X copies', 'Change it to X', 'I just want X total', or 'set it to X', you MUST use action_type=set_exact with quantity X. " +
+        "RULE 2 NEGATION & CORRECTION: If the caller says 'No, not X, I want Y', 'Don't add more, make it Y', or 'No, don't add, I just want Y total', recognize the correction and use action_type=set_exact with quantity Y — NEVER add Y on top of the current cart. " +
+        "RULE 3 RELATIVE ONLY WHEN EXPLICIT: Use action_type=add ONLY for phrases like 'add X more', 'give me X extra', 'add X copies'. Use action_type=remove ONLY for 'remove X', 'minus X', 'take away X'. " +
+        "Always pass unit_price from the latest catalog search with variant_id when available.",
       parameters: {
         type: "object",
         properties: {
-          set_absolute_quantity: {
-            type: "boolean",
+          action_type: {
+            type: "string",
+            enum: ["add", "remove", "set_exact"],
             description:
-              "When true, each item quantity replaces the current line quantity instead of adding to it.",
+              "add = increase by quantity; remove = decrease by quantity (floor 0); set_exact = replace line quantity with quantity.",
+          },
+          quantity: {
+            type: "number",
+            description: "Integer quantity for the chosen action_type.",
+          },
+          item_id: {
+            type: "string",
+            description: "Product/variant identifier (Shopify ProductVariant GID preferred).",
+          },
+          variant_id: {
+            type: "string",
+            description: "Shopify ProductVariant GID from search results (alias of item_id).",
+          },
+          sku: {
+            type: "string",
+            description: "Optional SKU when variant GID is unavailable.",
+          },
+          title: { type: "string", description: "Book title for matching the cart line." },
+          product_id: { type: "string" },
+          isbn: { type: "string" },
+          unit_price: {
+            type: "string",
+            description: "Per-unit catalog price from search (e.g. 12.99).",
           },
           items: {
             type: "array",
+            description: "Optional multi-line payload; each line uses the same action_type.",
             items: {
               type: "object",
               properties: {
                 title: { type: "string" },
                 variant_id: { type: "string" },
+                item_id: { type: "string" },
+                sku: { type: "string" },
                 product_id: { type: "string" },
                 isbn: { type: "string" },
-                unit_price: { type: "string", description: "Per-unit catalog price from search (e.g. 12.99)" },
-                quantity: { type: "number" },
-              },
-              required: ["title", "unit_price"],
-            },
-          },
-        },
-        required: ["items"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "remove_from_cart",
-      description: "Remove items or reduce quantities in the caller's shopping cart.",
-      parameters: {
-        type: "object",
-        properties: {
-          items: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                title: { type: "string" },
-                variant_id: { type: "string" },
+                unit_price: { type: "string" },
                 quantity: { type: "number" },
               },
             },
           },
         },
-        required: ["items"],
+        required: ["action_type", "quantity"],
         additionalProperties: false,
       },
     },

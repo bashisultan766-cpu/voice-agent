@@ -12,11 +12,10 @@ import {
 import { lookupOrderStatus, clearOrderStatusCache } from "../services/shopifyService.js";
 import { aggregateOrderForCaller } from "./orderAggregationEngine.js";
 import {
-  addToCart,
   ensureShoppingCart,
   getCartSummary,
-  removeFromCart,
-  setCartLineQuantity,
+  updateCartItemQuantity,
+  type CartActionType,
 } from "../agents/cartManager.js";
 import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
@@ -85,8 +84,7 @@ export type LlmToolName =
   | "search_shopify_book_by_isbn"
   | "search_shopify_book_by_title"
   | "dictate_tracking"
-  | "add_to_cart"
-  | "remove_from_cart"
+  | "update_cart_item_quantity"
   | "get_cart_summary"
   | "send_checkout_email"
   | "send_support_escalation"
@@ -303,8 +301,7 @@ export async function executeLlmTool(
   }
 
   if (!session && (
-    tool === "add_to_cart" ||
-    tool === "remove_from_cart" ||
+    tool === "update_cart_item_quantity" ||
     tool === "get_cart_summary" ||
     tool === "send_checkout_email" ||
     tool === "send_support_escalation" ||
@@ -347,19 +344,56 @@ export async function executeLlmTool(
     };
   }
 
-  if (tool === "add_to_cart" && session) {
+  if (tool === "update_cart_item_quantity" && session) {
     try {
-      const items = reconcileAddToCartItems(session, parseCartItemsArg(rawArgsForCart.items));
+      const actionRaw = String(
+        rawArgsForCart.action_type ?? rawArgsForCart.actionType ?? "add",
+      )
+        .trim()
+        .toLowerCase();
+      const actionType: CartActionType =
+        actionRaw === "remove" || actionRaw === "set_exact" || actionRaw === "add"
+          ? (actionRaw as CartActionType)
+          : rawArgsForCart.set_absolute_quantity === true
+            ? "set_exact"
+            : "add";
+
+      const fromItems = reconcileAddToCartItems(
+        session,
+        parseCartItemsArg(rawArgsForCart.items),
+      );
+      const singleItem = {
+        title: String(rawArgsForCart.title ?? "").trim() || undefined,
+        variant_id: String(
+          rawArgsForCart.variant_id ??
+            rawArgsForCart.item_id ??
+            rawArgsForCart.sku ??
+            "",
+        ).trim() || undefined,
+        product_id: String(rawArgsForCart.product_id ?? "").trim() || undefined,
+        isbn: String(rawArgsForCart.isbn ?? "").trim() || undefined,
+        unit_price: String(rawArgsForCart.unit_price ?? rawArgsForCart.price ?? "").trim() || undefined,
+        quantity: Number(rawArgsForCart.quantity ?? 0) || undefined,
+      };
+      const items =
+        fromItems.length > 0
+          ? fromItems
+          : singleItem.title || singleItem.variant_id
+            ? reconcileAddToCartItems(session, [singleItem])
+            : [];
+
       if (!items.length) {
         return {
           tool,
           args,
           ok: false,
           status: "blocked",
-          errorMessage: "Provide at least one item with title or variant_id.",
+          errorMessage:
+            "Provide item_id/variant_id/sku or title, plus quantity and action_type (add | remove | set_exact).",
           elapsedMs: Date.now() - started,
         };
       }
+
       for (const item of items) {
         const rawVariant = (item.variant_id ?? "").trim();
         if (rawVariant && !rawVariant.startsWith("custom:") && !parseVariantGid(rawVariant)) {
@@ -378,19 +412,16 @@ export async function executeLlmTool(
             args,
             ok: false,
             status: "blocked",
-            errorMessage: "Each cart line needs a valid variant_id or title.",
+            errorMessage: "Each cart line needs a valid variant_id/item_id/sku or title.",
             elapsedMs: Date.now() - started,
           };
         }
       }
-      const setAbsolute = rawArgsForCart.set_absolute_quantity === true;
+
       let cart = ensureShoppingCart(session);
       for (const item of items) {
-        if (setAbsolute && item.quantity != null) {
-          cart = setCartLineQuantity(session, item, item.quantity);
-        } else {
-          cart = addToCart(session, [item]);
-        }
+        const quantity = Number(item.quantity ?? rawArgsForCart.quantity ?? 1) || 1;
+        cart = updateCartItemQuantity(session, item, quantity, actionType);
       }
       const data: CartToolResult = {
         status: "ok",
@@ -403,28 +434,9 @@ export async function executeLlmTool(
           price: line.unitPrice ?? line.price,
         })),
         total_units: cart.reduce((sum, line) => sum + line.quantity, 0),
+        message: `Cart updated with action_type=${actionType}.`,
       };
       return { tool, args, ok: true, status: "ok", data, elapsedMs: Date.now() - started };
-    } catch {
-      return cartErrorRecord(tool, args, started);
-    }
-  }
-
-  if (tool === "remove_from_cart" && session) {
-    try {
-      const items = parseCartItemsArg(rawArgsForCart.items);
-      const cart = removeFromCart(session, items);
-      const data: CartToolResult = {
-        status: cart.length ? "ok" : "empty",
-        items: cart.map((line) => ({
-          title: line.title,
-          quantity: line.quantity,
-          variant_id: line.variantId,
-          product_id: line.productId,
-        })),
-        total_units: cart.reduce((sum, line) => sum + line.quantity, 0),
-      };
-      return { tool, args, ok: true, status: cart.length ? "ok" : "empty", data, elapsedMs: Date.now() - started };
     } catch {
       return cartErrorRecord(tool, args, started);
     }
@@ -999,8 +1011,7 @@ export function toolResultForLlm(
   }
 
   if (
-    record.tool === "add_to_cart" ||
-    record.tool === "remove_from_cart" ||
+    record.tool === "update_cart_item_quantity" ||
     record.tool === "get_cart_summary"
   ) {
     return JSON.stringify({
@@ -1082,12 +1093,12 @@ export function toolResultForLlm(
     const similar = data.similarMatches ?? [];
     const volumeHint =
       data.exactMatch === true
-        ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask how many copies before add_to_cart unless the caller already stated a quantity."
+        ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask how many copies before update_cart_item_quantity unless the caller already stated a quantity."
         : data.exactMatch === false && similar.length > 1
-          ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before add_to_cart."
+          ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before update_cart_item_quantity."
           : suppressEscalation
-            ? "If in stock, offer to add to cart using variant_id and unit_price from this response — follow ZERO ASSUMPTION QUANTITY. If out of stock, apologize and offer similar titles — do NOT escalate unless they ask for support."
-            : "If in stock, offer to add to cart using variant_id and unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
+            ? "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY. If out of stock, apologize and offer similar titles — do NOT escalate unless they ask for support."
+            : "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
     return JSON.stringify({
       status: data.status,
       found: data.status === "found",

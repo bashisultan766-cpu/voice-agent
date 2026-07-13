@@ -173,9 +173,8 @@ export async function* runLlmOrchestratorTurn(
             t === "get_shopify_order_status" ||
             t === "get_customer_history" ||
             t === "send_checkout_email" ||
-            t === "add_to_cart" ||
-            t === "remove_from_cart",
-          ) ?? event.tools[0];
+            t === "update_cart_item_quantity",
+        ) ?? event.tools[0];
         yield { type: "chunk", chunk: planInstantFiller(heavy) };
         continue;
       }

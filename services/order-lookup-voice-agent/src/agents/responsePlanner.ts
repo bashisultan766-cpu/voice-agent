@@ -52,8 +52,7 @@ function planToolTransitionPhrase(tool?: string): string {
       return "Let me pull that up for you.";
     case "get_customer_history":
       return "Let me pull that up for you.";
-    case "add_to_cart":
-    case "remove_from_cart":
+    case "update_cart_item_quantity":
       return "One second while I update your cart.";
     case "dictate_tracking":
       return "I'll read your tracking number now.";

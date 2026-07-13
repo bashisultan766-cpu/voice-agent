@@ -108,17 +108,13 @@ describe("enterprise restoration phase 2 e2e", () => {
       if (/\b(change to 5|five copies)\b/i.test(input.userMessage)) {
         const { executeLlmTool } = await import("../src/adapters/llmToolExecutor.js");
         const exec = await executeLlmTool(
-          "add_to_cart",
+          "update_cart_item_quantity",
           {
-            set_absolute_quantity: true,
-            items: [
-              {
-                title: "Test Book",
-                variant_id: "gid://shopify/ProductVariant/999",
-                unit_price: "12.99",
-                quantity: 5,
-              },
-            ],
+            action_type: "set_exact",
+            quantity: 5,
+            title: "Test Book",
+            variant_id: "gid://shopify/ProductVariant/999",
+            unit_price: "12.99",
           },
           input.callSid,
           session,

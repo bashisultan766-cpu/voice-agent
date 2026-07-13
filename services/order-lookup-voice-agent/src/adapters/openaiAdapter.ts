@@ -264,8 +264,7 @@ function isToolName(name: string): name is LlmToolName {
     name === "search_shopify_book_by_isbn" ||
     name === "search_shopify_book_by_title" ||
     name === "dictate_tracking" ||
-    name === "add_to_cart" ||
-    name === "remove_from_cart" ||
+    name === "update_cart_item_quantity" ||
     name === "get_cart_summary" ||
     name === "send_checkout_email" ||
     name === "send_support_escalation" ||
@@ -470,7 +469,7 @@ function mapToolToIntentKey(tool: LlmToolName): string | null {
   if (tool === "search_shopify_book_by_title" || tool === "search_shopify_book_by_isbn") {
     return "catalog";
   }
-  if (tool === "get_cart_summary" || tool === "add_to_cart" || tool === "remove_from_cart") {
+  if (tool === "get_cart_summary" || tool === "update_cart_item_quantity") {
     return "cart";
   }
   if (tool === "send_checkout_email") return "checkout";
@@ -1198,8 +1197,7 @@ export async function* runLlmAgentTurnEvents(
           const batchHasCartTools = toolCalls.some(
             (candidate) =>
               candidate.type === "function" &&
-              (candidate.function.name === "add_to_cart" ||
-                candidate.function.name === "remove_from_cart" ||
+              (candidate.function.name === "update_cart_item_quantity" ||
                 candidate.function.name === "get_cart_summary"),
           );
 
@@ -1326,7 +1324,7 @@ export async function* runLlmAgentTurnEvents(
           (exec) =>
             exec.tool === "search_shopify_book_by_title" ||
             exec.tool === "search_shopify_book_by_isbn" ||
-            exec.tool === "add_to_cart" ||
+            exec.tool === "update_cart_item_quantity" ||
             exec.tool === "send_checkout_email",
         );
         const lastOrderExec = [...toolExecutions]

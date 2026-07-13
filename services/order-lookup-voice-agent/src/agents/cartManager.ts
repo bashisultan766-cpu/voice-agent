@@ -10,11 +10,15 @@ import {
   sumCartMerchandiseTotal,
 } from "../utils/shopifyMoney.js";
 
+export type CartActionType = "add" | "remove" | "set_exact";
+
 export interface CartItemInput {
   variant_id?: string;
   product_id?: string;
   title?: string;
   isbn?: string;
+  sku?: string;
+  item_id?: string;
   unit_price?: string;
   price?: string;
   quantity?: number;
@@ -25,6 +29,21 @@ function resolveUnitPrice(raw: CartItemInput): string | undefined {
   if (!candidate) return undefined;
   return normalizeShopifyUnitPrice(candidate);
 }
+
+function resolveVariantHint(raw: CartItemInput): string {
+  return (raw.variant_id ?? raw.item_id ?? raw.sku ?? "").trim();
+}
+
+function findCartLineIndex(cart: ShoppingCartLineItem[], raw: CartItemInput): number {
+  const variantGid = parseVariantGid(resolveVariantHint(raw));
+  const title = (raw.title ?? "").trim().toLowerCase();
+  return cart.findIndex(
+    (line) =>
+      (variantGid && line.variantId === variantGid) ||
+      (title && line.title.toLowerCase() === title),
+  );
+}
+
 export function ensureShoppingCart(session: CallSession): ShoppingCartLineItem[] {
   if (!session.shoppingCart) {
     session.shoppingCart = [];
@@ -32,83 +51,57 @@ export function ensureShoppingCart(session: CallSession): ShoppingCartLineItem[]
   return session.shoppingCart;
 }
 
-export function addToCart(session: CallSession, items: CartItemInput[]): ShoppingCartLineItem[] {
-  const cart = ensureShoppingCart(session);
-
-  for (const raw of items) {
-    const variantGid = parseVariantGid(raw.variant_id ?? "");
-    const title = (raw.title ?? "").trim();
-    const quantity = Math.max(1, Number(raw.quantity ?? 1) || 1);
-    const unitPrice = resolveUnitPrice(raw);
-
-    if (!variantGid && !title) continue;
-
-    const lineKey = variantGid ?? `custom:${title.toLowerCase()}`;
-    const existing = cart.find(
-      (line) =>
-        (variantGid && line.variantId === variantGid) ||
-        (!variantGid && title && line.title.toLowerCase() === title.toLowerCase()),
-    );
-
-    if (existing) {
-      existing.quantity += quantity;
-      if (raw.isbn) existing.isbn = raw.isbn;
-      if (raw.product_id) existing.productId = raw.product_id;
-      if (unitPrice) {
-        existing.unitPrice = unitPrice;
-        existing.price = unitPrice;
-      }
-      continue;
-    }
-
-    cart.push({
-      variantId: variantGid ?? lineKey,
-      productId: (raw.product_id ?? "").trim(),
-      title: title || "Book",
-      quantity,
-      unitPrice,
-      price: unitPrice,
-      isbn: raw.isbn?.trim(),
-    });
-  }
+function logCartUpdate(session: CallSession, cart: ShoppingCartLineItem[]): void {
   logger.info("cart_updated", {
     callSid: session.callSid.slice(0, 8),
     itemCount: cart.length,
     totalUnits: cart.reduce((sum, line) => sum + line.quantity, 0),
   });
+}
 
+/**
+ * Unified cart quantity updater — single source of truth for add / remove / set_exact.
+ */
+export function updateCartItemQuantity(
+  session: CallSession,
+  item: CartItemInput,
+  quantity: number,
+  actionType: CartActionType,
+): ShoppingCartLineItem[] {
+  const cart = ensureShoppingCart(session);
+  const qty = Math.max(0, Math.floor(Number(quantity) || 0));
+  const index = findCartLineIndex(cart, item);
+  const currentQty = index >= 0 ? cart[index]!.quantity : 0;
+
+  let targetQty: number;
+  if (actionType === "add") {
+    const delta = Math.max(1, qty || 1);
+    targetQty = currentQty + delta;
+  } else if (actionType === "remove") {
+    const delta = Math.max(1, qty || 1);
+    targetQty = Math.max(0, currentQty - delta);
+  } else {
+    targetQty = qty;
+  }
+
+  return setCartLineQuantity(session, item, targetQty);
+}
+
+export function addToCart(session: CallSession, items: CartItemInput[]): ShoppingCartLineItem[] {
+  let cart = ensureShoppingCart(session);
+  for (const raw of items) {
+    const quantity = Math.max(1, Number(raw.quantity ?? 1) || 1);
+    cart = updateCartItemQuantity(session, raw, quantity, "add");
+  }
   return cart;
 }
 
 export function removeFromCart(session: CallSession, items: CartItemInput[]): ShoppingCartLineItem[] {
-  const cart = ensureShoppingCart(session);
-
+  let cart = ensureShoppingCart(session);
   for (const raw of items) {
-    const variantGid = parseVariantGid(raw.variant_id ?? "");
-    const title = (raw.title ?? "").trim().toLowerCase();
     const removeQty = Math.max(1, Number(raw.quantity ?? 1) || 1);
-
-    const index = cart.findIndex(
-      (line) =>
-        (variantGid && line.variantId === variantGid) ||
-        (title && line.title.toLowerCase() === title),
-    );
-    if (index < 0) continue;
-
-    const line = cart[index];
-    if (line.quantity > removeQty) {
-      line.quantity -= removeQty;
-    } else {
-      cart.splice(index, 1);
-    }
+    cart = updateCartItemQuantity(session, raw, removeQty, "remove");
   }
-
-  logger.info("cart_updated", {
-    callSid: session.callSid.slice(0, 8),
-    itemCount: cart.length,
-    totalUnits: cart.reduce((sum, line) => sum + line.quantity, 0),
-  });
-
   return cart;
 }
 
@@ -119,32 +112,48 @@ export function setCartLineQuantity(
   targetQuantity: number,
 ): ShoppingCartLineItem[] {
   const cart = ensureShoppingCart(session);
-  const variantGid = parseVariantGid(item.variant_id ?? "");
-  const title = (item.title ?? "").trim().toLowerCase();
+  const variantHint = resolveVariantHint(item);
+  const variantGid = parseVariantGid(variantHint);
+  const title = (item.title ?? "").trim();
   const qty = Math.max(0, Math.floor(Number(targetQuantity) || 0));
-
-  const index = cart.findIndex(
-    (line) =>
-      (variantGid && line.variantId === variantGid) ||
-      (title && line.title.toLowerCase() === title),
-  );
+  const index = findCartLineIndex(cart, item);
 
   if (qty <= 0) {
     if (index >= 0) cart.splice(index, 1);
+    logCartUpdate(session, cart);
     return cart;
   }
 
+  const unitPrice = resolveUnitPrice(item);
   if (index >= 0) {
-    cart[index].quantity = qty;
-    const unitPrice = resolveUnitPrice(item);
+    const line = cart[index]!;
+    line.quantity = qty;
+    if (item.isbn) line.isbn = item.isbn;
+    if (item.product_id) line.productId = item.product_id;
     if (unitPrice) {
-      cart[index].unitPrice = unitPrice;
-      cart[index].price = unitPrice;
+      line.unitPrice = unitPrice;
+      line.price = unitPrice;
     }
+    logCartUpdate(session, cart);
     return cart;
   }
 
-  return addToCart(session, [{ ...item, quantity: qty }]);
+  if (!variantGid && !title) {
+    return cart;
+  }
+
+  const lineKey = variantGid ?? `custom:${title.toLowerCase()}`;
+  cart.push({
+    variantId: variantGid ?? lineKey,
+    productId: (item.product_id ?? "").trim(),
+    title: title || "Book",
+    quantity: qty,
+    unitPrice,
+    price: unitPrice,
+    isbn: item.isbn?.trim(),
+  });
+  logCartUpdate(session, cart);
+  return cart;
 }
 
 export function getCartSummary(session: CallSession): {
@@ -195,13 +204,13 @@ export function validateCartForCheckout(
 export function buildCartContextSystemMessage(session: CallSession): string {
   const summary = getCartSummary(session);
   if (summary.isEmpty) {
-    return "ACTIVE SHOPPING CART: Empty. Help the caller find books and use add_to_cart when they want items.";
+    return "ACTIVE SHOPPING CART: Empty. Help the caller find books and use update_cart_item_quantity when they want items.";
   }
 
   return (
     "ACTIVE SHOPPING CART: The caller's current cart is persisted for this call. " +
-    "Use add_to_cart with variant_id and unit_price from search results (full gid://shopify/ProductVariant/...), " +
-    "or remove_from_cart / get_cart_summary to manage it. " +
+    "Use update_cart_item_quantity with action_type add | remove | set_exact, and variant_id / unit_price from search results " +
+    "(full gid://shopify/ProductVariant/...). Use get_cart_summary to read the cart. " +
     `JSON: ${JSON.stringify(summary.items)}`
   );
 }

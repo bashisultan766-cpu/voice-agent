@@ -5,14 +5,14 @@
 import type { CallSession } from "../types/order.js";
 import { logger } from "../utils/logger.js";
 import {
-  addToCart,
   getCartSummary,
-  setCartLineQuantity,
+  updateCartItemQuantity,
 } from "./cartManager.js";
 import {
   isCatalogShoppingUtterance,
   isCartActionUtterance,
   parseCartQuantityFromSpeech,
+  resolveCartActionTypeFromSpeech,
 } from "./catalogShoppingIntent.js";
 import { isPurchaseFlowActive, setConversationFlowMode } from "./conversationFlowState.js";
 import {
@@ -224,12 +224,8 @@ export function shouldSuppressCatalogEscalation(session?: CallSession): boolean 
   return false;
 }
 
-function isAbsoluteQuantityChange(text: string): boolean {
-  return /\b(?:make\s+it|change\s+(?:it\s+)?to|set\s+(?:it\s+)?to|no,?\s+make\s+it)\b/i.test(text);
-}
-
 /**
- * Deterministic cart update for "Add 20 copies" / "Make it 10" using last catalog target.
+ * Deterministic cart update for "Add 20 copies" / "Make it 10" / "don't add, just want 5 total".
  */
 export function tryDeterministicCartTurn(
   session: CallSession,
@@ -248,16 +244,8 @@ export function tryDeterministicCartTurn(
     isbn: target.isbn,
   };
 
-  if (isAbsoluteQuantityChange(text)) {
-    setCartLineQuantity(session, lineInput, qty);
-  } else {
-    const existing = session.shoppingCart?.find((l) => l.variantId === target.variantId);
-    if (existing) {
-      setCartLineQuantity(session, lineInput, existing.quantity + qty);
-    } else {
-      addToCart(session, [{ ...lineInput, quantity: qty }]);
-    }
-  }
+  const actionType = resolveCartActionTypeFromSpeech(text);
+  updateCartItemQuantity(session, lineInput, qty, actionType);
 
   const memory = getSessionMemory(session);
   memory.latestQuantityRequested = qty;

@@ -97,18 +97,42 @@ const cartItemSchema = z
   })
   .passthrough();
 
-const addToCartSchema = z
+const updateCartItemQuantitySchema = z
   .object({
+    action_type: z.enum(["add", "remove", "set_exact"]).optional(),
+    actionType: z.enum(["add", "remove", "set_exact"]).optional(),
+    quantity: z.number().optional(),
+    item_id: z.string().optional(),
+    variant_id: z.string().optional(),
+    sku: z.string().optional(),
+    title: z.string().optional(),
+    product_id: z.string().optional(),
+    isbn: z.string().optional(),
+    unit_price: z.union([z.string(), z.number()]).optional(),
+    price: z.union([z.string(), z.number()]).optional(),
     set_absolute_quantity: z.boolean().optional(),
-    items: z.array(cartItemSchema).min(1, validationMessage("Provide at least one cart item")),
+    items: z.array(cartItemSchema).optional(),
   })
-  .passthrough();
-
-const removeFromCartSchema = z
-  .object({
-    items: z.array(cartItemSchema).min(1, validationMessage("Provide at least one cart item")),
-  })
-  .passthrough();
+  .passthrough()
+  .superRefine((data, ctx) => {
+    const action = String(data.action_type ?? data.actionType ?? "").trim();
+    if (!action && data.set_absolute_quantity !== true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: validationMessage("action_type is required (add | remove | set_exact)"),
+      });
+    }
+    const qty = data.quantity;
+    const hasItemQty =
+      Array.isArray(data.items) &&
+      data.items.some((item) => item.quantity != null);
+    if ((qty == null || !Number.isFinite(Number(qty))) && !hasItemQty) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: validationMessage("quantity is required"),
+      });
+    }
+  });
 
 const checkoutEmailSchema = z
   .object({
@@ -209,8 +233,7 @@ const TOOL_SCHEMAS: Record<LlmToolName, z.ZodTypeAny> = {
   search_shopify_book_by_isbn: isbnSearchSchema,
   search_shopify_book_by_title: titleSearchSchema,
   dictate_tracking: trackingGuardSchema,
-  add_to_cart: addToCartSchema,
-  remove_from_cart: removeFromCartSchema,
+  update_cart_item_quantity: updateCartItemQuantitySchema,
   get_cart_summary: emptyArgsSchema,
   send_checkout_email: checkoutEmailSchema,
   send_support_escalation: supportEscalationSchema,

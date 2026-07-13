@@ -125,7 +125,7 @@ export interface CallSession {
   orderContextConfirmed?: boolean;
   /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
   shoppingCart?: ShoppingCartLineItem[];
-  /** Most recent successful catalog search — binds add_to_cart to the right variant. */
+  /** Most recent successful catalog search — binds update_cart_item_quantity to the right variant. */
   lastCatalogSearch?: {
     title: string;
     variantId?: string;

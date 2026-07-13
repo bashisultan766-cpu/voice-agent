@@ -111,7 +111,7 @@ export function buildActiveOrderContextSystemMessage(
       "ACTIVE ORDER CONTEXT (BACKGROUND ONLY): An order was previously loaded this call, " +
       "but the caller just pivoted to buying / searching the catalog. " +
       "Do NOT restate order status, fulfillment, or progressive disclosure. " +
-      "Call search_shopify_book_by_title or search_shopify_book_by_isbn, then add_to_cart / send_checkout_email as needed. " +
+      "Call search_shopify_book_by_title or search_shopify_book_by_isbn, then update_cart_item_quantity / send_checkout_email as needed. " +
       `Prior order JSON (reference only): ${JSON.stringify(data)}`
     );
   }

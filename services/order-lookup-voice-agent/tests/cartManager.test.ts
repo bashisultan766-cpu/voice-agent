@@ -3,7 +3,13 @@ import {
   addToCart,
   getCartSummary,
   removeFromCart,
+  updateCartItemQuantity,
 } from "../src/agents/cartManager.js";
+import {
+  parseCartQuantityFromSpeech,
+  resolveCartActionTypeFromSpeech,
+} from "../src/agents/catalogShoppingIntent.js";
+import { tryDeterministicCartTurn } from "../src/agents/agentBrain.js";
 import type { CallSession } from "../src/types/order.js";
 
 function makeSession(): CallSession {
@@ -80,5 +86,83 @@ describe("cartManager", () => {
     const summary = getCartSummary(session);
     expect(summary.merchandiseTotal).toBe("509.99");
     expect(summary.totalUnits).toBe(51);
+  });
+});
+
+describe("updateCartItemQuantity action_type", () => {
+  it("set_exact replaces quantity instead of adding", () => {
+    const session = makeSession();
+    addToCart(session, [
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999", quantity: 20 },
+    ]);
+    updateCartItemQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      5,
+      "set_exact",
+    );
+    expect(getCartSummary(session).totalUnits).toBe(5);
+  });
+
+  it("add increases and remove decreases with floor zero", () => {
+    const session = makeSession();
+    updateCartItemQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      3,
+      "add",
+    );
+    updateCartItemQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      2,
+      "add",
+    );
+    expect(getCartSummary(session).totalUnits).toBe(5);
+    updateCartItemQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      10,
+      "remove",
+    );
+    expect(getCartSummary(session).isEmpty).toBe(true);
+  });
+});
+
+describe("cart intent speech parsing", () => {
+  it("maps absolute and negation phrases to set_exact", () => {
+    expect(resolveCartActionTypeFromSpeech("Make it 5")).toBe("set_exact");
+    expect(resolveCartActionTypeFromSpeech("I want 5 copies")).toBe("set_exact");
+    expect(
+      resolveCartActionTypeFromSpeech("No, don't add more, I just want 5 total"),
+    ).toBe("set_exact");
+    expect(resolveCartActionTypeFromSpeech("No, not 20, I want 5")).toBe("set_exact");
+    expect(parseCartQuantityFromSpeech("No, don't add more, I just want 5 total")).toBe(5);
+  });
+
+  it("maps relative phrases to add/remove", () => {
+    expect(resolveCartActionTypeFromSpeech("add 5 more copies")).toBe("add");
+    expect(resolveCartActionTypeFromSpeech("give me 3 extra")).toBe("add");
+    expect(resolveCartActionTypeFromSpeech("minus 2")).toBe("remove");
+    expect(resolveCartActionTypeFromSpeech("remove 1")).toBe("remove");
+  });
+
+  it("deterministic turn uses set_exact for negation instead of adding", () => {
+    const session = makeSession();
+    session.lastCatalogSearch = {
+      title: "Test Book",
+      variantId: "gid://shopify/ProductVariant/999",
+      unitPrice: "12.99",
+      recordedAt: Date.now(),
+    };
+    addToCart(session, [
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999", quantity: 20 },
+    ]);
+    const result = tryDeterministicCartTurn(
+      session,
+      "No, don't add more, I just want 5 total",
+    );
+    expect(result?.handled).toBe(true);
+    expect(getCartSummary(session).totalUnits).toBe(5);
   });
 });

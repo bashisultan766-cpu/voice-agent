@@ -35,15 +35,45 @@ export function isCatalogShoppingUtterance(callerText: string): boolean {
 }
 
 const CART_ACTION_RE =
-  /\b(?:add\s+(?:\d+|[a-z-]+)\s*(?:more\s+)?cop(?:y|ies)|add\s+(?:it|this|that)(?:\s+to\s+(?:my\s+)?cart)?|make\s+it\s+\d+|change\s+(?:it\s+)?to\s+\d+|set\s+(?:it\s+)?to\s+\d+|remove\s+(?:that|this)\s+book|change\s+quantity\s+to\s+\d+|send\s+(?:me\s+)?(?:a\s+)?payment\s+link|checkout\s+now|pay\s+now)\b/i;
+  /\b(?:add\s+(?:\d+|[a-z-]+)\s*(?:more\s+)?cop(?:y|ies)|add\s+(?:it|this|that)(?:\s+to\s+(?:my\s+)?cart)?|make\s+it\s+\d+|change\s+(?:it\s+)?to\s+\d+|set\s+(?:it\s+)?to\s+\d+|i\s+just\s+want\s+\d+|don'?t\s+add|do\s+not\s+add|remove\s+(?:that|this|\d+)\s*(?:book|cop(?:y|ies))?|minus\s+\d+|change\s+quantity\s+to\s+\d+|send\s+(?:me\s+)?(?:a\s+)?payment\s+link|checkout\s+now|pay\s+now)\b/i;
 
 /** True when the caller is changing cart quantity or checkout — not order lookup or support. */
 export function isCartActionUtterance(callerText: string): boolean {
   const text = callerText.trim();
   if (!text) return false;
   if (CART_ACTION_RE.test(text)) return true;
-  if (/\b\d+\s+cop(?:y|ies)\b/i.test(text) && /\b(add|want|need|make)\b/i.test(text)) return true;
+  if (/\b\d+\s+cop(?:y|ies)\b/i.test(text) && /\b(add|want|need|make|total|don'?t)\b/i.test(text)) {
+    return true;
+  }
   return false;
+}
+
+/**
+ * Resolve add vs remove vs set_exact from natural speech.
+ * Absolute/correction language wins over blind addition.
+ */
+export function resolveCartActionTypeFromSpeech(
+  text: string,
+): "add" | "remove" | "set_exact" {
+  const t = text.trim().toLowerCase();
+  const explicitAddMore =
+    /\b(?:add|give\s+me)\s+(?:\d+|[a-z-]+)\s*(?:more|extra)\b/.test(t) ||
+    /\badd\s+(?:\d+|[a-z-]+)\s+cop(?:y|ies)\b/.test(t) ||
+    /\badd\s+(?:it|this|that)\b/.test(t);
+  const explicitRemove =
+    /\b(?:remove|minus|take\s+(?:away|off)|subtract)\s+(?:\d+|[a-z-]+)?/.test(t) &&
+    !/\bmake\s+it\b/.test(t);
+
+  const absoluteOrCorrection =
+    /\b(?:make\s+it|change\s+(?:it\s+)?to|set\s+(?:it\s+)?to|i\s+just\s+want|want\s+\d+\s+total|total\s+of\s+\d+|don'?t\s+add|do\s+not\s+add|no,?\s+(?:don'?t|not)\b)/.test(
+      t,
+    ) || /\bnot\s+\d+[,.]?\s*(?:i\s+)?want\s+\d+\b/.test(t);
+
+  if (absoluteOrCorrection && !explicitAddMore) return "set_exact";
+  if (explicitRemove) return "remove";
+  if (explicitAddMore) return "add";
+  if (/\bi\s+want\s+(?:\d+|[a-z-]+)\s+cop(?:y|ies)\b/.test(t)) return "set_exact";
+  return "add";
 }
 
 const SPOKEN_QTY: Record<string, number> = {
@@ -65,14 +95,18 @@ const SPOKEN_QTY: Record<string, number> = {
   "twenty-five": 25,
 };
 
-/** Parse spoken quantity from cart commands — e.g. "add 20 copies", "make it ten". */
+/** Parse spoken quantity from cart commands — e.g. "add 20 copies", "make it ten", "just want 5 total". */
 export function parseCartQuantityFromSpeech(text: string): number | null {
   const t = text.trim().toLowerCase();
   if (!t) return null;
 
   const digitMatch =
-    t.match(/\b(?:add|want|need|make\s+it|change\s+to|set\s+to)\s+(\d+)\b/) ??
-    t.match(/\b(\d+)\s+cop(?:y|ies)\b/);
+    t.match(
+      /\b(?:add|want|need|make\s+it|change\s+(?:it\s+)?to|set\s+(?:it\s+)?to|just\s+want|total(?:\s+of)?)\s+(\d+)\b/,
+    ) ??
+    t.match(/\b(?:don'?t\s+add(?:\s+more)?(?:,|\s+)?(?:i\s+)?(?:just\s+)?want)\s+(\d+)\b/) ??
+    t.match(/\bnot\s+\d+[,.]?\s*(?:i\s+)?want\s+(\d+)\b/) ??
+    t.match(/\b(\d+)\s+(?:cop(?:y|ies)|total)\b/);
   if (digitMatch?.[1]) {
     const n = Number.parseInt(digitMatch[1], 10);
     return Number.isFinite(n) && n > 0 ? n : null;
@@ -82,7 +116,10 @@ export function parseCartQuantityFromSpeech(text: string): number | null {
     if (new RegExp(`\\b${word}\\s+cop(?:y|ies)\\b`).test(t) || new RegExp(`\\badd\\s+${word}\\b`).test(t)) {
       return value;
     }
-    if (new RegExp(`\\bmake\\s+it\\s+${word}\\b`).test(t)) {
+    if (
+      new RegExp(`\\bmake\\s+it\\s+${word}\\b`).test(t) ||
+      new RegExp(`\\bjust\\s+want\\s+${word}\\b`).test(t)
+    ) {
       return value;
     }
   }

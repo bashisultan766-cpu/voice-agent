@@ -1,5 +1,5 @@
 /**
- * Binds add_to_cart to the caller's most recent catalog search result.
+ * Binds update_cart_item_quantity to the caller's most recent catalog search result.
  */
 import type { BookAvailabilityResult } from "../adapters/shopifyStorefrontAdapter.js";
 import type { CallSession } from "../types/order.js";
@@ -44,7 +44,7 @@ export function buildCatalogTargetSystemMessage(session: CallSession): string | 
     `Most recent book search: "${target.title}".`,
     `variant_id=${target.variantId}`,
     target.unitPrice ? `unit_price=${target.unitPrice}` : "",
-    "When the caller says add it, add to cart, or gives a quantity for the book you just found, add_to_cart MUST use this variant_id and unit_price — NEVER a prior search or an item already in the cart unless they explicitly name a different book.",
+    "When the caller says add it, add to cart, or gives a quantity for the book you just found, update_cart_item_quantity MUST use this variant_id and unit_price — NEVER a prior search or an item already in the cart unless they explicitly name a different book. Use action_type=set_exact for 'make it X / I want X total / don't add, make it Y', action_type=add only for 'add X more', and action_type=remove for 'minus/remove X'.",
   ]
     .filter(Boolean)
     .join(" ");
