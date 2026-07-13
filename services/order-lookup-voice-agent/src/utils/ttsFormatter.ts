@@ -40,7 +40,7 @@ export const TRACKING_CHAR_PAUSE_NORMAL_MS = 500;
 export type TrackingDictationSpeed = "slow" | "normal";
 
 export interface FormatTrackingNumberOptions {
-  /** Legacy opt-in — SSML breaks are often stripped on voice relays; comma pacing is default. */
+  /** Legacy opt-in — SSML breaks are often stripped on voice relays; ellipsis pacing is default. */
   useSsml?: boolean;
 }
 
@@ -48,9 +48,14 @@ const SSML_BREAK_TAG_RE = /<break\s+time=["']([^"']+)["']\s*\/?>/gi;
 
 const TRACKING_DICTATION_SSML_RE = /<break\s+time=/i;
 const TRACKING_DICTATION_PHONETIC_RE =
-  /\b(Zero|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Dash|Ay|Bee|Cee|Dee|Eee|Ef|Gee|Aitch|Eye|Jay|Kay|El|Em|En|Oh|Pea|Cue|Ar|Ess|Tee|You|Vee|Double-you|Ex|Why|Zee)(?:\.|\s*-)/i;
+  /\b(Zero|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ay|Bee|Cee|Dee|Eee|Ef|Gee|Aitch|Eye|Jay|Kay|El|Em|En|Oh|Pea|Cue|Ar|Ess|Tee|You|Vee|Double-you|Ex|Why|Zee)(?:\.\.\.|\.|\s*-)/i;
 const TRACKING_DICTATION_COMMA_RE = /[A-Z0-9],\s+[A-Z0-9]/i;
+const TRACKING_DICTATION_ELLIPSIS_RE =
+  /\b(Zero|One|Two|Three|Four|Five|Six|Seven|Eight|Nine)\.\.\./i;
 const TRACKING_DICTATION_DASH_RE = /\d\s+-\s+\d/;
+
+/** Pause separator between spoken digit words — never commas or dashes (TTS reads those aloud). */
+const DIGIT_PAUSE_SEP = "... ";
 
 const DIGIT_PHONETIC: Record<string, string> = {
   "0": "Zero",
@@ -68,19 +73,24 @@ const DIGIT_PHONETIC: Record<string, string> = {
 function charToPhoneticWord(char: string): string {
   if (DIGIT_PHONETIC[char]) return DIGIT_PHONETIC[char];
   if (/[A-Z]/.test(char)) return char;
-  if (char === "-") return "Dash";
+  // Never speak "Dash" — hyphens become silent pauses via separator only.
+  if (char === "-") return "";
   return char;
 }
 
 function charToPhoneticPacing(char: string): string {
-  return `${charToPhoneticWord(char)}.`;
+  const word = charToPhoneticWord(char);
+  return word ? `${word}.` : "";
 }
 
-/** Phonetic pacing for a raw digit run (e.g. spatial resume chunk "02" → "Zero, Two"). */
+/** Phonetic pacing for a raw digit run (e.g. spatial resume chunk "02" → "Zero... Two"). */
 export function formatTrackingChunkPhonetic(sequence: string): string {
   const normalized = normalizeTrackingIdRawSequence(sequence);
   if (!normalized) return "";
-  return [...normalized].map(charToPhoneticWord).join(", ");
+  return [...normalized]
+    .map(charToPhoneticWord)
+    .filter(Boolean)
+    .join(DIGIT_PAUSE_SEP);
 }
 
 export function formatTrackingChunkForTts(
@@ -93,9 +103,9 @@ export function formatTrackingChunkForTts(
   return formatTrackingChunkPhonetic(sequence);
 }
 
-function formatPhoneticAcousticPacing(chars: string[], separator = ", "): string {
+function formatPhoneticAcousticPacing(chars: string[], separator = DIGIT_PAUSE_SEP): string {
   if (!chars.length) return "";
-  return chars.map(charToPhoneticWord).join(separator);
+  return chars.map(charToPhoneticWord).filter(Boolean).join(separator);
 }
 
 /** Extra-slow replay when the caller asks to repeat / go slower. */
@@ -104,14 +114,15 @@ export function formatTrackingNumberForTTSSlower(trackingId: string): string {
   if (!normalized) return "";
   const chars = [...normalized];
   if (chars.every((c) => c >= "0" && c <= "9")) {
-    return chars.join(",  ");
+    return chars.map((c) => DIGIT_PHONETIC[c] ?? c).join("...  ");
   }
-  return formatPhoneticAcousticPacing(chars, ",  ");
+  return formatPhoneticAcousticPacing(chars, "...  ");
 }
 
 /**
  * Format a tracking ID for extremely slow, clear TTS dictation.
- * Uses comma-space separators (e.g. "9, 4, 4, 9") so TTS pauses without saying "dash".
+ * Uses spoken digit words with ellipsis pauses ("One... Two... Three...") —
+ * never commas or dashes (TTS would say "comma" / "dash").
  * SSML breaks are opt-in only — they are often stripped or ignored on voice relays.
  */
 export function formatTrackingNumberForTTS(
@@ -129,9 +140,9 @@ export function formatTrackingNumberForTTS(
     return chars.map((char) => `${char}<break time="${breakTime}"/>`).join("");
   }
 
-  // Pure digit IDs: comma-space pacing ("944901" → "9, 4, 4, 9, 0, 1").
+  // Pure digit IDs: pause-only spoken words ("944901" → "Nine... Four... Four... Nine... Zero... One").
   if (chars.every((c) => c >= "0" && c <= "9")) {
-    return chars.join(", ");
+    return chars.map((c) => DIGIT_PHONETIC[c] ?? c).join(DIGIT_PAUSE_SEP);
   }
 
   return formatPhoneticAcousticPacing(chars);
@@ -215,7 +226,7 @@ function spokenDigitRunToPhonetic(digitRun: string): string {
     const mapped = SPOKEN_DIGIT_TO_CHAR[token];
     if (mapped) chars.push(mapped);
   }
-  return chars.map((ch) => charToPhoneticWord(ch)).join(", ");
+  return chars.map((ch) => charToPhoneticWord(ch)).filter(Boolean).join("... ");
 }
 
 /** Remove decimal/math phrasing from tracking dictation speech (e.g. "point 02" → "Zero, Two"). */
@@ -240,6 +251,7 @@ export function isTrackingDictationText(text: string): boolean {
   return (
     TRACKING_DICTATION_SSML_RE.test(text) ||
     TRACKING_DICTATION_PHONETIC_RE.test(text) ||
+    TRACKING_DICTATION_ELLIPSIS_RE.test(text) ||
     TRACKING_DICTATION_COMMA_RE.test(text) ||
     TRACKING_DICTATION_DASH_RE.test(text)
   );

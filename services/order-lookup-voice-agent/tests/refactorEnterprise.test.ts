@@ -53,7 +53,7 @@ describe("semantic product search disclosure", () => {
 });
 
 describe("concise order lookup disclosure", () => {
-  it("returns conversational summarization template", () => {
+  it("returns passive confirmation template", () => {
     const speech = buildProgressiveDisclosureOrderSpeech({
       orderNumber: "#21698",
       isRefunded: false,
@@ -64,11 +64,8 @@ describe("concise order lookup disclosure", () => {
       financialStatus: "PAID",
       customerEmail: "caller@example.com",
     } as any);
-    expect(speech).toMatch(/^I found your order 21698\./);
-    expect(speech).toMatch(/SureShot Guide is currently fulfilled/i);
-    expect(speech).toMatch(/payment is marked paid/i);
-    expect(speech).toContain("caller@example.com");
-    expect(speech).toContain("I have provided that, how else can I help you today?");
+    expect(speech).toBe("I've found your order. How can I help you with this one?");
+    expect(speech).not.toContain("SureShot Guide");
   });
 });
 

@@ -163,11 +163,10 @@ describe("transactionNodesFromConnection", () => {
 });
 
 describe("buildProgressiveDisclosureOrderSpeech", () => {
-  it("returns conversational summarization for refunded orders", () => {
+  it("returns passive confirmation for refunded orders", () => {
     const parsed = parseDeepOrderData(DEEP_FETCH_GQL_NODE);
     const speech = buildProgressiveDisclosureOrderSpeech(parsed);
-    expect(speech).toMatch(/^I found your order 18420\./);
-    expect(speech).toMatch(/currently Refunded/);
+    expect(speech).toBe("I've found your order. How can I help you with this one?");
     expect(speech).not.toContain("Sarah Chen");
   });
 });
@@ -179,10 +178,9 @@ describe("buildProactiveOrderSummarySpeech", () => {
     expect(speech).toBe(DEEP_FETCH_EXPECTED_TTS);
   });
 
-  it("buildOrderStatusTts produces conversational summarization end-to-end", () => {
+  it("buildOrderStatusTts produces passive confirmation end-to-end", () => {
     const mapped = mapGqlOrderNode(DEEP_FETCH_GQL_NODE);
     const tts = buildOrderStatusTts({ status: "found", ...mapped });
-    expect(tts.text).toMatch(/^I found your order 18420\./);
-    expect(tts.text).toMatch(/currently Refunded/);
+    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
   });
 });

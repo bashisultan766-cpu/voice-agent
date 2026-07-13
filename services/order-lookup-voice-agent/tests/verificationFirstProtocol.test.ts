@@ -85,7 +85,7 @@ describe("verification-first protocol", () => {
     expect(callerAskedForTracking(session)).toBe(true);
   });
 
-  it("emits conversational summarization plus closing phrase", () => {
+  it("emits passive confirmation only — no automatic summary", () => {
     const speech = buildVerificationFirstOrderSpeech({
       orderNumber: "#21698",
       orderPlacedAtSpoken: "March 10th, 2025",
@@ -99,14 +99,10 @@ describe("verification-first protocol", () => {
       financialStatus: "PAID",
       customerEmail: "caller@example.com",
     });
-    expect(speech).toMatch(/^I found your order 21698\./);
-    expect(speech).toMatch(/SureShot Guide is currently fulfilled/i);
-    expect(speech).toMatch(/payment is marked paid/i);
-    expect(speech).toContain("caller@example.com");
-    expect(speech).toContain(
-      "Because this is a legacy order, the specific payment card details are hidden for security",
-    );
-    expect(speech).toContain(POST_INFORMATION_CLOSING_SPEECH);
+    expect(speech).toBe("I've found your order. How can I help you with this one?");
+    expect(speech).not.toContain("SureShot Guide");
+    expect(speech).not.toContain("caller@example.com");
+    expect(speech).not.toContain(POST_INFORMATION_CLOSING_SPEECH);
   });
 
   it("offers tracking readout when caller asked for tracking", () => {
@@ -133,7 +129,7 @@ describe("verification-first protocol", () => {
     expect(normalizeTrackingIdRawSequence("2.0.3.4.5")).toBe("20345");
     const tts = formatTrackingNumberForTTS("2.0.3.4.5");
     expect(tts).not.toContain("2.0");
-    expect(tts).toBe("2, 0, 3, 4, 5");
+    expect(tts).toBe("Two... Zero... Three... Four... Five");
   });
 
   it("verification gate authorizes vault fields only when phones match", () => {
@@ -167,15 +163,14 @@ describe("verification-first protocol", () => {
     expect(maskPhoneForUnverified("+15551234567")).toBe("*** *** 4567");
   });
 
-  it("buildOrderStatusTts uses verification-first template", () => {
+  it("buildOrderStatusTts uses passive confirmation template", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "12345",
       orderPlacedAt: "2025-03-10T00:00:00Z",
       fulfillmentStatus: "FULFILLED",
     });
-    expect(tts.text).toMatch(/^I found your order 12345\./);
-    expect(tts.text).toContain(POST_INFORMATION_CLOSING_SPEECH);
+    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
   });
 
   it("appendProtocolClosing is idempotent", () => {

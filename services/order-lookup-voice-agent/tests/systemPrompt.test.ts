@@ -154,7 +154,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DICTATION & INTERRUPTION PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/There are two 88s in the number/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /After 47, the remaining numbers are 1, 8, 8, 3, 0, 0/i,
+      /After 47, the remaining numbers are One\.\.\. Eight\.\.\. Eight\.\.\. Three\.\.\. Zero\.\.\. Zero/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/After 68, the next numbers are|After Holy/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/physical_items/i);
@@ -233,9 +233,9 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT hang up/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONVERSATIONAL MEMORY/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER ask the customer for their order number again/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DATA DICTATION PACING/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/COMMA and a SPACE/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER use dashes or hyphens/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DICTATION PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/One\.\.\. Two\.\.\. Three\.\.\. Four/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/do not use dashes or commas/i);
   });
 
   it("locks context so tracking interrupts never become new order lookups", () => {
@@ -271,12 +271,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/strictly forbidden from answering general knowledge/i);
   });
 
-  it("requires conversational summarization for initial order lookup", () => {
+  it("requires passive confirmation for initial order lookup", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/MULTILINGUAL PROTOCOL|Match the caller's language/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ORDER LOOKUP S\.O\.P\./i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONVERSATIONAL SUMMARIZATION/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/PASSIVE CONFIRMATION|PASSIVE UNTIL ASKED|CONVERSATION LOCK/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Never act like a database/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Because this is a legacy order, the specific payment card details are hidden/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I've found your order\. How can I help you with this one/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ACTIVE ORDER CONTEXT/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I don't have that specific detail on file|that specific detail is not on file/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRACKING ID \(TOOL-SCOPED\)/i);

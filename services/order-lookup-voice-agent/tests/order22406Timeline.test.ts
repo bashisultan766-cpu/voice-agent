@@ -51,8 +51,7 @@ describe("order #22406 deep timeline extraction", () => {
     const mapped = mapGqlOrderNode(ORDER_22406_GQL_NODE);
     const tts = buildOrderStatusTts({ status: "found", ...mapped });
 
-    expect(tts.text).toMatch(/^I found your order 22406\./);
-    expect(tts.text).toMatch(/currently Refunded/);
+    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
     expect(tts.text).not.toContain("Blake Penfield");
     expect(tts.text).not.toContain("Your order contains");
     expect(tts.text).not.toContain("OUT OF STOCK");

@@ -64,8 +64,7 @@ describe("runLlmAgentTurnEvents grounded order speech", () => {
       undefined,
       expect.objectContaining({ skipPolicy: true }),
     );
-    expect(speech).toMatch(/^I found your order 21698-F1\./);
-    expect(speech).toMatch(/currently Refunded/);
+    expect(speech).toBe("I've found your order. How can I help you with this one?");
     expect(speech).not.toContain("Joel Moore");
     expect(speech).not.toContain("OUT OF STOCK");
     expect(speech).not.toMatch(/The books cost/i);

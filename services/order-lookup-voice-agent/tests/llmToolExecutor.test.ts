@@ -77,14 +77,14 @@ describe("toolResultForLlm order shaping", () => {
     ]) {
       expect(key in parsed.data).toBe(true);
     }
-    expect(parsed.instructions).toMatch(/CONVERSATIONAL SUMMARIZATION|ORDER LOOKUP S\.O\.P/i);
+    expect(parsed.instructions).toMatch(/PASSIVE CONFIRMATION|PASSIVE UNTIL ASKED|CONVERSATION LOCK|ORDER LOOKUP S\.O\.P/i);
     expect(parsed.instructions).toMatch(/SECURITY CLEARANCE \(UNBREAKABLE RULE\)/i);
-    expect(parsed.instructions).toMatch(/CONTEXT LOCK & TOOL GUARDRAILS/i);
+    expect(parsed.instructions).toMatch(/CONVERSATION LOCK/i);
     expect(parsed.instructions).toMatch(/EXPLAINING PAYMENTS & NOTIFICATIONS/i);
-    expect(parsed.instructions).toMatch(/What comes after 80111/i);
+    expect(parsed.instructions).toMatch(/What comes after 47|What comes after 80111/i);
     expect(parsed.instructions).toMatch(/sourceName \/ Litextension/i);
     expect(parsed.instructions).toMatch(/ABSOLUTE BLACKLIST/i);
-    expect(parsed.instructions).toMatch(/9, 4, 4, 9, 0, 1/);
+    expect(parsed.instructions).toMatch(/Nine\.\.\. Four\.\.\. Four\.\.\. Nine\.\.\. Zero\.\.\. One/);
     expect(parsed.instructions).not.toMatch(/9 - 4 - 4/);
     expect(parsed.status).toBe("FOUND");
     expect(parsed.found).toBe(true);
@@ -167,7 +167,7 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.tracking_number).toBe("1Z999999999");
     expect(parsed.data.tracking_company).toBe("UPS");
     expect(String(parsed.data.tracking_number_for_tts)).toBe(
-      "One, Z, Nine, Nine, Nine, Nine, Nine, Nine, Nine, Nine, Nine",
+      "One... Z... Nine... Nine... Nine... Nine... Nine... Nine... Nine... Nine... Nine",
     );
   });
 

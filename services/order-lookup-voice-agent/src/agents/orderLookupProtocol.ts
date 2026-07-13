@@ -1,8 +1,7 @@
 /**
- * Verification-first / conversational order lookup protocol — deterministic speech.
+ * Verification-first order lookup protocol — passive confirmation until asked.
  */
 import type { ParsedOrderData } from "../utils/orderDataParser.js";
-import { fulfillmentStatusPhrase, speakMoney } from "../utils/formatter.js";
 import type { CallSession } from "../types/order.js";
 import { callerAskedForTracking } from "./sessionMemory.js";
 import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
@@ -24,6 +23,13 @@ export const TRACKING_ID_OFFER_SPEECH = "Would you like me to read the tracking 
 
 export const POST_INFORMATION_CLOSING_SPEECH =
   "I have provided that, how else can I help you today?";
+
+/**
+ * Passive confirmation after a successful deep order fetch.
+ * Never auto-read status, items, totals, or emails — wait for a specific question.
+ */
+export const ORDER_FOUND_PASSIVE_SPEECH =
+  "I've found your order. How can I help you with this one?";
 
 /** ORDER_LOOKUP / tracking goals must not hit Shopify until an order number is collected. */
 export function requiresOrderNumberPreflight(
@@ -57,80 +63,19 @@ export function buildOrderNumberPreflightSpeech(session?: CallSession): string {
 }
 
 /**
- * Human concierge summary after a successful deep order fetch.
- * Never just say "Order found."
+ * Confirmation & Ready — passive until the caller asks for a specific field.
+ * Full deep-fetch data stays in session/LLM memory for follow-ups.
  */
 export function buildVerificationFirstOrderSpeech(
-  data: ParsedOrderData,
+  _data: ParsedOrderData,
   session?: CallSession,
 ): string {
-  const orderId = data.orderNumber?.replace(/^#/, "") ?? "unknown";
-
-  let statusPhrase: string;
-  if (data.isRefunded) {
-    statusPhrase = "Refunded";
-  } else if (data.fulfillmentStatus?.trim()) {
-    statusPhrase = fulfillmentStatusPhrase(data.fulfillmentStatus);
-  } else {
-    statusPhrase = "being processed";
+  void _data;
+  // If they asked for tracking up front, arm the offer path without dumping order details.
+  if (session && callerAskedForTracking(session)) {
+    return `${ORDER_FOUND_PASSIVE_SPEECH} ${TRACKING_ID_OFFER_SPEECH}`;
   }
-
-  const books = (data.lineItems ?? []).filter((item) => item.title?.trim());
-  const bookPhrase =
-    books.length === 0
-      ? "your items"
-      : books.length === 1
-        ? books[0]!.title.trim()
-        : books.length === 2
-          ? `${books[0]!.title.trim()} and ${books[1]!.title.trim()}`
-          : `${books[0]!.title.trim()} and ${books.length - 1} other books`;
-
-  const total = data.totalAmount?.trim();
-  const financial = (data.financialStatus ?? "").trim();
-  const paidPhrase = data.isRefunded
-    ? "the payment was refunded"
-    : /paid|partially_paid/i.test(financial)
-      ? "payment is marked paid"
-      : financial
-        ? `payment status is ${financial.toLowerCase().replace(/_/g, " ")}`
-        : "payment was recorded";
-
-  const notifyEmail =
-    data.orderConfirmationEmail?.trim() ||
-    data.customerEmail?.trim() ||
-    data.refundNotificationEmail?.trim() ||
-    "";
-
-  const segments: string[] = [
-    `I found your order ${orderId}. ${bookPhrase} ${books.length === 1 ? "is" : "are"} currently ${statusPhrase}.`,
-    total
-      ? `I can confirm ${paidPhrase} for ${speakMoney(total)}.`
-      : `I can confirm ${paidPhrase}.`,
-  ];
-
-  if (notifyEmail) {
-    segments.push(
-      `All system notifications, shipping updates, and receipts were automatically routed to ${notifyEmail}.`,
-    );
-  }
-
-  if (!data.cardLast4?.trim()) {
-    segments.push(
-      "Because this is a legacy order, the specific payment card details are hidden for security, but the transaction was successfully processed.",
-    );
-  }
-
-  const askedForTracking = Boolean(session && callerAskedForTracking(session));
-  if (askedForTracking && !data.trackingNumber?.trim()) {
-    segments.push(
-      "I do not have a valid tracking number on file yet. It may not have shipped, or it may have been refunded.",
-    );
-  } else if (askedForTracking && data.trackingNumber?.trim()) {
-    segments.push(TRACKING_ID_OFFER_SPEECH);
-  }
-
-  segments.push(POST_INFORMATION_CLOSING_SPEECH);
-  return segments.join(" ");
+  return ORDER_FOUND_PASSIVE_SPEECH;
 }
 
 /** Arm tracking-offer acceptance when disclosure speech includes the read-tracking prompt. */
@@ -147,6 +92,6 @@ export function appendProtocolClosing(speech: string): string {
   return `${trimmed} ${POST_INFORMATION_CLOSING_SPEECH}`;
 }
 
-export function orderLookupMayAccessDatabase(session: CallSession): boolean {
+export function shouldSkipOrderNumberReask(session: CallSession): boolean {
   return hasConfirmedOrderContext(session);
 }

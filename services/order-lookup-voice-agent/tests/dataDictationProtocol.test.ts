@@ -48,7 +48,8 @@ describe("Data Dictation Protocol", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /I have your tracking number right here\. Let me know when you have a pen and paper ready/i,
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/9, 4, 4, 9, 0, 1/);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Nine\.\.\. Four\.\.\. Four\.\.\. Nine/);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/One\.\.\. Two\.\.\. Three\.\.\. Four/);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /Did you get all that, or should I repeat any part of it/i,
     );
@@ -56,13 +57,13 @@ describe("Data Dictation Protocol", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/orderNote \/ note/i);
   });
 
-  it("formats digit tracking with commas between every character", () => {
-    expect(formatTrackingNumberForTTS("944901")).toBe("9, 4, 4, 9, 0, 1");
-    expect(formatTrackingNumberForTTSSlower("944901")).toBe("9,  4,  4,  9,  0,  1");
+  it("formats digit tracking with pause-only spoken words", () => {
+    expect(formatTrackingNumberForTTS("944901")).toBe("Nine... Four... Four... Nine... Zero... One");
+    expect(formatTrackingNumberForTTSSlower("944901")).toBe("Nine...  Four...  Four...  Nine...  Zero...  One");
   });
 
-  it("uses phonetic comma pacing for alphanumeric tracking IDs", () => {
-    expect(formatTrackingNumberForTTS("1Z999")).toBe("One, Z, Nine, Nine, Nine");
+  it("uses phonetic pause pacing for alphanumeric tracking IDs", () => {
+    expect(formatTrackingNumberForTTS("1Z999")).toBe("One... Z... Nine... Nine... Nine");
   });
 
   it("notepad handshake uses the Data Dictation Protocol script", () => {
@@ -90,7 +91,7 @@ describe("Data Dictation Protocol", () => {
     updateActiveSession(CALL_SID, { isNotepadReady: true, currentState: "tracking_dictation" });
     const dictated = beginTrackingDictationAfterNotepadReady(CALL_SID);
     expect(dictated.ok).toBe(true);
-    expect(dictated.speech).toMatch(/9, 4, 0/);
+    expect(dictated.speech).toMatch(/Nine\.\.\. Four\.\.\. Zero/);
     expect(dictated.speech).toContain(TRACKING_DICTATION_CONFIRM_SPEECH);
 
     const active = getOrCreateActiveSession(CALL_SID);
@@ -100,12 +101,12 @@ describe("Data Dictation Protocol", () => {
     const session = baseSession();
     const repeat = resolveTrackingPhaseGate("say it slower please", session);
     expect(repeat.handled).toBe(true);
-    expect(repeat.speech).toContain("9,  4");
+    expect(repeat.speech).toMatch(/Nine\.\.\./);
     expect(repeat.speech).not.toMatch(/physical_items|shipping_amount|full summary/i);
     expect(appendTrackingDictationConfirm(repeat.speech ?? "")).toMatch(/get all that/i);
 
     const slower = buildSlowerTrackingReplaySpeech(CALL_SID);
-    expect(slower).toContain("9,  4");
+    expect(slower).toMatch(/Nine\.\.\./);
   });
 
   it("does not dump order payload when repeating during notepad wait", () => {
@@ -114,6 +115,6 @@ describe("Data Dictation Protocol", () => {
     const repeat = resolveTrackingPhaseGate("repeat that", session);
     expect(repeat.handled).toBe(true);
     expect(repeat.speech).toMatch(/pen and paper ready/i);
-    expect(repeat.speech).not.toMatch(/9, 4/);
+    expect(repeat.speech).not.toMatch(/Nine\.\.\./);
   });
 });

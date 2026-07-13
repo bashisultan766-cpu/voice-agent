@@ -52,7 +52,7 @@ describe("buildBookFoundTts", () => {
 });
 
 describe("buildOrderStatusTts", () => {
-  it("returns conversational summarization summary on initial lookup", () => {
+  it("returns passive confirmation on initial lookup", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
@@ -72,23 +72,20 @@ describe("buildOrderStatusTts", () => {
       cardLast4: "4242",
       cardBrand: "Visa",
     });
-    expect(tts.text).toMatch(/^I found your order 12345\./);
-    expect(tts.text).toMatch(/Harry Potter is currently/i);
-    expect(tts.text).toContain("jane.doe@example.com");
+    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
+    expect(tts.text).not.toContain("Harry Potter");
+    expect(tts.text).not.toContain("jane.doe@example.com");
     expect(tts.text).not.toContain("Jane Doe");
-    expect(tts.text).not.toContain("Your order contains");
-    expect(tts.text).not.toMatch(/The books cost/i);
   });
 
-  it("uses Refunded status for refunded orders with concierge summary", () => {
+  it("keeps refunded orders passive until asked", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderPlacedAt: "2025-04-01T10:00:00Z",
       ...ORDER_21698_F1_EXPECTED,
     });
 
-    expect(tts.text).toMatch(/^I found your order 21698-F1\./);
-    expect(tts.text).toMatch(/currently Refunded/);
+    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
     expect(tts.text).not.toContain("Joel Moore");
     expect(tts.text).not.toContain("OUT OF STOCK");
   });
@@ -125,8 +122,7 @@ describe("handleFulfillmentTurn", () => {
       callSid: "CA_TEST",
     });
 
-    expect(result.tts.text).toMatch(/^I found your order 54321\./);
-    expect(result.tts.text).toMatch(/currently shipped/i);
+    expect(result.tts.text).toBe("I've found your order. How can I help you with this one?");
   });
 
   it("returns title search fallback on not found", async () => {

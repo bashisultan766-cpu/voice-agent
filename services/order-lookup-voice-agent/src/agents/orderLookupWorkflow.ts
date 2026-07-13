@@ -1,5 +1,6 @@
 /**
  * Single order-lookup workflow — shared speech, retry signals, and status classification.
+ * Found orders use passive confirmation only (no automatic summary readout).
  */
 import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import {
@@ -10,6 +11,9 @@ import {
 } from "../constants/systemMessages.js";
 import type { CallSession } from "../types/order.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
+import { ORDER_FOUND_PASSIVE_SPEECH } from "./orderLookupProtocol.js";
+
+export { ORDER_FOUND_PASSIVE_SPEECH };
 
 export function isOrderLookupInsistenceUtterance(text: string): boolean {
   return /\b((?:this\s+is\s+the\s+)?correct|right)\s+order|please\s+(?:find|look\s*(?:it\s+)?up|try\s+again|provide)\b/i.test(
