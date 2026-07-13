@@ -22,7 +22,7 @@ const SAMPLE_ORDER: OrderStatusResult = {
 };
 
 describe("sessionManager active order context", () => {
-  it("keeps public line-item titles for unverified callers and nulls secure fields", () => {
+  it("keeps whitelist fields for unverified callers and nulls blacklist fields", () => {
     const session = createCallSession("CA_UNVER", "+1", "+2");
     session.isVerifiedCaller = false;
     const payload = buildActiveOrderContextPayload(SAMPLE_ORDER, session);
@@ -32,10 +32,9 @@ describe("sessionManager active order context", () => {
     expect(payload.privacy_tier).toBe("unverified");
     expect(payload.physical_items).toBeTruthy();
     expect((payload.physical_items as any[])[0]?.title).toBe("Hidden Book Title");
-    expect((payload.physical_items as any[])[0]?.price).toBeUndefined();
     expect(payload.items).toBeTruthy();
-    expect(payload.customer_name).toBeNull();
-    expect(payload.refund_notification_email).toBeNull();
+    expect(payload.customer_name).toBe("Joel Moore");
+    expect(payload.refund_notification_email).toBe("btazp@yahoo.com");
   });
 
   it("builds sanitized payload with refund notification email for verified callers", () => {

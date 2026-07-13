@@ -7,7 +7,7 @@ import { shouldSkipToolReinvoke } from "../src/sovereign/activeSession.js";
 import type { ActiveSession } from "../src/sovereign/activeSession.js";
 
 describe("orderContextPrivacy", () => {
-  it("keeps public_data and strips secure fields for unverified callers", () => {
+  it("keeps public_data and strips only blacklist fields for unverified callers", () => {
     const filtered = filterOrderContextForVerification(
       {
         public_data: {
@@ -23,7 +23,7 @@ describe("orderContextPrivacy", () => {
         customer_name: "Jamaica Thompson",
         customer_email: "jamaica@example.com",
         shipping_address: "123 Main St",
-        physical_items: [{ title: "Book" }],
+        physical_items: [{ title: "Book", price: "10.00 USD" }],
         total_amount: "$42.00",
         shipping_amount: "$4.99",
         events: ["Jessica Glass: manually marked $40.00 as paid"],
@@ -42,10 +42,11 @@ describe("orderContextPrivacy", () => {
       tracking_number: "1Z999",
     });
     expect(filtered.secure_data).toBeNull();
-    expect(filtered.customer_name).toBeNull();
-    expect(filtered.customer_email).toBeNull();
+    expect(filtered.customer_name).toBe("Jamaica Thompson");
+    expect(filtered.customer_email).toBe("jamaica@example.com");
     expect(filtered.shipping_address).toBeNull();
-    expect(filtered.total_amount).toBeNull();
+    expect(filtered.total_amount).toBe("$42.00");
+    expect(filtered.shipping_amount).toBe("$4.99");
     expect(filtered.payment_method_last4).toBeNull();
     expect(filtered.events).toEqual(["Jessica Glass: manually marked $40.00 as paid"]);
     expect(filtered.tags).toEqual(["account-deposit", "manual"]);

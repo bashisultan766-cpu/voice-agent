@@ -1051,7 +1051,7 @@ export function toolResultForLlm(
           : null,
       instructions: readiness
         ? "NOTEPAD-FIRST RULE: Speak ONLY the readiness handshake verbatim — 'I have your tracking number right here. Let me know when you have a pen and paper ready.' Do NOT read any tracking digits."
-        : "DATA DICTATION PROTOCOL: Speak tracking_number_for_tts verbatim with slow dashed pacing (e.g. '9 - 4 - 4 - 9 - 0 - 1'). Append 'Did you get all that, or should I repeat any part of it?' Never mention items, fees, payment, or other order fields. On 'repeat that' / 'say it slower', re-speak ONLY tracking_number_for_tts even slower — never the full order. If the caller confirms they wrote it down, stop dictating and ask if they need anything else.",
+        : "DATA DICTATION PROTOCOL: Speak tracking_number_for_tts with slow COMMA-SPACE digit pacing (e.g. '9, 4, 4, 9, 0, 1'). NEVER use hyphens or dashes. If the string contains '-', rewrite them as ', ' before speaking. Append 'Did you get all that, or should I repeat any part of it?' Never mention items, fees, payment, or other order fields. On 'repeat that' / 'say it slower', re-speak ONLY tracking_number_for_tts even slower — never the full order. If the caller confirms they wrote it down, stop dictating and ask if they need anything else.",
     });
   }
 
@@ -1211,7 +1211,7 @@ export function toolResultForLlm(
         verified,
       ),
       instructions:
-        "Deep-fetch data is for internal memory only. Translate the events timeline via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. When the caller asks how they were notified, look in events for Confirmation / Received new order / Draft order / notification language and answer confidently. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Never hang up because a timeline question is hard. physical_items and item_count are BOOKS ONLY — each physical_items entry includes title, quantity, and price (per-unit); use that price for ordinal item questions (1st/2nd/3rd) — never substitute subtotal_amount. Never count or speak fee_items, processing_fees, shipping_fees, or handling_fees as books. Use shipping_amount for order shipping cost; use fee line arrays only when the caller explicitly asks about surcharges. Keys always present: customer_name, customer_email, customer_email_for_tts, order_placed_at, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). Use payment_method for spoken payment summaries (e.g. Visa ending in 1302 or PayPal). Use cancel_reason or refund_reason when explaining why an order was refunded or cancelled — always speak the reason when the caller asks about refunds. For spoken refund notification email, use refund_notification_email_for_tts (full speakable address, e.g. jamaicathompson87 at gmail dot com). If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK from INTERNATIONAL PROTOCOL using order_placed_at and customer_email_for_tts — never say not on file for archived orders with customer_email on file. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow DATA DICTATION PROTOCOL via dictate_tracking — notepad check first, then speak ONLY tracking_number_for_tts verbatim with dashed pacing (e.g. 9 - 4 - 4 - 9 - 0 - 1) and ask Did you get all of that, or should I repeat any part of it? Never mention items, fees, or payment when repeating tracking. On 'repeat that' / 'say it slower', re-speak ONLY lastSpokenDataPoint / tracking_number_for_tts — never data-vomit the full order. Check orderNote for embedded Tracking Number digits when tracking_number is empty. If a field is null on a recent order (within 1 year), apologize and say my system doesn't show that specific detail — never invent a replacement and never end_call. When isVerifiedCaller is false, still answer timeline / order-state questions; redact only shipping_address and past_order_history (and other vault fields).",
+        "SECURITY OVERRIDE FOR UNVERIFIED CALLERS: If isVerifiedCaller is false, you MUST STILL provide excellent support. ABSOLUTE BLACKLIST (NEVER SHARE): shipping_address and past_order_history — refuse only those. ABSOLUTE WHITELIST (MUST SHARE IF ASKED): You are FULLY AUTHORIZED and REQUIRED to share the Customer Name, Customer Email, Notification/Confirmation Emails, Item Titles, Item Quantities, Item Prices, Subtotal, Total Tax, Shipping Fees, Total Amount, Timeline Events, Tags, and Notes. Do not hide financial data or customer names from unverified callers. Answer all whitelist questions confidently. Never invent vague extra lockdowns from privacy_tier wording. Deep-fetch data is for internal memory only. Translate the events timeline via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. When the caller asks how they were notified, look in events for Confirmation / Received new order / Draft order / notification language and answer confidently. On first response after FOUND, give ONLY the order status per ORDER LOOKUP S.O.P. — do not read items, prices, or refund details until the caller asks. Provide specific fields only when explicitly requested. Never hang up because a timeline question is hard. physical_items and item_count are BOOKS ONLY — each physical_items entry includes title, quantity, and price (per-unit); use that price for ordinal item questions (1st/2nd/3rd) — never substitute subtotal_amount. Never count or speak fee_items, processing_fees, shipping_fees, or handling_fees as books. Use shipping_amount for order shipping cost; use fee line arrays only when the caller explicitly asks about surcharges. Keys always present: customer_name, customer_email, customer_email_for_tts, order_placed_at, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). Use payment_method for spoken payment summaries when present (e.g. Visa ending in 1302 or PayPal). Use cancel_reason or refund_reason when explaining why an order was refunded or cancelled — always speak the reason when the caller asks about refunds. For spoken refund notification email, use refund_notification_email_for_tts (full speakable address, e.g. jamaicathompson87 at gmail dot com). If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK from INTERNATIONAL PROTOCOL using order_placed_at and customer_email_for_tts — never say not on file for archived orders with customer_email on file. If the caller asks about refund status, notification email, or payment method, follow INTERNATIONAL PROTOCOL — never say information is not on file when those fields are non-null. For tracking ID requests, follow DATA DICTATION PROTOCOL via dictate_tracking — notepad check first, then speak ONLY tracking_number_for_tts with comma-space digit pacing (e.g. 9, 4, 4, 9, 0, 1) — NEVER hyphens/dashes — and ask Did you get all of that, or should I repeat any part of it? Never mention items, fees, or payment when repeating tracking. On 'repeat that' / 'say it slower', re-speak ONLY lastSpokenDataPoint / tracking_number_for_tts — never data-vomit the full order. Check orderNote for embedded Tracking Number digits when tracking_number is empty. If a field is null on a recent order (within 1 year), apologize and say my system doesn't show that specific detail — never invent a replacement and never end_call.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -1361,12 +1361,24 @@ function shapeOrderStatusForLlm(
   const shippingFees = feeItems.filter((line) => /\bshipping\b/i.test(line.title));
   const handlingFees = feeItems.filter((line) => /\bhandling\b/i.test(line.title));
 
-  const publicItems = physicalItems.map((item) => ({
-    title: item.title,
-    quantity: item.quantity,
-    ...(item.variantTitle ? { variant_title: item.variantTitle } : {}),
-    ...(item.fulfillmentStatus ? { fulfillment_status: item.fulfillmentStatus } : {}),
-  }));
+  const publicItems = physicalItems.map((item) => {
+    const row = item as {
+      title: string;
+      quantity: number;
+      variantTitle?: string;
+      fulfillmentStatus?: string;
+      price?: string;
+      originalUnitPrice?: string;
+    };
+    const price = row.price ?? row.originalUnitPrice;
+    return {
+      title: row.title,
+      quantity: row.quantity,
+      ...(price ? { price } : {}),
+      ...(row.variantTitle ? { variant_title: row.variantTitle } : {}),
+      ...(row.fulfillmentStatus ? { fulfillment_status: row.fulfillmentStatus } : {}),
+    };
+  });
 
   const publicData: Record<string, unknown> = {
     order_number: data.orderNumber ?? null,
@@ -1386,7 +1398,18 @@ function shapeOrderStatusForLlm(
         : null,
     item_count: itemCount,
     physical_items: publicItems.length ? publicItems : null,
-    // General order-state fields available to unverified callers.
+    // Whitelist fields available to unverified callers (see SECURITY OVERRIDE).
+    customer_name: data.customerName ?? null,
+    customer_email: data.customerEmail ?? null,
+    customer_email_for_tts: formatEmailForTTS(data.customerEmail ?? null),
+    total_amount: data.totalAmount ?? null,
+    shipping_amount: data.shippingFee ?? null,
+    subtotal_amount: data.subtotalAmount ?? null,
+    total_tax: data.totalTax ?? null,
+    refund_notification_email: refundNotificationEmail,
+    refund_notification_email_for_tts: formatEmailForTTS(refundNotificationEmail),
+    order_confirmation_email: orderConfirmationEmail,
+    order_confirmation_email_for_tts: formatEmailForTTS(orderConfirmationEmail),
     events: data.events ?? [],
     note: data.orderNote ?? null,
     order_note: data.orderNote ?? null,
@@ -1445,9 +1468,9 @@ function shapeOrderStatusForLlm(
     public_data: publicData,
     secure_data: secureData,
     order_number: data.orderNumber ?? null,
-    customer_name: verified ? (data.customerName ?? null) : null,
-    customer_email: verified ? (data.customerEmail ?? null) : null,
-    customer_email_for_tts: verified ? formatEmailForTTS(data.customerEmail ?? null) : null,
+    customer_name: data.customerName ?? null,
+    customer_email: data.customerEmail ?? null,
+    customer_email_for_tts: formatEmailForTTS(data.customerEmail ?? null),
     is_verified_caller: verified,
     total_order_count: verified
       ? (data.totalOrderCount ?? session?.totalOrderCount ?? null)
@@ -1461,10 +1484,10 @@ function shapeOrderStatusForLlm(
     processing_fees: verified && processingFees.length ? processingFees : null,
     shipping_fees: verified && shippingFees.length ? shippingFees : null,
     handling_fees: verified && handlingFees.length ? handlingFees : null,
-    total_amount: verified ? (data.totalAmount ?? null) : null,
-    shipping_amount: verified ? (data.shippingFee ?? null) : null,
-    subtotal_amount: verified ? (data.subtotalAmount ?? null) : null,
-    total_tax: verified ? (data.totalTax ?? null) : null,
+    total_amount: data.totalAmount ?? null,
+    shipping_amount: data.shippingFee ?? null,
+    subtotal_amount: data.subtotalAmount ?? null,
+    total_tax: data.totalTax ?? null,
     total_discounts: verified ? (data.totalDiscounts ?? null) : null,
     payment_method: verified ? paymentMethod : null,
     payment_method_last4: verified ? (data.cardLast4 ?? null) : null,
@@ -1474,14 +1497,10 @@ function shapeOrderStatusForLlm(
     refund_reason: verified ? (data.refundReason ?? null) : null,
     cancel_reason: verified ? cancelReason : null,
     refund_amount: verified ? (data.refundAmount ?? null) : null,
-    refund_notification_email: verified ? refundNotificationEmail : null,
-    refund_notification_email_for_tts: verified
-      ? formatEmailForTTS(refundNotificationEmail)
-      : null,
-    order_confirmation_email: verified ? orderConfirmationEmail : null,
-    order_confirmation_email_for_tts: verified
-      ? formatEmailForTTS(orderConfirmationEmail)
-      : null,
+    refund_notification_email: refundNotificationEmail,
+    refund_notification_email_for_tts: formatEmailForTTS(refundNotificationEmail),
+    order_confirmation_email: orderConfirmationEmail,
+    order_confirmation_email_for_tts: formatEmailForTTS(orderConfirmationEmail),
     events: data.events ?? [],
     note: data.orderNote ?? null,
     order_note: data.orderNote ?? null,
@@ -1493,7 +1512,7 @@ function shapeOrderStatusForLlm(
     is_draft_order_origin: verified ? data.isDraftOrderOrigin === true : false,
     custom_attributes: verified ? (data.customAttributes ?? []) : [],
     transactions: verified ? (data.transactions ?? []) : [],
-    order_placed_at: verified ? (data.orderPlacedAt ?? null) : null,
+    order_placed_at: data.orderPlacedAt ?? null,
     refund_date: verified ? (data.refundDate ?? null) : null,
     fulfillment_status: data.fulfillmentStatus ?? null,
     estimated_delivery_days: data.estimatedDeliveryDays ?? null,

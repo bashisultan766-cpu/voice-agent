@@ -27,7 +27,7 @@ describe("activeSession spatial index", () => {
   it("records tracking payload with phonetic pacing", () => {
     const active = recordTrackingPayload("CA1", "925");
     expect(active.currentState).toBe("awaiting_notepad_ready");
-    expect(active.lastSpokenPayload?.trackingForTts).toBe("9 - 2 - 5");
+    expect(active.lastSpokenPayload?.trackingForTts).toBe("9, 2, 5");
     expect(active.spatialIndex).toHaveLength(3);
   });
 

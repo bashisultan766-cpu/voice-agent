@@ -126,7 +126,7 @@ describe("verification-first protocol", () => {
     expect(normalizeTrackingIdRawSequence("2.0.3.4.5")).toBe("20345");
     const tts = formatTrackingNumberForTTS("2.0.3.4.5");
     expect(tts).not.toContain("2.0");
-    expect(tts).toBe("2 - 0 - 3 - 4 - 5");
+    expect(tts).toBe("2, 0, 3, 4, 5");
   });
 
   it("verification gate authorizes vault fields only when phones match", () => {
@@ -148,9 +148,11 @@ describe("verification-first protocol", () => {
     expect(isFieldAuthorizedForCaller(unverifiedSession, "shipping_address")).toBe(false);
     expect(isFieldAuthorizedForCaller(unverifiedSession, "tracking_number")).toBe(true);
     expect(isFieldAuthorizedForCaller(unverifiedSession, "line_items")).toBe(true);
-    expect(isFieldAuthorizedForCaller(unverifiedSession, "total_amount")).toBe(false);
-    expect(isFieldAuthorizedForCaller(unverifiedSession, "shipping_amount")).toBe(false);
-    expect(isFieldAuthorizedForCaller(unverifiedSession, "item_price")).toBe(false);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "total_amount")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "shipping_amount")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "item_price")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "customer_name")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "customer_email")).toBe(true);
     expect(isFieldAuthorizedForCaller(unverifiedSession, "payment_method")).toBe(false);
     expect(maskEmailForUnverified("user@gmail.com")).toBe("...@gmail.com");
     expect(maskPhoneForUnverified("+15551234567")).toBe("*** *** 4567");

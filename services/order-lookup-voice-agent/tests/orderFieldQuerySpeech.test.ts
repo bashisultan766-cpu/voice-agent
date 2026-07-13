@@ -26,14 +26,18 @@ describe("order field query speech", () => {
     expect(speech).toMatch(/shipping is 4\.99 USD/i);
   });
 
-  it("refuses totals and fees for unverified callers", () => {
+  it("shares totals and item titles for unverified callers", () => {
     const speech = buildOrderFieldQuerySpeech(
       "tell me total product, total amount, total shipping fees and product title",
       context,
       false,
     );
-    expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
-    expect(speech).not.toMatch(/25\.00|4\.99/i);
+    expect(speech).toBeTruthy();
+    expect(speech).toMatch(/You ordered 3 book/i);
+    expect(speech).toMatch(/Book A/);
+    expect(speech).toMatch(/Book B/);
+    expect(speech).toMatch(/total is 25\.00 USD/i);
+    expect(speech).toMatch(/shipping is 4\.99 USD/i);
   });
 
   it("includes per-item prices when verified caller asks for product amount", () => {

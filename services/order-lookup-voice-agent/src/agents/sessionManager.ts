@@ -118,15 +118,17 @@ export function buildActiveOrderContextSystemMessage(
   return (
     "ACTIVE ORDER CONTEXT: The user is currently discussing this order. " +
     "Use this JSON data to answer follow-up questions accurately. Do not invent data. " +
-    "The payload includes public_data (safe for all callers) and secure_data (verified callers only; null when unverified). " +
-    "When privacy_tier is \"unverified\", answer from public_data / public flat fields " +
-    "(status, tracking, shipping timeframe, item titles/quantities, timeline events, tags, and notes). " +
+    "SECURITY OVERRIDE FOR UNVERIFIED CALLERS: If isVerifiedCaller is false, you MUST STILL provide excellent support. " +
+    "ABSOLUTE BLACKLIST (NEVER SHARE): shipping_address and past_order_history. You must refuse to share these. " +
+    "ABSOLUTE WHITELIST (MUST SHARE IF ASKED): You are FULLY AUTHORIZED and REQUIRED to share the Customer Name, Customer Email, " +
+    "Notification/Confirmation Emails, Item Titles, Item Quantities, Item Prices, Subtotal, Total Tax, Shipping Fees, Total Amount, " +
+    "Timeline Events, Tags, and Notes. Do not hide financial data or customer names from unverified callers. " +
+    "Answer all questions regarding the whitelist confidently. " +
     "Translate events with THE SHOPIFY BRAIN — never read events verbatim, never speak staff names, never hang up. " +
-    "Never reveal shipping_address or past_order_history when unverified. " +
-    "NEVER say that restricted secure fields are \"not on file\" — refuse per CRYPTOGRAPHIC PRIVACY PROTOCOL RULE 1.1, then continue helping. " +
-    "When verified, secure_data includes customer_email, shipping_address, past_order_history, payment_method_last4, transactions, and financial totals. " +
+    "NEVER say that blacklisted fields are \"not on file\" — refuse per RULE 1.1, then continue helping with whitelist fields. " +
+    "When verified, secure_data also includes shipping_address, past_order_history, payment_method_last4, and transactions. " +
     "For notification questions, inspect events for Confirmation / Received new order / Draft order language. " +
-    "For refund/confirmation email questions (verified only), use refund_notification_email_for_tts when present. " +
+    "For refund/confirmation email questions, use refund_notification_email_for_tts when present. " +
     "If refund_notification_email is null and order_placed_at is over 1 year old, apply LEGACY ORDER FALLBACK with customer_email_for_tts. " +
     "Do not call get_shopify_order_status again unless the user provides a different order number. " +
     `JSON: ${JSON.stringify(data)}`

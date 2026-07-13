@@ -82,25 +82,25 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
       /SECURITY CLEARANCE FOR UNVERIFIED CALLERS/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /For security purposes, since you are calling from an unverified number/i,
+      /ABSOLUTE BLACKLIST \(NEVER SHARE\): shipping_address and past_order_history/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I can only share private account details with the verified account holder/i,
+      /ABSOLUTE WHITELIST \(MUST SHARE IF ASKED\)/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /I can still help with items, quantities, totals, payment status, timeline, and tracking/i,
+      /FULLY AUTHORIZED and REQUIRED to share the Customer Name, Customer Email/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /shipping address(?:,|\s+and|\s+or).{0,40}past order history/i,
+      /ORDER NUMBER EXTRACTION/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /read the digits to me one by one/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /I can't read the exact shipping address/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /confirm your payment went through and tell you where the package is right now|confirm your payment was processed and tell you exactly how the order was handled/i,
-    );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /FULLY AUTHORIZED to read the Item Names, Quantities, Subtotal, Taxes, Shipping Fees, Total Amount/i,
     );
   });
 
@@ -195,11 +195,9 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
   it("authorizes order money fields for unverified callers while locking vault fields", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — AUTHORIZED PUBLIC \+ ORDER DETAILS/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/answer from public_data/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Subtotal, taxes, shipping fees, total amount/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICT LOCK \(UNVERIFIED — VAULT ONLY\)/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT read secure_data vault fields/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping\/billing address/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method_last4/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Subtotal, total tax, shipping fees, total amount/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICT LOCK \(UNVERIFIED — ABSOLUTE BLACKLIST ONLY\)/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT share shipping_address \/ billing address or past_order_history/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Timeline events \(translated via THE SHOPIFY BRAIN/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT hang up/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONVERSATIONAL MEMORY/i);

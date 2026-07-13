@@ -461,9 +461,6 @@ export function buildOrderFieldQuerySpeech(
   }
 
   if (/\b(customer\s+email|what\s+email|email\s+on\s+(?:the\s+)?order)\b/i.test(callerText)) {
-    if (!isVerifiedCaller) {
-      return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
-    }
     const email = String(context.customer_email ?? context.order_confirmation_email ?? "").trim();
     if (email) {
       return `The email on this order is ${formatEmailForTTS(email) ?? email}.`;
@@ -471,9 +468,6 @@ export function buildOrderFieldQuerySpeech(
   }
 
   if (/\b(order\s+details|tell\s+me\s+(?:the\s+)?details|about\s+(?:my\s+)?order)\b/i.test(lower)) {
-    if (!isVerifiedCaller) {
-      return buildUnverifiedRestrictedFieldRefusal(registeredCustomerName);
-    }
     const status = String(context.fulfillment_status ?? context.refund_status ?? "").trim();
     const name = String(context.customer_name ?? "").trim();
     const orderNum = String(context.order_number ?? "").replace(/^#/, "").trim();

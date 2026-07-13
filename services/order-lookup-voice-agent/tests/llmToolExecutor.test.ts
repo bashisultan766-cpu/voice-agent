@@ -79,6 +79,11 @@ describe("toolResultForLlm order shaping", () => {
     }
     expect(parsed.instructions).toMatch(/progressive disclosure|ORDER LOOKUP S\.O\.P/i);
     expect(parsed.instructions).toMatch(/INTERNATIONAL PROTOCOL/i);
+    expect(parsed.instructions).toMatch(/SECURITY OVERRIDE FOR UNVERIFIED CALLERS/i);
+    expect(parsed.instructions).toMatch(/ABSOLUTE BLACKLIST/i);
+    expect(parsed.instructions).toMatch(/ABSOLUTE WHITELIST/i);
+    expect(parsed.instructions).toMatch(/9, 4, 4, 9, 0, 1/);
+    expect(parsed.instructions).not.toMatch(/9 - 4 - 4/);
     expect(parsed.status).toBe("FOUND");
     expect(parsed.found).toBe(true);
   });
@@ -130,10 +135,11 @@ describe("toolResultForLlm order shaping", () => {
     );
 
     const unverifiedPayload = buildActiveOrderContextPayload(record.data);
-    expect(unverifiedPayload.customer_name).toBeNull();
+    expect(unverifiedPayload.customer_name).toBe("Jamaica Thompson");
     expect(unverifiedPayload.payment_method_last4).toBeNull();
     expect(unverifiedPayload.secure_data).toBeNull();
     expect(unverifiedPayload.privacy_tier).toBe("unverified");
+    expect(unverifiedPayload.refund_notification_email).toBe("jamaicathompson87@gmail.com");
   });
 
   it("includes tracking_number and tracking_number_for_tts in order payload", () => {
@@ -159,7 +165,7 @@ describe("toolResultForLlm order shaping", () => {
     expect(parsed.data.tracking_number).toBe("1Z999999999");
     expect(parsed.data.tracking_company).toBe("UPS");
     expect(String(parsed.data.tracking_number_for_tts)).toBe(
-      "One - Z - Nine - Nine - Nine - Nine - Nine - Nine - Nine - Nine - Nine",
+      "One, Z, Nine, Nine, Nine, Nine, Nine, Nine, Nine, Nine, Nine",
     );
   });
 
@@ -189,14 +195,14 @@ describe("toolResultForLlm order shaping", () => {
 
     expect(parsed.data.item_count).toBe(1);
     expect(parsed.data.physical_items).toEqual([
-      { title: "The Holy Bible", quantity: 1 },
+      { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
     ]);
     expect(parsed.data.items).toEqual([
-      { title: "The Holy Bible", quantity: 1 },
+      { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
     ]);
     expect(parsed.data.public_data).toMatchObject({
       item_count: 1,
-      physical_items: [{ title: "The Holy Bible", quantity: 1 }],
+      physical_items: [{ title: "The Holy Bible", quantity: 1, price: "12.99 USD" }],
     });
     expect(parsed.data.secure_data).toMatchObject({
       physical_items: [{ title: "The Holy Bible", quantity: 1, price: "12.99 USD" }],
@@ -217,7 +223,7 @@ describe("toolResultForLlm order shaping", () => {
     expect(unverified.data.processing_fees).toBeNull();
     expect(unverified.data.shipping_fees).toBeNull();
     expect(unverified.data.physical_items).toEqual([
-      { title: "The Holy Bible", quantity: 1 },
+      { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
     ]);
   });
 
