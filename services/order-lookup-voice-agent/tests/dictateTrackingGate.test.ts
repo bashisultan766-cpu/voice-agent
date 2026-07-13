@@ -25,7 +25,7 @@ describe("dictateTrackingGate", () => {
     recordTrackingPayload("CA_GATE", "9250");
     const gate = resolveDictateTracking("CA_GATE");
     expect(gate.intent).toBe("ReadinessRequest");
-    expect(gate.speech).toContain("pen and notepad");
+    expect(gate.speech).toMatch(/pen and paper|ready for me to read/i);
   });
 
   it("dictates tracking only after notepad is ready", () => {
@@ -33,7 +33,7 @@ describe("dictateTrackingGate", () => {
     updateActiveSession("CA_GATE2", { isNotepadReady: true });
     const gate = resolveDictateTracking("CA_GATE2");
     expect(gate.intent).toBe("dictate_tracking");
-    expect(gate.speech).toContain("Nine.");
+    expect(gate.speech).toContain("9 - 2 - 5 - 0");
   });
 });
 
@@ -53,7 +53,7 @@ describe("sovereignRouter notepad gate", () => {
     const resolution = resolveTrackingPhaseGate("can you repeat my tracking number", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("PHASE_HANDSHAKE");
-    expect(resolution.speech).toContain("pen and notepad");
+    expect(resolution.speech).toMatch(/pen and paper|ready for me to read/i);
   });
 
   it("dictates through gate after caller confirms readiness", () => {
@@ -75,6 +75,6 @@ describe("sovereignRouter notepad gate", () => {
     const resolution = resolveTrackingPhaseGate("yes I am ready", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("USER_NOTEPAD_READY");
-    expect(resolution.speech).toContain("Nine.");
+    expect(resolution.speech).toContain("9 - 2 - 5 - 0");
   });
 });

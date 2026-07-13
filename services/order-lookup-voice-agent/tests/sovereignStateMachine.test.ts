@@ -27,7 +27,7 @@ describe("activeSession spatial index", () => {
   it("records tracking payload with phonetic pacing", () => {
     const active = recordTrackingPayload("CA1", "925");
     expect(active.currentState).toBe("awaiting_notepad_ready");
-    expect(active.lastSpokenPayload?.trackingForTts).toBe("Nine. Two. Five.");
+    expect(active.lastSpokenPayload?.trackingForTts).toBe("9 - 2 - 5");
     expect(active.spatialIndex).toHaveLength(3);
   });
 
@@ -88,6 +88,6 @@ describe("tracking phase gate", () => {
     const resolution = resolveTrackingPhaseGate("can you repeat my tracking number", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.skipTools).toBe(true);
-    expect(resolution.speech).toContain("pen and notepad");
+    expect(resolution.speech).toMatch(/pen and paper|ready for me to read|pen and notepad/i);
   });
 });

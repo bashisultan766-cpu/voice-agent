@@ -19,7 +19,7 @@ import * as shopifyStorefrontAdapter from "../src/adapters/shopifyStorefrontAdap
 import * as resendEmailService from "../src/utils/resendEmailService.js";
 
 const TRACKING = "9449050105795009634765";
-const NOTEPAD_NUDGE_RE = /pen and notepad|write that correctly/i;
+const NOTEPAD_NUDGE_RE = /pen and (?:notepad|paper)|get all of that|write that correctly/i;
 
 async function collectSpeech(
   session: ReturnType<typeof createCallSession>,

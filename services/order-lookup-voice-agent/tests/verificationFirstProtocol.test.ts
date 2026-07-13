@@ -126,7 +126,7 @@ describe("verification-first protocol", () => {
     expect(normalizeTrackingIdRawSequence("2.0.3.4.5")).toBe("20345");
     const tts = formatTrackingNumberForTTS("2.0.3.4.5");
     expect(tts).not.toContain("2.0");
-    expect(tts).toMatch(/Two.*Zero.*Three/);
+    expect(tts).toBe("2 - 0 - 3 - 4 - 5");
   });
 
   it("verification gate authorizes vault fields only when phones match", () => {

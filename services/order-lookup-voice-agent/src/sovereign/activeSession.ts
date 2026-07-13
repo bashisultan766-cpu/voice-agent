@@ -3,7 +3,7 @@
  */
 import type { CallSession } from "../types/order.js";
 import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
-import { formatTrackingNumberForTTS, formatTrackingChunkPhonetic } from "../utils/ttsFormatter.js";
+import { formatTrackingNumberForTTS, formatTrackingChunkPhonetic, formatTrackingNumberForTTSSlower } from "../utils/ttsFormatter.js";
 import type { LlmToolName } from "../adapters/llmToolExecutor.js";
 import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
@@ -26,6 +26,14 @@ export interface SpatialIndexEntry {
   digit: string;
 }
 
+export interface LastSpokenDataPoint {
+  /** What the caller is currently struggling to write down / asked to repeat. */
+  kind: "tracking_number" | "order_number" | "email" | "other";
+  raw: string;
+  forTts: string;
+  capturedAt: number;
+}
+
 export interface LastSpokenPayload {
   kind: "tracking" | "order_status" | "catalog" | "cart" | "general";
   speech: string;
@@ -40,6 +48,8 @@ export interface ActiveSession {
   callSid: string;
   currentState: SovereignState;
   lastSpokenPayload: LastSpokenPayload | null;
+  /** Last specific data point spoken (tracking ID, etc.) — used for "repeat that" without reloading order JSON. */
+  lastSpokenDataPoint: LastSpokenDataPoint | null;
   spatialIndex: SpatialIndexEntry[];
   awaitingClarification: string | null;
   cachedIntent: string | null;
@@ -63,6 +73,7 @@ export function createActiveSession(callSid: string): ActiveSession {
     callSid,
     currentState: "idle",
     lastSpokenPayload: null,
+    lastSpokenDataPoint: null,
     spatialIndex: [],
     awaitingClarification: null,
     cachedIntent: null,
@@ -165,6 +176,12 @@ export function recordTrackingPayload(
     lastSpokenIndex: -1,
     isNotepadReady: false,
     trackingDictationComplete: false,
+    lastSpokenDataPoint: {
+      kind: "tracking_number",
+      raw: normalizedRaw,
+      forTts: trackingForTts,
+      capturedAt: Date.now(),
+    },
     lastSpokenPayload: {
       kind: "tracking",
       speech: speech ?? trackingForTts,
@@ -175,6 +192,37 @@ export function recordTrackingPayload(
       capturedAt: Date.now(),
     },
   });
+}
+
+/** Re-speak the last tracking data point slower — for "repeat that" / "say it slower". */
+export function buildSlowerTrackingReplaySpeech(callSid: string): string | null {
+  const active = getOrCreateActiveSession(callSid);
+  const raw =
+    active.lastSpokenDataPoint?.kind === "tracking_number"
+      ? active.lastSpokenDataPoint.raw
+      : active.lastSpokenPayload?.trackingRaw;
+  if (!raw?.trim()) return null;
+  const slower = formatTrackingNumberForTTSSlower(raw);
+  if (!slower) return null;
+  updateActiveSession(callSid, {
+    lastSpokenDataPoint: {
+      kind: "tracking_number",
+      raw,
+      forTts: slower,
+      capturedAt: Date.now(),
+    },
+    lastSpokenPayload: {
+      kind: "tracking",
+      speech: slower,
+      trackingForTts: slower,
+      trackingRaw: raw,
+      intentKey: "tracking_repeat",
+      capturedAt: Date.now(),
+    },
+    currentState: "tracking_dictation",
+    cachedIntent: "tracking",
+  });
+  return slower;
 }
 
 /**
@@ -404,6 +452,13 @@ export function buildActiveSessionSystemMessage(active: ActiveSession): string {
     } else {
       lines.push(`lastSpoken: ${active.lastSpokenPayload.speech.slice(0, 200)}`);
     }
+  }
+
+  if (active.lastSpokenDataPoint) {
+    lines.push(
+      `lastSpokenDataPoint: kind=${active.lastSpokenDataPoint.kind}; raw=${active.lastSpokenDataPoint.raw}; forTts=${active.lastSpokenDataPoint.forTts}`,
+      "DATA DICTATION: On 'repeat that' / 'say it slower', re-speak ONLY lastSpokenDataPoint.forTts — never the full order JSON.",
+    );
   }
 
   if (active.cachedIntent && active.currentState !== "idle") {

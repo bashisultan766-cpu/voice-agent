@@ -22,10 +22,10 @@ export const TRACKING_DICTATION_COMPLETE_SPEECH =
   "I have provided that, how else can I help you today?";
 
 export const TRACKING_DICTATION_CONFIRM_SPEECH =
-  "Did you write that correctly, or should I repeat it?";
+  "Did you get all of that, or should I repeat any part of it?";
 
 const NOTEPAD_READY_RE =
-  /\b(?:i'?m\s+ready|i am ready|we'?re ready|(?:have|got)\s+(?:it|my\s+(?:pen|notepad|paper))\s+ready|notepad\s+ready|pen\s+ready|go\s+ahead|all\s+set|you\s+can\s+go|have\s+my\s+pen|got\s+my\s+pen|paper\s+ready|pen\s+and\s+paper|\bready\b)/i;
+  /\b(?:i'?m\s+ready|i am ready|we'?re ready|(?:have|got)\s+(?:it|my\s+(?:pen|notepad|paper))\s+ready|notepad\s+ready|pen\s+ready|go\s+ahead|all\s+set|you\s+can\s+go|have\s+my\s+pen|got\s+my\s+pen|paper\s+ready|pen\s+and\s+paper|ready\s+for\s+(?:me\s+to\s+)?read|\bready\b)/i;
 
 export class NotReadyError extends Error {
   readonly code = "NOTEPAD_NOT_READY" as const;
@@ -37,17 +37,19 @@ export class NotReadyError extends Error {
 }
 
 export function promptUserForNotepad(): string {
-  return "Please have your pen and notepad ready. Let me know when you are ready.";
+  return "I have your tracking number here. Let me know when you have a pen and paper ready, or if you're ready for me to read it.";
 }
 
 export function buildNotepadReadyNudge(): string {
-  return "Whenever you're ready with pen and notepad, just say ready and I'll read the tracking ID slowly.";
+  return "Whenever you're ready with pen and paper, just say ready and I'll read the tracking ID slowly.";
 }
 
 export function appendTrackingDictationConfirm(speech: string): string {
   const trimmed = speech.trim();
   if (!trimmed) return TRACKING_DICTATION_CONFIRM_SPEECH;
-  if (/write that correctly|should I repeat/i.test(trimmed)) return trimmed;
+  if (/get all of that|repeat any part|write that correctly|should I repeat/i.test(trimmed)) {
+    return trimmed;
+  }
   return `${trimmed} ${TRACKING_DICTATION_CONFIRM_SPEECH}`;
 }
 

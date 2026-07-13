@@ -486,6 +486,23 @@ export function extractTrackingInfo(
   return {};
 }
 
+/**
+ * Pull a tracking ID hidden inside staff order notes
+ * (e.g. "Tracking Number: 9449012345678901234567").
+ */
+const TRACKING_IN_NOTE_RE =
+  /\btracking\s*(?:number|id|#)?\s*[:#\-]?\s*([A-Z0-9][A-Z0-9\-\s]{5,40})/i;
+
+export function extractTrackingFromOrderNote(
+  note: string | null | undefined,
+): string | undefined {
+  if (!note?.trim()) return undefined;
+  const match = note.match(TRACKING_IN_NOTE_RE);
+  if (!match?.[1]) return undefined;
+  const candidate = match[1].replace(/[\s\-_.]/g, "").toUpperCase();
+  return isValidTrackingNumber(candidate) ? candidate : undefined;
+}
+
 /** Parse receiptJson / receipt for payment_method_details.card.{last4,brand}. */
 export function extractCardFromReceipt(
   receipt: string | Record<string, unknown> | null | undefined,

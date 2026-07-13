@@ -160,7 +160,7 @@ describe("tracking gate shorthand", () => {
     const resolution = resolveTrackingPhaseGate("give me the id number", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("PHASE_HANDSHAKE");
-    expect(resolution.speech).toContain("pen and notepad");
+    expect(resolution.speech).toMatch(/pen and paper|ready for me to read|pen and notepad/i);
   });
 
   it("handles spatial queries through the orchestrator gate", () => {
@@ -185,7 +185,7 @@ describe("tracking gate shorthand", () => {
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("spatial_resume");
     expect(resolution.speech).toMatch(/After Six-Three/i);
-    expect(resolution.speech).not.toContain("pen and notepad");
+    expect(resolution.speech).not.toMatch(/pen and (?:notepad|paper)|ready for me to read/i);
   });
 
   it("does not restart notepad handshake on spatial query mid-dictation", () => {
@@ -210,7 +210,7 @@ describe("tracking gate shorthand", () => {
     const resolution = resolveTrackingPhaseGate("what comes after 4.5", session);
     expect(resolution.handled).toBe(true);
     expect(resolution.intentKey).toBe("spatial_resume");
-    expect(resolution.speech).not.toMatch(/pen and notepad|let me know when you are ready/i);
+    expect(resolution.speech).not.toMatch(/pen and (?:notepad|paper)|let me know when you are ready|ready for me to read/i);
     expect(resolution.speech).not.toMatch(/3\.0|point/i);
 
     const active = getOrCreateActiveSession("CA_SPATIAL2");

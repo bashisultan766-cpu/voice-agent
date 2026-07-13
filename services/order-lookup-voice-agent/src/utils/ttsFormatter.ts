@@ -1,5 +1,5 @@
 import { normalizeTrackingIdRawSequence } from "./trackingIdSequence.js";
-import { formatTrackingDigitSequenceForSpeech, wrapTrackingChunkSsml } from "./formatter.js";
+import { wrapTrackingChunkSsml } from "./formatter.js";
 /**
  * Voice-friendly email handle for refund/confirmation readout.
  * Returns the local part before @ with trailing digits stripped
@@ -48,8 +48,9 @@ const SSML_BREAK_TAG_RE = /<break\s+time=["']([^"']+)["']\s*\/?>/gi;
 
 const TRACKING_DICTATION_SSML_RE = /<break\s+time=/i;
 const TRACKING_DICTATION_PHONETIC_RE =
-  /\b(Zero|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Dash|Ay|Bee|Cee|Dee|Eee|Ef|Gee|Aitch|Eye|Jay|Kay|El|Em|En|Oh|Pea|Cue|Ar|Ess|Tee|You|Vee|Double-you|Ex|Why|Zee)\./i;
+  /\b(Zero|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Dash|Ay|Bee|Cee|Dee|Eee|Ef|Gee|Aitch|Eye|Jay|Kay|El|Em|En|Oh|Pea|Cue|Ar|Ess|Tee|You|Vee|Double-you|Ex|Why|Zee)(?:\.|\s*-)/i;
 const TRACKING_DICTATION_COMMA_RE = /[A-Z0-9],\s+[A-Z0-9]/i;
+const TRACKING_DICTATION_DASH_RE = /\d\s+-\s+\d/;
 
 const DIGIT_PHONETIC: Record<string, string> = {
   "0": "Zero",
@@ -64,26 +65,22 @@ const DIGIT_PHONETIC: Record<string, string> = {
   "9": "Nine",
 };
 
-function charToPhoneticPacing(char: string): string {
-  if (DIGIT_PHONETIC[char]) return `${DIGIT_PHONETIC[char]}.`;
-  if (/[A-Z]/.test(char)) return `${char}.`;
-  if (char === "-") return "Dash.";
-  return `${char}.`;
+function charToPhoneticWord(char: string): string {
+  if (DIGIT_PHONETIC[char]) return DIGIT_PHONETIC[char];
+  if (/[A-Z]/.test(char)) return char;
+  if (char === "-") return "Dash";
+  return char;
 }
 
-/** Phonetic pacing for a raw digit run (e.g. spatial resume chunk "02" → "Zero. Two."). */
+function charToPhoneticPacing(char: string): string {
+  return `${charToPhoneticWord(char)}.`;
+}
+
+/** Phonetic pacing for a raw digit run (e.g. spatial resume chunk "02" → "Zero - Two"). */
 export function formatTrackingChunkPhonetic(sequence: string): string {
   const normalized = normalizeTrackingIdRawSequence(sequence);
   if (!normalized) return "";
-  const commaForm = formatTrackingDigitSequenceForSpeech(normalized);
-  if (!commaForm) return "";
-  return commaForm
-    .split(", ")
-    .map((word) => {
-      const title = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-      return `${title}.`;
-    })
-    .join(" ");
+  return [...normalized].map(charToPhoneticWord).join(" - ");
 }
 
 export function formatTrackingChunkForTts(
@@ -96,9 +93,48 @@ export function formatTrackingChunkForTts(
   return formatTrackingChunkPhonetic(sequence);
 }
 
-function formatPhoneticAcousticPacing(chars: string[]): string {
+function formatPhoneticAcousticPacing(chars: string[], separator = " - "): string {
   if (!chars.length) return "";
-  return chars.map(charToPhoneticPacing).join(" ");
+  return chars.map(charToPhoneticWord).join(separator);
+}
+
+/** Extra-slow replay when the caller asks to repeat / go slower. */
+export function formatTrackingNumberForTTSSlower(trackingId: string): string {
+  const normalized = normalizeTrackingIdRawSequence(trackingId);
+  if (!normalized) return "";
+  const chars = [...normalized];
+  if (chars.every((c) => c >= "0" && c <= "9")) {
+    return chars.join(" -  - ");
+  }
+  return formatPhoneticAcousticPacing(chars, " -  - ");
+}
+
+/**
+ * Format a tracking ID for extremely slow, clear TTS dictation.
+ * Uses phonetic words separated by dashes (e.g. "Nine - Two - Five - Zero") so TTS cannot race through digits.
+ * SSML breaks are opt-in only — they are often stripped or ignored on voice relays.
+ */
+export function formatTrackingNumberForTTS(
+  trackingId: string,
+  _speed: TrackingDictationSpeed = "slow",
+  options?: FormatTrackingNumberOptions,
+): string {
+  const normalized = normalizeTrackingIdRawSequence(trackingId);
+  if (!normalized) return "";
+
+  const chars = [...normalized];
+
+  if (options?.useSsml === true) {
+    const breakTime = formatSsmlBreakTime(pauseMsForSpeed(_speed));
+    return chars.map((char) => `${char}<break time="${breakTime}"/>`).join("");
+  }
+
+  // Pure digit IDs: dashed glyphs force slow TTS ("944901" → "9 - 4 - 4 - 9 - 0 - 1").
+  if (chars.every((c) => c >= "0" && c <= "9")) {
+    return chars.join(" - ");
+  }
+
+  return formatPhoneticAcousticPacing(chars);
 }
 
 /** Parse an SSML break duration string (e.g. "500ms", "2s", "1.5s") into milliseconds. */
@@ -179,17 +215,17 @@ function spokenDigitRunToPhonetic(digitRun: string): string {
     const mapped = SPOKEN_DIGIT_TO_CHAR[token];
     if (mapped) chars.push(mapped);
   }
-  return chars.map((ch) => charToPhoneticPacing(ch)).join(" ");
+  return chars.map((ch) => charToPhoneticWord(ch)).join(" - ");
 }
 
-/** Remove decimal/math phrasing from tracking dictation speech (e.g. "point 02" → "Zero. Two."). */
+/** Remove decimal/math phrasing from tracking dictation speech (e.g. "point 02" → "Zero - Two"). */
 export function sanitizeTrackingDictationSpeech(text: string): string {
   if (!text?.trim()) return "";
 
   let out = text.replace(/(\d)\.(\d)/g, "$1 $2");
 
   out = out.replace(
-    /\bpoint\s+((?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\.?[\s,.]*)+|\d[\d\s,.]*)/gi,
+    /\bpoint\s+((?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\.?[\s,.-]*)+|\d[\d\s,.]*)/gi,
     (_match, digitRun: string) => spokenDigitRunToPhonetic(digitRun),
   );
 
@@ -204,33 +240,11 @@ export function isTrackingDictationText(text: string): boolean {
   return (
     TRACKING_DICTATION_SSML_RE.test(text) ||
     TRACKING_DICTATION_PHONETIC_RE.test(text) ||
-    TRACKING_DICTATION_COMMA_RE.test(text)
+    TRACKING_DICTATION_COMMA_RE.test(text) ||
+    TRACKING_DICTATION_DASH_RE.test(text)
   );
 }
 
 function pauseMsForSpeed(speed: TrackingDictationSpeed): number {
   return speed === "slow" ? TRACKING_CHAR_PAUSE_SLOW_MS : TRACKING_CHAR_PAUSE_NORMAL_MS;
-}
-
-/**
- * Format a tracking ID for extremely slow, clear TTS dictation.
- * Uses phonetic word-form pacing with periods (e.g. "Nine. Two. Five. Zero.") for deliberate pauses.
- * SSML breaks are opt-in only — they are often stripped or ignored on voice relays.
- */
-export function formatTrackingNumberForTTS(
-  trackingId: string,
-  _speed: TrackingDictationSpeed = "slow",
-  options?: FormatTrackingNumberOptions,
-): string {
-  const normalized = normalizeTrackingIdRawSequence(trackingId);
-  if (!normalized) return "";
-
-  const chars = [...normalized];
-
-  if (options?.useSsml === true) {
-    const breakTime = formatSsmlBreakTime(pauseMsForSpeed(_speed));
-    return chars.map((char) => `${char}<break time="${breakTime}"/>`).join("");
-  }
-
-  return formatPhoneticAcousticPacing(chars);
 }

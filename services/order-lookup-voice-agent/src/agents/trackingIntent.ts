@@ -21,12 +21,23 @@ export function isOrderTrackingIdShorthand(callerText: string): boolean {
 const TRACKING_ID_FRAGMENT_RE = /\btracking\s*i\.?d\.?\b/i;
 
 /**
- * Explicit tracking repeat requests (asking the agent to repeat digits).
+ * Explicit tracking repeat / slower requests (asking the agent to re-dictate digits).
  * Important: do NOT treat the word "repeat" as a completion-killer by itself,
  * because callers often say things like "I repeated it back; it's written down".
  */
 const TRACKING_REPEAT_REQUEST_RE =
-  /\b(?:didn'?t|did not|not yet|repeat\s+(?:after|from)|say\s+(?:it\s+)?again|one\s+more\s+time|can\s+you\s+repeat|read\s+(?:it\s+)?again|start\s+over)\b/i;
+  /\b(?:didn'?t|did not|not yet|repeat\s+(?:that|it|after|from)|say\s+(?:it\s+)?(?:again|slower)|one\s+more\s+time|can\s+you\s+repeat|read\s+(?:it\s+)?again|start\s+over|more\s+slowly|go\s+slower|slower\s+please|repeat\s+please)\b/i;
+
+/** Caller wants only the last spoken data point re-read (not the whole order). */
+export function isContextualDictationRepeatRequest(callerText: string): boolean {
+  const text = callerText.trim();
+  if (!text) return false;
+  if (isSpatialResumeQuery(text)) return false;
+  if (isCatalogShoppingUtterance(text)) return false;
+  // Explicit field requests are handled by tracking / order-field routers.
+  if (TRACKING_REQUEST_RE.test(text) && /\btracking\b/i.test(text)) return false;
+  return TRACKING_REPEAT_REQUEST_RE.test(text);
+}
 
 export interface TrackingDictationContext {
   currentState?: string;

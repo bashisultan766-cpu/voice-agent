@@ -96,6 +96,7 @@ import {
   recordTrackingPayload,
   updateActiveSession,
   syncActiveSessionFromCallSession,
+  buildSlowerTrackingReplaySpeech,
 } from "../sovereign/activeSession.js";
 import {
   clearPreferredVoiceForCall,
@@ -191,7 +192,7 @@ import {
   isOrderLookupRequestWithoutNumber,
   executeOrderLookupForSession,
 } from "./orderContextPolicy.js";
-import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation } from "./trackingIntent.js";
+import { isTrackingRequest, hasTrackingInSessionContext, isTrackingDictationCompleteIntent, shouldStartTrackingDictation, isContextualDictationRepeatRequest } from "./trackingIntent.js";
 import {
   resolveCallerIntent,
   shouldRunTrackingPhaseGate,
@@ -619,6 +620,53 @@ function tryResolveNotepadReadyTurn(
   };
 }
 
+/** "Repeat that" / "say it slower" — re-dictate lastSpokenDataPoint only (never full order JSON). */
+function tryResolveContextualDictationRepeat(
+  text: string,
+  session: CallSession,
+): TrackingPhaseResolution | null {
+  if (!isContextualDictationRepeatRequest(text)) return null;
+
+  const active = getOrCreateActiveSession(session.callSid);
+  const trackingRaw =
+    active.lastSpokenDataPoint?.kind === "tracking_number"
+      ? active.lastSpokenDataPoint.raw
+      : active.lastSpokenPayload?.trackingRaw ||
+        String(session.currentOrderData?.tracking_number ?? "").trim();
+
+  const hasTrackingContext =
+    Boolean(trackingRaw) &&
+    (active.lastSpokenPayload?.kind === "tracking" ||
+      active.lastSpokenDataPoint?.kind === "tracking_number" ||
+      active.currentState === "tracking_dictation" ||
+      (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") ||
+      active.cachedIntent === "tracking");
+
+  if (!hasTrackingContext) return null;
+
+  if (!active.isNotepadReady) {
+    return {
+      handled: true,
+      speech: beginTrackingNotepadHandshake(session.callSid),
+      skipLlm: true,
+      skipTools: true,
+      intentKey: PHASE_HANDSHAKE,
+    };
+  }
+
+  ensureTrackingPayloadFromSession(session);
+  const slower = buildSlowerTrackingReplaySpeech(session.callSid);
+  if (!slower) return null;
+
+  return {
+    handled: true,
+    speech: appendTrackingDictationConfirm(slower),
+    skipLlm: true,
+    skipTools: true,
+    intentKey: "tracking_repeat_slower",
+  };
+}
+
 function tryResolveTrackingOfferTurn(
   text: string,
   session: CallSession,
@@ -751,6 +799,9 @@ export function resolveTrackingPhaseGate(
   const notepadReadyTurn = tryResolveNotepadReadyTurn(text, session);
   if (notepadReadyTurn) return notepadReadyTurn;
 
+  const contextualRepeatTurn = tryResolveContextualDictationRepeat(text, session);
+  if (contextualRepeatTurn) return contextualRepeatTurn;
+
   if (!shouldRunTrackingPhaseGate(intent)) {
     const preserveTrackingMidDictation =
       isSpatialResumeQuery(text) ||
@@ -817,7 +868,7 @@ export function resolveTrackingPhaseGate(
       return {
         handled: true,
         speech:
-          "I'll read your tracking ID one digit at a time once you confirm your pen and notepad are ready. Just say ready when you're set.",
+          "I'll read your tracking ID one digit at a time once you confirm your pen and paper are ready. Just say ready when you're set.",
         skipLlm: true,
         skipTools: true,
         intentKey: "spatial_clarify",

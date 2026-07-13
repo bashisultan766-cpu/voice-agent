@@ -74,12 +74,12 @@ describe("enterprise orchestrator phase 3 e2e", () => {
 
     const handshake = await collectSpeech(session, "give me the id number");
     logPhase("1-notepad-handshake", session, handshake);
-    expect(handshake).toMatch(/ready with pen and notepad|pen and notepad/i);
+    expect(handshake).toMatch(/ready with pen and (?:notepad|paper)|pen and (?:notepad|paper)|ready for me to read/i);
     expect(getOrCreateActiveSession(session.callSid).currentState).toBe("awaiting_notepad_ready");
 
     const dictation = await collectSpeech(session, "ready");
     logPhase("2-dictation", session, dictation);
-    expect(dictation).toMatch(/write that correctly|should I repeat/i);
+    expect(dictation).toMatch(/get all of that|write that correctly|should I repeat/i);
     expect(dictation).toContain(TRACKING_DICTATION_CONFIRM_SPEECH);
     expect(getOrCreateActiveSession(session.callSid).currentState).toBe("tracking_dictation");
 

@@ -44,7 +44,7 @@ import {
   type DeepOrderGraphqlNode,
 } from "../utils/orderDataParser.js";
 import { isPhysicalBookLineItem } from "../utils/productLineItems.js";
-import { extractTrackingInfo, isValidTrackingNumber } from "./orderFieldExtractors.js";
+import { extractTrackingInfo, isValidTrackingNumber, extractTrackingFromOrderNote } from "./orderFieldExtractors.js";
 import { enrichOrderNodeTimeline } from "./shopifyOrderTimeline.js";
 import { parseVariantGid, toProductGid } from "../utils/shopifyGid.js";
 import { normalizeShopifyUnitPrice } from "../utils/shopifyMoney.js";
@@ -600,6 +600,7 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
   const parsed = parseDeepOrderData(node);
   const fulfillment = pickPrimaryFulfillment(node.fulfillments);
   const trackingExtract = extractTrackingInfo(node.fulfillments);
+  const noteTracking = extractTrackingFromOrderNote(parsed.orderNote);
   const fulfillmentStatus =
     fulfillment?.displayStatus ??
     fulfillment?.status ??
@@ -608,7 +609,7 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
 
   const estimatedDeliveryDays = estimateDeliveryDays(fulfillmentStatus, fulfillment);
 
-  const trackingNumber = trackingExtract.trackingNumber;
+  const trackingNumber = trackingExtract.trackingNumber ?? noteTracking;
   const trackingCompany = trackingExtract.trackingCompany;
   const trackingStatus = trackingCompany
     ? `${trackingCompany}${trackingNumber ? ` ${trackingNumber}` : ""}`.trim()

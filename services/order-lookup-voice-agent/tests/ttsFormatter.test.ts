@@ -33,15 +33,15 @@ describe("formatEmailForTTS", () => {
 });
 
 describe("formatTrackingNumberForTTS", () => {
-  it("uses phonetic word-form pacing with periods for hyper-slow dictation", () => {
+  it("uses dashed digit pacing for hyper-slow dictation", () => {
     const formatted = formatTrackingNumberForTTS("9250");
-    expect(formatted).toBe("Nine. Two. Five. Zero.");
+    expect(formatted).toBe("9 - 2 - 5 - 0");
   });
 
   it("phonetically paces every character in long alphanumeric tracking IDs", () => {
     const formatted = formatTrackingNumberForTTS("1Z999999999", "slow");
     expect(formatted).toBe(
-      "One. Z. Nine. Nine. Nine. Nine. Nine. Nine. Nine. Nine. Nine.",
+      "One - Z - Nine - Nine - Nine - Nine - Nine - Nine - Nine - Nine - Nine",
     );
     expect(formatted).not.toContain("<break");
     expect(formatted).not.toContain(",");
@@ -54,7 +54,7 @@ describe("formatTrackingNumberForTTS", () => {
 
   it("normalizes to uppercase and trims whitespace", () => {
     const formatted = formatTrackingNumberForTTS("  ab-12  ", "slow");
-    expect(formatted).toBe("A. B. Dash. One. Two.");
+    expect(formatted).toBe("A - B - Dash - One - Two");
   });
 
   it("returns empty string for blank input", () => {
@@ -84,9 +84,9 @@ describe("sanitizeSsmlForTTS", () => {
 
   it("rewrites point-decimal tracking speech into phonetic digits", () => {
     expect(sanitizeTrackingDictationSpeech("After 47, the digits are: point 02")).toBe(
-      "After 47, the digits are: Zero. Two.",
+      "After 47, the digits are: Zero - Two",
     );
-    expect(sanitizeTrackingDictationSpeech("point zero two")).toBe("Zero. Two.");
+    expect(sanitizeTrackingDictationSpeech("point zero two")).toBe("Zero - Two");
   });
 });
 

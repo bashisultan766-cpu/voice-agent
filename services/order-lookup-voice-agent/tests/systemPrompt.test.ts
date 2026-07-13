@@ -131,7 +131,9 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE ISOLATION RULE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NO DATA VOMITING/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE "REPEAT IT" PRONOUN RULE/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/resolve the pronoun "it" ONLY to the very last specific entity/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /resolve the pronoun "it" ONLY to lastSpokenDataPoint \/ the very last specific entity/i,
+    );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY FORBIDDEN from interpreting "it" as the entire order/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/PERMISSION TO ACT/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/PRIMARY MANDATORY DUTY to call the appropriate tool/i);

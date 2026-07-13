@@ -72,6 +72,7 @@ import {
   getOrCreateActiveSession,
   ensureTrackingPayload,
   shouldSkipToolReinvoke,
+  buildSlowerTrackingReplaySpeech,
 } from "../sovereign/activeSession.js";
 import { buildEmailConfirmationSystemMessage } from "../agents/emailConfirmationManager.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
@@ -80,6 +81,7 @@ import {
   hasTrackingInSessionContext,
   isTrackingDictationCompleteIntent,
   shouldStartTrackingDictation,
+  isContextualDictationRepeatRequest,
   type TrackingDictationGateContext,
 } from "../agents/trackingIntent.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
@@ -91,6 +93,7 @@ import {
   isUserNotepadReadyIntent,
   beginTrackingDictationAfterNotepadReady,
   isTrackingDictationPending,
+  appendTrackingDictationConfirm,
 } from "../agents/dictationTool.js";
 import { isTrackingDictationText } from "../utils/ttsFormatter.js";
 import {
@@ -823,6 +826,50 @@ function interceptOrderFieldQueryBeforeLlm(input: LlmAgentTurnInput): LlmAgentTu
   };
 }
 
+function interceptContextualDictationRepeatBeforeLlm(
+  input: LlmAgentTurnInput,
+): LlmAgentTurnResult | null {
+  if (!isContextualDictationRepeatRequest(input.userMessage)) return null;
+
+  const active = getOrCreateActiveSession(input.callSid);
+  const trackingRaw =
+    active.lastSpokenDataPoint?.kind === "tracking_number"
+      ? active.lastSpokenDataPoint.raw
+      : active.lastSpokenPayload?.trackingRaw ||
+        String(input.session?.currentOrderData?.tracking_number ?? "").trim();
+
+  const hasTrackingContext =
+    Boolean(trackingRaw) &&
+    (active.lastSpokenPayload?.kind === "tracking" ||
+      active.lastSpokenDataPoint?.kind === "tracking_number" ||
+      active.currentState === "tracking_dictation" ||
+      (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") ||
+      active.cachedIntent === "tracking");
+
+  if (!hasTrackingContext) return null;
+
+  if (!active.isNotepadReady) {
+    return {
+      speech: promptUserForNotepad(),
+      toolExecutions: [],
+      responseType: "general_help",
+    };
+  }
+
+  if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
+    ensureTrackingPayload(input.callSid, trackingRaw);
+  }
+
+  const slower = buildSlowerTrackingReplaySpeech(input.callSid);
+  if (!slower) return null;
+
+  return {
+    speech: appendTrackingDictationConfirm(slower),
+    toolExecutions: [],
+    responseType: "order_found",
+  };
+}
+
 function interceptNotepadReadyBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
   if (!isUserNotepadReadyIntent(input.userMessage, input.callSid)) return null;
 
@@ -1061,6 +1108,12 @@ export async function* runLlmAgentTurnEvents(
   const spatialIntercept = interceptSpatialBeforeLlm(input);
   if (spatialIntercept) {
     yield { type: "result", result: spatialIntercept };
+    return;
+  }
+
+  const contextualRepeatIntercept = interceptContextualDictationRepeatBeforeLlm(input);
+  if (contextualRepeatIntercept) {
+    yield { type: "result", result: contextualRepeatIntercept };
     return;
   }
 

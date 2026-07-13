@@ -100,7 +100,7 @@ describe("intent-first orchestrator routing", () => {
     const session = seedOrderSession("CA_ROUTE_TRACK");
     const speech = await collectSpeech(session, "give me the tracking id number");
     console.log(`[INTENT-E2E] tracking_request | state=${getOrCreateActiveSession(session.callSid).currentState} | speech="${speech.slice(0, 100)}…"`);
-    expect(speech).toMatch(/pen and notepad|ready with pen/i);
+    expect(speech).toMatch(/pen and (?:notepad|paper)|ready with pen|ready for me to read/i);
     expect(getOrCreateActiveSession(session.callSid).currentState).toBe("awaiting_notepad_ready");
   });
 

@@ -59,8 +59,8 @@ describe("tracking notepad ready handshake", () => {
     const gate = resolveTrackingPhaseGate("yes", session);
     expect(gate.handled).toBe(true);
     expect(gate.intentKey).toBe("PHASE_HANDSHAKE");
-    expect(gate.speech).toContain("pen and notepad");
-    expect(gate.speech).not.toMatch(/Nine\.|write that correctly/i);
+    expect(gate.speech).toContain("pen and paper");
+    expect(gate.speech).not.toMatch(/9 -|Nine|get all of that|write that correctly/i);
 
     const active = getOrCreateActiveSession(callSid);
     expect(active.currentState).toBe("awaiting_notepad_ready");
@@ -78,7 +78,7 @@ describe("tracking notepad ready handshake", () => {
     const gate = resolveTrackingPhaseGate("I am ready, speak the tracking ID", session);
     expect(gate.handled).toBe(true);
     expect(gate.intentKey).toBe("USER_NOTEPAD_READY");
-    expect(gate.speech).toMatch(/write that correctly|should I repeat/i);
+    expect(gate.speech).toMatch(/get all of that|write that correctly|should I repeat/i);
 
     const active = getOrCreateActiveSession(callSid);
     expect(active.isNotepadReady).toBe(true);
