@@ -69,6 +69,7 @@ function seedProductSession(callSid: string): CallSession {
     price: "19.99",
     inStock: true,
   });
+  session.facilityType = "TX";
   setConversationFlowMode(callSid, "PURCHASE_FLOW");
   session.lastOrchestratorIntent = "catalog";
   return session;

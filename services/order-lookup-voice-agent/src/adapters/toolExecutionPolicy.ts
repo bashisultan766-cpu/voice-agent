@@ -108,6 +108,8 @@ const updateCartItemQuantitySchema = z
     quantity: z.number().optional(),
     confirm_removal: z.boolean().optional(),
     confirmRemoval: z.boolean().optional(),
+    facility_type: z.string().optional(),
+    facilityType: z.string().optional(),
     item_id: z.string().optional(),
     variant_id: z.string().optional(),
     sku: z.string().optional(),

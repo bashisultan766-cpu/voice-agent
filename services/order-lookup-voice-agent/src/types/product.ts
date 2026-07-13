@@ -15,6 +15,8 @@ export interface StructuredProduct {
   vendor: string;
   author?: string;
   tags: string[];
+  /** Shopify product metafields (compliance, ISBN, etc.). */
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
   variants: ProductVariant[];
   isbns?: string[];
   descriptionSnippet?: string;

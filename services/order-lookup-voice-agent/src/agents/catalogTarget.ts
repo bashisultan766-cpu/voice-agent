@@ -10,6 +10,8 @@ export interface LastCatalogSearch {
   unitPrice?: string;
   isbn?: string;
   recordedAt: number;
+  tags?: string[];
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
 }
 
 import { getSessionMemory } from "./sessionMemory.js";
@@ -27,6 +29,8 @@ export function recordLastCatalogSearch(
     unitPrice: data.price,
     isbn: data.isbn,
     recordedAt: Date.now(),
+    tags: data.tags ?? [],
+    metafields: data.metafields ?? [],
   };
   const memory = getSessionMemory(session);
   memory.lastProductTitle = title;

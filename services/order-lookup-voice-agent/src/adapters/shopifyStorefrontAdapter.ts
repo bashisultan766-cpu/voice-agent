@@ -253,6 +253,8 @@ export interface BookCatalogMatch {
   exactMatch: boolean;
   /** 0–100 title match confidence (scoreTitleMatch / 10). */
   matchConfidence?: number;
+  tags?: string[];
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
 }
 
 export interface BookAvailabilityResult {
@@ -274,6 +276,10 @@ export interface BookAvailabilityResult {
   queriedTitle?: string;
   /** Up to 5 ranked title matches (volumes/variants) for fuzzy catalog search. */
   similarMatches?: BookCatalogMatch[];
+  /** Product tags — used for facility compliance (restricted_state_*, restricted_facility_type*). */
+  tags?: string[];
+  /** Product metafields — used for facility compliance cross-reference. */
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
   message?: string;
 }
 
@@ -812,6 +818,8 @@ function productToCatalogMatch(
       : exactMatch
         ? 100
         : undefined,
+    tags: product.tags ?? [],
+    metafields: product.metafields ?? [],
   };
 }
 
@@ -859,6 +867,8 @@ function toBookResult(
     needsDisambiguation: meta?.needsDisambiguation,
     queriedTitle: meta?.queriedTitle,
     similarMatches: meta?.similarMatches,
+    tags: product.tags ?? [],
+    metafields: product.metafields ?? [],
   };
 }
 

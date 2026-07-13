@@ -245,13 +245,22 @@ export function tryDeterministicCartTurn(
   };
 
   const actionType = resolveCartActionTypeFromSpeech(text);
-  const result = applySessionCartQuantity(session, lineInput, qty, actionType);
+  const result = applySessionCartQuantity(session, lineInput, qty, actionType, {
+    facilityType: session.facilityType,
+  });
 
   const memory = getSessionMemory(session);
   memory.latestQuantityRequested = qty;
   memory.unresolvedUserGoal = null;
   session.lastOrchestratorIntent = "cart";
   setConversationFlowMode(session.callSid, "PURCHASE_FLOW");
+
+  if (result.complianceBlocked) {
+    return {
+      handled: true,
+      speech: result.confirmationSpeech ?? result.message,
+    };
+  }
 
   if (result.needsRemovalConfirmation && result.confirmationSpeech) {
     return { handled: true, speech: result.confirmationSpeech };
@@ -263,7 +272,9 @@ export function tryDeterministicCartTurn(
   const title = target.title || "that book";
   return {
     handled: true,
-    speech: `I've updated your cart to ${count} ${count === 1 ? "copy" : "copies"} of ${title}.`,
+    speech:
+      result.message ||
+      `I've updated your cart to ${count} ${count === 1 ? "copy" : "copies"} of ${title}.`,
   };
 }
 

@@ -149,7 +149,7 @@ export type LlmToolName =
   | "end_call";
 
 export interface CartToolResult {
-  status: "ok" | "empty" | "error" | "confirm_removal";
+  status: "ok" | "empty" | "error" | "confirm_removal" | "compliance_blocked";
   items?: Array<{
     title: string;
     quantity: number;
@@ -163,6 +163,8 @@ export interface CartToolResult {
   currentSessionCart?: Record<string, number>;
   needsRemovalConfirmation?: boolean;
   confirmationSpeech?: string;
+  complianceBlocked?: boolean;
+  needsFacilityInfo?: boolean;
 }
 
 export interface CheckoutEmailToolResult {
@@ -202,7 +204,8 @@ export interface LlmToolExecutionRecord {
     | "sent"
     | "error"
     | "failed"
-    | "confirm_removal";
+    | "confirm_removal"
+    | "compliance_blocked";
   data?:
     | OrderStatusResult
     | CustomerHistoryResult
@@ -428,6 +431,12 @@ export async function executeLlmTool(
         rawArgsForCart.confirm_removal === true ||
         rawArgsForCart.confirmRemoval === true ||
         actionRaw === "confirm_remove";
+      const facilityType = String(
+        rawArgsForCart.facility_type ??
+          rawArgsForCart.facilityType ??
+          session.facilityType ??
+          "",
+      ).trim();
 
       if ((confirmRemoval || actionRaw === "keep") && session.pendingCartRemoval) {
         const confirmed = confirmPendingCartRemoval(session, actionRaw !== "keep");
@@ -518,20 +527,25 @@ export async function executeLlmTool(
         items[0]!,
         Number(items[0]!.quantity ?? rawArgsForCart.quantity ?? 1) || 1,
         actionForEngine,
-        { confirmRemoval },
+        { confirmRemoval, facilityType: facilityType || undefined },
       );
       for (let i = 1; i < items.length; i++) {
         const item = items[i]!;
         const quantity = Number(item.quantity ?? rawArgsForCart.quantity ?? 1) || 1;
         lastResult = applySessionCartQuantity(session, item, quantity, actionForEngine, {
           confirmRemoval,
+          facilityType: facilityType || undefined,
         });
-        if (lastResult.needsRemovalConfirmation) break;
+        if (lastResult.needsRemovalConfirmation || lastResult.complianceBlocked) break;
       }
 
       const cart = lastResult.cart;
       const data: CartToolResult = {
-        status: lastResult.needsRemovalConfirmation ? "confirm_removal" : "ok",
+        status: lastResult.complianceBlocked
+          ? "compliance_blocked"
+          : lastResult.needsRemovalConfirmation
+            ? "confirm_removal"
+            : "ok",
         items: cart.map((line) => ({
           title: line.title,
           quantity: line.quantity,
@@ -544,12 +558,14 @@ export async function executeLlmTool(
         message: lastResult.message,
         currentSessionCart: lastResult.currentSessionCart,
         needsRemovalConfirmation: lastResult.needsRemovalConfirmation,
-        confirmationSpeech: lastResult.confirmationSpeech,
+        confirmationSpeech: lastResult.confirmationSpeech ?? lastResult.message,
+        complianceBlocked: lastResult.complianceBlocked,
+        needsFacilityInfo: lastResult.needsFacilityInfo,
       };
       return {
         tool,
         args,
-        ok: true,
+        ok: !lastResult.complianceBlocked,
         status: data.status,
         data,
         elapsedMs: Date.now() - started,
@@ -1265,8 +1281,11 @@ export function toolResultForLlm(
       variant_id: data.variantId,
       matchConfidence: data.matchConfidence,
       needsDisambiguation: data.needsDisambiguation,
+      tags: data.tags ?? [],
+      metafields: data.metafields ?? [],
       similarMatches: similar,
-      instructions: volumeHint,
+      instructions:
+        `${volumeHint} FACILITY COMPLIANCE: Before update_cart_item_quantity, ask for facility type/state if unknown and pass facility_type. Inspect tags/metafields for restricted_state_* / restricted_facility_type_* — never add a restricted title.`,
     });
   }
 

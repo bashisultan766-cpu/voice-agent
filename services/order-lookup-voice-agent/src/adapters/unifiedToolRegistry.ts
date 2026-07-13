@@ -158,6 +158,11 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
             description:
               "Set true only after the caller confirms they want to remove the item entirely when quantity would drop below 1.",
           },
+          facility_type: {
+            type: "string",
+            description:
+              "Facility type or state for compliance (e.g. FL, Florida, federal, state prison). Required before adding books.",
+          },
           item_id: {
             type: "string",
             description: "Product/variant identifier (Shopify ProductVariant GID preferred).",

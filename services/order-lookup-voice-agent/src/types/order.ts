@@ -138,6 +138,11 @@ export interface CallSession {
     fulfillmentStatus?: string;
     financialStatus?: string;
   };
+  /**
+   * Facility type / state for proactive compliance (e.g. "FL", "federal", "state prison").
+   * Required before adding restricted or unrestricted books once compliance gate is active.
+   */
+  facilityType?: string;
   /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
   shoppingCart?: ShoppingCartLineItem[];
   /**
@@ -161,6 +166,8 @@ export interface CallSession {
     unitPrice?: string;
     isbn?: string;
     recordedAt: number;
+    tags?: string[];
+    metafields?: Array<{ namespace: string; key: string; value: string }>;
   };
   /** Last generated Shopify invoice URL for checkout email. */
   pendingInvoiceUrl?: string;

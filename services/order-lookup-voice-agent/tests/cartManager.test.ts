@@ -136,6 +136,7 @@ describe("updateCartItemQuantity action_type", () => {
       { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
       5,
       "add",
+      { facilityType: "TX" },
     );
     expect(session.currentSessionCart?.["gid://shopify/ProductVariant/999"]).toBe(5);
     applySessionCartQuantity(
@@ -143,6 +144,7 @@ describe("updateCartItemQuantity action_type", () => {
       { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
       3,
       "set",
+      { facilityType: "TX" },
     );
     expect(getCartSummary(session).totalUnits).toBe(3);
     applySessionCartQuantity(
@@ -164,6 +166,7 @@ describe("updateCartItemQuantity action_type", () => {
       { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
       2,
       "add",
+      { facilityType: "TX" },
     );
     const blocked = applySessionCartQuantity(
       session,
@@ -198,6 +201,7 @@ describe("cart intent speech parsing", () => {
 
   it("deterministic turn uses set_exact for negation instead of adding", () => {
     const session = makeSession();
+    session.facilityType = "TX";
     session.lastCatalogSearch = {
       title: "Test Book",
       variantId: "gid://shopify/ProductVariant/999",

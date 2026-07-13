@@ -306,6 +306,17 @@ function extractIsbnsFromMetafields(node: GqlProductNode): string[] {
 
 export function mapGqlProduct(node: GqlProductNode): StructuredProduct {
   const isbns = extractIsbnsFromMetafields(node);
+  const metafields = (node.metafields?.edges ?? [])
+    .map(({ node: mf }) =>
+      mf
+        ? {
+            namespace: mf.namespace ?? "",
+            key: mf.key ?? "",
+            value: mf.value ?? "",
+          }
+        : null,
+    )
+    .filter((mf): mf is { namespace: string; key: string; value: string } => Boolean(mf?.key));
 
   return {
     id: node.id.replace("gid://shopify/Product/", ""),
@@ -315,6 +326,7 @@ export function mapGqlProduct(node: GqlProductNode): StructuredProduct {
     vendor: node.vendor ?? "",
     author: node.vendor || undefined,
     tags: node.tags ?? [],
+    metafields,
     isbns,
     variants: (node.variants?.edges ?? []).map(({ node: v }) => ({
       id: v.id.replace("gid://shopify/ProductVariant/", ""),
