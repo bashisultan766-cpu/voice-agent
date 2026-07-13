@@ -19,41 +19,6 @@ import {
   type CheckoutItemSelector,
 } from "../agents/cartManager.js";
 import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
-
-function normalizeCheckoutItemArgs(args: Record<string, unknown>): CheckoutItemSelector[] | null {
-  const fromItems = Array.isArray(args.items) ? args.items : null;
-  if (fromItems?.length) {
-    return fromItems
-      .map((entry) => {
-        if (!entry || typeof entry !== "object") return null;
-        const row = entry as Record<string, unknown>;
-        const quantityRaw = row.quantity;
-        const quantity =
-          typeof quantityRaw === "number"
-            ? quantityRaw
-            : typeof quantityRaw === "string"
-              ? Number(quantityRaw)
-              : undefined;
-        return {
-          variant_id: typeof row.variant_id === "string" ? row.variant_id : undefined,
-          variantId: typeof row.variantId === "string" ? row.variantId : undefined,
-          item_id: typeof row.item_id === "string" ? row.item_id : undefined,
-          sku: typeof row.sku === "string" ? row.sku : undefined,
-          title: typeof row.title === "string" ? row.title : undefined,
-          quantity: Number.isFinite(quantity) ? quantity : undefined,
-        } satisfies CheckoutItemSelector;
-      })
-      .filter((entry): entry is CheckoutItemSelector => Boolean(entry));
-  }
-
-  const ids = [
-    ...(Array.isArray(args.variant_ids) ? args.variant_ids : []),
-    ...(Array.isArray(args.item_ids) ? args.item_ids : []),
-  ].filter((id): id is string => typeof id === "string" && id.trim().length > 0);
-
-  if (!ids.length) return null;
-  return ids.map((id) => ({ variant_id: id }));
-}
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
 import { shouldSuppressCatalogEscalation } from "../agents/agentBrain.js";
 import { runVerificationGate } from "../agents/verificationGate.js";
@@ -75,7 +40,14 @@ import { getAgentState } from "../platform/eventDispatcher.js";
 import { filterOrderContextForVerification } from "../agents/orderContextPrivacy.js";
 import { setOrderHistoryContext } from "../agents/orderHistoryFlow.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
-import { OUT_OF_STOCK_ISBN_MESSAGE } from "../constants/systemMessages.js";
+import {
+  CATALOG_TOOL_ERROR_LLM_PAYLOAD,
+  ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
+  OUT_OF_STOCK_ISBN_MESSAGE,
+  SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD,
+  SHOPIFY_TIMEOUT_LLM_PAYLOAD,
+  SYSTEM_MAINTENANCE_LLM_PAYLOAD,
+} from "../constants/systemMessages.js";
 import {
   isValidOrderNumberFormat,
 } from "../utils/formatter.js";
@@ -94,18 +66,65 @@ import {
 } from "../utils/ttsFormatter.js";
 import { SURESHOT_GOODBYE_SPEECH } from "../utils/callerMemory.js";
 import { resolveDictateTracking } from "../sovereign/dictateTrackingGate.js";
-import {
-  CATALOG_TOOL_ERROR_LLM_PAYLOAD,
-  ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
-  SESSION_PERSISTENCE_ERROR_LLM_PAYLOAD,
-  SHOPIFY_TIMEOUT_LLM_PAYLOAD,
-  SYSTEM_MAINTENANCE_LLM_PAYLOAD,
-} from "../constants/systemMessages.js";
 import { prepareUnifiedToolArgs } from "./toolExecutionPolicy.js";
 import {
   flushUnifiedSessionToL2,
   touchUnifiedSession,
 } from "../agents/unifiedCallSession.js";
+
+function isCheckoutItemSelector(entry: CheckoutItemSelector | null): entry is CheckoutItemSelector {
+  return entry !== null;
+}
+
+/** Map unpredictable LLM checkout item payloads into strict CheckoutItemSelector[]. */
+function normalizeCheckoutItemArgs(args: Record<string, unknown>): CheckoutItemSelector[] | null {
+  const fromItems = Array.isArray(args.items) ? args.items : null;
+  if (fromItems?.length) {
+    const mapped: Array<CheckoutItemSelector | null> = fromItems.map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+
+      const variantIdRaw =
+        (typeof row.variant_id === "string" && row.variant_id.trim()) ||
+        (typeof row.variantId === "string" && row.variantId.trim()) ||
+        (typeof row.item_id === "string" && row.item_id.trim()) ||
+        (typeof row.sku === "string" && row.sku.trim()) ||
+        "";
+      const title = typeof row.title === "string" ? row.title.trim() : "";
+      if (!variantIdRaw && !title) return null;
+
+      const quantityRaw = row.quantity;
+      const parsedQuantity =
+        typeof quantityRaw === "number"
+          ? quantityRaw
+          : typeof quantityRaw === "string"
+            ? Number(quantityRaw)
+            : NaN;
+      const quantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1;
+
+      const selector: CheckoutItemSelector = {
+        variant_id: variantIdRaw || undefined,
+        variantId: typeof row.variantId === "string" ? row.variantId.trim() || undefined : undefined,
+        item_id: typeof row.item_id === "string" ? row.item_id.trim() || undefined : undefined,
+        sku: typeof row.sku === "string" ? row.sku.trim() || undefined : undefined,
+        title: title || undefined,
+        quantity,
+      };
+      return selector;
+    });
+
+    const selectors = mapped.filter(isCheckoutItemSelector);
+    return selectors.length ? selectors : null;
+  }
+
+  const ids = [
+    ...(Array.isArray(args.variant_ids) ? args.variant_ids : []),
+    ...(Array.isArray(args.item_ids) ? args.item_ids : []),
+  ].filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+
+  if (!ids.length) return null;
+  return ids.map((id) => ({ variant_id: id, quantity: 1 }));
+}
 
 export { SYSTEM_MAINTENANCE_LLM_PAYLOAD };
 
