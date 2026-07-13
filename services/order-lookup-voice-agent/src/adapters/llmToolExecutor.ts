@@ -16,8 +16,44 @@ import {
   getCartSummary,
   updateCartItemQuantity,
   type CartActionType,
+  type CheckoutItemSelector,
 } from "../agents/cartManager.js";
 import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
+
+function normalizeCheckoutItemArgs(args: Record<string, unknown>): CheckoutItemSelector[] | null {
+  const fromItems = Array.isArray(args.items) ? args.items : null;
+  if (fromItems?.length) {
+    return fromItems
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") return null;
+        const row = entry as Record<string, unknown>;
+        const quantityRaw = row.quantity;
+        const quantity =
+          typeof quantityRaw === "number"
+            ? quantityRaw
+            : typeof quantityRaw === "string"
+              ? Number(quantityRaw)
+              : undefined;
+        return {
+          variant_id: typeof row.variant_id === "string" ? row.variant_id : undefined,
+          variantId: typeof row.variantId === "string" ? row.variantId : undefined,
+          item_id: typeof row.item_id === "string" ? row.item_id : undefined,
+          sku: typeof row.sku === "string" ? row.sku : undefined,
+          title: typeof row.title === "string" ? row.title : undefined,
+          quantity: Number.isFinite(quantity) ? quantity : undefined,
+        } satisfies CheckoutItemSelector;
+      })
+      .filter((entry): entry is CheckoutItemSelector => Boolean(entry));
+  }
+
+  const ids = [
+    ...(Array.isArray(args.variant_ids) ? args.variant_ids : []),
+    ...(Array.isArray(args.item_ids) ? args.item_ids : []),
+  ].filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+
+  if (!ids.length) return null;
+  return ids.map((id) => ({ variant_id: id }));
+}
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
 import { shouldSuppressCatalogEscalation } from "../agents/agentBrain.js";
 import { runVerificationGate } from "../agents/verificationGate.js";
@@ -470,8 +506,9 @@ export async function executeLlmTool(
   if (tool === "send_checkout_email" && session) {
     const customerEmail = (args.customerEmail ?? args.email ?? "").trim();
     const customerName = (args.customerName ?? args.name ?? "").trim();
+    const itemSelectors = normalizeCheckoutItemArgs(args);
 
-    if (session.paymentLinkSent) {
+    if (!itemSelectors?.length && session.paymentLinkSent) {
       const prior = session.paymentLinkSentTo ?? customerEmail ?? "your email";
       return {
         tool,
@@ -482,7 +519,7 @@ export async function executeLlmTool(
           status: "sent",
           message: `Payment link was already sent to ${prior} during this call.`,
           instructions:
-            "Confirm-once policy: do NOT resend. Say the link was already emailed and ask if they need anything else.",
+            "Confirm-once policy for full-cart checkout: do NOT resend. Say the link was already emailed and ask if they need anything else. For split-order remaining books, pass items for the next batch after letter-by-letter email verification.",
         } satisfies CheckoutEmailToolResult,
         elapsedMs: Date.now() - started,
       };
@@ -511,11 +548,14 @@ export async function executeLlmTool(
       };
     }
 
-    const result = await sendCheckoutPaymentLink(session, customerEmail, customerName);
+    const result = await sendCheckoutPaymentLink(session, customerEmail, {
+      customerName,
+      items: itemSelectors,
+    });
     let status: "sent" | "blocked" | "empty" | "error" | "failed" = result.ok ? "sent" : "failed";
     if (!result.ok) {
       if (/valid customer email/i.test(result.message)) status = "blocked";
-      else if (/cart is empty/i.test(result.message)) status = "empty";
+      else if (/cart is empty|could not find/i.test(result.message)) status = "empty";
       else if (/not configured/i.test(result.message)) status = "error";
     }
     const data: CheckoutEmailToolResult = {
@@ -524,7 +564,11 @@ export async function executeLlmTool(
       message: result.message,
       reason: result.ok ? undefined : result.message,
       instructions: result.ok
-        ? undefined
+        ? result.splitBatch && (result.remainingCartUnits ?? 0) > 0
+          ? "SPLIT BATCH SENT: Confirm this link was emailed. Then ask which remaining books go to the NEXT email. Re-run letter-by-letter email verification for the next address before calling send_checkout_email again with the next items subset. Do NOT collect all emails at once."
+          : result.splitBatch
+            ? "SPLIT COMPLETE: All cart batches have been emailed. Ask if they need anything else — do NOT auto hang up."
+            : undefined
         : result.invoiceUrl
           ? "Email delivery failed but invoice_url is valid — read the checkout link aloud or offer to retry email."
           : undefined,

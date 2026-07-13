@@ -183,6 +183,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/monthYear/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/facility and inmate information|Inmate Facility details/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE SPLIT-ORDER CHECKOUT PROTOCOL/i);
   });
 
   it("restricts unverified callers to public_data only", () => {

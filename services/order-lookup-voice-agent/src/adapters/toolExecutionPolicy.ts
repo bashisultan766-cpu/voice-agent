@@ -140,6 +140,22 @@ const checkoutEmailSchema = z
     email: z.string().optional(),
     customerName: z.string().optional(),
     name: z.string().optional(),
+    items: z
+      .array(
+        z
+          .object({
+            variant_id: z.string().optional(),
+            variantId: z.string().optional(),
+            item_id: z.string().optional(),
+            sku: z.string().optional(),
+            title: z.string().optional(),
+            quantity: z.number().optional(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+    variant_ids: z.array(z.string()).optional(),
+    item_ids: z.array(z.string()).optional(),
   })
   .passthrough()
   .superRefine((data, ctx) => {

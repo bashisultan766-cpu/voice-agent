@@ -211,7 +211,10 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "send_checkout_email",
       description:
-        "After email verification, create a Shopify draft order and email the secure checkout link to the customer. Prefer the session-confirmed email — the pipeline injects it when available.",
+        "After letter-by-letter email verification, create a Shopify draft order and email the secure checkout link. " +
+        "For a normal checkout, omit items to use the full cart. " +
+        "For SPLIT-ORDER / multi-recipient checkout, pass items as an array of {variant_id|title, quantity} for ONLY this batch — remaining cart lines stay for the next email. " +
+        "NEVER collect multiple emails at once; one batch → one verified email → one link. Prefer the session-confirmed email when injected.",
       parameters: {
         type: "object",
         properties: {
@@ -220,6 +223,34 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
             description: "Verified customer email — any valid domain.",
           },
           customerName: { type: "string", description: "Customer full name." },
+          items: {
+            type: "array",
+            description:
+              "Optional subset of cart lines for this payment link (split checkout). Each entry needs variant_id or title plus quantity. Omit to check out the entire cart.",
+            items: {
+              type: "object",
+              properties: {
+                variant_id: {
+                  type: "string",
+                  description: "Shopify ProductVariant GID from the cart / search results.",
+                },
+                item_id: {
+                  type: "string",
+                  description: "Alias of variant_id.",
+                },
+                title: {
+                  type: "string",
+                  description: "Book title as it appears in the cart (used when variant_id is unknown).",
+                },
+                quantity: {
+                  type: "number",
+                  description: "How many copies of this line to include in this payment link.",
+                },
+                sku: { type: "string", description: "Optional SKU alias." },
+              },
+              additionalProperties: false,
+            },
+          },
         },
         required: ["customerEmail", "customerName"],
         additionalProperties: false,

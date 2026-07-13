@@ -201,6 +201,92 @@ export function validateCartForCheckout(
   return null;
 }
 
+export interface CheckoutItemSelector {
+  variant_id?: string;
+  variantId?: string;
+  item_id?: string;
+  sku?: string;
+  title?: string;
+  quantity?: number;
+}
+
+function cloneCartLine(line: ShoppingCartLineItem, quantity: number): ShoppingCartLineItem {
+  return {
+    variantId: line.variantId,
+    productId: line.productId,
+    title: line.title,
+    quantity,
+    unitPrice: line.unitPrice,
+    price: line.price ?? line.unitPrice,
+    isbn: line.isbn,
+  };
+}
+
+/**
+ * Resolve which cart lines to check out.
+ * Empty/omitted selectors → entire cart (standard checkout).
+ * With selectors → subset for split-order multi-recipient checkout.
+ */
+export function resolveCheckoutLineItems(
+  session: CallSession,
+  selectors?: CheckoutItemSelector[] | null,
+): { ok: true; items: ShoppingCartLineItem[]; isSubset: boolean } | { ok: false; message: string } {
+  const cart = ensureShoppingCart(session);
+  if (!cart.length) {
+    return { ok: false, message: "Cart is empty — add books before checkout." };
+  }
+
+  if (!selectors?.length) {
+    return {
+      ok: true,
+      isSubset: false,
+      items: cart.map((line) => cloneCartLine(line, line.quantity)),
+    };
+  }
+
+  const selected: ShoppingCartLineItem[] = [];
+  for (const raw of selectors) {
+    const input: CartItemInput = {
+      variant_id: raw.variant_id ?? raw.variantId ?? raw.item_id ?? raw.sku,
+      item_id: raw.item_id,
+      sku: raw.sku,
+      title: raw.title,
+      quantity: raw.quantity,
+    };
+    const index = findCartLineIndex(cart, input);
+    if (index < 0) {
+      const label = (raw.title ?? raw.variant_id ?? raw.variantId ?? raw.item_id ?? "item").toString();
+      return {
+        ok: false,
+        message: `Could not find "${label}" in the cart for this checkout batch. Ask which books belong to this email.`,
+      };
+    }
+    const line = cart[index]!;
+    const requested = Math.floor(Number(raw.quantity ?? line.quantity) || line.quantity);
+    const qty = Math.min(line.quantity, Math.max(1, requested));
+    selected.push(cloneCartLine(line, qty));
+  }
+
+  return { ok: true, isSubset: true, items: selected };
+}
+
+/** Remove (or reduce) cart lines that were just checked out in a split batch. */
+export function deductCheckedOutItems(
+  session: CallSession,
+  checkedOut: ShoppingCartLineItem[],
+): ShoppingCartLineItem[] {
+  let cart = ensureShoppingCart(session);
+  for (const line of checkedOut) {
+    cart = updateCartItemQuantity(
+      session,
+      { variant_id: line.variantId, title: line.title, quantity: line.quantity },
+      line.quantity,
+      "remove",
+    );
+  }
+  return cart;
+}
+
 export function buildCartContextSystemMessage(session: CallSession): string {
   const summary = getCartSummary(session);
   if (summary.isEmpty) {
@@ -211,6 +297,7 @@ export function buildCartContextSystemMessage(session: CallSession): string {
     "ACTIVE SHOPPING CART: The caller's current cart is persisted for this call. " +
     "Use update_cart_item_quantity with action_type add | remove | set_exact, and variant_id / unit_price from search results " +
     "(full gid://shopify/ProductVariant/...). Use get_cart_summary to read the cart. " +
+    "For split-order checkout, pass the subset items array into send_checkout_email so remaining cart lines stay for the next email. " +
     `JSON: ${JSON.stringify(summary.items)}`
   );
 }
