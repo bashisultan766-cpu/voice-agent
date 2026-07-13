@@ -1,7 +1,8 @@
 /**
- * Verification-first order lookup protocol — passive confirmation until asked.
+ * Verification-first order lookup protocol — Concierge Gateway until asked.
  */
 import type { ParsedOrderData } from "../utils/orderDataParser.js";
+import { fulfillmentStatusPhrase } from "../utils/formatter.js";
 import type { CallSession } from "../types/order.js";
 import { callerAskedForTracking } from "./sessionMemory.js";
 import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
@@ -24,12 +25,36 @@ export const TRACKING_ID_OFFER_SPEECH = "Would you like me to read the tracking 
 export const POST_INFORMATION_CLOSING_SPEECH =
   "I have provided that, how else can I help you today?";
 
+export const ORDER_FOUND_FOLLOW_UP =
+  "How can I assist you further with this order?";
+
 /**
- * Passive confirmation after a successful deep order fetch.
- * Never auto-read status, items, totals, or emails — wait for a specific question.
+ * Concierge Gateway — status only after successful lookup.
+ * Never auto-read tracking, address, or items.
  */
+export function buildOrderFoundGatewaySpeech(data: {
+  orderNumber?: string;
+  customerName?: string;
+  fulfillmentStatus?: string;
+  financialStatus?: string;
+}): string {
+  const orderNumber =
+    String(data.orderNumber ?? "")
+      .replace(/^#/, "")
+      .trim() || "unknown";
+  const customerName = data.customerName?.trim() || "the customer";
+  const statusRaw =
+    data.fulfillmentStatus?.trim() || data.financialStatus?.trim() || "unknown";
+  const status = fulfillmentStatusPhrase(statusRaw);
+  return (
+    `I have successfully pulled up order ${orderNumber} for ${customerName}. ` +
+    `Order status is ${status}. ${ORDER_FOUND_FOLLOW_UP}`
+  );
+}
+
+/** @deprecated Use buildOrderFoundGatewaySpeech — kept for re-exports / tests expecting a constant name. */
 export const ORDER_FOUND_PASSIVE_SPEECH =
-  "I've found your order. How can I help you with this one?";
+  "I have successfully pulled up order [Number] for [Customer Name]. Order status is [Status]. How can I assist you further with this order?";
 
 /** ORDER_LOOKUP / tracking goals must not hit Shopify until an order number is collected. */
 export function requiresOrderNumberPreflight(
@@ -63,19 +88,15 @@ export function buildOrderNumberPreflightSpeech(session?: CallSession): string {
 }
 
 /**
- * Confirmation & Ready — passive until the caller asks for a specific field.
+ * Confirmation & Ready — Concierge Gateway only (status + follow-up).
  * Full deep-fetch data stays in session/LLM memory for follow-ups.
  */
 export function buildVerificationFirstOrderSpeech(
-  _data: ParsedOrderData,
-  session?: CallSession,
+  data: ParsedOrderData,
+  _session?: CallSession,
 ): string {
-  void _data;
-  // If they asked for tracking up front, arm the offer path without dumping order details.
-  if (session && callerAskedForTracking(session)) {
-    return `${ORDER_FOUND_PASSIVE_SPEECH} ${TRACKING_ID_OFFER_SPEECH}`;
-  }
-  return ORDER_FOUND_PASSIVE_SPEECH;
+  void _session;
+  return buildOrderFoundGatewaySpeech(data);
 }
 
 /** Arm tracking-offer acceptance when disclosure speech includes the read-tracking prompt. */

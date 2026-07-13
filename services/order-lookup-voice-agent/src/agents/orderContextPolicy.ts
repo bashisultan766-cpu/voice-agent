@@ -19,10 +19,12 @@ export function hasConfirmedOrderContext(session?: CallSession): boolean {
 
 export function markOrderContextConfirmed(session: CallSession): void {
   session.orderContextConfirmed = true;
+  session.orderLookupComplete = true;
 }
 
 export function clearOrderContextConfirmation(session: CallSession): void {
   session.orderContextConfirmed = false;
+  session.orderLookupComplete = false;
 }
 
 /** Caller wants order help but has not supplied an order number yet. */

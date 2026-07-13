@@ -47,12 +47,13 @@ describe("order #22406 deep timeline extraction", () => {
     expect(mapped.shippingFee).toBe(ORDER_22406_EXPECTED.shippingFee);
   });
 
-  it("buildOrderStatusTts gives concise initial response without data dump", () => {
+  it("buildOrderStatusTts gives Concierge Gateway without data dump", () => {
     const mapped = mapGqlOrderNode(ORDER_22406_GQL_NODE);
     const tts = buildOrderStatusTts({ status: "found", ...mapped });
 
-    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
-    expect(tts.text).not.toContain("Blake Penfield");
+    expect(tts.text).toBe(
+      "I have successfully pulled up order 22406 for Blake Penfield. Order status is awaiting fulfillment. How can I assist you further with this order?",
+    );
     expect(tts.text).not.toContain("Your order contains");
     expect(tts.text).not.toContain("OUT OF STOCK");
     expect(tts.text).not.toMatch(/\bfake\b/i);

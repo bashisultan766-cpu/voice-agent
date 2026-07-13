@@ -123,6 +123,11 @@ export interface CallSession {
   currentOrderData?: Record<string, unknown>;
   /** True only after a successful get_shopify_order_status lookup this call. */
   orderContextConfirmed?: boolean;
+  /**
+   * Context lock (`order_lookup_complete`): after a successful lookup, the LLM must not
+   * re-invoke get_shopify_order_status for the same order — use cached JSON only.
+   */
+  orderLookupComplete?: boolean;
   /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
   shoppingCart?: ShoppingCartLineItem[];
   /** Most recent successful catalog search — binds update_cart_item_quantity to the right variant. */

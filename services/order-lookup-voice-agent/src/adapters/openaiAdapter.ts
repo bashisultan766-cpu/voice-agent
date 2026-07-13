@@ -1316,8 +1316,30 @@ export async function* runLlmAgentTurnEvents(
             shouldSkipToolReinvoke(active, intentKey, call.function.name, {
               userMessage: input.userMessage,
               orderContext: filteredContext,
+              session: input.session,
+              requestedOrderNumber:
+                typeof parsedArgs.orderNumber === "string"
+                  ? parsedArgs.orderNumber
+                  : undefined,
             })
           ) {
+            const cachedOrderPayload =
+              call.function.name === "get_shopify_order_status" && filteredContext
+                ? {
+                    status: "FOUND",
+                    found: true,
+                    order_lookup_complete: true,
+                    data: filteredContext,
+                    instructions:
+                      "CONTEXT LOCK: order_lookup_complete is true. Do NOT call get_shopify_order_status again. Answer ONLY from this cached JSON. Obey STRICT CONVERSATIONAL ECONOMY — disclose fields only when the caller asks.",
+                  }
+                : {
+                    status: "CACHED",
+                    source: "ActiveSession",
+                    instructions:
+                      "Do NOT re-fetch. Use lastSpokenPayload from SOVEREIGN ACTIVE SESSION. Obey SILENCE PROTOCOL unless caller said 'full summary'.",
+                    lastSpoken: active.lastSpokenPayload,
+                  };
             toolExecutions.push({
               tool: call.function.name,
               args: toToolArgsRecord(parsedArgs),
@@ -1328,13 +1350,7 @@ export async function* runLlmAgentTurnEvents(
             messages.push({
               role: "tool",
               tool_call_id: call.id,
-              content: JSON.stringify({
-                status: "CACHED",
-                source: "ActiveSession",
-                instructions:
-                  "Do NOT re-fetch. Use lastSpokenPayload from SOVEREIGN ACTIVE SESSION. Obey SILENCE PROTOCOL unless caller said 'full summary'.",
-                lastSpoken: active.lastSpokenPayload,
-              }),
+              content: JSON.stringify(cachedOrderPayload),
             });
             continue;
           }

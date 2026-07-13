@@ -52,7 +52,7 @@ describe("buildBookFoundTts", () => {
 });
 
 describe("buildOrderStatusTts", () => {
-  it("returns passive confirmation on initial lookup", () => {
+  it("returns Concierge Gateway speech on initial lookup", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "#12345",
@@ -72,21 +72,24 @@ describe("buildOrderStatusTts", () => {
       cardLast4: "4242",
       cardBrand: "Visa",
     });
-    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
+    expect(tts.text).toBe(
+      "I have successfully pulled up order 12345 for Jane Doe. Order status is in transit. How can I assist you further with this order?",
+    );
     expect(tts.text).not.toContain("Harry Potter");
     expect(tts.text).not.toContain("jane.doe@example.com");
-    expect(tts.text).not.toContain("Jane Doe");
+    expect(tts.text).not.toContain("9400");
   });
 
-  it("keeps refunded orders passive until asked", () => {
+  it("keeps refunded orders to gateway only until asked", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderPlacedAt: "2025-04-01T10:00:00Z",
       ...ORDER_21698_F1_EXPECTED,
     });
 
-    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
-    expect(tts.text).not.toContain("Joel Moore");
+    expect(tts.text).toBe(
+      "I have successfully pulled up order 21698-F1 for Joel Moore. Order status is unknown. How can I assist you further with this order?",
+    );
     expect(tts.text).not.toContain("OUT OF STOCK");
   });
 });
@@ -122,7 +125,9 @@ describe("handleFulfillmentTurn", () => {
       callSid: "CA_TEST",
     });
 
-    expect(result.tts.text).toBe("I've found your order. How can I help you with this one?");
+    expect(result.tts.text).toBe(
+      "I have successfully pulled up order 54321 for the customer. Order status is shipped. How can I assist you further with this order?",
+    );
   });
 
   it("returns title search fallback on not found", async () => {

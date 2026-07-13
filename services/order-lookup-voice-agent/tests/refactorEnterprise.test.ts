@@ -53,7 +53,7 @@ describe("semantic product search disclosure", () => {
 });
 
 describe("concise order lookup disclosure", () => {
-  it("returns passive confirmation template", () => {
+  it("returns Concierge Gateway template", () => {
     const speech = buildProgressiveDisclosureOrderSpeech({
       orderNumber: "#21698",
       isRefunded: false,
@@ -64,7 +64,9 @@ describe("concise order lookup disclosure", () => {
       financialStatus: "PAID",
       customerEmail: "caller@example.com",
     } as any);
-    expect(speech).toBe("I've found your order. How can I help you with this one?");
+    expect(speech).toBe(
+      "I have successfully pulled up order 21698 for the customer. Order status is fulfilled. How can I assist you further with this order?",
+    );
     expect(speech).not.toContain("SureShot Guide");
   });
 });

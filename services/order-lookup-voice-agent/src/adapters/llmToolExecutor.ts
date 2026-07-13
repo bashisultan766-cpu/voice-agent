@@ -22,6 +22,7 @@ import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
 import { shouldSuppressCatalogEscalation } from "../agents/agentBrain.js";
 import { runVerificationGate } from "../agents/verificationGate.js";
+import { shouldBlockOrderLookupReinvoke } from "../agents/orderLookupWorkflow.js";
 import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
 import type { CallSession } from "../types/order.js";
 import {
@@ -705,6 +706,35 @@ export async function executeLlmTool(
   if (tool === "get_shopify_order_status") {
     const rawInput = args.orderNumber ?? "";
     const orderNumber = normalizeOrderNumber(rawInput);
+
+    if (session && shouldBlockOrderLookupReinvoke(session, orderNumber || rawInput)) {
+      const cached = session.lastOrderStatusResult;
+      if (cached && cached.status === "found") {
+        return {
+          tool,
+          args: { orderNumber: orderNumber || rawInput },
+          ok: true,
+          status: "found",
+          data: cached,
+          elapsedMs: Date.now() - started,
+        };
+      }
+      return {
+        tool,
+        args: { orderNumber: orderNumber || rawInput },
+        ok: true,
+        status: "ok",
+        data: {
+          status: "found",
+          orderNumber:
+            String(session.currentOrderData?.order_number ?? session.currentOrder?.orderNumber ?? ""),
+          message:
+            "order_lookup_complete: reuse ACTIVE ORDER CONTEXT — do not re-query Shopify for this order.",
+        } as OrderStatusResult,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
     const gate = validateShopifyExecutionGate(
       "order_status",
       gateExtraction("order_status", { orderNumber, slotType: "order_number" }),
@@ -1051,7 +1081,7 @@ export function toolResultForLlm(
           : null,
       instructions: readiness
         ? "NOTEPAD-FIRST RULE: Speak ONLY the readiness handshake verbatim — 'I have your tracking number right here. Let me know when you have a pen and paper ready.' Do NOT read any tracking digits."
-        : "DICTATION PROTOCOL: Speak tracking_number_for_tts digit-by-digit with PAUSES only — spoken words like 'Nine... Four... Four... Nine... Zero... One.' NEVER use commas, hyphens, or dashes (TTS will say those words aloud). Append 'Did you get all that, or should I repeat any part of it?' Never mention items, fees, payment, or other order fields. On 'repeat that' / 'say it slower', re-speak ONLY tracking_number_for_tts even slower — never the full order. If the caller asks What comes after [Number]?, locate that number and read ONLY the digits after it. If the caller confirms they wrote it down, stop dictating and ask if they need anything else.",
+        : "DICTATION PROTOCOL: Speak tracking_number_for_tts with COMMA PACING for sequences longer than 5 digits (e.g. '9, 4, 4, 9, 0, 1'). ZERO PUNCTUATION — never hyphens, dashes, or points. Append 'Did you get all that, or should I repeat any part of it?' Never mention items, fees, payment, or other order fields. On 'repeat that' / 'say it slower', re-speak ONLY tracking_number_for_tts even slower — never the full order. If the caller asks What comes after [Number]?, string-slice the cached ID and speak ONLY the remainder. If the caller confirms they wrote it down, stop dictating and ask if they need anything else.",
     });
   }
 
@@ -1211,7 +1241,7 @@ export function toolResultForLlm(
         verified,
       ),
       instructions:
-        "SECURITY CLEARANCE (UNBREAKABLE RULE): If isVerifiedCaller is FALSE, you are ONLY forbidden from sharing two things: (1) the exact Shipping Address, and (2) Past Order History / previous months' orders. You MUST share EVERYTHING ELSE — Item Names, Item Prices, Quantities, Subtotal, Taxes, Shipping Fees, Total Amount, Payment Method, Notification Emails, and Timeline Events. Do not apologize; simply provide the info. ABSOLUTE BLACKLIST: shipping_address and past_order_history only. UNVERIFIED CALLER PERMISSIONS: RESTRICTED = Shipping Address + Full Order History; ALLOWED = everything else — never say Sorry I can't for allowed items. CONVERSATION LOCK: Once an order is FOUND, you are LOCKED to this order — NEVER re-invoke get_shopify_order_status for follow-ups. If the user provides digits (e.g. What comes after 47 / 80111 / 48011), assume they are clarifying Tracking ID or the order already in memory — NOT a new search. Locate digits in tracking_number_for_tts/spatialIndex and read only the remainder. PASSIVE CONFIRMATION: On FOUND do not dump status/items/totals/emails — the spoken confirmation is already handled; answer only what they ask next. EXPLAINING PAYMENTS & NOTIFICATIONS: Act like a human concierge when asked. If financial_status is PAID and card last4 is null, explain via sourceName / Litextension when present. For notification routing say notifications were routed to the contact on file when asked. If tracking is in orderNote, say you found tracking securely noted, then dictate. Never invent vague lockdowns from privacy_tier wording. Translate events via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. physical_items and item_count are BOOKS ONLY. Keys always present: customer_name, customer_email, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). LEGACY DATA: If tracking_number is null, scan orderNote/note for Tracking Number. For tracking dictation use pause-only spoken digits (Nine... Four... Four... Nine... Zero... One). Never end_call for missing fields.",
+        "SECURITY CLEARANCE (UNBREAKABLE RULE): If isVerifiedCaller is FALSE, you are ONLY forbidden from sharing two things: (1) the exact Shipping Address, and (2) Past Order History / previous months' orders. You MUST share EVERYTHING ELSE — Item Names, Item Prices, Quantities, Subtotal, Taxes, Shipping Fees, Total Amount, Payment Method, Notification Emails, and Timeline Events. Do not apologize; simply provide the info. ABSOLUTE BLACKLIST: shipping_address and past_order_history only. UNVERIFIED CALLER PERMISSIONS: RESTRICTED = Shipping Address + Full Order History; ALLOWED = everything else — never say Sorry I can't for allowed items. CONVERSATION LOCK / order_lookup_complete: Once an order is FOUND, you are LOCKED to this order — NEVER re-invoke get_shopify_order_status for follow-ups. If the user provides digits (e.g. What comes after 47 / 80111 / 48011), assume they are clarifying Tracking ID or the order already in memory — NOT a new search. Locate digits in tracking_number_for_tts/spatialIndex and read only the remainder. STRICT CONVERSATIONAL ECONOMY: On FOUND the spoken gateway is already handled (order number + customer name + status + follow-up only) — answer only what they ask next; never volunteer tracking, address, or items. EXPLAINING PAYMENTS & NOTIFICATIONS: Act like a human concierge when asked. If financial_status is PAID and card last4 is null, explain via sourceName / Litextension when present. For notification routing say notifications were routed to the contact on file when asked. If tracking is in orderNote, say you found tracking securely noted, then dictate. Never invent vague lockdowns from privacy_tier wording. Translate events via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. physical_items and item_count are BOOKS ONLY. Keys always present: customer_name, customer_email, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). LEGACY DATA: If tracking_number is null, scan orderNote/note for Tracking Number. For tracking dictation use comma pacing (9, 4, 4, 9, 0, 1) with zero hyphens/dashes/points. Never end_call for missing fields.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",

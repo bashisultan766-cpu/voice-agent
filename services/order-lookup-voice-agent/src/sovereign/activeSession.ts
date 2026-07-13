@@ -8,7 +8,10 @@ import type { LlmToolName } from "../adapters/llmToolExecutor.js";
 import { getPreferredVoiceForCall } from "../adapters/voiceAdapter.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { orderUtteranceNeedsFreshLookup } from "../agents/orderContextPrivacy.js";
-import { isOrderLookupInsistenceUtterance } from "../agents/orderLookupWorkflow.js";
+import {
+  isOrderLookupInsistenceUtterance,
+  shouldBlockOrderLookupReinvoke,
+} from "../agents/orderLookupWorkflow.js";
 import { getUnifiedSession } from "../agents/unifiedCallSession.js";
 
 export type SovereignState =
@@ -290,27 +293,10 @@ export function shouldSkipToolReinvoke(
   options?: {
     userMessage?: string;
     orderContext?: ActiveOrderContextData;
+    session?: CallSession;
+    requestedOrderNumber?: string;
   },
 ): boolean {
-  if (!active.lastSpokenPayload) return false;
-
-  if (toolName === "dictate_tracking") {
-    if (active.trackingDictationComplete) {
-      const wantsAgain =
-        options?.userMessage &&
-        /\b(?:repeat|read|give|tell|say|hear)\s+(?:me\s+)?(?:the\s+)?tracking|tracking\s+(?:id|number)\s+again\b/i.test(
-          options.userMessage,
-        );
-      if (!wantsAgain) return true;
-    }
-    if (active.cachedIntent === "tracking") {
-      if (!active.isNotepadReady) return true;
-      if (active.currentState === "tracking_dictation" && active.lastSpokenIndex >= 0) {
-        return true;
-      }
-    }
-  }
-
   if (toolName === "get_shopify_order_status") {
     if (options?.userMessage && isOrderLookupInsistenceUtterance(options.userMessage)) {
       return false;
@@ -331,6 +317,31 @@ export function shouldSkipToolReinvoke(
       )
     ) {
       return false;
+    }
+    // Context lock: order_lookup_complete forbids re-invoke for the same order.
+    if (
+      shouldBlockOrderLookupReinvoke(options?.session, options?.requestedOrderNumber)
+    ) {
+      return true;
+    }
+  }
+
+  if (!active.lastSpokenPayload) return false;
+
+  if (toolName === "dictate_tracking") {
+    if (active.trackingDictationComplete) {
+      const wantsAgain =
+        options?.userMessage &&
+        /\b(?:repeat|read|give|tell|say|hear)\s+(?:me\s+)?(?:the\s+)?tracking|tracking\s+(?:id|number)\s+again\b/i.test(
+          options.userMessage,
+        );
+      if (!wantsAgain) return true;
+    }
+    if (active.cachedIntent === "tracking") {
+      if (!active.isNotepadReady) return true;
+      if (active.currentState === "tracking_dictation" && active.lastSpokenIndex >= 0) {
+        return true;
+      }
     }
   }
 

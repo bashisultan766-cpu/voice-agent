@@ -1,6 +1,6 @@
 /**
  * Single order-lookup workflow — shared speech, retry signals, and status classification.
- * Found orders use passive confirmation only (no automatic summary readout).
+ * Found orders use Concierge Gateway speech only (status + follow-up; no automatic dump).
  */
 import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import {
@@ -10,10 +10,53 @@ import {
   SHOPIFY_TIMEOUT_SPOKEN,
 } from "../constants/systemMessages.js";
 import type { CallSession } from "../types/order.js";
+import { orderNumbersMatch } from "../utils/formatter.js";
+import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
-import { ORDER_FOUND_PASSIVE_SPEECH } from "./orderLookupProtocol.js";
+import {
+  ORDER_FOUND_PASSIVE_SPEECH,
+  buildOrderFoundGatewaySpeech,
+} from "./orderLookupProtocol.js";
+import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
 
-export { ORDER_FOUND_PASSIVE_SPEECH };
+export { ORDER_FOUND_PASSIVE_SPEECH, buildOrderFoundGatewaySpeech };
+
+/** True when this call session already completed a successful order lookup. */
+export function isOrderLookupComplete(session?: CallSession): boolean {
+  return Boolean(session?.orderLookupComplete) || hasConfirmedOrderContext(session);
+}
+
+/**
+ * Context lock: after order_lookup_complete, forbid re-calling get_shopify_order_status
+ * for the same order — rely on cached JSON. Allow only when the caller names a different order.
+ */
+export function shouldBlockOrderLookupReinvoke(
+  session: CallSession | undefined,
+  requestedOrderNumber?: string,
+): boolean {
+  if (!isOrderLookupComplete(session)) return false;
+
+  const cached = String(
+    session?.currentOrderData?.order_number ??
+      session?.currentOrder?.orderNumber ??
+      session?.lastOrderStatusResult?.orderNumber ??
+      "",
+  );
+  if (!cached) return true;
+
+  const requested = normalizeOrderNumber(requestedOrderNumber ?? "");
+  if (!requested) return true;
+
+  return orderNumbersMatch(cached, requested);
+}
+
+export function markOrderLookupComplete(session: CallSession): void {
+  session.orderLookupComplete = true;
+}
+
+export function clearOrderLookupComplete(session: CallSession): void {
+  session.orderLookupComplete = false;
+}
 
 export function isOrderLookupInsistenceUtterance(text: string): boolean {
   return /\b((?:this\s+is\s+the\s+)?correct|right)\s+order|please\s+(?:find|look\s*(?:it\s+)?up|try\s+again|provide)\b/i.test(

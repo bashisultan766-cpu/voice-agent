@@ -4,6 +4,7 @@ import {
   formatEmailForTTS,
   formatEmailHandleForTTS,
   formatTrackingNumberForTTS,
+  formatTrackingRemainderAfterAnchor,
   parseSsmlBreakTimeMs,
   sanitizeSsmlForTTS,
   sanitizeTextForTTS,
@@ -33,16 +34,14 @@ describe("formatEmailForTTS", () => {
 });
 
 describe("formatTrackingNumberForTTS", () => {
-  it("uses pause-only digit-word pacing for hyper-slow dictation", () => {
+  it("uses comma+space digit pacing for dictation", () => {
     const formatted = formatTrackingNumberForTTS("9250");
-    expect(formatted).toBe("Nine... Two... Five... Zero");
+    expect(formatted).toBe("9, 2, 5, 0");
   });
 
-  it("phonetically paces every character in long alphanumeric tracking IDs", () => {
+  it("comma-paces every character in long alphanumeric tracking IDs", () => {
     const formatted = formatTrackingNumberForTTS("1Z999999999", "slow");
-    expect(formatted).toBe(
-      "One... Z... Nine... Nine... Nine... Nine... Nine... Nine... Nine... Nine... Nine",
-    );
+    expect(formatted).toBe("1, Z, 9, 9, 9, 9, 9, 9, 9, 9, 9");
     expect(formatted).not.toContain("<break");
     expect(formatted).not.toMatch(/\d\s+-\s+\d/);
   });
@@ -52,13 +51,17 @@ describe("formatTrackingNumberForTTS", () => {
     expect(formatted).toBe('A<break time="500ms"/>B<break time="500ms"/>C<break time="500ms"/>');
   });
 
-  it("normalizes to uppercase and trims whitespace without speaking dash", () => {
+  it("normalizes to uppercase and strips dashes (zero punctuation)", () => {
     const formatted = formatTrackingNumberForTTS("  ab-12  ", "slow");
-    expect(formatted).toBe("A... B... One... Two");
+    expect(formatted).toBe("A, B, 1, 2");
   });
 
   it("returns empty string for blank input", () => {
     expect(formatTrackingNumberForTTS("   ")).toBe("");
+  });
+
+  it("slices remainder after an anchor for what-comes-after precision", () => {
+    expect(formatTrackingRemainderAfterAnchor("944901188300", "4490")).toBe("1, 1, 8, 8, 3, 0, 0");
   });
 });
 
@@ -82,11 +85,11 @@ describe("sanitizeSsmlForTTS", () => {
     expect(sanitizeTextForTTS('  1<break time="10s"/>  ')).toBe('1<break time="1s"/>');
   });
 
-  it("rewrites point-decimal tracking speech into phonetic digits", () => {
+  it("rewrites point-decimal tracking speech into comma-paced digits", () => {
     expect(sanitizeTrackingDictationSpeech("After 47, the digits are: point 02")).toBe(
-      "After 47, the digits are: Zero... Two",
+      "After 47, the digits are: 0, 2",
     );
-    expect(sanitizeTrackingDictationSpeech("point zero two")).toBe("Zero... Two");
+    expect(sanitizeTrackingDictationSpeech("point zero two")).toBe("0, 2");
   });
 });
 

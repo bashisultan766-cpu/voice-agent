@@ -37,10 +37,16 @@ export const SSML_BREAK_SAFE_MS = 800;
 export const TRACKING_CHAR_PAUSE_SLOW_MS = SSML_BREAK_SAFE_MS;
 export const TRACKING_CHAR_PAUSE_NORMAL_MS = 500;
 
+/** Comma+space separator for long numeric / tracking sequences (TTS pacing). */
+export const DIGIT_COMMA_SEP = ", ";
+
+/** Sequences longer than this use mandatory comma pacing. */
+export const COMMA_PACING_MIN_LENGTH = 5;
+
 export type TrackingDictationSpeed = "slow" | "normal";
 
 export interface FormatTrackingNumberOptions {
-  /** Legacy opt-in — SSML breaks are often stripped on voice relays; ellipsis pacing is default. */
+  /** Legacy opt-in — SSML breaks are often stripped on voice relays; comma pacing is default. */
   useSsml?: boolean;
 }
 
@@ -53,9 +59,6 @@ const TRACKING_DICTATION_COMMA_RE = /[A-Z0-9],\s+[A-Z0-9]/i;
 const TRACKING_DICTATION_ELLIPSIS_RE =
   /\b(Zero|One|Two|Three|Four|Five|Six|Seven|Eight|Nine)\.\.\./i;
 const TRACKING_DICTATION_DASH_RE = /\d\s+-\s+\d/;
-
-/** Pause separator between spoken digit words — never commas or dashes (TTS reads those aloud). */
-const DIGIT_PAUSE_SEP = "... ";
 
 const DIGIT_PHONETIC: Record<string, string> = {
   "0": "Zero",
@@ -70,27 +73,82 @@ const DIGIT_PHONETIC: Record<string, string> = {
   "9": "Nine",
 };
 
-function charToPhoneticWord(char: string): string {
-  if (DIGIT_PHONETIC[char]) return DIGIT_PHONETIC[char];
-  if (/[A-Z]/.test(char)) return char;
-  // Never speak "Dash" — hyphens become silent pauses via separator only.
-  if (char === "-") return "";
+/** Strip hyphens, dashes, and points — Zero Punctuation for spoken IDs. */
+export function stripSpokenPunctuation(raw: string): string {
+  return String(raw ?? "")
+    .replace(/[.\u2026]/g, "")
+    .replace(/[-–—]/g, "")
+    .trim();
+}
+
+/** Normalize a tracking / order ID for spoken dictation (no hyphens/dashes/points). */
+export function normalizeSpokenIdSequence(raw: string): string {
+  return stripSpokenPunctuation(normalizeTrackingIdRawSequence(raw)).replace(
+    /[^0-9A-Za-z]/g,
+    "",
+  );
+}
+
+function charToSpokenToken(char: string): string {
+  if (!char || char === "-" || char === "." || char === "–" || char === "—") return "";
   return char;
 }
 
-function charToPhoneticPacing(char: string): string {
-  const word = charToPhoneticWord(char);
-  return word ? `${word}.` : "";
+/**
+ * Comma-pace characters when the sequence is longer than 5 digits/chars.
+ * Example: "944901" → "9, 4, 4, 9, 0, 1"
+ */
+export function formatWithCommaPacing(sequence: string): string {
+  const normalized = normalizeSpokenIdSequence(sequence);
+  if (!normalized) return "";
+  const chars = [...normalized].map(charToSpokenToken).filter(Boolean);
+  if (!chars.length) return "";
+  if (chars.length > COMMA_PACING_MIN_LENGTH) {
+    return chars.join(DIGIT_COMMA_SEP);
+  }
+  return chars.join(DIGIT_COMMA_SEP);
 }
 
-/** Phonetic pacing for a raw digit run (e.g. spatial resume chunk "02" → "Zero... Two"). */
+/**
+ * Precision slice: return ONLY the remainder of a cached ID after an anchor.
+ * e.g. sliceTrackingRemainderAfterAnchor("944901188300", "47") → "901188300" if "47" appears…
+ * Uses the first occurrence of the anchor digit run.
+ */
+export function sliceTrackingRemainderAfterAnchor(
+  trackingId: string,
+  anchor: string,
+): string {
+  const normalized = normalizeSpokenIdSequence(trackingId);
+  const anchorNorm = normalizeSpokenIdSequence(anchor);
+  if (!normalized || !anchorNorm) return "";
+  const idx = normalized.indexOf(anchorNorm);
+  if (idx < 0) return "";
+  return normalized.slice(idx + anchorNorm.length);
+}
+
+/** Format the remainder after an anchor with comma pacing (empty if no match / no remainder). */
+export function formatTrackingRemainderAfterAnchor(
+  trackingId: string,
+  anchor: string,
+): string {
+  const remainder = sliceTrackingRemainderAfterAnchor(trackingId, anchor);
+  return remainder ? formatWithCommaPacing(remainder) : "";
+}
+
+function charToPhoneticWord(char: string): string {
+  if (DIGIT_PHONETIC[char]) return DIGIT_PHONETIC[char];
+  if (/[A-Z]/i.test(char)) return char.toUpperCase();
+  return "";
+}
+
+/** Phonetic pacing for a raw digit run — comma-separated spoken words when long. */
 export function formatTrackingChunkPhonetic(sequence: string): string {
-  const normalized = normalizeTrackingIdRawSequence(sequence);
+  const normalized = normalizeSpokenIdSequence(sequence);
   if (!normalized) return "";
   return [...normalized]
     .map(charToPhoneticWord)
     .filter(Boolean)
-    .join(DIGIT_PAUSE_SEP);
+    .join(DIGIT_COMMA_SEP);
 }
 
 export function formatTrackingChunkForTts(
@@ -100,29 +158,20 @@ export function formatTrackingChunkForTts(
   if (options?.useCharacterSsml) {
     return wrapTrackingChunkSsml(sequence);
   }
-  return formatTrackingChunkPhonetic(sequence);
-}
-
-function formatPhoneticAcousticPacing(chars: string[], separator = DIGIT_PAUSE_SEP): string {
-  if (!chars.length) return "";
-  return chars.map(charToPhoneticWord).filter(Boolean).join(separator);
+  return formatWithCommaPacing(sequence);
 }
 
 /** Extra-slow replay when the caller asks to repeat / go slower. */
 export function formatTrackingNumberForTTSSlower(trackingId: string): string {
-  const normalized = normalizeTrackingIdRawSequence(trackingId);
+  const normalized = normalizeSpokenIdSequence(trackingId);
   if (!normalized) return "";
-  const chars = [...normalized];
-  if (chars.every((c) => c >= "0" && c <= "9")) {
-    return chars.map((c) => DIGIT_PHONETIC[c] ?? c).join("...  ");
-  }
-  return formatPhoneticAcousticPacing(chars, "...  ");
+  // Wider pause: double-space after commas for slower delivery.
+  return [...normalized].join(",  ");
 }
 
 /**
- * Format a tracking ID for extremely slow, clear TTS dictation.
- * Uses spoken digit words with ellipsis pauses ("One... Two... Three...") —
- * never commas or dashes (TTS would say "comma" / "dash").
+ * Format a tracking ID for clear TTS dictation.
+ * Comma pacing for sequences longer than 5 digits; Zero Punctuation (no hyphens/dashes/points).
  * SSML breaks are opt-in only — they are often stripped or ignored on voice relays.
  */
 export function formatTrackingNumberForTTS(
@@ -130,7 +179,7 @@ export function formatTrackingNumberForTTS(
   _speed: TrackingDictationSpeed = "slow",
   options?: FormatTrackingNumberOptions,
 ): string {
-  const normalized = normalizeTrackingIdRawSequence(trackingId);
+  const normalized = normalizeSpokenIdSequence(trackingId);
   if (!normalized) return "";
 
   const chars = [...normalized];
@@ -140,12 +189,7 @@ export function formatTrackingNumberForTTS(
     return chars.map((char) => `${char}<break time="${breakTime}"/>`).join("");
   }
 
-  // Pure digit IDs: pause-only spoken words ("944901" → "Nine... Four... Four... Nine... Zero... One").
-  if (chars.every((c) => c >= "0" && c <= "9")) {
-    return chars.map((c) => DIGIT_PHONETIC[c] ?? c).join(DIGIT_PAUSE_SEP);
-  }
-
-  return formatPhoneticAcousticPacing(chars);
+  return formatWithCommaPacing(normalized);
 }
 
 /** Parse an SSML break duration string (e.g. "500ms", "2s", "1.5s") into milliseconds. */
@@ -211,7 +255,7 @@ const SPOKEN_DIGIT_TO_CHAR: Record<string, string> = {
   nine: "9",
 };
 
-function spokenDigitRunToPhonetic(digitRun: string): string {
+function spokenDigitRunToCommaPaced(digitRun: string): string {
   const tokens = digitRun
     .toLowerCase()
     .replace(/\./g, " ")
@@ -226,10 +270,10 @@ function spokenDigitRunToPhonetic(digitRun: string): string {
     const mapped = SPOKEN_DIGIT_TO_CHAR[token];
     if (mapped) chars.push(mapped);
   }
-  return chars.map((ch) => charToPhoneticWord(ch)).filter(Boolean).join("... ");
+  return formatWithCommaPacing(chars.join(""));
 }
 
-/** Remove decimal/math phrasing from tracking dictation speech (e.g. "point 02" → "Zero, Two"). */
+/** Remove decimal/math phrasing from tracking dictation speech (e.g. "point 02" → "0, 2"). */
 export function sanitizeTrackingDictationSpeech(text: string): string {
   if (!text?.trim()) return "";
 
@@ -237,10 +281,13 @@ export function sanitizeTrackingDictationSpeech(text: string): string {
 
   out = out.replace(
     /\bpoint\s+((?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\.?[\s,.-]*)+|\d[\d\s,.]*)/gi,
-    (_match, digitRun: string) => spokenDigitRunToPhonetic(digitRun),
+    (_match, digitRun: string) => spokenDigitRunToCommaPaced(digitRun),
   );
 
   out = out.replace(/\bpoint\s+(?=\d)/gi, "");
+
+  // Zero Punctuation: strip residual hyphens/dashes from spoken digit runs.
+  out = out.replace(/(\d)\s*[-–—]\s*(\d)/g, `$1${DIGIT_COMMA_SEP}$2`);
 
   return out.trim();
 }

@@ -3,7 +3,6 @@ import {
   ORDER_NUMBER_PREFLIGHT_SPEECH,
   TRACKING_ORDER_NUMBER_PREFLIGHT_SPEECH,
   POST_INFORMATION_CLOSING_SPEECH,
-  TRACKING_ID_OFFER_SPEECH,
   appendProtocolClosing,
   buildOrderNumberPreflightSpeech,
   buildVerificationFirstOrderSpeech,
@@ -99,13 +98,15 @@ describe("verification-first protocol", () => {
       financialStatus: "PAID",
       customerEmail: "caller@example.com",
     });
-    expect(speech).toBe("I've found your order. How can I help you with this one?");
+    expect(speech).toBe(
+      "I have successfully pulled up order 21698 for the customer. Order status is fulfilled. How can I assist you further with this order?",
+    );
     expect(speech).not.toContain("SureShot Guide");
     expect(speech).not.toContain("caller@example.com");
     expect(speech).not.toContain(POST_INFORMATION_CLOSING_SPEECH);
   });
 
-  it("offers tracking readout when caller asked for tracking", () => {
+  it("still uses Concierge Gateway when caller asked for tracking (no auto dump)", () => {
     const session = baseSession();
     captureSessionIntent(session, "I need my tracking number", "order_lookup");
     const speech = buildVerificationFirstOrderSpeech(
@@ -122,14 +123,16 @@ describe("verification-first protocol", () => {
       },
       session,
     );
-    expect(speech).toContain(TRACKING_ID_OFFER_SPEECH);
+    expect(speech).toMatch(/I have successfully pulled up order 12345/i);
+    expect(speech).toMatch(/How can I assist you further with this order/i);
+    expect(speech).not.toContain("1Z999");
   });
 
   it("strips decimal artifacts from tracking IDs", () => {
     expect(normalizeTrackingIdRawSequence("2.0.3.4.5")).toBe("20345");
     const tts = formatTrackingNumberForTTS("2.0.3.4.5");
     expect(tts).not.toContain("2.0");
-    expect(tts).toBe("Two... Zero... Three... Four... Five");
+    expect(tts).toBe("2, 0, 3, 4, 5");
   });
 
   it("verification gate authorizes vault fields only when phones match", () => {
@@ -163,14 +166,16 @@ describe("verification-first protocol", () => {
     expect(maskPhoneForUnverified("+15551234567")).toBe("*** *** 4567");
   });
 
-  it("buildOrderStatusTts uses passive confirmation template", () => {
+  it("buildOrderStatusTts uses Concierge Gateway template", () => {
     const tts = buildOrderStatusTts({
       status: "found",
       orderNumber: "12345",
       orderPlacedAt: "2025-03-10T00:00:00Z",
       fulfillmentStatus: "FULFILLED",
     });
-    expect(tts.text).toBe("I've found your order. How can I help you with this one?");
+    expect(tts.text).toBe(
+      "I have successfully pulled up order 12345 for the customer. Order status is fulfilled. How can I assist you further with this order?",
+    );
   });
 
   it("appendProtocolClosing is idempotent", () => {
