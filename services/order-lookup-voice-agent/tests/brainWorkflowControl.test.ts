@@ -142,7 +142,7 @@ describe("support escalation override", () => {
       "what is the shipping address",
       filterOrderContextForVerification(session.currentOrderData as any, false),
     );
-    expect(refusal).toMatch(/cannot provide the shipping address|can't provide the shipping address/i);
+    expect(refusal).toMatch(/can't read out the exact shipping address|cannot provide the shipping address|can't provide the shipping address/i);
 
     expect(isWorkflowCancellationUtterance("No, I want to buy a book")).toBe(true);
     applyBrainWorkflowControl(session, "No, I want to buy a book", "catalog");
@@ -195,7 +195,7 @@ describe("order detail permissions", () => {
     expect(speech).not.toMatch(/\$12\.00|\$5\.00/i);
 
     const addr = buildOrderDetailSpeech(session, "what is the shipping address", ctx);
-    expect(addr).toMatch(/cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);
+    expect(addr).toMatch(/can't read out the exact shipping address|cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);
   });
 
   it("30-31 — verified caller gets shipping address", () => {

@@ -127,7 +127,8 @@ export function buildUnverifiedRestrictedFieldRefusal(customerName?: string): st
 
 export function buildUnverifiedShippingAddressRefusal(): string {
   return (
-    "For security purposes, since you are calling from an unverified number, I cannot provide the shipping address on this call. " +
+    "Because you are calling from a different number than the one on the order, I can't read out the exact shipping address for security reasons, " +
+    "but I can absolutely confirm your payment was processed and tell you exactly how the order was handled. " +
     "I can forward your request to support if you'd like."
   );
 }

@@ -84,8 +84,25 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
       /I can only share public order status and tracking details on this call/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /shipping address, email, card last4, payment details, totals, tags, staff notes, or past order history/i,
+      /shipping address or past order history/i,
     );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /I can't read out the exact shipping address for security reasons/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /confirm your payment was processed and tell you exactly how the order was handled/i,
+    );
+  });
+
+  it("teaches timeline translation via THE SHOPIFY BRAIN and never hang up on notifications", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE SHOPIFY BRAIN/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/TRANSLATING NOTIFICATIONS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/manually processed your order and marked your payment as successful/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/system confirmation was instantly generated/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Account Deposit \$65\.00/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/packed and processed your item for shipping/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER panic or hang up when asked about notifications/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICTLY FORBIDDEN from speaking staff names/i);
   });
 
   it("requires dynamic cart math and hangup prevention during shopping", () => {
@@ -164,12 +181,14 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
 
   it("restricts unverified callers to public_data only", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — PUBLIC DATA ONLY/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/answer only from public_data/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/answer from public_data/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/no prices or fees/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICT LOCK \(UNVERIFIED\)/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT read secure_data/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT read secure_data vault fields/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/shipping\/billing address/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method_last4/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Timeline events \(translated via THE SHOPIFY BRAIN/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Do NOT hang up/i);
   });
 
   it("enforces voice-native output, letter-by-letter email, and multi-item checkout loop", () => {

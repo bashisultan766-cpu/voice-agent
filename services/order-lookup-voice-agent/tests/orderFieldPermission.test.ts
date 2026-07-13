@@ -146,7 +146,9 @@ describe("non-verified order field disclosure", () => {
       "what is the shipping address",
       filteredContext(session),
     );
-    expect(speech).toMatch(/cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);
+    expect(speech).toMatch(
+      /can't read out the exact shipping address|cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i,
+    );
     expect(speech).toMatch(/support/i);
     expect(speech).not.toMatch(/123 Main St/i);
   });

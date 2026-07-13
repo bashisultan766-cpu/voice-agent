@@ -276,7 +276,9 @@ describe("non-verified order detail disclosure", () => {
     const session = seedSession("NV_4", false);
     const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
     const speech = buildOrderDetailSpeech(session, "what is the shipping address", ctx);
-    expect(speech).toMatch(/cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);
+    expect(speech).toMatch(
+      /can't read out the exact shipping address|cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i,
+    );
     expect(speech).not.toMatch(/123 Main St/i);
   });
 
