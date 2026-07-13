@@ -1435,6 +1435,11 @@ async function* handleAwaitingOrderNumberPhase(
     return false;
   }
 
+  // CONTEXT LOCK: "what comes after 80111" is tracking resume — never a new order lookup.
+  if (isSpatialResumeQuery(text)) {
+    return false;
+  }
+
   const pivotIntent = resolveCallerIntent(text, session);
   if (
     pivotIntent === "catalog" ||

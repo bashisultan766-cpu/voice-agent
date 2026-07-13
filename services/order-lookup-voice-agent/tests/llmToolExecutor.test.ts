@@ -78,14 +78,12 @@ describe("toolResultForLlm order shaping", () => {
       expect(key in parsed.data).toBe(true);
     }
     expect(parsed.instructions).toMatch(/progressive disclosure|ORDER LOOKUP S\.O\.P/i);
-    expect(parsed.instructions).toMatch(/INTERNATIONAL PROTOCOL/i);
-    expect(parsed.instructions).toMatch(/SECURITY OVERRIDE FOR UNVERIFIED CALLERS/i);
-    expect(parsed.instructions).toMatch(/UNVERIFIED CALLER WHITELIST \(UNBREAKABLE\)/i);
-    expect(parsed.instructions).toMatch(/LEGACY DATA INTERPRETATION/i);
-    expect(parsed.instructions).toMatch(/DICTATION & INTERRUPTION PROTOCOL/i);
-    expect(parsed.instructions).toMatch(/After 47, the remaining numbers are/i);
+    expect(parsed.instructions).toMatch(/SECURITY CLEARANCE \(UNBREAKABLE RULE\)/i);
+    expect(parsed.instructions).toMatch(/CONTEXT LOCK & TOOL GUARDRAILS/i);
+    expect(parsed.instructions).toMatch(/EXPLAINING PAYMENTS & NOTIFICATIONS/i);
+    expect(parsed.instructions).toMatch(/What comes after 80111/i);
+    expect(parsed.instructions).toMatch(/sourceName \/ Litextension/i);
     expect(parsed.instructions).toMatch(/ABSOLUTE BLACKLIST/i);
-    expect(parsed.instructions).toMatch(/ABSOLUTE WHITELIST/i);
     expect(parsed.instructions).toMatch(/9, 4, 4, 9, 0, 1/);
     expect(parsed.instructions).not.toMatch(/9 - 4 - 4/);
     expect(parsed.status).toBe("FOUND");
@@ -140,7 +138,7 @@ describe("toolResultForLlm order shaping", () => {
 
     const unverifiedPayload = buildActiveOrderContextPayload(record.data);
     expect(unverifiedPayload.customer_name).toBe("Jamaica Thompson");
-    expect(unverifiedPayload.payment_method_last4).toBeNull();
+    expect(unverifiedPayload.payment_method_last4).toBe("4242");
     expect(unverifiedPayload.secure_data).toBeNull();
     expect(unverifiedPayload.privacy_tier).toBe("unverified");
     expect(unverifiedPayload.refund_notification_email).toBe("jamaicathompson87@gmail.com");
@@ -224,8 +222,14 @@ describe("toolResultForLlm order shaping", () => {
       toolResultForLlm(record, { isVerifiedCaller: false }),
     ) as { data: Record<string, unknown> };
     expect(unverified.data.secure_data).toBeNull();
-    expect(unverified.data.processing_fees).toBeNull();
-    expect(unverified.data.shipping_fees).toBeNull();
+    expect(unverified.data.shipping_address).toBeNull();
+    expect(unverified.data.past_order_history).toBeNull();
+    expect(unverified.data.processing_fees).toEqual([
+      { title: "Processing Fee", quantity: 1, price: "3.00 USD" },
+    ]);
+    expect(unverified.data.shipping_fees).toEqual([
+      { title: "Shipping", quantity: 1, price: "5.50 USD" },
+    ]);
     expect(unverified.data.physical_items).toEqual([
       { title: "The Holy Bible", quantity: 1, price: "12.99 USD" },
     ]);

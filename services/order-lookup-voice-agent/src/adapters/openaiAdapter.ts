@@ -537,6 +537,19 @@ function detectOrderNumberForForcedLookup(input: LlmAgentTurnInput): string | nu
     return null;
   }
 
+  // CONTEXT LOCK: tracking resume / mid-dictation digits are NOT a new order number.
+  if (isSpatialResumeQuery(input.userMessage)) {
+    return null;
+  }
+  const active = getOrCreateActiveSession(input.callSid);
+  const inTrackingDictation =
+    active.currentState === "tracking_dictation" ||
+    (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking") ||
+    active.cachedIntent === "tracking";
+  if (inTrackingDictation) {
+    return null;
+  }
+
   const insistence = isOrderLookupInsistenceUtterance(input.userMessage);
 
   if (insistence) {

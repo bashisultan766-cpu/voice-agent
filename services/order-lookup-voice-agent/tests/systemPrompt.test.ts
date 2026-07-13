@@ -79,16 +79,16 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
 
   it("requires shipping and history refusal for unverified callers", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /SECURITY CLEARANCE FOR UNVERIFIED CALLERS/i,
+      /SECURITY CLEARANCE \(UNBREAKABLE RULE\)/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /ABSOLUTE BLACKLIST \(NEVER SHARE\): shipping_address and past_order_history/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /ABSOLUTE WHITELIST \(MUST SHARE IF ASKED\)/i,
+      /ABSOLUTE WHITELIST \(MUST SHARE IF ASKED\)|explicitly REQUIRED to share/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /FULLY AUTHORIZED and REQUIRED to share the Customer Name, Customer Email/i,
+      /Item Names, Item Prices, Quantities, Subtotal, Taxes/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
       /ORDER NUMBER EXTRACTION/i,
@@ -165,18 +165,23 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/LEGACY DATA INTERPRETATION/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Litextension/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/thoroughly scan the orderNote or note fields/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/older migrated order/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/EXPLAINING PAYMENTS & NOTIFICATIONS/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /exact card digits are hidden for security/i,
+      /exact card digits are hidden/i,
+    );
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /payment is fully cleared/i,
     );
   });
 
   it("requires unbreakable unverified caller whitelist", () => {
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER WHITELIST \(UNBREAKABLE\)/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SECURITY CLEARANCE \(UNBREAKABLE RULE\)/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
-      /ONLY things you are forbidden from sharing are the EXACT SHIPPING ADDRESS and PAST ORDER HISTORY/i,
+      /ONLY forbidden from sharing two things/i,
     );
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Over-redaction of totals, items, taxes, or timeline/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/exact Shipping Address/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Past Order History/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Over-redaction of prices, taxes, items, payment method, or timeline/i);
   });
 
   it("requires volume alternative suggestions for title search", () => {
@@ -217,6 +222,9 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
 
   it("authorizes order money fields for unverified callers while locking vault fields", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/UNVERIFIED CALLER — AUTHORIZED PUBLIC \+ ORDER DETAILS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SECURITY CLEARANCE \(UNBREAKABLE RULE\)/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONTEXT LOCK & TOOL GUARDRAILS/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/EXPLAINING PAYMENTS & NOTIFICATIONS/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/answer from public_data/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Subtotal, total tax, shipping fees, total amount/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/STRICT LOCK \(UNVERIFIED — ABSOLUTE BLACKLIST ONLY\)/i);
@@ -228,6 +236,12 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/DATA DICTATION PACING/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/COMMA and a SPACE/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER use dashes or hyphens/i);
+  });
+
+  it("locks context so tracking interrupts never become new order lookups", () => {
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/What comes after 48011/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Those digits are tracking anchors, NOT a new order number/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/Never say "Order not found" in response to a tracking resume interrupt/i);
   });
 
   it("enforces voice-native output, letter-by-letter email, and multi-item checkout loop", () => {

@@ -1,7 +1,7 @@
 /**
  * PII guardrails for LLM-injected order context.
  * Unverified callers: absolute blacklist is shipping_address + past_order_history only.
- * Whitelist financial/customer identity fields remain available.
+ * Everything else (items, prices, taxes, payment method, emails, timeline) stays available.
  */
 import type { ActiveOrderContextData } from "./sessionManager.js";
 
@@ -12,11 +12,6 @@ const UNVERIFIED_STRIPPED_CONTEXT_KEYS = [
   "billing_address",
   "past_order_history",
   "customer_phone",
-  "payment_method_last4",
-  "card_brand",
-  "payment_gateway",
-  "payment_method",
-  "transactions",
   "total_order_count",
 ] as const;
 
@@ -25,6 +20,7 @@ export const UNVERIFIED_ALLOWED_PUBLIC_CONTEXT_KEYS = [
   "public_data",
   "order_number",
   "fulfillment_status",
+  "financial_status",
   "estimated_delivery_days",
   "tracking_number",
   "tracking_company",
@@ -51,6 +47,13 @@ export const UNVERIFIED_ALLOWED_PUBLIC_CONTEXT_KEYS = [
   "order_note",
   "tags",
   "metafields",
+  "payment_method",
+  "payment_method_last4",
+  "card_brand",
+  "payment_gateway",
+  "transactions",
+  "source_name",
+  "sourceName",
 ] as const;
 
 /** Strip vault blacklist fields from order JSON before LLM injection for unverified callers. */
@@ -67,11 +70,7 @@ export function filterOrderContextForVerification(
 
   const copy: ActiveOrderContextData = { ...data };
   for (const key of UNVERIFIED_STRIPPED_CONTEXT_KEYS) {
-    if (key === "transactions") {
-      copy[key] = [];
-    } else {
-      copy[key] = null;
-    }
+    copy[key] = null;
   }
   for (const key of UNVERIFIED_ALLOWED_PUBLIC_CONTEXT_KEYS) {
     if (key in data) copy[key] = data[key];
@@ -90,25 +89,21 @@ const SHIPPING_ADDRESS_RE =
 const DETAILED_ORDER_HISTORY_RE =
   /\b(order\s+history|past\s+orders|previous\s+orders|my\s+other\s+orders|what\s+did\s+i\s+order\s+in|orders?\s+in\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)|get_customer_history|customer\s+history)\b/i;
 
-const CARD_LAST4_RE =
-  /\b(card\s+(?:ending|last)|last\s*4|payment\s+method|what\s+card)\b/i;
-
-/** Vault-only queries an unverified caller must not receive via deterministic speech. */
+/** Absolute blacklist queries an unverified caller must not receive via deterministic speech. */
 export function isRestrictedFieldQueryForUnverified(callerText: string): boolean {
   const text = callerText.trim();
   if (!text) return false;
   if (SHIPPING_ADDRESS_RE.test(text)) return true;
   if (DETAILED_ORDER_HISTORY_RE.test(text)) return true;
-  if (CARD_LAST4_RE.test(text)) return true;
   return false;
 }
 
 export function buildUnverifiedRestrictedFieldRefusal(customerName?: string): string {
   const name = String(customerName ?? "the registered customer").trim() || "the registered customer";
   return (
-    "For security purposes, since you are calling from an unverified number, I can't share that private vault detail on this call. " +
-    `I am sorry, but I can only share shipping address, past order history, and card details with the verified account holder, ${name}. ` +
-    "I can still help with customer name, emails, items, prices, totals, timeline, tags, and notes."
+    "For security purposes, since you are calling from an unverified number, I can't share past order history on this call. " +
+    `I am sorry, but I can only share previous months' orders with the verified account holder, ${name}. ` +
+    "I can still help with customer name, emails, items, prices, totals, payment method, timeline, tags, and notes on this order."
   );
 }
 

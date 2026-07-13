@@ -153,7 +153,9 @@ describe("verification-first protocol", () => {
     expect(isFieldAuthorizedForCaller(unverifiedSession, "item_price")).toBe(true);
     expect(isFieldAuthorizedForCaller(unverifiedSession, "customer_name")).toBe(true);
     expect(isFieldAuthorizedForCaller(unverifiedSession, "customer_email")).toBe(true);
-    expect(isFieldAuthorizedForCaller(unverifiedSession, "payment_method")).toBe(false);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "payment_method")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "payment_method_last4")).toBe(true);
+    expect(isFieldAuthorizedForCaller(unverifiedSession, "card_last4")).toBe(true);
     expect(maskEmailForUnverified("user@gmail.com")).toBe("...@gmail.com");
     expect(maskPhoneForUnverified("+15551234567")).toBe("*** *** 4567");
   });
