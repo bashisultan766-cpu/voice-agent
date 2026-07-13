@@ -251,6 +251,8 @@ export interface BookCatalogMatch {
   productId?: string;
   variantId?: string;
   exactMatch: boolean;
+  /** 0–100 title match confidence (scoreTitleMatch / 10). */
+  matchConfidence?: number;
 }
 
 export interface BookAvailabilityResult {
@@ -265,6 +267,10 @@ export interface BookAvailabilityResult {
   isbn?: string;
   /** False when the match is fuzzy rather than an exact title hit. */
   exactMatch?: boolean;
+  /** 0–100 confidence for the top title match. Below 90 → ask "Did you mean X or Y?". */
+  matchConfidence?: number;
+  /** True when top match is below 90% and multiple similar titles exist. */
+  needsDisambiguation?: boolean;
   queriedTitle?: string;
   /** Up to 5 ranked title matches (volumes/variants) for fuzzy catalog search. */
   similarMatches?: BookCatalogMatch[];
@@ -777,10 +783,16 @@ async function graphqlProductsForQueries(
   return { nodes: dedupeGqlProductNodes(nodes), hadErrors, stoppedEarly };
 }
 
+function titleMatchConfidencePercent(title: string, query: string): number {
+  const score = scoreTitleMatch(title, query);
+  return Math.max(0, Math.min(100, Math.round((score / 10) * 100)));
+}
+
 function productToCatalogMatch(
   product: MappedProduct,
   exactMatch: boolean,
   preferredPrice?: number | null,
+  queriedTitle?: string,
 ): BookCatalogMatch {
   const primaryVariant = selectPrimaryVariant(product, { preferredPrice });
   const quantity = product.variants.reduce((sum, v) => sum + (v.inventoryQuantity ?? 0), 0);
@@ -795,6 +807,11 @@ function productToCatalogMatch(
     productId: toProductGid(product.id),
     variantId: variantGid,
     exactMatch,
+    matchConfidence: queriedTitle
+      ? titleMatchConfidencePercent(product.title, queriedTitle)
+      : exactMatch
+        ? 100
+        : undefined,
   };
 }
 
@@ -806,6 +823,8 @@ function toBookResult(
     queriedTitle?: string;
     similarMatches?: BookCatalogMatch[];
     preferredPrice?: number | null;
+    matchConfidence?: number;
+    needsDisambiguation?: boolean;
   },
 ): BookAvailabilityResult {
   const primaryVariant = selectPrimaryVariant(product, {
@@ -818,6 +837,14 @@ function toBookResult(
     parseVariantGid(primaryVariant?.id ?? "") ??
     undefined;
 
+  const matchConfidence =
+    meta?.matchConfidence ??
+    (meta?.queriedTitle
+      ? titleMatchConfidencePercent(product.title, meta.queriedTitle)
+      : meta?.exactMatch
+        ? 100
+        : undefined);
+
   return {
     status,
     bookName: product.title,
@@ -828,6 +855,8 @@ function toBookResult(
     variantId: variantGid,
     isbn: product.isbns?.[0],
     exactMatch: meta?.exactMatch,
+    matchConfidence,
+    needsDisambiguation: meta?.needsDisambiguation,
     queriedTitle: meta?.queriedTitle,
     similarMatches: meta?.similarMatches,
   };
@@ -1330,13 +1359,28 @@ export async function searchByTitle(
       }
 
       const exactMatch = isExactTitleMatch(top.title, q);
+      const matchConfidence = titleMatchConfidencePercent(top.title, q);
       const similarSource = inStockList.length ? inStockList : rankedList;
       const similarMatches = similarSource
         .slice(0, 5)
         .map((product) =>
-          productToCatalogMatch(product, isExactTitleMatch(product.title, q), preferredPrice),
+          productToCatalogMatch(
+            product,
+            isExactTitleMatch(product.title, q),
+            preferredPrice,
+            q,
+          ),
         );
-      return toBookResult(top, "found", { exactMatch, queriedTitle: q, similarMatches, preferredPrice });
+      const needsDisambiguation =
+        !exactMatch && matchConfidence < 90 && similarMatches.length > 1;
+      return toBookResult(top, "found", {
+        exactMatch,
+        queriedTitle: q,
+        similarMatches,
+        preferredPrice,
+        matchConfidence,
+        needsDisambiguation,
+      });
     });
 
     return result;

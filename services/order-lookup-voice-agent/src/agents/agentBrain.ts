@@ -6,7 +6,6 @@ import type { CallSession } from "../types/order.js";
 import { logger } from "../utils/logger.js";
 import {
   getCartSummary,
-  updateCartItemQuantity,
 } from "./cartManager.js";
 import {
   isCatalogShoppingUtterance,
@@ -14,6 +13,7 @@ import {
   parseCartQuantityFromSpeech,
   resolveCartActionTypeFromSpeech,
 } from "./catalogShoppingIntent.js";
+import { applySessionCartQuantity } from "./orderLookupWorkflow.js";
 import { isPurchaseFlowActive, setConversationFlowMode } from "./conversationFlowState.js";
 import {
   cancelSupportEscalation,
@@ -245,13 +245,17 @@ export function tryDeterministicCartTurn(
   };
 
   const actionType = resolveCartActionTypeFromSpeech(text);
-  updateCartItemQuantity(session, lineInput, qty, actionType);
+  const result = applySessionCartQuantity(session, lineInput, qty, actionType);
 
   const memory = getSessionMemory(session);
   memory.latestQuantityRequested = qty;
   memory.unresolvedUserGoal = null;
   session.lastOrchestratorIntent = "cart";
   setConversationFlowMode(session.callSid, "PURCHASE_FLOW");
+
+  if (result.needsRemovalConfirmation && result.confirmationSpeech) {
+    return { handled: true, speech: result.confirmationSpeech };
+  }
 
   const summary = getCartSummary(session);
   const line = summary.items.find((l) => l.variantId === target.variantId);

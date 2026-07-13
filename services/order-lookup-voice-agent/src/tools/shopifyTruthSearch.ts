@@ -113,7 +113,7 @@ export function buildTitleTruthQueries(query: string): string[] {
     ordered.push(next);
   };
 
-  // Phrase-level (strict)
+  // Phrase-level (strict) — title first for ranking / stop-on-hit
   add(`title:*${escapeShopifySearchToken(q)}*`);
   add(q);
 
@@ -128,6 +128,11 @@ export function buildTitleTruthQueries(query: string): string[] {
   if (tokens.length === 1) {
     add(`title:*${escapeShopifySearchToken(tokens[0]!)}*`);
   }
+
+  // Fuzzy + semantic field union (after strict title forms)
+  add(
+    `(title:*${escapeShopifySearchToken(q)}* OR variant_title:*${escapeShopifySearchToken(q)}* OR sku:*${escapeShopifySearchToken(q)}*)`,
+  );
 
   // Broad OR only after strict forms fail downstream stop-on-first-hit
   if (tokens.length >= 2) {

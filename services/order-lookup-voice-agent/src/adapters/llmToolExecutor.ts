@@ -12,17 +12,18 @@ import {
 import { lookupOrderStatus, clearOrderStatusCache } from "../services/shopifyService.js";
 import { aggregateOrderForCaller } from "./orderAggregationEngine.js";
 import {
-  ensureShoppingCart,
   getCartSummary,
-  updateCartItemQuantity,
-  type CartActionType,
   type CheckoutItemSelector,
 } from "../agents/cartManager.js";
 import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
 import { shouldSuppressCatalogEscalation } from "../agents/agentBrain.js";
 import { runVerificationGate } from "../agents/verificationGate.js";
-import { shouldBlockOrderLookupReinvoke } from "../agents/orderLookupWorkflow.js";
+import {
+  applySessionCartQuantity,
+  confirmPendingCartRemoval,
+  shouldBlockOrderLookupReinvoke,
+} from "../agents/orderLookupWorkflow.js";
 import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
 import type { CallSession } from "../types/order.js";
 import {
@@ -148,7 +149,7 @@ export type LlmToolName =
   | "end_call";
 
 export interface CartToolResult {
-  status: "ok" | "empty" | "error";
+  status: "ok" | "empty" | "error" | "confirm_removal";
   items?: Array<{
     title: string;
     quantity: number;
@@ -159,6 +160,9 @@ export interface CartToolResult {
   }>;
   total_units?: number;
   message?: string;
+  currentSessionCart?: Record<string, number>;
+  needsRemovalConfirmation?: boolean;
+  confirmationSpeech?: string;
 }
 
 export interface CheckoutEmailToolResult {
@@ -197,7 +201,8 @@ export interface LlmToolExecutionRecord {
     | "empty"
     | "sent"
     | "error"
-    | "failed";
+    | "failed"
+    | "confirm_removal";
   data?:
     | OrderStatusResult
     | CustomerHistoryResult
@@ -376,11 +381,23 @@ export async function executeLlmTool(
   if (tool === "update_pending_email" && session) {
     const { updatePendingEmail } = await import("../agents/emailConfirmationManager.js");
     const email = (args.email ?? args.customerEmail ?? "").trim();
-    const result = updatePendingEmail(session, email, email);
+    const replaceFrom = String(args.replace_from ?? args.replaceFrom ?? "").trim();
+    const replaceTo = String(args.replace_to ?? args.replaceTo ?? "").trim();
+    const baseEmail =
+      email ||
+      session.emailConfirmation?.normalizedEmail ||
+      "";
+    const result = updatePendingEmail(session, baseEmail, email || baseEmail, {
+      replaceFrom: replaceFrom || undefined,
+      replaceTo: replaceTo || undefined,
+    });
     if (!result.ok) {
+      const failArgs: Record<string, string> = { email: baseEmail };
+      if (replaceFrom) failArgs.replace_from = replaceFrom;
+      if (replaceTo) failArgs.replace_to = replaceTo;
       return {
         tool,
-        args: { email },
+        args: failArgs,
         ok: false,
         status: "blocked",
         errorMessage: result.error,
@@ -407,12 +424,31 @@ export async function executeLlmTool(
       )
         .trim()
         .toLowerCase();
-      const actionType: CartActionType =
-        actionRaw === "remove" || actionRaw === "set_exact" || actionRaw === "add"
-          ? (actionRaw as CartActionType)
-          : rawArgsForCart.set_absolute_quantity === true
-            ? "set_exact"
-            : "add";
+      const confirmRemoval =
+        rawArgsForCart.confirm_removal === true ||
+        rawArgsForCart.confirmRemoval === true ||
+        actionRaw === "confirm_remove";
+
+      if ((confirmRemoval || actionRaw === "keep") && session.pendingCartRemoval) {
+        const confirmed = confirmPendingCartRemoval(session, actionRaw !== "keep");
+        if (confirmed) {
+          const data: CartToolResult = {
+            status: "ok",
+            items: confirmed.cart.map((line) => ({
+              title: line.title,
+              quantity: line.quantity,
+              variant_id: line.variantId,
+              product_id: line.productId,
+              unit_price: line.unitPrice ?? line.price,
+              price: line.unitPrice ?? line.price,
+            })),
+            total_units: confirmed.cart.reduce((sum, line) => sum + line.quantity, 0),
+            message: confirmed.message,
+            currentSessionCart: confirmed.currentSessionCart,
+          };
+          return { tool, args, ok: true, status: "ok", data, elapsedMs: Date.now() - started };
+        }
+      }
 
       const fromItems = reconcileAddToCartItems(
         session,
@@ -445,7 +481,7 @@ export async function executeLlmTool(
           ok: false,
           status: "blocked",
           errorMessage:
-            "Provide item_id/variant_id/sku or title, plus quantity and action_type (add | remove | set_exact).",
+            "Provide item_id/variant_id/sku or title, plus quantity and action_type (add | set | minus | set_exact | remove).",
           elapsedMs: Date.now() - started,
         };
       }
@@ -474,13 +510,28 @@ export async function executeLlmTool(
         }
       }
 
-      let cart = ensureShoppingCart(session);
-      for (const item of items) {
+      const actionForEngine =
+        rawArgsForCart.set_absolute_quantity === true ? "set" : actionRaw || "add";
+
+      let lastResult = applySessionCartQuantity(
+        session,
+        items[0]!,
+        Number(items[0]!.quantity ?? rawArgsForCart.quantity ?? 1) || 1,
+        actionForEngine,
+        { confirmRemoval },
+      );
+      for (let i = 1; i < items.length; i++) {
+        const item = items[i]!;
         const quantity = Number(item.quantity ?? rawArgsForCart.quantity ?? 1) || 1;
-        cart = updateCartItemQuantity(session, item, quantity, actionType);
+        lastResult = applySessionCartQuantity(session, item, quantity, actionForEngine, {
+          confirmRemoval,
+        });
+        if (lastResult.needsRemovalConfirmation) break;
       }
+
+      const cart = lastResult.cart;
       const data: CartToolResult = {
-        status: "ok",
+        status: lastResult.needsRemovalConfirmation ? "confirm_removal" : "ok",
         items: cart.map((line) => ({
           title: line.title,
           quantity: line.quantity,
@@ -490,9 +541,19 @@ export async function executeLlmTool(
           price: line.unitPrice ?? line.price,
         })),
         total_units: cart.reduce((sum, line) => sum + line.quantity, 0),
-        message: `Cart updated with action_type=${actionType}.`,
+        message: lastResult.message,
+        currentSessionCart: lastResult.currentSessionCart,
+        needsRemovalConfirmation: lastResult.needsRemovalConfirmation,
+        confirmationSpeech: lastResult.confirmationSpeech,
       };
-      return { tool, args, ok: true, status: "ok", data, elapsedMs: Date.now() - started };
+      return {
+        tool,
+        args,
+        ok: true,
+        status: data.status,
+        data,
+        elapsedMs: Date.now() - started,
+      };
     } catch {
       return cartErrorRecord(tool, args, started);
     }
@@ -1185,18 +1246,25 @@ export function toolResultForLlm(
     }
     const similar = data.similarMatches ?? [];
     const volumeHint =
-      data.exactMatch === true
-        ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask how many copies before update_cart_item_quantity unless the caller already stated a quantity."
-        : data.exactMatch === false && similar.length > 1
-          ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before update_cart_item_quantity."
-          : suppressEscalation
-            ? "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY. If out of stock, apologize and offer similar titles — do NOT escalate unless they ask for support."
-            : "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
+      data.needsDisambiguation ||
+      (typeof data.matchConfidence === "number" &&
+        data.matchConfidence < 90 &&
+        similar.length > 1)
+        ? "LOW CONFIDENCE MATCH (<90%): Ask 'I found [X] and [Y], which one were you looking for?' using the top similarMatches. Do NOT add to cart until they choose."
+        : data.exactMatch === true
+          ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask how many copies before update_cart_item_quantity unless the caller already stated a quantity."
+          : data.exactMatch === false && similar.length > 1
+            ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before update_cart_item_quantity."
+            : suppressEscalation
+              ? "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY. If out of stock, apologize and offer similar titles — do NOT escalate unless they ask for support."
+              : "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
     return JSON.stringify({
       status: data.status,
       found: data.status === "found",
       data,
       variant_id: data.variantId,
+      matchConfidence: data.matchConfidence,
+      needsDisambiguation: data.needsDisambiguation,
       similarMatches: similar,
       instructions: volumeHint,
     });

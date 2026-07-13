@@ -162,24 +162,32 @@ export function buildEmailCapturePrompt(workflowType: EmailWorkflowType): string
 /**
  * LLM / tool path — update pending email on UnifiedCallSession without restarting
  * the support_escalation or payment_link workflow.
+ * Supports contextual segment repair via replaceFrom/replaceTo without re-asking the full address.
  */
 export function updatePendingEmail(
   session: CallSession,
   email: string,
   rawUtterance?: string,
+  options?: { replaceFrom?: string; replaceTo?: string },
 ): { ok: true; email: string; spelled: string } | { ok: false; error: string } {
-  const normalized = email.trim().toLowerCase();
+  const ctx = ensureEmailConfirmation(session);
+  const from = (options?.replaceFrom ?? "").trim().toLowerCase();
+  const to = (options?.replaceTo ?? "").trim().toLowerCase();
+  let normalized = email.trim().toLowerCase();
+
+  if (from && to) {
+    const base = (ctx.normalizedEmail ?? normalized).toLowerCase();
+    if (!base.includes("@")) {
+      return { ok: false, error: "No cached email to patch — collect the full address first." };
+    }
+    normalized = base.includes(from) ? base.split(from).join(to) : base;
+  }
+
   if (!isValidCustomerEmail(normalized)) {
     return { ok: false, error: "Valid email address required." };
   }
-  const ctx = ensureEmailConfirmation(session);
-  if (ctx.phase === "idle" || ctx.phase === "completed") {
-    // Keep the active workflow type if present; otherwise leave as-is for tool callers.
-    ctx.phase = "pending_confirmation";
-  } else {
-    ctx.phase = "pending_confirmation";
-  }
-  ctx.latestRawEmail = (rawUtterance ?? email).trim();
+  ctx.phase = "pending_confirmation";
+  ctx.latestRawEmail = (rawUtterance ?? (email || normalized)).trim();
   ctx.normalizedEmail = normalized;
   ctx.confirmedEmail = undefined;
   ctx.confirmationStatus = "pending";
@@ -187,6 +195,7 @@ export function updatePendingEmail(
     callSid: session.callSid.slice(0, 8),
     workflowType: ctx.workflowType,
     emailDomain: normalized.split("@")[1] ?? "unknown",
+    segmentRepair: Boolean(from && to),
   });
   return {
     ok: true,
@@ -373,7 +382,7 @@ export function buildEmailConfirmationSystemMessage(session: CallSession): strin
     `pendingEmailSpelled: ${spelled}`,
     "The caller's raw utterance is authoritative. Honor meta-instructions (e.g. change formatting, fix a letter, start over, 'don't read it like that').",
     "When confirming an email, read it STRICTLY letter-by-letter with short pauses (e.g. B, A, S, H, I at gmail dot com). NEVER use 'A as in Apple' phonetic cue words for email.",
-    "If the caller corrects the email, call update_pending_email with the full corrected address, apologize briefly, then read the updated email back letter-by-letter exactly how they asked.",
+    "If the caller corrects the email, apply CONTEXTUAL REPAIR: call update_pending_email with replace_from/replace_to and/or the full patched address — do NOT re-ask for the entire email. Acknowledge the correction, then read the FULL updated email back once letter-by-letter.",
     "Do NOT say you must finish confirming email before helping — apply their correction or instruction immediately.",
     "Only after they explicitly confirm the spelled email, call send_checkout_email or send_support_escalation as appropriate for this workflow.",
   ].join("\n");

@@ -52,6 +52,12 @@ export function ensureShoppingCart(session: CallSession): ShoppingCartLineItem[]
 }
 
 function logCartUpdate(session: CallSession, cart: ShoppingCartLineItem[]): void {
+  const projection: Record<string, number> = {};
+  for (const line of cart) {
+    const key = (line.isbn ?? line.variantId ?? line.title).trim() || line.title;
+    projection[key] = line.quantity;
+  }
+  session.currentSessionCart = projection;
   logger.info("cart_updated", {
     callSid: session.callSid.slice(0, 8),
     itemCount: cart.length,
@@ -180,6 +186,8 @@ export function getLineMerchandiseTotal(line: ShoppingCartLineItem): string {
 
 export function clearShoppingCart(session: CallSession): void {
   session.shoppingCart = [];
+  session.currentSessionCart = {};
+  session.pendingCartRemoval = undefined;
   session.pendingInvoiceUrl = undefined;
   session.pendingDraftOrderName = undefined;
 }

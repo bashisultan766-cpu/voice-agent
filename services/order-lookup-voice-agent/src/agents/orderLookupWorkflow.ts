@@ -1,6 +1,9 @@
 /**
- * Single order-lookup workflow — shared speech, retry signals, and status classification.
+ * Single order-lookup + transactional cart workflow — shared speech, retry signals,
+ * status classification, and currentSessionCart projection.
  * Found orders use Concierge Gateway speech only (status + follow-up; no automatic dump).
+ * Cart mutations go through applySessionCartQuantity so order + cart sticky state stay reconciled
+ * (avoids a double workflow where LLM tools and deterministic cart turns diverge).
  */
 import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import {
@@ -9,9 +12,15 @@ import {
   ORDER_NOT_FOUND_STRICT_SPOKEN,
   SHOPIFY_TIMEOUT_SPOKEN,
 } from "../constants/systemMessages.js";
-import type { CallSession } from "../types/order.js";
+import type { CallSession, ShoppingCartLineItem } from "../types/order.js";
 import { orderNumbersMatch } from "../utils/formatter.js";
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
+import {
+  type CartActionType,
+  type CartItemInput,
+  ensureShoppingCart,
+  updateCartItemQuantity,
+} from "./cartManager.js";
 import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
 import {
   ORDER_FOUND_PASSIVE_SPEECH,
@@ -33,6 +42,158 @@ export type CurrentSessionOrder = {
   fulfillmentStatus?: string;
   financialStatus?: string;
 };
+
+/** Transactional cart engine — sku/variant key → quantity. */
+export type CurrentSessionCart = Record<string, number>;
+
+/** Verbal intent → engine action (aliases: set→set_exact, minus→remove). */
+export type SessionCartActionType = "add" | "set" | "minus" | CartActionType;
+
+export interface SessionCartUpdateResult {
+  cart: ShoppingCartLineItem[];
+  currentSessionCart: CurrentSessionCart;
+  actionType: CartActionType;
+  needsRemovalConfirmation?: boolean;
+  confirmationSpeech?: string;
+  message: string;
+}
+
+function cartLineKey(line: ShoppingCartLineItem): string {
+  return (line.isbn ?? line.variantId ?? line.title).trim() || line.title;
+}
+
+/** Rebuild currentSessionCart from shoppingCart lines (single projection). */
+export function syncCurrentSessionCart(session: CallSession): CurrentSessionCart {
+  const cart = ensureShoppingCart(session);
+  const map: CurrentSessionCart = {};
+  for (const line of cart) {
+    map[cartLineKey(line)] = line.quantity;
+  }
+  session.currentSessionCart = map;
+  return map;
+}
+
+export function getCurrentSessionCart(session?: CallSession): CurrentSessionCart {
+  if (!session) return {};
+  if (session.currentSessionCart) return { ...session.currentSessionCart };
+  return syncCurrentSessionCart(session);
+}
+
+/** Normalize LLM / speech action_type into cartManager enums. */
+export function normalizeSessionCartAction(
+  actionRaw: string | undefined,
+): CartActionType {
+  const raw = String(actionRaw ?? "add").trim().toLowerCase();
+  if (raw === "set" || raw === "set_exact" || raw === "exact") return "set_exact";
+  if (raw === "minus" || raw === "remove" || raw === "subtract") return "remove";
+  return "add";
+}
+
+/**
+ * Stateful cart engine: add = current+incoming, set = incoming, minus = current-incoming.
+ * If minus/set would drop below 1 without confirmRemoval, ask before clearing the line.
+ */
+export function applySessionCartQuantity(
+  session: CallSession,
+  item: CartItemInput,
+  quantity: number,
+  actionTypeRaw: SessionCartActionType | string,
+  options?: { confirmRemoval?: boolean },
+): SessionCartUpdateResult {
+  const actionType = normalizeSessionCartAction(String(actionTypeRaw));
+  const cart = ensureShoppingCart(session);
+  const variantHint = (item.variant_id ?? item.item_id ?? item.sku ?? "").trim();
+  const title = (item.title ?? "").trim().toLowerCase();
+  const index = cart.findIndex(
+    (line) =>
+      (variantHint &&
+        (line.variantId === variantHint ||
+          line.isbn === variantHint ||
+          line.variantId.endsWith(`/${variantHint}`))) ||
+      (title && line.title.toLowerCase() === title),
+  );
+  const currentQty = index >= 0 ? cart[index]!.quantity : 0;
+  const incoming = Math.max(0, Math.floor(Number(quantity) || 0));
+
+  let newTotal: number;
+  if (actionType === "add") {
+    newTotal = currentQty + Math.max(1, incoming || 1);
+  } else if (actionType === "remove") {
+    newTotal = currentQty - Math.max(1, incoming || 1);
+  } else {
+    newTotal = incoming;
+  }
+
+  if (newTotal < 1 && currentQty >= 1 && !options?.confirmRemoval) {
+    const line = index >= 0 ? cart[index]! : undefined;
+    const titleLabel = line?.title || item.title || "that book";
+    const variantId = line?.variantId || variantHint;
+    if (variantId) {
+      session.pendingCartRemoval = {
+        variantId,
+        title: titleLabel,
+        currentQuantity: currentQty,
+      };
+    }
+    const confirmationSpeech =
+      `You have ${currentQty} ${currentQty === 1 ? "copy" : "copies"} of ${titleLabel} in your cart. ` +
+      `Do you want to remove the item entirely?`;
+    return {
+      cart: [...cart],
+      currentSessionCart: syncCurrentSessionCart(session),
+      actionType,
+      needsRemovalConfirmation: true,
+      confirmationSpeech,
+      message: confirmationSpeech,
+    };
+  }
+
+  session.pendingCartRemoval = undefined;
+  const updated =
+    newTotal < 1
+      ? updateCartItemQuantity(session, item, 0, "set_exact")
+      : actionType === "set_exact"
+        ? updateCartItemQuantity(session, item, newTotal, "set_exact")
+        : updateCartItemQuantity(
+            session,
+            item,
+            Math.max(1, incoming || 1),
+            actionType,
+          );
+
+  const currentSessionCart = syncCurrentSessionCart(session);
+  return {
+    cart: updated,
+    currentSessionCart,
+    actionType,
+    message: `Cart updated with action_type=${actionType}.`,
+  };
+}
+
+/** Confirm a pending full-line removal after the agent asked. */
+export function confirmPendingCartRemoval(
+  session: CallSession,
+  confirm: boolean,
+): SessionCartUpdateResult | null {
+  const pending = session.pendingCartRemoval;
+  if (!pending) return null;
+  if (!confirm) {
+    session.pendingCartRemoval = undefined;
+    return {
+      cart: [...ensureShoppingCart(session)],
+      currentSessionCart: syncCurrentSessionCart(session),
+      actionType: "remove",
+      message: `Okay — keeping ${pending.currentQuantity} ${pending.currentQuantity === 1 ? "copy" : "copies"} of ${pending.title} in your cart.`,
+    };
+  }
+  return applySessionCartQuantity(
+    session,
+    { variant_id: pending.variantId, title: pending.title },
+    pending.currentQuantity,
+    "minus",
+    { confirmRemoval: true },
+  );
+}
 
 /** True when this call session already completed a successful order lookup. */
 export function isOrderLookupComplete(session?: CallSession): boolean {

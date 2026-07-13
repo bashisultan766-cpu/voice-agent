@@ -191,6 +191,14 @@ describe("partial email correction", () => {
     );
     expect(corrected).toBe("bashisultaan766@gmail.com");
   });
+
+  it("15b — contextual segment repair Sub → Saab", () => {
+    const corrected = applyPartialEmailCorrection(
+      "bashisub766@gmail.com",
+      "Not Sub, it's Saab",
+    );
+    expect(corrected).toBe("bashisaab766@gmail.com");
+  });
 });
 
 describe("product ISBN / title intent", () => {

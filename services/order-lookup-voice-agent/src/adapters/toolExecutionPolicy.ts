@@ -99,9 +99,15 @@ const cartItemSchema = z
 
 const updateCartItemQuantitySchema = z
   .object({
-    action_type: z.enum(["add", "remove", "set_exact"]).optional(),
-    actionType: z.enum(["add", "remove", "set_exact"]).optional(),
+    action_type: z
+      .enum(["add", "set", "minus", "remove", "set_exact", "confirm_remove", "keep"])
+      .optional(),
+    actionType: z
+      .enum(["add", "set", "minus", "remove", "set_exact", "confirm_remove", "keep"])
+      .optional(),
     quantity: z.number().optional(),
+    confirm_removal: z.boolean().optional(),
+    confirmRemoval: z.boolean().optional(),
     item_id: z.string().optional(),
     variant_id: z.string().optional(),
     sku: z.string().optional(),
@@ -116,17 +122,23 @@ const updateCartItemQuantitySchema = z
   .passthrough()
   .superRefine((data, ctx) => {
     const action = String(data.action_type ?? data.actionType ?? "").trim();
-    if (!action && data.set_absolute_quantity !== true) {
+    if (!action && data.set_absolute_quantity !== true && data.confirm_removal !== true) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: validationMessage("action_type is required (add | remove | set_exact)"),
+        message: validationMessage("action_type is required (add | set | minus | set_exact | remove)"),
       });
     }
     const qty = data.quantity;
     const hasItemQty =
       Array.isArray(data.items) &&
       data.items.some((item) => item.quantity != null);
-    if ((qty == null || !Number.isFinite(Number(qty))) && !hasItemQty) {
+    if (
+      (qty == null || !Number.isFinite(Number(qty))) &&
+      !hasItemQty &&
+      data.confirm_removal !== true &&
+      action !== "confirm_remove" &&
+      action !== "keep"
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: validationMessage("quantity is required"),
@@ -231,14 +243,23 @@ const updatePendingEmailSchema = z
   .object({
     email: z.string().optional(),
     customerEmail: z.string().optional(),
+    replace_from: z.string().optional(),
+    replace_to: z.string().optional(),
+    replaceFrom: z.string().optional(),
+    replaceTo: z.string().optional(),
   })
   .passthrough()
   .superRefine((data, ctx) => {
     const email = String(data.email ?? data.customerEmail ?? "").trim();
-    if (!email || !isValidCustomerEmail(email)) {
+    const hasSegment =
+      Boolean(String(data.replace_from ?? data.replaceFrom ?? "").trim()) &&
+      Boolean(String(data.replace_to ?? data.replaceTo ?? "").trim());
+    if ((!email || !isValidCustomerEmail(email)) && !hasSegment) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: validationMessage("email must be a valid customer email address"),
+        message: validationMessage(
+          "email must be a valid customer email address (or provide replace_from + replace_to)",
+        ),
       });
     }
   });

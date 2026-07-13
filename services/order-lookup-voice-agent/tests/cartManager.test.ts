@@ -127,6 +127,55 @@ describe("updateCartItemQuantity action_type", () => {
     );
     expect(getCartSummary(session).isEmpty).toBe(true);
   });
+
+  it("set/minus aliases via applySessionCartQuantity sync currentSessionCart", async () => {
+    const { applySessionCartQuantity } = await import("../src/agents/orderLookupWorkflow.js");
+    const session = makeSession();
+    applySessionCartQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      5,
+      "add",
+    );
+    expect(session.currentSessionCart?.["gid://shopify/ProductVariant/999"]).toBe(5);
+    applySessionCartQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      3,
+      "set",
+    );
+    expect(getCartSummary(session).totalUnits).toBe(3);
+    applySessionCartQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      1,
+      "minus",
+    );
+    expect(getCartSummary(session).totalUnits).toBe(2);
+  });
+
+  it("asks confirmation before removing last copies", async () => {
+    const { applySessionCartQuantity, confirmPendingCartRemoval } = await import(
+      "../src/agents/orderLookupWorkflow.js"
+    );
+    const session = makeSession();
+    applySessionCartQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      2,
+      "add",
+    );
+    const blocked = applySessionCartQuantity(
+      session,
+      { title: "Test Book", variant_id: "gid://shopify/ProductVariant/999" },
+      5,
+      "minus",
+    );
+    expect(blocked.needsRemovalConfirmation).toBe(true);
+    expect(getCartSummary(session).totalUnits).toBe(2);
+    const cleared = confirmPendingCartRemoval(session, true);
+    expect(cleared?.cart.length).toBe(0);
+  });
 });
 
 describe("cart intent speech parsing", () => {

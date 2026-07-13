@@ -87,9 +87,11 @@ export function isPartialEmailCorrection(text: string): boolean {
   const t = (text ?? "").trim().toLowerCase();
   if (!t) return false;
   return (
-    /\breplace\s+\w\s+with\s+\w/i.test(t) ||
+    /\breplace\s+\w+\s+with\s+\w+/i.test(t) ||
     /\bdouble\s+[a-z]\b/i.test(t) ||
     /\b(use|switch\s+to|instead\s+of)\b.*\b(yahoo|gmail|outlook|hotmail|icloud)\b/i.test(t) ||
+    /\bnot\s+[a-z0-9]+\s*[,.]?\s*(?:it'?s|it\s+is|is)\s+[a-z0-9]+/i.test(t) ||
+    /\bit'?s\s+[a-z0-9]+\s*,?\s*not\s+[a-z0-9]+/i.test(t) ||
     /\bnot\s+sultan\b/i.test(t) ||
     /\bsultaan\b/i.test(t) ||
     /\bcompany\s+email\b/i.test(t) ||
@@ -122,7 +124,26 @@ export function applyPartialEmailCorrection(
   let [localPart, domainPart] = base.split("@", 2);
   const t = (text ?? "").trim().toLowerCase();
 
-  const replaceMatch = t.match(/\breplace\s+([a-z0-9])\s+with\s+([a-z0-9])/i);
+  // Contextual segment repair: "Not Sub, it's Saab" / "not Sultan, it is Sultaan"
+  const notItsMatch =
+    t.match(/\bnot\s+([a-z0-9]+)\s*[,.]?\s*(?:it'?s|it\s+is|is)\s+([a-z0-9]+)/i) ??
+    t.match(/\bit'?s\s+([a-z0-9]+)\s*,?\s*not\s+([a-z0-9]+)/i);
+  if (notItsMatch) {
+    // First pattern: not FROM, it's TO. Second: it's TO, not FROM → swap groups.
+    const fromFirst = /\bnot\s+[a-z0-9]+\s*[,.]?\s*(?:it'?s|it\s+is|is)\s+/i.test(t);
+    const wrong = (fromFirst ? notItsMatch[1] : notItsMatch[2]!).toLowerCase();
+    const right = (fromFirst ? notItsMatch[2] : notItsMatch[1]!).toLowerCase();
+    if (wrong && right && wrong !== right) {
+      const patchedLocal = localPart.split(wrong).join(right);
+      const patchedDomain = domainPart.split(wrong).join(right);
+      const candidate = `${patchedLocal}@${patchedDomain}`.replace(/\s+/g, "");
+      if (candidate !== base.replace(/\s+/g, "") && isValidCustomerEmail(candidate)) {
+        return candidate.toLowerCase();
+      }
+    }
+  }
+
+  const replaceMatch = t.match(/\breplace\s+([a-z0-9]+)\s+with\s+([a-z0-9]+)/i);
   if (replaceMatch) {
     const from = replaceMatch[1].toLowerCase();
     const to = replaceMatch[2].toLowerCase();

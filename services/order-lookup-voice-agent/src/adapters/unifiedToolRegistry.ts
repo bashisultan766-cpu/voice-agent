@@ -133,24 +133,30 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "update_cart_item_quantity",
       description:
-        "Unified cart updater for SureShot Books. ALWAYS use this tool for cart changes — never invent separate add/remove tools. " +
-        "Parameters: item_id or variant_id (or sku/title), quantity (integer), action_type enum add | remove | set_exact. " +
-        "RULE 1 ABSOLUTE ASSIGNMENT: If the caller says 'Make it X', 'I want X copies', 'Change it to X', 'I just want X total', or 'set it to X', you MUST use action_type=set_exact with quantity X. " +
-        "RULE 2 NEGATION & CORRECTION: If the caller says 'No, not X, I want Y', 'Don't add more, make it Y', or 'No, don't add, I just want Y total', recognize the correction and use action_type=set_exact with quantity Y — NEVER add Y on top of the current cart. " +
-        "RULE 3 RELATIVE ONLY WHEN EXPLICIT: Use action_type=add ONLY for phrases like 'add X more', 'give me X extra', 'add X copies'. Use action_type=remove ONLY for 'remove X', 'minus X', 'take away X'. " +
+        "Unified cart updater (updateCart) for SureShot Books. ALWAYS use this tool for cart changes — never invent separate add/remove tools. " +
+        "Parameters: item_id or variant_id (or sku/title), quantity (integer), action_type enum add | set | minus (aliases: set_exact | remove). " +
+        "RULE 1 ABSOLUTE ASSIGNMENT: If the caller says 'Make it X', 'I want X copies', 'Change it to X', 'I just want X total', or 'set it to X', you MUST use action_type=set (or set_exact) with quantity X. " +
+        "RULE 2 NEGATION & CORRECTION: If the caller says 'No, not X, I want Y', 'Don't add more, make it Y', or 'No, don't add, I just want Y total', recognize the correction and use action_type=set with quantity Y — NEVER add Y on top of the current cart. " +
+        "RULE 3 RELATIVE ONLY WHEN EXPLICIT: Use action_type=add ONLY for phrases like 'add X more', 'give me X extra', 'add X copies'. Use action_type=minus (or remove) ONLY for 'remove X', 'minus X', 'take away X'. " +
+        "RULE 4 BELOW-ONE CONFIRMATION: If minus/set would drop a line below 1, the tool returns needsRemovalConfirmation — speak the confirmationSpeech and wait. Only then call again with confirm_removal=true to clear the line. " +
         "Always pass unit_price from the latest catalog search with variant_id when available.",
       parameters: {
         type: "object",
         properties: {
           action_type: {
             type: "string",
-            enum: ["add", "remove", "set_exact"],
+            enum: ["add", "set", "minus", "remove", "set_exact"],
             description:
-              "add = increase by quantity; remove = decrease by quantity (floor 0); set_exact = replace line quantity with quantity.",
+              "add = current + incoming; set/set_exact = absolute total; minus/remove = current - incoming.",
           },
           quantity: {
             type: "number",
             description: "Integer quantity for the chosen action_type.",
+          },
+          confirm_removal: {
+            type: "boolean",
+            description:
+              "Set true only after the caller confirms they want to remove the item entirely when quantity would drop below 1.",
           },
           item_id: {
             type: "string",
@@ -283,13 +289,21 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "update_pending_email",
       description:
-        "During collect_email or pending_confirmation, update the pending email on UnifiedCallSession when the caller corrects spelling, a letter, the domain, or asks to start over with a new address. Pass the full corrected email. Then read it back letter-by-letter (no phonetic 'as in' cues) and ask for confirmation.",
+        "CONTEXTUAL REPAIR during collect_email or pending_confirmation: when the caller corrects a specific word/segment (e.g. 'Not Sub, it's Saab'), pass replace_from + replace_to (and/or the full patched email). Do NOT re-ask for the entire email. Acknowledge the correction, patch the cached pending email, then read back the FULL updated email once for confirmation.",
       parameters: {
         type: "object",
         properties: {
           email: {
             type: "string",
-            description: "Full corrected email address (e.g. bashisultan766@gmail.com).",
+            description: "Full corrected email address after the patch (e.g. bashisaab766@gmail.com).",
+          },
+          replace_from: {
+            type: "string",
+            description: "Wrong segment to replace in the cached pending email (e.g. 'sub').",
+          },
+          replace_to: {
+            type: "string",
+            description: "Correct segment (e.g. 'saab').",
           },
         },
         required: ["email"],

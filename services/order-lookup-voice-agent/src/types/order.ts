@@ -140,6 +140,20 @@ export interface CallSession {
   };
   /** Persistent in-call shopping cart — survives unlimited add/remove cycles. */
   shoppingCart?: ShoppingCartLineItem[];
+  /**
+   * Transactional cart projection `{ sku|variantId: quantity }` — kept in sync with shoppingCart.
+   * Single source of truth for set/add/minus math alongside CurrentSessionOrder.
+   */
+  currentSessionCart?: Record<string, number>;
+  /**
+   * When a remove/minus would drop a line below 1, hold the line until the caller confirms
+   * full removal (or chooses a different quantity).
+   */
+  pendingCartRemoval?: {
+    variantId: string;
+    title: string;
+    currentQuantity: number;
+  };
   /** Most recent successful catalog search — binds update_cart_item_quantity to the right variant. */
   lastCatalogSearch?: {
     title: string;
