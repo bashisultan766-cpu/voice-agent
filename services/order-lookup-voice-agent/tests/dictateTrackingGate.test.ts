@@ -8,6 +8,7 @@ import {
 import { recordTrackingPayload, updateActiveSession } from "../src/sovereign/activeSession.js";
 import { resolveDictateTracking } from "../src/sovereign/dictateTrackingGate.js";
 import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 describe("interruptBuffer", () => {
@@ -46,8 +47,8 @@ describe("sovereignRouter notepad gate", () => {
       phase: "follow_up",
       orderNumberAttempts: 0,
       createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9250" },
     } as CallSession;
+    saveActiveOrderContext(session, { tracking_number: "9250" });
 
     recordTrackingPayload("CA3", "9250");
     const resolution = resolveTrackingPhaseGate("can you repeat my tracking number", session);
@@ -64,8 +65,8 @@ describe("sovereignRouter notepad gate", () => {
       phase: "follow_up",
       orderNumberAttempts: 0,
       createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9250" },
     } as CallSession;
+    saveActiveOrderContext(session, { tracking_number: "9250" });
 
     recordTrackingPayload("CA4", "9250");
     const handshake = resolveTrackingPhaseGate("can you read my tracking number", session);

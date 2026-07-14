@@ -1,12 +1,12 @@
 /**
  * Shopify order timeline enrichment — search queries often return events: [].
- * Fallback: direct order(id:) GraphQL + REST /orders/{id}/events.json.
+ * Transport via infra HTTP client / QueryBoundary; no direct fetch here.
  */
 import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { maskShopifyToken } from "../utils/security.js";
-import { ShopifyAuthError } from "../platform/shopifyErrors.js";
-import { shopifyGraphql } from "../tools/shopifyLiveSearch.js";
+import { shopifyGraphql, shopifyRestJson } from "../infra/shopifyHttpClient.js";
+import { fetchOrderTimelineView } from "../infra/shopifyQueryBoundary.js";
 import type { OrderTimelineEvent } from "./orderFieldExtractors.js";
 import type { DeepOrderGraphqlNode } from "../utils/orderDataParser.js";
 import { transactionNodesFromConnection } from "../utils/orderDataParser.js";
@@ -94,12 +94,6 @@ interface RestShopifyEvent {
   created_at?: string;
 }
 
-function shopifyRestBaseUrl(): string {
-  const cfg = getConfig();
-  const domain = cfg.SHOPIFY_SHOP_DOMAIN.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  return `https://${domain}/admin/api/${cfg.SHOPIFY_API_VERSION}`;
-}
-
 /** Extract numeric Shopify order id from Admin GraphQL gid. */
 export function orderGidToNumericId(gid: string | undefined): string | undefined {
   if (!gid?.trim()) return undefined;
@@ -183,47 +177,20 @@ async function fetchDeepOrderByGid(
   };
 }
 
-async function fetchTimelineGraphqlByOrderGid(
-  orderGid: string,
-): Promise<OrderTimelineEvent[]> {
-  const deep = await fetchDeepOrderByGid(orderGid);
-  return deep.events;
-}
-
 async function fetchTimelineRestByNumericId(
   numericId: string,
 ): Promise<OrderTimelineEvent[]> {
-  const cfg = getConfig();
-  const accessToken = cfg.SHOPIFY_ADMIN_ACCESS_TOKEN;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(`${shopifyRestBaseUrl()}/orders/${numericId}/events.json`, {
-      method: "GET",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
+  const result = await shopifyRestJson<{ events?: RestShopifyEvent[] }>(
+    `/orders/${numericId}/events.json`,
+  );
+  if (!result.ok) {
+    logger.warn("shopify_rest_order_events_failed", {
+      orderId: numericId,
+      httpStatus: result.status,
     });
-
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) {
-        throw new ShopifyAuthError(res.status);
-      }
-      logger.warn("shopify_rest_order_events_failed", {
-        orderId: numericId,
-        httpStatus: res.status,
-      });
-      return [];
-    }
-
-    const body = (await res.json()) as { events?: RestShopifyEvent[] };
-    return messagesFromRestEvents(body.events ?? []);
-  } finally {
-    clearTimeout(timer);
+    return [];
   }
+  return messagesFromRestEvents(result.data.events ?? []);
 }
 
 /**
@@ -311,6 +278,24 @@ export async function enrichOrderNodeTimeline(
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  // Last-resort DTO path — still no direct fetch from this module.
+  try {
+    const view = await fetchOrderTimelineView(orderGid);
+    if (view.events.length) {
+      return {
+        ...node,
+        events: toTimelineEdges(
+          view.events.map((event) => ({
+            message: event.summary,
+            createdAt: event.at,
+          })),
+        ),
+      };
+    }
+  } catch {
+    /* empty */
   }
 
   logger.warn("shopify_timeline_enrichment_empty", {

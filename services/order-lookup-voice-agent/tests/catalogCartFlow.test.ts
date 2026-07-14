@@ -15,19 +15,16 @@ import {
   shouldOfferEndCallTool,
 } from "../src/services/llmService.js";
 import { isPaymentLinkActionUtterance } from "../src/agents/lockedFlowState.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 function sessionWithOrderAndCart(callSid: string): CallSession {
-  return {
+  const session = {
     callSid,
     from: "+15551234567",
     to: "+15559876543",
     phase: "follow_up",
     greetedThisCall: true,
-    currentOrderData: {
-      order_number: "21698",
-      tracking_number: "1Z999AA10123456784",
-    },
     shoppingCart: [
       {
         title: "Lindy Book",
@@ -43,6 +40,11 @@ function sessionWithOrderAndCart(callSid: string): CallSession {
       recordedAt: Date.now(),
     },
   } as CallSession;
+  saveActiveOrderContext(session, {
+    order_number: "21698",
+    tracking_number: "1Z999AA10123456784",
+  });
+  return session;
 }
 
 describe("catalog shopping vs tracking hijack", () => {
@@ -119,12 +121,12 @@ describe("checkout hangup guards", () => {
     ).toBe(false);
   });
 
-  it("removes end_call tool offer during locked cart flow", () => {
+  it("keeps end_call tool available during locked cart flow (hang-up safety)", () => {
     expect(
       shouldOfferEndCallTool({
         userMessage: "thanks",
         session: lockedSession,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

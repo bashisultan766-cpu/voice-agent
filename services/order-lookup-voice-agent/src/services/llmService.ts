@@ -97,14 +97,13 @@ export function shouldBlockPrematureEndCall(input: {
   return !explicitClose;
 }
 
-/** True when end_call may appear in the LLM tool list for this turn. */
-export function shouldOfferEndCallTool(input: {
+/** True when end_call may appear in the LLM tool list — ALWAYS available (hang-up safety). */
+export function shouldOfferEndCallTool(_input: {
   userMessage: string;
   messages?: Array<{ role: string; content: string }>;
   session?: CallSession;
 }): boolean {
-  if (input.session && isLockedFlowState(input.session)) return false;
-  return isExplicitEndCallIntent(input.userMessage, input.messages ?? []);
+  return true;
 }
 
 /** Caller affirms help after "anything else?" and continues with a real question — not a hangup. */
@@ -128,9 +127,9 @@ export function isClosingConversationUtterance(
   if (isNoWithCartCorrection(callerText)) return false;
   if (isAffirmativeFollowUpRequest(callerText)) return false;
   if (isPaymentLinkActionUtterance(callerText)) return false;
-  if (session && isLockedFlowState(session)) return false;
-
+  // Explicit goodbye works even while locked (hang-up safety).
   if (isExplicitGoodbyeUtterance(callerText)) return true;
+  if (session && isLockedFlowState(session)) return false;
 
   const text = callerText.toLowerCase().trim();
   if (/^(okay bye|ok bye|okay, bye|ok, bye)\b/.test(text)) {

@@ -3,6 +3,7 @@
  */
 import type { CallSession } from "../types/order.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
+import { getActiveOrderContext } from "./sessionManager.js";
 import { formatEmailForTTS } from "../utils/ttsFormatter.js";
 import { physicalItemCount } from "../utils/productLineItems.js";
 import {
@@ -228,7 +229,7 @@ export function buildOrderDetailSpeech(
 
   if (!verified && isRestrictedFieldQueryForUnverified(callerText)) {
     const registeredName = String(
-      session.currentOrderData?.customer_name ?? session.currentOrder?.customerName ?? "",
+      getActiveOrderContext(session)?.customer_name ?? session.currentOrder?.customerName ?? "",
     ).trim();
     if (/\b(shipping\s+address|delivery\s+address)\b/i.test(callerText)) {
       armPrivateInfoBlockedEscalation(
@@ -252,7 +253,7 @@ export function buildOrderDetailSpeech(
   const parts: string[] = [];
 
   const registeredName = String(
-    session.currentOrderData?.customer_name ?? session.currentOrder?.customerName ?? "",
+    getActiveOrderContext(session)?.customer_name ?? session.currentOrder?.customerName ?? "",
   ).trim();
 
   for (const field of fields) {

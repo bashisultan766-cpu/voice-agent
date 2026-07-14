@@ -89,16 +89,96 @@ const SPOKEN_QTY: Record<string, number> = {
   ten: 10,
   eleven: 11,
   twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
   fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
   twenty: 20,
   twentyfive: 25,
   "twenty-five": 25,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
 };
 
-/** Parse spoken quantity from cart commands — e.g. "add 20 copies", "make it ten", "just want 5 total". */
+/**
+ * Semantic Intent Resolver — map bare / natural-language quantity answers to integers.
+ * Prevents Verification Over-Constraint on replies like "one", "just one", "a single copy".
+ */
+export function mapNaturalLanguageToInteger(input: string): number | null {
+  const raw = (input ?? "").trim().toLowerCase();
+  if (!raw) return null;
+
+  // Pure digits (optionally with "x" / "#")
+  const digitOnly = raw.match(/^(?:#|x)?\s*(\d{1,3})\s*$/);
+  if (digitOnly?.[1]) {
+    const n = Number.parseInt(digitOnly[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  // Strip polite wrappers: "just one", "only 1 please", "a single copy", "one please"
+  const stripped = raw
+    .replace(/^(?:just|only|maybe|like|uh+|um+|please|ok(?:ay)?|alright|yes[,.]?\s*)+/g, "")
+    .replace(/[,.]?\s*(?:please|thanks|thank\s+you)\s*$/g, "")
+    .trim();
+
+  const singleCopy =
+    stripped.match(
+      /^(?:a\s+)?(?:single|one)\s+(?:copy|copies|book|books)?$/,
+    ) ?? stripped.match(/^one$/);
+  if (singleCopy) return 1;
+
+  const aCopy = /^(?:a|an)\s+(?:copy|book)$/.test(stripped);
+  if (aCopy) return 1;
+
+  const digitWrapped = stripped.match(/^(\d{1,3})(?:\s*(?:cop(?:y|ies)|books?|x))?$/);
+  if (digitWrapped?.[1]) {
+    const n = Number.parseInt(digitWrapped[1], 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  for (const [word, value] of Object.entries(SPOKEN_QTY)) {
+    if (
+      stripped === word ||
+      stripped === `${word} copy` ||
+      stripped === `${word} copies` ||
+      stripped === `${word} book` ||
+      stripped === `${word} books`
+    ) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+/** True when the utterance is ONLY a quantity answer (not a full cart command). */
+export function isBareQuantityReply(text: string): boolean {
+  return mapNaturalLanguageToInteger(text) != null && !CART_ACTION_RE.test(text.trim());
+}
+
+/** True when the last assistant turn asked how many copies (quantity Confirmation Turn). */
+export function lastAssistantAskedForQuantity(
+  messages: Array<{ role: string; content: string }>,
+): boolean {
+  const last = [...messages].reverse().find((m) => m.role === "assistant");
+  if (!last?.content) return false;
+  return /\bhow\s+many\s+cop(?:y|ies)\b/i.test(last.content);
+}
+
+/** Parse spoken quantity from cart commands — e.g. "add 20 copies", "make it ten", "just want 5 total", bare "one". */
 export function parseCartQuantityFromSpeech(text: string): number | null {
   const t = text.trim().toLowerCase();
   if (!t) return null;
+
+  // Bare / natural-language quantity answers first (Semantic Intent Resolver).
+  const bare = mapNaturalLanguageToInteger(t);
+  if (bare != null && isBareQuantityReply(t)) {
+    return bare;
+  }
 
   const digitMatch =
     t.match(
@@ -118,10 +198,13 @@ export function parseCartQuantityFromSpeech(text: string): number | null {
     }
     if (
       new RegExp(`\\bmake\\s+it\\s+${word}\\b`).test(t) ||
-      new RegExp(`\\bjust\\s+want\\s+${word}\\b`).test(t)
+      new RegExp(`\\bjust\\s+want\\s+${word}\\b`).test(t) ||
+      new RegExp(`\\bjust\\s+${word}\\b`).test(t)
     ) {
       return value;
     }
   }
-  return null;
+
+  // Fall through: still accept resolver for "just one" style wrappers inside longer phrases.
+  return bare;
 }

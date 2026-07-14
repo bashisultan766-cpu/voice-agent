@@ -36,6 +36,10 @@ import {
   isSessionPersistenceEnabled,
 } from "./platform/sessionPersistence.js";
 
+import { initCheckoutOperationRepository } from "./platform/checkoutOperationBootstrap.js";
+
+import { assertProductionDeploymentReady } from "./platform/deploymentInvariants.js";
+
 import { validateEnvironmentOnStartup } from "./platform/envValidator.js";
 
 import {
@@ -181,6 +185,9 @@ async function bootstrap(): Promise<void> {
 
   await initPostgresEventStore();
   await initSessionPersistence();
+  await initCheckoutOperationRepository();
+
+  await assertProductionDeploymentReady();
 
   if (!isConversationRelayRuntime()) {
     await prewarmVoiceCache();

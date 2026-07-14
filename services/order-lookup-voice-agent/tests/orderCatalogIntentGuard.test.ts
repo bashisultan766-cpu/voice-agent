@@ -9,6 +9,7 @@ import { isCatalogShoppingUtterance, extractSpokenCatalogPrice } from "../src/ag
 import { createCallSession } from "../src/agents/conversationOrchestrator.js";
 import type { CallSession } from "../src/types/order.js";
 import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
+import { ORDER_DISCLOSURE_POLICY_VERSION } from "../src/agents/orderDisclosurePolicy.js";
 
 function confirmedOrderSession(callSid: string): CallSession {
   const session = {
@@ -27,10 +28,17 @@ function confirmedOrderSession(callSid: string): CallSession {
 }
 
 describe("order context policy", () => {
-  it("does not treat memory-only order JSON as confirmed context", () => {
+  it("does not treat unconfirmed sessionOrderContext as confirmed context", () => {
     const session = {
       callSid: "CA_UNCONFIRMED",
-      currentOrderData: { order_number: "99999", customer_name: "Ghost" },
+      sessionOrderContext: {
+        orderReferenceId: "99999",
+        orderNumber: "99999",
+        verificationLevel: "unverified",
+        disclosurePolicyVersion: ORDER_DISCLOSURE_POLICY_VERSION,
+        orderView: { verificationLevel: "unverified", order_number: "99999", customer_name: "Ghost" },
+        fetchedAt: Date.now(),
+      },
     } as CallSession;
     expect(hasConfirmedOrderContext(session)).toBe(false);
   });
@@ -42,7 +50,7 @@ describe("order context policy", () => {
 
   it("does not restore order context from caller memory on new call", () => {
     const session = createCallSession("CA_NEW_CALL", "+15551234567", "+15559876543");
-    expect(session.currentOrderData).toBeUndefined();
+    expect(session.sessionOrderContext).toBeUndefined();
     expect(session.orderContextConfirmed).toBeUndefined();
   });
 });
@@ -51,7 +59,14 @@ describe("catalog vs order intent guards", () => {
   it("routes book title search to catalog even when stale order exists in session object", () => {
     const session = {
       callSid: "CA_TITLE_SEARCH",
-      currentOrderData: { order_number: "21698" },
+      sessionOrderContext: {
+        orderReferenceId: "21698",
+        orderNumber: "21698",
+        verificationLevel: "unverified",
+        disclosurePolicyVersion: ORDER_DISCLOSURE_POLICY_VERSION,
+        orderView: { verificationLevel: "unverified", order_number: "21698" },
+        fetchedAt: Date.now(),
+      },
       phase: "follow_up",
     } as CallSession;
     const utterance = "please find exact book title rich dad poor dad";
@@ -63,7 +78,14 @@ describe("catalog vs order intent guards", () => {
   it("asks for order number instead of using stale context for order details requests", () => {
     const session = {
       callSid: "CA_ORDER_DETAILS",
-      currentOrderData: { order_number: "21698" },
+      sessionOrderContext: {
+        orderReferenceId: "21698",
+        orderNumber: "21698",
+        verificationLevel: "unverified",
+        disclosurePolicyVersion: ORDER_DISCLOSURE_POLICY_VERSION,
+        orderView: { verificationLevel: "unverified", order_number: "21698" },
+        fetchedAt: Date.now(),
+      },
       phase: "follow_up",
     } as CallSession;
     const utterance = "how can I get details of my order";

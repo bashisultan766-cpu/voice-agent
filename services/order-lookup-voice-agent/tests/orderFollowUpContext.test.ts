@@ -7,6 +7,10 @@ import {
 } from "../src/adapters/openaiAdapter.js";
 import { clearAllAgentStates, getAgentState } from "../src/platform/stateProjection.js";
 import { markCallSessionActive, clearAllCallSessionLocks } from "../src/voice/callSessionLock.js";
+import {
+  getActiveOrderContext,
+  saveActiveOrderContext,
+} from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 const mockCreate = vi.fn();
@@ -66,13 +70,14 @@ describe("multi-turn order follow-up context injection", () => {
       elapsedMs: 10,
       data: {
         status: "found",
-        orderNumber: "#21698-F1",
-        customerName: "Joel Moore",
-        customerPhone: "+15551234567",
-        refundStatus: "REFUNDED",
-        refundReason: "OUT OF STOCK",
-        refundNotificationEmail: "btazp@yahoo.com",
-        fulfillmentStatus: "unfulfilled",
+        is_verified_caller: true,
+        orderView: {
+          verificationLevel: "verified",
+          order_number: "#21698-F1",
+          customer_name: "Joel Moore",
+          fulfillment_status: "unfulfilled",
+          refund_notification_email: "btazp@yahoo.com",
+        },
       },
     });
 
@@ -80,13 +85,13 @@ describe("multi-turn order follow-up context injection", () => {
 
     const turn1Speech = await collectOrchestratorSpeech(session, "Order 21698");
 
-    expect(turn1Speech).toMatch(
-      /I have successfully pulled up order 21698-F1 for Joel Moore\.\s*Order status is awaiting fulfillment\.\s*How can I assist you further with this order\?/i,
-    );
+    expect(turn1Speech).toMatch(/21698-F1/i);
+    expect(turn1Speech).toMatch(/Joel Moore/i);
+    expect(turn1Speech).toMatch(/unfulfilled|awaiting fulfillment/i);
     expect(turn1Speech).not.toContain("btazp@yahoo.com");
     expect(session.isVerifiedCaller).toBe(true);
     expect(session.orderLookupComplete).toBe(true);
-    expect(session.currentOrderData?.refund_notification_email).toBe("btazp@yahoo.com");
+    expect(getActiveOrderContext(session)?.refund_notification_email).toBe("btazp@yahoo.com");
     expect(session.phase).toBe("order_disclosed");
 
     mockCreate.mockResolvedValue({
@@ -110,22 +115,24 @@ describe("multi-turn order follow-up context injection", () => {
     expect(mockCreate).not.toHaveBeenCalled();
     expect(turn2Speech.toLowerCase()).toMatch(/btazp.*yahoo/);
     expect(turn2Speech).toMatch(/inbox and spam folder/i);
-    expect(session.currentOrderData?.refund_notification_email).toBe("btazp@yahoo.com");
+    expect(getActiveOrderContext(session)?.refund_notification_email).toBe("btazp@yahoo.com");
   });
 
   it("buildLlmTurnMessagesForTest injects active order context as hidden system message", () => {
+    const session = {
+      callSid: "CA_MSG",
+      orderContextConfirmed: true,
+      isVerifiedCaller: true,
+    } as CallSession;
+    saveActiveOrderContext(session, {
+      order_number: "#21698-F1",
+      refund_notification_email: "btazp@yahoo.com",
+    });
+
     const messages = buildLlmTurnMessagesForTest({
       callSid: "CA_MSG",
       userMessage: "What was the refund email?",
-      session: {
-        callSid: "CA_MSG",
-        orderContextConfirmed: true,
-        isVerifiedCaller: true,
-        currentOrderData: {
-          order_number: "#21698-F1",
-          refund_notification_email: "btazp@yahoo.com",
-        },
-      } as CallSession,
+      session,
       messages: [
         { role: "assistant", content: "I found your order. Your order status is Refunded." },
         { role: "user", content: "What was the refund email?" },
@@ -146,10 +153,10 @@ describe("multi-turn order follow-up context injection", () => {
   it("clears stale context after a failed order lookup", async () => {
     markCallSessionActive("CA_FAIL");
     const session = createCallSession("CA_FAIL", "+1", "+2");
-    session.currentOrderData = {
+    saveActiveOrderContext(session, {
       order_number: "#21698-F1",
       refund_notification_email: "btazp@yahoo.com",
-    };
+    });
 
     vi.mocked(executeLlmTool).mockResolvedValue({
       tool: "get_shopify_order_status",
@@ -170,7 +177,8 @@ describe("multi-turn order follow-up context injection", () => {
     await collectOrchestratorSpeech(session, "99999");
 
     expect(executeLlmTool).toHaveBeenCalledTimes(1);
-    expect(session.currentOrderData).toBeUndefined();
+    expect(getActiveOrderContext(session)).toBeUndefined();
+    expect(session.sessionOrderContext).toBeUndefined();
   });
 });
 

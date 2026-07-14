@@ -33,6 +33,10 @@ import {
   ARE_YOU_STILL_THERE_SPEECH,
   VOICE_LAYER_ERROR_SPEECH,
 } from "../constants/systemMessages.js";
+import {
+  SharedListeningWaitScheduler,
+  cancelListeningWaitTimer,
+} from "./turnScheduler.js";
 
 const interruptedCalls = new Set<string>();
 
@@ -103,7 +107,10 @@ async function runRelayTurn(
     }
 
     if (endCall && !isInterrupted(callSid)) {
-      sendEndCall(send);
+      const { TerminationCoordinator } = await import("../runtime/terminationCoordinator.js");
+      TerminationCoordinator.terminate(session, "transport_stop", {
+        sendEndCall: () => sendEndCall(send),
+      });
     }
   } catch (err) {
     logger.error("conversation_relay_turn_failed", {
@@ -154,6 +161,16 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
 
         session = await createOrHydrateCallSession(callSid, from, to);
         session.greetedThisCall = true;
+        SharedListeningWaitScheduler.registerDelivery(
+          callSid,
+          async (decision) => {
+            if (closed || !decision.speech) return;
+            await sendSpeechToConversationRelay(send, decision.speech, {
+              endOfTurn: true,
+            });
+          },
+          () => !closed && isCallSessionActive(callSid),
+        );
         logger.info("conversation_relay_setup", {
           callSid: callSid.slice(0, 8),
           from: from.slice(-4),
@@ -238,6 +255,8 @@ export async function handleConversationRelaySocket(socket: WebSocket): Promise<
   socket.on("close", () => {
     closed = true;
     if (session) {
+      cancelListeningWaitTimer(session.callSid);
+      SharedListeningWaitScheduler.unregisterDelivery(session.callSid);
       abortActiveTurn(session.callSid);
       setInterrupted(session.callSid, false);
       endCallSession(session.callSid, session);

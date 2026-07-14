@@ -3,6 +3,7 @@
  * Single source for deterministic refusals and vault field authorization.
  */
 import type { CallSession } from "../types/order.js";
+import { getActiveOrderContext } from "./sessionManager.js";
 import {
   canRevealOrderField,
   disclosureTierForSession,
@@ -109,7 +110,7 @@ export function shouldRefuseUnverifiedFieldQuery(
 
 export function buildVerificationRefusalSpeech(session: CallSession): string {
   const name = String(
-    session.currentOrderData?.customer_name ?? session.currentOrder?.customerName ?? "",
+    getActiveOrderContext(session)?.customer_name ?? session.currentOrder?.customerName ?? "",
   ).trim();
   return buildUnverifiedRestrictedFieldRefusal(name || undefined);
 }

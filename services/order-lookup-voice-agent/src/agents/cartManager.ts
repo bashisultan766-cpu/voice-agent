@@ -22,6 +22,13 @@ export interface CartItemInput {
   unit_price?: string;
   price?: string;
   quantity?: number;
+  /** Facility/compliance tags to stamp onto the cart line. */
+  tags?: string[];
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
+  /** Inventory snapshot for Urgency Guardrail / Atomic Finality. */
+  inventoryQuantity?: number;
+  temporaryReservation?: boolean;
+  reservedAt?: number;
 }
 
 function resolveUnitPrice(raw: CartItemInput): string | undefined {
@@ -60,6 +67,26 @@ export function ensureShoppingCart(session: CallSession): ShoppingCartLineItem[]
   return session.shoppingCart;
 }
 
+/**
+ * CartState — single source of truth for quantity and SKU counts.
+ * All commerce mutations must flow through applySessionCartQuantity so this stays consistent.
+ */
+export interface CartState {
+  shoppingCart: ShoppingCartLineItem[];
+  currentSessionCart: Record<string, number>;
+  totalUnits: number;
+}
+
+export function getCartState(session: CallSession): CartState {
+  const shoppingCart = ensureShoppingCart(session);
+  const currentSessionCart = session.currentSessionCart ?? {};
+  return {
+    shoppingCart,
+    currentSessionCart,
+    totalUnits: shoppingCart.reduce((sum, line) => sum + line.quantity, 0),
+  };
+}
+
 function logCartUpdate(session: CallSession, cart: ShoppingCartLineItem[]): void {
   const projection: Record<string, number> = {};
   for (const line of cart) {
@@ -75,7 +102,10 @@ function logCartUpdate(session: CallSession, cart: ShoppingCartLineItem[]): void
 }
 
 /**
- * Unified cart quantity updater — single source of truth for add / remove / set_exact.
+ * Low-level cart quantity writer.
+ * Caller-driven commerce mutations (add/set/minus from speech or tools) MUST go through
+ * `applySessionCartQuantity` so facility compliance + upsell + projection stay consistent.
+ * Prefer that API; use this only for internal cart math (e.g. checkout batch deduct).
  */
 export function updateCartItemQuantity(
   session: CallSession,
@@ -149,6 +179,11 @@ export function setCartLineQuantity(
       line.unitPrice = unitPrice;
       line.price = unitPrice;
     }
+    if (item.tags?.length) line.tags = [...item.tags];
+    if (item.metafields?.length) line.metafields = item.metafields.map((m) => ({ ...m }));
+    if (item.inventoryQuantity != null) line.inventoryQuantity = item.inventoryQuantity;
+    if (item.temporaryReservation != null) line.temporaryReservation = item.temporaryReservation;
+    if (item.reservedAt != null) line.reservedAt = item.reservedAt;
     logCartUpdate(session, cart);
     return cart;
   }
@@ -166,6 +201,13 @@ export function setCartLineQuantity(
     unitPrice,
     price: unitPrice,
     isbn: item.isbn?.trim(),
+    tags: item.tags?.length ? [...item.tags] : undefined,
+    metafields: item.metafields?.length
+      ? item.metafields.map((m) => ({ ...m }))
+      : undefined,
+    inventoryQuantity: item.inventoryQuantity,
+    temporaryReservation: item.temporaryReservation,
+    reservedAt: item.reservedAt,
   });
   logCartUpdate(session, cart);
   return cart;
@@ -239,6 +281,11 @@ function cloneCartLine(line: ShoppingCartLineItem, quantity: number): ShoppingCa
     unitPrice: line.unitPrice,
     price: line.price ?? line.unitPrice,
     isbn: line.isbn,
+    tags: line.tags ? [...line.tags] : undefined,
+    metafields: line.metafields?.map((m) => ({ ...m })),
+    inventoryQuantity: line.inventoryQuantity,
+    temporaryReservation: line.temporaryReservation,
+    reservedAt: line.reservedAt,
   };
 }
 
@@ -323,15 +370,28 @@ export function deductCheckedOutItems(
 export function buildCartContextSystemMessage(session: CallSession): string {
   const summary = getCartSummary(session);
   if (summary.isEmpty) {
-    return "ACTIVE SHOPPING CART: Empty. Help the caller find books and use update_cart_item_quantity when they want items.";
+    return "ACTIVE SHOPPING CART (CartState SSOT): Empty. Help the caller find books and use update_cart_item_quantity when they want items. NEVER invent a separate add/remove tool.";
   }
 
+  const cs = session.paymentCheckout?.checkoutSession;
+  const pendingBatch = cs?.currentBatch?.length
+    ? ` pendingCheckoutBatch=${JSON.stringify(cs.currentBatch)}`
+    : "";
+  const confirmedBatches = cs?.completedBatches?.length
+    ? ` confirmedPaymentBatches=${cs.completedBatches.length} (emails: ${cs.completedBatches.map((b) => b.email).join(", ")})`
+    : "";
+  const remaining =
+    cs?.active && cs.remainingItems.length
+      ? ` cartIteratorRemaining=${JSON.stringify(cs.remainingItems)}`
+      : "";
+
   return (
-    "ACTIVE SHOPPING CART: The caller's current cart is persisted for this call. " +
-    "Use update_cart_item_quantity with action_type add | remove | set_exact, and variant_id / unit_price from search results " +
+    "ACTIVE SHOPPING CART (CartState SSOT): The caller's cart is the ONLY source of truth for quantity and SKU counts. " +
+    "ALWAYS use update_cart_item_quantity for cart changes (action_type add | remove | set_exact) with variant_id / unit_price from search results " +
     "(full gid://shopify/ProductVariant/...). Use get_cart_summary to read the cart. " +
-    "For multi-batch split checkout, pass items into send_checkout_email (alias: generate_payment_link) with title, variant_id, or 1-based position plus quantity. " +
-    "Tell the caller exactly how many units remain after every batch. " +
+    "For multi-batch split checkout, call send_checkout_email / initiate_checkout_batch with items = sku_list for ONE email only " +
+    "(title, variant_id, or 1-based position plus quantity). After each batch, CartState decrements — tell the caller remaining units exactly. " +
+    `Distinguish pending vs confirmed payment links:${pendingBatch || " pendingCheckoutBatch=(none)"}${confirmedBatches || " confirmedPaymentBatches=0"}${remaining}. ` +
     `JSON: ${JSON.stringify(summary.items.map((line, i) => ({ position: i + 1, ...line })))}`
   );
 }

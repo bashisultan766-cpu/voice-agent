@@ -3,6 +3,7 @@ import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
+import { shopifyGraphql } from "../infra/shopifyHttpClient.js";
 
 interface CatalogCache {
   products: StructuredProduct[];
@@ -11,19 +12,6 @@ interface CatalogCache {
 }
 
 let catalogCache: CatalogCache | null = null;
-
-function shopifyBaseUrl(): string {
-  const cfg = getConfig();
-  const domain = cfg.SHOPIFY_SHOP_DOMAIN.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  return `https://${domain}/admin/api/${cfg.SHOPIFY_API_VERSION}`;
-}
-
-function authHeaders(): Record<string, string> {
-  return {
-    "X-Shopify-Access-Token": getConfig().SHOPIFY_ADMIN_ACCESS_TOKEN,
-    "Content-Type": "application/json",
-  };
-}
 
 function indexIsbn(map: Map<string, string>, value: string | undefined, productId: string): void {
   if (!value) return;
@@ -45,27 +33,6 @@ function buildIsbnIndex(products: StructuredProduct[]): Map<string, string> {
     }
   }
   return index;
-}
-
-async function shopifyGraphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-  const cfg = getConfig();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(`${shopifyBaseUrl()}/graphql.json`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ query, variables }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`shopify_graphql_http_${res.status}`);
-    const body = (await res.json()) as { data?: T; errors?: unknown[] };
-    if (body.errors?.length) throw new Error("shopify_graphql_error");
-    return body.data as T;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 const CATALOG_QUERY = `query ($cursor: String) {

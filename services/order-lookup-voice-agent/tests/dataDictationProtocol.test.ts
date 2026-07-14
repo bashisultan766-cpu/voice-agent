@@ -20,22 +20,23 @@ import { isContextualDictationRepeatRequest } from "../src/agents/trackingIntent
 import { extractTrackingFromOrderNote } from "../src/adapters/orderFieldExtractors.js";
 import { SHOSHAN_SYSTEM_PROMPT } from "../src/prompts/systemPrompt.js";
 import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 const CALL_SID = "CA_data_dictation_protocol";
 
 function baseSession(overrides: Partial<CallSession> = {}): CallSession {
-  return {
+  const session = {
     callSid: CALL_SID,
     phase: "active",
-    orderContextConfirmed: true,
-    currentOrderData: {
-      tracking_number: "9400111899223344556677",
-      order_number: "12345",
-    },
     shoppingCart: [],
     ...overrides,
   } as CallSession;
+  saveActiveOrderContext(session, {
+    tracking_number: "9400111899223344556677",
+    order_number: "12345",
+  });
+  return session;
 }
 
 describe("Data Dictation Protocol", () => {

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { runOrchestratorTurn } from "../src/agents/conversationOrchestrator.js";
 import { createCallSession } from "../src/agents/orderAgent.js";
 import { applyCallerVerificationFromOrder } from "../src/agents/callerVerification.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import { addToCart, getCartSummary } from "../src/agents/cartManager.js";
 import { getOrCreateActiveSession, recordTrackingPayload } from "../src/sovereign/activeSession.js";
 import { clearAllCallMemories } from "../src/memory/callMemoryStore.js";
@@ -176,7 +177,7 @@ describe("enterprise restoration phase 2 e2e", () => {
       customerId: "gid://shopify/Customer/12345",
       totalOrderCount: 4,
     } as shopifyStorefrontAdapter.OrderStatusResult);
-    session.currentOrderData = {
+    saveActiveOrderContext(session, {
       order_number: "21796",
       customer_name: "Jamaica Thompson",
       tracking_number: TRACKING,
@@ -184,7 +185,7 @@ describe("enterprise restoration phase 2 e2e", () => {
       total_amount: "$42.00",
       shipping_amount: "$5.99",
       payment_method: "Visa ending in 4242",
-    };
+    });
     logStep(1, "verify-caller", session, `isVerifiedCaller=${session.isVerifiedCaller}`);
     expect(session.isVerifiedCaller).toBe(true);
 

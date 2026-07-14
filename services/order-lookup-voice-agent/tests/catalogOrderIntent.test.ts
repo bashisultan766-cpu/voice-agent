@@ -1,22 +1,24 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { resolveCallerIntent } from "../src/agents/callerIntent.js";
 import { isStableOrderLookupStatus } from "../src/agents/orderLookupWorkflow.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 function sessionWithOrder(callSid: string): CallSession {
-  return {
+  const session = {
     callSid,
     from: "+15551234567",
     to: "+15559876543",
     phase: "follow_up",
     greetedThisCall: true,
-    currentOrderData: {
-      order_number: "21698",
-      customer_name: "Jane Doe",
-      physical_items: [{ title: "Old Order Book", quantity: 1 }],
-    },
     isVerifiedCaller: false,
   } as CallSession;
+  saveActiveOrderContext(session, {
+    order_number: "21698",
+    customer_name: "Jane Doe",
+    physical_items: [{ title: "Old Order Book", quantity: 1 }],
+  });
+  return session;
 }
 
 describe("catalog vs order intent", () => {

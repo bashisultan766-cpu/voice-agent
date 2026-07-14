@@ -24,9 +24,16 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().default("gpt-4o-mini"),
   CONVERSATION_BRAIN_MODEL: z.string().default("gpt-4o"),
   OPENAI_TIMEOUT_MS: z.coerce.number().default(8000),
+  /** Checkout / orchestrator creativity — production default 0.2 for reliability. */
+  LLM_TEMPERATURE: z.coerce.number().min(0).max(2).default(0.2),
+  /** When true, OpenAI chat uses token streaming for low-latency voice. */
+  STREAMING_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
 
   SHOPIFY_SHOP_DOMAIN: z.string().min(1),
-  /** Static Custom App Admin API token (required). */
+  /** Static Custom App Admin API token (required). Alias: SHOPIFY_API_KEY. */
   SHOPIFY_ADMIN_ACCESS_TOKEN: z.string().min(1),
   SHOPIFY_API_VERSION: z.string().default("2025-07"),
   /** Hard ceiling for Shopify HTTP / GraphQL calls (voice must not hang). */
@@ -34,6 +41,19 @@ const envSchema = z.object({
   /** Hard ceiling for any UnifiedToolRegistry execution (Shopify, Resend, etc.). */
   TOOL_EXECUTION_TIMEOUT_MS: z.coerce.number().default(6000),
   SHOPIFY_CACHE_TTL_SECS: z.coerce.number().default(60),
+
+  /**
+   * Optional facility restriction database URL / path (JSON).
+   * When unset, facility compliance uses product tags/metafields only.
+   */
+  FACILITY_RESTRICTION_DB: z.string().optional(),
+  /** Optional webhook for escalate_to_human (POST JSON ticket payload). */
+  SUPPORT_HUMAN_WEBHOOK: z.string().optional(),
+  /**
+   * Optional logistics intelligence sidecar base URL.
+   * When set, live inventory may be refreshed via POST {base}/inventory before Shopify Admin.
+   */
+  LOGISTICS_INTELLIGENCE_URL: z.string().optional(),
 
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().optional(),

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildActiveOrderContextSystemMessage,
   clearActiveOrderContext,
+  getActiveOrderContext,
+  getActiveOrderNumber,
   saveActiveOrderContext,
   shouldReplaceOrderContext,
 } from "../src/agents/sessionManager.js";
@@ -50,16 +52,20 @@ describe("sessionManager active order context", () => {
     });
   });
 
-  it("persists and clears currentOrderData on the call session", () => {
+  it("persists and clears sessionOrderContext on the call session", () => {
     const session = createCallSession("CA_CTX", "+1", "+2");
     session.isVerifiedCaller = true;
     const payload = buildActiveOrderContextPayload(SAMPLE_ORDER, session);
 
     saveActiveOrderContext(session, payload);
-    expect(session.currentOrderData?.refund_notification_email).toBe("btazp@yahoo.com");
+    expect(getActiveOrderContext(session)?.refund_notification_email).toBe("btazp@yahoo.com");
+    expect(getActiveOrderContext(session)?.order_number).toBe("#21698-F1");
+    expect(getActiveOrderNumber(session)).toBe("21698-F1");
+    expect(session.currentSessionOrder?.orderNumber).toBe("21698-F1");
 
     clearActiveOrderContext(session);
-    expect(session.currentOrderData).toBeUndefined();
+    expect(session.sessionOrderContext).toBeUndefined();
+    expect(getActiveOrderContext(session)).toBeUndefined();
   });
 
   it("detects when a new spoken order number should replace context", () => {

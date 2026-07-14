@@ -10,6 +10,8 @@ import {
 import {
   isCatalogShoppingUtterance,
   isCartActionUtterance,
+  isBareQuantityReply,
+  mapNaturalLanguageToInteger,
   parseCartQuantityFromSpeech,
   resolveCartActionTypeFromSpeech,
 } from "./catalogShoppingIntent.js";
@@ -30,6 +32,11 @@ import { isSupportEscalationRequest, type CallerIntent } from "./callerIntent.js
 import { isEmailConfirmationActive } from "./emailConfirmationManager.js";
 import { shouldAbortEmailConfirmation } from "../utils/emailCapture.js";
 import { applyUnifiedWorkflowTransition } from "./unifiedCallSession.js";
+import {
+  analyzeAndTrackSentiment,
+  SENTIMENT_SHIELD_SPEECH,
+} from "../utils/sentiment.js";
+import { getActiveOrderContext } from "./sessionManager.js";
 
 export type AgentWorkflow =
   | "idle"
@@ -47,6 +54,8 @@ export type AgentWorkflow =
 export interface BrainControlResult {
   cancelledSupport: boolean;
   deterministicCartSpeech?: string;
+  /** Sentiment Shield Support-Mode speech (frustrationCount > 2). */
+  sentimentShieldSpeech?: string;
   activeWorkflow: AgentWorkflow;
 }
 
@@ -104,7 +113,7 @@ export function resolveAgentWorkflow(session: CallSession): AgentWorkflow {
   if ((session.shoppingCart?.length ?? 0) > 0) return "cart_checkout";
   if (ctx === "product_search") return "product_search";
   if (ctx === "order_lookup") return "order_lookup";
-  if (session.orderContextConfirmed && session.currentOrderData) return "order_detail";
+  if (session.orderContextConfirmed && getActiveOrderContext(session)) return "order_detail";
   return "idle";
 }
 
@@ -131,8 +140,9 @@ export function syncBrainMemory(
     memory.lastProductIsbn = target.isbn;
   }
 
-  if (session.currentOrderData?.order_number) {
-    memory.lastOrderNumber = String(session.currentOrderData.order_number).replace(/^#/, "");
+  const activeOrderNumber = getActiveOrderContext(session)?.order_number;
+  if (activeOrderNumber) {
+    memory.lastOrderNumber = String(activeOrderNumber).replace(/^#/, "");
   }
   memory.verificationStatus = session.isVerifiedCaller === true ? "verified" : "non_verified";
   memory.supportEscalationStatus = session.supportEscalation?.state ?? "normal";
@@ -150,6 +160,17 @@ export function applyBrainWorkflowControl(
 ): BrainControlResult {
   syncBrainMemory(session, text, callerIntent);
   captureSessionIntent(session, text, callerIntent);
+
+  // Sentiment Shield — analyze every turn; defer escalate while a payment batch is mid-flight.
+  const sentiment = analyzeAndTrackSentiment(session, text);
+  if (sentiment.shieldArmed) {
+    syncBrainMemory(session, text, callerIntent);
+    return {
+      cancelledSupport: false,
+      sentimentShieldSpeech: SENTIMENT_SHIELD_SPEECH,
+      activeWorkflow: resolveAgentWorkflow(session),
+    };
+  }
 
   let cancelledSupport = false;
   const pivotToPurchase =
@@ -230,8 +251,9 @@ export function shouldSuppressCatalogEscalation(session?: CallSession): boolean 
 }
 
 /**
- * Deterministic cart update for "Add 20 copies" / "Make it 10" / "don't add, just want 5 total".
+ * Deterministic cart update for "Add 20 copies" / "Make it 10" / bare "one" after How many copies?.
  * Also resolves yes/no for a pending proactive recommendation.
+ * Bare quantity replies never re-enter a verification loop — apply once and offer next step.
  */
 export function tryDeterministicCartTurn(
   session: CallSession,
@@ -266,10 +288,23 @@ export function tryDeterministicCartTurn(
     }
   }
 
-  if (!isCartActionUtterance(text)) return null;
-
+  const memory = getSessionMemory(session);
+  const bareQty = mapNaturalLanguageToInteger(text);
+  const bareReply = isBareQuantityReply(text);
+  const awaitingQty = memory.awaitingQuantityReply === true;
   const target = session.lastCatalogSearch;
-  const qty = parseCartQuantityFromSpeech(text);
+  const canAcceptBareQty =
+    bareReply &&
+    bareQty != null &&
+    bareQty > 0 &&
+    Boolean(target?.variantId) &&
+    (awaitingQty ||
+      (memory.quantityAskCount ?? 0) > 0 ||
+      !(session.shoppingCart ?? []).some((line) => line.variantId === target?.variantId));
+
+  if (!isCartActionUtterance(text) && !canAcceptBareQty) return null;
+
+  const qty = parseCartQuantityFromSpeech(text) ?? bareQty;
   if (!target?.variantId || qty == null || qty <= 0) return null;
 
   const lineInput = {
@@ -279,13 +314,15 @@ export function tryDeterministicCartTurn(
     isbn: target.isbn,
   };
 
-  const actionType = resolveCartActionTypeFromSpeech(text);
+  // Bare quantity answering "How many copies?" is an absolute total — never re-confirm.
+  const actionType = canAcceptBareQty ? "set_exact" : resolveCartActionTypeFromSpeech(text);
   const result = applySessionCartQuantity(session, lineInput, qty, actionType, {
     facilityType: session.facilityType,
   });
 
-  const memory = getSessionMemory(session);
   memory.latestQuantityRequested = qty;
+  memory.awaitingQuantityReply = false;
+  memory.quantityAskCount = 0;
   memory.unresolvedUserGoal = null;
   session.lastOrchestratorIntent = "cart";
   setConversationFlowMode(session.callSid, "PURCHASE_FLOW");
@@ -305,6 +342,19 @@ export function tryDeterministicCartTurn(
   const line = summary.items.find((l) => l.variantId === target.variantId);
   const count = line?.quantity ?? qty;
   const title = target.title || "that book";
+
+  // Confirmation Turn complete — acknowledge and advance toward payment-link shopping loop.
+  // Do NOT re-ask "How many copies?"
+  if (canAcceptBareQty || awaitingQty) {
+    return {
+      handled: true,
+      speech:
+        `Got it — ${count} ${count === 1 ? "copy" : "copies"} of ${title} ` +
+        `${count === 1 ? "is" : "are"} in your cart. ` +
+        `Would you like to search for another book, or shall I prepare your payment link?`,
+    };
+  }
+
   return {
     handled: true,
     speech:

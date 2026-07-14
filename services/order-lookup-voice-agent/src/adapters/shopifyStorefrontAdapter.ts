@@ -299,6 +299,9 @@ export interface CustomerHistoryResult {
   orderCount?: number;
   message?: string;
   error?: string;
+  /** FAILURE_STATE / verification redirect (unverified callers). */
+  failureState?: string;
+  redirect_to_support?: boolean;
 }
 
 export interface DraftOrderLineInput {

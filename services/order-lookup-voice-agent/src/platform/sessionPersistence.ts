@@ -20,6 +20,10 @@ import {
   isPostgresEventStoreEnabled,
   queryPostgres,
 } from "./postgresEventStore.js";
+import {
+  assertSessionSafeForPersistence,
+  serializeSessionForPersistence,
+} from "./sessionSerialization.js";
 
 export type PersistedSessionStatus = "active" | "completed" | "archived";
 
@@ -173,6 +177,16 @@ export async function savePersistedSessionDetailed(
     return { ok: true, version: null, skipped: true };
   }
 
+  try {
+    assertSessionSafeForPersistence(session);
+  } catch (err) {
+    logger.warn("session_persistence_privacy_guard_tripped", {
+      callSid: session.callSid.slice(0, 8),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { ok: false, reason: "save_failed" };
+  }
+
   let expected = readVersion(session);
   for (let attempt = 0; attempt < MAX_OPTIMISTIC_RETRIES; attempt += 1) {
     const payload = cloneSession(session);
@@ -180,6 +194,7 @@ export async function savePersistedSessionDetailed(
     const nextVersion = expected + 1;
 
     try {
+      const serialized = serializeSessionForPersistence(payload);
       const result = await queryPostgres(
         `INSERT INTO call_sessions (
            call_sid, status, version, session_json, from_number, to_number, updated_at
@@ -197,7 +212,7 @@ export async function savePersistedSessionDetailed(
         [
           session.callSid,
           nextVersion,
-          JSON.stringify(payload),
+          serialized,
           session.from ?? null,
           session.to ?? null,
           expected,
@@ -250,7 +265,10 @@ export async function archivePersistedSession(
   if (!isSessionPersistenceEnabled()) return;
 
   try {
-    const payload = session ? JSON.stringify(cloneSession(session)) : null;
+    if (session) assertSessionSafeForPersistence(session);
+    const payload = session
+      ? serializeSessionForPersistence(cloneSession(session))
+      : null;
     if (payload) {
       await queryPostgres(
         `INSERT INTO call_sessions (

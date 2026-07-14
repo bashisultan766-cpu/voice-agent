@@ -1,7 +1,7 @@
 /**
  * Cross-call in-memory cache — survives dropped calls within the same Node process.
  */
-import type { ShoppingCartLineItem } from "../types/order.js";
+import type { ShoppingCartLineItem, CallSession } from "../types/order.js";
 import { logger } from "./logger.js";
 
 export const CALLER_WELCOME_BACK_GREETING =
@@ -17,7 +17,7 @@ export interface CallerMemorySnapshot {
   phone: string;
   lastIntent?: string;
   shoppingCart?: ShoppingCartLineItem[];
-  currentOrderData?: Record<string, unknown>;
+  sessionOrderContext?: CallSession["sessionOrderContext"];
   savedAt: number;
 }
 
@@ -47,7 +47,7 @@ export function saveCallerMemory(
   logger.info("caller_memory_saved", {
     keySuffix: key.slice(-4),
     cartLines: snapshot.shoppingCart?.length ?? 0,
-    hasOrderContext: Boolean(snapshot.currentOrderData),
+    hasOrderContext: Boolean(snapshot.sessionOrderContext),
   });
 }
 

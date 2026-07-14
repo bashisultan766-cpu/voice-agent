@@ -4,10 +4,7 @@
  * Maps Shopify adapter results to caller-facing speech with graceful fallbacks
  * when lookups fail, throttle, or return no matches.
  */
-import type {
-  BookAvailabilityResult,
-  OrderStatusResult,
-} from "../adapters/shopifyStorefrontAdapter.js";
+import type { BookAvailabilityResult } from "../adapters/shopifyStorefrontAdapter.js";
 import {
   getOrderStatus,
   searchByISBN,
@@ -35,7 +32,6 @@ import {
   SYSTEM_MAINTENANCE_SPOKEN,
 } from "../constants/systemMessages.js";
 import { buildVerificationFirstOrderSpeech } from "./orderLookupProtocol.js";
-import { parsedDataFromOrderResult } from "../utils/orderDataParser.js";
 import { filterPhysicalLineItems, physicalItemCount } from "../utils/productLineItems.js";
 import { speakMoney } from "../utils/formatter.js";
 import { logger } from "../utils/logger.js";
@@ -60,7 +56,7 @@ export interface FulfillmentHandlerResult {
   extraction: EntityExtractionResult;
   tts: TtsPayload;
   /** Raw adapter payload when a Shopify call was made. */
-  data?: OrderStatusResult | BookAvailabilityResult;
+  data?: OrderSpeechData | BookAvailabilityResult;
 }
 
 function formatVoicePrice(price: string): string {
@@ -111,9 +107,31 @@ export function buildBookFoundTts(result: BookAvailabilityResult): TtsPayload {
   };
 }
 
-import type { StructuredOrder } from "../types/order.js";
+import type { OrderLookupStatus, StructuredOrder } from "../types/order.js";
 
-function isRefundedOrder(result: OrderStatusResult): boolean {
+type OrderSpeechData = {
+  status: OrderLookupStatus;
+  orderNumber?: string;
+  customerName?: string;
+  fulfillmentStatus?: string;
+  financialStatus?: string;
+  trackingStatus?: string;
+  estimatedDeliveryDays?: number;
+  trackingNumber?: string;
+  lineItems?: Array<{ title: string; quantity: number }>;
+  itemCount?: number;
+  totalAmount?: string;
+  shippingFee?: string;
+  refundStatus?: string;
+  refundReason?: string;
+  refundNotificationEmail?: string;
+  refundEmail?: string;
+  refundAmount?: string;
+  cardLast4?: string;
+  cardBrand?: string;
+};
+
+function isRefundedOrder(result: OrderSpeechData): boolean {
   return Boolean(result.refundStatus && /refund/i.test(result.refundStatus));
 }
 
@@ -122,7 +140,7 @@ function isRefundedOrder(result: OrderStatusResult): boolean {
  * Full deep-fetch data stays in LLM/session memory for follow-up questions.
  */
 export function buildOrderStatusTts(
-  result: OrderStatusResult,
+  result: OrderSpeechData,
   session?: import("../types/order.js").CallSession,
 ): TtsPayload {
   if (result.status !== "found" || !result.orderNumber) {
@@ -131,11 +149,19 @@ export function buildOrderStatusTts(
 
   logger.info("raw_data_passed_to_tts_builder", { orderData: result });
 
-  const parsed = parsedDataFromOrderResult(result);
-  parsed.trackingStatus = result.trackingStatus;
-  parsed.estimatedDeliveryDays = result.estimatedDeliveryDays;
-  parsed.fulfillmentStatus = result.fulfillmentStatus;
-  parsed.trackingNumber = result.trackingNumber;
+  const parsed = {
+    orderNumber: result.orderNumber,
+    customerName: result.customerName,
+    itemCount: 0,
+    lineItems: [],
+    feeLineItems: [],
+    isRefunded: false,
+    events: [],
+    trackingStatus: result.trackingStatus,
+    estimatedDeliveryDays: result.estimatedDeliveryDays,
+    fulfillmentStatus: result.fulfillmentStatus,
+    trackingNumber: result.trackingNumber,
+  };
 
   return {
     text: buildVerificationFirstOrderSpeech(parsed, session),
@@ -145,7 +171,7 @@ export function buildOrderStatusTts(
 
 /** Map adapter order result into session StructuredOrder for follow-up context. */
 export function orderStatusToStructuredOrder(
-  result: OrderStatusResult,
+  result: OrderSpeechData,
 ): StructuredOrder | undefined {
   if (result.status !== "found" || !result.orderNumber) return undefined;
 
@@ -198,7 +224,7 @@ function buildTitleNotFoundTts(): TtsPayload {
   };
 }
 
-function buildOrderFallbackTts(result: OrderStatusResult): TtsPayload {
+function buildOrderFallbackTts(result: OrderSpeechData): TtsPayload {
   if (result.status === "invalid_format") {
     return {
       text: "I didn't catch a valid order number. Please say your order number — it's usually four to six digits.",
@@ -219,7 +245,7 @@ function buildOrderFallbackTts(result: OrderStatusResult): TtsPayload {
 
 /** Deterministic order speech — never use LLM paraphrase for Shopify order facts. */
 export function groundedOrderSpeech(
-  result: OrderStatusResult,
+  result: OrderSpeechData,
   session?: import("../types/order.js").CallSession,
 ): string {
   if (result.status === "found" && result.orderNumber) {

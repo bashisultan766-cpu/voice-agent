@@ -64,6 +64,15 @@ export type OrderLookupResult =
   | { status: "invalid_format"; message: string }
   | { status: "api_error"; message: string };
 
+/** Narrow lookup outcome vocabulary for speech and orchestration surfaces. */
+export type OrderLookupStatus =
+  | "found"
+  | "not_found"
+  | "invalid_format"
+  | "api_error"
+  | "system_maintenance"
+  | "throttled";
+
 export type CallPhase =
   | "greeting"
   | "awaiting_order_number"
@@ -95,6 +104,18 @@ export interface ShoppingCartLineItem {
   /** @deprecated Use unitPrice — kept for backward compatibility. */
   price?: string;
   isbn?: string;
+  /**
+   * Facility/restriction tags stamped at add time (SSOT for compliance on later qty increases).
+   * Prefer these over re-reading lastCatalogSearch alone.
+   */
+  tags?: string[];
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
+  /** Live inventory snapshot stamped at add / last stock double-check. */
+  inventoryQuantity?: number;
+  /** True when low-stock Urgency Guardrail placed a temporary hold. */
+  temporaryReservation?: boolean;
+  /** Epoch ms when temporary reservation was stamped. */
+  reservedAt?: number;
 }
 
 export interface CallSession {
@@ -119,8 +140,6 @@ export interface CallSession {
    */
   pendingLlmSystemNote?: string;
   currentOrder?: StructuredOrder;
-  /** Full sanitized Shopify order JSON for invisible LLM follow-up context. */
-  currentOrderData?: Record<string, unknown>;
   /** True only after a successful get_shopify_order_status lookup this call. */
   orderContextConfirmed?: boolean;
   /**
@@ -186,6 +205,8 @@ export interface CallSession {
     unitPrice?: string;
     isbn?: string;
     recordedAt: number;
+    /** Available units from catalog search (inventoryQuantity). */
+    quantity?: number;
     tags?: string[];
     metafields?: Array<{ namespace: string; key: string; value: string }>;
     similarMatches?: Array<{
@@ -227,8 +248,20 @@ export interface CallSession {
     | "awaiting_clarification";
   /** Optimistic concurrency token for L2 Postgres session snapshots. */
   persistenceVersion?: number;
-  /** Last successful Shopify lookup — drives verification-first disclosure speech. */
-  lastOrderStatusResult?: import("../adapters/shopifyStorefrontAdapter.js").OrderStatusResult;
+  /**
+   * Disclosure-safe sticky order context for the current call. Replaces the
+   * legacy `lastOrderStatusResult` — no raw Shopify OrderStatusResult ever lives
+   * in shared session state.
+   */
+  sessionOrderContext?: {
+    /** Opaque reference (order number / GID) — never the raw Shopify object. */
+    orderReferenceId: string;
+    orderNumber: string;
+    verificationLevel: "verified" | "unverified";
+    disclosurePolicyVersion: string;
+    orderView: import("../agents/orderDisclosurePolicy.js").OrderView;
+    fetchedAt: number;
+  };
   /** Active order-history drill-down context for verified callers. */
   orderHistoryContext?: import("../agents/orderHistoryFlow.js").OrderHistoryContext;
   /** Support escalation state machine — locks routing during email capture. */

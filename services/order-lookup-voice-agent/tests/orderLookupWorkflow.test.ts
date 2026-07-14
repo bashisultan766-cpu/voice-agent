@@ -123,6 +123,35 @@ describe("facility compliance engine", () => {
     expect(ok.complianceBlocked).toBeFalsy();
     expect(ok.cart).toHaveLength(1);
     expect(ok.cart[0]?.quantity).toBe(2);
+    expect(ok.cart[0]?.tags).toEqual(["restricted_state_fl"]);
     expect(ok.message).toMatch(/2 copies of Open Title/i);
+  });
+
+  it("re-checks stamped cart-line tags on later increase without catalog search", () => {
+    const session = makeSession();
+    session.facilityType = "FL";
+    session.shoppingCart = [
+      {
+        variantId: "gid://shopify/ProductVariant/9",
+        productId: "gid://shopify/Product/9",
+        title: "Stamped Restricted",
+        quantity: 1,
+        unitPrice: "8.00",
+        tags: ["restricted_state_fl"],
+      },
+    ];
+    session.lastCatalogSearch = undefined;
+    const blocked = applySessionCartQuantity(
+      session,
+      {
+        title: "Stamped Restricted",
+        variant_id: "gid://shopify/ProductVariant/9",
+      },
+      1,
+      "add",
+    );
+    expect(blocked.complianceBlocked).toBe(true);
+    expect(blocked.cart[0]?.quantity).toBe(1);
+    expect(blocked.message).toMatch(/Stamped Restricted/i);
   });
 });

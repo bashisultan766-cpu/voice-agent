@@ -10,12 +10,7 @@ import {
   registerEmailWorkflowExecutor,
   startEmailCapture,
 } from "./emailConfirmationManager.js";
-import {
-  isResendAvailable,
-  isValidCustomerEmail,
-  sendSupportEscalationDetailed,
-  type SupportEscalationDetails,
-} from "../utils/resendEmailService.js";
+import { isValidEmail as isValidCustomerEmail } from "../utils/emailUtils.js";
 import { isConfirmKeyword, isPurchaseFlowActive } from "./conversationFlowState.js";
 import { isSupportEscalationRequest } from "./callerIntent.js";
 import { isCartActionUtterance, isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
@@ -24,6 +19,7 @@ import {
   resetEmailConfirmation,
 } from "./emailConfirmationManager.js";
 import { shouldAbortEmailConfirmation, isOrderContextSwitchUtterance } from "../utils/emailCapture.js";
+import { getActiveOrderContext } from "./sessionManager.js";
 
 export type SupportEscalationState =
   | "normal"
@@ -181,9 +177,9 @@ function buildIssueDescription(
   escalationReason: string,
 ): string {
   const name = String(
-    session.currentOrderData?.customer_name ?? session.currentOrder?.customerName ?? "Customer",
+    getActiveOrderContext(session)?.customer_name ?? session.currentOrder?.customerName ?? "Customer",
   ).trim();
-  const orderNum = String(session.currentOrderData?.order_number ?? "").replace(/^#/, "").trim();
+  const orderNum = String(getActiveOrderContext(session)?.order_number ?? "").replace(/^#/, "").trim();
   const verified = session.isVerifiedCaller === true ? "verified" : "non-verified";
   const phone = session.callerPhone ?? session.from ?? "unknown number";
   const orderPart = orderNum ? ` for order #${orderNum}` : "";
@@ -191,26 +187,6 @@ function buildIssueDescription(
     `Customer ${name} called from a ${verified} phone number requesting ${requestedInfo}${orderPart}. ` +
     `${escalationReason} Caller phone: ${phone}.`
   );
-}
-
-function buildEscalationDetails(session: CallSession, callbackEmail: string): SupportEscalationDetails {
-  const ctx = ensureEscalation(session);
-  const orderData = session.currentOrderData ?? {};
-  return {
-    customerName: String(orderData.customer_name ?? session.currentOrder?.customerName ?? "").trim(),
-    callbackEmail,
-    callerPhone: session.callerPhone ?? session.from,
-    isVerifiedCaller: session.isVerifiedCaller === true,
-    orderNumber: String(orderData.order_number ?? "").replace(/^#/, "").trim() || undefined,
-    orderEmail: String(orderData.customer_email ?? orderData.order_confirmation_email ?? "").trim() || undefined,
-    requestedInfo: ctx.requestedInfo,
-    escalationReason: ctx.escalationReason,
-    issueDescription:
-      ctx.issueDescription ??
-      buildIssueDescription(session, ctx.requestedInfo, ctx.escalationReason),
-    recommendedAction:
-      "Please verify the customer and follow up using the confirmed email.",
-  };
 }
 
 async function executeSupportEmail(
@@ -226,17 +202,26 @@ async function executeSupportEmail(
         "I did not catch a complete email address. Please say your full email again slowly, including at and dot com.",
     };
   }
-  if (!isResendAvailable()) {
-    return {
-      ok: false,
-      successSpeech: "",
-      failureSpeech:
-        "I am sorry, but I cannot send the support request email right now. Please call back shortly or email our support team directly.",
-    };
-  }
 
-  const details = buildEscalationDetails(session, confirmedEmail);
-  const result = await sendSupportEscalationDetailed(details);
+  const orderData = getActiveOrderContext(session);
+  const { ActionGateway } = await import("../runtime/actionGateway.js");
+  const result = await ActionGateway.createSupportCase(
+    {
+      session,
+      reason: ctx.escalationReason,
+      issueSummary:
+        ctx.issueDescription ??
+        buildIssueDescription(session, ctx.requestedInfo, ctx.escalationReason),
+      customerName: String(orderData?.customer_name ?? session.currentOrder?.customerName ?? "").trim(),
+      callbackEmail: confirmedEmail,
+      orderNumber: String(orderData?.order_number ?? "").replace(/^#/, "").trim() || undefined,
+    },
+    {
+      callId: session.callSid,
+      actionId: `support_${Date.now().toString(36)}`,
+      workflowId: "support_escalation",
+    },
+  );
   if (!result.ok) {
     return {
       ok: false,
@@ -249,9 +234,11 @@ async function executeSupportEmail(
   logger.info("support_email_sent", {
     callSid: session.callSid.slice(0, 8),
     requestedInfo: ctx.requestedInfo,
+    caseId: result.caseId,
   });
   logger.info("support_escalation_submitted", {
     callSid: session.callSid.slice(0, 8),
+    caseId: result.caseId,
   });
   return { ok: true, successSpeech: SUCCESS_SPEECH, failureSpeech: "" };
 }

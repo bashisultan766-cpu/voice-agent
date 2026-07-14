@@ -5,14 +5,13 @@
  * Cart mutations go through applySessionCartQuantity so order + cart sticky state stay reconciled
  * (avoids a double workflow where LLM tools and deterministic cart turns diverge).
  */
-import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import {
   ORDER_LOOKUP_MAINTENANCE_SPOKEN,
   ORDER_LOOKUP_RETRY_SPOKEN,
   ORDER_NOT_FOUND_STRICT_SPOKEN,
   SHOPIFY_TIMEOUT_SPOKEN,
 } from "../constants/systemMessages.js";
-import type { CallSession, ShoppingCartLineItem } from "../types/order.js";
+import type { CallSession, OrderLookupStatus, ShoppingCartLineItem } from "../types/order.js";
 import { orderNumbersMatch } from "../utils/formatter.js";
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import {
@@ -22,13 +21,17 @@ import {
   updateCartItemQuantity,
 } from "./cartManager.js";
 import { attachProactiveRecommendationAfterAdd } from "./recommendationEngine.js";
-import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
 import {
   ORDER_FOUND_PASSIVE_SPEECH,
   buildOrderFoundGatewaySpeech,
   buildStickyOrderStillOpenSpeech,
 } from "./orderLookupProtocol.js";
 import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
+import {
+  checkLogisticsFeasibility,
+} from "./logisticsIntelligence.js";
+import { guardCartAddInventory } from "./inventoryResolutionService.js";
+import { SessionStateService } from "./sessionStateService.js";
 
 export {
   ORDER_FOUND_PASSIVE_SPEECH,
@@ -60,6 +63,13 @@ export interface SessionCartUpdateResult {
   complianceBlocked?: boolean;
   /** True when facility type/state is required before add. */
   needsFacilityInfo?: boolean;
+  /** True when Urgency Guardrail blocked add (out of stock). */
+  inventoryBlocked?: boolean;
+  /** Suggest pre-order / similar titles when inventory is zero. */
+  suggestAlternatives?: boolean;
+  /** Low-stock temporary reservation was applied. */
+  temporaryReservation?: boolean;
+  inventoryQuantity?: number;
   /** One Smart Suggest cross-sell after a successful quantity increase. */
   proactiveRecommendation?: {
     title: string;
@@ -216,8 +226,9 @@ function collectRestrictionKeys(
 }
 
 /**
- * Proactive facility compliance check — cross-references product tags/metafields
- * against the caller's facility type / state before cart mutation.
+ * Proactive facility compliance check — PRIMARY filter (Source of Truth).
+ * LogisticsEngine (package_restriction / max_weight) runs as a sub-layer so
+ * callers get one rejection point at add-time, not a second surprise at checkout.
  */
 export function checkFacilityCompliance(input: {
   bookTitle: string;
@@ -240,6 +251,23 @@ export function checkFacilityCompliance(input: {
       facilityLabel: "",
       speech:
         "I don't have the facility type on file. Could you provide the state or facility type so I can verify book approval for you?",
+    };
+  }
+
+  // Logistics sub-layer — packaging / shipability under ComplianceEngine.
+  const logistics = checkLogisticsFeasibility(
+    { title: bookTitle, tags: input.tags, metafields: input.metafields },
+    facilityLabel,
+  );
+  if (!logistics.ok) {
+    return {
+      status: "restricted",
+      bookTitle,
+      facilityLabel,
+      matchedRestriction: logistics.reason ?? "package_restriction",
+      speech:
+        logistics.speech ??
+        `I'm afraid ${bookTitle} does not meet the facility's packaging requirements, so I cannot add it to your cart.`,
     };
   }
 
@@ -305,6 +333,47 @@ export function rememberFacilityType(session: CallSession, facilityType: string 
   if (trimmed) session.facilityType = trimmed;
 }
 
+/** Resolve restriction metadata — prefer stamped cart line, then catalog target, then input. */
+export function resolveCartComplianceMetadata(
+  session: CallSession,
+  item: CartItemInput,
+  existingLine?: ShoppingCartLineItem,
+): {
+  tags?: string[];
+  metafields?: Array<{ namespace: string; key: string; value: string }>;
+} {
+  if (existingLine?.tags?.length || existingLine?.metafields?.length) {
+    return { tags: existingLine.tags, metafields: existingLine.metafields };
+  }
+  if (item.tags?.length || item.metafields?.length) {
+    return { tags: item.tags, metafields: item.metafields };
+  }
+
+  const catalog = session.lastCatalogSearch;
+  if (!catalog) return {};
+
+  const variantHint = (item.variant_id ?? item.item_id ?? item.sku ?? "").trim();
+  const title = (item.title ?? "").trim().toLowerCase();
+  const matchesCatalog =
+    (catalog.variantId &&
+      (variantHint === catalog.variantId || variantHint.endsWith(`/${catalog.variantId}`))) ||
+    (title && catalog.title?.toLowerCase() === title) ||
+    (existingLine?.variantId && existingLine.variantId === catalog.variantId);
+
+  if (!matchesCatalog) {
+    const similar = catalog.similarMatches?.find(
+      (m) =>
+        (variantHint && m.variantId === variantHint) ||
+        (title && m.title.toLowerCase() === title) ||
+        (existingLine?.variantId && m.variantId === existingLine.variantId),
+    );
+    if (similar) return { tags: similar.tags, metafields: similar.metafields };
+    return {};
+  }
+
+  return { tags: catalog.tags, metafields: catalog.metafields };
+}
+
 function cartLineKey(line: ShoppingCartLineItem): string {
   return (line.isbn ?? line.variantId ?? line.title).trim() || line.title;
 }
@@ -340,6 +409,8 @@ export function normalizeSessionCartAction(
  * Stateful cart engine: add = current+incoming, set = incoming, minus = current-incoming.
  * If minus/set would drop below 1 without confirmRemoval, ask before clearing the line.
  * Facility compliance runs before any quantity increase (add / set above current).
+ * No manual_confirmation gate for simple positive integer quantities — apply immediately.
+ * The only confirmation gate is pendingCartRemoval when qty would drop below 1.
  */
 export function applySessionCartQuantity(
   session: CallSession,
@@ -375,21 +446,20 @@ export function applySessionCartQuantity(
   }
 
   const isIncreasing = newTotal > currentQty;
+  const existingLine = index >= 0 ? cart[index] : undefined;
+  const complianceMeta = resolveCartComplianceMetadata(session, item, existingLine);
+
   if (isIncreasing) {
     const bookTitle =
       item.title?.trim() ||
       session.lastCatalogSearch?.title ||
-      (index >= 0 ? cart[index]!.title : "that book");
-    const catalog = session.lastCatalogSearch;
-    const sameAsCatalogTarget =
-      Boolean(catalog?.variantId) &&
-      (variantHint === catalog?.variantId ||
-        (title && catalog?.title?.toLowerCase() === title));
+      existingLine?.title ||
+      "that book";
     const compliance = checkFacilityCompliance({
       bookTitle,
       facilityType: session.facilityType,
-      tags: sameAsCatalogTarget ? catalog?.tags : undefined,
-      metafields: sameAsCatalogTarget ? catalog?.metafields : undefined,
+      tags: complianceMeta.tags,
+      metafields: complianceMeta.metafields,
     });
     if (compliance.status === "facility_unknown") {
       return {
@@ -412,7 +482,85 @@ export function applySessionCartQuantity(
         message: compliance.speech,
       };
     }
+
+    // Urgency Guardrail — InventoryResolutionService owns stock decisions (cache-aside).
+    const variantId = (item.variant_id ?? item.item_id ?? item.sku ?? existingLine?.variantId ?? "").trim();
+    const requestedDelta = newTotal - currentQty;
+    const guard = guardCartAddInventory(session, {
+      variantId,
+      requestedQuantity: requestedDelta,
+      bookTitle,
+      inventoryQuantityHint: item.inventoryQuantity ?? existingLine?.inventoryQuantity,
+      catalogQuantityHint: session.lastCatalogSearch?.quantity,
+    });
+    if (guard.decision === "out_of_stock") {
+      return {
+        cart: [...cart],
+        currentSessionCart: syncCurrentSessionCart(session),
+        actionType,
+        inventoryBlocked: true,
+        suggestAlternatives: true,
+        inventoryQuantity: 0,
+        message: guard.speech ?? `${bookTitle} is out of stock.`,
+      };
+    }
+    if (
+      (guard.decision === "reduce" || guard.temporaryReservation) &&
+      guard.availableQuantity != null &&
+      Number.isFinite(guard.availableQuantity)
+    ) {
+      // Cap cart line so we never oversell available units (absolute stock).
+      newTotal = Math.min(newTotal, guard.availableQuantity);
+      if (newTotal <= currentQty) {
+        return {
+          cart: [...cart],
+          currentSessionCart: syncCurrentSessionCart(session),
+          actionType,
+          inventoryBlocked: true,
+          temporaryReservation: true,
+          inventoryQuantity: guard.availableQuantity,
+          message:
+            guard.speech ??
+            `Only ${guard.availableQuantity} ${guard.availableQuantity === 1 ? "copy" : "copies"} of ${bookTitle} remain.`,
+        };
+      }
+    }
   }
+
+  // Stamp compliance + inventory metadata onto the write so later increases remain checkable.
+  const stampVariantId = (item.variant_id ?? item.item_id ?? item.sku ?? existingLine?.variantId ?? "").trim();
+  const stampGuard = stampVariantId
+    ? guardCartAddInventory(session, {
+        variantId: stampVariantId,
+        requestedQuantity: Math.max(1, newTotal - currentQty),
+        bookTitle: item.title?.trim() || existingLine?.title || "that book",
+        inventoryQuantityHint: item.inventoryQuantity ?? existingLine?.inventoryQuantity,
+        catalogQuantityHint: session.lastCatalogSearch?.quantity,
+      })
+    : null;
+  const inventoryForStamp = stampGuard?.availableQuantity ?? item.inventoryQuantity ?? existingLine?.inventoryQuantity;
+  const urgencyForStamp =
+    isIncreasing && stampGuard
+      ? {
+          temporaryReservation: stampGuard.temporaryReservation,
+          inventoryQuantity: stampGuard.availableQuantity ?? undefined,
+        }
+      : null;
+
+  const stampedItem: CartItemInput = {
+    ...item,
+    tags: complianceMeta.tags ?? item.tags ?? existingLine?.tags,
+    metafields: complianceMeta.metafields ?? item.metafields ?? existingLine?.metafields,
+    inventoryQuantity: inventoryForStamp ?? item.inventoryQuantity ?? existingLine?.inventoryQuantity,
+    temporaryReservation:
+      urgencyForStamp?.temporaryReservation === true
+        ? true
+        : item.temporaryReservation ?? existingLine?.temporaryReservation,
+    reservedAt:
+      urgencyForStamp?.temporaryReservation === true
+        ? Date.now()
+        : item.reservedAt ?? existingLine?.reservedAt,
+  };
 
   if (newTotal < 1 && currentQty >= 1 && !options?.confirmRemoval) {
     const line = index >= 0 ? cart[index]! : undefined;
@@ -439,14 +587,18 @@ export function applySessionCartQuantity(
   }
 
   session.pendingCartRemoval = undefined;
+  // When Urgency Guardrail capped quantity, always write the absolute newTotal.
+  const useExactWrite =
+    actionType === "set_exact" ||
+    (isIncreasing && urgencyForStamp?.temporaryReservation === true && newTotal !== currentQty + Math.max(1, incoming || 1));
   const updated =
     newTotal < 1
-      ? updateCartItemQuantity(session, item, 0, "set_exact")
-      : actionType === "set_exact"
-        ? updateCartItemQuantity(session, item, newTotal, "set_exact")
+      ? updateCartItemQuantity(session, stampedItem, 0, "set_exact")
+      : useExactWrite
+        ? updateCartItemQuantity(session, stampedItem, newTotal, "set_exact")
         : updateCartItemQuantity(
             session,
-            item,
+            stampedItem,
             Math.max(1, incoming || 1),
             actionType,
           );
@@ -467,8 +619,13 @@ export function applySessionCartQuantity(
   let message = isIncreasing
     ? `I've added ${addedTitle} to your cart.`
     : `Cart updated with action_type=${actionType}.`;
+  if (urgencyForStamp?.speech && isIncreasing) {
+    message = `${urgencyForStamp.speech} Your cart now has ${finalQty} ${finalQty === 1 ? "copy" : "copies"} of ${addedTitle}.`;
+  }
 
   let proactiveRecommendation: SessionCartUpdateResult["proactiveRecommendation"];
+  const urgencyPrefix =
+    urgencyForStamp?.speech && isIncreasing ? `${urgencyForStamp.speech} ` : "";
   if (isIncreasing && !options?.confirmRemoval) {
     const addedSku =
       parseVariantHint(variantHint) ||
@@ -488,8 +645,8 @@ export function applySessionCartQuantity(
         matchReason: recommendation.matchReason,
         speech: recommendation.speech,
       };
-      message = recommendation.speech;
-    } else if (isIncreasing) {
+      message = `${urgencyPrefix}${recommendation.speech}`;
+    } else if (isIncreasing && !urgencyForStamp?.speech) {
       message = `I've updated your cart to ${finalQty} ${finalQty === 1 ? "copy" : "copies"} of ${addedTitle}.`;
     }
   }
@@ -499,6 +656,8 @@ export function applySessionCartQuantity(
     currentSessionCart,
     actionType,
     proactiveRecommendation,
+    temporaryReservation: urgencyForStamp?.temporaryReservation === true,
+    inventoryQuantity: urgencyForStamp?.inventoryQuantity,
     message,
   };
 }
@@ -534,40 +693,22 @@ export function confirmPendingCartRemoval(
 
 /** True when this call session already completed a successful order lookup. */
 export function isOrderLookupComplete(session?: CallSession): boolean {
-  return (
-    Boolean(session?.orderLookupComplete) ||
-    Boolean(session?.currentSessionOrder?.orderNumber) ||
-    hasConfirmedOrderContext(session)
-  );
+  return SessionStateService.isOrderLookupComplete(session);
 }
 
 export function getCurrentSessionOrderNumber(session?: CallSession): string {
-  return String(
-    session?.currentSessionOrder?.orderNumber ??
-      session?.currentOrderData?.order_number ??
-      session?.currentOrder?.orderNumber ??
-      session?.lastOrderStatusResult?.orderNumber ??
-      "",
-  );
+  return SessionStateService.getStickyOrderNumber(session) ?? "";
 }
 
 /**
- * Context lock: after order_lookup_complete, forbid re-calling get_shopify_order_status
- * for the same order — rely on cached JSON. Allow only when the caller names a different order.
+ * Context lock (SessionStateService SSOT): after order_lookup_complete, forbid re-calling
+ * get_shopify_order_status for the same order — rely on cached JSON.
  */
 export function shouldBlockOrderLookupReinvoke(
   session: CallSession | undefined,
   requestedOrderNumber?: string,
 ): boolean {
-  if (!isOrderLookupComplete(session)) return false;
-
-  const cached = getCurrentSessionOrderNumber(session);
-  if (!cached) return true;
-
-  const requested = normalizeOrderNumber(requestedOrderNumber ?? "");
-  if (!requested) return true;
-
-  return orderNumbersMatch(cached, requested);
+  return SessionStateService.shouldBlockOrderLookupReinvoke(session, requestedOrderNumber);
 }
 
 /** Persist sticky CurrentSessionOrder from a found Shopify result. */
@@ -614,7 +755,7 @@ export function isOrderLookupInsistenceUtterance(text: string): boolean {
 }
 
 export function isTransientOrderLookupStatus(
-  status: OrderStatusResult["status"] | string | undefined,
+  status: OrderLookupStatus | string | undefined,
 ): boolean {
   return status === "api_error" || status === "system_maintenance" || status === "throttled";
 }
@@ -625,14 +766,21 @@ export function isTransientOrderLookupStatus(
  * when the caller insists with the same digits (common after STT noise or a brief miss).
  */
 export function isStableOrderLookupStatus(
-  status: OrderStatusResult["status"] | string | undefined,
+  status: OrderLookupStatus | string | undefined,
 ): boolean {
   return status === "found" || status === "invalid_format";
 }
 
 /** Deterministic spoken response for any order lookup tool result — one workflow, no LLM paraphrase. */
 export function speechForOrderLookupResult(
-  result: OrderStatusResult,
+  result: {
+    status?: OrderLookupStatus | string;
+    orderNumber?: string;
+    customerName?: string;
+    fulfillmentStatus?: string;
+    message?: string;
+    searchedNumber?: string;
+  },
   options?: { insistence?: boolean; session?: CallSession },
 ): string {
   if (
@@ -648,16 +796,21 @@ export function speechForOrderLookupResult(
     return ORDER_LOOKUP_MAINTENANCE_SPOKEN;
   }
   if (result.status === "found") {
-    return groundedOrderSpeech(result, options?.session);
+    const name = result.customerName ? ` for ${result.customerName}` : "";
+    const fulfillment = result.fulfillmentStatus ? ` It is currently ${result.fulfillmentStatus}.` : "";
+    return `I found order ${result.orderNumber ?? ""}${name}.${fulfillment}`.trim();
   }
   if (result.status === "not_found") {
     return ORDER_NOT_FOUND_STRICT_SPOKEN;
   }
-  return groundedOrderSpeech(result, options?.session);
+  if (result.status === "invalid_format") {
+    return "I didn't catch a valid order number. Please say your order number again.";
+  }
+  return ORDER_NOT_FOUND_STRICT_SPOKEN;
 }
 
 export function isRetriableOrderLookupMiss(
-  status: OrderStatusResult["status"] | string | undefined,
+  status: OrderLookupStatus | string | undefined,
 ): boolean {
   return status === "not_found";
 }

@@ -220,11 +220,110 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "check_logistics_feasibility",
+      description:
+        "Shipability gate: check whether a SKU can ship to the caller's facility using product metafields " +
+        "(max_weight, package_restriction) and tags. If not shipable, remove it from the payment batch and speak the packaging-restriction script.",
+      parameters: {
+        type: "object",
+        properties: {
+          sku: { type: "string", description: "SKU or variant id to check." },
+          variant_id: { type: "string", description: "Shopify ProductVariant GID." },
+          title: { type: "string", description: "Book title if SKU unknown." },
+          facility_type: {
+            type: "string",
+            description: "Facility type / state for packaging rules (e.g. federal, FL).",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "verify_stock_availability",
+      description:
+        "Atomic Finality stock double-check for a sku_list before generating a payment link. " +
+        "Updates CartState if inventory dropped (reduce qty or remove). Call via initiate_checkout_batch / CheckoutManager automatically, or explicitly when stock may have changed.",
+      parameters: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            description: "sku_list / cart selectors to verify. Omit to verify the full cart.",
+            items: {
+              type: "object",
+              properties: {
+                variant_id: { type: "string" },
+                sku: { type: "string" },
+                title: { type: "string" },
+                quantity: { type: "number" },
+                position: { type: "number" },
+              },
+              additionalProperties: false,
+            },
+          },
+          sku_list: {
+            type: "array",
+            description: "Alias of items — list of variant/sku/title selectors.",
+            items: {
+              type: "object",
+              properties: {
+                variant_id: { type: "string" },
+                sku: { type: "string" },
+                title: { type: "string" },
+                quantity: { type: "number" },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "initiate_checkout_batch",
+      description:
+        "CheckoutManager production step: lock a sku_list as the current payment batch after stock + logistics gates, then start letter-by-letter email capture. " +
+        "Call this BEFORE send_checkout_email for split-order / CartIterator flows. Does NOT send the payment email itself.",
+      parameters: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            description: "sku_list for this batch. Omit to prepare the full cart.",
+            items: {
+              type: "object",
+              properties: {
+                variant_id: { type: "string" },
+                sku: { type: "string" },
+                title: { type: "string" },
+                quantity: { type: "number" },
+                position: { type: "number" },
+              },
+              additionalProperties: false,
+            },
+          },
+          facility_type: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "send_checkout_email",
       description:
-        "After letter-by-letter email verification, create a Shopify draft order and email the secure checkout link (generate_payment_link). " +
-        "For a normal checkout, omit items to use the full cart. " +
-        "For MULTI-BATCH / SPLIT-ORDER checkout, pass items as {variant_id|title|position, quantity} for ONLY the current batch — remaining cart lines stay for the next email. " +
+        "After letter-by-letter email verification, create a Shopify draft order and email the secure checkout link. " +
+        "Aliases: generate_payment_link, send_payment_link (NOT initiate_checkout_batch — that is CheckoutManager prep). " +
+        "Runs verify_stock_availability + logistics shipability before creating the draft. " +
+        "For a normal checkout, omit items to use the full CartState. " +
+        "For MULTI-BATCH / SPLIT-ORDER (CartIterator): pass items as {variant_id|title|position|sku, quantity} for ONLY the current sku_list — CartState decrements after send; remaining lines stay for the next email. " +
         "position is 1-based among remaining cart titles (e.g. position:1 = first remaining book). " +
         "NEVER collect multiple emails at once; one batch → one verified email → one link. Prefer the session-confirmed email when injected.",
       parameters: {
@@ -232,7 +331,15 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
         properties: {
           customerEmail: {
             type: "string",
-            description: "Verified customer email — any valid domain.",
+            description: "DEPRECATED — ignored. Use confirmed_email_id only.",
+          },
+          confirmed_email_id: {
+            type: "string",
+            description: "Opaque id issued by EmailConfirmationManager after letter-by-letter confirm.",
+          },
+          checkout_group_id: {
+            type: "string",
+            description: "CheckoutGroup id from initiate_checkout_batch.",
           },
           customerName: { type: "string", description: "Customer full name." },
           items: {
@@ -269,7 +376,7 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
             },
           },
         },
-        required: ["customerEmail", "customerName"],
+        required: ["confirmed_email_id"],
         additionalProperties: false,
       },
     },
@@ -277,7 +384,7 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "send_support_escalation",
+      name: "create_support_case",
       description:
         "Email jessica@sureshotbooks.com after letter-by-letter email verification when a book cannot be found, is out of stock, an unverified caller needs account help, or the issue cannot be resolved on the call.",
       parameters: {
@@ -300,7 +407,7 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "update_pending_email",
       description:
-        "CONTEXTUAL REPAIR during collect_email or pending_confirmation: when the caller corrects a specific word/segment (e.g. 'Not Sub, it's Saab'), pass replace_from + replace_to (and/or the full patched email). Do NOT re-ask for the entire email. Acknowledge the correction, patch the cached pending email, then read back the FULL updated email once for confirmation.",
+        "SEMANTIC SLOT PartialCorrection during collect_email or pending_confirmation: when the caller corrects a specific word/segment (e.g. 'Not Sub, it's Saab'), pass replace_from + replace_to (and/or the full patched email). Optionally pass slot=part1|part2|domain. Do NOT re-ask for the entire email. Acknowledge the corrected slot only ('Understood. I have updated the spelling to S-A-A-B…'), then read back the FULL updated email once for confirmation.",
       parameters: {
         type: "object",
         properties: {
@@ -316,8 +423,31 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
             type: "string",
             description: "Correct segment (e.g. 'saab').",
           },
+          slot: {
+            type: "string",
+            enum: ["part1", "part2", "domain", "local"],
+            description: "Optional semantic slot target for PartialCorrection.",
+          },
         },
         required: ["email"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "escalate_to_human",
+      description:
+        "Sentiment Shield / Support-Mode: escalate the call to a human agent when the caller is frustrated (frustrationCount > 2) or explicitly asks for a person. Logs a mock ticket to the dashboard. Do NOT use during an in-flight payment batch — finish sending the current payment link first.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description: "Why escalation is needed (e.g. sentiment_shield, caller_requested).",
+          },
+        },
         additionalProperties: false,
       },
     },

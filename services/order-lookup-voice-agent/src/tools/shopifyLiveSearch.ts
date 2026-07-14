@@ -1,19 +1,15 @@
 /**
  * Internal Shopify GraphQL search — NOT a public tool entry point.
- * All production search MUST go through shopifyProductTools (guarded).
+ * Transport lives in infra/shopifyHttpClient; this module only maps DTOs.
  */
-import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
-import {
-  isShopifyThrottleError,
-  parseShopifyGraphqlErrors,
-  ShopifyAuthError,
-  ShopifyThrottledError,
-} from "../platform/shopifyErrors.js";
+import { isShopifyThrottleError } from "../platform/shopifyErrors.js";
 import { normalizeIsbn } from "../utils/productSearchNormalize.js";
 import type { StructuredProduct } from "../types/product.js";
 import { ensureShopifyProductScopes, SHOPIFY_MISSING_PRODUCTS_SCOPE_ERROR } from "./shopifyScopeCheck.js";
-import { maskShopifyToken } from "../utils/security.js";
+import { shopifyGraphql } from "../infra/shopifyHttpClient.js";
+
+export { shopifyGraphql };
 
 export interface GqlMetafieldNode {
   namespace: string;
@@ -141,154 +137,9 @@ const SEARCH_VARIANTS_QUERY_BASIC = `query LiveSearchVariants($query: String!) {
   }
 }`;
 
-function shopifyBaseUrl(): string {
-  const cfg = getConfig();
-  const domain = cfg.SHOPIFY_SHOP_DOMAIN.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  return `https://${domain}/admin/api/${cfg.SHOPIFY_API_VERSION}`;
-}
-
 function isMetafieldGraphqlError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /metafield/i.test(message);
-}
-
-function summarizeShopifyGraphqlErrors(errors: unknown): {
-  errorsJson: string;
-  codes: string[];
-  messages: string[];
-} {
-  const list = Array.isArray(errors) ? errors : [];
-  const codes: string[] = [];
-  const messages: string[] = [];
-
-  for (const entry of list) {
-    const err = entry as {
-      message?: unknown;
-      extensions?: { code?: unknown } | null;
-    } | null;
-    const message = typeof err?.message === "string" ? err.message : null;
-    const code =
-      typeof err?.extensions?.code === "string" ? err.extensions.code : null;
-    if (message) messages.push(message);
-    if (code) codes.push(code);
-  }
-
-  let errorsJson = "[]";
-  try {
-    errorsJson = JSON.stringify(errors ?? [], null, 2);
-  } catch {
-    errorsJson = String(errors);
-  }
-
-  return { errorsJson, codes, messages };
-}
-
-export async function shopifyGraphql<T>(
-  query: string,
-  variables?: Record<string, unknown>,
-): Promise<T> {
-  const cfg = getConfig();
-  const accessToken = cfg.SHOPIFY_ADMIN_ACCESS_TOKEN;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.SHOPIFY_TIMEOUT_MS);
-
-  const started = Date.now();
-  try {
-    console.log("[shopify_graphql]", query);
-    const res = await fetch(`${shopifyBaseUrl()}/graphql.json`, {
-      method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      let httpBodyText: string | null = null;
-      try {
-        httpBodyText = await res.text();
-      } catch {
-        httpBodyText = null;
-      }
-      let parsedErrors: unknown = null;
-      try {
-        parsedErrors = httpBodyText ? (JSON.parse(httpBodyText) as { errors?: unknown })?.errors : null;
-      } catch {
-        parsedErrors = null;
-      }
-      const summary = summarizeShopifyGraphqlErrors(parsedErrors);
-      if (res.status === 401 || res.status === 403) {
-        logger.error("SHOPIFY_AUTH_FAILED: Invalid Token or Missing Scopes", {
-          httpStatus: res.status,
-          token: maskShopifyToken(accessToken),
-          shop: cfg.SHOPIFY_SHOP_DOMAIN,
-          queryName: query.split("\n")[0]?.trim() ?? null,
-          extensionCodes: summary.codes,
-          errorMessages: summary.messages,
-          shopifyErrors: summary.errorsJson,
-          responseBodyPreview: httpBodyText?.slice(0, 2000) ?? null,
-        });
-        throw new ShopifyAuthError(res.status);
-      }
-      logger.error("shopify_graphql_http_error", {
-        httpStatus: res.status,
-        shop: cfg.SHOPIFY_SHOP_DOMAIN,
-        queryName: query.split("\n")[0]?.trim() ?? null,
-        extensionCodes: summary.codes,
-        errorMessages: summary.messages,
-        shopifyErrors: summary.errorsJson,
-        responseBodyPreview: httpBodyText?.slice(0, 2000) ?? null,
-      });
-      throw new Error(`shopify_graphql_http_${res.status}`);
-    }
-
-    const body = (await res.json()) as { data?: T; errors?: unknown[] };
-    if (body.errors?.length) {
-      const throttled = parseShopifyGraphqlErrors(body.errors);
-      if (throttled) throw throttled;
-
-      const summary = summarizeShopifyGraphqlErrors(body.errors);
-      const authDenied = (body.errors as Array<{ message?: string; extensions?: { code?: string } }>).some(
-        (e) =>
-          /access denied|unauthorized|invalid api key|invalid access token/i.test(
-            e.message ?? "",
-          ) || e.extensions?.code === "ACCESS_DENIED",
-      );
-
-      logger.error(
-        authDenied
-          ? "SHOPIFY_GRAPHQL_ACCESS_DENIED: field/scope detail"
-          : "shopify_graphql_errors",
-        {
-          token: maskShopifyToken(accessToken),
-          shop: cfg.SHOPIFY_SHOP_DOMAIN,
-          queryName: query.split("\n")[0]?.trim() ?? null,
-          extensionCodes: summary.codes,
-          errorMessages: summary.messages,
-          shopifyErrors: summary.errorsJson,
-        },
-      );
-
-      if (authDenied) {
-        throw new ShopifyAuthError(403);
-      }
-
-      throw new Error(
-        `shopify_graphql_error:${summary.messages.join(" | ") || summary.errorsJson.slice(0, 500)}`,
-      );
-    }
-
-    logger.debug("shopify_live_graphql_ok", {
-      elapsedMs: Date.now() - started,
-      query: query.split("\n")[0]?.trim(),
-    });
-
-    return body.data as T;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function extractIsbnsFromMetafields(node: GqlProductNode): string[] {

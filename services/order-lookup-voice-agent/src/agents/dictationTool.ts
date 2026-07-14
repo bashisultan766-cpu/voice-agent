@@ -2,6 +2,7 @@
  * Tracking dictation — chunked playback, lastSpokenIndex, spatial resume, and notepad gate.
  */
 import type { SpeechChunk, CallSession } from "../types/order.js";
+import type { OrderView } from "./orderDisclosurePolicy.js";
 import type { ActiveSession, SpatialIndexEntry } from "../sovereign/activeSession.js";
 import {
   buildSpatialResumeFromIndex,
@@ -85,11 +86,11 @@ export function isUserNotepadReadyIntent(callerText: string, callSid?: string): 
 /** Caller has tracking on file and has not finished dictation yet. */
 export function isTrackingDictationPending(
   callSid: string,
-  orderData?: Record<string, unknown>,
+  orderContext?: OrderView | Record<string, unknown>,
 ): boolean {
   const active = getOrCreateActiveSession(callSid);
   if (active.trackingDictationComplete) return false;
-  const trackingRaw = String(orderData?.tracking_number ?? "").trim();
+  const trackingRaw = String(orderContext?.tracking_number ?? "").trim();
   return Boolean(active.lastSpokenPayload?.trackingForTts || trackingRaw);
 }
 

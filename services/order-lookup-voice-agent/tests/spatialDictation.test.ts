@@ -7,7 +7,21 @@ import {
 import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
 import { recordTrackingPayload, updateActiveSession, getOrCreateActiveSession } from "../src/sovereign/activeSession.js";
 import { isTrackingRequest, isTrackingDictationCompleteIntent } from "../src/agents/trackingIntent.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
+
+function trackingSession(callSid: string, trackingNumber: string): CallSession {
+  const session = {
+    callSid,
+    from: "+1",
+    to: "+2",
+    phase: "follow_up",
+    orderNumberAttempts: 0,
+    createdAt: Date.now(),
+  } as CallSession;
+  saveActiveOrderContext(session, { tracking_number: trackingNumber });
+  return session;
+}
 
 describe("spatialDictation anchors", () => {
   const tracking = ":9449050105795009634765";
@@ -100,15 +114,7 @@ describe("tracking dictation completion", () => {
   });
 
   it("exits notepad handshake to LLM on unrelated thanks (no nudge loop)", () => {
-    const session = {
-      callSid: "CA_THANKS",
-      from: "+1",
-      to: "+2",
-      phase: "follow_up",
-      orderNumberAttempts: 0,
-      createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9250" },
-    } as CallSession;
+    const session = trackingSession("CA_THANKS", "9250");
 
     recordTrackingPayload("CA_THANKS", "9250");
     const resolution = resolveTrackingPhaseGate("thanks", session);
@@ -116,15 +122,7 @@ describe("tracking dictation completion", () => {
   });
 
   it("closes tracking flow instead of restarting dictation", () => {
-    const session = {
-      callSid: "CA_DONE",
-      from: "+1",
-      to: "+2",
-      phase: "follow_up",
-      orderNumberAttempts: 0,
-      createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9449050105795009634765" },
-    } as CallSession;
+    const session = trackingSession("CA_DONE", "9449050105795009634765");
 
     recordTrackingPayload("CA_DONE", "9449050105795009634765");
     updateActiveSession("CA_DONE", { isNotepadReady: true, currentState: "tracking_dictation" });
@@ -146,15 +144,7 @@ describe("tracking dictation completion", () => {
 
 describe("tracking gate shorthand", () => {
   it("requires notepad before reading tracking for give me the id", () => {
-    const session = {
-      callSid: "CA_ID",
-      from: "+1",
-      to: "+2",
-      phase: "follow_up",
-      orderNumberAttempts: 0,
-      createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9449050105795009634765" },
-    } as CallSession;
+    const session = trackingSession("CA_ID", "9449050105795009634765");
 
     recordTrackingPayload("CA_ID", "9449050105795009634765");
     const resolution = resolveTrackingPhaseGate("give me the id number", session);
@@ -164,15 +154,7 @@ describe("tracking gate shorthand", () => {
   });
 
   it("handles spatial queries through the orchestrator gate", () => {
-    const session = {
-      callSid: "CA_SPATIAL",
-      from: "+1",
-      to: "+2",
-      phase: "follow_up",
-      orderNumberAttempts: 0,
-      createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9449050105795009634765" },
-    } as CallSession;
+    const session = trackingSession("CA_SPATIAL", "9449050105795009634765");
 
     recordTrackingPayload("CA_SPATIAL", "9449050105795009634765");
     updateActiveSession("CA_SPATIAL", {
@@ -189,15 +171,7 @@ describe("tracking gate shorthand", () => {
   });
 
   it("does not restart notepad handshake on spatial query mid-dictation", () => {
-    const session = {
-      callSid: "CA_SPATIAL2",
-      from: "+1",
-      to: "+2",
-      phase: "follow_up",
-      orderNumberAttempts: 0,
-      createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9449050105795009634765" },
-    } as CallSession;
+    const session = trackingSession("CA_SPATIAL2", "9449050105795009634765");
 
     recordTrackingPayload("CA_SPATIAL2", "9449050105795009634765");
     updateActiveSession("CA_SPATIAL2", {

@@ -7,6 +7,7 @@ import {
 } from "../src/adapters/llmToolExecutor.js";
 import {
   buildActiveOrderContextSystemMessage,
+  getActiveOrderContext,
   saveActiveOrderContext,
 } from "../src/agents/sessionManager.js";
 import { createCallSession } from "../src/agents/conversationOrchestrator.js";
@@ -129,14 +130,14 @@ describe("order #21796 deep timeline extraction", () => {
     expect((sessionPayload.events as string[]).length).toBeGreaterThan(0);
 
     saveActiveOrderContext(session, sessionPayload);
-    expect(session.currentOrderData?.refund_notification_email).toBe(
+    expect(getActiveOrderContext(session)?.refund_notification_email).toBe(
       "jamaicathompson87@gmail.com",
     );
-    expect(session.currentOrderData?.customer_name).toBe("Jamaica Thompson");
-    expect(session.currentOrderData?.payment_method_last4).toBe("4242");
-    expect(session.currentOrderData?.card_brand).toBe("Visa");
-    expect(session.currentOrderData?.refund_reason).toBe("Customer Cancel Order");
-    expect(session.currentOrderData?.events).toEqual(
+    expect(getActiveOrderContext(session)?.customer_name).toBe("Jamaica Thompson");
+    expect(getActiveOrderContext(session)?.payment_method_last4).toBe("4242");
+    expect(getActiveOrderContext(session)?.card_brand).toBe("Visa");
+    expect(getActiveOrderContext(session)?.refund_reason).toBe("Customer Cancel Order");
+    expect(getActiveOrderContext(session)?.events).toEqual(
       expect.arrayContaining([
         expect.stringContaining("jamaicathompson87@gmail.com"),
       ]),

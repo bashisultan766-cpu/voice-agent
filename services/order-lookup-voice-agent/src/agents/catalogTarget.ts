@@ -10,6 +10,8 @@ export interface LastCatalogSearch {
   unitPrice?: string;
   isbn?: string;
   recordedAt: number;
+  /** Available inventory units from the catalog search. */
+  quantity?: number;
   tags?: string[];
   metafields?: Array<{ namespace: string; key: string; value: string }>;
   similarMatches?: Array<{
@@ -36,6 +38,7 @@ export function recordLastCatalogSearch(
     unitPrice: data.price,
     isbn: data.isbn,
     recordedAt: Date.now(),
+    quantity: data.quantity,
     tags: data.tags ?? [],
     metafields: data.metafields ?? [],
     similarMatches: (data.similarMatches ?? [])

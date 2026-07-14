@@ -23,6 +23,7 @@ import {
   type SessionPersistResult,
 } from "../platform/sessionPersistence.js";
 import { withCallSessionLock } from "../platform/sessionLock.js";
+import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
 
 /** Sovereign surface mirrored onto CallSession to prevent Map desync. */
 export type UnifiedSovereignState =
@@ -198,7 +199,7 @@ export function deriveSovereignState(session: CallSession): UnifiedSovereignStat
     return "catalog_active";
   }
 
-  if (session.orderContextConfirmed && session.currentOrderData) {
+  if (hasConfirmedOrderContext(session)) {
     return "order_active";
   }
 

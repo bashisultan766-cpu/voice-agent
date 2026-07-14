@@ -8,7 +8,7 @@ import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator
 import { getOrCreateActiveSession, updateActiveSession } from "../src/sovereign/activeSession.js";
 import { completeTrackingDictation } from "../src/agents/dictationTool.js";
 import { buildOrderFieldQuerySpeech } from "../src/agents/orderFollowUpSpeech.js";
-import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
+import { getActiveOrderContext, saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 function mockSession(callSid: string): CallSession {
@@ -74,7 +74,7 @@ describe("intent-first switching", () => {
     const utterance =
       "yes, tell me how many items are there in this product and what is the title";
     expect(resolveCallerIntent(utterance, session)).toBe("order_field_query");
-    const speech = buildOrderFieldQuerySpeech(utterance, session.currentOrderData as any);
+    const speech = buildOrderFieldQuerySpeech(utterance, getActiveOrderContext(session) as any);
     expect(speech).toMatch(/Sample Book/i);
     expect(speech).toMatch(/1 book/i);
   });
@@ -115,7 +115,7 @@ describe("intent-first switching", () => {
 
     const fieldSpeech = buildOrderFieldQuerySpeech(
       "how many products, their price, and shipping fee",
-      session.currentOrderData as any,
+      getActiveOrderContext(session) as any,
     );
     expect(fieldSpeech).toMatch(/1 book|Sample Book/i);
     expect(fieldSpeech).toMatch(/shipping/i);

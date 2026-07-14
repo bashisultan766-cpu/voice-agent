@@ -8,7 +8,7 @@
 import type { CallSession } from "../types/order.js";
 import { logger } from "../utils/logger.js";
 import {
-  applyPartialEmailCorrection,
+  applyPartialCorrection,
   buildEmailConfirmationSpeech,
   buildUpdatedEmailConfirmationSpeech,
   extractEmailFromSpeech,
@@ -17,11 +17,17 @@ import {
   isPartialEmailCorrection,
   isRequestSlowEmailRepeat,
   looksLikePartialEmail,
+  parsePendingEmail,
   shouldAbortEmailConfirmation,
   isOrderContextSwitchUtterance,
   spellEmailLetterByLetterForTTS,
+  type PendingEmail,
+  type PartialCorrection,
 } from "../utils/emailCapture.js";
-import { isValidCustomerEmail } from "../utils/resendEmailService.js";
+import { isValidEmail as isValidCustomerEmail } from "../utils/emailUtils.js";
+import type { ConfirmedEmail } from "../domain/checkoutModels.js";
+import { ensureSessionMemory } from "./sessionMemory.js";
+import { randomUUID } from "node:crypto";
 
 export type EmailWorkflowType = "support_escalation" | "payment_link";
 
@@ -36,17 +42,72 @@ export interface EmailConfirmationContext {
   workflowType: EmailWorkflowType;
   phase: EmailConfirmationPhase;
   latestRawEmail?: string;
+  /** Normalized full address — mirrored into pendingEmailSlots. */
   normalizedEmail?: string;
+  /**
+   * Semantic slots for targeted PartialCorrection (part1 / part2 / domain).
+   * SSOT for mid-confirmation segment repair — never force a full re-parse.
+   */
+  pendingEmailSlots?: PendingEmail;
+  /** Last applied PartialCorrection (for speech / LLM context). */
+  lastPartialCorrection?: PartialCorrection;
   confirmedEmail?: string;
   confirmationStatus: "pending" | "confirmed" | "rejected";
   sentStatus: "pending" | "sent" | "failed";
   sentTimestamp?: number;
 }
 
+function syncPendingEmailSlots(
+  ctx: EmailConfirmationContext,
+  email: string,
+  correction?: PartialCorrection | null,
+): PendingEmail {
+  const slots = parsePendingEmail(email);
+  ctx.normalizedEmail = slots.full;
+  ctx.pendingEmailSlots = slots;
+  if (correction) {
+    ctx.lastPartialCorrection = correction;
+  } else {
+    ctx.lastPartialCorrection = undefined;
+  }
+  return slots;
+}
+
 export type EmailWorkflowExecutor = (
   session: CallSession,
   confirmedEmail: string,
 ) => Promise<{ ok: boolean; successSpeech: string; failureSpeech: string }>;
+
+/** Issue opaque confirmed_email_id — only EmailConfirmationManager may create these. */
+export function issueConfirmedEmail(
+  session: CallSession,
+  address: string,
+  workflowType: EmailWorkflowType,
+): ConfirmedEmail {
+  const memory = ensureSessionMemory(session);
+  if (!memory.confirmedEmails) memory.confirmedEmails = [];
+  const record: ConfirmedEmail = {
+    confirmedEmailId: `ce_${randomUUID().slice(0, 12)}`,
+    address: address.trim().toLowerCase(),
+    confirmedAt: Date.now(),
+    workflowType,
+  };
+  memory.confirmedEmails.push(record);
+  memory.latestConfirmedEmailId = record.confirmedEmailId;
+  return record;
+}
+
+export function getConfirmedEmailById(
+  session: CallSession,
+  confirmedEmailId: string,
+): ConfirmedEmail | undefined {
+  const memory = ensureSessionMemory(session);
+  return memory.confirmedEmails?.find((e) => e.confirmedEmailId === confirmedEmailId);
+}
+
+export function getLatestConfirmedEmailId(session: CallSession): string | undefined {
+  return ensureSessionMemory(session).latestConfirmedEmailId;
+}
 
 const ASK_EMAIL_SPEECH =
   "What email address should we use? Please say it clearly, for example, your name at gmail dot com.";
@@ -113,6 +174,8 @@ export function startEmailCapture(
   ctx.phase = "collect_email";
   ctx.latestRawEmail = undefined;
   ctx.normalizedEmail = undefined;
+  ctx.pendingEmailSlots = undefined;
+  ctx.lastPartialCorrection = undefined;
   ctx.confirmedEmail = undefined;
   ctx.confirmationStatus = "pending";
   ctx.sentStatus = "pending";
@@ -162,25 +225,39 @@ export function buildEmailCapturePrompt(workflowType: EmailWorkflowType): string
 /**
  * LLM / tool path — update pending email on UnifiedCallSession without restarting
  * the support_escalation or payment_link workflow.
- * Supports contextual segment repair via replaceFrom/replaceTo without re-asking the full address.
+ * Supports Semantic Slot PartialCorrection via replaceFrom/replaceTo or explicit slot.
  */
 export function updatePendingEmail(
   session: CallSession,
   email: string,
   rawUtterance?: string,
-  options?: { replaceFrom?: string; replaceTo?: string },
-): { ok: true; email: string; spelled: string } | { ok: false; error: string } {
+  options?: {
+    replaceFrom?: string;
+    replaceTo?: string;
+    /** Target semantic slot for PartialCorrection (defaults to inferred). */
+    slot?: PartialCorrection["slot"];
+  },
+): { ok: true; email: string; spelled: string; pending: PendingEmail; correction?: PartialCorrection }
+  | { ok: false; error: string } {
   const ctx = ensureEmailConfirmation(session);
   const from = (options?.replaceFrom ?? "").trim().toLowerCase();
   const to = (options?.replaceTo ?? "").trim().toLowerCase();
   let normalized = email.trim().toLowerCase();
+  let correction: PartialCorrection | undefined;
 
   if (from && to) {
     const base = (ctx.normalizedEmail ?? normalized).toLowerCase();
     if (!base.includes("@")) {
       return { ok: false, error: "No cached email to patch — collect the full address first." };
     }
+    const before = ctx.pendingEmailSlots ?? parsePendingEmail(base);
     normalized = base.includes(from) ? base.split(from).join(to) : base;
+    const after = parsePendingEmail(normalized);
+    correction = {
+      slot: options?.slot ?? inferSlotFromPatch(before, after, from, to),
+      from,
+      to,
+    };
   }
 
   if (!isValidCustomerEmail(normalized)) {
@@ -188,20 +265,36 @@ export function updatePendingEmail(
   }
   ctx.phase = "pending_confirmation";
   ctx.latestRawEmail = (rawUtterance ?? (email || normalized)).trim();
-  ctx.normalizedEmail = normalized;
+  const pending = syncPendingEmailSlots(ctx, normalized, correction);
   ctx.confirmedEmail = undefined;
   ctx.confirmationStatus = "pending";
   logger.info("email_pending_updated", {
     callSid: session.callSid.slice(0, 8),
     workflowType: ctx.workflowType,
-    emailDomain: normalized.split("@")[1] ?? "unknown",
+    emailDomain: pending.domain || "unknown",
     segmentRepair: Boolean(from && to),
+    slot: correction?.slot,
   });
   return {
     ok: true,
-    email: normalized,
-    spelled: spellEmailLetterByLetterForTTS(normalized),
+    email: pending.full,
+    spelled: spellEmailLetterByLetterForTTS(pending.full),
+    pending,
+    correction,
   };
+}
+
+function inferSlotFromPatch(
+  before: PendingEmail,
+  after: PendingEmail,
+  from: string,
+  to: string,
+): PartialCorrection["slot"] {
+  if (before.part2.includes(from) && after.part2.includes(to)) return "part2";
+  if (before.part1.includes(from) && after.part1.includes(to)) return "part1";
+  if (before.domain.includes(from) && after.domain.includes(to)) return "domain";
+  if (before.domain !== after.domain) return "domain";
+  return "local";
 }
 
 function captureEmailFromSpeech(
@@ -212,7 +305,7 @@ function captureEmailFromSpeech(
   const email = extractEmailFromSpeech(text);
   if (email && isValidCustomerEmail(email)) {
     ctx.latestRawEmail = text;
-    ctx.normalizedEmail = email;
+    syncPendingEmailSlots(ctx, email);
     ctx.phase = "pending_confirmation";
     logger.info("email_extracted", {
       callSid: session.callSid.slice(0, 8),
@@ -246,6 +339,7 @@ async function confirmAndSend(
   ctx.confirmedEmail = email;
   ctx.confirmationStatus = "confirmed";
   ctx.phase = "confirmed";
+  issueConfirmedEmail(session, email, ctx.workflowType);
 
   const executor = workflowExecutors.get(ctx.workflowType);
   if (!executor) {
@@ -271,6 +365,8 @@ async function confirmAndSend(
   ctx.sentStatus = "failed";
   ctx.phase = "collect_email";
   ctx.normalizedEmail = undefined;
+  ctx.pendingEmailSlots = undefined;
+  ctx.lastPartialCorrection = undefined;
   ctx.confirmedEmail = undefined;
   return { handled: true, speech: result.failureSpeech };
 }
@@ -302,19 +398,23 @@ export async function resolveEmailConfirmationTurn(
 
   if (ctx.phase === "pending_confirmation") {
     if (isEmailRejection(text)) {
+      const structured =
+        ctx.normalizedEmail ? applyPartialCorrection(ctx.normalizedEmail, text) : null;
       const corrected =
-        extractEmailFromSpeech(text) ??
-        (ctx.normalizedEmail
-          ? applyPartialEmailCorrection(ctx.normalizedEmail, text)
-          : null);
+        extractEmailFromSpeech(text) ?? structured?.email ?? null;
       if (corrected && isValidCustomerEmail(corrected)) {
         ctx.latestRawEmail = text;
-        ctx.normalizedEmail = corrected;
+        syncPendingEmailSlots(ctx, corrected, structured?.correction);
         ctx.confirmationStatus = "pending";
-        return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
+        return {
+          handled: true,
+          speech: buildUpdatedEmailConfirmationSpeech(corrected, structured?.correction),
+        };
       }
       ctx.phase = "collect_email";
       ctx.normalizedEmail = undefined;
+      ctx.pendingEmailSlots = undefined;
+      ctx.lastPartialCorrection = undefined;
       ctx.latestRawEmail = undefined;
       ctx.confirmationStatus = "rejected";
       return { handled: true, speech: buildEmailCapturePrompt(ctx.workflowType) };
@@ -329,12 +429,15 @@ export async function resolveEmailConfirmationTurn(
     }
 
     if (isPartialEmailCorrection(text) && ctx.normalizedEmail) {
-      const corrected =
-        applyPartialEmailCorrection(ctx.normalizedEmail, text) ?? extractEmailFromSpeech(text);
+      const structured = applyPartialCorrection(ctx.normalizedEmail, text);
+      const corrected = structured?.email ?? extractEmailFromSpeech(text);
       if (corrected && isValidCustomerEmail(corrected)) {
         ctx.latestRawEmail = text;
-        ctx.normalizedEmail = corrected;
-        return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
+        syncPendingEmailSlots(ctx, corrected, structured?.correction);
+        return {
+          handled: true,
+          speech: buildUpdatedEmailConfirmationSpeech(corrected, structured?.correction),
+        };
       }
       // Unstructured correction ("Bashi not Basi", "don't read it like that") → LLM.
       return { handled: false };
@@ -343,7 +446,7 @@ export async function resolveEmailConfirmationTurn(
     const corrected = extractEmailFromSpeech(text);
     if (corrected && isValidCustomerEmail(corrected)) {
       ctx.latestRawEmail = text;
-      ctx.normalizedEmail = corrected;
+      syncPendingEmailSlots(ctx, corrected);
       return { handled: true, speech: buildUpdatedEmailConfirmationSpeech(corrected) };
     }
 
@@ -370,21 +473,31 @@ export function buildEmailConfirmationSystemMessage(session: CallSession): strin
   if (!isEmailConfirmationActive(session) || !session.emailConfirmation) return null;
   const ctx = session.emailConfirmation;
   const pending = ctx.normalizedEmail?.trim() ?? "";
+  const slots = ctx.pendingEmailSlots ?? (pending ? parsePendingEmail(pending) : null);
   const spelled = pending ? spellEmailLetterByLetterForTTS(pending) : "(none yet)";
   const workflow =
     ctx.workflowType === "payment_link" ? "payment_link checkout" : "support_escalation";
+  const slotLine = slots
+    ? `pendingEmailSlots: part1=${slots.part1 || "(empty)"} part2=${slots.part2 || "(empty)"} domain=${slots.domain || "(empty)"}`
+    : "pendingEmailSlots: (none yet)";
+  const lastFix = ctx.lastPartialCorrection
+    ? `lastPartialCorrection: slot=${ctx.lastPartialCorrection.slot} ${ctx.lastPartialCorrection.from}→${ctx.lastPartialCorrection.to}`
+    : "lastPartialCorrection: (none)";
 
   return [
-    "EMAIL CONFIRMATION IN PROGRESS (MANDATORY — LLM-DRIVEN)",
+    "EMAIL CONFIRMATION IN PROGRESS (MANDATORY — SEMANTIC SLOT REPAIR)",
     `workflow: ${workflow}`,
     `phase: ${ctx.phase}`,
     `pendingEmail: ${pending || "(awaiting address)"}`,
+    slotLine,
+    lastFix,
     `pendingEmailSpelled: ${spelled}`,
     "The caller's raw utterance is authoritative. Honor meta-instructions (e.g. change formatting, fix a letter, start over, 'don't read it like that').",
     "When confirming an email, read it STRICTLY letter-by-letter with short pauses (e.g. B, A, S, H, I at gmail dot com). NEVER use 'A as in Apple' phonetic cue words for email.",
-    "If the caller corrects the email, apply CONTEXTUAL REPAIR: call update_pending_email with replace_from/replace_to and/or the full patched address — do NOT re-ask for the entire email. Acknowledge the correction, then read the FULL updated email back once letter-by-letter.",
+    "SEMANTIC SLOT PartialCorrection: If the caller says 'No, it's Saab', patch ONLY the matching slot (usually part2) via update_pending_email with replace_from/replace_to — do NOT re-ask for the entire email.",
+    "Acknowledge the corrected slot only: 'Understood. I have updated the spelling to S-A-A-B. Your email is now … Is that correct?' then read the FULL updated email once letter-by-letter.",
     "Do NOT say you must finish confirming email before helping — apply their correction or instruction immediately.",
-    "Only after they explicitly confirm the spelled email, call send_checkout_email or send_support_escalation as appropriate for this workflow.",
+    "Only after they explicitly confirm the spelled email, call send_checkout_email (or initiate_checkout_batch first for split batches) or send_support_escalation as appropriate for this workflow.",
   ].join("\n");
 }
 

@@ -3,6 +3,7 @@
  */
 import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
 import type { CallSession } from "../types/order.js";
+import { getActiveOrderContext } from "./sessionManager.js";
 import { callerMatchesAnyShopifyPhone } from "../utils/phoneNormalizer.js";
 import { logger } from "../utils/logger.js";
 
@@ -36,18 +37,18 @@ export function applyCallerVerificationFromOrder(
 }
 
 export function buildVaultSecuritySystemMessage(session: CallSession): string | null {
-  if (session.isVerifiedCaller === undefined && !session.currentOrderData) {
+  if (session.isVerifiedCaller === undefined && !getActiveOrderContext(session)) {
     return null;
   }
 
   const customerName =
-    (session.currentOrderData?.customer_name as string | undefined) ??
+    getActiveOrderContext(session)?.customer_name ??
     session.currentOrder?.customerName ??
     "the registered customer";
   const verified = session.isVerifiedCaller === true;
   const totalOrders =
     session.totalOrderCount ??
-    (session.currentOrderData?.total_order_count as number | undefined) ??
+    getActiveOrderContext(session)?.total_order_count ??
     null;
 
   return (

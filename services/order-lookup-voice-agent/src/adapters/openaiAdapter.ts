@@ -6,12 +6,13 @@ import { getConfig } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { SHOSHAN_SYSTEM_PROMPT } from "../prompts/systemPrompt.js";
 import {
+  normalizeLlmToolName,
   toolResultForLlm,
   type LlmToolExecutionRecord,
   type LlmToolName,
 } from "./llmToolExecutor.js";
 import { UNIFIED_OPENAI_TOOL_SCHEMAS } from "./unifiedToolRegistry.js";
-import type { OrderStatusResult } from "./shopifyStorefrontAdapter.js";
+import type { OrderLookupStatus } from "../types/order.js";
 import { ServiceRegistry } from "../sovereign/serviceRegistry.js";
 import {
   getCurrentSessionOrderNumber,
@@ -20,13 +21,23 @@ import {
   shouldBlockOrderLookupReinvoke,
   speechForOrderLookupResult,
 } from "../agents/orderLookupWorkflow.js";
-import { LLM_ORCHESTRATOR_TEMPERATURE } from "../agents/llmConfig.js";
+import { getLlmOrchestratorTemperature, isLlmStreamingEnabled } from "../agents/llmConfig.js";
 import { extractOrderNumberFromStt } from "../nlp/entityExtractor.js";
 import { ORDER_NOT_FOUND_STRICT_SPOKEN, SHOPIFY_TIMEOUT_SPOKEN } from "../constants/systemMessages.js";
 import { dispatchAgentEvent, getAgentState } from "../platform/eventDispatcher.js";
 import { extractOrderNumberFromSpeech, orderNumbersMatch } from "../utils/formatter.js";
 import { buildPolitePivotSpeech, isOutOfDomainQuestion } from "../utils/domainGuard.js";
-import { buildActiveOrderContextSystemMessage, redactTrackingFromOrderContext } from "../agents/sessionManager.js";
+import { buildActiveOrderContextSystemMessage, getActiveOrderTrackingNumber, getActiveOrderContext, redactTrackingFromOrderContext } from "../agents/sessionManager.js";
+import {
+  isBareQuantityReply,
+  lastAssistantAskedForQuantity,
+  mapNaturalLanguageToInteger,
+} from "../agents/catalogShoppingIntent.js";
+import { getSessionMemory, ensureSessionMemory } from "../agents/sessionMemory.js";
+import {
+  decideTurnEnd,
+  mergeListeningWaitBuffer,
+} from "./turnEndHeuristics.js";
 import { filterOrderContextForVerification } from "../agents/orderContextPrivacy.js";
 import type { ActiveOrderContextData } from "../agents/sessionManager.js";
 import { buildCartContextSystemMessage } from "../agents/cartManager.js";
@@ -77,6 +88,7 @@ import {
   ensureTrackingPayload,
   shouldSkipToolReinvoke,
   buildSlowerTrackingReplaySpeech,
+  setAgentRelayState,
 } from "../sovereign/activeSession.js";
 import { buildEmailConfirmationSystemMessage } from "../agents/emailConfirmationManager.js";
 import { NOTEPAD_HANDSHAKE_PROMPT } from "../sovereign/sovereignRouter.js";
@@ -94,9 +106,6 @@ import {
   promptUserForNotepad,
   completeTrackingDictation,
   TRACKING_DICTATION_COMPLETE_SPEECH,
-  isUserNotepadReadyIntent,
-  beginTrackingDictationAfterNotepadReady,
-  isTrackingDictationPending,
   appendTrackingDictationConfirm,
 } from "../agents/dictationTool.js";
 import { isTrackingDictationText } from "../utils/ttsFormatter.js";
@@ -174,6 +183,7 @@ type StreamedAssistantRound = {
 /**
  * Stream one OpenAI chat round. Emits speech_delta on sentence/phrase boundaries
  * for text-only replies; accumulates tool_calls without speaking.
+ * Honors STREAMING_ENABLED (production default true) and LLM_TEMPERATURE (default 0.2).
  */
 async function* streamAssistantRound(
   messages: OpenAI.Chat.ChatCompletionMessageParam[],
@@ -182,10 +192,44 @@ async function* streamAssistantRound(
   { type: "speech_delta"; text: string } | { type: "round"; round: StreamedAssistantRound }
 > {
   const signal = getTurnAbortSignal(input.callSid);
+  const temperature = getLlmOrchestratorTemperature();
+  const streaming = isLlmStreamingEnabled();
+
+  if (!streaming) {
+    const completion = await getClient().chat.completions.create(
+      {
+        model: getConfig().CONVERSATION_BRAIN_MODEL,
+        temperature,
+        max_tokens: 450,
+        tools: resolveToolsForTurn(input),
+        tool_choice: "auto",
+        messages,
+        stream: false,
+      },
+      signal ? { signal } : undefined,
+    );
+    const choice = completion.choices[0];
+    const content = choice?.message?.content?.trim() ?? "";
+    const toolCalls = choice?.message?.tool_calls ?? [];
+    if (content && !toolCalls.length) {
+      yield { type: "speech_delta", text: content };
+    }
+    yield {
+      type: "round",
+      round: {
+        content,
+        toolCalls,
+        finishReason: choice?.finish_reason ?? (toolCalls.length > 0 ? "tool_calls" : "stop"),
+        streamedSpeech: Boolean(content && !toolCalls.length),
+      },
+    };
+    return;
+  }
+
   const stream = await getClient().chat.completions.create(
     {
       model: getConfig().CONVERSATION_BRAIN_MODEL,
-      temperature: LLM_ORCHESTRATOR_TEMPERATURE,
+      temperature,
       max_tokens: 450,
       tools: resolveToolsForTurn(input),
       tool_choice: "auto",
@@ -265,19 +309,7 @@ async function* streamAssistantRound(
 }
 
 function isToolName(name: string): name is LlmToolName {
-  return (
-    name === "get_shopify_order_status" ||
-    name === "get_customer_history" ||
-    name === "search_shopify_book_by_isbn" ||
-    name === "search_shopify_book_by_title" ||
-    name === "dictate_tracking" ||
-    name === "update_cart_item_quantity" ||
-    name === "get_cart_summary" ||
-    name === "send_checkout_email" ||
-    name === "send_support_escalation" ||
-    name === "update_pending_email" ||
-    name === "end_call"
-  );
+  return normalizeLlmToolName(name) != null;
 }
 
 function toToolArgsRecord(rawArgs: Record<string, unknown>): Record<string, string> {
@@ -392,6 +424,18 @@ function buildOpenAiMessages(
       systemMessages.push({ role: "system", content: vaultMessage });
     }
 
+    // Track Conversation Turns: if we just asked How many copies?, arm Confirmation Turn.
+    if (lastAssistantAskedForQuantity(input.messages)) {
+      const memory = getSessionMemory(input.session);
+      memory.awaitingQuantityReply = true;
+      memory.quantityAskCount = (memory.quantityAskCount ?? 0) + 1;
+    }
+
+    const quantityIntent = applySemanticQuantityIntentResolver(input);
+    if (quantityIntent.systemNote) {
+      systemMessages.push({ role: "system", content: quantityIntent.systemNote });
+    }
+
     if (input.session.greetedThisCall) {
       systemMessages.push({
         role: "system",
@@ -491,6 +535,57 @@ function lastAssistantAskedForOrder(messages: LlmChatMessage[]): boolean {
         last.content,
       ),
   );
+}
+
+/**
+ * Semantic Intent Resolver — preprocess user input before the LLM.
+ * Maps "one" / "just one" / "a single copy" → integer 1 and annotates the turn
+ * so the model cannot re-ask How many copies? (Verification Over-Constraint).
+ */
+function applySemanticQuantityIntentResolver(input: LlmAgentTurnInput): {
+  resolvedQuantity: number | null;
+  systemNote: string | null;
+} {
+  if (!isBareQuantityReply(input.userMessage)) {
+    return { resolvedQuantity: null, systemNote: null };
+  }
+  const resolvedQuantity = mapNaturalLanguageToInteger(input.userMessage);
+  if (resolvedQuantity == null) {
+    return { resolvedQuantity: null, systemNote: null };
+  }
+
+  const session = input.session;
+  if (!session?.lastCatalogSearch?.variantId) {
+    return { resolvedQuantity, systemNote: null };
+  }
+
+  const memory = getSessionMemory(session);
+  const alreadyInCart = (session.shoppingCart ?? []).some(
+    (line) => line.variantId === session.lastCatalogSearch?.variantId,
+  );
+  const asked =
+    lastAssistantAskedForQuantity(input.messages) ||
+    memory.awaitingQuantityReply === true ||
+    (memory.quantityAskCount ?? 0) > 0 ||
+    !alreadyInCart;
+
+  if (!asked) {
+    return { resolvedQuantity, systemNote: null };
+  }
+
+  memory.awaitingQuantityReply = true;
+  memory.latestQuantityRequested = resolvedQuantity;
+
+  const title = session.lastCatalogSearch.title?.trim() || "the book you just found";
+  return {
+    resolvedQuantity,
+    systemNote: [
+      "SEMANTIC INTENT RESOLVER (MANDATORY — NO RE-ASK LOOP):",
+      `The caller answered a quantity question with natural language. Mapped utterance → quantity=${resolvedQuantity}.`,
+      `This is a Confirmation Turn. Immediately call update_cart_item_quantity with action_type=set (or add if the line is new), quantity=${resolvedQuantity}, and the last catalog variant for "${title}".`,
+      "Acknowledge once and proceed to the shopping loop / payment-link offer. Do NOT ask 'How many copies?' again. Do NOT ask 'are you sure?'.",
+    ].join(" "),
+  };
 }
 
 function isAwaitingOrderNumberSlot(input: LlmAgentTurnInput): boolean {
@@ -732,7 +827,26 @@ function groundedSpeechFromOrderToolRecord(
     record.data &&
     "status" in record.data
   ) {
-    return speechForOrderLookupResult(record.data as OrderStatusResult, options);
+    const data = record.data as {
+      status?: string;
+      message?: string;
+      orderView?: { order_number?: string; customer_name?: string; fulfillment_status?: string };
+      searchedNumber?: string;
+    };
+    if (data.orderView) {
+      return speechForOrderLookupResult(
+        {
+          status: data.status === "found" ? "found" : (data.status as OrderLookupStatus) ?? "not_found",
+          orderNumber: data.orderView.order_number,
+          customerName: data.orderView.customer_name,
+          fulfillmentStatus: data.orderView.fulfillment_status,
+          message: data.message,
+          searchedNumber: data.searchedNumber,
+        },
+        options,
+      );
+    }
+    return speechForOrderLookupResult(data, options);
   }
   if (
     record.status === "system_maintenance" ||
@@ -857,7 +971,7 @@ function interceptContextualDictationRepeatBeforeLlm(
     active.lastSpokenDataPoint?.kind === "tracking_number"
       ? active.lastSpokenDataPoint.raw
       : active.lastSpokenPayload?.trackingRaw ||
-        String(input.session?.currentOrderData?.tracking_number ?? "").trim();
+        getActiveOrderTrackingNumber(input.session);
 
   const hasTrackingContext =
     Boolean(trackingRaw) &&
@@ -891,115 +1005,6 @@ function interceptContextualDictationRepeatBeforeLlm(
   };
 }
 
-function interceptNotepadReadyBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  if (!isUserNotepadReadyIntent(input.userMessage, input.callSid)) return null;
-
-  const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
-  const active = getOrCreateActiveSession(input.callSid);
-  if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
-    ensureTrackingPayload(input.callSid, trackingRaw);
-  }
-  if (
-    !isTrackingDictationPending(input.callSid, input.session?.currentOrderData) ||
-    !getOrCreateActiveSession(input.callSid).lastSpokenPayload?.trackingForTts
-  ) {
-    return null;
-  }
-
-  const turn = beginTrackingDictationAfterNotepadReady(input.callSid);
-  return {
-    speech: turn.speech,
-    toolExecutions: [],
-    responseType: turn.ok ? "order_found" : "general_help",
-  };
-}
-
-function interceptTrackingCompleteBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  const active = getOrCreateActiveSession(input.callSid);
-  const trackingDictationContext = {
-    currentState: active.currentState,
-    lastSpokenIndex: active.lastSpokenIndex,
-  };
-  if (!isTrackingDictationCompleteIntent(input.userMessage, trackingDictationContext)) return null;
-
-  const inTrackingFlow =
-    Boolean(active.lastSpokenPayload?.trackingForTts) &&
-    (active.currentState === "tracking_dictation" || active.cachedIntent === "tracking");
-
-  if (!inTrackingFlow) return null;
-
-  completeTrackingDictation(input.callSid);
-
-  if (isIntentSwitchAwayFromTracking(input.userMessage, input.session ?? undefined)) {
-    return null;
-  }
-
-  return {
-    speech: TRACKING_DICTATION_COMPLETE_SPEECH,
-    toolExecutions: [],
-    responseType: "general_help",
-  };
-}
-
-function interceptTrackingDictationLockBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  const active = getOrCreateActiveSession(input.callSid);
-  const inTracking =
-    active.currentState === "tracking_dictation" ||
-    (active.currentState === "awaiting_notepad_ready" && active.cachedIntent === "tracking");
-  if (!inTracking) return null;
-
-  if (isSpatialResumeQuery(input.userMessage)) return null;
-  if (isUserNotepadReadyIntent(input.userMessage, input.callSid)) return null;
-  if (isTrackingRequest(input.userMessage)) return null;
-  if (
-    isTrackingDictationCompleteIntent(input.userMessage, {
-      currentState: active.currentState,
-      lastSpokenIndex: active.lastSpokenIndex,
-      isNotepadReady: active.isNotepadReady,
-    })
-  ) {
-    return null;
-  }
-
-  if (isIntentSwitchAwayFromTracking(input.userMessage, input.session ?? undefined)) {
-    releaseTrackingFlowForIntentSwitch(input.callSid);
-    return null;
-  }
-
-  return {
-    speech:
-      "I'm still on your tracking number. Tell me which digits to repeat from, or let me know once you've written it down.",
-    toolExecutions: [],
-    responseType: "general_help",
-  };
-}
-
-function interceptSpatialBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  if (!isSpatialResumeQuery(input.userMessage)) return null;
-
-  const active = getOrCreateActiveSession(input.callSid);
-  const trackingRaw = String(input.session?.currentOrderData?.tracking_number ?? "").trim();
-  if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
-    ensureTrackingPayload(input.callSid, trackingRaw);
-  }
-
-  const refreshed = getOrCreateActiveSession(input.callSid);
-  if (!refreshed.spatialIndex.length) return null;
-
-  const turn = resolveSpatialTurnSpeech(
-    input.userMessage,
-    refreshed.spatialIndex,
-    refreshed.lastSpokenPayload?.trackingRaw,
-  );
-  if (!turn.handled || !turn.speech) return null;
-
-  return {
-    speech: turn.speech,
-    toolExecutions: [],
-    responseType: "general_help",
-  };
-}
-
 function enforceNotepadGateOnSpeech(callSid: string, speech: string): string {
   const active = getOrCreateActiveSession(callSid);
   if (active.trackingDictationComplete) return speech;
@@ -1009,46 +1014,6 @@ function enforceNotepadGateOnSpeech(callSid: string, speech: string): string {
     return promptUserForNotepad();
   }
   return speech;
-}
-
-function interceptTrackingBeforeLlm(input: LlmAgentTurnInput): LlmAgentTurnResult | null {
-  if (isCatalogShoppingUtterance(input.userMessage)) return null;
-
-  const callerIntent = resolveCallerIntent(input.userMessage, input.session ?? undefined);
-  if (callerIntent === "catalog" || callerIntent === "cart") return null;
-
-  const active = getOrCreateActiveSession(input.callSid);
-  const trackingGate: TrackingDictationGateContext = { session: input.session };
-  if (
-    !shouldStartTrackingDictation(
-      input.userMessage,
-      active.trackingDictationComplete === true,
-      trackingGate,
-    )
-  ) {
-    return null;
-  }
-  const trackingRaw = String(
-    input.session?.currentOrderData?.tracking_number ??
-      input.session?.lastOrderStatusResult?.trackingNumber ??
-      "",
-  ).trim();
-  if (!active.lastSpokenPayload?.trackingForTts && trackingRaw) {
-    ensureTrackingPayload(input.callSid, trackingRaw);
-  }
-
-  const hasTracking = Boolean(
-    getOrCreateActiveSession(input.callSid).lastSpokenPayload?.trackingForTts ||
-      hasTrackingInSessionContext(input.session?.currentOrderData),
-  );
-  if (!hasTracking) return null;
-
-  const gate = resolveDictateTracking(input.callSid);
-  return {
-    speech: gate.speech,
-    toolExecutions: [],
-    responseType: gate.intent === "dictate_tracking" ? "order_found" : "general_help",
-  };
 }
 
 export async function* runLlmAgentTurnEvents(
@@ -1077,26 +1042,11 @@ export async function* runLlmAgentTurnEvents(
     }
   }
 
-  // Tracking / spatial follow-ups before any forced Shopify re-lookup.
+  // Pre-turn LISTENING_WAIT is owned by VoicePreTurn (orchestrator / transport).
+  // Adapter must not duplicate Wait-for-Clause ownership.
+
+  // Tracking / notepad / spatial gating: ConversationOrchestrator.resolveTrackingPhaseGate only.
   ensureCatalogPivotClearsTracking(input);
-
-  const spatialInterceptEarly = interceptSpatialBeforeLlm(input);
-  if (spatialInterceptEarly) {
-    yield { type: "result", result: spatialInterceptEarly };
-    return;
-  }
-
-  const contextualRepeatEarly = interceptContextualDictationRepeatBeforeLlm(input);
-  if (contextualRepeatEarly) {
-    yield { type: "result", result: contextualRepeatEarly };
-    return;
-  }
-
-  const trackingInterceptEarly = interceptTrackingBeforeLlm(input);
-  if (trackingInterceptEarly) {
-    yield { type: "result", result: trackingInterceptEarly };
-    return;
-  }
 
   // Same order already sticky — acknowledge without re-fetching or re-speaking gateway.
   if (
@@ -1195,21 +1145,9 @@ export async function* runLlmAgentTurnEvents(
 
   ensureCatalogPivotClearsTracking(input);
 
-  const trackingDictationLock = interceptTrackingDictationLockBeforeLlm(input);
-  if (trackingDictationLock) {
-    yield { type: "result", result: trackingDictationLock };
-    return;
-  }
-
-  const notepadReadyIntercept = interceptNotepadReadyBeforeLlm(input);
-  if (notepadReadyIntercept) {
-    yield { type: "result", result: notepadReadyIntercept };
-    return;
-  }
-
-  const trackingCompleteIntercept = interceptTrackingCompleteBeforeLlm(input);
-  if (trackingCompleteIntercept) {
-    yield { type: "result", result: trackingCompleteIntercept };
+  const contextualRepeat = interceptContextualDictationRepeatBeforeLlm(input);
+  if (contextualRepeat) {
+    yield { type: "result", result: contextualRepeat };
     return;
   }
 
@@ -1412,8 +1350,9 @@ export async function* runLlmAgentTurnEvents(
           }
 
           const generation = getTurnGeneration(input.callSid);
+          const canonicalTool = normalizeLlmToolName(call.function.name) ?? call.function.name;
           const record = await ServiceRegistry.executeTool(
-            call.function.name,
+            canonicalTool,
             parsedArgs,
             input.callSid,
             input.session,

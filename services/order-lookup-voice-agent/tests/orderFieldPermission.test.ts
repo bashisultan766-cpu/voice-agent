@@ -13,6 +13,7 @@ import {
   setOrderHistoryContext,
 } from "../src/agents/orderHistoryFlow.js";
 import { canRevealOrderField } from "../src/agents/verificationGate.js";
+import { getActiveOrderContext, saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 const ORDER_CONTEXT = {
@@ -38,7 +39,7 @@ function seedSession(callSid: string, verified: boolean): CallSession {
   const phone = verified ? "+15551234567" : "+15550001111";
   const session = createCallSession(callSid, phone, "+18005551212");
   session.orderContextConfirmed = true;
-  session.currentOrderData = { ...ORDER_CONTEXT };
+  saveActiveOrderContext(session, { ...ORDER_CONTEXT });
   applyCallerVerificationFromOrder(session, {
     status: "found",
     orderNumber: "48065",
@@ -55,7 +56,7 @@ function seedSession(callSid: string, verified: boolean): CallSession {
 
 function filteredContext(session: CallSession) {
   return filterOrderContextForVerification(
-    session.currentOrderData as any,
+    getActiveOrderContext(session) as any,
     session.isVerifiedCaller === true,
   );
 }

@@ -97,6 +97,7 @@ import {
   updateActiveSession,
   syncActiveSessionFromCallSession,
   buildSlowerTrackingReplaySpeech,
+  setAgentRelayState,
 } from "../sovereign/activeSession.js";
 import {
   clearPreferredVoiceForCall,
@@ -213,9 +214,17 @@ import {
   ORDER_NUMBER_ATTEMPTS_EXHAUSTED_SYSTEM_NOTE,
   syncTrackingOfferState,
 } from "./orderLookupProtocol.js";
-import { captureSessionIntent, callerAskedForTracking } from "./sessionMemory.js";
-import { groundedOrderSpeech } from "./fulfillmentHandlers.js";
+import { captureSessionIntent, callerAskedForTracking, ensureSessionMemory } from "./sessionMemory.js";
+import { processVoicePreTurn } from "../voice/voicePreTurn.js";
+import { SharedListeningWaitScheduler } from "../voice/turnScheduler.js";
+import {
+  buildFailureStateSpeech,
+  hasUnacknowledgedFailure,
+  maybeAcknowledgeFailureFromUtterance,
+} from "./failureState.js";
+import { buildOrderFoundGatewaySpeech } from "./orderLookupProtocol.js";
 import type { ActiveOrderContextData } from "./sessionManager.js";
+import { getActiveOrderContext, hasActiveOrderTracking, getActiveOrderTrackingNumber } from "./sessionManager.js";
 import {
   filterOrderContextForVerification,
   isRestrictedFieldQueryForUnverified,
@@ -331,6 +340,9 @@ export async function createOrHydrateCallSession(
       hydrated.to = to;
     }
     createActiveSession(callSid);
+    // Restore dictation / tracking cursor BEFORE sync (which preserves tracking states).
+    const { ensureSessionMemoryHydrated } = await import("./sessionStateService.js");
+    await ensureSessionMemoryHydrated(callSid, hydrated);
     if (hydrated.flowMode) {
       setConversationFlowMode(callSid, hydrated.flowMode);
     }
@@ -345,11 +357,14 @@ export async function createOrHydrateCallSession(
 /** Tear down all per-call resources when the relay socket closes. */
 export function endCallSession(callSid: string, session?: CallSession): void {
   if (session) {
+    void import("./flowMutex.js").then(({ clearFlowMutexOnSessionEnd }) => {
+      clearFlowMutexOnSessionEnd(session);
+    });
     saveCallerMemory({
       phone: session.callerPhone ?? session.from,
       lastIntent: session.lastOrchestratorIntent,
       shoppingCart: session.shoppingCart,
-      currentOrderData: session.currentOrderData,
+      sessionOrderContext: session.sessionOrderContext,
     });
   }
   markCallSessionClosed(callSid);
@@ -423,7 +438,7 @@ function ensureTrackingPayloadFromSession(session: CallSession): void {
   const active = getOrCreateActiveSession(session.callSid);
   if (active.lastSpokenPayload?.trackingForTts) return;
 
-  const trackingRaw = String(session.currentOrderData?.tracking_number ?? "").trim();
+  const trackingRaw = getActiveOrderTrackingNumber(session);
   if (trackingRaw) {
     ensureTrackingPayload(session.callSid, trackingRaw);
   }
@@ -500,7 +515,7 @@ async function* yieldSupportEscalationTurnIfActive(
 }
 
 function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
-  const raw = session.currentOrderData ?? {};
+  const raw = getActiveOrderContext(session) ?? {};
   return filterOrderContextForVerification(
     raw as ActiveOrderContextData,
     session.isVerifiedCaller === true,
@@ -510,7 +525,7 @@ function verifiedOrderContext(session: CallSession): ActiveOrderContextData {
 function buildOrderFieldSpeech(session: CallSession, callerText: string): string | null {
   const context = verifiedOrderContext(session);
   const registeredCustomerName = String(
-    session.currentOrderData?.customer_name ?? session.currentOrder?.customerName ?? "",
+    getActiveOrderContext(session)?.customer_name ?? session.currentOrder?.customerName ?? "",
   ).trim();
   const detailSpeech = buildOrderDetailSpeech(session, callerText, context);
   if (detailSpeech) return detailSpeech;
@@ -536,7 +551,7 @@ async function resolveOrderHistorySpeech(
   if (session.isVerifiedCaller !== true) {
     const count =
       session.totalOrderCount ??
-      (session.currentOrderData?.total_order_count as number | undefined) ??
+      getActiveOrderContext(session)?.total_order_count ??
       0;
     armPrivateInfoBlockedEscalation(
       session,
@@ -606,7 +621,7 @@ function tryResolveNotepadReadyTurn(
   ensureTrackingPayloadFromSession(session);
   const active = getOrCreateActiveSession(session.callSid);
   if (active.trackingDictationComplete) return null;
-  if (!active.lastSpokenPayload?.trackingForTts && !hasTrackingInSessionContext(session.currentOrderData)) {
+  if (!active.lastSpokenPayload?.trackingForTts && !hasTrackingInSessionContext(getActiveOrderContext(session))) {
     return null;
   }
 
@@ -632,7 +647,7 @@ function tryResolveContextualDictationRepeat(
     active.lastSpokenDataPoint?.kind === "tracking_number"
       ? active.lastSpokenDataPoint.raw
       : active.lastSpokenPayload?.trackingRaw ||
-        String(session.currentOrderData?.tracking_number ?? "").trim();
+        getActiveOrderTrackingNumber(session);
 
   const hasTrackingContext =
     Boolean(trackingRaw) &&
@@ -900,7 +915,7 @@ export function resolveTrackingPhaseGate(
   }
 
   const trackingContextReady = Boolean(
-    refreshed.lastSpokenPayload?.trackingForTts || hasTrackingInSessionContext(session.currentOrderData),
+    refreshed.lastSpokenPayload?.trackingForTts || hasTrackingInSessionContext(getActiveOrderContext(session)),
   );
 
   if (wantsTrackingDictation && trackingContextReady) {
@@ -1151,9 +1166,74 @@ async function* runOrchestratorTurnCore(
   session: CallSession,
   callerText: string,
 ): AsyncGenerator<AgentStreamEvent> {
+  // Stale-lock breaker + orphan flag cleanup before any turn work.
+  const { onTurnFlowMutexCheck } = await import("./flowMutex.js");
+  onTurnFlowMutexCheck(session);
+
+  // Await email_unknown reconciliation when a stuck group exists — never force cart re-plan.
+  {
+    const { ensureCheckoutPlan } = await import("../domain/checkoutModels.js");
+    const hasEmailUnknown = ensureCheckoutPlan(session).groups.some(
+      (g) => g.status === "email_unknown",
+    );
+    if (hasEmailUnknown) {
+      const { ActionGateway } = await import("../runtime/actionGateway.js");
+      await ActionGateway.reconcileEmailUnknownGroups(session, {
+        callId: session.callSid,
+        actionId: `reconcile_${Date.now().toString(36)}`,
+        workflowId: "email_unknown_reconcile",
+      }).catch(() => undefined);
+    }
+  }
+
   setToolExecutionPhase(session.callSid, "PHASE_1");
   setSlotValidationReady(session.callSid, false);
-  const text = (callerText ?? "").trim();
+  const rawText = (callerText ?? "").trim();
+  const memory = ensureSessionMemory(session);
+  const preTurn = processVoicePreTurn(session, {
+    transport: "conversation_relay",
+    callId: session.callSid,
+    text: rawText,
+  });
+  if (preTurn.action === "listening_wait") {
+    if (preTurn.speech) {
+      yield chunkEvent(preTurn.speech);
+    }
+    // Arm shared silence interjection timer — buffer stays intact until proceed.
+    SharedListeningWaitScheduler.arm(session, preTurn.waitId, {
+      isSessionActive: () => isCallSessionActive(session.callSid),
+    });
+    yield doneEvent(session.phase);
+    return;
+  }
+  if (preTurn.action === "listening_wait_timeout") {
+    // Legacy path — current VoicePreTurn prefers listening_wait interjections.
+    const uniqueSpeech = await ensureUniqueSpokenResponse(
+      session.callSid,
+      preTurn.speech,
+      rawText,
+    );
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return;
+  }
+  const text = preTurn.text;
+  const failureAcked = maybeAcknowledgeFailureFromUtterance(session, text);
+  if (!failureAcked && hasUnacknowledgedFailure(session) && !isNoiseTranscript(text)) {
+    const failSpeech = buildFailureStateSpeech(session);
+    if (failSpeech) {
+      const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, failSpeech, text);
+      syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+        responseType: "general_help",
+      });
+      yield* yieldSpeech(uniqueSpeech);
+      yield doneEvent(session.phase);
+      return;
+    }
+  }
   ingestUserTurn(session.callSid, text);
   syncActiveWorkflowContext(session);
 
@@ -1161,6 +1241,20 @@ async function* runOrchestratorTurnCore(
   const brain = applyBrainWorkflowControl(session, text, callerIntentPreview);
 
   if (yield* yieldEmailConfirmationTurnIfActive(session, text)) {
+    return;
+  }
+
+  if (brain.sentimentShieldSpeech) {
+    const uniqueSpeech = await ensureUniqueSpokenResponse(
+      session.callSid,
+      brain.sentimentShieldSpeech,
+      text,
+    );
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
     return;
   }
 
@@ -1281,7 +1375,7 @@ async function* runOrchestratorTurnCore(
       const refusal = /\b(shipping\s+address|delivery\s+address)\b/i.test(text)
         ? buildUnverifiedShippingAddressRefusal()
         : buildUnverifiedRefusalWithSupportOffer(
-            String(session.currentOrderData?.customer_name ?? ""),
+            String(getActiveOrderContext(session)?.customer_name ?? ""),
           );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, text);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
@@ -1734,6 +1828,19 @@ async function* handleFollowUpPhase(
 
   const followIntent = resolveCallerIntent(callerText, session);
   const followBrain = applyBrainWorkflowControl(session, callerText, followIntent);
+  if (followBrain.sentimentShieldSpeech) {
+    const uniqueSpeech = await ensureUniqueSpokenResponse(
+      session.callSid,
+      followBrain.sentimentShieldSpeech,
+      callerText,
+    );
+    syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
+      responseType: "general_help",
+    });
+    yield* yieldSpeech(uniqueSpeech);
+    yield doneEvent(session.phase);
+    return;
+  }
   if (followBrain.deterministicCartSpeech) {
     const uniqueSpeech = await ensureUniqueSpokenResponse(
       session.callSid,
@@ -1801,7 +1908,7 @@ async function* handleFollowUpPhase(
       const refusal = /\b(shipping\s+address|delivery\s+address)\b/i.test(callerText)
         ? buildUnverifiedShippingAddressRefusal()
         : buildUnverifiedRefusalWithSupportOffer(
-            String(session.currentOrderData?.customer_name ?? ""),
+            String(getActiveOrderContext(session)?.customer_name ?? ""),
           );
       const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, refusal, callerText);
       syncDeterministicAssistantSpeech(session.callSid, uniqueSpeech, {
@@ -1845,9 +1952,16 @@ async function* handleFollowUpPhase(
   const intent = await classifyFollowUpIntent(callerText);
 
   if (intent === "goodbye") {
-    session.phase = "ended";
+    const { TerminationCoordinator } = await import("../runtime/terminationCoordinator.js");
+    const term = TerminationCoordinator.terminate(session, "follow_up_goodbye", undefined, callerText);
+    if (!term.ended) {
+      const speech = term.speech ?? "I can keep helping with your cart or checkout.";
+      yield chunkEvent(speech);
+      yield doneEvent(session.phase, false);
+      return;
+    }
     clearCallerMemory(session.callerPhone ?? session.from);
-    yield chunkEvent(planGoodbye());
+    yield chunkEvent(term.speech ?? planGoodbye().text);
     yield doneEvent(session.phase, true);
     return;
   }
@@ -1873,11 +1987,14 @@ async function* handleFollowUpPhase(
   }
 
   if (
-    session.currentOrderData &&
+    getActiveOrderContext(session) &&
     hasConfirmedOrderContext(session) &&
     isRefundNotificationEmailQuestion(callerText)
   ) {
-    const speech = buildRefundEmailFollowUpSpeech(session.currentOrderData, callerText);
+    const speech = buildRefundEmailFollowUpSpeech(
+      getActiveOrderContext(session) as ActiveOrderContextData,
+      callerText,
+    );
     session.phase = "follow_up";
     session.awaitingInput = null;
     const uniqueSpeech = await ensureUniqueSpokenResponse(session.callSid, speech, callerText);
@@ -1900,14 +2017,22 @@ async function* streamOrderSummary(
   order: StructuredOrder,
   session: CallSession,
 ): AsyncGenerator<AgentStreamEvent> {
-  const result = session.lastOrderStatusResult;
-  if (result?.status === "found") {
-    const speech = groundedOrderSpeech(result, session);
+  // Speech is built from the disclosure-safe OrderView + StructuredOrder — the raw
+  // Shopify OrderStatusResult never lives on session state anymore.
+  const view = session.sessionOrderContext?.orderView;
+  const speech = buildOrderFoundGatewaySpeech({
+    orderNumber: order.orderNumber || String(view?.order_number ?? ""),
+    customerName: order.customerName || String(view?.customer_name ?? ""),
+    fulfillmentStatus:
+      order.fulfillmentStatus || String(view?.fulfillment_status ?? ""),
+    financialStatus:
+      order.financialStatus || String(view?.financial_status ?? ""),
+  });
+  if (speech) {
     syncTrackingOfferState(speech, session);
     yield* yieldSpeech(speech);
     return;
   }
-  void order;
   yield* yieldSpeech("I could not load your order summary. Please try again.");
 }
 

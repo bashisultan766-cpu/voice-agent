@@ -12,6 +12,7 @@ import {
   updateActiveSession,
 } from "../src/sovereign/activeSession.js";
 import { shouldPreferLlmPrimaryRouting } from "../src/agents/agentBrain.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 
 describe("unified call session (Priority 3 + 6)", () => {
   const callSid = "CA_UNIFIED_TEST";
@@ -44,8 +45,7 @@ describe("unified call session (Priority 3 + 6)", () => {
 
   it("keeps catalog_active when order data exists during purchase flow", () => {
     const session = createCallSession(callSid, "+15551112222", "+15553334444");
-    session.currentOrderData = { order_number: "12345" };
-    session.orderContextConfirmed = true;
+    saveActiveOrderContext(session, { order_number: "12345" });
     applyUnifiedWorkflowTransition(session, "product_search", { reason: "test" });
 
     expect(session.flowMode).toBe("PURCHASE_FLOW");

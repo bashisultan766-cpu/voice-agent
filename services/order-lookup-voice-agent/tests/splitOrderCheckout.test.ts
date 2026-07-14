@@ -11,9 +11,14 @@ import {
   setCurrentCheckoutBatch,
   remainingUnits,
   buildPostBatchRemainingSpeech,
+  initiateCheckoutBatch,
+  getCartIterator,
+  CheckoutManager,
 } from "../src/agents/paymentCheckoutFlow.js";
-import { sendCheckoutPaymentLink } from "../src/services/checkoutEmailService.js";
 import { SHOSHAN_SYSTEM_PROMPT } from "../src/prompts/systemPrompt.js";
+import { issueConfirmedEmail } from "../src/agents/emailConfirmationManager.js";
+import { planCheckoutGroup, cartLinesToGroupLines } from "../src/domain/checkoutModels.js";
+import { ActionGateway } from "../src/runtime/actionGateway.js";
 
 const { mockCreateDraft, mockSendEmail, mockResendAvailable } = vi.hoisted(() => ({
   mockCreateDraft: vi.fn(),
@@ -30,6 +35,23 @@ vi.mock("../src/utils/resendEmailService.js", () => ({
   isValidCustomerEmail: (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
   sendCheckoutEmail: mockSendEmail,
 }));
+
+async function executeCheckoutGroupViaGateway(
+  session: CallSession,
+  email: string,
+  options: { customerName?: string; items?: Array<{ title?: string; position?: number; quantity: number }> },
+) {
+  const resolved = resolveCheckoutLineItems(session, options.items);
+  if (!resolved.ok) return { ok: false, message: resolved.message };
+  const planned = planCheckoutGroup(session, cartLinesToGroupLines(resolved.items));
+  if (!planned.ok) return { ok: false, message: planned.message };
+  const confirmed = issueConfirmedEmail(session, email, "payment_link");
+  const result = await ActionGateway.executeCheckoutGroup(
+    { session, checkoutGroupId: planned.group.checkoutGroupId, confirmedEmailId: confirmed.confirmedEmailId, customerName: options.customerName },
+    { callId: session.callSid, actionId: "test_checkout" },
+  );
+  return { ...result, splitBatch: resolved.isSubset, remainingCartUnits: result.remainingUnits };
+}
 
 function sessionWithSixUnits(callSid: string): CallSession {
   return {
@@ -87,8 +109,10 @@ describe("split-order / multi-batch checkout", () => {
       /Let's do this one step at a time so nothing gets mixed up/i,
     );
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/NEVER collect all emails at once/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/You have \[Y\] items remaining/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONTEXTUAL REPAIR/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/which email for the remaining \[Y\] books|Shall we proceed with the remaining/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/SEMANTIC SLOT|CONTEXTUAL REPAIR/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/initiate_checkout_batch/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CartIterator/i);
   });
 
   it("resolves a subset of cart lines without touching the rest", () => {
@@ -144,21 +168,25 @@ describe("split-order / multi-batch checkout", () => {
     expect(batch1.ok).toBe(true);
     expect(getCheckoutSession(session)?.phase).toBe("awaiting_batch_email");
 
-    const first = await sendCheckoutPaymentLink(session, "a@example.com", {
+    const first = await executeCheckoutGroupViaGateway(session, "a@example.com", {
       customerName: "Caller",
       items: [{ title: "Book A", quantity: 2 }],
+      skipConfirmedEmailGate: true,
     });
     expect(first.ok).toBe(true);
     expect(first.splitBatch).toBe(true);
     expect(first.remainingCartUnits).toBe(4);
     expect(getCheckoutSession(session)?.completedBatches).toHaveLength(1);
     expect(getCheckoutSession(session)?.phase).toBe("confirming_continue");
-    expect(buildPostBatchRemainingSpeech(session, "a@example.com")).toMatch(/4 items remaining/i);
+    expect(buildPostBatchRemainingSpeech(session, "a@example.com")).toMatch(
+      /Shall we proceed with the remaining 4 items/i,
+    );
     expect(session.paymentLinkSent).not.toBe(true);
 
-    const second = await sendCheckoutPaymentLink(session, "b@example.com", {
+    const second = await executeCheckoutGroupViaGateway(session, "b@example.com", {
       customerName: "Caller",
       items: [{ title: "Book B", quantity: 3 }],
+      skipConfirmedEmailGate: true,
     });
     expect(second.ok).toBe(true);
     expect(second.remainingCartUnits).toBe(1);
@@ -167,9 +195,10 @@ describe("split-order / multi-batch checkout", () => {
       { variantId: "gid://shopify/ProductVariant/3", title: "Book C", quantity: 1 },
     ]);
 
-    const third = await sendCheckoutPaymentLink(session, "c@example.com", {
+    const third = await executeCheckoutGroupViaGateway(session, "c@example.com", {
       customerName: "Caller",
       items: [{ position: 1, quantity: 1 }],
+      skipConfirmedEmailGate: true,
     });
     expect(third.ok).toBe(true);
     expect(third.remainingCartUnits).toBe(0);
@@ -183,5 +212,21 @@ describe("split-order / multi-batch checkout", () => {
       "c@example.com",
     ]);
     expect(mockCreateDraft).toHaveBeenCalledTimes(3);
+  });
+
+  it("initiate_checkout_batch locks pending batch without deducting CartState", () => {
+    const session = sessionWithSixUnits("CA_INIT_BATCH");
+    const result = initiateCheckoutBatch(session, [{ title: "Book A", quantity: 2 }], {
+      startEmailCapture: false,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.batch).toEqual([
+      { variantId: "gid://shopify/ProductVariant/1", title: "Book A", quantity: 2 },
+    ]);
+    expect(getCheckoutSession(session)?.phase).toBe("awaiting_batch_email");
+    expect(getCartIterator(session).reduce((s, l) => s + l.quantity, 0)).toBe(6);
+    expect(session.shoppingCart).toHaveLength(3);
+    expect(CheckoutManager.getCartState(session).totalUnits).toBe(6);
   });
 });

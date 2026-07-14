@@ -13,6 +13,7 @@ import {
   extractSpatialAnchorDigits,
 } from "../src/sovereign/spatialDictation.js";
 import { resolveTrackingPhaseGate } from "../src/agents/conversationOrchestrator.js";
+import { saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 describe("activeSession spatial index", () => {
@@ -50,8 +51,8 @@ describe("activeSession spatial index", () => {
       createdAt: Date.now(),
       orderLookupComplete: true,
       currentSessionOrder: { orderNumber: "21698" },
-      currentOrderData: { order_number: "21698", tracking_number: "9250" },
     } as CallSession;
+    saveActiveOrderContext(session, { order_number: "21698", tracking_number: "9250" });
     expect(
       shouldSkipToolReinvoke(active, "order", "get_shopify_order_status", {
         session,
@@ -73,8 +74,8 @@ describe("activeSession spatial index", () => {
       phase: "follow_up",
       orderNumberAttempts: 0,
       createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9250" },
     } as CallSession;
+    saveActiveOrderContext(session, { tracking_number: "9250" });
 
     const after = syncActiveSessionFromCallSession(session);
     expect(after.isNotepadReady).toBe(true);
@@ -105,8 +106,8 @@ describe("tracking phase gate", () => {
       phase: "follow_up",
       orderNumberAttempts: 0,
       createdAt: Date.now(),
-      currentOrderData: { tracking_number: "9250" },
     } as CallSession;
+    saveActiveOrderContext(session, { tracking_number: "9250" });
 
     recordTrackingPayload("CA3", "9250");
     const resolution = resolveTrackingPhaseGate("can you repeat my tracking number", session);

@@ -12,19 +12,17 @@ import type { OrderLookupResult, StructuredOrder } from "../types/order.js";
 import { isValidOrderNumberFormat, normalizeOrderNumber } from "../utils/formatter.js";
 import { fuzzyOrderNumberCandidates } from "../utils/inputNormalizer.js";
 import { TimeoutError, withTimeout } from "../utils/promiseTimeout.js";
+import {
+  getProtectedOrderCache,
+  tenantIdForCurrentShop,
+} from "../infra/protectedOrderCache.js";
 
 interface CacheEntry {
   expiresAt: number;
   value: OrderLookupResult;
 }
 
-interface StatusCacheEntry {
-  expiresAt: number;
-  value: OrderStatusResult;
-}
-
 const cache = new Map<string, CacheEntry>();
-const statusCache = new Map<string, StatusCacheEntry>();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,21 +43,37 @@ function cacheSet(key: string, value: OrderLookupResult): void {
   cache.set(key, { value, expiresAt: Date.now() + ttl });
 }
 
-function statusCacheGet(key: string): OrderStatusResult | null {
-  const entry = statusCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    statusCache.delete(key);
-    return null;
+function protectedStatusGet(orderNumber: string): OrderStatusResult | undefined {
+  try {
+    return getProtectedOrderCache().get({
+      tenantId: tenantIdForCurrentShop(),
+      orderNumber,
+    });
+  } catch {
+    return undefined;
   }
-  return entry.value;
 }
 
-function statusCacheSet(key: string, value: OrderStatusResult): void {
-  // Positive hits and invalid format only — never negative not_found.
-  if (value.status !== "found" && value.status !== "invalid_format") return;
-  const ttl = getConfig().SHOPIFY_CACHE_TTL_SECS * 1000;
-  statusCache.set(key, { value, expiresAt: Date.now() + ttl });
+function protectedStatusSet(orderNumber: string, value: OrderStatusResult): void {
+  try {
+    getProtectedOrderCache().set(
+      { tenantId: tenantIdForCurrentShop(), orderNumber },
+      value,
+    );
+  } catch {
+    // Tenant / order number unavailable — leave cache untouched.
+  }
+}
+
+function protectedStatusDelete(orderNumber: string): void {
+  try {
+    getProtectedOrderCache().delete({
+      tenantId: tenantIdForCurrentShop(),
+      orderNumber,
+    });
+  } catch {
+    // No-op.
+  }
 }
 
 function mapFoundOrder(data: OrderStatusResult): StructuredOrder {
@@ -115,12 +129,16 @@ function mapLookupResult(data: OrderStatusResult): OrderLookupResult {
 export function clearOrderStatusCache(rawOrderNumber?: string): void {
   if (!rawOrderNumber) {
     cache.clear();
-    statusCache.clear();
+    try {
+      getProtectedOrderCache().clear(tenantIdForCurrentShop());
+    } catch {
+      getProtectedOrderCache().clear();
+    }
     return;
   }
   const orderNumber = normalizeOrderNumber(rawOrderNumber);
   if (!orderNumber) return;
-  statusCache.delete(`status:${orderNumber}`);
+  protectedStatusDelete(orderNumber);
   cache.delete(`order:${orderNumber}`);
 }
 
@@ -146,7 +164,6 @@ export async function lookupOrderStatus(
     clearOrderStatusCache(orderNumber);
   }
 
-  const cacheKey = `status:${orderNumber}`;
   const maxRetries = Math.max(0, getConfig().ORDER_LOOKUP_MAX_RETRIES);
   let lastResult: OrderStatusResult | null = null;
 
@@ -157,7 +174,7 @@ export async function lookupOrderStatus(
       logger.info("shopify_status_lookup_retry", { orderNumber, attempt });
     }
 
-    const cached = statusCacheGet(cacheKey);
+    const cached = protectedStatusGet(orderNumber);
     if (cached) {
       logger.debug("shopify_status_cache_hit", { orderNumber });
       return cached;
@@ -172,7 +189,7 @@ export async function lookupOrderStatus(
       lastResult = data;
 
       if (isStableOrderLookupStatus(data.status)) {
-        statusCacheSet(cacheKey, data);
+        protectedStatusSet(orderNumber, data);
         cacheSet(`order:${orderNumber}`, mapLookupResult(data));
         return data;
       }

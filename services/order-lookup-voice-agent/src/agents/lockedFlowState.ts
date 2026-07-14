@@ -1,5 +1,7 @@
 /**
- * LOCKED_FLOW_STATE — active transactions where end_call must be disabled.
+ * LOCKED_FLOW_STATE — mid-transaction guard for anti-hangup speech.
+ * end_call remains in the ToolRegistry at all times (barge-in / hang-up safety).
+ * Explicit goodbye may still invoke end_call; premature hangup is blocked separately.
  */
 import type { CallSession } from "../types/order.js";
 
@@ -21,8 +23,8 @@ export function isPaymentLinkActionUtterance(callerText: string): boolean {
 }
 
 /**
- * True when the caller is mid-transaction — cart active, checkout in flight, or payment link requested.
- * In this state end_call is physically removed from the tool list.
+ * True when the caller is mid-transaction — cart active or invoice URL pending.
+ * Used for anti-hangup speech — NOT to remove end_call from the registry.
  */
 export function isLockedFlowState(session?: CallSession): boolean {
   if (!session) return false;
@@ -35,9 +37,9 @@ export function buildLockedFlowSystemMessage(session?: CallSession): string | nu
   if (!isLockedFlowState(session)) return null;
   return [
     "LOCKED FLOW STATE (MANDATORY): You are in an active transaction.",
-    "The end_call tool is DISABLED — you cannot invoke it.",
-    'You are STRICTLY FORBIDDEN from saying goodbye, "Have a wonderful day", or any closing phrase unless the caller explicitly says goodbye, end call, or finished.',
-    'After sending or confirming a payment link, say: "I am sending the payment link to your email now. Is there anything else I can help you with?" then WAIT for the caller — NEVER auto-hangup.',
-    "Never end the call because the caller confirmed an action like sending the link.",
+    "Prefer finishing cart/checkout before goodbye. The end_call tool remains AVAILABLE for explicit hang-up / barge-in safety.",
+    'Do NOT say goodbye or invoke end_call unless the caller explicitly says goodbye, end call, finished, that\'s all, or declines further help after "anything else?".',
+    'After sending a payment link, say: "I am sending the payment link to your email now. Is there anything else I can help you with?" then WAIT.',
+    "Never end the call merely because the caller confirmed sending the link.",
   ].join(" ");
 }

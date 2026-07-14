@@ -9,14 +9,15 @@ import {
 } from "../adapters/openaiAdapter.js";
 import type { LlmToolExecutionRecord } from "../adapters/llmToolExecutor.js";
 import type { LlmAgentTurnResult } from "../adapters/openaiAdapter.js";
-import { orderStatusToStructuredOrder } from "./fulfillmentHandlers.js";
 import {
-  buildActiveOrderContextFromResult,
   clearActiveOrderContext,
+  getActiveOrderContext,
   saveActiveOrderContext,
 } from "./sessionManager.js";
-import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
-import { applyCallerVerificationFromOrder } from "./callerVerification.js";
+import {
+  hasConfirmedOrderContext,
+  saveSessionOrderContext,
+} from "./orderContextPolicy.js";
 import { planInstantFiller } from "./responsePlanner.js";
 import { speechChunksFromText } from "../services/voiceSmoothingEngine.js";
 import { isTrackingDictationText, sanitizeTextForTTS } from "../utils/ttsFormatter.js";
@@ -107,33 +108,61 @@ function persistOrderContext(
   const orderData =
     orderExec.tool === "get_shopify_order_status" ? orderExec.data : undefined;
 
-  if (!orderExec.ok || !orderData || !("status" in orderData) || orderData.status !== "found") {
+  if (
+    !orderExec.ok ||
+    !orderData ||
+    !("status" in orderData) ||
+    orderData.status !== "found"
+  ) {
     clearActiveOrderContext(session);
     session.isVerifiedCaller = false;
     return;
   }
 
-  if ("orderNumber" in orderData) {
-    applyCallerVerificationFromOrder(session, orderData);
-  }
-
-  const payload = buildActiveOrderContextFromResult(orderData, session);
-  if (payload) {
-    saveActiveOrderContext(session, payload);
-    recordToolPayload(session.callSid, {
-      kind: "order_status",
-      speech: "",
-      toolName: "get_shopify_order_status",
-      intentKey: "order",
-      state: "order_active",
-    });
-  }
-
-  if (!("orderNumber" in orderData)) return;
-
-  const structured = orderStatusToStructuredOrder(orderData);
-  if (structured) {
-    session.currentOrder = structured;
+  // get_shopify_order_status now returns CallerOrderLookupResult — a
+  // disclosure-safe view. Any raw OrderStatusResult would fail the
+  // sessionSerialization invariant on next persist.
+  if ("orderView" in orderData && orderData.orderView) {
+    const view = orderData.orderView;
+    session.isVerifiedCaller =
+      "is_verified_caller" in orderData ? orderData.is_verified_caller === true : session.isVerifiedCaller === true;
+    const orderNumber = String(view.order_number ?? "");
+    if (orderNumber) {
+      saveSessionOrderContext(session, {
+        orderNumber,
+        orderView: view,
+        verified: session.isVerifiedCaller === true,
+      });
+      const active: Record<string, unknown> = {
+        order_number: view.order_number ?? "",
+        customer_name: view.customer_name,
+        fulfillment_status: view.fulfillment_status,
+        financial_status: view.financial_status,
+        items: view.items,
+        subtotal_amount: view.totals?.subtotal,
+        total_tax: view.totals?.tax,
+        shipping_amount: view.totals?.shipping,
+        total_amount: view.totals?.total,
+        tracking_available: view.tracking_available,
+        tracking_number: view.tracking_number,
+        tracking_number_for_tts: view.tracking_number_for_tts,
+        refund_notification_email: view.refund_notification_email,
+        is_verified_caller: session.isVerifiedCaller === true,
+      };
+      if (session.isVerifiedCaller === true) {
+        active.shipping_address = view.shipping_address;
+        active.past_order_history = view.past_order_history;
+      }
+      saveActiveOrderContext(session, active);
+      recordToolPayload(session.callSid, {
+        kind: "order_status",
+        speech: "",
+        toolName: "get_shopify_order_status",
+        intentKey: "order",
+        state: "order_active",
+      });
+    }
+    return;
   }
 }
 
@@ -161,7 +190,7 @@ export async function* runLlmOrchestratorTurn(
       content: m.content,
     })),
     activeOrderContext: hasConfirmedOrderContext(session)
-      ? session.currentOrderData
+      ? (getActiveOrderContext(session) as import("./sessionManager.js").ActiveOrderContextData)
       : undefined,
   })) {
       if (event.type === "tool_pending") {

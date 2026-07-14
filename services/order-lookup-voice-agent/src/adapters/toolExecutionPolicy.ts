@@ -5,12 +5,14 @@
 import { z } from "zod";
 import type { CallSession } from "../types/order.js";
 import { getUnifiedSession } from "../agents/unifiedCallSession.js";
-import { isValidCustomerEmail } from "../utils/resendEmailService.js";
+import { isValidEmail as isValidCustomerEmail } from "../utils/emailUtils.js";
+import { mapNaturalLanguageToInteger } from "../agents/catalogShoppingIntent.js";
 import { isValidOrderNumberFormat } from "../utils/formatter.js";
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
 import { normalizeIsbn, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 import { isValidTrackingNumber } from "./orderFieldExtractors.js";
 import type { LlmToolExecutionRecord, LlmToolName } from "./llmToolExecutor.js";
+import { getLatestConfirmedEmailId } from "../agents/emailConfirmationManager.js";
 
 const VALIDATION_PREFIX = "Validation Error: ";
 
@@ -86,6 +88,18 @@ const titleSearchSchema = z
   })
   .passthrough();
 
+/** Coerce spoken/string quantities ("one", "1") → integer for update_cart_item_quantity. */
+function coerceQuantityInput(val: unknown): unknown {
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  if (typeof val === "string") {
+    const mapped = mapNaturalLanguageToInteger(val);
+    if (mapped != null) return mapped;
+    const n = Number(val.trim());
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return val;
+}
+
 const cartItemSchema = z
   .object({
     title: z.string().optional(),
@@ -93,7 +107,7 @@ const cartItemSchema = z
     product_id: z.string().optional(),
     isbn: z.string().optional(),
     unit_price: z.union([z.string(), z.number()]).optional(),
-    quantity: z.number().optional(),
+    quantity: z.preprocess(coerceQuantityInput, z.number().optional()),
   })
   .passthrough();
 
@@ -105,7 +119,7 @@ const updateCartItemQuantitySchema = z
     actionType: z
       .enum(["add", "set", "minus", "remove", "set_exact", "confirm_remove", "keep"])
       .optional(),
-    quantity: z.number().optional(),
+    quantity: z.preprocess(coerceQuantityInput, z.number().optional()),
     confirm_removal: z.boolean().optional(),
     confirmRemoval: z.boolean().optional(),
     facility_type: z.string().optional(),
@@ -150,6 +164,10 @@ const updateCartItemQuantitySchema = z
 
 const checkoutEmailSchema = z
   .object({
+    confirmed_email_id: z.string().optional(),
+    confirmedEmailId: z.string().optional(),
+    checkout_group_id: z.string().optional(),
+    checkoutGroupId: z.string().optional(),
     customerEmail: z.string().optional(),
     email: z.string().optional(),
     customerName: z.string().optional(),
@@ -175,6 +193,7 @@ const checkoutEmailSchema = z
   })
   .passthrough()
   .superRefine((data, ctx) => {
+    // Raw email is never an execution credential — only confirmed_email_id is.
     const email = (data.customerEmail ?? data.email ?? "").trim();
     if (email && !isValidCustomerEmail(email)) {
       ctx.addIssue({
@@ -251,6 +270,8 @@ const updatePendingEmailSchema = z
     replace_to: z.string().optional(),
     replaceFrom: z.string().optional(),
     replaceTo: z.string().optional(),
+    slot: z.enum(["part1", "part2", "domain", "local"]).optional(),
+    email_slot: z.enum(["part1", "part2", "domain", "local"]).optional(),
   })
   .passthrough()
   .superRefine((data, ctx) => {
@@ -276,9 +297,50 @@ const TOOL_SCHEMAS: Record<LlmToolName, z.ZodTypeAny> = {
   dictate_tracking: trackingGuardSchema,
   update_cart_item_quantity: updateCartItemQuantitySchema,
   get_cart_summary: emptyArgsSchema,
+  check_logistics_feasibility: z
+    .object({
+      sku: z.string().optional(),
+      variant_id: z.string().optional(),
+      title: z.string().optional(),
+      facility_type: z.string().optional(),
+      facilityType: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      metafields: z
+        .array(
+          z.object({
+            namespace: z.string(),
+            key: z.string(),
+            value: z.string(),
+          }),
+        )
+        .optional(),
+    })
+    .passthrough(),
+  verify_stock_availability: z
+    .object({
+      items: z.array(z.record(z.unknown())).optional(),
+      sku_list: z.array(z.record(z.unknown())).optional(),
+      live_inventory: z.record(z.number()).optional(),
+      liveInventory: z.record(z.number()).optional(),
+    })
+    .passthrough(),
+  initiate_checkout_batch: z
+    .object({
+      items: z.array(z.record(z.unknown())).optional(),
+      sku_list: z.array(z.record(z.unknown())).optional(),
+      facility_type: z.string().optional(),
+      facilityType: z.string().optional(),
+      start_email_capture: z.boolean().optional(),
+    })
+    .passthrough(),
   send_checkout_email: checkoutEmailSchema,
-  send_support_escalation: supportEscalationSchema,
+  create_support_case: supportEscalationSchema,
   update_pending_email: updatePendingEmailSchema,
+  escalate_to_human: z
+    .object({
+      reason: z.string().optional(),
+    })
+    .passthrough(),
   end_call: emptyArgsSchema,
 };
 
@@ -308,14 +370,18 @@ export function injectSecureToolContext(
     }
   }
 
-  if (tool === "send_checkout_email" || tool === "send_support_escalation") {
-    const confirmed =
-      session.emailConfirmation?.confirmedEmail?.trim() ||
-      session.emailConfirmation?.normalizedEmail?.trim() ||
-      "";
-    if (confirmed && isValidCustomerEmail(confirmed)) {
+  if (tool === "send_checkout_email" || tool === "create_support_case") {
+    const confirmed = session.emailConfirmation?.confirmedEmail?.trim() || "";
+    if (tool === "create_support_case" && confirmed && isValidCustomerEmail(confirmed)) {
       args.customerEmail = confirmed;
       delete args.email;
+    }
+    if (tool === "send_checkout_email") {
+      // Never trust LLM raw email for checkout — strip; executor resolves confirmed_email_id.
+      delete args.customerEmail;
+      delete args.email;
+      const id = getLatestConfirmedEmailId(session);
+      if (id) args.confirmed_email_id = id;
     }
   }
 

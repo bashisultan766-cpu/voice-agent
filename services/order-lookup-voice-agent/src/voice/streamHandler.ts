@@ -17,7 +17,10 @@ import {
   takeInterruptSignal,
 } from "../runtime/interruptBuffer.js";
 import { logEventIngestion } from "../runtime/turnObservability.js";
-import { clearShoppingCart } from "../agents/cartManager.js";
+import {
+  flushUnifiedSessionToL2,
+  touchUnifiedSession,
+} from "../agents/unifiedCallSession.js";
 import {
   clearOutboundAudioTracking,
   getLastOutboundAudioAt,
@@ -53,8 +56,25 @@ import { TWILIO_MEDIA_STREAM_PROTOCOL } from "./mediaStreamProtocol.js";
 import type { CallSession } from "../types/order.js";
 
 import { VOICE_LAYER_ERROR_SPEECH } from "../constants/systemMessages.js";
+import {
+  BARGE_IN_HOLD_MS,
+  evaluateBargeIn,
+  estimateMulawPower,
+  VAD_SILENCE_THRESHOLD_MS,
+  VERIFICATION_SILENCE_PROMPT_MS,
+} from "../streaming/audioProcessor.js";
+import {
+  processVoicePreTurn,
+  silenceWaitMsForSession,
+} from "./voicePreTurn.js";
+import {
+  SharedListeningWaitScheduler,
+  cancelListeningWaitTimer,
+} from "./turnScheduler.js";
+import { TerminationCoordinator } from "../runtime/terminationCoordinator.js";
 
-const SILENCE_MS = 900;
+/** VAD endpointing — full second of silence before turn-end (calm pacing). */
+const SILENCE_MS = VAD_SILENCE_THRESHOLD_MS;
 const MIN_INBOUND_MULAW_BYTES = 3200;
 const STREAM_HEARTBEAT_IDLE_MS = 500;
 const STREAM_HEARTBEAT_TICK_MS = 100;
@@ -66,6 +86,12 @@ const streamSidRegistry = new Map<string, string>();
 const inboundMulawBuffers = new Map<string, Buffer[]>();
 const silenceTimers = new Map<string, NodeJS.Timeout>();
 const heartbeatTimers = new Map<string, NodeJS.Timeout>();
+/** Rolling outbound power for barge-in comparison. */
+const outboundPowerByCall = new Map<string, number>();
+/** Sustained loud inbound ms while agent is speaking. */
+const bargeInHoldMsByCall = new Map<string, number>();
+/** Last inbound media timestamp (for hold accumulation). */
+const lastInboundAtByCall = new Map<string, number>();
 
 type TurnGenerator = (
   callSid: string,
@@ -84,13 +110,23 @@ function registerStreamSend(callSid: string, send: MediaStreamSendFn, streamSid:
   streamSidRegistry.set(callSid, streamSid);
 }
 
+/** Cancel VAD silence endpointing timers for a call — idempotent. */
+function cancelVadSilenceTimers(callSid: string): void {
+  const timer = silenceTimers.get(callSid);
+  if (timer) clearTimeout(timer);
+  silenceTimers.delete(callSid);
+}
+
 function unregisterStreamSend(callSid: string): void {
   streamSendRegistry.delete(callSid);
   streamSidRegistry.delete(callSid);
   inboundMulawBuffers.delete(callSid);
-  const timer = silenceTimers.get(callSid);
-  if (timer) clearTimeout(timer);
-  silenceTimers.delete(callSid);
+  outboundPowerByCall.delete(callSid);
+  bargeInHoldMsByCall.delete(callSid);
+  lastInboundAtByCall.delete(callSid);
+  cancelVadSilenceTimers(callSid);
+  cancelListeningWaitTimer(callSid);
+  SharedListeningWaitScheduler.unregisterDelivery(callSid);
   stopStreamHeartbeat(callSid);
   clearOutboundAudioTracking(callSid);
 }
@@ -156,6 +192,8 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
   let session: CallSession | null = null;
   let turnAbort: AbortController | null = null;
   let closed = false;
+  /** Guards double-close so L2 flush / endCallSession run at most once. */
+  let teardownStarted = false;
   let streamSid = "";
   let callSid = "";
 
@@ -170,6 +208,80 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
       });
     }
     socket.send(JSON.stringify(msg));
+  };
+
+  /**
+   * Cart-survival teardown: persist shopping cart + wait buffer to L2 before
+   * endCallSession. Never clears the cart on socket close (transient blips).
+   */
+  const teardownMediaStreamSession = async (): Promise<void> => {
+    if (teardownStarted) return;
+    teardownStarted = true;
+    closed = true;
+    turnAbort?.abort();
+
+    const activeCallSid = callSid;
+    const activeSession = session;
+
+    if (activeCallSid) {
+      // (a) Cancel any active LISTENING_WAIT / VAD silence timers.
+      cancelVadSilenceTimers(activeCallSid);
+      cancelListeningWaitTimer(activeCallSid);
+      speakingTurns.delete(activeCallSid);
+      activeTurnAborts.delete(activeCallSid);
+      clearInterruptBuffer(activeCallSid);
+      unregisterStreamSend(activeCallSid);
+      markCallSessionClosed(activeCallSid);
+    }
+
+    if (activeSession && activeCallSid) {
+      const cartItemsCount = activeSession.shoppingCart?.length ?? 0;
+
+      // (b) Capture latest cart / wait-buffer state into L1.
+      touchUnifiedSession(activeSession);
+
+      // (c) Force L2 flush before endCallSession so cart survives reconnect.
+      let persistState: "persisted" | "persist_failed" = "persisted";
+      try {
+        const flushResult = await flushUnifiedSessionToL2(activeSession, {
+          force: true,
+        });
+        if (!flushResult.ok) {
+          persistState = "persist_failed";
+          logger.error("session_teardown_flush_critical", {
+            callSid: activeCallSid.slice(0, 8),
+            reason: flushResult.reason,
+            cartItemsCount,
+          });
+        }
+      } catch (err) {
+        persistState = "persist_failed";
+        logger.error("session_teardown_flush_critical", {
+          callSid: activeCallSid.slice(0, 8),
+          error: err instanceof Error ? err.message : String(err),
+          cartItemsCount,
+        });
+      }
+
+      logger.info(
+        `[SessionTeardown] callSid=${activeCallSid} reason="socket_close" cartItemsCount=${cartItemsCount} state="${persistState}"`,
+        {
+          callSid: activeCallSid.slice(0, 8),
+          reason: "socket_close",
+          cartItemsCount,
+          state: persistState,
+        },
+      );
+
+      // Persist (or best-effort) completed — then tear down in-memory session.
+      // endCallSession saves cart via callerMemory; cart must still be intact.
+      clearDictationLock(activeCallSid);
+      endCallSession(activeCallSid, activeSession);
+    }
+
+    logger.info("media_stream_closed", {
+      callSid: activeCallSid ? activeCallSid.slice(0, 8) : undefined,
+    });
   };
 
   const scheduleTurn = (callerText: string): Promise<void> => {
@@ -187,11 +299,14 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
     const existing = silenceTimers.get(callSid);
     if (existing) clearTimeout(existing);
 
+    // Shared pre-turn silence wait (parity with ConversationRelay).
+    const waitMs = silenceWaitMsForSession(session);
+
     silenceTimers.set(
       callSid,
       setTimeout(() => {
         void flushAndTranscribe();
-      }, SILENCE_MS),
+      }, waitMs),
     );
   };
 
@@ -201,20 +316,57 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
     if (mulaw.length < MIN_INBOUND_MULAW_BYTES) return;
 
     if (speakingTurns.has(callSid)) {
-      await onUserSpeechDetected(callSid);
+      await onUserSpeechDetected(callSid, mulaw);
       return;
     }
 
     const transcript = await transcribeMulawBuffer(mulaw);
     if (!transcript || isNoiseTranscript(transcript)) return;
 
+    const preTurn = processVoicePreTurn(session, {
+      transport: "media_streams",
+      callId: callSid,
+      text: transcript,
+    });
+
+    if (preTurn.action === "listening_wait") {
+      if (preTurn.speech) {
+        await streamSpeechToMediaStream(preTurn.speech, send, {
+          streamSid,
+          onAudioSent: () => touchOutboundAudio(callSid),
+        }, callSid);
+      }
+      SharedListeningWaitScheduler.arm(session, preTurn.waitId, {
+        isSessionActive: () => !closed && isCallSessionActive(callSid),
+        onInterjection: async (decision) => {
+          if (closed || !decision.speech) return;
+          await streamSpeechToMediaStream(decision.speech, send, {
+            streamSid,
+            onAudioSent: () => touchOutboundAudio(callSid),
+          }, callSid);
+        },
+      });
+      return;
+    }
+
+    if (preTurn.action === "listening_wait_timeout") {
+      // Legacy path — buffer-preserving interjections use listening_wait instead.
+      if (preTurn.speech) {
+        await streamSpeechToMediaStream(preTurn.speech, send, {
+          streamSid,
+          onAudioSent: () => touchOutboundAudio(callSid),
+        }, callSid);
+      }
+      return;
+    }
+
     logEventIngestion(callSid, {
       source: "media_stream",
-      textLength: transcript.length,
+      textLength: preTurn.text.length,
       partial: false,
     });
 
-    await scheduleTurn(transcript);
+    await scheduleTurn(preTurn.text);
   };
 
   socket.on("message", (raw) => {
@@ -268,7 +420,10 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
             setAgentRelayState(callSid, "SPEAKING");
             await streamSpeechToMediaStream(welcomeGreeting, send, {
               streamSid,
-              onAudioSent: () => touchOutboundAudio(callSid),
+              onAudioSent: () => {
+                touchOutboundAudio(callSid);
+                outboundPowerByCall.set(callSid, 2500);
+              },
             }, callSid);
             speakingTurns.delete(callSid);
             setAgentRelayState(callSid, "LISTENING");
@@ -283,6 +438,36 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
           const chunks = inboundMulawBuffers.get(callSid) ?? [];
           chunks.push(payload);
           inboundMulawBuffers.set(callSid, chunks);
+
+          // Track outbound power when we hear comfort/TTS frames via touchOutboundAudio timestamps.
+          const now = Date.now();
+          const prevAt = lastInboundAtByCall.get(callSid) ?? now;
+          lastInboundAtByCall.set(callSid, now);
+
+          if (speakingTurns.has(callSid)) {
+            const power = estimateMulawPower(payload);
+            const agentPower = outboundPowerByCall.get(callSid) ?? 0;
+            const agentSilentForMs = now - getLastOutboundAudioAt(callSid);
+            const decision = evaluateBargeIn({
+              inboundMulaw: payload,
+              agentOutboundPower: agentPower,
+              agentSilentForMs,
+              sustainedInboundMs: bargeInHoldMsByCall.get(callSid) ?? 0,
+            });
+            if (decision.inboundPower >= Math.max(agentPower, 80) * 0.9) {
+              const held = (bargeInHoldMsByCall.get(callSid) ?? 0) + Math.max(0, now - prevAt);
+              bargeInHoldMsByCall.set(callSid, held);
+            } else {
+              bargeInHoldMsByCall.set(callSid, 0);
+            }
+            // Only schedule silence flush for barge-in evaluation after hold builds.
+            if ((bargeInHoldMsByCall.get(callSid) ?? 0) >= BARGE_IN_HOLD_MS) {
+              scheduleSilenceTranscription();
+            }
+            return;
+          }
+
+          bargeInHoldMsByCall.set(callSid, 0);
           scheduleSilenceTranscription();
           return;
         }
@@ -300,21 +485,7 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
   });
 
   socket.on("close", () => {
-    closed = true;
-    turnAbort?.abort();
-    if (callSid) {
-      speakingTurns.delete(callSid);
-      activeTurnAborts.delete(callSid);
-      clearInterruptBuffer(callSid);
-      unregisterStreamSend(callSid);
-      markCallSessionClosed(callSid);
-      if (session) {
-        clearShoppingCart(session);
-        clearDictationLock(callSid);
-        endCallSession(callSid, session);
-      }
-    }
-    logger.info("media_stream_closed", { callSid: callSid.slice(0, 8) });
+    void teardownMediaStreamSession();
   });
 
   socket.on("error", (err) => {
@@ -322,8 +493,26 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
   });
 }
 
-async function onUserSpeechDetected(callSid: string): Promise<void> {
+async function onUserSpeechDetected(callSid: string, inboundMulaw: Buffer): Promise<void> {
   if (!speakingTurns.has(callSid)) return;
+
+  const decision = evaluateBargeIn({
+    inboundMulaw,
+    agentOutboundPower: outboundPowerByCall.get(callSid) ?? 0,
+    agentSilentForMs: Date.now() - getLastOutboundAudioAt(callSid),
+    sustainedInboundMs: bargeInHoldMsByCall.get(callSid) ?? 0,
+  });
+
+  if (!decision.allow) {
+    logger.debug("barge_in_suppressed", {
+      callSid: callSid.slice(0, 8),
+      reason: decision.reason,
+      inboundPower: Math.round(decision.inboundPower),
+    });
+    return;
+  }
+
+  bargeInHoldMsByCall.set(callSid, 0);
   pushInterruptSignal(callSid, "");
   const aborted = await abortCurrentTTS(callSid, true);
   if (!aborted) return;
@@ -398,7 +587,10 @@ async function runStreamingTurn(
           {
             abortSignal: abort.signal,
             streamSid,
-            onAudioSent: () => touchOutboundAudio(session.callSid),
+            onAudioSent: () => {
+              touchOutboundAudio(session.callSid);
+              outboundPowerByCall.set(session.callSid, 2500);
+            },
           },
           session.callSid,
         );
@@ -426,7 +618,10 @@ async function runStreamingTurn(
         {
           abortSignal: abort.signal,
           streamSid,
-          onAudioSent: () => touchOutboundAudio(session.callSid),
+          onAudioSent: () => {
+            touchOutboundAudio(session.callSid);
+            outboundPowerByCall.set(session.callSid, 2500);
+          },
         },
         session.callSid,
       );
@@ -443,8 +638,10 @@ async function runStreamingTurn(
     return;
   }
 
-  if (endCall && !abort.signal.aborted) {
-    sendMediaStreamStop(send, streamSid);
+  if (endCall && !abort.signal.aborted && session) {
+    TerminationCoordinator.terminate(session, "transport_stop", {
+      sendMediaStreamStop: () => sendMediaStreamStop(send, streamSid),
+    });
   }
 }
 

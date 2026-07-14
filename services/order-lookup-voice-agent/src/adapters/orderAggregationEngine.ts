@@ -11,6 +11,8 @@ import {
 import { lookupOrderStatus } from "../services/shopifyService.js";
 import { callerMatchesAnyShopifyPhone } from "../utils/phoneNormalizer.js";
 import { logger } from "../utils/logger.js";
+import { buildOrderView, type OrderView } from "../agents/orderDisclosurePolicy.js";
+import type { CallSession } from "../types/order.js";
 
 export interface OrderAggregationDiagnostics {
   coreOrder: boolean;
@@ -23,20 +25,25 @@ export interface OrderAggregationDiagnostics {
   customerHistory: boolean;
   pastOrderCount: number;
   verified: boolean;
-  callerPhone: string;
+  /** Masked phone only; diagnostics are safe to serialize. */
+  callerPhoneLast4: string;
   payloadAccess: "full" | "filtered";
 }
 
 export interface AggregatedOrderPayload {
   status: OrderStatusResult["status"];
-  order: OrderStatusResult | null;
-  past_order_history: CustomerHistoryOrderSummary[] | null;
-  shipping_address: string | null;
+  /** Disclosure-safe DTO. Raw Shopify results never cross this boundary. */
+  orderView: OrderView | null;
   is_verified_caller: boolean;
   diagnostics: OrderAggregationDiagnostics;
   message?: string;
   error?: string;
   searchedNumber?: string;
+}
+
+function phoneLast4(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return digits ? `***${digits.slice(-4)}` : "unknown";
 }
 
 function verificationPhones(order: OrderStatusResult): Array<string | undefined> {
@@ -66,8 +73,8 @@ export function printOrderAggregationChecklist(
       ? `[SUCCESS] Customer Order History retrieved (Found ${diagnostics.pastOrderCount} past orders).`
       : "[WARN] Customer Order History not retrieved.",
     diagnostics.verified
-      ? `[VERIFICATION] Caller Phone (${diagnostics.callerPhone || "unknown"}) MATCHES Order Phone. Status: VERIFIED.`
-      : `[VERIFICATION] Caller Phone (${diagnostics.callerPhone || "unknown"}) does NOT match Order Phone. Status: UNVERIFIED.`,
+      ? `[VERIFICATION] Caller Phone (${diagnostics.callerPhoneLast4}) MATCHES Order Phone. Status: VERIFIED.`
+      : `[VERIFICATION] Caller Phone (${diagnostics.callerPhoneLast4}) does NOT match Order Phone. Status: UNVERIFIED.`,
     diagnostics.payloadAccess === "full"
       ? "[PAYLOAD GENERATED] Full access granted."
       : "[PAYLOAD GENERATED] Filtered access — shipping_address and past_order_history redacted.",
@@ -110,15 +117,13 @@ export async function aggregateOrderForCaller(
       customerHistory: false,
       pastOrderCount: 0,
       verified: false,
-      callerPhone: callerPhone || "unknown",
+      callerPhoneLast4: phoneLast4(callerPhone),
       payloadAccess: "filtered",
     };
     printOrderAggregationChecklist(orderLabel, diagnostics);
     return {
       status: order.status,
-      order: null,
-      past_order_history: null,
-      shipping_address: null,
+      orderView: null,
       is_verified_caller: false,
       diagnostics,
       message: order.message,
@@ -157,24 +162,34 @@ export async function aggregateOrderForCaller(
     customerHistory: historyFetched,
     pastOrderCount: pastOrders.length,
     verified,
-    callerPhone: callerPhone || "unknown",
+    callerPhoneLast4: phoneLast4(callerPhone),
     payloadAccess: verified ? "full" : "filtered",
   };
 
   printOrderAggregationChecklist(order.orderNumber ?? orderLabel, diagnostics);
 
-  // Unverified: keep timeline/tags/notes/status/items; redact shipping + history only.
-  const filteredOrder: OrderStatusResult = { ...order };
-  if (!verified) {
-    filteredOrder.shippingAddress = undefined;
-    filteredOrder.pastOrderHistory = undefined;
-  }
+  const disclosureSession = {
+    callSid,
+    isVerifiedCaller: verified,
+  } as CallSession;
 
   return {
     status: "found",
-    order: filteredOrder,
-    past_order_history: verified ? pastOrders : null,
-    shipping_address: verified ? (order.shippingAddress ?? null) : null,
+    orderView: buildOrderView(disclosureSession, {
+      order_number: order.orderNumber,
+      fulfillment_status: order.fulfillmentStatus,
+      financial_status: order.financialStatus,
+      customer_name: order.customerName,
+      physical_items: order.lineItems,
+      subtotal_amount: order.subtotalAmount,
+      total_tax: order.totalTax,
+      shipping_amount: order.shippingFee,
+      total_amount: order.totalAmount,
+      tracking_number: order.trackingNumber,
+      ...(verified
+        ? { shipping_address: order.shippingAddress, past_order_history: pastOrders }
+        : {}),
+    }),
     is_verified_caller: verified,
     diagnostics,
   };

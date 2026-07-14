@@ -31,6 +31,8 @@ import {
   isProductSearchContextActive,
   isOrderLookupContextActive,
 } from "./workflowContext.js";
+import { hasConfirmedOrderContext } from "./orderContextPolicy.js";
+import { getActiveOrderContext } from "./sessionManager.js";
 
 export enum WorkflowPriority {
   EmailConfirmation = 1,
@@ -57,7 +59,7 @@ export function resolveActiveWorkflowPriority(session: CallSession): WorkflowPri
 }
 
 function hasActiveOrderContext(session: CallSession): boolean {
-  return session.orderContextConfirmed === true && Boolean(session.currentOrderData);
+  return hasConfirmedOrderContext(session);
 }
 
 export function isWorkflowBlocked(
@@ -99,7 +101,7 @@ export function shouldDeferToHigherPriorityWorkflow(
     sovereignState === "awaiting_notepad_ready" ||
     sovereign.currentState === "tracking_dictation" ||
     (sovereign.currentState === "awaiting_notepad_ready" && sovereign.cachedIntent === "tracking") ||
-    isTrackingDictationPending(callSid, session.currentOrderData);
+    isTrackingDictationPending(callSid, getActiveOrderContext(session));
 
   if (inTracking && active <= WorkflowPriority.Tracking) {
     if (isOrderFieldQuestion(text, session) || isCatalogShoppingUtterance(text)) {

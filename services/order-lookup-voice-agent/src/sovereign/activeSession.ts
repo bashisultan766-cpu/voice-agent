@@ -61,8 +61,8 @@ export interface ActiveSession {
   lastDictationIndex: number;
   /** Character index in spatialIndex for chunked dictation resume. */
   lastSpokenIndex: number;
-  /** Relay audio state — LISTENING after hard-stop interrupt. */
-  agentRelayState: "LISTENING" | "SPEAKING";
+  /** Relay audio state — LISTENING after hard-stop interrupt; LISTENING_WAIT for incomplete clauses. */
+  agentRelayState: "LISTENING" | "LISTENING_WAIT" | "SPEAKING";
   /** True only after caller confirms pen and notepad are ready. */
   isNotepadReady: boolean;
   /** True after caller confirms tracking was written down — blocks notepad re-entry. */
@@ -102,6 +102,7 @@ export function getOrCreateActiveSession(callSid: string): ActiveSession {
 export function updateActiveSession(
   callSid: string,
   patch: Partial<Omit<ActiveSession, "callSid">>,
+  options?: { persist?: boolean },
 ): ActiveSession {
   const current = getOrCreateActiveSession(callSid);
   const next = { ...current, ...patch };
@@ -112,11 +113,30 @@ export function updateActiveSession(
     session.sovereignState = patch.currentState;
   }
 
+  // Async durable mirror — skip during hydrate to avoid write amplification.
+  if (options?.persist !== false) {
+    void import("../agents/sessionStateService.js")
+      .then(({ syncSessionMemory }) => {
+        syncSessionMemory(callSid);
+      })
+      .catch(() => undefined);
+  }
+
   return next;
 }
 
 export function clearActiveSession(callSid: string): void {
   store.delete(callSid);
+  void import("../agents/sessionStateService.js")
+    .then(({ clearSessionHydrationBarrier }) => {
+      clearSessionHydrationBarrier(callSid);
+    })
+    .catch(() => undefined);
+}
+
+/** Test helper — wipe the in-memory ActiveSession Map. */
+export function clearAllActiveSessions(): void {
+  store.clear();
 }
 
 export function setAgentRelayState(
@@ -397,7 +417,7 @@ export function syncActiveSessionFromCallSession(callSession: CallSession): Acti
     });
   }
 
-  if (callSession.currentOrderData && Object.keys(callSession.currentOrderData).length > 0) {
+  if (callSession.sessionOrderContext && callSession.orderContextConfirmed) {
     callSession.sovereignState = "order_active";
     return updateActiveSession(callSession.callSid, {
       currentState: "order_active",

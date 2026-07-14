@@ -4,6 +4,7 @@
  */
 import type { CallSession } from "../types/order.js";
 import { ensureShoppingCart } from "./cartManager.js";
+import { getSessionMemory } from "./sessionMemory.js";
 
 export interface RecommendationCandidate {
   title: string;
@@ -239,6 +240,12 @@ export function attachProactiveRecommendationAfterAdd(
   session: CallSession,
   added: { sku: string; title: string; tags?: string[]; metafields?: Array<{ namespace: string; key: string; value: string }> },
 ): ProactiveRecommendation | null {
+  // Sentiment Shield — stop all sales/upsell while Support-Mode is active.
+  if (getSessionMemory(session).sentimentShieldActive) {
+    session.pendingProactiveRecommendation = undefined;
+    return null;
+  }
+
   const cartVariantIds = ensureShoppingCart(session).map((line) => line.variantId);
   const recommendation = getProactiveRecommendation({
     addedSku: added.sku,

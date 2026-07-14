@@ -23,6 +23,7 @@ import {
 } from "../src/agents/workflowContext.js";
 import { applyCallerVerificationFromOrder } from "../src/agents/callerVerification.js";
 import { filterOrderContextForVerification } from "../src/agents/orderContextPrivacy.js";
+import { getActiveOrderContext, saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import { buildOrderDetailSpeech } from "../src/agents/orderDetailBuilder.js";
 import { buildOrderFieldQuerySpeech } from "../src/agents/orderFollowUpSpeech.js";
 import {
@@ -52,7 +53,7 @@ function seedSession(callSid: string, verified: boolean): CallSession {
   const phone = verified ? "+15551234567" : "+15550001111";
   const session = createCallSession(callSid, phone, "+18005551212");
   session.orderContextConfirmed = true;
-  session.currentOrderData = { ...ORDER_CONTEXT };
+  saveActiveOrderContext(session, { ...ORDER_CONTEXT });
   applyCallerVerificationFromOrder(session, {
     status: "found",
     orderNumber: "48065",
@@ -102,7 +103,9 @@ describe("email confirmation — full flow", () => {
     await resolveEmailConfirmationTurn(session, "no that is wrong");
     await resolveEmailConfirmationTurn(session, "right at gmail dot com");
     expect(session.emailConfirmation?.normalizedEmail).toBe("right@gmail.com");
-    expect(buildUpdatedEmailConfirmationSpeech("right@gmail.com")).toMatch(/Thank you\. I have updated it/i);
+    expect(buildUpdatedEmailConfirmationSpeech("right@gmail.com")).toMatch(
+      /Understood\. I have updated it/i,
+    );
 
     const confirm = await resolveEmailConfirmationTurn(session, "yes that is correct");
     expect(confirm.speech).toMatch(/Support sent/i);
@@ -199,6 +202,34 @@ describe("partial email correction", () => {
     );
     expect(corrected).toBe("bashisaab766@gmail.com");
   });
+
+  it("15c — Semantic Slot PartialCorrection mid-confirmation (Sub → Saab)", async () => {
+    const { applyPartialCorrection, parsePendingEmail } = await import(
+      "../src/utils/emailCapture.js"
+    );
+    const session = createCallSession("EM_SLOT", "+1", "+1");
+    startEmailCapture(session, "payment_link");
+    await resolveEmailConfirmationTurn(session, "bashi sub 766 at gmail dot com");
+    // Force a known pending address if STT normalization differs
+    if (session.emailConfirmation) {
+      session.emailConfirmation.normalizedEmail = "bashisub766@gmail.com";
+      session.emailConfirmation.pendingEmailSlots = parsePendingEmail("bashisub766@gmail.com");
+      session.emailConfirmation.phase = "pending_confirmation";
+    }
+
+    const structured = applyPartialCorrection("bashisub766@gmail.com", "Not Sub, it's Saab");
+    expect(structured?.email).toBe("bashisaab766@gmail.com");
+    expect(structured?.correction.slot).toMatch(/part1|part2|local/);
+    expect(structured?.correction.to).toBe("saab");
+
+    const turn = await resolveEmailConfirmationTurn(session, "Not Sub, it's Saab");
+    expect(turn.handled).toBe(true);
+    expect(turn.speech).toMatch(/Understood\. I have updated the spelling to S-A-A-B/i);
+    expect(turn.speech).toMatch(/Is that correct/i);
+    expect(session.emailConfirmation?.normalizedEmail).toBe("bashisaab766@gmail.com");
+    expect(session.emailConfirmation?.pendingEmailSlots?.full).toBe("bashisaab766@gmail.com");
+    expect(session.emailConfirmation?.lastPartialCorrection?.to).toBe("saab");
+  });
 });
 
 describe("product ISBN / title intent", () => {
@@ -241,7 +272,7 @@ describe("product ISBN / title intent", () => {
 describe("non-verified order detail disclosure", () => {
   it("22-27 — title public; price and shipping fee refused for non-verified", () => {
     const session = seedSession("NV_1", false);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, false);
     expect(buildOrderDetailSpeech(session, "what is the item title", ctx)).toMatch(/Healing Book/i);
     expect(buildOrderDetailSpeech(session, "what is the item price", ctx)).toMatch(
       /unverified number|public order status and tracking|verified account holder/i,
@@ -253,7 +284,7 @@ describe("non-verified order detail disclosure", () => {
 
   it("28-29 — combined price/shipping/total refused for unverified", () => {
     const session = seedSession("NV_2", false);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, false);
     const speech = buildOrderDetailSpeech(
       session,
       "tell me item title, item price, shipping fee, and total amount",
@@ -265,7 +296,7 @@ describe("non-verified order detail disclosure", () => {
 
   it("30-31 — refuses confirmation email for unverified callers", () => {
     const session = seedSession("NV_3", false);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, false);
     const speech = buildOrderDetailSpeech(session, "where was the confirmation sent", ctx);
     expect(speech).toMatch(/unverified number|public order status and tracking|verified account holder/i);
     expect(speech).not.toMatch(/fred@example\.com|fred at example/i);
@@ -282,7 +313,7 @@ describe("non-verified order detail disclosure", () => {
 
   it("32-33 — refuses shipping address", () => {
     const session = seedSession("NV_4", false);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, false);
     const speech = buildOrderDetailSpeech(session, "what is the shipping address", ctx);
     expect(speech).toMatch(
       /can't read (?:out )?the exact shipping address|cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i,
@@ -299,7 +330,7 @@ describe("non-verified order detail disclosure", () => {
 describe("verified order detail disclosure", () => {
   it("36-37 — shipping address for verified caller", () => {
     const session = seedSession("V_1", true);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, true);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, true);
     const speech = buildOrderDetailSpeech(session, "what is the shipping address", ctx);
     expect(speech).toMatch(/123 Main St/i);
   });

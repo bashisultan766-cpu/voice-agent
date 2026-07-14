@@ -8,15 +8,17 @@ import {
 import {
   buildCheckoutSummarySpeech,
   ensurePaymentCheckoutExecutors,
+  PAYMENT_LINK_SUCCESS_SPEECH,
   resolvePaymentCheckoutTurn,
 } from "../src/agents/paymentCheckoutFlow.js";
 import { addToCart, setCartLineQuantity } from "../src/agents/cartManager.js";
 import { buildOrderDetailSpeech, detectRequestedOrderFields } from "../src/agents/orderDetailBuilder.js";
 import { WorkflowPriority, resolveActiveWorkflowPriority } from "../src/agents/intentRouter.js";
 import { applyCallerVerificationFromOrder } from "../src/agents/callerVerification.js";
-import * as checkoutEmailService from "../src/services/checkoutEmailService.js";
+import { ActionGateway } from "../src/runtime/actionGateway.js";
 import * as resendEmailService from "../src/utils/resendEmailService.js";
 import { ensureSupportExecutors } from "../src/agents/supportEscalationFlow.js";
+import { getActiveOrderContext, saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import type { CallSession } from "../src/types/order.js";
 
 function seedOrderContext(session: CallSession, verified: boolean): void {
@@ -29,7 +31,7 @@ function seedOrderContext(session: CallSession, verified: boolean): void {
     totalOrderCount: 3,
   } as any);
   session.orderContextConfirmed = true;
-  session.currentOrderData = {
+  saveActiveOrderContext(session, {
     order_number: "48065",
     customer_name: "Frederick Marcalus",
     physical_items: [{ title: "Test Book", quantity: 1, price: "$12.00" }],
@@ -40,7 +42,7 @@ function seedOrderContext(session: CallSession, verified: boolean): void {
     tracking_number: "1Z999",
     order_confirmation_email: "fred@example.com",
     shipping_address: "123 Main St",
-  };
+  });
 }
 
 describe("central email confirmation engine", () => {
@@ -67,13 +69,16 @@ describe("central email confirmation engine", () => {
         quantity: 2,
       },
     ]);
-    const sendSpy = vi.spyOn(checkoutEmailService, "sendCheckoutPaymentLink").mockImplementation(
-      async (session) => {
+    const sendSpy = vi.spyOn(ActionGateway, "executeCheckoutGroup").mockImplementation(
+      async ({ session, checkoutGroupId }) => {
         session.paymentLinkSent = true;
         session.paymentLinkSentTo = "buyer@gmail.com";
         return {
           ok: true,
-          message: checkoutEmailService.PAYMENT_LINK_SUCCESS_SPEECH,
+          checkoutGroupId,
+          idempotencyKey: "test",
+          status: "sent",
+          message: PAYMENT_LINK_SUCCESS_SPEECH,
           invoiceUrl: "https://checkout.example/inv",
         };
       },
@@ -111,7 +116,7 @@ describe("order detail builder", () => {
     const speech = buildOrderDetailSpeech(
       session,
       "tell me title, amount and shipping fee",
-      session.currentOrderData as any,
+      getActiveOrderContext(session) as any,
     );
     expect(speech).toMatch(/Test Book/i);
     expect(speech).toMatch(/shipping fee/i);
@@ -124,7 +129,7 @@ describe("order detail builder", () => {
     const speech = buildOrderDetailSpeech(
       session,
       "what is the shipping address",
-      session.currentOrderData as any,
+      getActiveOrderContext(session) as any,
     );
     expect(speech).toMatch(/can't read (?:out )?the exact shipping address|cannot provide the shipping address|can't provide the shipping address|cannot share the shipping address/i);
   });

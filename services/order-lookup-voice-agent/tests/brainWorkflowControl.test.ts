@@ -23,6 +23,7 @@ import {
 } from "../src/agents/supportEscalationFlow.js";
 import { applyCallerVerificationFromOrder } from "../src/agents/callerVerification.js";
 import { filterOrderContextForVerification } from "../src/agents/orderContextPrivacy.js";
+import { getActiveOrderContext, saveActiveOrderContext } from "../src/agents/sessionManager.js";
 import { buildOrderDetailSpeech } from "../src/agents/orderDetailBuilder.js";
 import { toolResultForLlm } from "../src/adapters/llmToolExecutor.js";
 import { isCartActionUtterance, parseCartQuantityFromSpeech } from "../src/agents/catalogShoppingIntent.js";
@@ -47,7 +48,7 @@ function seedSession(callSid: string, verified: boolean): CallSession {
   const phone = verified ? "+15551234567" : "+15550001111";
   const session = createCallSession(callSid, phone, "+18005551212");
   session.orderContextConfirmed = true;
-  session.currentOrderData = { ...ORDER_CONTEXT };
+  saveActiveOrderContext(session, { ...ORDER_CONTEXT });
   applyCallerVerificationFromOrder(session, {
     status: "found",
     orderNumber: "48065",
@@ -141,7 +142,7 @@ describe("support escalation override", () => {
     const refusal = buildOrderDetailSpeech(
       session,
       "what is the shipping address",
-      filterOrderContextForVerification(session.currentOrderData as any, false),
+      filterOrderContextForVerification(getActiveOrderContext(session) as any, false),
     );
     expect(refusal).toMatch(/can't read (?:out )?the exact shipping address|cannot provide the shipping address|can't provide the shipping address/i);
 
@@ -156,7 +157,7 @@ describe("support escalation override", () => {
 describe("shopify timeline and payment details", () => {
   it("21-25 — uses real payment/notification fields, no hallucination", () => {
     const session = seedSession("TL_1", true);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, true);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, true);
     const paymentSpeech = buildOrderDetailSpeech(
       session,
       "what payment method was used",
@@ -184,7 +185,7 @@ describe("shopify timeline and payment details", () => {
 describe("order detail permissions", () => {
   it("26-29 — non-verified gets title only; refuses price/shipping/address", () => {
     const session = seedSession("OD_1", false);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, false);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, false);
     expect(buildOrderDetailSpeech(session, "what is the item title", ctx)).toMatch(/Healing Book/i);
 
     const speech = buildOrderDetailSpeech(
@@ -201,7 +202,7 @@ describe("order detail permissions", () => {
 
   it("30-31 — verified caller gets shipping address", () => {
     const session = seedSession("OD_2", true);
-    const ctx = filterOrderContextForVerification(session.currentOrderData as any, true);
+    const ctx = filterOrderContextForVerification(getActiveOrderContext(session) as any, true);
     const speech = buildOrderDetailSpeech(session, "what is the shipping address", ctx);
     expect(speech).toMatch(/123 Main St/i);
   });

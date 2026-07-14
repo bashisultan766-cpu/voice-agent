@@ -3,22 +3,18 @@
  */
 import {
   getCustomerHistory,
-  searchByISBN,
-  searchByTitle,
   type BookAvailabilityResult,
   type CustomerHistoryResult,
-  type OrderStatusResult,
 } from "./shopifyStorefrontAdapter.js";
-import { lookupOrderStatus, clearOrderStatusCache } from "../services/shopifyService.js";
-import { aggregateOrderForCaller } from "./orderAggregationEngine.js";
+import { searchByISBN, searchByTitle } from "../infra/shopifyQueryBoundary.js";
+import { clearOrderStatusCache } from "../services/shopifyService.js";
 import {
   getCartSummary,
   type CheckoutItemSelector,
 } from "../agents/cartManager.js";
-import { sendCheckoutPaymentLink } from "../services/checkoutEmailService.js";
 import { recordLastCatalogSearch, reconcileAddToCartItems } from "../agents/catalogTarget.js";
 import { shouldSuppressCatalogEscalation } from "../agents/agentBrain.js";
-import { runVerificationGate } from "../agents/verificationGate.js";
+import { getSessionMemory } from "../agents/sessionMemory.js";
 import {
   applySessionCartQuantity,
   confirmPendingCartRemoval,
@@ -27,11 +23,6 @@ import {
 import { normalizeTrackingIdRawSequence } from "../utils/trackingIdSequence.js";
 import type { CallSession } from "../types/order.js";
 import {
-  isResendAvailable,
-  isValidCustomerEmail,
-  sendSupportEscalation,
-} from "../utils/resendEmailService.js";
-import {
   validateShopifyExecutionGate,
   sanitizeCatalogTitlePhrase,
   type EntityExtractionResult,
@@ -39,9 +30,8 @@ import {
 import { normalizeIsbn, isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 import { parseVariantGid } from "../utils/shopifyGid.js";
 import { getAgentState } from "../platform/eventDispatcher.js";
-import { filterOrderContextForVerification } from "../agents/orderContextPrivacy.js";
 import { setOrderHistoryContext } from "../agents/orderHistoryFlow.js";
-import type { ActiveOrderContextData } from "../agents/sessionManager.js";
+import { lookupOrderForCaller, type CallerOrderLookupResult } from "../agents/orderLookupService.js";
 import {
   CATALOG_TOOL_ERROR_LLM_PAYLOAD,
   ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD,
@@ -73,6 +63,7 @@ import {
   flushUnifiedSessionToL2,
   touchUnifiedSession,
 } from "../agents/unifiedCallSession.js";
+import { getActiveOrderContext } from "../agents/sessionManager.js";
 
 function isCheckoutItemSelector(entry: CheckoutItemSelector | null): entry is CheckoutItemSelector {
   return entry !== null;
@@ -80,7 +71,13 @@ function isCheckoutItemSelector(entry: CheckoutItemSelector | null): entry is Ch
 
 /** Map unpredictable LLM checkout item payloads into strict CheckoutItemSelector[]. */
 function normalizeCheckoutItemArgs(args: Record<string, unknown>): CheckoutItemSelector[] | null {
-  const fromItems = Array.isArray(args.items) ? args.items : null;
+  const fromItems = Array.isArray(args.items)
+    ? args.items
+    : Array.isArray(args.sku_list)
+      ? args.sku_list
+      : Array.isArray(args.skuList)
+        ? args.skuList
+        : null;
   if (fromItems?.length) {
     const mapped: Array<CheckoutItemSelector | null> = fromItems.map((entry) => {
       if (!entry || typeof entry !== "object") return null;
@@ -137,6 +134,8 @@ export { SYSTEM_MAINTENANCE_LLM_PAYLOAD };
 export interface ExecuteLlmToolOptions {
   /** When true, Zod + secure inject already ran (executeUnifiedTool). */
   skipPolicy?: boolean;
+  /** Latest caller utterance — used by TerminationCoordinator for end_call. */
+  userMessage?: string;
 }
 
 export type LlmToolName =
@@ -147,13 +146,58 @@ export type LlmToolName =
   | "dictate_tracking"
   | "update_cart_item_quantity"
   | "get_cart_summary"
+  | "check_logistics_feasibility"
+  | "verify_stock_availability"
+  | "initiate_checkout_batch"
   | "send_checkout_email"
-  | "send_support_escalation"
+  | "create_support_case"
   | "update_pending_email"
+  | "escalate_to_human"
   | "end_call";
 
+/** Aliases the LLM may emit — always resolve to the canonical tool name. */
+const LLM_TOOL_ALIASES: Record<string, LlmToolName> = {
+  generate_payment_link: "send_checkout_email",
+  send_payment_link: "send_checkout_email",
+  update_cart_quantity: "update_cart_item_quantity",
+  add_to_cart: "update_cart_item_quantity",
+  partial_correction: "update_pending_email",
+  escalate_to_human_agent: "escalate_to_human",
+  send_support_escalation: "create_support_case",
+};
+
+export function normalizeLlmToolName(name: string): LlmToolName | null {
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed in LLM_TOOL_ALIASES) return LLM_TOOL_ALIASES[trimmed]!;
+  const canonical: LlmToolName[] = [
+    "get_shopify_order_status",
+    "get_customer_history",
+    "search_shopify_book_by_isbn",
+    "search_shopify_book_by_title",
+    "dictate_tracking",
+    "update_cart_item_quantity",
+    "get_cart_summary",
+    "check_logistics_feasibility",
+    "verify_stock_availability",
+    "initiate_checkout_batch",
+    "send_checkout_email",
+    "create_support_case",
+    "update_pending_email",
+    "escalate_to_human",
+    "end_call",
+  ];
+  return (canonical as string[]).includes(trimmed) ? (trimmed as LlmToolName) : null;
+}
+
 export interface CartToolResult {
-  status: "ok" | "empty" | "error" | "confirm_removal" | "compliance_blocked";
+  status:
+    | "ok"
+    | "empty"
+    | "error"
+    | "confirm_removal"
+    | "compliance_blocked"
+    | "inventory_blocked";
   items?: Array<{
     title: string;
     quantity: number;
@@ -169,6 +213,10 @@ export interface CartToolResult {
   confirmationSpeech?: string;
   complianceBlocked?: boolean;
   needsFacilityInfo?: boolean;
+  inventoryBlocked?: boolean;
+  suggestAlternatives?: boolean;
+  temporaryReservation?: boolean;
+  inventoryQuantity?: number;
   proactiveRecommendation?: {
     title: string;
     variantId: string;
@@ -180,12 +228,15 @@ export interface CartToolResult {
 export interface CheckoutEmailToolResult {
   status: "sent" | "failed" | "error" | "blocked";
   invoice_url?: string;
+  invoiceUrl?: string;
   draft_order_name?: string;
   reason?: string;
   message?: string;
   instructions?: string;
   splitBatch?: boolean;
   remainingCartUnits?: number;
+  checkoutGroupId?: string;
+  confirmedEmailId?: string;
   checkoutSession?: {
     phase: string;
     remainingItems: Array<{ title: string; quantity: number; variantId: string }>;
@@ -206,6 +257,58 @@ export interface DictateTrackingToolResult {
   tracking_number_for_tts?: string;
 }
 
+export interface PendingEmailToolResult {
+  status: "ok" | "blocked";
+  message?: string;
+  confirmationSpeech?: string;
+  pendingEmailSlots?: {
+    full: string;
+    part1: string;
+    part2: string;
+    domain: string;
+  };
+  partialCorrection?: {
+    slot: string;
+    from: string;
+    to: string;
+  };
+  instructions?: string;
+}
+
+export interface EscalateToHumanToolResult {
+  status: "ok" | "blocked";
+  message?: string;
+  ticketId?: string;
+  instructions?: string;
+}
+
+export interface LogisticsToolResult {
+  status?: "ok" | "blocked";
+  shipable?: boolean;
+  title?: string;
+  reason?: string;
+  message?: string;
+}
+
+export interface StockVerifyToolResult {
+  status?: "ok" | "blocked";
+  cartUpdated?: boolean;
+  removedTitles?: string[];
+  lines?: unknown[];
+  viableSelectors?: unknown[];
+  message?: string;
+  currentSessionCart?: Record<string, number>;
+}
+
+export interface InitiateCheckoutBatchToolResult {
+  status?: "ok" | "blocked";
+  message?: string;
+  remainingUnits?: number;
+  cartUpdated?: boolean;
+  stockVerified?: boolean;
+  instructions?: string;
+}
+
 export interface LlmToolExecutionRecord {
   tool: LlmToolName;
   args: Record<string, string>;
@@ -224,15 +327,21 @@ export interface LlmToolExecutionRecord {
     | "error"
     | "failed"
     | "confirm_removal"
-    | "compliance_blocked";
+    | "compliance_blocked"
+    | "inventory_blocked";
   data?:
-    | OrderStatusResult
+    | CallerOrderLookupResult
     | CustomerHistoryResult
     | BookAvailabilityResult
     | CartToolResult
     | CheckoutEmailToolResult
     | SupportEscalationToolResult
-    | DictateTrackingToolResult;
+    | DictateTrackingToolResult
+    | PendingEmailToolResult
+    | EscalateToHumanToolResult
+    | LogisticsToolResult
+    | StockVerifyToolResult
+    | InitiateCheckoutBatchToolResult;
   errorMessage?: string;
   elapsedMs: number;
 }
@@ -347,11 +456,12 @@ export async function executeLlmTool(
   options?: ExecuteLlmToolOptions,
 ): Promise<LlmToolExecutionRecord> {
   const started = Date.now();
+  const canonicalTool = normalizeLlmToolName(tool) ?? tool;
 
   let effectiveArgs = rawArgs ?? {};
   let effectiveSession = session;
   if (!options?.skipPolicy) {
-    const prepared = prepareUnifiedToolArgs(tool, effectiveArgs, callSid, effectiveSession);
+    const prepared = prepareUnifiedToolArgs(canonicalTool, effectiveArgs, callSid, effectiveSession);
     if (!prepared.ok) {
       return prepared.record;
     }
@@ -372,8 +482,32 @@ export async function executeLlmTool(
   // Preserve structured cart payloads for downstream parsers
   const rawArgsForCart = effectiveArgs;
   session = effectiveSession;
+  tool = canonicalTool;
 
   if (tool === "end_call") {
+    if (session) {
+      const { TerminationCoordinator } = await import("../runtime/terminationCoordinator.js");
+      const decision = TerminationCoordinator.evaluate(
+        session,
+        "llm_end_call",
+        options?.userMessage ?? "",
+      );
+      if (!decision.allow) {
+        return {
+          tool,
+          args,
+          ok: false,
+          status: "blocked",
+          errorMessage: decision.speech ?? decision.blockReason ?? "end_call blocked",
+          data: {
+            status: "blocked",
+            message: decision.speech,
+            instructions: "Continue helping — hang-up only after explicit goodbye.",
+          },
+          elapsedMs: Date.now() - started,
+        };
+      }
+    }
     return {
       tool,
       args,
@@ -383,11 +517,65 @@ export async function executeLlmTool(
     };
   }
 
+  if (tool === "escalate_to_human") {
+    const { SENTIMENT_SHIELD_SPEECH } = await import("../utils/sentiment.js");
+    const { ESCALATION_FAILURE_SPEECH } = await import("../agents/flowMutex.js");
+    if (!session) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        errorMessage: "Session unavailable for human escalation.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+    const reason = String(args.reason ?? "agent_requested").trim() || "agent_requested";
+    const { ActionGateway } = await import("../runtime/actionGateway.js");
+    const result = await ActionGateway.escalateToHuman(session, reason, {
+      callId: session.callSid,
+      actionId: `escalate_${Date.now().toString(36)}`,
+      workflowId: "llm_tool",
+    });
+    if (!result.ok) {
+      return {
+        tool,
+        args: { reason },
+        ok: false,
+        status: "error",
+        errorMessage: result.error,
+        data: {
+          status: "error",
+          message: result.speech ?? ESCALATION_FAILURE_SPEECH,
+          instructions: `Speak exactly: ${result.speech ?? ESCALATION_FAILURE_SPEECH}`,
+        },
+        elapsedMs: Date.now() - started,
+      };
+    }
+    const ticketId = result.caseId ?? "";
+    return {
+      tool,
+      args: { reason, ticketId },
+      ok: true,
+      status: "ok",
+      data: {
+        status: "ok",
+        message: `Escalated to human agent (${ticketId}).`,
+        ticketId,
+        instructions: `Speak Support-Mode: ${SENTIMENT_SHIELD_SPEECH}`,
+      },
+      elapsedMs: Date.now() - started,
+    };
+  }
+
   if (!session && (
     tool === "update_cart_item_quantity" ||
     tool === "get_cart_summary" ||
+    tool === "check_logistics_feasibility" ||
+    tool === "verify_stock_availability" ||
+    tool === "initiate_checkout_batch" ||
     tool === "send_checkout_email" ||
-    tool === "send_support_escalation" ||
+    tool === "create_support_case" ||
     tool === "update_pending_email"
   )) {
     return {
@@ -402,9 +590,15 @@ export async function executeLlmTool(
 
   if (tool === "update_pending_email" && session) {
     const { updatePendingEmail } = await import("../agents/emailConfirmationManager.js");
+    const { buildUpdatedEmailConfirmationSpeech } = await import("../utils/emailCapture.js");
     const email = (args.email ?? args.customerEmail ?? "").trim();
     const replaceFrom = String(args.replace_from ?? args.replaceFrom ?? "").trim();
     const replaceTo = String(args.replace_to ?? args.replaceTo ?? "").trim();
+    const slotRaw = String(args.slot ?? args.email_slot ?? "").trim().toLowerCase();
+    const slot =
+      slotRaw === "part1" || slotRaw === "part2" || slotRaw === "domain" || slotRaw === "local"
+        ? slotRaw
+        : undefined;
     const baseEmail =
       email ||
       session.emailConfirmation?.normalizedEmail ||
@@ -412,6 +606,7 @@ export async function executeLlmTool(
     const result = updatePendingEmail(session, baseEmail, email || baseEmail, {
       replaceFrom: replaceFrom || undefined,
       replaceTo: replaceTo || undefined,
+      slot,
     });
     if (!result.ok) {
       const failArgs: Record<string, string> = { email: baseEmail };
@@ -426,6 +621,7 @@ export async function executeLlmTool(
         elapsedMs: Date.now() - started,
       };
     }
+    const confirmSpeech = buildUpdatedEmailConfirmationSpeech(result.email, result.correction);
     return {
       tool,
       args: { email: result.email },
@@ -434,7 +630,12 @@ export async function executeLlmTool(
       data: {
         status: "ok",
         message: `Pending email updated to ${result.email}. spelled_for_tts: ${result.spelled}`,
-      } satisfies CartToolResult,
+        confirmationSpeech: confirmSpeech,
+        pendingEmailSlots: result.pending,
+        partialCorrection: result.correction,
+        instructions:
+          "SEMANTIC SLOT REPAIR: Speak the confirmationSpeech verbatim (acknowledge the corrected slot only, then verify the full updated email). Do NOT re-ask for the entire address.",
+      } satisfies PendingEmailToolResult,
       elapsedMs: Date.now() - started,
     };
   }
@@ -555,16 +756,19 @@ export async function executeLlmTool(
           confirmRemoval,
           facilityType: facilityType || undefined,
         });
-        if (lastResult.needsRemovalConfirmation || lastResult.complianceBlocked) break;
+        if (lastResult.needsRemovalConfirmation || lastResult.complianceBlocked || lastResult.inventoryBlocked)
+          break;
       }
 
       const cart = lastResult.cart;
       const data: CartToolResult = {
         status: lastResult.complianceBlocked
           ? "compliance_blocked"
-          : lastResult.needsRemovalConfirmation
-            ? "confirm_removal"
-            : "ok",
+          : lastResult.inventoryBlocked
+            ? "inventory_blocked"
+            : lastResult.needsRemovalConfirmation
+              ? "confirm_removal"
+              : "ok",
         items: cart.map((line) => ({
           title: line.title,
           quantity: line.quantity,
@@ -580,18 +784,30 @@ export async function executeLlmTool(
         confirmationSpeech: lastResult.confirmationSpeech ?? lastResult.message,
         complianceBlocked: lastResult.complianceBlocked,
         needsFacilityInfo: lastResult.needsFacilityInfo,
+        inventoryBlocked: lastResult.inventoryBlocked,
+        suggestAlternatives: lastResult.suggestAlternatives,
+        temporaryReservation: lastResult.temporaryReservation,
+        inventoryQuantity: lastResult.inventoryQuantity,
         proactiveRecommendation: lastResult.proactiveRecommendation,
       };
       return {
         tool,
         args,
-        ok: !lastResult.complianceBlocked,
+        ok: !lastResult.complianceBlocked && !lastResult.inventoryBlocked,
         status: data.status,
         data,
         elapsedMs: Date.now() - started,
       };
-    } catch {
-      return cartErrorRecord(tool, args, started);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logger.error("cart_tool_execution_failed", {
+        callSid: session.callSid.slice(0, 8),
+        reason,
+      });
+      return {
+        ...cartErrorRecord(tool, args, started),
+        errorMessage: `Cart update failed: ${reason}`,
+      };
     }
   }
 
@@ -620,103 +836,338 @@ export async function executeLlmTool(
     };
   }
 
-  if (tool === "send_checkout_email" && session) {
-    const customerEmail = (args.customerEmail ?? args.email ?? "").trim();
-    const customerName = (args.customerName ?? args.name ?? "").trim();
-    const itemSelectors = normalizeCheckoutItemArgs(args);
+  if (tool === "check_logistics_feasibility" && session) {
+    const { checkLogisticsFeasibility, gateBatchForLogistics } = await import(
+      "../agents/logisticsIntelligence.js"
+    );
+    const facilityType = String(args.facility_type ?? args.facilityType ?? session.facilityType ?? "").trim();
+    const sku = String(args.sku ?? args.variant_id ?? args.variantId ?? "").trim();
+    const title = String(args.title ?? "").trim();
+    const cart = getCartSummary(session).items;
+    const line =
+      cart.find(
+        (l) =>
+          (sku && (l.variantId === sku || l.isbn === sku)) ||
+          (title && l.title.toLowerCase() === title.toLowerCase()),
+      ) ?? undefined;
 
-    if (!itemSelectors?.length && session.paymentLinkSent) {
-      const prior = session.paymentLinkSentTo ?? customerEmail ?? "your email";
+    if (line || title || sku) {
+      const result = checkLogisticsFeasibility(
+        {
+          title: line?.title ?? (title || "that book"),
+          variantId: line?.variantId ?? sku,
+          sku,
+          tags: line?.tags ?? (Array.isArray(args.tags) ? (args.tags as string[]) : undefined),
+          metafields:
+            line?.metafields ??
+            (Array.isArray(args.metafields)
+              ? (args.metafields as Array<{ namespace: string; key: string; value: string }>)
+              : undefined),
+        },
+        facilityType,
+      );
+      if (!result.ok && line) {
+        gateBatchForLogistics(
+          session,
+          [{ variant_id: line.variantId, title: line.title, quantity: line.quantity }],
+          facilityType,
+        );
+      }
       return {
         tool,
-        args: { customerEmail, customerName },
-        ok: true,
-        status: "sent",
+        args,
+        ok: result.ok,
+        status: result.ok ? "ok" : "blocked",
         data: {
-          status: "sent",
-          message: `Payment link was already sent to ${prior} during this call.`,
-          instructions:
-            "Confirm-once policy for full-cart checkout: do NOT resend. Say the link was already emailed and ask if they need anything else. For split-order remaining books, pass items for the next batch after letter-by-letter email verification.",
-        } satisfies CheckoutEmailToolResult,
+          shipable: result.shipable,
+          title: result.title,
+          reason: result.reason,
+          message: result.speech ?? (result.ok ? "Shipable to facility." : "Not shipable."),
+        },
         elapsedMs: Date.now() - started,
       };
     }
-
-    if (!isValidCustomerEmail(customerEmail)) {
-      return {
-        tool,
-        args: { customerEmail, customerName },
-        ok: false,
-        status: "blocked",
-        errorMessage: "Valid customer email required before sending checkout link.",
-        elapsedMs: Date.now() - started,
-      };
-    }
-
-    const summary = getCartSummary(session);
-    if (summary.isEmpty) {
-      return {
-        tool,
-        args: { customerEmail, customerName },
-        ok: false,
-        status: "empty",
-        errorMessage: "Cart is empty — add books before checkout.",
-        elapsedMs: Date.now() - started,
-      };
-    }
-
-    const result = await sendCheckoutPaymentLink(session, customerEmail, {
-      customerName,
-      items: itemSelectors,
-    });
-    let status: "sent" | "blocked" | "empty" | "error" | "failed" = result.ok ? "sent" : "failed";
-    if (!result.ok) {
-      if (/valid customer email/i.test(result.message)) status = "blocked";
-      else if (/cart is empty|could not find/i.test(result.message)) status = "empty";
-      else if (/not configured/i.test(result.message)) status = "error";
-    }
-
-    const cs = session.paymentCheckout?.checkoutSession;
-    const remainingUnits = result.remainingCartUnits ?? 0;
-    const data: CheckoutEmailToolResult = {
-      status: result.ok ? "sent" : "failed",
-      invoice_url: result.invoiceUrl,
-      message: result.message,
-      reason: result.ok ? undefined : result.message,
-      splitBatch: result.splitBatch,
-      remainingCartUnits: result.remainingCartUnits,
-      checkoutSession: cs
-        ? {
-            phase: cs.phase,
-            remainingItems: cs.remainingItems,
-            currentBatch: cs.currentBatch,
-            completedBatches: cs.completedBatches.length,
-            batchNumber: cs.batchNumber,
-          }
-        : undefined,
-      instructions: result.ok
-        ? result.splitBatch && remainingUnits > 0
-          ? `MULTI-BATCH PAYMENT: Link sent. Tell the caller remaining count is exactly ${remainingUnits}. Ask if remaining items go to a different email. Then: (1) ask how many copies of the next title / which books by title or position, (2) letter-by-letter verify that email via CONTEXTUAL REPAIR as needed, (3) call send_checkout_email again with items for ONLY that batch. Do NOT dump a full cart summary. Do NOT collect all emails at once.`
-          : result.splitBatch
-            ? "SPLIT COMPLETE: All cart batches have been emailed. Ask if they need anything else — do NOT auto hang up."
-            : undefined
-        : result.invoiceUrl
-          ? "Email delivery failed but invoice_url is valid — read the checkout link aloud or offer to retry email."
-          : undefined,
-    };
 
     return {
       tool,
-      args: { customerEmail, customerName },
+      args,
+      ok: false,
+      status: "blocked",
+      errorMessage: "Provide sku/variant_id or title for logistics check.",
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  if (tool === "verify_stock_availability" && session) {
+    const { verifyStockAvailability } = await import("../agents/logisticsIntelligence.js");
+    const { resolveInventoryBatch } = await import("../agents/inventoryResolutionService.js");
+    const skuList = normalizeCheckoutItemArgs(args) ?? undefined;
+    const liveRaw = args.live_inventory ?? args.liveInventory;
+    let liveInventory =
+      liveRaw && typeof liveRaw === "object"
+        ? (liveRaw as Record<string, number>)
+        : undefined;
+    let inventoryUnavailable = false;
+    if (!liveInventory) {
+      const { resolveCheckoutLineItems } = await import("../agents/cartManager.js");
+      const resolved = resolveCheckoutLineItems(session, skuList);
+      if (resolved.ok) {
+        const requests = resolved.items
+          .map((line) => ({
+            variantId: line.variantId,
+            requestedQuantity: Math.max(1, line.quantity || 1),
+          }))
+          .filter((r) => r.variantId);
+        const resolutions = await resolveInventoryBatch(session, requests, { force: true });
+        liveInventory = {};
+        inventoryUnavailable = resolutions.some((r) => r.availableQuantity == null);
+        for (const r of resolutions) {
+          if (r.availableQuantity != null) {
+            liveInventory[r.variantId] = r.availableQuantity;
+          }
+        }
+      }
+    }
+    const result = verifyStockAvailability(session, skuList, {
+      liveInventory,
+      inventoryUnavailable,
+    });
+    return {
+      tool,
+      args,
       ok: result.ok,
-      status,
-      data,
+      status: result.ok ? "ok" : "blocked",
+      data: {
+        cartUpdated: result.cartUpdated,
+        removedTitles: result.removedTitles,
+        lines: result.lines,
+        viableSelectors: result.viableSelectors,
+        message: result.speech ?? (result.ok ? "Stock verified." : "Stock unavailable."),
+        currentSessionCart: session.currentSessionCart,
+      },
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  if (tool === "initiate_checkout_batch" && session) {
+    const { initiateCheckoutBatchWithLiveInventory } = await import(
+      "../agents/paymentCheckoutFlow.js"
+    );
+    let itemSelectors = normalizeCheckoutItemArgs(args) ?? [];
+    if (!itemSelectors.length) {
+      const { getCartSummary } = await import("../agents/cartManager.js");
+      const summary = getCartSummary(session);
+      itemSelectors = summary.items.map((line) => ({
+        variant_id: line.variantId,
+        title: line.title,
+        quantity: line.quantity,
+      }));
+    }
+    const facilityType = String(args.facility_type ?? args.facilityType ?? "").trim();
+    const startEmailRaw = String(
+      args.start_email_capture ?? args.startEmailCapture ?? "true",
+    )
+      .trim()
+      .toLowerCase();
+    const startEmailCapture = !["false", "0", "no", "off"].includes(startEmailRaw);
+    const result = await initiateCheckoutBatchWithLiveInventory(session, itemSelectors, {
+      startEmailCapture,
+      facilityType: facilityType || undefined,
+    });
+    return {
+      tool,
+      args,
+      ok: result.ok,
+      status: result.ok ? "ok" : "blocked",
+      data: {
+        status: result.ok ? "ok" : "blocked",
+        message: result.ok ? result.speech : result.message,
+        ...(result.ok
+          ? {
+              remainingUnits: result.remainingUnits,
+              cartUpdated: result.cartUpdated,
+              stockVerified: result.stockVerified,
+              checkoutGroupId: result.checkoutGroupId,
+              instructions:
+                "CheckoutManager batch locked. Continue letter-by-letter email verification, then call send_checkout_email with confirmed_email_id and this checkout_group_id.",
+            }
+          : { cartUpdated: result.cartUpdated }),
+      },
       errorMessage: result.ok ? undefined : result.message,
       elapsedMs: Date.now() - started,
     };
   }
 
-  if (tool === "send_support_escalation" && session) {
+  if (tool === "send_checkout_email" && session) {
+    const customerName = (args.customerName ?? args.name ?? "").trim();
+    const itemSelectors = normalizeCheckoutItemArgs(args);
+    const confirmedEmailId = String(
+      args.confirmed_email_id ?? args.confirmedEmailId ?? "",
+    ).trim();
+    let checkoutGroupId = String(
+      args.checkout_group_id ?? args.checkoutGroupId ?? "",
+    ).trim();
+
+    const { hasUnacknowledgedFailure, buildFailureStateSpeech } = await import(
+      "../agents/failureState.js"
+    );
+    if (hasUnacknowledgedFailure(session)) {
+      const speech =
+        buildFailureStateSpeech(session) ??
+        "The previous checkout step failed. Please acknowledge that before we retry.";
+      return {
+        tool,
+        args: { confirmedEmailId, checkoutGroupId, customerName },
+        ok: false,
+        status: "blocked",
+        errorMessage: speech,
+        data: {
+          status: "blocked",
+          message: speech,
+          instructions:
+            "FAILURE_STATE: Acknowledge the prior failure before retry. No dual/fallback payment path.",
+        } satisfies CheckoutEmailToolResult,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const {
+      getLatestConfirmedEmailId,
+      getConfirmedEmailById,
+      issueConfirmedEmail,
+    } = await import("../agents/emailConfirmationManager.js");
+
+    // Prefer opaque confirmed_email_id; migrate confirmed session email into an id once.
+    let emailId = confirmedEmailId || getLatestConfirmedEmailId(session) || "";
+    if (!emailId) {
+      const conf = session.emailConfirmation;
+      const addr = conf?.confirmedEmail ?? conf?.normalizedEmail;
+      if (conf?.confirmationStatus === "confirmed" && addr) {
+        emailId = issueConfirmedEmail(session, addr, "payment_link").confirmedEmailId;
+      }
+    }
+    if (!emailId || !getConfirmedEmailById(session, emailId)) {
+      return {
+        tool,
+        args: { confirmedEmailId: emailId, checkoutGroupId, customerName },
+        ok: false,
+        status: "blocked",
+        errorMessage:
+          "confirmed_email_id required — complete letter-by-letter email confirmation first.",
+        data: {
+          status: "blocked",
+          message: "ActionGateway rejected send: missing confirmed_email_id.",
+          instructions:
+            "Do not pass raw customerEmail to send. Confirm email, then call execute with confirmed_email_id + checkout_group_id.",
+        } satisfies CheckoutEmailToolResult,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const {
+      planCheckoutGroup,
+      cartLinesToGroupLines,
+      getCheckoutGroup,
+    } = await import("../domain/checkoutModels.js");
+    const { resolveCheckoutLineItems, getCartSummary } = await import("../agents/cartManager.js");
+
+    if (!checkoutGroupId) {
+      const resolved = resolveCheckoutLineItems(session, itemSelectors);
+      if (!resolved.ok || !resolved.items.length) {
+        const summary = getCartSummary(session);
+        if (summary.isEmpty) {
+          return {
+            tool,
+            args: { confirmedEmailId: emailId, customerName },
+            ok: false,
+            status: "empty",
+            errorMessage: "Cart is empty — add books before checkout.",
+            elapsedMs: Date.now() - started,
+          };
+        }
+      }
+      const lines = resolved.ok
+        ? cartLinesToGroupLines(resolved.items)
+        : cartLinesToGroupLines(
+            getCartSummary(session).items.map((l) => ({
+              variantId: l.variantId,
+              productId: l.productId ?? "",
+              title: l.title,
+              quantity: l.quantity,
+              unitPrice: l.unitPrice,
+              price: l.price,
+              isbn: l.isbn,
+            })),
+          );
+      const planned = planCheckoutGroup(session, lines);
+      if (!planned.ok) {
+        return {
+          tool,
+          args: { confirmedEmailId: emailId, customerName },
+          ok: false,
+          status: "blocked",
+          errorMessage: planned.message,
+          data: { status: "blocked", message: planned.message },
+          elapsedMs: Date.now() - started,
+        };
+      }
+      checkoutGroupId = planned.group.checkoutGroupId;
+    } else if (!getCheckoutGroup(session, checkoutGroupId)) {
+      return {
+        tool,
+        args: { confirmedEmailId: emailId, checkoutGroupId, customerName },
+        ok: false,
+        status: "blocked",
+        errorMessage: "Unknown checkout_group_id.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const { ActionGateway } = await import("../runtime/actionGateway.js");
+    const result = await ActionGateway.executeCheckoutGroup(
+      {
+        session,
+        checkoutGroupId,
+        confirmedEmailId: emailId,
+        customerName,
+      },
+      {
+        callId: session.callSid,
+        actionId: `act_${Date.now().toString(36)}`,
+        idempotencyKey: getCheckoutGroup(session, checkoutGroupId)?.idempotencyKey,
+        workflowId: "checkout",
+      },
+    );
+
+    let status: "sent" | "blocked" | "empty" | "error" | "failed" = result.ok ? "sent" : "failed";
+    if (!result.ok) {
+      if (/email|confirm/i.test(result.message)) status = "blocked";
+      else if (/empty/i.test(result.message)) status = "empty";
+    }
+
+    return {
+      tool,
+      args: { confirmedEmailId: emailId, checkoutGroupId, customerName },
+      ok: result.ok,
+      status,
+      data: {
+        status: result.ok ? "sent" : "blocked",
+        message: result.message,
+        invoiceUrl: result.invoiceUrl,
+        checkoutGroupId: result.checkoutGroupId,
+        remainingCartUnits: result.remainingUnits,
+        instructions: result.ok
+          ? result.remainingUnits && result.remainingUnits > 0
+            ? "MULTI-BATCH: Link sent. Call initiate_checkout_batch for the next partition, confirm email, then send_checkout_email with confirmed_email_id + checkout_group_id."
+            : "Checkout complete. Ask if they need anything else."
+          : "FAILURE_STATE recorded. Acknowledge to the caller before retrying this checkout_group_id.",
+      } satisfies CheckoutEmailToolResult,
+      errorMessage: result.ok ? undefined : result.message,
+      elapsedMs: Date.now() - started,
+    };
+  }
+
+  if (tool === "create_support_case" && session) {
     const customerName = (args.customerName ?? args.name ?? "").trim();
     const customerEmail = (args.customerEmail ?? args.email ?? "").trim();
     const issueSummary = (args.issueSummary ?? args.summary ?? "").trim();
@@ -732,37 +1183,27 @@ export async function executeLlmTool(
       };
     }
 
-    if (!isResendAvailable()) {
-      return {
-        tool,
-        args,
-        ok: false,
-        status: "error",
-        errorMessage: "Email service is not configured.",
-        elapsedMs: Date.now() - started,
-      };
-    }
-
     try {
-      const enrichedSummary = buildEscalationIssueSummary(callSid, session, issueSummary);
-      const emailResult = await sendSupportEscalation(
-        customerName,
-        customerEmail,
-        session.from,
-        enrichedSummary,
+      const { ActionGateway } = await import("../runtime/actionGateway.js");
+      const created = await ActionGateway.createSupportCase(
+        { session, reason: "Voice agent escalation", issueSummary, customerName, callbackEmail: customerEmail },
+        { callId: session.callSid, actionId: `esc_${Date.now().toString(36)}`, workflowId: "support_escalation" },
       );
       const data: SupportEscalationToolResult = {
-        status: emailResult.ok ? "sent" : "error",
-        message: emailResult.ok
-          ? "Support team notified."
-          : emailResult.error ?? "Could not notify support.",
+        status: created.ok ? "sent" : "error",
+        message: created.ok
+          ? `Support case ${created.caseId} created.`
+          : created.error || "I'm sorry, I couldn't escalate right now, please try again",
       };
       return {
         tool,
         args: { customerName, customerEmail, issueSummary },
-        ok: emailResult.ok,
-        status: emailResult.ok ? "sent" : "error",
+        ok: created.ok,
+        status: created.ok ? "sent" : "error",
         data,
+        errorMessage: created.ok
+          ? undefined
+          : created.error || "I'm sorry, I couldn't escalate right now, please try again",
         elapsedMs: Date.now() - started,
       };
     } catch {
@@ -771,7 +1212,7 @@ export async function executeLlmTool(
         args,
         ok: false,
         status: "api_error",
-        errorMessage: "Escalation failed. Please try again.",
+        errorMessage: "I'm sorry, I couldn't escalate right now, please try again",
         elapsedMs: Date.now() - started,
       };
     }
@@ -819,14 +1260,21 @@ export async function executeLlmTool(
     const orderNumber = normalizeOrderNumber(rawInput);
 
     if (session && shouldBlockOrderLookupReinvoke(session, orderNumber || rawInput)) {
-      const cached = session.lastOrderStatusResult;
-      if (cached && cached.status === "found") {
+      const cached = getActiveOrderContext(session);
+      if (cached) {
         return {
           tool,
           args: { orderNumber: orderNumber || rawInput },
           ok: true,
           status: "found",
-          data: cached,
+          data: {
+            status: "found",
+            orderView: {
+              verificationLevel: session.isVerifiedCaller ? "verified" : "unverified",
+              order_number: String(cached.order_number ?? ""),
+            },
+            is_verified_caller: session.isVerifiedCaller === true,
+          },
           elapsedMs: Date.now() - started,
         };
       }
@@ -837,11 +1285,13 @@ export async function executeLlmTool(
         status: "ok",
         data: {
           status: "found",
-          orderNumber:
-            String(session.currentOrderData?.order_number ?? session.currentOrder?.orderNumber ?? ""),
-          message:
-            "order_lookup_complete: reuse ACTIVE ORDER CONTEXT — do not re-query Shopify for this order.",
-        } as OrderStatusResult,
+          orderView: {
+            verificationLevel: session.isVerifiedCaller ? "verified" : "unverified",
+            order_number: String(getActiveOrderContext(session)?.order_number ?? session.currentOrder?.orderNumber ?? ""),
+          },
+          is_verified_caller: session.isVerifiedCaller === true,
+          message: "order_lookup_complete: reuse ACTIVE ORDER CONTEXT — do not re-query Shopify for this order.",
+        },
         elapsedMs: Date.now() - started,
       };
     }
@@ -883,38 +1333,14 @@ export async function executeLlmTool(
     });
 
     try {
-      const callerPhone = session?.callerPhone ?? session?.from ?? "";
-      let data: OrderStatusResult;
-
-      if (callerPhone) {
-        const aggregated = await aggregateOrderForCaller(orderNumber, callerPhone, callSid);
-        if (aggregated.status === "found" && aggregated.order) {
-          data = aggregated.order;
-          if (session) {
-            session.lastOrderStatusResult = data;
-            session.isVerifiedCaller = aggregated.is_verified_caller;
-            session.callerPhone = callerPhone;
-            session.shopifyCustomerPhone = data.customerPhone;
-            session.shopifyCustomerId = data.customerId;
-            session.totalOrderCount = data.totalOrderCount;
-          }
-        } else {
-          data = {
-            status: aggregated.status,
-            message: aggregated.message,
-            error: aggregated.error,
-            searchedNumber: aggregated.searchedNumber ?? orderNumber,
-          };
-        }
-      } else {
-        data = await lookupOrderStatus(orderNumber, callSid, {
-          bypassCache: true,
-        });
-        if (session && data.status === "found") {
-          session.lastOrderStatusResult = data;
-          runVerificationGate(session, data);
-        }
-      }
+      const lookupSession = session ?? ({
+        callSid,
+        from: "",
+        to: "",
+        phase: "active",
+        isVerifiedCaller: false,
+      } as unknown as CallSession);
+      const data = await lookupOrderForCaller(lookupSession, orderNumber);
 
       if (isTurnAborted(callSid)) {
         return {
@@ -974,11 +1400,15 @@ export async function executeLlmTool(
         args,
         ok: false,
         status: "blocked",
-        errorMessage: "UNAUTHORIZED: You cannot fetch history details for unverified callers.",
+        errorMessage:
+          "UNAUTHORIZED: is_verified is false — cannot access order_history. Redirect the caller to support for personal order history queries.",
         data: {
           status: "api_error",
-          message: "UNAUTHORIZED: You cannot fetch history details for unverified callers.",
+          message:
+            "UNAUTHORIZED: Verification required. Offer to escalate to support so they can verify identity and follow up on past orders.",
           error: "UNAUTHORIZED: You cannot fetch history details for unverified callers.",
+          failureState: "VERIFICATION_REQUIRED",
+          redirect_to_support: true,
         },
         elapsedMs: Date.now() - started,
       };
@@ -1037,6 +1467,16 @@ export async function executeLlmTool(
 
     try {
       const data = await searchByISBN(isbn, callSid);
+      const productView =
+        data.status === "found" && data.variantId && data.bookName
+          ? {
+              title: data.bookName,
+              price: data.price ?? "",
+              isbn: data.isbn,
+              variantId: data.variantId,
+              available: data.inStock,
+            }
+          : null;
       if (session && data.status === "found") {
         recordLastCatalogSearch(session, data);
         const persistError = await flushSessionAfterCatalogMutation(
@@ -1052,7 +1492,7 @@ export async function executeLlmTool(
         args: { isbn },
         ok: data.status === "found",
         status: data.status,
-        data,
+        data: (productView ? { ...data, productView } : data) as BookAvailabilityResult,
         elapsedMs: Date.now() - started,
       };
     } catch (err) {
@@ -1062,6 +1502,7 @@ export async function executeLlmTool(
     }
   }
 
+  if (tool === "search_shopify_book_by_title") {
   const title = sanitizeCatalogTitlePhrase((args.title ?? "").trim());
   const gate = validateShopifyExecutionGate(
     "title_search",
@@ -1080,6 +1521,16 @@ export async function executeLlmTool(
 
   try {
     const data = await searchByTitle(title, callSid);
+    const productView =
+      data.status === "found" && data.variantId && data.bookName
+        ? {
+            title: data.bookName,
+            price: data.price ?? "",
+            isbn: data.isbn,
+            variantId: data.variantId,
+            available: data.inStock,
+          }
+        : null;
     if (session && data.status === "found") {
       recordLastCatalogSearch(session, data);
       const persistError = await flushSessionAfterCatalogMutation(
@@ -1095,7 +1546,7 @@ export async function executeLlmTool(
       args: { title },
       ok: data.status === "found",
       status: data.status,
-      data,
+      data: (productView ? { ...data, productView } : data) as BookAvailabilityResult,
       elapsedMs: Date.now() - started,
     };
   } catch (err) {
@@ -1103,6 +1554,16 @@ export async function executeLlmTool(
       err instanceof Error ? err.message : CATALOG_TOOL_ERROR_LLM_PAYLOAD.reason;
     return catalogErrorRecord(tool, { title }, started, reason);
   }
+  }
+
+  return {
+    tool,
+    args,
+    ok: false,
+    status: "blocked",
+    errorMessage: `Unsupported tool: ${tool}`,
+    elapsedMs: Date.now() - started,
+  };
 }
 
 /** Compact JSON tool result for the LLM synthesis pass. */
@@ -1172,7 +1633,12 @@ export function toolResultForLlm(
     return JSON.stringify(SHOPIFY_TIMEOUT_LLM_PAYLOAD);
   }
 
-  if (record.data && "status" in record.data && isMaintenanceToolStatus(record.data.status)) {
+  if (
+    record.data &&
+    "status" in record.data &&
+    record.data.status != null &&
+    isMaintenanceToolStatus(record.data.status)
+  ) {
     if (record.tool === "get_shopify_order_status") {
       return JSON.stringify(ORDER_LOOKUP_MAINTENANCE_LLM_PAYLOAD);
     }
@@ -1218,6 +1684,11 @@ export function toolResultForLlm(
     record.tool === "update_cart_item_quantity" ||
     record.tool === "get_cart_summary"
   ) {
+    if (record.tool === "update_cart_item_quantity" && record.ok && options?.session) {
+      const memory = getSessionMemory(options.session);
+      memory.awaitingQuantityReply = false;
+      memory.quantityAskCount = 0;
+    }
     return JSON.stringify({
       status: record.status,
       ok: record.ok,
@@ -1225,7 +1696,7 @@ export function toolResultForLlm(
       instructions:
         record.tool === "get_cart_summary"
           ? "Summarize the cart naturally for the caller."
-          : "Confirm the cart change warmly and ask if they want anything else.",
+          : "Confirm the cart change warmly. Offer: adjust quantity, search for another book, or prepare the payment link. Do NOT re-ask how many copies.",
     });
   }
 
@@ -1238,7 +1709,7 @@ export function toolResultForLlm(
         reason,
         checkout,
         instructions:
-          "Do NOT say the system is undergoing updates. Apologize to the customer, state exactly which book caused the problem using the reason field, and immediately call send_support_escalation with a concise issueSummary.",
+          "Do NOT say the system is undergoing updates. Apologize to the customer, state exactly which book caused the problem using the reason field, and immediately call create_support_case with a concise issueSummary.",
       });
     }
     return JSON.stringify({
@@ -1250,7 +1721,7 @@ export function toolResultForLlm(
     });
   }
 
-  if (record.tool === "send_support_escalation") {
+  if (record.tool === "create_support_case") {
     return JSON.stringify({
       status: record.status,
       ok: record.ok,
@@ -1286,7 +1757,7 @@ export function toolResultForLlm(
     const suppressEscalation = shouldSuppressCatalogEscalation(options?.session);
     const notFoundInstruction = suppressEscalation
       ? "Apologize that the exact book was not found. Offer to try a different title or ISBN. Do NOT escalate to support unless the customer explicitly asks for human help or a warehouse check."
-      : "Follow OMNI-CHANNEL ESCALATION S.O.P.: ask for email, verify letter-by-letter, call send_support_escalation, then say: I have sent your request to the support team. They will contact you shortly.";
+      : "Follow OMNI-CHANNEL ESCALATION S.O.P.: ask for email, verify letter-by-letter, call create_support_case, then say a support case was created.";
     if (data.status === "not_found") {
       return JSON.stringify({
         status: "NOT_FOUND",
@@ -1302,12 +1773,17 @@ export function toolResultForLlm(
         similar.length > 1)
         ? "LOW CONFIDENCE MATCH (<90%): Ask 'I found [X] and [Y], which one were you looking for?' using the top similarMatches. Do NOT add to cart until they choose."
         : data.exactMatch === true
-          ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask how many copies before update_cart_item_quantity unless the caller already stated a quantity."
+          ? "EXACT MATCH: Say confidently: 'I found exactly what you are looking for: [bookName] for [price].' Follow ZERO ASSUMPTION QUANTITY — ask ONCE how many copies before update_cart_item_quantity unless the caller already stated a quantity. When they answer 'one'/'1'/'just one', treat it as quantity=1 immediately — never re-ask."
           : data.exactMatch === false && similar.length > 1
-            ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before update_cart_item_quantity."
+            ? "No exact match. Say: 'I don't have that exact book, but I found these similar options...' Read the top 2 or 3 entries from similarMatches (bookName, inStock, price) and ask if they want one. Follow ZERO ASSUMPTION QUANTITY before update_cart_item_quantity. Bare answers like 'one' map to quantity=1 — do not loop."
             : suppressEscalation
-              ? "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY. If out of stock, apologize and offer similar titles — do NOT escalate unless they ask for support."
-              : "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
+              ? "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY (ask once). If out of stock, apologize and offer similar titles — do NOT escalate unless they ask for support."
+              : "If in stock, offer to add to cart using update_cart_item_quantity with action_type=add and variant_id/unit_price from this response — follow ZERO ASSUMPTION QUANTITY and ask how many copies once unless quantity was already stated. If out of stock, follow OMNI-CHANNEL ESCALATION S.O.P.";
+    if (options?.session && data.status === "found") {
+      const memory = getSessionMemory(options.session);
+      memory.awaitingQuantityReply = true;
+      memory.quantityAskCount = Math.max(1, memory.quantityAskCount ?? 0);
+    }
     return JSON.stringify({
       status: data.status,
       found: data.status === "found",
@@ -1342,7 +1818,7 @@ export function toolResultForLlm(
     });
   }
 
-  if (record.tool === "get_shopify_order_status" && "orderNumber" in record.data) {
+  if (record.tool === "get_shopify_order_status" && "orderView" in record.data) {
     if (record.data.status !== "found") {
       const searchedNumber = record.args.orderNumber ?? record.data.searchedNumber ?? "";
       const payload = buildOrderNotFoundLlmPayload(String(searchedNumber));
@@ -1353,16 +1829,12 @@ export function toolResultForLlm(
       return JSON.stringify(payload);
     }
 
-    const verified = options?.isVerifiedCaller === true;
     const payload = {
       status: "FOUND",
       found: true,
-      data: filterOrderContextForVerification(
-        shapeOrderStatusForLlm(record.data, undefined, verified) as ActiveOrderContextData,
-        verified,
-      ),
+      orderView: record.data.orderView,
       instructions:
-        "SECURITY CLEARANCE (UNBREAKABLE RULE): If isVerifiedCaller is FALSE, you are ONLY forbidden from sharing two things: (1) the exact Shipping Address, and (2) Past Order History / previous months' orders. You MUST share EVERYTHING ELSE — Item Names, Item Prices, Quantities, Subtotal, Taxes, Shipping Fees, Total Amount, Payment Method, Notification Emails, and Timeline Events. Do not apologize; simply provide the info. ABSOLUTE BLACKLIST: shipping_address and past_order_history only. UNVERIFIED CALLER PERMISSIONS: RESTRICTED = Shipping Address + Full Order History; ALLOWED = everything else — never say Sorry I can't for allowed items. CONVERSATION LOCK / order_lookup_complete: Once an order is FOUND, you are LOCKED to this order — NEVER re-invoke get_shopify_order_status for follow-ups. If the user provides digits (e.g. What comes after 47 / 80111 / 48011), assume they are clarifying Tracking ID or the order already in memory — NOT a new search. Locate digits in tracking_number_for_tts/spatialIndex and read only the remainder. STRICT CONVERSATIONAL ECONOMY: On FOUND the spoken gateway is already handled (order number + customer name + status + follow-up only) — answer only what they ask next; never volunteer tracking, address, or items. EXPLAINING PAYMENTS & NOTIFICATIONS: Act like a human concierge when asked. If financial_status is PAID and card last4 is null, explain via sourceName / Litextension when present. For notification routing say notifications were routed to the contact on file when asked. If tracking is in orderNote, say you found tracking securely noted, then dictate. Never invent vague lockdowns from privacy_tier wording. Translate events via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. physical_items and item_count are BOOKS ONLY. Keys always present: customer_name, customer_email, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). LEGACY DATA: If tracking_number is null, scan orderNote/note for Tracking Number. For tracking dictation use comma pacing (9, 4, 4, 9, 0, 1) with zero hyphens/dashes/points. Never end_call for missing fields.",
+        "SECURITY CLEARANCE (UNBREAKABLE RULE): If isVerifiedCaller is FALSE, you are ONLY forbidden from sharing two things: (1) the exact Shipping Address, and (2) Past Order History / previous months' orders. You MUST share EVERYTHING ELSE — Item Names, Item Prices, Quantities, Subtotal, Taxes, Shipping Fees, Total Amount, Payment Method, Notification Emails, and Timeline Events. Do not apologize; simply provide the info. ABSOLUTE BLACKLIST: shipping_address and past_order_history only. Prefer orderView DTO fields — never invent vault fields. CONVERSATION LOCK / order_lookup_complete: Once an order is FOUND, you are LOCKED to this order — NEVER re-invoke get_shopify_order_status for follow-ups. If the user provides digits (e.g. What comes after 47 / 80111 / 48011), assume they are clarifying Tracking ID or the order already in memory — NOT a new search. Locate digits in tracking_number_for_tts/spatialIndex and read only the remainder. STRICT CONVERSATIONAL ECONOMY: On FOUND the spoken gateway is already handled (order number + customer name + status + follow-up only) — answer only what they ask next; never volunteer tracking, address, or items. EXPLAINING PAYMENTS & NOTIFICATIONS: Act like a human concierge when asked. If financial_status is PAID and card last4 is null, explain via sourceName / Litextension when present. For notification routing say notifications were routed to the contact on file when asked. If tracking is in orderNote, say you found tracking securely noted, then dictate. Never invent vague lockdowns from privacy_tier wording. Translate events via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. physical_items and item_count are BOOKS ONLY. Keys always present: customer_name, customer_email, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). LEGACY DATA: If tracking_number is null, scan orderNote/note for Tracking Number. For tracking dictation use comma pacing (9, 4, 4, 9, 0, 1) with zero hyphens/dashes/points. Never end_call for missing fields.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
@@ -1454,14 +1926,14 @@ function buildEscalationIssueSummary(
   userSummary: string,
 ): string {
   const issue = userSummary.trim() || "Voice support request";
-  const orderNumber = String(session.currentOrderData?.order_number ?? "").trim();
+  const orderNumber = String(getActiveOrderContext(session)?.order_number ?? "").trim();
   const verified = session.isVerifiedCaller === true ? "verified" : "unverified";
   const parts = [issue, `Caller ${session.from}`, `${verified} line`];
   if (orderNumber) parts.push(`Order ${orderNumber}`);
   return parts.join(" | ");
 }
 
-/** Keys that must always exist on session.currentOrderData / LLM payloads (null allowed). */
+/** Keys that must always exist on active order context / LLM payloads (null allowed). */
 export const OMNI_EXTRACTOR_PAYLOAD_KEYS = [
   "customer_name",
   "payment_method",
@@ -1474,7 +1946,7 @@ export const OMNI_EXTRACTOR_PAYLOAD_KEYS = [
 
 /** Sanitized snake_case order fields for session memory and LLM follow-up context. */
 export function buildActiveOrderContextPayload(
-  data: OrderStatusResult,
+  data: Record<string, any>,
   session?: CallSession,
 ): Record<string, unknown> {
   return shapeOrderStatusForLlm(data, session);
@@ -1486,7 +1958,7 @@ export function buildActiveOrderContextPayload(
  * Omni-Extractor keys are always present on the flat payload — never dropped.
  */
 function shapeOrderStatusForLlm(
-  data: OrderStatusResult,
+  data: Record<string, any>,
   session?: CallSession,
   verifiedOverride?: boolean,
 ): Record<string, unknown> {

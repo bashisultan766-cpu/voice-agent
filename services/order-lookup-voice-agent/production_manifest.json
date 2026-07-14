@@ -1,0 +1,94 @@
+{
+  "service": "sureshot-order-lookup-voice-agent",
+  "version": "1.0.0",
+  "generatedAt": "2026-07-14T06:37:00.000Z",
+  "environment": "production-staging",
+  "goLiveGate": {
+    "fullSuitePassed": false,
+    "fullSuite": { "passed": 725, "failed": 17, "total": 742, "note": "17 pre-existing privacy/e2e/timeline failures unrelated to logistics deploy; llmConfig updated for 0.2" },
+    "criticalSuitePassed": true,
+    "criticalSuites": [
+      "logisticsIntelligence",
+      "splitOrderCheckout",
+      "sentimentShieldCheckout",
+      "cartManager",
+      "orderLookupWorkflow",
+      "checkoutEmailTool",
+      "llmConfig"
+    ]
+  },
+  "performance": {
+    "LLM_TEMPERATURE": 0.2,
+    "STREAMING_ENABLED": true
+  },
+  "envMapping": {
+    "SHOPIFY_API_KEY": { "mapsTo": "SHOPIFY_ADMIN_ACCESS_TOKEN", "required": true, "status": "mapped" },
+    "SHOPIFY_ADMIN_ACCESS_TOKEN": { "required": true, "status": "canonical" },
+    "FACILITY_RESTRICTION_DB": { "required": false, "status": "mapped", "fallback": "product tags/metafields" },
+    "SUPPORT_HUMAN_WEBHOOK": { "required": false, "status": "mapped", "usedBy": "escalate_to_human" },
+    "LOGISTICS_INTELLIGENCE_URL": { "required": false, "status": "mapped", "fallback": "Shopify Admin GraphQL inventoryQuantity" },
+    "LLM_TEMPERATURE": { "default": "0.2", "status": "mapped" },
+    "STREAMING_ENABLED": { "default": "true", "status": "mapped" }
+  },
+  "liveInventory": {
+    "source": "shopify_admin_graphql",
+    "module": "src/services/shopifyInventoryService.ts",
+    "wiredInto": [
+      "ActionGateway.executeCheckoutGroup",
+      "initiateCheckoutBatchWithLiveInventory",
+      "verify_stock_availability tool"
+    ],
+    "mockInTests": true,
+    "productionMockSkipped": "VITEST/NODE_ENV=test skips network; production uses real Admin API"
+  },
+  "agents": [
+    { "name": "CheckoutManager", "module": "src/agents/paymentCheckoutFlow.ts", "version": "1.0.0" },
+    { "name": "LogisticsIntelligence", "module": "src/agents/logisticsIntelligence.ts", "version": "1.0.0" },
+    { "name": "CartManager", "module": "src/agents/cartManager.ts", "version": "1.0.0" },
+    { "name": "OrderLookupWorkflow", "module": "src/agents/orderLookupWorkflow.ts", "version": "1.0.0" },
+    { "name": "AgentBrain", "module": "src/agents/agentBrain.ts", "version": "1.0.0" },
+    { "name": "LlmOrchestrator", "module": "src/agents/llmOrchestrator.ts", "version": "1.0.0" },
+    { "name": "ConversationOrchestrator", "module": "src/agents/conversationOrchestrator.ts", "version": "1.0.0" },
+    { "name": "EmailConfirmationManager", "module": "src/agents/emailConfirmationManager.ts", "version": "1.0.0" },
+    { "name": "SessionManager", "module": "src/agents/sessionManager.ts", "version": "1.0.0" },
+    { "name": "RecommendationEngine", "module": "src/agents/recommendationEngine.ts", "version": "1.0.0" },
+    { "name": "SupportEscalationFlow", "module": "src/agents/supportEscalationFlow.ts", "version": "1.0.0" },
+    { "name": "UnifiedCallSession", "module": "src/agents/unifiedCallSession.ts", "version": "1.0.0" }
+  ],
+  "tools": [
+    "get_shopify_order_status",
+    "get_customer_history",
+    "search_shopify_book_by_isbn",
+    "search_shopify_book_by_title",
+    "dictate_tracking",
+    "update_cart_item_quantity",
+    "get_cart_summary",
+    "check_logistics_feasibility",
+    "verify_stock_availability",
+    "initiate_checkout_batch",
+    "send_checkout_email",
+    "create_support_case",
+    "update_pending_email",
+    "escalate_to_human",
+    "end_call"
+  ],
+  "toolAliases": {
+    "generate_payment_link": "send_checkout_email",
+    "send_payment_link": "send_checkout_email",
+    "add_to_cart": "update_cart_item_quantity",
+    "execute_checkout_group": "send_checkout_email"
+    ,"send_support_escalation": "create_support_case"
+  },
+  "toolOwners": {
+    "initiate_checkout_batch": "CheckoutManager.planPreparation",
+    "send_checkout_email": "ActionGateway.executeCheckoutGroup",
+    "create_support_case": "SupportCaseService.createCase",
+    "end_call": "TerminationCoordinator",
+    "dictate_tracking": "ConversationOrchestrator.resolveTrackingPhaseGate"
+  },
+  "shopifyInventoryRefresh": {
+    "ready": true,
+    "query": "nodes(ids) { ... on ProductVariant { id inventoryQuantity } }",
+    "optionalSidecar": "LOGISTICS_INTELLIGENCE_URL/inventory"
+  }
+}

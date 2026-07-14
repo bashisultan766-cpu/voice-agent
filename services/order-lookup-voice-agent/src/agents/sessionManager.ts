@@ -1,10 +1,8 @@
 /**
- * Call-session order context — persists Shopify deep-fetch across turns
- * and builds invisible LLM injection payloads for follow-up answers.
+ * Active order disclosure context — the sanitized snake_case DTO used by the
+ * LLM system message + follow-up speech. Never carries the raw Shopify
+ * OrderStatusResult (that lives inside protected-data modules only).
  */
-import type { OrderStatusResult } from "../adapters/shopifyStorefrontAdapter.js";
-import { buildActiveOrderContextPayload } from "../adapters/llmToolExecutor.js";
-import type { LlmToolExecutionRecord } from "../adapters/llmToolExecutor.js";
 import type { CallSession } from "../types/order.js";
 import { orderNumbersMatch } from "../utils/formatter.js";
 import { normalizeOrderNumber } from "../utils/inputNormalizer.js";
@@ -13,6 +11,11 @@ import {
   clearOrderContextConfirmation,
   markOrderContextConfirmed,
 } from "./orderContextPolicy.js";
+import {
+  buildOrderView,
+  ORDER_DISCLOSURE_POLICY_VERSION,
+  type OrderView,
+} from "./orderDisclosurePolicy.js";
 
 export type ActiveOrderContextData = Record<string, unknown>;
 
@@ -37,35 +40,11 @@ export function redactTrackingFromOrderContext(
   return copy;
 }
 
-export function buildActiveOrderContextFromResult(
-  result: OrderStatusResult,
-  session?: CallSession,
-): ActiveOrderContextData | null {
-  if (result.status !== "found" || !result.orderNumber) return null;
-  return buildActiveOrderContextPayload(result, session);
-}
-
-export function buildActiveOrderContextFromToolRecord(
-  record: LlmToolExecutionRecord,
-  session?: CallSession,
-): ActiveOrderContextData | null {
-  if (
-    record.tool !== "get_shopify_order_status" ||
-    !record.ok ||
-    !record.data ||
-    !("orderNumber" in record.data) ||
-    record.data.status !== "found"
-  ) {
-    return null;
-  }
-  return buildActiveOrderContextFromResult(record.data, session);
-}
-
 export function saveActiveOrderContext(
   session: CallSession,
   data: ActiveOrderContextData,
 ): void {
-  const previous = session.currentOrderData;
+  const previous = session.sessionOrderContext?.orderView;
   const previousNumber = previous ? String(previous.order_number ?? "") : "";
   const nextNumber = String(data.order_number ?? "");
 
@@ -77,11 +56,17 @@ export function saveActiveOrderContext(
     });
   }
 
-  session.currentOrderData = data;
+  const orderView = buildOrderView(session, data);
+  const orderNumber = String(orderView.order_number ?? "").replace(/^#/, "").trim();
+  session.sessionOrderContext = {
+    orderReferenceId: orderNumber,
+    orderNumber,
+    verificationLevel: session.isVerifiedCaller === true ? "verified" : "unverified",
+    disclosurePolicyVersion: ORDER_DISCLOSURE_POLICY_VERSION,
+    orderView,
+    fetchedAt: Date.now(),
+  };
   markOrderContextConfirmed(session);
-  const orderNumber = String(data.order_number ?? "")
-    .replace(/^#/, "")
-    .trim();
   if (orderNumber) {
     session.currentSessionOrder = {
       orderNumber,
@@ -97,9 +82,44 @@ export function saveActiveOrderContext(
   }
 }
 
+/**
+ * Single source of truth for active order disclosure context.
+ * SessionOrderContext.orderView is the disclosure-safe source of truth.
+ */
+export function getActiveOrderContext(
+  session?: CallSession,
+): OrderView | undefined {
+  return session?.sessionOrderContext?.orderView;
+}
+
+/** Order number from SSOT (falls back to projection only if data missing). */
+export function getActiveOrderNumber(session?: CallSession): string | undefined {
+  const fromSsot = String(session?.sessionOrderContext?.orderView.order_number ?? "")
+    .replace(/^#/, "")
+    .trim();
+  if (fromSsot) return fromSsot;
+  const projected = String(session?.currentSessionOrder?.orderNumber ?? "")
+    .replace(/^#/, "")
+    .trim();
+  return projected || undefined;
+}
+
+/** True when sticky order context indicates tracking is on file (digits may live in sovereign payload). */
+export function hasActiveOrderTracking(session?: CallSession): boolean {
+  const view = getActiveOrderContext(session);
+  if (!view) return false;
+  if (view.tracking_available === true) return true;
+  return Boolean(String(view.tracking_number ?? "").trim());
+}
+
+/** Tracking digits when present on the in-memory OrderView (tests / pre-persist payloads only). */
+export function getActiveOrderTrackingNumber(session?: CallSession): string {
+  return String(getActiveOrderContext(session)?.tracking_number ?? "").trim();
+}
+
 export function clearActiveOrderContext(session: CallSession): void {
-  session.currentOrderData = undefined;
   session.currentSessionOrder = undefined;
+  session.sessionOrderContext = undefined;
   clearOrderContextConfirmation(session);
 }
 
@@ -108,9 +128,10 @@ export function shouldReplaceOrderContext(
   session: CallSession,
   spokenOrderNumber: string,
 ): boolean {
-  if (!session.currentOrderData) return true;
+  const active = getActiveOrderContext(session);
+  if (!active) return true;
 
-  const existing = String(session.currentOrderData.order_number ?? "");
+  const existing = String(active.order_number ?? "");
   if (!existing) return true;
 
   const normalized = normalizeOrderNumber(spokenOrderNumber);

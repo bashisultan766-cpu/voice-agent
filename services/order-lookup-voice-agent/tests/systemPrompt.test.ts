@@ -134,6 +134,7 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/EXACT MATCH SEARCH PROTOCOL/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/I found exactly what you are looking for/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/ZERO ASSUMPTION QUANTITY/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/CONTEXTUALLY ASSERTIVE QUANTITY/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/How many copies of \[Book Title\] would you like to add/i);
   });
 
@@ -217,7 +218,9 @@ describe("SHOSHAN_SYSTEM_PROMPT anti-hallucination", () => {
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/monthYear/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/facility and inmate information|Inmate Facility details/i);
     expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/payment_method/i);
-    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(/THE SPLIT-ORDER CHECKOUT PROTOCOL/i);
+    expect(SHOSHAN_SYSTEM_PROMPT).toMatch(
+      /THE SPLIT-ORDER(?: CHECKOUT PROTOCOL| \/ MULTI-BATCH PAYMENT ORCHESTRATOR)/i,
+    );
   });
 
   it("authorizes order money fields for unverified callers while locking vault fields", () => {

@@ -2,6 +2,8 @@
  * Shared tracking-intent detection — orchestrator + LLM safety net use the same patterns.
  */
 import type { CallSession } from "../types/order.js";
+import type { OrderView } from "./orderDisclosurePolicy.js";
+import { getActiveOrderContext, hasActiveOrderTracking } from "./sessionManager.js";
 import { isCatalogShoppingUtterance } from "./catalogShoppingIntent.js";
 import { isSpatialResumeQuery } from "../sovereign/spatialDictation.js";
 
@@ -131,9 +133,11 @@ export interface TrackingDictationGateContext {
 }
 
 export function hasTrackingInSessionContext(
-  currentOrderData?: Record<string, unknown>,
+  orderContext?: OrderView | Record<string, unknown>,
 ): boolean {
-  const tracking = String(currentOrderData?.tracking_number ?? "").trim();
+  if (!orderContext) return false;
+  if (orderContext.tracking_available === true) return true;
+  const tracking = String(orderContext.tracking_number ?? "").trim();
   return tracking.length > 0;
 }
 
@@ -157,16 +161,12 @@ export function shouldStartTrackingDictation(
   const explicitTracking = TRACKING_REQUEST_RE.test(callerText.trim());
   if (cartActive && !explicitTracking) return false;
 
-  const hasOrderTracking = Boolean(
-    String(gate?.session?.currentOrderData?.tracking_number ?? "").trim(),
-  );
+  const hasOrderTracking = hasActiveOrderTracking(gate?.session);
   const orderIdShorthand =
     isOrderTrackingIdShorthand(callerText) && hasOrderTracking && !cartActive;
 
   const hasOrderContext = Boolean(
-    gate?.session?.orderContextConfirmed &&
-      gate.session.currentOrderData &&
-      Object.keys(gate.session.currentOrderData).length > 0,
+    gate?.session?.orderContextConfirmed && gate.session.sessionOrderContext,
   );
   if (!hasOrderContext && !hasOrderTracking) {
     return false;

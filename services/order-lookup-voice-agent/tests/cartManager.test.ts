@@ -8,6 +8,8 @@ import {
 import {
   parseCartQuantityFromSpeech,
   resolveCartActionTypeFromSpeech,
+  mapNaturalLanguageToInteger,
+  isBareQuantityReply,
 } from "../src/agents/catalogShoppingIntent.js";
 import { tryDeterministicCartTurn } from "../src/agents/agentBrain.js";
 import type { CallSession } from "../src/types/order.js";
@@ -197,6 +199,41 @@ describe("cart intent speech parsing", () => {
     expect(resolveCartActionTypeFromSpeech("give me 3 extra")).toBe("add");
     expect(resolveCartActionTypeFromSpeech("minus 2")).toBe("remove");
     expect(resolveCartActionTypeFromSpeech("remove 1")).toBe("remove");
+  });
+
+  it("Semantic Intent Resolver maps bare 'one' / 'just one' / 'a single copy' → 1", () => {
+    expect(mapNaturalLanguageToInteger("one")).toBe(1);
+    expect(mapNaturalLanguageToInteger("1")).toBe(1);
+    expect(mapNaturalLanguageToInteger("just one")).toBe(1);
+    expect(mapNaturalLanguageToInteger("a single copy")).toBe(1);
+    expect(mapNaturalLanguageToInteger("only one please")).toBe(1);
+    expect(isBareQuantityReply("one")).toBe(true);
+    expect(parseCartQuantityFromSpeech("one")).toBe(1);
+    expect(parseCartQuantityFromSpeech("just one")).toBe(1);
+  });
+
+  it("bare 'one' after catalog find updates cart and offers payment link — no re-ask", () => {
+    const session = makeSession();
+    session.facilityType = "TX";
+    session.lastCatalogSearch = {
+      title: "Healing Book",
+      variantId: "gid://shopify/ProductVariant/999",
+      unitPrice: "12.99",
+      recordedAt: Date.now(),
+    };
+    session.sessionMemory = {
+      initialIntent: null,
+      pendingGoal: null,
+      awaitingQuantityReply: true,
+      quantityAskCount: 1,
+    };
+    const result = tryDeterministicCartTurn(session, "one");
+    expect(result?.handled).toBe(true);
+    expect(result?.speech).toMatch(/Got it — 1 copy of Healing Book/i);
+    expect(result?.speech).toMatch(/payment link/i);
+    expect(result?.speech).not.toMatch(/how many copies/i);
+    expect(getCartSummary(session).totalUnits).toBe(1);
+    expect(session.sessionMemory?.awaitingQuantityReply).toBe(false);
   });
 
   it("deterministic turn uses set_exact for negation instead of adding", () => {

@@ -37,6 +37,7 @@ import {
 import { isEmailConfirmationLocked } from "./emailConfirmationManager.js";
 import { shouldAbortEmailConfirmation, isOrderContextSwitchUtterance } from "../utils/emailCapture.js";
 import { isProductSearchContextActive, isOrderLookupContextActive } from "./workflowContext.js";
+import { getActiveOrderContext, hasActiveOrderTracking } from "./sessionManager.js";
 import { isValidIsbnFormat } from "../utils/productSearchNormalize.js";
 
 export type CallerIntent =
@@ -172,7 +173,7 @@ function resolveCallerIntentCore(
     callSid &&
     active &&
     isUserNotepadReadyIntent(text, callSid) &&
-    isTrackingDictationPending(callSid, session?.currentOrderData)
+    isTrackingDictationPending(callSid, getActiveOrderContext(session))
   ) {
     return "tracking_flow_active";
   }
@@ -291,9 +292,7 @@ function resolveCallerIntentCore(
   }
 
   const cartActive = (session?.shoppingCart?.length ?? 0) > 0;
-  const orderTrackingOnFile = Boolean(
-    String(session?.currentOrderData?.tracking_number ?? "").trim(),
-  );
+  const orderTrackingOnFile = hasActiveOrderTracking(session);
   if (!cartActive && orderTrackingOnFile && isOrderTrackingIdShorthand(text)) {
     return "tracking_dictation";
   }

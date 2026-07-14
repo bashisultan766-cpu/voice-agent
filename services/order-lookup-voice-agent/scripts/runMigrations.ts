@@ -1,6 +1,10 @@
 /**
  * Apply SQL migrations when DATABASE_URL is configured.
  * Usage: npx tsx scripts/runMigrations.ts
+ *
+ * Only forward migrations are applied. Files ending in `.down.sql` are
+ * intentionally excluded — rollbacks are manual operator steps so a botched
+ * deploy cannot be silently reverted by rerunning the migration runner.
  */
 import "../src/bootstrapEnv.js";
 import { readdirSync, readFileSync } from "node:fs";
@@ -15,8 +19,10 @@ if (!databaseUrl) {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsDir = join(root, "migrations");
+const FORWARD_MIGRATION_RE = /^\d+_.+\.sql$/;
+
 const files = readdirSync(migrationsDir)
-  .filter((name) => name.endsWith(".sql"))
+  .filter((name) => FORWARD_MIGRATION_RE.test(name) && !name.endsWith(".down.sql"))
   .sort();
 
 const pg = await import("pg");

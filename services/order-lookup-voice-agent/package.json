@@ -11,6 +11,9 @@
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "staging:harness": "tsx scripts/stagingHarness.ts",
+    "migrate": "tsx scripts/runMigrations.ts",
     "verify:customer-history": "tsx scripts/verifyCustomerHistoryCapability.ts"
   },
   "engines": {
