@@ -114,6 +114,18 @@ describe("capability ownership invariants", () => {
     expect(owners.length).toBe(keys.length);
   });
 
+  it("owner strings are unique across capabilities (deployment invariant)", () => {
+    const owners = Object.values(CAPABILITY_OWNERS);
+    const seen = new Map<string, number>();
+    for (const owner of owners) {
+      seen.set(owner, (seen.get(owner) ?? 0) + 1);
+    }
+    const duplicates = [...seen.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([owner]) => owner);
+    expect(duplicates).toEqual([]);
+  });
+
   it("business capabilities are not owned by an HTTP / QueryBoundary client", () => {
     const offenders: string[] = [];
     for (const capability of BUSINESS_CAPABILITIES) {

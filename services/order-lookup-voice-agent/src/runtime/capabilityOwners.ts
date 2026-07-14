@@ -1,11 +1,14 @@
 /**
  * Capability → sole workflow owner registry.
- * Invariant tests fail if any capability maps to more than one owner, or if a
- * business capability is owned by a low-level HTTP client (Client / Http /
- * QueryBoundary) instead of a domain service.
+ * Invariant tests fail if any capability maps to more than one owner, if the
+ * same owner string is reused for two capabilities, or if a business capability
+ * is owned by a low-level HTTP client (Client / Http / QueryBoundary) instead
+ * of a domain service.
  *
  * The registry is the source of truth for architecture ownership assertions —
  * update it whenever a new domain owner takes over a workflow.
+ * Owner values must be globally unique strings (qualify with .method when one
+ * module legitimately owns multiple capabilities).
  */
 export const CAPABILITY_OWNERS = {
   // Runtime + orchestration.
@@ -27,9 +30,10 @@ export const CAPABILITY_OWNERS = {
   email_confirmation_ids: "EmailConfirmationManager",
 
   // Business owners for Shopify + support flows.
+  // Owner strings must be unique across the registry (deployment invariant).
   product_search: "ProductSearchService",
   order_lookup: "OrderLookupService",
-  order_timeline: "OrderLookupService",
+  order_timeline: "OrderAggregationEngine",
   sticky_order_context: "OrderContextService",
   inventory_resolution: "InventoryResolutionService",
   order_disclosure: "OrderDisclosurePolicy",
