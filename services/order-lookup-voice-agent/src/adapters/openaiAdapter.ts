@@ -44,6 +44,7 @@ import { buildCartContextSystemMessage } from "../agents/cartManager.js";
 import { buildCatalogTargetSystemMessage } from "../agents/catalogTarget.js";
 import { hasConfirmedOrderContext } from "../agents/orderContextPolicy.js";
 import { buildVaultSecuritySystemMessage } from "../agents/callerVerification.js";
+import { buildOrderContextStructuredSystemMessages } from "../agents/orderContextPromptFactory.js";
 import type { CallSession } from "../types/order.js";
 import {
   appendProtocolClosing,
@@ -385,27 +386,32 @@ function extractRecordMeta(
   return {};
 }
 
-function buildOpenAiMessages(
+/**
+ * Dynamic system-message factory — rebuilt on each turn and mid-call after
+ * verify_caller_challenge unlocks shipping / ledger disclosure.
+ */
+function buildDynamicSystemMessages(
   input: LlmAgentTurnInput,
+  options?: { consumePendingNotes?: boolean },
 ): OpenAI.Chat.ChatCompletionMessageParam[] {
-  const history = input.messages.slice(0, -1).map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
-
+  const consumePending = options?.consumePendingNotes !== false;
   const systemMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: "system", content: SHOSHAN_SYSTEM_PROMPT },
   ];
 
+  const liveOrderContext =
+    (input.session ? getActiveOrderContext(input.session) : undefined) ??
+    input.activeOrderContext;
+
   if (
-    input.activeOrderContext &&
-    Object.keys(input.activeOrderContext).length > 0 &&
+    liveOrderContext &&
+    Object.keys(liveOrderContext).length > 0 &&
     hasConfirmedOrderContext(input.session)
   ) {
     const active = getOrCreateActiveSession(input.callSid);
     const verified = input.session?.isVerifiedCaller === true;
     const orderContext = filterOrderContextForVerification(
-      redactTrackingFromOrderContext(input.activeOrderContext, active.isNotepadReady),
+      redactTrackingFromOrderContext(liveOrderContext, active.isNotepadReady),
       verified,
     );
     const catalogPivot = isCatalogBuyPivotUtterance(
@@ -424,9 +430,18 @@ function buildOpenAiMessages(
       systemMessages.push({ role: "system", content: vaultMessage });
     }
 
+    const memory = getSessionMemory(input.session) ?? ensureSessionMemory(input.session);
+
+    // Structured Shopify schema injection (ledger / subscription / attachments / gate).
+    for (const block of buildOrderContextStructuredSystemMessages(
+      input.session,
+      liveOrderContext ?? null,
+    )) {
+      systemMessages.push({ role: "system", content: block });
+    }
+
     // Track Conversation Turns: if we just asked How many copies?, arm Confirmation Turn.
     if (lastAssistantAskedForQuantity(input.messages)) {
-      const memory = getSessionMemory(input.session);
       memory.awaitingQuantityReply = true;
       memory.quantityAskCount = (memory.quantityAskCount ?? 0) + 1;
     }
@@ -444,7 +459,7 @@ function buildOpenAiMessages(
       });
     }
 
-    if (input.session.pendingLlmSystemNote) {
+    if (consumePending && input.session.pendingLlmSystemNote) {
       systemMessages.push({
         role: "system",
         content: input.session.pendingLlmSystemNote,
@@ -486,8 +501,40 @@ function buildOpenAiMessages(
     }
   }
 
+  return systemMessages;
+}
+
+/**
+ * After verify_caller_challenge succeeds, splice a fresh system prefix onto the
+ * live tool-loop messages so the next model round sees unredacted ledger/shipping.
+ */
+function spliceDynamicSystemMessagesAfterUnlock(
+  messages: OpenAI.Chat.ChatCompletionMessageParam[],
+  input: LlmAgentTurnInput,
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  if (input.session) {
+    const refreshed = getActiveOrderContext(input.session);
+    if (refreshed && Object.keys(refreshed).length > 0) {
+      input.activeOrderContext = refreshed;
+    }
+  }
+  const freshSystem = buildDynamicSystemMessages(input, { consumePendingNotes: false });
+  const firstNonSystem = messages.findIndex((m) => m.role !== "system");
+  const tail =
+    firstNonSystem >= 0 ? messages.slice(firstNonSystem) : ([] as OpenAI.Chat.ChatCompletionMessageParam[]);
+  return [...freshSystem, ...tail];
+}
+
+function buildOpenAiMessages(
+  input: LlmAgentTurnInput,
+): OpenAI.Chat.ChatCompletionMessageParam[] {
+  const history = input.messages.slice(0, -1).map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
   return [
-    ...systemMessages,
+    ...buildDynamicSystemMessages(input),
     ...history,
     { role: "user", content: input.userMessage },
   ];
@@ -1395,6 +1442,19 @@ export async function* runLlmAgentTurnEvents(
             tool_call_id: call.id,
             content: toolContent,
           });
+
+          // Mid-call state unlock: rebuild system prefix with unredacted ledger/shipping.
+          if (
+            call.function.name === "verify_caller_challenge" &&
+            record.ok &&
+            input.session?.isVerifiedCaller === true
+          ) {
+            messages = spliceDynamicSystemMessagesAfterUnlock(messages, input);
+            logger.info("verification_challenge_prompt_rebuilt", {
+              callSid: input.callSid.slice(0, 8),
+              verified: true,
+            });
+          }
         }
 
         if (isTurnAborted(input.callSid)) {

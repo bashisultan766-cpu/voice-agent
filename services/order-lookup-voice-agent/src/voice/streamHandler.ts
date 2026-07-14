@@ -72,6 +72,7 @@ import {
   cancelListeningWaitTimer,
 } from "./turnScheduler.js";
 import { TerminationCoordinator } from "../runtime/terminationCoordinator.js";
+import { ensureSessionMemory } from "../agents/sessionMemory.js";
 
 /** VAD endpointing — full second of silence before turn-end (calm pacing). */
 const SILENCE_MS = VAD_SILENCE_THRESHOLD_MS;
@@ -313,7 +314,23 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
   const flushAndTranscribe = async (): Promise<void> => {
     if (!session || !callSid || closed) return;
     const mulaw = flushInboundBuffer(callSid);
-    if (mulaw.length < MIN_INBOUND_MULAW_BYTES) return;
+    if (mulaw.length < MIN_INBOUND_MULAW_BYTES) {
+      // Transient short audio / silence — reassure instead of dropping the session.
+      const memory = ensureSessionMemory(session);
+      if (
+        memory.listeningWaitEnteredAt ||
+        memory.verificationChallengePending ||
+        memory.metadata?.is_tracking_in_progress
+      ) {
+        const speech =
+          "Take your time — I'm still listening. You can continue with your tracking number or question whenever you're ready.";
+        await streamSpeechToMediaStream(speech, send, {
+          streamSid,
+          onAudioSent: () => touchOutboundAudio(callSid),
+        }, callSid);
+      }
+      return;
+    }
 
     if (speakingTurns.has(callSid)) {
       await onUserSpeechDetected(callSid, mulaw);
@@ -321,7 +338,33 @@ export async function handleMediaStreamSocket(socket: WebSocket): Promise<void> 
     }
 
     const transcript = await transcribeMulawBuffer(mulaw);
-    if (!transcript || isNoiseTranscript(transcript)) return;
+    if (!transcript || isNoiseTranscript(transcript)) {
+      const memory = ensureSessionMemory(session);
+      if (
+        memory.listeningWaitEnteredAt ||
+        memory.verificationChallengePending ||
+        memory.metadata?.is_tracking_in_progress
+      ) {
+        const speech = "Are you still there? I'm still with you — take your time.";
+        await streamSpeechToMediaStream(speech, send, {
+          streamSid,
+          onAudioSent: () => touchOutboundAudio(callSid),
+        }, callSid);
+        if (memory.listeningWait?.waitId) {
+          SharedListeningWaitScheduler.arm(session, memory.listeningWait.waitId, {
+            isSessionActive: () => !closed && isCallSessionActive(callSid),
+            onInterjection: async (decision) => {
+              if (closed || !decision.speech) return;
+              await streamSpeechToMediaStream(decision.speech, send, {
+                streamSid,
+                onAudioSent: () => touchOutboundAudio(callSid),
+              }, callSid);
+            },
+          });
+        }
+      }
+      return;
+    }
 
     const preTurn = processVoicePreTurn(session, {
       transport: "media_streams",

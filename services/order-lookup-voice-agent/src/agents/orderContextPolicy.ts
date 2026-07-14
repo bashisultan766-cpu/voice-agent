@@ -156,6 +156,11 @@ export async function executeOrderLookupForSession(
       total_tax: lookup.orderView.totals?.tax,
       shipping_amount: lookup.orderView.totals?.shipping,
       total_amount: lookup.orderView.totals?.total,
+      shipping_fee: lookup.orderView.shipping_fee ?? lookup.orderView.totals?.shipping,
+      subtotal_price: lookup.orderView.subtotal_price ?? lookup.orderView.totals?.subtotal,
+      payment_method: lookup.orderView.payment_method ?? null,
+      order_metafields: lookup.orderView.order_metafields ?? null,
+      timeline_attachments: lookup.orderView.timeline_attachments ?? [],
       tracking_available: lookup.orderView.tracking_available,
       is_verified_caller: session.isVerifiedCaller === true,
     };

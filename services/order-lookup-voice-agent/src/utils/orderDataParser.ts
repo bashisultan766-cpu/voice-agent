@@ -22,6 +22,14 @@ import {
 import { physicalItemCount, splitLineItems } from "./productLineItems.js";
 import { buildVerificationFirstOrderSpeech } from "../agents/orderLookupProtocol.js";
 import { fulfillmentStatusPhrase, speakMoney } from "./formatter.js";
+import {
+  compileOrderMetafieldBundle,
+  extractTimelineAttachments,
+  flattenMetafieldNodes,
+  resolvePaymentMethod,
+  type OrderMetafieldBundle,
+  type TimelineAttachment,
+} from "../adapters/orderMetafieldMapping.js";
 
 export interface DeepOrderGraphqlNode {
   id: string;
@@ -109,11 +117,13 @@ export interface DeepOrderGraphqlNode {
     deliveredAt?: string | null;
     trackingInfo?: Array<{ company?: string; number?: string; url?: string }>;
   }>;
-  metafields?: {
-    edges?: Array<{
-      node?: { namespace?: string; key?: string; value?: string };
-    }>;
-  };
+  metafields?:
+    | Array<{ namespace?: string | null; key?: string | null; value?: string | null } | null>
+    | {
+        edges?: Array<{
+          node?: { namespace?: string; key?: string; value?: string };
+        }>;
+      };
 }
 
 /** Strict typed order context — no field may be silently dropped at parse time. */
@@ -180,6 +190,14 @@ export interface ParsedOrderData {
   shippingAddress?: string;
   totalOrderCount?: number;
   metafields?: Array<{ namespace: string; key: string; value: string }>;
+  /** Structured known order metafields (productname / enddate / magazinestartdate). */
+  orderMetafields?: OrderMetafieldBundle;
+  /** File names referenced in timeline comments (PDF / images / docs). */
+  timelineAttachments?: TimelineAttachment[];
+  /** Alias of subtotalAmount for TTS mapping clarity. */
+  subtotalPrice?: string | null;
+  /** Human payment method from gateways (PayPal, Visa, …). */
+  paymentMethod?: string | null;
 }
 
 function ordinalSuffix(day: number): string {
@@ -282,16 +300,7 @@ function normalizeOrderTags(tags: DeepOrderGraphqlNode["tags"]): string[] {
 function normalizeOrderMetafields(
   metafields: DeepOrderGraphqlNode["metafields"],
 ): Array<{ namespace: string; key: string; value: string }> {
-  const out: Array<{ namespace: string; key: string; value: string }> = [];
-  for (const edge of metafields?.edges ?? []) {
-    const node = edge.node;
-    const namespace = String(node?.namespace ?? "").trim();
-    const key = String(node?.key ?? "").trim();
-    const value = String(node?.value ?? "").trim();
-    if (!namespace || !key) continue;
-    out.push({ namespace, key, value });
-  }
-  return out;
+  return flattenMetafieldNodes(metafields);
 }
 
 function detectDraftOrderOrigin(node: DeepOrderGraphqlNode): boolean {
@@ -449,6 +458,12 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   const orderPlacedAt = node.createdAt;
   const tags = normalizeOrderTags(node.tags);
   const metafields = normalizeOrderMetafields(node.metafields);
+  const orderMetafields = compileOrderMetafieldBundle(metafields);
+  const timelineAttachments = extractTimelineAttachments(events);
+  const paymentMethod = resolvePaymentMethod(
+    node.paymentGatewayNames,
+    payment.paymentGateway,
+  );
   const channelName =
     node.channelInformation?.channelDefinition?.channelName?.trim() ||
     node.channelInformation?.channelDefinition?.handle?.trim() ||
@@ -464,6 +479,9 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
   const transactions = transactionNodesFromConnection(node.transactions).map(
     summarizeTransactionForLlm,
   );
+  const subtotalAmount = subtotalFromNode(node);
+  const shippingFee = formatMoneyAmount(node.totalShippingPriceSet?.shopMoney) ?? null;
+  const totalTax = formatMoneyAmount(node.totalTaxSet?.shopMoney) ?? null;
 
   return {
     orderNumber: node.name,
@@ -471,10 +489,11 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     customerEmail: customerRegisteredEmail(node),
     orderPlacedAt,
     orderPlacedAtSpoken: orderPlacedAt ? formatOrderDateEnglish(orderPlacedAt) : undefined,
-    subtotalAmount: subtotalFromNode(node),
-    shippingFee: formatMoneyAmount(node.totalShippingPriceSet?.shopMoney),
+    subtotalAmount,
+    subtotalPrice: subtotalAmount ?? null,
+    shippingFee: shippingFee ?? undefined,
     totalAmount: formatMoneyAmount(node.totalPriceSet?.shopMoney),
-    totalTax: formatMoneyAmount(node.totalTaxSet?.shopMoney),
+    totalTax: totalTax ?? undefined,
     totalDiscounts: formatMoneyAmount(node.totalDiscountsSet?.shopMoney),
     itemCount: itemCount || physicalItems.length,
     lineItems: physicalItems,
@@ -499,6 +518,7 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     cardLast4: payment.cardLast4,
     cardBrand: payment.cardBrand,
     paymentGateway: payment.paymentGateway,
+    paymentMethod,
     financialStatus,
     customerPhone: customerRegisteredPhone(node),
     shippingPhone: shippingAddressPhone(node),
@@ -507,6 +527,8 @@ export function parseDeepOrderData(node: DeepOrderGraphqlNode): ParsedOrderData 
     shippingAddress: formatShippingAddress(node.shippingAddress),
     totalOrderCount: node.customer?.numberOfOrders,
     metafields: metafields.length ? metafields : undefined,
+    orderMetafields,
+    timelineAttachments: timelineAttachments.length ? timelineAttachments : undefined,
   };
 }
 
@@ -525,8 +547,10 @@ export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrde
       ? formatOrderDateEnglish(result.orderPlacedAt)
       : undefined,
     subtotalAmount: result.subtotalAmount,
+    subtotalPrice: result.subtotalPrice ?? result.subtotalAmount ?? null,
     shippingFee: result.shippingFee,
     totalAmount: result.totalAmount,
+    totalTax: result.totalTax,
     itemCount,
     lineItems: physicalItems,
     feeLineItems: feeItems,
@@ -544,8 +568,12 @@ export function parsedDataFromOrderResult(result: OrderStatusResult): ParsedOrde
     cardLast4: result.cardLast4,
     cardBrand: result.cardBrand,
     paymentGateway: result.paymentGateway,
+    paymentMethod: result.paymentMethod ?? result.paymentGateway ?? null,
     financialStatus: result.financialStatus,
     trackingNumber: result.trackingNumber,
+    metafields: result.metafields,
+    orderMetafields: result.orderMetafields,
+    timelineAttachments: result.timelineAttachments,
   };
 }
 

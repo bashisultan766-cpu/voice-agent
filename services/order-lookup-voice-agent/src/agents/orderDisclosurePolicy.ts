@@ -27,10 +27,22 @@ export interface OrderView {
   tracking_available?: boolean;
   refund_notification_email?: string;
   payment_method_last4?: string;
+  payment_method?: string | null;
   card_brand?: string;
   refund_reason?: string;
   events?: unknown;
   total_order_count?: number;
+  /** Structured productname / enddate / magazinestartdate. */
+  order_metafields?: {
+    productName: string | null;
+    endDate: string | null;
+    magazineStartDate: string | null;
+  } | null;
+  /** Timeline file attachments (PDF / images) for LLM awareness. */
+  timeline_attachments?: Array<{ fileName: string; timestamp: string | null }>;
+  shipping_fee?: string | null;
+  subtotal_price?: string | null;
+  total_tax?: string | null;
   /** Never present for unverified — shipping / history stripped. */
   shipping_address?: never | string;
   past_order_history?: never | unknown;
@@ -100,10 +112,24 @@ export function buildOrderView(
     refund_notification_email_for_tts:
       filtered.refund_notification_email_for_tts as string | undefined,
     payment_method_last4: filtered.payment_method_last4 as string | undefined,
+    payment_method: (filtered.payment_method as string | null | undefined) ?? null,
     card_brand: filtered.card_brand as string | undefined,
     refund_reason: filtered.refund_reason as string | undefined,
     events: filtered.events,
     total_order_count: filtered.total_order_count as number | undefined,
+    order_metafields:
+      (filtered.order_metafields as OrderView["order_metafields"]) ?? null,
+    timeline_attachments: Array.isArray(filtered.timeline_attachments)
+      ? (filtered.timeline_attachments as OrderView["timeline_attachments"])
+      : [],
+    shipping_fee:
+      (filtered.shipping_fee as string | null | undefined) ??
+      (filtered.shipping_amount as string | null | undefined) ??
+      null,
+    subtotal_price:
+      (filtered.subtotal_price as string | null | undefined) ??
+      (filtered.subtotal_amount as string | null | undefined) ??
+      null,
   };
 
   if (level === "verified") {

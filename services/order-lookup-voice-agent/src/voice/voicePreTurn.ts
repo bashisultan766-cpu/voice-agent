@@ -17,7 +17,7 @@ import {
   decideTurnEnd,
   mergeListeningWaitBuffer,
 } from "../adapters/turnEndHeuristics.js";
-import { setAgentRelayState } from "../sovereign/activeSession.js";
+import { setAgentRelayState, getOrCreateActiveSession } from "../sovereign/activeSession.js";
 import { logger } from "../utils/logger.js";
 import { VERIFICATION_SILENCE_PROMPT_MS } from "../streaming/audioProcessor.js";
 import { isEmailConfirmationActive } from "../agents/emailConfirmationManager.js";
@@ -202,9 +202,18 @@ export function processVoicePreTurn(
 
 /** Silence wait for verification vs normal VAD. */
 export function silenceWaitMsForSession(session: CallSession): number {
+  const memory = ensureSessionMemory(session);
+  const active = getOrCreateActiveSession(session.callSid);
+  const trackingQuiet =
+    active.currentState === "awaiting_notepad_ready" ||
+    active.currentState === "tracking_dictation" ||
+    memory.metadata?.is_tracking_in_progress === true;
+
   if (
     isEmailConfirmationActive(session) ||
-    ensureSessionMemory(session).listeningWaitEnteredAt
+    memory.listeningWaitEnteredAt ||
+    trackingQuiet ||
+    memory.verificationChallengePending === true
   ) {
     return Math.max(1000, VERIFICATION_SILENCE_PROMPT_MS);
   }

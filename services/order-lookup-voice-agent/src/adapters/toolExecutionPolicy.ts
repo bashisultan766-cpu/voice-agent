@@ -341,6 +341,12 @@ const TOOL_SCHEMAS: Record<LlmToolName, z.ZodTypeAny> = {
       reason: z.string().optional(),
     })
     .passthrough(),
+  verify_caller_challenge: z
+    .object({
+      userInputZipOrStreet: z.string().min(1),
+      user_input_zip_or_street: z.string().optional(),
+    })
+    .passthrough(),
   end_call: emptyArgsSchema,
 };
 

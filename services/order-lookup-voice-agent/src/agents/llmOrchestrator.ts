@@ -143,6 +143,11 @@ function persistOrderContext(
         total_tax: view.totals?.tax,
         shipping_amount: view.totals?.shipping,
         total_amount: view.totals?.total,
+        shipping_fee: view.shipping_fee ?? view.totals?.shipping,
+        subtotal_price: view.subtotal_price ?? view.totals?.subtotal,
+        payment_method: view.payment_method ?? null,
+        order_metafields: view.order_metafields ?? null,
+        timeline_attachments: view.timeline_attachments ?? [],
         tracking_available: view.tracking_available,
         tracking_number: view.tracking_number,
         tracking_number_for_tts: view.tracking_number_for_tts,
@@ -313,6 +318,34 @@ export async function* runLlmOrchestratorTurn(
     recordOrderNumber: result.recordOrderNumber,
     recordProduct: result.recordProduct,
   });
+
+  for (const exec of result.toolExecutions) {
+    if (exec.tool !== "verify_caller_challenge" || !exec.ok) continue;
+    if (session.isVerifiedCaller !== true) continue;
+    const prior = getActiveOrderContext(session);
+    if (prior) {
+      saveActiveOrderContext(session, {
+        ...prior,
+        is_verified_caller: true,
+      });
+    }
+    if (session.sessionOrderContext) {
+      session.sessionOrderContext = {
+        ...session.sessionOrderContext,
+        verificationLevel: "verified",
+        orderView: {
+          ...session.sessionOrderContext.orderView,
+          verificationLevel: "verified",
+          shipping_address:
+            (prior?.shipping_address as string | undefined) ??
+            session.sessionOrderContext.orderView.shipping_address,
+          past_order_history:
+            prior?.past_order_history ??
+            session.sessionOrderContext.orderView.past_order_history,
+        },
+      };
+    }
+  }
 
   applySessionPhaseAfterTurn(session, result.responseType);
   persistOrderContext(session, result);

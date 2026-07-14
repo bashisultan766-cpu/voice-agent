@@ -239,6 +239,18 @@ export interface OrderStatusResult {
   transactions?: Array<Record<string, unknown>>;
   /** Order-level metafields from Shopify Admin. */
   metafields?: Array<{ namespace: string; key: string; value: string }>;
+  /** Structured productname / enddate / magazinestartdate metafields. */
+  orderMetafields?: {
+    productName: string | null;
+    endDate: string | null;
+    magazineStartDate: string | null;
+  };
+  /** Files referenced in timeline comments (e.g. invoice PDFs). */
+  timelineAttachments?: Array<{ fileName: string; timestamp: string | null }>;
+  /** Alias of subtotalAmount for TTS mapping. */
+  subtotalPrice?: string | null;
+  /** Payment method from paymentGatewayNames / gateway. */
+  paymentMethod?: string | null;
   /** Customer's recent order history (attached by aggregation engine). */
   pastOrderHistory?: CustomerHistoryOrderSummary[];
 }
@@ -513,14 +525,17 @@ const LOOKUP_ORDER_QUERY = `query FulfillmentOrderLookup($query: String!, $first
             currencyCode
           }
         }
-        metafields(first: 20) {
-          edges {
-            node {
-              namespace
-              key
-              value
-            }
-          }
+        metafields(identifiers: [
+          {namespace: "custom", key: "productname"},
+          {namespace: "custom", key: "enddate"},
+          {namespace: "custom", key: "magazinestartdate"},
+          {namespace: "global", key: "productname"},
+          {namespace: "global", key: "enddate"},
+          {namespace: "global", key: "magazinestartdate"}
+        ]) {
+          namespace
+          key
+          value
         }
       }
     }
@@ -668,6 +683,10 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     customAttributes: parsed.customAttributes,
     transactions: parsed.transactions,
     metafields: parsed.metafields,
+    orderMetafields: parsed.orderMetafields,
+    timelineAttachments: parsed.timelineAttachments,
+    subtotalPrice: parsed.subtotalPrice ?? parsed.subtotalAmount ?? null,
+    paymentMethod: parsed.paymentMethod ?? parsed.paymentGateway ?? null,
     cardLast4: parsed.cardLast4,
     cardBrand: parsed.cardBrand,
     paymentGateway: parsed.paymentGateway,
@@ -686,6 +705,13 @@ function mapOrderNode(node: GqlOrderNode): Omit<OrderStatusResult, "status"> {
     customerName: mapped.customerName,
     cardLast4: mapped.cardLast4,
     cardBrand: mapped.cardBrand,
+    shippingFee: mapped.shippingFee ?? null,
+    totalTax: mapped.totalTax ?? null,
+    subtotalPrice: mapped.subtotalPrice ?? mapped.subtotalAmount ?? null,
+    paymentMethod: mapped.paymentMethod ?? mapped.paymentGateway ?? null,
+    orderMetafields: mapped.orderMetafields ?? null,
+    timelineAttachmentCount: mapped.timelineAttachments?.length ?? 0,
+    timelineAttachments: mapped.timelineAttachments?.slice(0, 5) ?? [],
     refundDate: mapped.refundDate,
     refundReason: mapped.refundReason,
     refundNotificationEmail: mapped.refundNotificationEmail,

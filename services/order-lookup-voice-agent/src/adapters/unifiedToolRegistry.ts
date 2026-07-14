@@ -455,6 +455,26 @@ export const UNIFIED_OPENAI_TOOL_SCHEMAS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "verify_caller_challenge",
+      description:
+        "Verify an unverified caller by matching the zip code or street / PO Box number they speak against the shipping address held in secure backend memory. Call when verificationChallengePending is true and the caller provides a zip or street number. On success, unlocks shipping_address without a new Shopify lookup.",
+      parameters: {
+        type: "object",
+        properties: {
+          userInputZipOrStreet: {
+            type: "string",
+            description:
+              "What the caller said for zip code, street number, or PO Box (e.g. '62701' or 'PO Box 12').",
+          },
+        },
+        required: ["userInputZipOrStreet"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "end_call",
       description:
         "Invoke ONLY when the caller is explicitly done: goodbye, thank you, okay bye, or 'no' after you asked if they need anything else. NEVER use during cart modifications, quantity changes, or partial-title shopping. Say the SureShot goodbye line first, then call this tool.",

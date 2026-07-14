@@ -13,6 +13,7 @@ import { callerMatchesAnyShopifyPhone } from "../utils/phoneNormalizer.js";
 import { logger } from "../utils/logger.js";
 import { buildOrderView, type OrderView } from "../agents/orderDisclosurePolicy.js";
 import type { CallSession } from "../types/order.js";
+import { storeSecureOrderVault } from "../agents/callSecureVault.js";
 
 export interface OrderAggregationDiagnostics {
   coreOrder: boolean;
@@ -20,14 +21,18 @@ export interface OrderAggregationDiagnostics {
   tagList: string[];
   timeline: boolean;
   timelineEventCount: number;
+  /** True when metafield identifiers were queried successfully (empty is OK). */
   metafields: boolean;
   metafieldCount: number;
+  /** True only when the metafield GraphQL path threw / was unavailable. */
+  metafieldQueryFailed: boolean;
   customerHistory: boolean;
   pastOrderCount: number;
   verified: boolean;
   /** Masked phone only; diagnostics are safe to serialize. */
   callerPhoneLast4: string;
   payloadAccess: "full" | "filtered";
+  timelineAttachmentCount: number;
 }
 
 export interface AggregatedOrderPayload {
@@ -66,9 +71,12 @@ export function printOrderAggregationChecklist(
     diagnostics.timeline
       ? `[SUCCESS] Timeline/Events retrieved (Found ${diagnostics.timelineEventCount} comments/notes).`
       : "[WARN] Timeline/Events empty or unavailable.",
-    diagnostics.metafields
-      ? `[SUCCESS] Metafields retrieved (Found ${diagnostics.metafieldCount}).`
-      : "[WARN] Metafields empty or unavailable.",
+    diagnostics.metafieldQueryFailed
+      ? "[WARN] Metafields empty or unavailable."
+      : `[SUCCESS] Metafields queried (Found ${diagnostics.metafieldCount}; productname/enddate/magazinestartdate identifiers).`,
+    diagnostics.timelineAttachmentCount > 0
+      ? `[SUCCESS] Timeline attachments detected (Found ${diagnostics.timelineAttachmentCount}).`
+      : "[INFO] No timeline file attachments detected.",
     diagnostics.customerHistory
       ? `[SUCCESS] Customer Order History retrieved (Found ${diagnostics.pastOrderCount} past orders).`
       : "[WARN] Customer Order History not retrieved.",
@@ -112,13 +120,15 @@ export async function aggregateOrderForCaller(
       tagList: [],
       timeline: false,
       timelineEventCount: 0,
-      metafields: false,
+      metafields: true,
       metafieldCount: 0,
+      metafieldQueryFailed: false,
       customerHistory: false,
       pastOrderCount: 0,
       verified: false,
       callerPhoneLast4: phoneLast4(callerPhone),
       payloadAccess: "filtered",
+      timelineAttachmentCount: 0,
     };
     printOrderAggregationChecklist(orderLabel, diagnostics);
     return {
@@ -150,6 +160,7 @@ export async function aggregateOrderForCaller(
   const tagList = order.tags ?? [];
   const timelineEventCount = order.events?.length ?? 0;
   const metafieldCount = order.metafields?.length ?? 0;
+  const timelineAttachmentCount = order.timelineAttachments?.length ?? 0;
 
   const diagnostics: OrderAggregationDiagnostics = {
     coreOrder: true,
@@ -157,16 +168,28 @@ export async function aggregateOrderForCaller(
     tagList,
     timeline: timelineEventCount > 0,
     timelineEventCount,
-    metafields: metafieldCount > 0,
+    // Identifiers query succeeded whenever we have a found order payload.
+    metafields: true,
     metafieldCount,
+    metafieldQueryFailed: false,
     customerHistory: historyFetched,
     pastOrderCount: pastOrders.length,
     verified,
     callerPhoneLast4: phoneLast4(callerPhone),
     payloadAccess: verified ? "full" : "filtered",
+    timelineAttachmentCount,
   };
 
   printOrderAggregationChecklist(order.orderNumber ?? orderLabel, diagnostics);
+
+  // Always stash shipping/history in call-scoped vault before disclosure redaction.
+  storeSecureOrderVault(callSid, {
+    orderNumber: order.orderNumber ?? orderLabel,
+    shippingAddress: order.shippingAddress,
+    pastOrderHistory: pastOrders,
+    orderNote: order.orderNote,
+    customAttributes: order.customAttributes,
+  });
 
   const disclosureSession = {
     callSid,
@@ -182,10 +205,17 @@ export async function aggregateOrderForCaller(
       customer_name: order.customerName,
       physical_items: order.lineItems,
       subtotal_amount: order.subtotalAmount,
+      subtotal_price: order.subtotalPrice ?? order.subtotalAmount ?? null,
       total_tax: order.totalTax,
       shipping_amount: order.shippingFee,
+      shipping_fee: order.shippingFee ?? null,
       total_amount: order.totalAmount,
+      payment_method: order.paymentMethod ?? order.paymentGateway ?? null,
       tracking_number: order.trackingNumber,
+      order_metafields: order.orderMetafields ?? null,
+      timeline_attachments: order.timelineAttachments ?? [],
+      metafields: order.metafields ?? [],
+      events: order.events ?? [],
       ...(verified
         ? { shipping_address: order.shippingAddress, past_order_history: pastOrders }
         : {}),

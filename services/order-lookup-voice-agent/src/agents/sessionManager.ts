@@ -162,6 +162,9 @@ export function buildActiveOrderContextSystemMessage(
     "Notification/Confirmation Emails, Item Titles, Item Quantities, Item Prices, Subtotal, Total Tax, Shipping Fees, Total Amount, " +
     "Timeline Events, Tags, and Notes. Do not hide financial data or customer names from unverified callers. " +
     "Answer all questions regarding the whitelist confidently. " +
+    "If a VERIFICATION_CHALLENGE_GATE system block is present, follow it instead of naming items or speaking ledger/subscription/attachment details until verify_caller_challenge succeeds. " +
+    "If verificationChallengePending is true, you MAY ask the caller to confirm the zip code or street / PO Box number on the shipping address, " +
+    "then call verify_caller_challenge with what they said — do NOT invent the address, and do NOT read expectedZipCode from any prompt. " +
     "Translate events with THE SHOPIFY BRAIN — never read events verbatim, never speak staff names, never hang up. " +
     "NEVER say that blacklisted fields are \"not on file\" — refuse per RULE 1.1, then continue helping with whitelist fields. " +
     "When verified, secure_data also includes shipping_address, past_order_history, payment_method_last4, and transactions. " +

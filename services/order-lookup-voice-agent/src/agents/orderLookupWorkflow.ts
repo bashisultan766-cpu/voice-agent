@@ -32,12 +32,34 @@ import {
 } from "./logisticsIntelligence.js";
 import { guardCartAddInventory } from "./inventoryResolutionService.js";
 import { SessionStateService } from "./sessionStateService.js";
+import {
+  armVerificationChallenge,
+  verifyCallerChallenge,
+  extractChallengeTargets,
+} from "./callerChallengeVerification.js";
+import {
+  parseCustomerLedgerNote,
+  formatCreditBalanceSpeech,
+  type ParsedCustomerBalance,
+} from "./ledgerNoteParser.js";
+import { enrichOrderLookupIntelligence } from "./orderLookupService.js";
 
 export {
   ORDER_FOUND_PASSIVE_SPEECH,
   buildOrderFoundGatewaySpeech,
   buildStickyOrderStillOpenSpeech,
 };
+
+/** Intelligence-engine helpers used after sticky order lookup / cart flows. */
+export {
+  armVerificationChallenge,
+  verifyCallerChallenge,
+  extractChallengeTargets,
+  parseCustomerLedgerNote,
+  formatCreditBalanceSpeech,
+  enrichOrderLookupIntelligence,
+};
+export type { ParsedCustomerBalance };
 
 /** Sticky session memory — order already loaded for this call. */
 export type CurrentSessionOrder = {

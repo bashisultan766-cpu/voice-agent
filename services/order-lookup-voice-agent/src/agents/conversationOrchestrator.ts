@@ -380,6 +380,9 @@ export function endCallSession(callSid: string, session?: CallSession): void {
   clearCallEventSession(callSid);
   clearCallSessionLock(callSid);
   clearActiveSession(callSid);
+  void import("./callSecureVault.js").then(({ clearSecureOrderVault }) => {
+    clearSecureOrderVault(callSid);
+  });
   clearPreferredVoiceForCall(callSid);
   clearConversationFlowMode(callSid);
   clearLastSpokenSentence(callSid);

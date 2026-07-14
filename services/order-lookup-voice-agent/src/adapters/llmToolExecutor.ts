@@ -153,6 +153,7 @@ export type LlmToolName =
   | "create_support_case"
   | "update_pending_email"
   | "escalate_to_human"
+  | "verify_caller_challenge"
   | "end_call";
 
 /** Aliases the LLM may emit — always resolve to the canonical tool name. */
@@ -162,6 +163,7 @@ const LLM_TOOL_ALIASES: Record<string, LlmToolName> = {
   update_cart_quantity: "update_cart_item_quantity",
   add_to_cart: "update_cart_item_quantity",
   partial_correction: "update_pending_email",
+  verifyCallerChallenge: "verify_caller_challenge",
   escalate_to_human_agent: "escalate_to_human",
   send_support_escalation: "create_support_case",
 };
@@ -185,6 +187,7 @@ export function normalizeLlmToolName(name: string): LlmToolName | null {
     "create_support_case",
     "update_pending_email",
     "escalate_to_human",
+    "verify_caller_challenge",
     "end_call",
   ];
   return (canonical as string[]).includes(trimmed) ? (trimmed as LlmToolName) : null;
@@ -282,6 +285,14 @@ export interface EscalateToHumanToolResult {
   instructions?: string;
 }
 
+export interface CallerChallengeToolResult {
+  status: "ok" | "blocked";
+  verified: boolean;
+  message?: string;
+  orderView?: import("../agents/orderDisclosurePolicy.js").OrderView | null;
+  isVerifiedCaller?: boolean;
+}
+
 export interface LogisticsToolResult {
   status?: "ok" | "blocked";
   shipable?: boolean;
@@ -339,6 +350,7 @@ export interface LlmToolExecutionRecord {
     | DictateTrackingToolResult
     | PendingEmailToolResult
     | EscalateToHumanToolResult
+    | CallerChallengeToolResult
     | LogisticsToolResult
     | StockVerifyToolResult
     | InitiateCheckoutBatchToolResult;
@@ -1382,6 +1394,49 @@ export async function executeLlmTool(
     }
   }
 
+  if (tool === "verify_caller_challenge") {
+    if (!session) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        errorMessage: "Session unavailable for caller challenge verification.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+    const spoken = String(
+      args.userInputZipOrStreet ?? args.user_input_zip_or_street ?? "",
+    ).trim();
+    if (!spoken) {
+      return {
+        tool,
+        args,
+        ok: false,
+        status: "blocked",
+        errorMessage: "Provide the zip code or street / PO Box the caller said.",
+        elapsedMs: Date.now() - started,
+      };
+    }
+    const { verifyCallerChallenge } = await import("../agents/callerChallengeVerification.js");
+    const result = await verifyCallerChallenge(session, spoken);
+    return {
+      tool,
+      args,
+      ok: result.ok,
+      status: result.verified ? "ok" : "blocked",
+      errorMessage: result.ok ? undefined : result.message,
+      data: {
+        status: result.verified ? "ok" : "blocked",
+        verified: result.verified,
+        message: result.message,
+        orderView: result.orderView ?? null,
+        isVerifiedCaller: session.isVerifiedCaller === true,
+      } satisfies CallerChallengeToolResult,
+      elapsedMs: Date.now() - started,
+    };
+  }
+
   if (tool === "get_customer_history") {
     if (!session) {
       return {
@@ -1818,9 +1873,10 @@ export function toolResultForLlm(
     });
   }
 
-  if (record.tool === "get_shopify_order_status" && "orderView" in record.data) {
-    if (record.data.status !== "found") {
-      const searchedNumber = record.args.orderNumber ?? record.data.searchedNumber ?? "";
+  if (record.tool === "get_shopify_order_status") {
+    const orderData = record.data as CallerOrderLookupResult | undefined;
+    if (!orderData || orderData.status !== "found") {
+      const searchedNumber = record.args.orderNumber ?? orderData?.searchedNumber ?? "";
       const payload = buildOrderNotFoundLlmPayload(String(searchedNumber));
       logger.info("tool_output_to_llm", {
         tool: "get_shopify_order_status",
@@ -1832,15 +1888,32 @@ export function toolResultForLlm(
     const payload = {
       status: "FOUND",
       found: true,
-      orderView: record.data.orderView,
+      orderView: orderData.orderView,
+      verificationChallengePending: orderData.verificationChallengePending === true,
+      parsedCustomerBalance: orderData.parsedCustomerBalance ?? null,
       instructions:
-        "SECURITY CLEARANCE (UNBREAKABLE RULE): If isVerifiedCaller is FALSE, you are ONLY forbidden from sharing two things: (1) the exact Shipping Address, and (2) Past Order History / previous months' orders. You MUST share EVERYTHING ELSE — Item Names, Item Prices, Quantities, Subtotal, Taxes, Shipping Fees, Total Amount, Payment Method, Notification Emails, and Timeline Events. Do not apologize; simply provide the info. ABSOLUTE BLACKLIST: shipping_address and past_order_history only. Prefer orderView DTO fields — never invent vault fields. CONVERSATION LOCK / order_lookup_complete: Once an order is FOUND, you are LOCKED to this order — NEVER re-invoke get_shopify_order_status for follow-ups. If the user provides digits (e.g. What comes after 47 / 80111 / 48011), assume they are clarifying Tracking ID or the order already in memory — NOT a new search. Locate digits in tracking_number_for_tts/spatialIndex and read only the remainder. STRICT CONVERSATIONAL ECONOMY: On FOUND the spoken gateway is already handled (order number + customer name + status + follow-up only) — answer only what they ask next; never volunteer tracking, address, or items. EXPLAINING PAYMENTS & NOTIFICATIONS: Act like a human concierge when asked. If financial_status is PAID and card last4 is null, explain via sourceName / Litextension when present. For notification routing say notifications were routed to the contact on file when asked. If tracking is in orderNote, say you found tracking securely noted, then dictate. Never invent vague lockdowns from privacy_tier wording. Translate events via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. physical_items and item_count are BOOKS ONLY. Keys always present: customer_name, customer_email, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). LEGACY DATA: If tracking_number is null, scan orderNote/note for Tracking Number. For tracking dictation use comma pacing (9, 4, 4, 9, 0, 1) with zero hyphens/dashes/points. Never end_call for missing fields.",
+        "SECURITY CLEARANCE (UNBREAKABLE RULE): If isVerifiedCaller is FALSE, you are ONLY forbidden from sharing two things: (1) the exact Shipping Address, and (2) Past Order History / previous months' orders. You MUST share EVERYTHING ELSE — Item Names, Item Prices, Quantities, Subtotal, Taxes, Shipping Fees, Total Amount, Payment Method, Notification Emails, and Timeline Events. Do not apologize; simply provide the info. ABSOLUTE BLACKLIST: shipping_address and past_order_history only. Prefer orderView DTO fields — never invent vault fields. If verificationChallengePending is true, ask for zip or street/PO Box and call verify_caller_challenge. If parsedCustomerBalance.creditBalance is set, proactively mention the remaining credit once. CONVERSATION LOCK / order_lookup_complete: Once an order is FOUND, you are LOCKED to this order — NEVER re-invoke get_shopify_order_status for follow-ups. If the user provides digits (e.g. What comes after 47 / 80111 / 48011), assume they are clarifying Tracking ID or the order already in memory — NOT a new search. Locate digits in tracking_number_for_tts/spatialIndex and read only the remainder. STRICT CONVERSATIONAL ECONOMY: On FOUND the spoken gateway is already handled (order number + customer name + status + follow-up only) — answer only what they ask next; never volunteer tracking, address, or items. EXPLAINING PAYMENTS & NOTIFICATIONS: Act like a human concierge when asked. If financial_status is PAID and card last4 is null, explain via sourceName / Litextension when present. For notification routing say notifications were routed to the contact on file when asked. If tracking is in orderNote, say you found tracking securely noted, then dictate. Never invent vague lockdowns from privacy_tier wording. Translate events via THE SHOPIFY BRAIN — never read events verbatim and never speak staff names. physical_items and item_count are BOOKS ONLY. Keys always present: customer_name, customer_email, payment_method, payment_method_last4, card_brand, cancel_reason, refund_reason, refund_notification_email, order_confirmation_email (null when absent — never invent). LEGACY DATA: If tracking_number is null, scan orderNote/note for Tracking Number. For tracking dictation use comma pacing (9, 4, 4, 9, 0, 1) with zero hyphens/dashes/points. Never end_call for missing fields.",
     };
     logger.info("tool_output_to_llm", {
       tool: "get_shopify_order_status",
       output: payload,
     });
     return JSON.stringify(payload);
+  }
+
+  if (record.tool === "verify_caller_challenge") {
+    const challenge = record.data as CallerChallengeToolResult | undefined;
+    return JSON.stringify({
+      status: challenge?.status ?? record.status,
+      verified: challenge?.verified === true,
+      message: challenge?.message ?? record.errorMessage,
+      orderView: challenge?.orderView ?? null,
+      isVerifiedCaller: challenge?.isVerifiedCaller === true,
+      instructions:
+        challenge?.verified === true
+          ? "Caller verified via zip/street challenge. System prompt was rebuilt with unredacted ACCOUNT_LEDGER / shipping. You may now share shipping_address, past_order_history, ledger credit, subscription dates, and timeline attachments. Confirm briefly and continue helping."
+          : "Challenge failed or incomplete. Do not invent the shipping address. Follow VERIFICATION_CHALLENGE_GATE if present — offer another try or continue without naming gated fields.",
+    });
   }
 
   return JSON.stringify({

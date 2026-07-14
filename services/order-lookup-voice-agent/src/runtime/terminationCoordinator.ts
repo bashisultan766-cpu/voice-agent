@@ -57,6 +57,28 @@ export function evaluateTermination(
     };
   }
 
+  // Preserve context during LISTENING_WAIT / tracking / verification challenge —
+  // transient silence must never force hang-up.
+  {
+    const memory = ensureSessionMemory(session);
+    const waitOrChallenge =
+      Boolean(memory.listeningWaitEnteredAt) ||
+      memory.verificationChallengePending === true ||
+      memory.metadata?.is_tracking_in_progress === true;
+    if (waitOrChallenge && reason !== "follow_up_goodbye") {
+      const text = (utterance ?? "").trim();
+      if (!text || !/\b(goodbye|bye|end\s+call|hang\s+up)\b/i.test(text)) {
+        return {
+          allow: false,
+          reason,
+          blockReason: "listening_wait_or_challenge_active",
+          speech:
+            "I'm still here with your order open. Take your time — what would you like to do next?",
+        };
+      }
+    }
+  }
+
   const text = (utterance ?? "").trim();
   if (
     text &&

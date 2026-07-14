@@ -4,17 +4,21 @@ import {
   printOrderAggregationChecklist,
 } from "../src/adapters/orderAggregationEngine.js";
 import { phoneNumbersMatch } from "../src/utils/phoneNormalizer.js";
-import { buildActiveOrderContextPayload } from "../src/adapters/llmToolExecutor.js";
 
-vi.mock("../src/adapters/shopifyStorefrontAdapter.js", () => ({
-  getOrderStatus: vi.fn(),
-  getCustomerHistory: vi.fn(),
+vi.mock("../src/services/shopifyService.js", () => ({
+  lookupOrderStatus: vi.fn(),
 }));
 
-import {
-  getOrderStatus,
-  getCustomerHistory,
-} from "../src/adapters/shopifyStorefrontAdapter.js";
+vi.mock("../src/adapters/shopifyStorefrontAdapter.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/adapters/shopifyStorefrontAdapter.js")>();
+  return {
+    ...actual,
+    getCustomerHistory: vi.fn(),
+  };
+});
+
+import { lookupOrderStatus } from "../src/services/shopifyService.js";
+import { getCustomerHistory } from "../src/adapters/shopifyStorefrontAdapter.js";
 
 describe("phoneNumbersMatch country-code normalization", () => {
   it("matches formatted US numbers with and without +1", () => {
@@ -38,7 +42,7 @@ describe("aggregateOrderForCaller", () => {
     console.log = (...args: unknown[]) => {
       logs.push(args.map(String).join(" "));
     };
-    vi.mocked(getOrderStatus).mockReset();
+    vi.mocked(lookupOrderStatus).mockReset();
     vi.mocked(getCustomerHistory).mockReset();
   });
 
@@ -46,8 +50,8 @@ describe("aggregateOrderForCaller", () => {
     console.log = originalLog;
   });
 
-  it("returns full payload for verified callers including history and shipping", async () => {
-    vi.mocked(getOrderStatus).mockResolvedValue({
+  it("returns verified OrderView with shipping and history unlocked", async () => {
+    vi.mocked(lookupOrderStatus).mockResolvedValue({
       status: "found",
       orderNumber: "#48011",
       customerPhone: "+1 555-123-4567",
@@ -55,9 +59,22 @@ describe("aggregateOrderForCaller", () => {
       shippingAddress: "123 Main St, Austin TX",
       customerId: "gid://shopify/Customer/99",
       tags: ["Mail order", "VIP"],
-      events: ["Staff note: packed", "Email notification sent"],
+      events: ["Staff note: packed", "Email notification sent ChristianSweeten_147455.pdf"],
       orderNote: "Leave at door",
-      metafields: [{ namespace: "custom", key: "route", value: "west" }],
+      metafields: [{ namespace: "custom", key: "productname", value: "Healing Mag" }],
+      orderMetafields: {
+        productName: "Healing Mag",
+        endDate: null,
+        magazineStartDate: null,
+      },
+      timelineAttachments: [
+        { fileName: "ChristianSweeten_147455.pdf", timestamp: null },
+      ],
+      shippingFee: "$0.00",
+      totalTax: "$1.00",
+      subtotalAmount: "$12.00",
+      subtotalPrice: "$12.00",
+      paymentMethod: "shopify_payments",
       fulfillmentStatus: "FULFILLED",
       lineItems: [{ title: "Healing Book", quantity: 1, sku: "HB-1", price: "12.00" }],
     });
@@ -80,19 +97,24 @@ describe("aggregateOrderForCaller", () => {
 
     expect(result.status).toBe("found");
     expect(result.is_verified_caller).toBe(true);
-    expect(result.shipping_address).toMatch(/123 Main St/);
-    expect(result.past_order_history).toHaveLength(1);
-    expect(result.order?.tags).toEqual(["Mail order", "VIP"]);
-    expect(result.order?.events).toHaveLength(2);
-    expect(result.order?.metafields?.[0]?.key).toBe("route");
+    expect(result.orderView?.shipping_address).toMatch(/123 Main St/);
+    expect(result.orderView?.past_order_history).toHaveLength(1);
+    expect(result.orderView?.order_metafields?.productName).toBe("Healing Mag");
+    expect(result.orderView?.timeline_attachments?.[0]?.fileName).toBe(
+      "ChristianSweeten_147455.pdf",
+    );
+    expect(result.orderView?.shipping_fee).toBe("$0.00");
+    expect(result.orderView?.payment_method).toBe("shopify_payments");
     expect(logs.some((l) => l.includes("[SYSTEM START] Fetching Order"))).toBe(true);
     expect(logs.some((l) => l.includes("[SUCCESS] Core Order Data retrieved"))).toBe(true);
     expect(logs.some((l) => l.includes("Status: VERIFIED"))).toBe(true);
     expect(logs.some((l) => l.includes("Full access granted"))).toBe(true);
+    expect(logs.some((l) => l.includes("[WARN] Metafields empty"))).toBe(false);
+    expect(logs.some((l) => l.includes("Metafields queried"))).toBe(true);
   });
 
-  it("redacts shipping and past history for unverified callers but keeps timeline/tags/notes", async () => {
-    vi.mocked(getOrderStatus).mockResolvedValue({
+  it("redacts shipping/history for unverified callers but keeps metafields/timeline", async () => {
+    vi.mocked(lookupOrderStatus).mockResolvedValue({
       status: "found",
       orderNumber: "#48011",
       customerPhone: "+15551234567",
@@ -102,6 +124,8 @@ describe("aggregateOrderForCaller", () => {
       events: ["Refund notification sent"],
       orderNote: "Account deposit",
       metafields: [],
+      orderMetafields: { productName: null, endDate: null, magazineStartDate: null },
+      timelineAttachments: [],
       fulfillmentStatus: "FULFILLED",
     });
     vi.mocked(getCustomerHistory).mockResolvedValue({
@@ -121,30 +145,18 @@ describe("aggregateOrderForCaller", () => {
     const result = await aggregateOrderForCaller("48011", "+15550001111", "CA_AGG_U");
 
     expect(result.is_verified_caller).toBe(false);
-    expect(result.shipping_address).toBeNull();
-    expect(result.past_order_history).toBeNull();
-    expect(result.order?.shippingAddress).toBeUndefined();
-    expect(result.order?.pastOrderHistory).toBeUndefined();
-    expect(result.order?.events).toEqual(["Refund notification sent"]);
-    expect(result.order?.tags).toEqual(["Mail order"]);
-    expect(result.order?.orderNote).toBe("Account deposit");
+    expect(result.orderView?.shipping_address).toBeUndefined();
+    expect(result.orderView?.past_order_history).toBeUndefined();
+    expect(result.orderView?.events).toEqual(["Refund notification sent"]);
     expect(logs.some((l) => l.includes("Status: UNVERIFIED"))).toBe(true);
     expect(logs.some((l) => l.includes("shipping_address and past_order_history redacted"))).toBe(
       true,
     );
-
-    const shaped = buildActiveOrderContextPayload(result.order!, {
-      isVerifiedCaller: false,
-    } as import("../src/types/order.js").CallSession);
-    expect(shaped.shipping_address).toBeNull();
-    expect(shaped.past_order_history).toBeNull();
-    expect(shaped.events).toEqual(["Refund notification sent"]);
-    expect(shaped.tags).toEqual(["Mail order"]);
-    expect(shaped.note).toBe("Account deposit");
+    expect(logs.some((l) => l.includes("[WARN] Metafields empty"))).toBe(false);
   });
 
   it("prints fail diagnostics when order is not found", async () => {
-    vi.mocked(getOrderStatus).mockResolvedValue({
+    vi.mocked(lookupOrderStatus).mockResolvedValue({
       status: "not_found",
       searchedNumber: "#99999",
       error: "No exact match found in Shopify.",
@@ -152,7 +164,7 @@ describe("aggregateOrderForCaller", () => {
 
     const result = await aggregateOrderForCaller("99999", "+15551234567", "CA_MISS");
     expect(result.status).toBe("not_found");
-    expect(result.order).toBeNull();
+    expect(result.orderView).toBeNull();
     expect(logs.some((l) => l.includes("[FAIL] Core Order Data missing"))).toBe(true);
   });
 });
@@ -173,11 +185,13 @@ describe("printOrderAggregationChecklist", () => {
         timelineEventCount: 4,
         metafields: true,
         metafieldCount: 1,
+        metafieldQueryFailed: false,
         customerHistory: true,
         pastOrderCount: 2,
         verified: true,
-        callerPhone: "+1234567890",
+        callerPhoneLast4: "***7890",
         payloadAccess: "full",
+        timelineAttachmentCount: 1,
       });
     } finally {
       console.log = original;
@@ -186,5 +200,7 @@ describe("printOrderAggregationChecklist", () => {
     expect(lines[0]).toBe("[SYSTEM START] Fetching Order #48011...");
     expect(lines.some((l) => l.includes("Found 4 comments/notes"))).toBe(true);
     expect(lines.some((l) => l.includes("MATCHES Order Phone"))).toBe(true);
+    expect(lines.some((l) => l.includes("Metafields queried"))).toBe(true);
+    expect(lines.some((l) => l.includes("Timeline attachments detected"))).toBe(true);
   });
 });

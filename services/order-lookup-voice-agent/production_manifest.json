@@ -70,14 +70,16 @@
     "create_support_case",
     "update_pending_email",
     "escalate_to_human",
+    "verify_caller_challenge",
     "end_call"
   ],
   "toolAliases": {
     "generate_payment_link": "send_checkout_email",
     "send_payment_link": "send_checkout_email",
     "add_to_cart": "update_cart_item_quantity",
-    "execute_checkout_group": "send_checkout_email"
-    ,"send_support_escalation": "create_support_case"
+    "execute_checkout_group": "send_checkout_email",
+    "send_support_escalation": "create_support_case",
+    "verifyCallerChallenge": "verify_caller_challenge"
   },
   "toolOwners": {
     "initiate_checkout_batch": "CheckoutManager.planPreparation",

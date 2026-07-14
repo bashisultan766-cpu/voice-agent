@@ -95,6 +95,12 @@ export function serializeSessionForPersistence(session: CallSession): string {
     delete view.customer_phone;
     if (hadTracking) view.tracking_available = true;
   }
+  // Challenge secrets stay process-local — never persist expected zip/street to L2.
+  const mem = clone.sessionMemory as Record<string, unknown> | undefined;
+  if (mem) {
+    delete mem.expectedZipCode;
+    delete mem.expectedPoBoxOrStreet;
+  }
   return JSON.stringify(clone);
 }
 

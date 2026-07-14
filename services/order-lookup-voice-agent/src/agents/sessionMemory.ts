@@ -117,6 +117,24 @@ export interface SessionMemoryState {
   neutralTurnStreak?: number;
   lastOrderNumber?: string;
   verificationStatus?: "verified" | "non_verified";
+  /**
+   * Smart verification challenge — set when phone match failed but shipping
+   * is held in CallSecureVault. LLM sees pending flag + field names only
+   * (not the expected values in system prompts by default).
+   */
+  verificationChallengePending?: boolean;
+  /** Normalized expected zip (5 digits) for challenge match — backend only. */
+  expectedZipCode?: string;
+  /** Normalized PO Box / street number token — backend only. */
+  expectedPoBoxOrStreet?: string;
+  challengeAttempts?: number;
+  /** Parsed ledger from order.note / customAttributes. */
+  parsedCustomerBalance?: {
+    creditBalance?: number;
+    deposit?: number;
+    totalOrder?: number;
+    rawNoteSnippet?: string;
+  };
   supportEscalationStatus?: string;
   emailConfirmationStatus?: string;
   paymentLinkStatus?: string;

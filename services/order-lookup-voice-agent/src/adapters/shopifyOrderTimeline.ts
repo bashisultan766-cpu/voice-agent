@@ -74,14 +74,17 @@ const ORDER_DEEP_BY_ID_QUERY = `query OrderDeepById($id: ID!) {
         }
       }
     }
-    metafields(first: 20) {
-      edges {
-        node {
-          namespace
-          key
-          value
-        }
-      }
+    metafields(identifiers: [
+      {namespace: "custom", key: "productname"},
+      {namespace: "custom", key: "enddate"},
+      {namespace: "custom", key: "magazinestartdate"},
+      {namespace: "global", key: "productname"},
+      {namespace: "global", key: "enddate"},
+      {namespace: "global", key: "magazinestartdate"}
+    ]) {
+      namespace
+      key
+      value
     }
   }
 }`;
