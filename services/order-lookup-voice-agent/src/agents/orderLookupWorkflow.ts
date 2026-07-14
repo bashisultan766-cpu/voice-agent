@@ -539,11 +539,16 @@ export function applySessionCartQuantity(
       })
     : null;
   const inventoryForStamp = stampGuard?.availableQuantity ?? item.inventoryQuantity ?? existingLine?.inventoryQuantity;
-  const urgencyForStamp =
+  const urgencyForStamp: {
+    temporaryReservation: boolean;
+    inventoryQuantity: number | undefined;
+    speech?: string;
+  } | null =
     isIncreasing && stampGuard
       ? {
           temporaryReservation: stampGuard.temporaryReservation,
           inventoryQuantity: stampGuard.availableQuantity ?? undefined,
+          speech: stampGuard.speech,
         }
       : null;
 
@@ -619,13 +624,13 @@ export function applySessionCartQuantity(
   let message = isIncreasing
     ? `I've added ${addedTitle} to your cart.`
     : `Cart updated with action_type=${actionType}.`;
-  if (urgencyForStamp?.speech && isIncreasing) {
-    message = `${urgencyForStamp.speech} Your cart now has ${finalQty} ${finalQty === 1 ? "copy" : "copies"} of ${addedTitle}.`;
+  const urgencySpeech = (urgencyForStamp?.speech ?? "").trim();
+  if (urgencySpeech && isIncreasing) {
+    message = `${urgencySpeech} Your cart now has ${finalQty} ${finalQty === 1 ? "copy" : "copies"} of ${addedTitle}.`;
   }
 
   let proactiveRecommendation: SessionCartUpdateResult["proactiveRecommendation"];
-  const urgencyPrefix =
-    urgencyForStamp?.speech && isIncreasing ? `${urgencyForStamp.speech} ` : "";
+  const urgencyPrefix = urgencySpeech && isIncreasing ? `${urgencySpeech} ` : "";
   if (isIncreasing && !options?.confirmRemoval) {
     const addedSku =
       parseVariantHint(variantHint) ||
@@ -646,7 +651,7 @@ export function applySessionCartQuantity(
         speech: recommendation.speech,
       };
       message = `${urgencyPrefix}${recommendation.speech}`;
-    } else if (isIncreasing && !urgencyForStamp?.speech) {
+    } else if (isIncreasing && !urgencySpeech) {
       message = `I've updated your cart to ${finalQty} ${finalQty === 1 ? "copy" : "copies"} of ${addedTitle}.`;
     }
   }

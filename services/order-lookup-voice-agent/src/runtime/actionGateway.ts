@@ -33,6 +33,7 @@ import { resetEmailConfirmation } from "../agents/emailConfirmationManager.js";
 
 export type ActionName =
   | "execute_checkout_group"
+  | "reconcile_email_unknown"
   | "send_support_email"
   | "escalate_to_human_webhook"
   | "shopify_order_lookup"
