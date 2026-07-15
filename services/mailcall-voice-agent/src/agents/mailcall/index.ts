@@ -4,6 +4,7 @@ export {
   SYSTEM_PROMPT,
   AGENT_NAME,
   PUBLICATION_NAME,
+  buildSystemPrompt,
   buildKnowledgeContextBlock,
   buildTurnMessages,
   buildRetrievalOnlySpeech,
@@ -12,6 +13,7 @@ export {
   processConversationTurn,
   greetingSpeech,
   clearSession,
+  setSessionStartedAt,
 } from "./conversation.js";
 export {
   BRAND_PROFILE,
@@ -19,6 +21,15 @@ export {
   matchBrandProfileQuery,
   brandOfflineFallbackSpeech,
 } from "./brandProfile.js";
+export {
+  MAILCALL_PLANS,
+  buildProductCatalogSpeech,
+  isWithinOfficeHours,
+  canTransferToLiveAgent,
+  SCRIPTS,
+} from "./businessRules.js";
+export { normalizeSpokenEmail, looksLikeEmail } from "./emailNormalize.js";
+export { executeMailCallTool, MAILCALL_TOOL_DEFINITIONS } from "./tools.js";
 export { cleanseForSpeech, truncateToSentences, clampSpokenLength } from "./textCleaner.js";
 export { TtlCache } from "./ttlCache.js";
 export type {

@@ -35,6 +35,8 @@ const envSchema = z.object({
   MAILCALL_WP_APP_PASSWORD: z.string().min(1),
   MAILCALL_OPENAI_API_KEY: z.string().optional().default(""),
   MAILCALL_OPENAI_MODEL: z.string().optional().default("gpt-4o-mini"),
+  /** E.164 live-agent number for transfer_to_number (optional). */
+  MAILCALL_TRANSFER_NUMBER: z.string().optional().default(""),
   MAILCALL_CACHE_TTL_MS: z.coerce.number().int().positive().optional().default(60_000),
   MAILCALL_WP_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2_000),
   MAILCALL_PORT: z.coerce.number().int().positive().optional(),
@@ -136,6 +138,9 @@ export function sanitizeEnvForValidation(
     MAILCALL_WP_APP_PASSWORD: String(env.MAILCALL_WP_APP_PASSWORD ?? "").trim() || undefined,
     MAILCALL_OPENAI_API_KEY: String(env.MAILCALL_OPENAI_API_KEY ?? "").trim(),
     MAILCALL_OPENAI_MODEL: String(env.MAILCALL_OPENAI_MODEL ?? "").trim() || undefined,
+    MAILCALL_TRANSFER_NUMBER: String(env.MAILCALL_TRANSFER_NUMBER ?? "")
+      .replace(/\s+/g, "")
+      .trim(),
     MAILCALL_PORT: String(env.MAILCALL_PORT ?? env.PORT ?? DEFAULT_MAILCALL_PORT).trim(),
     MAILCALL_LOG_LEVEL: String(env.MAILCALL_LOG_LEVEL ?? "info").trim() || "info",
   };
@@ -174,6 +179,7 @@ function buildDegradedConfig(
     MAILCALL_WP_APP_PASSWORD: sanitized.MAILCALL_WP_APP_PASSWORD ?? "",
     MAILCALL_OPENAI_API_KEY: sanitized.MAILCALL_OPENAI_API_KEY ?? "",
     MAILCALL_OPENAI_MODEL: sanitized.MAILCALL_OPENAI_MODEL ?? "gpt-4o-mini",
+    MAILCALL_TRANSFER_NUMBER: sanitized.MAILCALL_TRANSFER_NUMBER ?? "",
     MAILCALL_CACHE_TTL_MS: Number(env.MAILCALL_CACHE_TTL_MS) > 0 ? Number(env.MAILCALL_CACHE_TTL_MS) : 60_000,
     MAILCALL_WP_TIMEOUT_MS: Number(env.MAILCALL_WP_TIMEOUT_MS) > 0 ? Number(env.MAILCALL_WP_TIMEOUT_MS) : 2_000,
     MAILCALL_PORT: resolveListenPort(env),

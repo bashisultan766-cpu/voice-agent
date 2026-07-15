@@ -70,7 +70,9 @@ export interface CallTurnResult {
   articlesUsed: number;
   latencyMs: number;
   usedBrandProfile?: boolean;
+  /** When set, ConversationRelay should hand off to this live-agent number. */
+  transferToNumber?: string;
 }
 
 export const GREETING_SPEECH =
-  "Thank you for calling Mail Call Communication. I'm your senior editorial representative. How can I help you with the newspaper today?";
+  "Thank you for calling MailCall Newspaper. This is Brook, your senior editorial and customer support representative. How can I help you today?";

@@ -263,11 +263,29 @@ export function attachMailCallRelayHandler(wss: WebSocketServer): void {
               last: true,
             }),
           );
+          if (result.transferToNumber) {
+            // ConversationRelay handoff — inbound TwiML action may Dial this number.
+            socket.send(
+              JSON.stringify({
+                type: "end",
+                handoffData: JSON.stringify({
+                  action: "transfer_to_number",
+                  number: result.transferToNumber,
+                }),
+              }),
+            );
+            logger.info("mailcall_ws_transfer", {
+              callSid,
+              // Do not log full number in shared logs if preferred — keep short.
+              numberSuffix: result.transferToNumber.slice(-4),
+            });
+          }
           logger.info("mailcall_ws_turn", {
             callSid,
             degraded: result.degraded,
             articlesUsed: result.articlesUsed,
             latencyMs: result.latencyMs,
+            transfer: Boolean(result.transferToNumber),
           });
         } catch (err) {
           logger.error("mailcall_ws_turn_failed", {

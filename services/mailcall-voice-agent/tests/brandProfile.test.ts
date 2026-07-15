@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   matchBrandProfileQuery,
   brandOfflineFallbackSpeech,
-  BRAND_LOCATION,
 } from "../src/agents/mailcall/brandProfile.js";
 
 describe("brandProfile", () => {
@@ -11,7 +10,7 @@ describe("brandProfile", () => {
       "news",
     );
     expect(matchBrandProfileQuery("Where are you located?")?.toLowerCase()).toContain(
-      BRAND_LOCATION.split(",")[0]!.toLowerCase(),
+      "united states",
     );
   });
 

@@ -18,6 +18,7 @@ function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
     MAILCALL_WP_APP_PASSWORD: "abcd efgh ijkl mnop qrst uvwx",
     MAILCALL_OPENAI_API_KEY: "",
     MAILCALL_OPENAI_MODEL: "gpt-4o-mini",
+    MAILCALL_TRANSFER_NUMBER: "",
     MAILCALL_CACHE_TTL_MS: 60_000,
     MAILCALL_WP_TIMEOUT_MS: 500,
     MAILCALL_PORT: 8010,

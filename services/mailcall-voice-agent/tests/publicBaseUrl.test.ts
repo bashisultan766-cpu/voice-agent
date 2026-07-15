@@ -15,6 +15,7 @@ function cfg(partial: Partial<MailCallConfig> = {}): MailCallConfig {
     MAILCALL_WP_APP_PASSWORD: "abcdefghijklmnopqrstuvwx",
     MAILCALL_OPENAI_API_KEY: "",
     MAILCALL_OPENAI_MODEL: "gpt-4o-mini",
+    MAILCALL_TRANSFER_NUMBER: "",
     MAILCALL_CACHE_TTL_MS: 60_000,
     MAILCALL_WP_TIMEOUT_MS: 2_500,
     MAILCALL_PORT: 8010,

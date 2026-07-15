@@ -20,6 +20,7 @@ function testConfig(): MailCallConfig {
     MAILCALL_WP_APP_PASSWORD: "abcdefghijklmnopqrstuvwx",
     MAILCALL_OPENAI_API_KEY: "",
     MAILCALL_OPENAI_MODEL: "gpt-4o-mini",
+    MAILCALL_TRANSFER_NUMBER: "",
     MAILCALL_CACHE_TTL_MS: 60_000,
     MAILCALL_WP_TIMEOUT_MS: 500,
     MAILCALL_PORT: 8010,
@@ -69,7 +70,33 @@ describe("conversation + prompts", () => {
 
     expect(result.usedBrandProfile).toBe(true);
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(result.speech.toLowerCase()).toMatch(/news|journalism|publication/);
+    expect(result.speech.toLowerCase()).toMatch(/news|inmate|mailcall|newspaper|journalism/);
+  });
+
+  it("answers pricing from Brook product catalog without OpenAI", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+
+    const result = await processConversationTurn(
+      { callSid: "call-1", utterance: "How much is the three month plan?" },
+      wp,
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result.speech.toLowerCase()).toMatch(/fifty-nine|three month|3-month/);
+    expect(result.speech).not.toMatch(/api|wordpress|json/i);
+  });
+
+  it("states all-sales-final on refund requests", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+
+    const result = await processConversationTurn(
+      { callSid: "call-1", utterance: "I want a refund please" },
+      wp,
+    );
+
+    expect(result.speech.toLowerCase()).toMatch(/final|does not permit|returns/);
   });
 
   it("summarizes articles in short spoken turns without OpenAI", async () => {
