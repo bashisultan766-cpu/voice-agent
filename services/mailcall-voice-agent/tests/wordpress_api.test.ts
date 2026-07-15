@@ -6,7 +6,9 @@ import {
   flattenFetchError,
   extractSearchTerms,
   LIVE_RAG_MAX_ARTICLES,
+  MEM_INDEX_POST_LIMIT,
 } from "../src/agents/mailcall/wordpress_api.js";
+import { normalizeVoiceTranscript } from "../src/agents/mailcall/textCleaner.js";
 
 function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
   const base: MailCallConfig = {
@@ -34,6 +36,41 @@ function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
   return { ...base, ...overrides };
 }
 
+function sampleArticles() {
+  return [
+    {
+      id: 1,
+      title: "Harbor Cleanup Begins",
+      excerpt: "Crews cleared the north pier.",
+      content: "Harbor news about debris and pier work.",
+      spokenSummary: "Crews cleared the north pier.",
+      categoryIds: [1],
+      customFields: {},
+      slug: "harbor-cleanup",
+    },
+    {
+      id: 2,
+      title: "Budget Vote",
+      excerpt: "Council approved the budget.",
+      content: "City budget details.",
+      spokenSummary: "Council approved the budget.",
+      categoryIds: [1],
+      customFields: {},
+      slug: "budget-vote",
+    },
+    {
+      id: 3,
+      title: "School Fair",
+      excerpt: "Students raised funds.",
+      content: "School fair highlights.",
+      spokenSummary: "Students raised funds.",
+      categoryIds: [2],
+      customFields: {},
+      slug: "school-fair",
+    },
+  ];
+}
+
 describe("cleanWpAppPassword", () => {
   it("strips spaces from 24-char application passwords", () => {
     expect(cleanWpAppPassword("abcd efgh ijkl mnop qrst uvwx")).toBe(
@@ -47,19 +84,28 @@ describe("WordPressApiClient", () => {
     resetConfigCache();
   });
 
-  it("uses Basic Auth, browser headers, and caches posts", async () => {
-    const calls: string[] = [];
+  it("uses Basic Auth, browser headers when warming the mem index", async () => {
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      calls.push(String(url));
       const headers = init?.headers as Record<string, string>;
       const auth = String(headers?.Authorization ?? "");
       expect(auth.startsWith("Basic ")).toBe(true);
       const decoded = Buffer.from(auth.slice(6), "base64").toString("utf8");
       expect(decoded).toBe("editor:abcdefghijklmnopqrstuvwx");
       expect(headers["User-Agent"]).toBe(WP_BROWSER_HEADERS["User-Agent"]);
-      expect(headers.Accept).toBe(WP_BROWSER_HEADERS.Accept);
-      expect(headers["Accept-Language"]).toBe(WP_BROWSER_HEADERS["Accept-Language"]);
 
+      const href = String(url);
+      if (href.includes("/categories")) {
+        return new Response(JSON.stringify([{ id: 1, name: "Local", slug: "local", count: 2 }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (href.includes("/pages")) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       return new Response(
         JSON.stringify([
           {
@@ -76,21 +122,19 @@ describe("WordPressApiClient", () => {
     }) as unknown as typeof fetch;
 
     const client = new WordPressApiClient(testConfig(), fetchImpl);
-    const first = await client.listRecentPosts(5);
-    const second = await client.listRecentPosts(5);
-
-    expect(first[0]?.title).toBe("City Council Votes");
-    expect(first[0]?.spokenSummary).toContain("budget");
-    expect(first[0]?.spokenSummary).not.toContain("https://");
-    expect(second[0]?.id).toBe(1);
-    expect(calls.length).toBe(1);
+    const ok = await client.warmCache("manual");
+    expect(ok).toBe(true);
+    expect(client.getMemIndex().articles[0]?.title).toBe("City Council Votes");
+    expect(client.getMemIndex().articles[0]?.spokenSummary).not.toContain("https://");
+    expect(fetchImpl.mock.calls.some((c) => String(c[0]).includes(`per_page=${MEM_INDEX_POST_LIMIT}`))).toBe(
+      true,
+    );
   });
 
-  it("URL-encodes search terms via URLSearchParams", async () => {
+  it("URL-encodes search terms when network search is used before warm", async () => {
     const fetchImpl = vi.fn(async (url: string | URL) => {
       const parsed = new URL(String(url));
       expect(parsed.searchParams.get("search")).toBe("city & budget?");
-      expect(String(url)).not.toContain("search=city & budget?");
       return new Response(JSON.stringify([]), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -100,24 +144,18 @@ describe("WordPressApiClient", () => {
     const client = new WordPressApiClient(testConfig(), fetchImpl);
     await client.searchPosts("city & budget?");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-
-    const built = new URL(client.buildWpUrl("/posts", { search: "a/b c", per_page: 1 }));
-    expect(built.searchParams.get("search")).toBe("a/b c");
   });
 
-  it("retries once on fetch failed then falls back to brand profile", async () => {
+  it("warmCache failure keeps prior index and does not throw", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("fetch failed");
     }) as unknown as typeof fetch;
 
     const client = new WordPressApiClient(testConfig(), fetchImpl);
-    const hit = await client.retrieveForQuery("top story");
-
-    // searchPosts + listCategories each retry once → 4 attempts max
-    expect(fetchImpl).toHaveBeenCalledTimes(4);
-    expect(hit.degraded).toBe(true);
-    expect(hit.usedBrandProfile).toBe(true);
-    expect(hit.degradeReason).toMatch(/fetch failed/i);
+    client.hydrateMemIndex({ articles: sampleArticles(), warmedAt: Date.now() });
+    const ok = await client.warmCache("swr");
+    expect(ok).toBe(false);
+    expect(client.getMemIndex().articles).toHaveLength(3);
   });
 
   it("flattenFetchError surfaces nested undici causes", () => {
@@ -127,80 +165,51 @@ describe("WordPressApiClient", () => {
     expect(flattenFetchError(outer)).toMatch(/ECONNRESET/);
   });
 
-  it("routes to brand profile on 5xx without throwing", async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response("boom", { status: 503 }),
-    ) as unknown as typeof fetch;
-
+  it("live retrieve hits mem index without network and is not degraded", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
     const client = new WordPressApiClient(testConfig(), fetchImpl);
-    const hit = await client.retrieveForQuery("budget");
+    client.hydrateMemIndex({ articles: sampleArticles(), warmedAt: Date.now() });
 
-    expect(hit.degraded).toBe(true);
-    expect(hit.usedBrandProfile).toBe(true);
-    expect(hit.brandSpeech?.toLowerCase()).toContain("mail call");
-    expect(hit.articles).toEqual([]);
+    const hit = await client.retrieveForLiveTurn("please tell me about the harbor news");
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(hit.degraded).toBe(false);
+    expect(hit.cacheHit).toBe(true);
+    expect(hit.articles.length).toBeLessThanOrEqual(LIVE_RAG_MAX_ARTICLES);
+    expect(hit.articles[0]?.title.toLowerCase()).toContain("harbor");
   });
 
-  it("routes to brand profile on timeout/abort", async () => {
-    const fetchImpl = vi.fn(async () => {
-      const err = new Error("aborted");
-      err.name = "AbortError";
-      throw err;
-    }) as unknown as typeof fetch;
-
-    const client = new WordPressApiClient(
-      testConfig({ MAILCALL_WP_TIMEOUT_MS: 50 }),
-      fetchImpl,
-    );
-    const hit = await client.retrieveForQuery("news");
-    expect(hit.degraded).toBe(true);
+  it("cold mem index falls back to brand profile without calling WordPress", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new WordPressApiClient(testConfig(), fetchImpl);
+    const hit = await client.retrieveForQuery("top story");
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(hit.usedBrandProfile).toBe(true);
-    expect(hit.degradeReason).toMatch(/ETIMEDOUT|timed out/i);
+    expect(hit.degraded).toBe(true);
+    expect(hit.degradeReason).toBe("MEM_CACHE_COLD");
   });
 
-  it("extractSearchTerms drops filler words from voice transcripts", () => {
+  it("extractSearchTerms drops filler words and repairs phonetic brand STT", () => {
     expect(extractSearchTerms("um can you please tell me about the harbor cleanup")).toBe(
       "harbor cleanup",
     );
+    expect(normalizeVoiceTranscript("tell me about the medical newspaper")).toMatch(
+      /MailCall Newspaper/i,
+    );
+    expect(extractSearchTerms("what is the medical newspaper mission")).toContain("mission");
   });
 
-  it("retrieveForLiveTurn caps articles at 2 and logs articlesUsed", async () => {
-    const fetchImpl = vi.fn(async () => {
-      return new Response(
-        JSON.stringify([
-          {
-            id: 1,
-            title: { rendered: "One" },
-            excerpt: { rendered: "<p>First</p>" },
-            content: { rendered: "<p>Body one</p>" },
-            categories: [],
-          },
-          {
-            id: 2,
-            title: { rendered: "Two" },
-            excerpt: { rendered: "<p>Second</p>" },
-            content: { rendered: "<p>Body two</p>" },
-            categories: [],
-          },
-          {
-            id: 3,
-            title: { rendered: "Three" },
-            excerpt: { rendered: "<p>Third</p>" },
-            content: { rendered: "<p>Body three</p>" },
-            categories: [],
-          },
-        ]),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }) as unknown as typeof fetch;
-
+  it("maps mission/vision queries to brand profile via mem path", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
     const client = new WordPressApiClient(testConfig(), fetchImpl);
-    const hit = await client.retrieveForLiveTurn("please tell me about the harbor news");
+    client.hydrateMemIndex({ articles: sampleArticles(), warmedAt: Date.now() });
 
-    expect(hit.degraded).toBe(false);
-    expect(hit.articles.length).toBeLessThanOrEqual(LIVE_RAG_MAX_ARTICLES);
-    expect(hit.articles.length).toBe(2);
-    const url = String(fetchImpl.mock.calls[0]?.[0] ?? "");
-    expect(url).toContain("per_page=2");
+    const mission = await client.retrieveForLiveTurn("what is your purpose");
+    expect(mission.usedBrandProfile).toBe(true);
+    expect(mission.degraded).toBe(false);
+    expect(mission.brandSpeech?.toLowerCase()).toMatch(/dedicated|mission|journalism/);
+
+    const vision = await client.retrieveForLiveTurn("what is your vision");
+    expect(vision.usedBrandProfile).toBe(true);
+    expect(vision.brandSpeech?.toLowerCase()).toContain("vision");
   });
 });

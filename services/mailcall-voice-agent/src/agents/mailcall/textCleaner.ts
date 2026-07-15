@@ -1,6 +1,7 @@
 /**
  * Cleanse WordPress payloads for TTS: strip HTML, shortcodes, markdown, URLs.
  * Voice turns must never speak raw markup or long links.
+ * Also normalizes common Twilio STT mis-hears of MailCall brand vocabulary.
  */
 
 const HTML_TAG_RE = /<\/?[^>]+>/g;
@@ -41,6 +42,38 @@ function decodeEntities(text: string): string {
     }
     return NAMED_ENTITIES[key] ?? "";
   });
+}
+
+/**
+ * Phonetic / STT repair map — apply BEFORE keyword extraction or brand matching.
+ * Twilio often hears "MailCall Newspaper" as medical/male variants.
+ */
+const VOICE_TRANSCRIPT_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\bmedical\s+newspaper\b/gi, "MailCall Newspaper"],
+  [/\bmedical\s+commutation\b/gi, "MailCall Newspaper"],
+  [/\bmedical\s+communication\b/gi, "MailCall Newspaper"],
+  [/\bmale\s+communication\b/gi, "MailCall Newspaper"],
+  [/\bmale\s+confirming\b/gi, "MailCall Newspaper"],
+  [/\bmale\s+call\s+newspaper\b/gi, "MailCall Newspaper"],
+  [/\bmail\s+communication\b/gi, "MailCall Newspaper"],
+  [/\bmail\s+call\s+communication\b/gi, "Mail Call Communication"],
+  [/\bmale\s+call\b/gi, "Mail Call"],
+  [/\bmedical\s+call\b/gi, "Mail Call"],
+  [/\bmay\s+call\s+newspaper\b/gi, "MailCall Newspaper"],
+  [/\bnail\s+call\b/gi, "Mail Call"],
+];
+
+/**
+ * Normalize a raw voice transcript for brand/keyword matching.
+ * Does not alter TTS output paths — only inbound understanding.
+ */
+export function normalizeVoiceTranscript(input: string | null | undefined): string {
+  let text = String(input ?? "").trim();
+  if (!text) return "";
+  for (const [pattern, replacement] of VOICE_TRANSCRIPT_REPLACEMENTS) {
+    text = text.replace(pattern, replacement);
+  }
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /**

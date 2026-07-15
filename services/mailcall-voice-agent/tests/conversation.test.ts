@@ -45,10 +45,8 @@ describe("conversation + prompts", () => {
     vi.stubEnv("MAILCALL_VALIDATE_TWILIO_SIGNATURES", "false");
   });
 
-  it("falls back to natural brand speech when WordPress is down", async () => {
-    const fetchImpl = vi.fn(async () =>
-      new Response("down", { status: 500 }),
-    ) as unknown as typeof fetch;
+  it("falls back to natural brand speech when mem index is cold", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
     const wp = new WordPressApiClient(testConfig(), fetchImpl);
 
     const result = await processConversationTurn(
@@ -56,6 +54,7 @@ describe("conversation + prompts", () => {
       wp,
     );
 
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(result.degraded).toBe(true);
     expect(result.usedBrandProfile).toBe(true);
     expect(result.speech.toLowerCase()).toContain("mail call");
@@ -102,38 +101,32 @@ describe("conversation + prompts", () => {
     expect(result.speech.toLowerCase()).toMatch(/final|does not permit|returns/);
   });
 
-  it("summarizes articles in short spoken turns without OpenAI", async () => {
-    const fetchImpl = vi.fn(async (url: string | URL) => {
-      const u = String(url);
-      if (u.includes("/categories")) {
-        return new Response(JSON.stringify([{ id: 1, name: "Local", slug: "local", count: 2 }]), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      return new Response(
-        JSON.stringify([
-          {
-            id: 9,
-            title: { rendered: "Harbor Cleanup Begins" },
-            excerpt: {
-              rendered:
-                "<p>Crews started clearing debris from the north pier this morning. Officials expect two weeks of work.</p>",
-            },
-            content: { rendered: "<p>More details...</p>" },
-            categories: [1],
-          },
-        ]),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }) as unknown as typeof fetch;
-
+  it("summarizes articles from mem index without OpenAI or live CMS", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
     const wp = new WordPressApiClient(testConfig(), fetchImpl);
+    wp.hydrateMemIndex({
+      warmedAt: Date.now(),
+      articles: [
+        {
+          id: 9,
+          title: "Harbor Cleanup Begins",
+          excerpt: "Crews started clearing debris from the north pier this morning.",
+          content: "Officials expect two weeks of work on the harbor.",
+          spokenSummary:
+            "Crews started clearing debris from the north pier this morning. Officials expect two weeks of work.",
+          categoryIds: [1],
+          customFields: {},
+          slug: "harbor-cleanup",
+        },
+      ],
+    });
+
     const result = await processConversationTurn(
       { callSid: "call-1", utterance: "harbor news" },
       wp,
     );
 
+    expect(fetchImpl).not.toHaveBeenCalled();
     expect(result.degraded).toBe(false);
     expect(result.articlesUsed).toBeGreaterThan(0);
     expect(result.articlesUsed).toBeLessThanOrEqual(2);

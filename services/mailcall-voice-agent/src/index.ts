@@ -17,6 +17,7 @@ import {
   attachMailCallRelayHandler,
   createMailCallRouter,
 } from "./agents/mailcall/router.js";
+import { startWordPressMemCache } from "./agents/mailcall/wordpress_api.js";
 
 function healthPayload() {
   const degraded = isConfigDegraded();
@@ -119,6 +120,14 @@ export function startServer() {
       ws: `${MAILCALL_API_PREFIX}/ws`,
       envFilesLoaded: envLoadReport.loaded,
     });
+
+    // Warm mem index + 5m SWR after bind — never blocks listen() or live turns.
+    if (!state.degraded) {
+      console.log("LOG: Starting WordPress in-memory cache warm + SWR...");
+      startWordPressMemCache();
+    } else {
+      console.log("LOG: Skipping CMS cache warm while config is degraded.");
+    }
   });
 
   server.on("error", (err) => {

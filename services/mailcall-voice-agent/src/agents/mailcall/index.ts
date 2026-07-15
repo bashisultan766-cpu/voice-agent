@@ -1,4 +1,11 @@
-export { WordPressApiClient, getWordPressApiClient, resetWordPressApiClient, extractSearchTerms } from "./wordpress_api.js";
+export {
+  WordPressApiClient,
+  getWordPressApiClient,
+  resetWordPressApiClient,
+  startWordPressMemCache,
+  extractSearchTerms,
+  scoreArticleAgainstTerms,
+} from "./wordpress_api.js";
 export { createMailCallRouter, attachMailCallRelayHandler, MAILCALL_API_PREFIX } from "./router.js";
 export {
   SYSTEM_PROMPT,
@@ -30,7 +37,12 @@ export {
 } from "./businessRules.js";
 export { normalizeSpokenEmail, looksLikeEmail } from "./emailNormalize.js";
 export { executeMailCallTool, MAILCALL_TOOL_DEFINITIONS } from "./tools.js";
-export { cleanseForSpeech, truncateToSentences, clampSpokenLength } from "./textCleaner.js";
+export {
+  cleanseForSpeech,
+  truncateToSentences,
+  clampSpokenLength,
+  normalizeVoiceTranscript,
+} from "./textCleaner.js";
 export { TtlCache } from "./ttlCache.js";
 export type {
   MailCallArticle,

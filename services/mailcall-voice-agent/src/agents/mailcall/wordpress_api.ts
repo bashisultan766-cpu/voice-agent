@@ -1,14 +1,14 @@
 /**
  * Decoupled WordPress REST data layer for Mail Call Voice AI.
- * Fetches /wp-json/wp/v2/posts (+ categories) with Basic Auth,
- * GoDaddy-compatible browser headers, hard 2s timeout, and silent
- * fallback to the local brand profile.
+ *
+ * Live voice turns NEVER wait on GoDaddy — they search a warmed in-memory index.
+ * Network I/O runs only at startup warm + stale-while-revalidate background sync.
  */
 
 import { DEFAULT_MAILCALL_WP_URL, getConfig, type MailCallConfig } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { TtlCache } from "./ttlCache.js";
-import { cleanseForSpeech, truncateToSentences } from "./textCleaner.js";
+import { cleanseForSpeech, normalizeVoiceTranscript, truncateToSentences } from "./textCleaner.js";
 import {
   brandOfflineFallbackSpeech,
   buildBrandProfileKnowledgeBlock,
@@ -22,16 +22,25 @@ import type {
   WpPostRaw,
 } from "./types.js";
 
-/** Voice budget: never wait longer than this for CMS. */
+/** Background / warm CMS budget (not used on live call path). */
 export const WP_REQUEST_TIMEOUT_MS = 2000;
 
-/** Live call RAG: hard outer deadline before LLM turn. */
+/** Longer budget for out-of-band warm + SWR sync only. */
+export const WP_BACKGROUND_TIMEOUT_MS = 12_000;
+
+/** Kept for telemetry compatibility — live path no longer races the network. */
 export const LIVE_RAG_TIMEOUT_MS = 1000;
 
 /** Live call RAG: inject at most this many articles into the turn prompt. */
 export const LIVE_RAG_MAX_ARTICLES = 2;
 
-/** One silent retry on transient socket failures before brand-profile fallback. */
+/** Posts pulled into the memory index on warm / SWR. */
+export const MEM_INDEX_POST_LIMIT = 50;
+
+/** SWR interval — refresh mem index without blocking calls. */
+export const MEM_INDEX_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+/** One silent retry on transient socket failures (background only). */
 const WP_TRANSIENT_RETRIES = 1;
 
 const SEARCH_STOP_WORDS = new Set([
@@ -107,14 +116,27 @@ const SEARCH_STOP_WORDS = new Set([
   "no",
   "okay",
   "ok",
+  "mailcall",
+  "mail",
+  "call",
+  "newspaper",
 ]);
 
+export interface MemIndexSnapshot {
+  articles: MailCallArticle[];
+  categories: MailCallCategory[];
+  /** About / mission / vision pages (and similar). */
+  pages: MailCallArticle[];
+  warmedAt: number;
+  version: number;
+}
+
 /**
- * Extract compact search terms from a raw voice transcript for WP `search=`.
- * Drops filler/stop words so live RAG hits relevant posts instead of noise.
+ * Extract compact search terms from a raw voice transcript for local index match.
+ * Applies phonetic STT repair first.
  */
 export function extractSearchTerms(utterance: string): string {
-  const raw = utterance.trim();
+  const raw = normalizeVoiceTranscript(utterance);
   if (!raw) return "";
 
   const tokens = raw
@@ -128,6 +150,24 @@ export function extractSearchTerms(utterance: string): string {
   return joined || raw.slice(0, 80);
 }
 
+/** Score an article against tokenized query terms (mini in-memory VSS). */
+export function scoreArticleAgainstTerms(article: MailCallArticle, terms: string[]): number {
+  if (terms.length === 0) return 0;
+  const title = article.title.toLowerCase();
+  const excerpt = article.excerpt.toLowerCase();
+  const content = article.content.toLowerCase().slice(0, 1200);
+  const slug = (article.slug ?? "").toLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    if (!term) continue;
+    if (title.includes(term)) score += 6;
+    if (slug.includes(term)) score += 4;
+    if (excerpt.includes(term)) score += 3;
+    if (content.includes(term)) score += 2;
+  }
+  return score;
+}
+
 /** Browser-like headers — GoDaddy / ModSecurity often block bare Node UA strings. */
 export const WP_BROWSER_HEADERS = {
   "User-Agent":
@@ -138,6 +178,7 @@ export const WP_BROWSER_HEADERS = {
 
 const POST_FIELDS = "id,date,modified,slug,link,title,excerpt,content,categories,tags,meta";
 const CATEGORY_FIELDS = "id,name,slug,count,description";
+const PAGE_SLUGS = ["about", "about-us", "mission", "vision", "our-mission", "our-vision"] as const;
 
 export class WordPressApiError extends Error {
   constructor(
@@ -227,6 +268,15 @@ export class WordPressApiClient {
   private readonly categoriesCache: TtlCache<MailCallCategory[]>;
   private readonly searchCache: TtlCache<MailCallArticle[]>;
   private readonly timeoutMs: number;
+  private memIndex: MemIndexSnapshot = {
+    articles: [],
+    categories: [],
+    pages: [],
+    warmedAt: 0,
+    version: 0,
+  };
+  private syncTimer: ReturnType<typeof setInterval> | null = null;
+  private syncing = false;
 
   constructor(
     private readonly cfg: MailCallConfig = getConfig(),
@@ -242,7 +292,6 @@ export class WordPressApiClient {
     return (this.cfg.wpBaseUrl || DEFAULT_MAILCALL_WP_URL).replace(/\/+$/, "");
   }
 
-  /** Basic Auth header; Application Password spaces already stripped in config. */
   private authHeader(): string {
     const token = Buffer.from(
       `${this.cfg.MAILCALL_WP_USER}:${this.cfg.wpAppPasswordClean}`,
@@ -258,19 +307,49 @@ export class WordPressApiClient {
     };
   }
 
-  /**
-   * Build a fully encoded WP REST URL.
-   * Query values go through URLSearchParams (encodeURIComponent-equivalent).
-   */
   buildWpUrl(resourcePath: string, params: Record<string, string | number>): string {
     const path = resourcePath.startsWith("/") ? resourcePath : `/${resourcePath}`;
     const url = new URL(`${this.baseUrl()}/wp-json/wp/v2${path}`);
     for (const [key, value] of Object.entries(params)) {
-      // Explicit encodeURIComponent then set via searchParams would double-encode;
-      // URLSearchParams.set encodes once — correct for WP `search=` terms.
       url.searchParams.set(key, String(value));
     }
     return url.toString();
+  }
+
+  getMemIndex(): MemIndexSnapshot {
+    return this.memIndex;
+  }
+
+  /** Test helper — inject a warm index without network. */
+  hydrateMemIndex( partial: Partial<MemIndexSnapshot>): void {
+    this.memIndex = {
+      articles: partial.articles ?? this.memIndex.articles,
+      categories: partial.categories ?? this.memIndex.categories,
+      pages: partial.pages ?? this.memIndex.pages,
+      warmedAt: partial.warmedAt ?? Date.now(),
+      version: (this.memIndex.version || 0) + 1,
+    };
+  }
+
+  /** Local keyword search over warmed posts + pages. Never touches the network. */
+  searchMemIndex(query: string, limit = LIVE_RAG_MAX_ARTICLES): MailCallArticle[] {
+    const terms = extractSearchTerms(query)
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    const corpus = [...this.memIndex.articles, ...this.memIndex.pages];
+    if (corpus.length === 0) return [];
+
+    if (terms.length === 0) {
+      return corpus.slice(0, limit);
+    }
+
+    return corpus
+      .map((article) => ({ article, score: scoreArticleAgainstTerms(article, terms) }))
+      .filter((row) => row.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((row) => row.article);
   }
 
   private async wpFetchOnce<T>(url: string, signal: AbortSignal): Promise<T> {
@@ -281,7 +360,6 @@ export class WordPressApiClient {
       redirect: "follow",
     });
 
-    // Auth / upstream failures → silent offline path (no throw to caller of retrieveForQuery).
     if (res.status === 401 || res.status === 403 || res.status === 503 || res.status >= 500) {
       throw new WordPressApiError(`CMS HTTP ${res.status}`, res.status);
     }
@@ -295,13 +373,14 @@ export class WordPressApiClient {
   private async wpFetch<T>(
     resourcePath: string,
     params: Record<string, string | number>,
+    timeoutMs = this.timeoutMs,
   ): Promise<T> {
     const url = this.buildWpUrl(resourcePath, params);
     let lastErr: unknown;
 
     for (let attempt = 0; attempt <= WP_TRANSIENT_RETRIES; attempt++) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         return await this.wpFetchOnce<T>(url, controller.signal);
       } catch (err) {
@@ -334,7 +413,11 @@ export class WordPressApiClient {
     throw new WordPressApiError(flattenFetchError(lastErr), undefined, lastErr);
   }
 
+  /** Background/admin path — may hit network (not used on live ConversationRelay turns). */
   async listRecentPosts(perPage = 10): Promise<MailCallArticle[]> {
+    if (this.memIndex.articles.length > 0) {
+      return this.memIndex.articles.slice(0, perPage);
+    }
     const key = `posts:recent:${perPage}`;
     return this.postsCache.getOrLoad(key, async () => {
       const raw = await this.wpFetch<WpPostRaw[]>("/posts", {
@@ -348,12 +431,15 @@ export class WordPressApiClient {
   }
 
   async searchPosts(query: string, perPage = 8): Promise<MailCallArticle[]> {
-    const q = query.trim().slice(0, 120);
+    const local = this.searchMemIndex(query, perPage);
+    if (local.length > 0 || this.memIndex.warmedAt > 0) {
+      return local;
+    }
+    const q = normalizeVoiceTranscript(query).slice(0, 120);
     if (!q) return this.listRecentPosts(perPage);
 
     const key = `posts:search:${q.toLowerCase()}:${perPage}`;
     return this.searchCache.getOrLoad(key, async () => {
-      // `search` is passed as a raw string; buildWpUrl / URLSearchParams encodes it.
       const raw = await this.wpFetch<WpPostRaw[]>("/posts", {
         search: q,
         per_page: perPage,
@@ -365,6 +451,9 @@ export class WordPressApiClient {
   }
 
   async listCategories(): Promise<MailCallCategory[]> {
+    if (this.memIndex.categories.length > 0) {
+      return this.memIndex.categories;
+    }
     return this.categoriesCache.getOrLoad("categories:all", async () => {
       const raw = await this.wpFetch<WpCategoryRaw[]>("/categories", {
         per_page: 100,
@@ -372,6 +461,140 @@ export class WordPressApiClient {
       });
       return raw.map(normalizeCategory);
     });
+  }
+
+  private async fetchCorePages(): Promise<MailCallArticle[]> {
+    const byId = new Map<number, MailCallArticle>();
+    await Promise.all(
+      PAGE_SLUGS.map(async (slug) => {
+        try {
+          const raw = await this.wpFetch<WpPostRaw[]>(
+            "/pages",
+            {
+              slug,
+              per_page: 1,
+              _fields: POST_FIELDS,
+            },
+            WP_BACKGROUND_TIMEOUT_MS,
+          );
+          for (const page of raw) {
+            byId.set(page.id, normalizeArticle(page));
+          }
+        } catch {
+          // Page may not exist — ignore quietly during warm/SWR.
+        }
+      }),
+    );
+
+    // Fallback search for about/mission/vision if slug lookup empty.
+    if (byId.size === 0) {
+      try {
+        const raw = await this.wpFetch<WpPostRaw[]>(
+          "/pages",
+          {
+            search: "about mission vision",
+            per_page: 10,
+            _fields: POST_FIELDS,
+          },
+          WP_BACKGROUND_TIMEOUT_MS,
+        );
+        for (const page of raw) {
+          byId.set(page.id, normalizeArticle(page));
+        }
+      } catch {
+        // keep empty
+      }
+    }
+
+    return [...byId.values()];
+  }
+
+  /**
+   * Pull top posts + categories + about/mission/vision into the memory index.
+   * Safe to call repeatedly (SWR). Never throws to callers.
+   */
+  async warmCache(reason: "startup" | "swr" | "manual" = "manual"): Promise<boolean> {
+    if (this.syncing) return false;
+    this.syncing = true;
+    const started = Date.now();
+    try {
+      const [postsRaw, categoriesRaw, pages] = await Promise.all([
+        this.wpFetch<WpPostRaw[]>(
+          "/posts",
+          {
+            per_page: MEM_INDEX_POST_LIMIT,
+            _fields: POST_FIELDS,
+            orderby: "date",
+            order: "desc",
+          },
+          WP_BACKGROUND_TIMEOUT_MS,
+        ),
+        this.wpFetch<WpCategoryRaw[]>(
+          "/categories",
+          {
+            per_page: 100,
+            _fields: CATEGORY_FIELDS,
+          },
+          WP_BACKGROUND_TIMEOUT_MS,
+        ).catch(() => [] as WpCategoryRaw[]),
+        this.fetchCorePages(),
+      ]);
+
+      const articles = postsRaw.map(normalizeArticle);
+      const categories = categoriesRaw.map(normalizeCategory);
+      this.memIndex = {
+        articles,
+        categories,
+        pages,
+        warmedAt: Date.now(),
+        version: this.memIndex.version + 1,
+      };
+
+      // Seed TTL caches so legacy helpers stay coherent.
+      this.postsCache.set(`posts:recent:${MEM_INDEX_POST_LIMIT}`, articles);
+      this.categoriesCache.set("categories:all", categories);
+
+      logger.info("[MEM_CACHE_WARM] In-memory WordPress index refreshed.", {
+        reason,
+        articles: articles.length,
+        categories: categories.length,
+        pages: pages.length,
+        latencyMs: Date.now() - started,
+        version: this.memIndex.version,
+      });
+      return true;
+    } catch (err) {
+      const reasonMsg = err instanceof Error ? err.message : String(err);
+      logger.warn("[MEM_CACHE_SWR] Background warm failed; keeping prior index.", {
+        reason: reasonMsg.slice(0, 160),
+        trigger: reason,
+        hadPrior: this.memIndex.articles.length > 0,
+        latencyMs: Date.now() - started,
+      });
+      return false;
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  /** Fire-and-forget warm + 5-minute SWR loop. Does not block listen(). */
+  startBackgroundSync(intervalMs = MEM_INDEX_SYNC_INTERVAL_MS): void {
+    if (this.syncTimer) return;
+    void this.warmCache("startup");
+    this.syncTimer = setInterval(() => {
+      void this.warmCache("swr");
+    }, intervalMs);
+    // Allow Node to exit in tests / short-lived processes.
+    if (typeof this.syncTimer === "object" && "unref" in this.syncTimer) {
+      this.syncTimer.unref();
+    }
+  }
+
+  stopBackgroundSync(): void {
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+      this.syncTimer = null;
+    }
   }
 
   private brandFallbackHit(
@@ -382,7 +605,7 @@ export class WordPressApiClient {
     const brandSpeech = opts?.brandSpeech ?? brandOfflineFallbackSpeech(query);
     return {
       articles: [],
-      categories: [],
+      categories: this.memIndex.categories,
       degraded: Boolean(opts?.degraded),
       usedBrandProfile: true,
       brandSpeech,
@@ -394,147 +617,75 @@ export class WordPressApiClient {
   }
 
   /**
-   * Knowledge retrieval for a caller utterance.
-   * Never throws — on CMS failure returns brand-profile fallback (caller-safe).
+   * Live / staging retrieval — memory index only (no network).
+   * Phonetic normalize → brand mission/vision/about → local keyword search.
    */
   async retrieveForQuery(query: string): Promise<KnowledgeHit> {
-    const started = Date.now();
-
-    // Identity / about questions → static brand profile (no CMS round-trip).
-    const brandHit = matchBrandProfileQuery(query);
-    if (brandHit) {
-      return this.brandFallbackHit(query, started, { brandSpeech: brandHit });
-    }
-
-    const q = query.trim().slice(0, 120);
-    const searchKey = q ? `posts:search:${q.toLowerCase()}:8` : `posts:recent:8`;
-    const cacheHit =
-      this.searchCache.get(searchKey) !== undefined ||
-      (!q && this.postsCache.get("posts:recent:8") !== undefined);
-
-    try {
-      const [articles, categories] = await Promise.all([
-        this.searchPosts(query),
-        this.listCategories().catch(() => [] as MailCallCategory[]),
-      ]);
-
-      return {
-        articles,
-        categories,
-        degraded: false,
-        usedBrandProfile: false,
-        cacheHit,
-        latencyMs: Date.now() - started,
-      };
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      // SRE signal only — never surface to the caller.
-      logger.warn("[WP_CLIENT_OFFLINE] Routing query to static local brand profile.", {
-        reason,
-        queryPreview: query.slice(0, 80),
-        timeoutMs: this.timeoutMs,
-      });
-
-      return this.brandFallbackHit(query, started, {
-        degraded: true,
-        degradeReason: reason,
-      });
-    }
+    return this.retrieveFromMemIndex(query);
   }
 
   /**
-   * Live voice-turn RAG: extract search terms → parallel WP search (max 2 articles)
-   * under a hard 1000ms deadline. Never throws.
+   * Live voice-turn RAG: never awaits WordPress. Sub-10ms local index search.
    */
   async retrieveForLiveTurn(rawUtterance: string): Promise<KnowledgeHit> {
-    const started = Date.now();
-    const brandHit = matchBrandProfileQuery(rawUtterance);
-    if (brandHit) {
-      return this.brandFallbackHit(rawUtterance, started, { brandSpeech: brandHit });
-    }
-
-    const searchTerms = extractSearchTerms(rawUtterance);
-    if (!searchTerms) {
-      return {
-        articles: [],
-        categories: [],
-        degraded: false,
-        usedBrandProfile: false,
-        cacheHit: false,
-        latencyMs: Date.now() - started,
-      };
-    }
-
-    const searchKey = `posts:search:${searchTerms.toLowerCase()}:${LIVE_RAG_MAX_ARTICLES}`;
-    const cacheHit = this.searchCache.get(searchKey) !== undefined;
-
-    const timedSearch = async (): Promise<MailCallArticle[]> => {
-      // Parallel: primary term search + optional raw-transcript search, merge by id.
-      const rawSlice = rawUtterance.trim().slice(0, 120);
-      const secondary =
-        rawSlice && rawSlice.toLowerCase() !== searchTerms.toLowerCase()
-          ? this.searchPosts(rawSlice, LIVE_RAG_MAX_ARTICLES).catch(() => [] as MailCallArticle[])
-          : Promise.resolve([] as MailCallArticle[]);
-
-      const [primary, alt] = await Promise.all([
-        this.searchPosts(searchTerms, LIVE_RAG_MAX_ARTICLES),
-        secondary,
-      ]);
-
-      const seen = new Set<number>();
-      const merged: MailCallArticle[] = [];
-      for (const article of [...primary, ...alt]) {
-        if (seen.has(article.id)) continue;
-        seen.add(article.id);
-        merged.push(article);
-        if (merged.length >= LIVE_RAG_MAX_ARTICLES) break;
-      }
-      return merged;
-    };
-
-    try {
-      const articles = await Promise.race([
-        timedSearch(),
-        new Promise<MailCallArticle[]>((_, reject) => {
-          setTimeout(
-            () => reject(new WordPressApiError("ETIMEDOUT")),
-            LIVE_RAG_TIMEOUT_MS,
-          );
-        }),
-      ]);
-
-      logger.info("mailcall_live_rag", {
-        searchTerms,
-        articlesUsed: articles.length,
-        latencyMs: Date.now() - started,
-        cacheHit,
-      });
-
-      return {
-        articles,
-        categories: [],
-        degraded: false,
-        usedBrandProfile: false,
-        cacheHit,
-        latencyMs: Date.now() - started,
-      };
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      logger.warn("[WP_CLIENT_OFFLINE] Live RAG timed out or failed; brand profile fallback.", {
-        reason,
-        searchTerms,
-        queryPreview: rawUtterance.slice(0, 80),
-        timeoutMs: LIVE_RAG_TIMEOUT_MS,
-      });
-
-      return this.brandFallbackHit(rawUtterance, started, {
-        degraded: true,
-        degradeReason: reason,
-      });
-    }
+    return this.retrieveFromMemIndex(rawUtterance);
   }
 
-  /** Natural offline / brand speech for routers (never technical). */
+  private async retrieveFromMemIndex(rawUtterance: string): Promise<KnowledgeHit> {
+    const started = Date.now();
+    const normalized = normalizeVoiceTranscript(rawUtterance);
+
+    const brandHit = matchBrandProfileQuery(normalized);
+    if (brandHit) {
+      logger.info("[MEM_CACHE_HIT] Resolved query via warmed in-memory index.", {
+        path: "brand_profile",
+        latencyMs: Date.now() - started,
+        indexVersion: this.memIndex.version,
+      });
+      return this.brandFallbackHit(normalized, started, { brandSpeech: brandHit });
+    }
+
+    const articles = this.searchMemIndex(normalized, LIVE_RAG_MAX_ARTICLES);
+    const latencyMs = Date.now() - started;
+
+    if (articles.length > 0) {
+      logger.info("[MEM_CACHE_HIT] Resolved query via warmed in-memory index.", {
+        path: "article_index",
+        articlesUsed: articles.length,
+        latencyMs,
+        indexVersion: this.memIndex.version,
+        indexSize: this.memIndex.articles.length,
+      });
+      return {
+        articles,
+        categories: this.memIndex.categories,
+        degraded: false,
+        usedBrandProfile: false,
+        cacheHit: true,
+        latencyMs,
+      };
+    }
+
+    // Cold index or no lexical match — natural brand speech, not a hard outage.
+    if (this.memIndex.warmedAt === 0) {
+      logger.warn("[MEM_CACHE_COLD] Index not warmed yet; serving brand profile.", {
+        queryPreview: normalized.slice(0, 80),
+        latencyMs,
+      });
+    } else {
+      logger.info("[MEM_CACHE_HIT] Resolved query via warmed in-memory index.", {
+        path: "brand_fallback_empty_match",
+        latencyMs,
+        indexVersion: this.memIndex.version,
+      });
+    }
+
+    return this.brandFallbackHit(normalized, started, {
+      degraded: this.memIndex.warmedAt === 0,
+      degradeReason: this.memIndex.warmedAt === 0 ? "MEM_CACHE_COLD" : undefined,
+    });
+  }
+
   static unavailableSpeech(): string {
     return brandOfflineFallbackSpeech("");
   }
@@ -543,6 +694,13 @@ export class WordPressApiClient {
     this.postsCache.clear();
     this.categoriesCache.clear();
     this.searchCache.clear();
+    this.memIndex = {
+      articles: [],
+      categories: [],
+      pages: [],
+      warmedAt: 0,
+      version: 0,
+    };
   }
 }
 
@@ -554,5 +712,13 @@ export function getWordPressApiClient(): WordPressApiClient {
 }
 
 export function resetWordPressApiClient(): void {
+  if (defaultClient) {
+    defaultClient.stopBackgroundSync();
+  }
   defaultClient = null;
+}
+
+/** Start warm + SWR on the singleton (called after HTTP listen). */
+export function startWordPressMemCache(): void {
+  getWordPressApiClient().startBackgroundSync();
 }

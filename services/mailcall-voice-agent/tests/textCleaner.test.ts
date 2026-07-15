@@ -3,6 +3,7 @@ import {
   cleanseForSpeech,
   truncateToSentences,
   clampSpokenLength,
+  normalizeVoiceTranscript,
 } from "../src/agents/mailcall/textCleaner.js";
 
 describe("cleanseForSpeech", () => {
@@ -38,5 +39,15 @@ describe("clampSpokenLength", () => {
     const out = clampSpokenLength(words, 10);
     expect(out.split(/\s+/).length).toBeLessThanOrEqual(11);
     expect(out.endsWith(".")).toBe(true);
+  });
+});
+
+describe("normalizeVoiceTranscript", () => {
+  it("repairs common MailCall STT mis-hears", () => {
+    expect(normalizeVoiceTranscript("I called about the medical newspaper")).toContain(
+      "MailCall Newspaper",
+    );
+    expect(normalizeVoiceTranscript("male communication please")).toContain("MailCall Newspaper");
+    expect(normalizeVoiceTranscript("mail communication support")).toContain("MailCall Newspaper");
   });
 });
