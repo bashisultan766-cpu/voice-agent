@@ -68,7 +68,7 @@ export const SCRIPTS = {
   escalation:
     "I really hear your frustration, and I want to help. While our refund policy is strict due to printing costs, I can escalate this to our support manager or look into a delivery issue personally. Would you like me to do that?",
   escalationSent:
-    "Not a problem, I have sent those details directly to our support team at support@mailcallnewspaper.com, and they will look into this on the next business day.",
+    "Perfect. I have compiled all your details and sent them directly to our processing queue. Our administrative staff will review this manually and execute your print run on the next business day. Thank you for supporting MailCall — if you need anything else, just give us a call.",
   addressChange:
     `Address changes are free. Please email the updated details to ${SUPPORT_EMAIL_SPOKEN}. The facility mailroom usually forwards mail for up to thirty days, and you should confirm the new facility accepts printed newspapers.`,
   firstIssueTimeline:

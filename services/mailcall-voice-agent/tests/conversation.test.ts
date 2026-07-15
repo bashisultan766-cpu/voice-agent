@@ -101,6 +101,90 @@ describe("conversation + prompts", () => {
     expect(result.speech.toLowerCase()).toMatch(/final|does not permit|returns/);
   });
 
+  it("locks purchase intent into deterministic nine-slot intake before submission", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+    let submitted: Record<string, unknown> | undefined;
+    const toolExecutor = vi.fn(
+      async (_name: string, rawArgs: string | undefined) => {
+        submitted = JSON.parse(rawArgs ?? "{}") as Record<string, unknown>;
+        return {
+          toolPayload: { ok: true, messageId: "email-1" },
+          spokenHint: "sent",
+        };
+      },
+    );
+
+    const turn = (utterance: string) =>
+      processConversationTurn(
+        { callSid: "intake-1", utterance },
+        wp,
+        toolExecutor,
+      );
+
+    expect((await turn("I want to buy the Urban edition for 3 months")).speech).toMatch(
+      /full name/i,
+    );
+    expect((await turn("Mary Smith")).speech).toMatch(/email address/i);
+    expect((await turn("mary dot smith at gmail dot com")).speech).toBe(
+      "Got it. Before I submit this to our fulfillment team, what is your preferred contact phone number?",
+    );
+    expect((await turn("two one two five five five zero one nine eight")).speech).toMatch(
+      /inmate's full legal name/i,
+    );
+    expect((await turn("John Robert Smith")).speech).toMatch(/booking|identification/i);
+    expect((await turn("A 12345")).speech).toMatch(/official name/i);
+    expect((await turn("Albany Correctional Center")).speech).toMatch(
+      /shipping address/i,
+    );
+    const final = await turn("1 Main Street, Albany, New York 12207");
+
+    expect(toolExecutor).toHaveBeenCalledTimes(1);
+    expect(submitted).toEqual({
+      sender_name: "Mary Smith",
+      sender_email: "mary.smith@gmail.com",
+      sender_phone: "2125550198",
+      inmate_name: "John Robert Smith",
+      inmate_number: "A 12345",
+      facility_name: "Albany Correctional Center",
+      facility_address: "1 Main Street, Albany, New York 12207",
+      newspaper_selection: "Urban",
+      plan_duration: 3,
+    });
+    expect(final.speech).toContain("compiled all your details");
+    expect(final.speech).toContain("next business day");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid intake slots and does not submit early", async () => {
+    const wp = new WordPressApiClient(
+      testConfig(),
+      vi.fn() as unknown as typeof fetch,
+    );
+    const toolExecutor = vi.fn(async () => ({
+      toolPayload: { ok: true },
+    }));
+
+    await processConversationTurn(
+      { callSid: "intake-2", utterance: "I want to purchase a newspaper plan" },
+      wp,
+      toolExecutor,
+    );
+    await processConversationTurn(
+      { callSid: "intake-2", utterance: "Mary Smith" },
+      wp,
+      toolExecutor,
+    );
+    const invalidEmail = await processConversationTurn(
+      { callSid: "intake-2", utterance: "not an email" },
+      wp,
+      toolExecutor,
+    );
+
+    expect(invalidEmail.speech).toMatch(/email slowly/i);
+    expect(toolExecutor).not.toHaveBeenCalled();
+  });
+
   it("summarizes articles from mem index without OpenAI or live CMS", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     const wp = new WordPressApiClient(testConfig(), fetchImpl);
@@ -140,6 +224,8 @@ describe("conversation + prompts", () => {
     const prompt = buildSystemPrompt(new Date("2026-07-15T12:00:00Z"));
     expect(prompt).toMatch(/strictly Brook/i);
     expect(prompt).toContain("send_support_escalation");
+    expect(prompt).toMatch(/Urban.*Spanish.*Global/s);
+    expect(prompt).toMatch(/all nine values/i);
     expect(prompt).toMatch(/\$21\.66/);
     expect(prompt).toMatch(/ALL SALES ARE FINAL/i);
   });

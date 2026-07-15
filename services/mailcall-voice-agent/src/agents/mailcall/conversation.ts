@@ -17,7 +17,15 @@ import {
   buildRetrievalOnlySpeech,
   buildTurnMessages,
 } from "./prompts.js";
-import { executeMailCallTool, MAILCALL_TOOL_DEFINITIONS } from "./tools.js";
+import {
+  executeMailCallTool,
+  MAILCALL_TOOL_DEFINITIONS,
+  normalizeNewspaperSelection,
+  normalizePhoneNumber,
+  normalizePlanDuration,
+  type PrintPlanIntake,
+} from "./tools.js";
+import { looksLikeEmail, normalizeSpokenEmail } from "./emailNormalize.js";
 import { clampSpokenLength, truncateToSentences } from "./textCleaner.js";
 import type { CallTurnResult } from "./types.js";
 import { GREETING_SPEECH } from "./types.js";
@@ -31,7 +39,18 @@ export interface ConversationTurnInput {
 interface SessionMemory {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   startedAtMs: number;
+  printIntake?: PrintIntakeState;
 }
+
+type IntakeSlot = keyof PrintPlanIntake;
+
+interface PrintIntakeState {
+  active: boolean;
+  slots: Partial<PrintPlanIntake>;
+  awaiting?: IntakeSlot;
+}
+
+type MailCallToolExecutor = typeof executeMailCallTool;
 
 const sessions = new Map<string, SessionMemory>();
 
@@ -50,6 +69,178 @@ const DELAY_RE =
   /\b(delay(ed)?|late|hasn'?t (arrived|come)|not (received|gotten)|where is (my|the) (paper|issue|order))\b/i;
 
 const UPSET_RE = /\b(angry|furious|ridiculous|unacceptable|scam|lawsuit|attorney)\b/i;
+
+const PURCHASE_INTENT_RE =
+  /\b(buy|purchase|subscribe|subscription setup|sign me up|sign up|set up|start)\b.*\b(plan|subscription|newspaper|mailcall|edition)\b|\b(i want|i'd like|i would like|ready)\b.*\b(subscribe|subscription|buy|purchase|plan|edition)\b/i;
+
+const INTAKE_SLOT_ORDER: IntakeSlot[] = [
+  "sender_name",
+  "sender_email",
+  "sender_phone",
+  "inmate_name",
+  "inmate_number",
+  "facility_name",
+  "facility_address",
+  "newspaper_selection",
+  "plan_duration",
+];
+
+const INTAKE_PROMPTS: Record<IntakeSlot, string> = {
+  sender_name: "I can help with that. What is your full name?",
+  sender_email:
+    "Got it. What is your email address? You can say “at” for the at sign and “dot” for each period.",
+  sender_phone:
+    "Got it. Before I submit this to our fulfillment team, what is your preferred contact phone number?",
+  inmate_name: "Thank you. What is the inmate's full legal name?",
+  inmate_number: "Got it. What is the inmate's booking or identification number?",
+  facility_name: "Thank you. What is the official name of the correctional facility?",
+  facility_address:
+    "Got it. What is the complete physical shipping address for that facility?",
+  newspaper_selection:
+    "Which print edition would you like: Urban, Spanish, or Global?",
+  plan_duration:
+    "Which plan duration would you like: one, three, six, or twelve months?",
+};
+
+function cleanSpokenValue(raw: string): string {
+  return raw
+    .trim()
+    .replace(
+      /^(?:it(?:'s| is)|this is|my (?:full )?name is|the (?:inmate|facility)(?:'s)? (?:name|number|address) is)\s+/i,
+      "",
+    )
+    .trim();
+}
+
+function captureIntakeSlot(
+  intake: PrintIntakeState,
+  slot: IntakeSlot,
+  utterance: string,
+): { accepted: boolean; retrySpeech?: string } {
+  const value = cleanSpokenValue(utterance);
+  switch (slot) {
+    case "sender_email": {
+      const email = normalizeSpokenEmail(value);
+      if (!looksLikeEmail(email)) {
+        return {
+          accepted: false,
+          retrySpeech:
+            "I want to make sure I have that correctly. Please say your email slowly, using “at” for the at sign and “dot” for each period.",
+        };
+      }
+      intake.slots.sender_email = email;
+      break;
+    }
+    case "sender_phone": {
+      const phone = normalizePhoneNumber(value);
+      if (!phone) {
+        return {
+          accepted: false,
+          retrySpeech:
+            "I didn't get a complete phone number. Please repeat your preferred contact number, including the area code.",
+        };
+      }
+      intake.slots.sender_phone = phone;
+      break;
+    }
+    case "newspaper_selection": {
+      const selection = normalizeNewspaperSelection(value);
+      if (!selection) {
+        return {
+          accepted: false,
+          retrySpeech: "Please choose one edition: Urban, Spanish, or Global.",
+        };
+      }
+      intake.slots.newspaper_selection = selection;
+      break;
+    }
+    case "plan_duration": {
+      const duration = normalizePlanDuration(value);
+      if (!duration) {
+        return {
+          accepted: false,
+          retrySpeech: "Please choose a one, three, six, or twelve month plan.",
+        };
+      }
+      intake.slots.plan_duration = duration;
+      break;
+    }
+    default:
+      if (value.length < 2) {
+        return { accepted: false, retrySpeech: INTAKE_PROMPTS[slot] };
+      }
+      intake.slots[slot] = value;
+  }
+  intake.awaiting = undefined;
+  return { accepted: true };
+}
+
+function nextMissingIntakeSlot(intake: PrintIntakeState): IntakeSlot | undefined {
+  return INTAKE_SLOT_ORDER.find((slot) => {
+    const value = intake.slots[slot];
+    return value === undefined || value === "";
+  });
+}
+
+function prefillIntakeSelections(intake: PrintIntakeState, utterance: string): void {
+  const selection = normalizeNewspaperSelection(utterance);
+  const duration = normalizePlanDuration(utterance);
+  if (selection) intake.slots.newspaper_selection = selection;
+  if (duration) intake.slots.plan_duration = duration;
+}
+
+function isCompletePrintPlanIntake(
+  slots: Partial<PrintPlanIntake>,
+): slots is PrintPlanIntake {
+  return INTAKE_SLOT_ORDER.every((slot) => slots[slot] !== undefined && slots[slot] !== "");
+}
+
+async function processPrintIntake(
+  session: SessionMemory,
+  callSid: string,
+  utterance: string,
+  toolExecutor: MailCallToolExecutor,
+): Promise<string | null> {
+  const beginsNow = !session.printIntake?.active && PURCHASE_INTENT_RE.test(utterance);
+  if (beginsNow) {
+    session.printIntake = { active: true, slots: {} };
+    prefillIntakeSelections(session.printIntake, utterance);
+  }
+
+  const intake = session.printIntake;
+  if (!intake?.active) return null;
+
+  if (!beginsNow && intake.awaiting) {
+    const captured = captureIntakeSlot(intake, intake.awaiting, utterance);
+    if (!captured.accepted) return captured.retrySpeech ?? INTAKE_PROMPTS[intake.awaiting];
+  }
+
+  const missing = nextMissingIntakeSlot(intake);
+  if (missing) {
+    intake.awaiting = missing;
+    return INTAKE_PROMPTS[missing];
+  }
+
+  if (!isCompletePrintPlanIntake(intake.slots)) {
+    return "Let me check those details once more before I submit them.";
+  }
+
+  const result = await toolExecutor(
+    "send_support_escalation",
+    JSON.stringify(intake.slots),
+    { callSid, callStartedAtMs: session.startedAtMs },
+  );
+
+  if (result.toolPayload.ok === true) {
+    intake.active = false;
+    return SCRIPTS.escalationSent;
+  }
+
+  return (
+    result.spokenHint ??
+    "I couldn't submit that just yet. Your details are still here, and our support team can help on the next business day."
+  );
+}
 
 function getSession(callSid: string): SessionMemory {
   let s = sessions.get(callSid);
@@ -172,6 +363,7 @@ async function maybeLlmSpeechWithTools(
 export async function processConversationTurn(
   input: ConversationTurnInput,
   wp: WordPressApiClient = getWordPressApiClient(),
+  toolExecutor: MailCallToolExecutor = executeMailCallTool,
 ): Promise<CallTurnResult> {
   const started = Date.now();
   const utterance = input.utterance.trim();
@@ -180,6 +372,23 @@ export async function processConversationTurn(
   if (!utterance) {
     return {
       speech: "Sorry, I didn't catch that. Could you say that again?",
+      degraded: false,
+      articlesUsed: 0,
+      latencyMs: Date.now() - started,
+    };
+  }
+
+  const intakeSpeech = await processPrintIntake(
+    session,
+    input.callSid,
+    utterance,
+    toolExecutor,
+  );
+  if (intakeSpeech) {
+    const speech = finalizeSpeech(intakeSpeech);
+    remember(session, utterance, speech);
+    return {
+      speech,
       degraded: false,
       articlesUsed: 0,
       latencyMs: Date.now() - started,

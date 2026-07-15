@@ -14,13 +14,15 @@ export interface ResendSendResult {
 }
 
 export interface SupportEscalationPayload {
-  callerName: string;
-  callerEmail: string;
+  senderName: string;
+  senderEmail: string;
+  senderPhone: string;
   inmateName: string;
   inmateNumber: string;
   facilityName: string;
   facilityAddress: string;
-  concern: string;
+  newspaperSelection: "Urban" | "Spanish" | "Global";
+  planDuration: 1 | 3 | 6 | 12;
   callSid?: string;
 }
 
@@ -46,33 +48,35 @@ export function buildSupportEscalationHtml(details: SupportEscalationPayload): s
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8" /><title>MailCall Support Escalation</title></head>
+<head><meta charset="utf-8" /><title>MailCall Print Plan Intake</title></head>
 <body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px 12px;">
     <tr><td align="center">
       <table role="presentation" width="100%" style="max-width:640px;background:#fff;border-radius:10px;overflow:hidden;">
         <tr>
           <td style="background:#1e3a5f;padding:20px 24px;">
-            <h1 style="margin:0;font-size:20px;color:#fff;">[MailCall Support Escalation] Inmate Support Request</h1>
+            <h1 style="margin:0;font-size:20px;color:#fff;">MailCall Print Plan Intake</h1>
           </td>
         </tr>
         <tr>
           <td style="padding:8px 0;">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-              ${row("Caller name", details.callerName)}
-              ${row("Caller email", details.callerEmail)}
+              ${row("Sender name", details.senderName)}
+              ${row("Sender email", details.senderEmail)}
+              ${row("Sender phone", details.senderPhone)}
               ${row("Inmate name", details.inmateName)}
               ${row("Inmate ID / number", details.inmateNumber)}
               ${row("Facility name", details.facilityName)}
-              ${row("Facility mailing address", details.facilityAddress)}
-              ${row("Main concern", details.concern)}
+              ${row("Facility shipping address", details.facilityAddress)}
+              ${row("Newspaper selection", `${details.newspaperSelection} edition`)}
+              ${row("Plan duration", `${details.planDuration} month${details.planDuration === 1 ? "" : "s"}`)}
               ${row("Call SID", details.callSid ?? "")}
             </table>
           </td>
         </tr>
         <tr>
           <td style="padding:16px 24px;background:#f8fafc;font-size:13px;color:#64748b;">
-            Submitted by Brook (MailCall voice agent). Please follow up on the next business day.
+            Compiled by Brook. Please review manually and execute the print run on the next business day.
           </td>
         </tr>
       </table>
@@ -94,18 +98,20 @@ export async function sendSupportEscalationEmail(
     ? `${cfg.RESEND_FROM_NAME} <${cfg.RESEND_FROM_EMAIL}>`
     : cfg.RESEND_FROM_EMAIL;
 
-  const subject = "[MailCall Support Escalation] Inmate Support Request";
+  const subject = `[MailCall Print Intake] ${details.newspaperSelection} — ${details.planDuration} month${details.planDuration === 1 ? "" : "s"}`;
   const html = buildSupportEscalationHtml(details);
   const text = [
     subject,
     "",
-    `Caller name: ${details.callerName || "Not provided"}`,
-    `Caller email: ${details.callerEmail || "Not provided"}`,
+    `Sender name: ${details.senderName || "Not provided"}`,
+    `Sender email: ${details.senderEmail || "Not provided"}`,
+    `Sender phone: ${details.senderPhone || "Not provided"}`,
     `Inmate name: ${details.inmateName || "Not provided"}`,
     `Inmate ID / number: ${details.inmateNumber || "Not provided"}`,
     `Facility name: ${details.facilityName || "Not provided"}`,
-    `Facility mailing address: ${details.facilityAddress || "Not provided"}`,
-    `Main concern: ${details.concern || "Not provided"}`,
+    `Facility shipping address: ${details.facilityAddress || "Not provided"}`,
+    `Newspaper selection: ${details.newspaperSelection} edition`,
+    `Plan duration: ${details.planDuration} month${details.planDuration === 1 ? "" : "s"}`,
     details.callSid ? `Call SID: ${details.callSid}` : "",
   ]
     .filter(Boolean)

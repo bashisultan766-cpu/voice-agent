@@ -41,6 +41,67 @@ export interface ToolExecutionResult {
   transferToNumber?: string;
 }
 
+export const NEWSPAPER_SELECTIONS = ["Urban", "Spanish", "Global"] as const;
+export const PLAN_DURATIONS = [1, 3, 6, 12] as const;
+
+export type NewspaperSelection = (typeof NEWSPAPER_SELECTIONS)[number];
+export type PlanDuration = (typeof PLAN_DURATIONS)[number];
+
+export interface PrintPlanIntake {
+  sender_name: string;
+  sender_email: string;
+  sender_phone: string;
+  inmate_name: string;
+  inmate_number: string;
+  facility_name: string;
+  facility_address: string;
+  newspaper_selection: NewspaperSelection;
+  plan_duration: PlanDuration;
+}
+
+export function normalizePhoneNumber(raw: string): string {
+  const trimmed = String(raw ?? "").trim();
+  const phoneWords: Record<string, string> = {
+    zero: "0",
+    oh: "0",
+    one: "1",
+    two: "2",
+    three: "3",
+    four: "4",
+    five: "5",
+    six: "6",
+    seven: "7",
+    eight: "8",
+    nine: "9",
+  };
+  const expanded = trimmed
+    .toLowerCase()
+    .replace(
+      /\b(zero|oh|one|two|three|four|five|six|seven|eight|nine)\b/g,
+      (word) => phoneWords[word] ?? "",
+    );
+  const digits = expanded.replace(/\D/g, "");
+  if (digits.length < 7 || digits.length > 15) return "";
+  return trimmed.startsWith("+") ? `+${digits}` : digits;
+}
+
+export function normalizeNewspaperSelection(raw: string): NewspaperSelection | null {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (/\burban\b/.test(value)) return "Urban";
+  if (/\bspanish\b/.test(value)) return "Spanish";
+  if (/\bglobal\b/.test(value)) return "Global";
+  return null;
+}
+
+export function normalizePlanDuration(raw: unknown): PlanDuration | null {
+  const match = String(raw ?? "").match(/\b(1|3|6|12)\b/);
+  if (!match) return null;
+  const months = Number(match[1]);
+  return (PLAN_DURATIONS as readonly number[]).includes(months)
+    ? (months as PlanDuration)
+    : null;
+}
+
 export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
@@ -140,32 +201,48 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "send_support_escalation",
       description:
-        "Email support@mailcallnewspaper.com with a formatted support escalation. Use for delivery complaints, inmate moves, or angry callers after collecting caller name/email, inmate name/ID, facility name/address, and the main concern.",
+        "Submit a complete MailCall print-plan intake to support@mailcallnewspaper.com. Never call until every required field was explicitly spoken by the caller.",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
-          caller_name: { type: "string", description: "Caller's full name." },
-          caller_email: { type: "string", description: "Caller's email address." },
-          inmate_name: { type: "string", description: "Inmate's full name." },
-          inmate_number: { type: "string", description: "Inmate ID or number." },
-          facility_name: { type: "string", description: "Correctional facility name." },
+          sender_name: { type: "string", description: "Full name of the civilian caller." },
+          sender_email: {
+            type: "string",
+            description: "Normalized lowercase contact email of the caller.",
+          },
+          sender_phone: { type: "string", description: "Contact phone number of the caller." },
+          inmate_name: {
+            type: "string",
+            description: "Full legal name of the incarcerated recipient.",
+          },
+          inmate_number: { type: "string", description: "Inmate booking or ID number." },
+          facility_name: { type: "string", description: "Official correctional center name." },
           facility_address: {
             type: "string",
-            description: "Facility mailing address for newspaper delivery.",
+            description: "Complete physical shipping address of the facility.",
           },
-          concern: {
+          newspaper_selection: {
             type: "string",
-            description: "Caller's main concern (delivery, move, complaint, etc.).",
+            enum: ["Urban", "Spanish", "Global"],
+            description: "Requested MailCall print edition.",
+          },
+          plan_duration: {
+            type: "integer",
+            enum: [1, 3, 6, 12],
+            description: "Subscription duration in months.",
           },
         },
         required: [
-          "caller_name",
-          "caller_email",
+          "sender_name",
+          "sender_email",
+          "sender_phone",
           "inmate_name",
           "inmate_number",
           "facility_name",
           "facility_address",
-          "concern",
+          "newspaper_selection",
+          "plan_duration",
         ],
       },
     },
@@ -341,27 +418,33 @@ export async function executeMailCallTool(
     }
 
     case "send_support_escalation": {
-      const callerName = String(args.caller_name ?? "").trim();
-      const callerEmail = normalizeSpokenEmail(String(args.caller_email ?? ""));
+      const senderName = String(args.sender_name ?? "").trim();
+      const senderEmail = normalizeSpokenEmail(String(args.sender_email ?? ""));
+      const senderPhone = normalizePhoneNumber(String(args.sender_phone ?? ""));
       const inmateName = String(args.inmate_name ?? "").trim();
       const inmateNumber = String(args.inmate_number ?? "").trim();
       const facilityName = String(args.facility_name ?? "").trim();
       const facilityAddress = String(args.facility_address ?? "").trim();
-      const concern = String(args.concern ?? "").trim();
+      const newspaperSelection = normalizeNewspaperSelection(
+        String(args.newspaper_selection ?? ""),
+      );
+      const planDuration = normalizePlanDuration(args.plan_duration);
 
       if (
-        !callerName ||
-        !looksLikeEmail(callerEmail) ||
+        !senderName ||
+        !looksLikeEmail(senderEmail) ||
+        !senderPhone ||
         !inmateName ||
         !inmateNumber ||
         !facilityName ||
         !facilityAddress ||
-        !concern
+        !newspaperSelection ||
+        !planDuration
       ) {
         return {
-          toolPayload: { ok: false, reason: "missing_fields" },
+          toolPayload: { ok: false, reason: "missing_or_invalid_fields" },
           spokenHint:
-            "Let me walk you through this. I still need your name and email, the inmate's name and number, the facility name and mailing address, and a short description of the concern.",
+            "Let me walk you through this. I still need your name, email, phone number, the inmate and facility details, the Urban, Spanish, or Global edition, and a one, three, six, or twelve month plan.",
         };
       }
 
@@ -374,13 +457,15 @@ export async function executeMailCallTool(
       }
 
       const sent = await sendSupportEscalationEmail({
-        callerName,
-        callerEmail,
+        senderName,
+        senderEmail,
+        senderPhone,
         inmateName,
         inmateNumber,
         facilityName,
         facilityAddress,
-        concern,
+        newspaperSelection,
+        planDuration,
         callSid: ctx.callSid,
       });
 
