@@ -4,6 +4,7 @@ import { resetConfigCache } from "../src/config.js";
 import { WordPressApiClient } from "../src/agents/mailcall/wordpress_api.js";
 import {
   clearSession,
+  greetingSpeech,
   processConversationTurn,
 } from "../src/agents/mailcall/conversation.js";
 import { buildRetrievalOnlySpeech } from "../src/agents/mailcall/prompts.js";
@@ -43,6 +44,12 @@ describe("conversation + prompts", () => {
     vi.stubEnv("MAILCALL_WP_APP_PASSWORD", "abcdefghijklmnopqrstuvwx");
     vi.stubEnv("MAILCALL_OPENAI_API_KEY", "");
     vi.stubEnv("MAILCALL_VALIDATE_TWILIO_SIGNATURES", "false");
+  });
+
+  it("uses the exact live pickup greeting", () => {
+    expect(greetingSpeech()).toBe(
+      "Thanks for calling MailCall Newspaper. I am Brook. How can I help you?",
+    );
   });
 
   it("falls back to natural brand speech when mem index is cold", async () => {
@@ -309,6 +316,9 @@ describe("conversation + prompts", () => {
     expect(prompt).toContain(
       "650 East Palisade Ave #429, Englewood Cliffs, New Jersey 07632",
     );
+    expect(prompt).toContain("twenty-four-page all-in-one publication");
+    expect(prompt).toContain("educate, entertain, and empower");
+    expect(prompt).toContain("Periódico para Prisioneros");
     expect(prompt).toMatch(/\$21\.66/);
     expect(prompt).toMatch(/ALL SALES ARE FINAL/i);
   });

@@ -58,7 +58,7 @@ export const MAILCALL_PLANS: MailCallPlan[] = [
 ];
 
 export const PRODUCT_INCLUSIONS_SPOKEN =
-  "Each month we send a twenty-four page print newspaper directly to U.S. inmates, with celebrity gossip, law and sentencing updates, comics, inmate news, music and education, financial literacy, and personal growth. It is not for the general public.";
+  "Each month we send a twenty-four-page newspaper designed exclusively for inmates across the U.S. It includes celebrity gossip and real news, inmate and sentencing updates, education and skill building, financial literacy, books and movies, music, comics, LGBTQ+ culture, health, fitness, Spanish content, travel, horoscopes, how-to guides, technology, sports, and pop culture.";
 
 export const SCRIPTS = {
   refundFinal:

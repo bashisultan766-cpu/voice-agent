@@ -75,4 +75,4 @@ export interface CallTurnResult {
 }
 
 export const GREETING_SPEECH =
-  "Thank you for calling MailCall Newspaper. This is Brook, your senior editorial and customer support representative. How can I help you today?";
+  "Thanks for calling MailCall Newspaper. I am Brook. How can I help you?";

@@ -19,12 +19,44 @@ export const BRAND_NAME = brandProfile.name;
 export const BRAND_WEBSITE = "https://mailcallnewspaper.com";
 export const BRAND_LOCATION = brandProfile.address;
 
+export const MAILCALL_ABOUT_US = {
+  headline: "MailCall Newspaper: The Best Newspaper to Inmates",
+  description:
+    "MailCall Newspaper delivers essential news, entertainment, and educational content in an all-in-one publication designed exclusively for inmates across the U.S.",
+  pageCount: 24,
+  sections: [
+    "Celebrity Gossip & Real News",
+    "Inmate News & Sentencing Updates",
+    "Education & Skill Building",
+    "Financial Literacy & Investment Tips",
+    "Prison Book Club & Movie Picks",
+    "Music, Comics & LGBTQ+ Culture",
+    "Health, Fitness & Motivation",
+    "Spanish Content & Travel",
+    "Horoscopes, How-To Guides & Tech",
+    "Sports, Pop Culture & More",
+  ],
+  spanishTitle: "Periódico para Prisioneros",
+  primaryTagline: "Your world. Your stories. Your connection.",
+  vision:
+    "We aim to provide content that not only informs but also inspires. From interactive RPG-style features to practical advice on building strong habits, managing money, and staying connected with loved ones, MailCall Newspaper is your trusted companion inside.",
+  mission:
+    "Our mission is simple: to educate, entertain, and empower. Every story, column, and feature is carefully curated to ensure our readers gain value with every page.",
+  values:
+    "Join thousands of inmates nationwide who rely on MailCall to stay connected to the world, learn new skills, and enjoy exclusive content they will not find anywhere else.",
+  closingTagline: "Your Connection. Your Community. Your Voice.",
+  callToAction: "Subscribe now.",
+  socialPlatforms: ["Facebook", "X", "Instagram", "TikTok", "Tumblr", "Pinterest"],
+  copyright:
+    "Copyright © 2026 Newspaper For Inmates | Inmate-Focused, Family-Trusted",
+} as const;
+
 export const BRAND_PROFILE = {
   ...brandProfile,
   website: BRAND_WEBSITE,
   location: BRAND_LOCATION,
   whatWeAre:
-    "MailCall Newspaper is a monthly print newspaper sent directly to U.S. inmates, helping loved ones stay connected with news, education, and encouragement.",
+    MAILCALL_ABOUT_US.description,
   locationSpoken:
     "We serve families and facilities across the United States with a monthly print newspaper mailed directly to inmates.",
   officeAddressSpoken: `MailCall Newspaper is located at ${brandProfile.address}.`,
@@ -38,10 +70,12 @@ export const BRAND_PROFILE = {
 
 export const BRAND_SPOKEN_ANSWERS = {
   identity:
-    "I'd be glad to tell you about that. MailCall Newspaper is a monthly print newspaper sent directly to U.S. inmates, with news, education, and encouragement for your loved one.",
-  mission: `I'd be glad to tell you about that. Our mission is: ${brandProfile.mission}`,
-  vision:
-    "I'd be glad to tell you about that. Our vision is a world where every incarcerated person can stay informed, hopeful, and connected to the people who care about them through a trusted monthly newspaper.",
+    "I'd be glad to tell you about that. MailCall Newspaper is a twenty-four-page all-in-one publication designed exclusively for inmates across the U.S., delivering essential news, entertainment, and educational content.",
+  mission: `I'd be glad to tell you about that. ${MAILCALL_ABOUT_US.mission}`,
+  vision: `I'd be glad to tell you about that. Our vision is this: ${MAILCALL_ABOUT_US.vision}`,
+  values: `Thousands of inmates nationwide rely on MailCall to stay connected to the world, learn new skills, and enjoy exclusive content. ${MAILCALL_ABOUT_US.closingTagline}`,
+  sections:
+    "Our twenty-four-page edition includes celebrity gossip and real news, inmate and sentencing updates, education, financial literacy, books and movies, music, comics, LGBTQ+ culture, health, fitness, Spanish content, travel, horoscopes, how-to guides, technology, sports, and pop culture.",
   location: `I'd be glad to tell you about that. MailCall Newspaper is located at ${brandProfile.address}.`,
   officeAddress: `I'd be glad to help. MailCall Newspaper is located at ${brandProfile.address}.`,
   leadership: `I'd be glad to help. MailCall Newspaper is led by ${brandProfile.ceo}.`,
@@ -58,6 +92,9 @@ const IDENTITY_RE =
 const VISION_RE = /\b(vision|future|aspire|what you (hope|want) (for|to))\b/i;
 const MISSION_RE =
   /\b(mission|purpose|why (do )?you|what('s| is) your (goal|aim)|dedicated to)\b/i;
+const VALUES_RE = /\b(values?|principles?|what (do )?you stand for)\b/i;
+const CONTENT_RE =
+  /\b(what('s| is) inside|sections?|content|topics?|cover(age)?|twenty[- ]?four|24[- ]?page)\b/i;
 const LOCATION_RE =
   /\b(where (are|is) you|address|location|based|office hours|what time|are you open)\b/i;
 const CONTACT_RE =
@@ -69,6 +106,8 @@ export function matchBrandProfileQuery(utterance: string): string | null {
 
   if (LOCATION_RE.test(q)) return BRAND_SPOKEN_ANSWERS.location;
   if (CONTACT_RE.test(q)) return BRAND_SPOKEN_ANSWERS.contact;
+  if (VALUES_RE.test(q)) return BRAND_SPOKEN_ANSWERS.values;
+  if (CONTENT_RE.test(q)) return BRAND_SPOKEN_ANSWERS.sections;
   if (VISION_RE.test(q)) return BRAND_SPOKEN_ANSWERS.vision;
   if (MISSION_RE.test(q)) return BRAND_SPOKEN_ANSWERS.mission;
   if (IDENTITY_RE.test(q)) return BRAND_SPOKEN_ANSWERS.identity;
@@ -89,9 +128,17 @@ export function buildBrandProfileKnowledgeBlock(): string {
     "BRAND PROFILE (authoritative local copy — speak naturally from this):",
     `Name: ${BRAND_PROFILE.name} / MailCall Newspaper`,
     `CEO: ${BRAND_PROFILE.ceo}`,
-    `About: ${BRAND_PROFILE.whatWeAre}`,
-    `Mission: ${BRAND_PROFILE.mission}`,
-    `Vision: ${BRAND_SPOKEN_ANSWERS.vision}`,
+    `Headline: ${MAILCALL_ABOUT_US.headline}`,
+    `About: ${MAILCALL_ABOUT_US.description}`,
+    `Format: ${MAILCALL_ABOUT_US.pageCount}-page edition`,
+    `Sections: ${MAILCALL_ABOUT_US.sections.join("; ")}`,
+    `Spanish identity: ${MAILCALL_ABOUT_US.spanishTitle}`,
+    `Primary tagline: ${MAILCALL_ABOUT_US.primaryTagline}`,
+    `Mission: ${MAILCALL_ABOUT_US.mission}`,
+    `Vision: ${MAILCALL_ABOUT_US.vision}`,
+    `Values: ${MAILCALL_ABOUT_US.values}`,
+    `Closing tagline: ${MAILCALL_ABOUT_US.closingTagline}`,
+    `Call to action: ${MAILCALL_ABOUT_US.callToAction}`,
     `Service area: ${BRAND_PROFILE.locationSpoken}`,
     `Office fallback: ${BRAND_PROFILE.officeAddressSpoken}`,
     `Phone: ${BRAND_PROFILE.phone}`,
