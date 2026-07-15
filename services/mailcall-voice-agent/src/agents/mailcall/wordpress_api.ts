@@ -10,6 +10,7 @@ import { logger } from "../../utils/logger.js";
 import { TtlCache } from "./ttlCache.js";
 import { cleanseForSpeech, normalizeVoiceTranscript, truncateToSentences } from "./textCleaner.js";
 import {
+  BRAND_SPOKEN_ANSWERS,
   brandOfflineFallbackSpeech,
   buildBrandProfileKnowledgeBlock,
   matchBrandProfileQuery,
@@ -125,11 +126,24 @@ const SEARCH_STOP_WORDS = new Set([
 export interface MemIndexSnapshot {
   articles: MailCallArticle[];
   categories: MailCallCategory[];
-  /** About / mission / vision pages (and similar). */
+  /** Full structural page snapshot from `/pages?per_page=20`. */
   pages: MailCallArticle[];
+  /** Direct lookup for high-priority corporate identity pages. */
+  corporatePages: Partial<Record<CorporatePageSlug, MailCallArticle>>;
   warmedAt: number;
   version: number;
 }
+
+export const CORPORATE_PAGE_SLUGS = [
+  "about",
+  "about-us",
+  "contact",
+  "contact-us",
+  "advertise",
+  "advertise-with-us",
+] as const;
+
+export type CorporatePageSlug = (typeof CORPORATE_PAGE_SLUGS)[number];
 
 /**
  * Extract compact search terms from a raw voice transcript for local index match.
@@ -178,7 +192,20 @@ export const WP_BROWSER_HEADERS = {
 
 const POST_FIELDS = "id,date,modified,slug,link,title,excerpt,content,categories,tags,meta";
 const CATEGORY_FIELDS = "id,name,slug,count,description";
-const PAGE_SLUGS = ["about", "about-us", "mission", "vision", "our-mission", "our-vision"] as const;
+const PAGE_FIELDS = "id,date,modified,slug,link,title,content";
+
+export function buildCorporatePageMap(
+  pages: MailCallArticle[],
+): Partial<Record<CorporatePageSlug, MailCallArticle>> {
+  const map: Partial<Record<CorporatePageSlug, MailCallArticle>> = {};
+  for (const page of pages) {
+    const slug = (page.slug ?? "").toLowerCase();
+    if ((CORPORATE_PAGE_SLUGS as readonly string[]).includes(slug)) {
+      map[slug as CorporatePageSlug] = page;
+    }
+  }
+  return map;
+}
 
 export class WordPressApiError extends Error {
   constructor(
@@ -272,6 +299,7 @@ export class WordPressApiClient {
     articles: [],
     categories: [],
     pages: [],
+    corporatePages: {},
     warmedAt: 0,
     version: 0,
   };
@@ -321,11 +349,13 @@ export class WordPressApiClient {
   }
 
   /** Test helper — inject a warm index without network. */
-  hydrateMemIndex( partial: Partial<MemIndexSnapshot>): void {
+  hydrateMemIndex(partial: Partial<MemIndexSnapshot>): void {
+    const pages = partial.pages ?? this.memIndex.pages;
     this.memIndex = {
       articles: partial.articles ?? this.memIndex.articles,
       categories: partial.categories ?? this.memIndex.categories,
-      pages: partial.pages ?? this.memIndex.pages,
+      pages,
+      corporatePages: partial.corporatePages ?? buildCorporatePageMap(pages),
       warmedAt: partial.warmedAt ?? Date.now(),
       version: (this.memIndex.version || 0) + 1,
     };
@@ -463,54 +493,8 @@ export class WordPressApiClient {
     });
   }
 
-  private async fetchCorePages(): Promise<MailCallArticle[]> {
-    const byId = new Map<number, MailCallArticle>();
-    await Promise.all(
-      PAGE_SLUGS.map(async (slug) => {
-        try {
-          const raw = await this.wpFetch<WpPostRaw[]>(
-            "/pages",
-            {
-              slug,
-              per_page: 1,
-              _fields: POST_FIELDS,
-            },
-            WP_BACKGROUND_TIMEOUT_MS,
-          );
-          for (const page of raw) {
-            byId.set(page.id, normalizeArticle(page));
-          }
-        } catch {
-          // Page may not exist — ignore quietly during warm/SWR.
-        }
-      }),
-    );
-
-    // Fallback search for about/mission/vision if slug lookup empty.
-    if (byId.size === 0) {
-      try {
-        const raw = await this.wpFetch<WpPostRaw[]>(
-          "/pages",
-          {
-            search: "about mission vision",
-            per_page: 10,
-            _fields: POST_FIELDS,
-          },
-          WP_BACKGROUND_TIMEOUT_MS,
-        );
-        for (const page of raw) {
-          byId.set(page.id, normalizeArticle(page));
-        }
-      } catch {
-        // keep empty
-      }
-    }
-
-    return [...byId.values()];
-  }
-
   /**
-   * Pull top posts + categories + about/mission/vision into the memory index.
+   * Pull top posts + categories + all structural pages into the memory index.
    * Safe to call repeatedly (SWR). Never throws to callers.
    */
   async warmCache(reason: "startup" | "swr" | "manual" = "manual"): Promise<boolean> {
@@ -518,7 +502,7 @@ export class WordPressApiClient {
     this.syncing = true;
     const started = Date.now();
     try {
-      const [postsRaw, categoriesRaw, pages] = await Promise.all([
+      const [postsRaw, categoriesRaw, pagesRaw] = await Promise.all([
         this.wpFetch<WpPostRaw[]>(
           "/posts",
           {
@@ -537,15 +521,25 @@ export class WordPressApiClient {
           },
           WP_BACKGROUND_TIMEOUT_MS,
         ).catch(() => [] as WpCategoryRaw[]),
-        this.fetchCorePages(),
+        this.wpFetch<WpPostRaw[]>(
+          "/pages",
+          {
+            per_page: 20,
+            _fields: PAGE_FIELDS,
+          },
+          WP_BACKGROUND_TIMEOUT_MS,
+        ).catch(() => [] as WpPostRaw[]),
       ]);
 
       const articles = postsRaw.map(normalizeArticle);
       const categories = categoriesRaw.map(normalizeCategory);
+      const pages = pagesRaw.map(normalizeArticle);
+      const corporatePages = buildCorporatePageMap(pages);
       this.memIndex = {
         articles,
         categories,
         pages,
+        corporatePages,
         warmedAt: Date.now(),
         version: this.memIndex.version + 1,
       };
@@ -559,6 +553,7 @@ export class WordPressApiClient {
         articles: articles.length,
         categories: categories.length,
         pages: pages.length,
+        corporatePages: Object.keys(corporatePages).length,
         latencyMs: Date.now() - started,
         version: this.memIndex.version,
       });
@@ -631,6 +626,64 @@ export class WordPressApiClient {
     return this.retrieveFromMemIndex(rawUtterance);
   }
 
+  /**
+   * Resolve organizational identity intents directly from structural pages.
+   * Returns null for non-corporate queries; never touches the network.
+   */
+  retrieveCorporatePageContext(rawUtterance: string): KnowledgeHit | null {
+    const started = Date.now();
+    const normalized = normalizeVoiceTranscript(rawUtterance);
+    const q = normalized.toLowerCase();
+    if (!/\b(address|location|office|ceo|owner|meet|contact|advertis(?:e|ing))\b/i.test(q)) {
+      return null;
+    }
+
+    let preferred: CorporatePageSlug[];
+    let fallbackSpeech: string;
+    if (/\badvertis(?:e|ing)\b/i.test(q)) {
+      preferred = ["advertise-with-us", "advertise", "contact-us", "contact"];
+      fallbackSpeech = BRAND_SPOKEN_ANSWERS.advertise;
+    } else if (/\b(ceo|owner|meet)\b/i.test(q)) {
+      preferred = ["about-us", "about", "contact-us", "contact"];
+      fallbackSpeech = BRAND_SPOKEN_ANSWERS.leadership;
+    } else {
+      preferred = ["contact-us", "contact", "about-us", "about"];
+      fallbackSpeech = /\b(address|location|office)\b/i.test(q)
+        ? BRAND_SPOKEN_ANSWERS.officeAddress
+        : BRAND_SPOKEN_ANSWERS.contact;
+    }
+
+    const page = preferred
+      .map((slug) => this.memIndex.corporatePages[slug])
+      .find((candidate): candidate is MailCallArticle => Boolean(candidate));
+
+    if (page) {
+      logger.info("[MEM_CACHE_HIT] Resolved corporate identity via structural page map.", {
+        path: "corporate_page_map",
+        slug: page.slug,
+        latencyMs: Date.now() - started,
+        indexVersion: this.memIndex.version,
+      });
+      return {
+        articles: [page],
+        categories: [],
+        degraded: false,
+        usedBrandProfile: false,
+        cacheHit: true,
+        latencyMs: Date.now() - started,
+      };
+    }
+
+    logger.info("[MEM_CACHE_HIT] Corporate page missing; using brand profile coordinates.", {
+      path: "corporate_brand_fallback",
+      latencyMs: Date.now() - started,
+      indexVersion: this.memIndex.version,
+    });
+    return this.brandFallbackHit(normalized, started, {
+      brandSpeech: fallbackSpeech,
+    });
+  }
+
   private async retrieveFromMemIndex(rawUtterance: string): Promise<KnowledgeHit> {
     const started = Date.now();
     const normalized = normalizeVoiceTranscript(rawUtterance);
@@ -698,6 +751,7 @@ export class WordPressApiClient {
       articles: [],
       categories: [],
       pages: [],
+      corporatePages: {},
       warmedAt: 0,
       version: 0,
     };

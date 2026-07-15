@@ -20,6 +20,12 @@ export const BRAND_PROFILE = {
     "Our mission is to provide accurate, timely, and uplifting print journalism for incarcerated readers and the families who support them.",
   locationSpoken:
     "We serve families and facilities across the United States with a monthly print newspaper mailed directly to inmates.",
+  officeAddressSpoken:
+    "Mail Call Communication's administrative office is based in Abbottabad, Pakistan. For current mailing instructions, contact support at mailcallnewspaper dot com.",
+  leadershipSpoken:
+    "MailCall Newspaper is led by its publishing and administrative team, serving incarcerated readers and their families. Current leadership details are maintained in our About information.",
+  advertiseSpoken:
+    "For advertising with MailCall Newspaper, contact support at mailcallnewspaper dot com and our administrative team will follow up.",
   contactSpoken: `You can reach us at ${SUPPORT_EMAIL_SPOKEN} for support and publication details.`,
   officeSpoken:
     "Our live team is available Monday through Friday, ten A.M. to five P.M. Eastern time, and I'm here to help you right now.",
@@ -34,6 +40,12 @@ export const BRAND_SPOKEN_ANSWERS = {
     "I'd be glad to tell you about that. Our vision is a world where every incarcerated person can stay informed, hopeful, and connected to the people who care about them through a trusted monthly newspaper.",
   location:
     "I'd be glad to tell you about that. We mail our print newspaper to facilities across the United States.",
+  officeAddress:
+    "I'd be glad to help. Mail Call Communication's administrative office is based in Abbottabad, Pakistan. For current mailing instructions, contact support at mailcallnewspaper dot com.",
+  leadership:
+    "I'd be glad to help. MailCall Newspaper is led by its publishing and administrative team, serving incarcerated readers and their families.",
+  advertise:
+    "I'd be glad to help with advertising. Contact support at mailcallnewspaper dot com and our administrative team will follow up.",
   contact: `I'd be glad to tell you about that. You can reach us at ${SUPPORT_EMAIL_SPOKEN}, and our live team is available weekdays ten to five Eastern.`,
   general:
     "I'd be glad to tell you about that. Mail Call Communication's MailCall Newspaper sends a monthly print paper directly to U.S. inmates. How else can I help you today?",
@@ -79,6 +91,9 @@ export function buildBrandProfileKnowledgeBlock(): string {
     `Mission: ${BRAND_PROFILE.mission}`,
     `Vision: ${BRAND_SPOKEN_ANSWERS.vision}`,
     `Service area: ${BRAND_PROFILE.locationSpoken}`,
+    `Office fallback: ${BRAND_PROFILE.officeAddressSpoken}`,
+    `Leadership fallback: ${BRAND_PROFILE.leadershipSpoken}`,
+    `Advertising fallback: ${BRAND_PROFILE.advertiseSpoken}`,
     `Contact: ${BRAND_PROFILE.contactSpoken}`,
     "Do not invent other facts. Keep replies to 2–3 short spoken sentences.",
   ].join("\n");

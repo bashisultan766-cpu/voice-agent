@@ -101,7 +101,29 @@ describe("WordPressApiClient", () => {
         });
       }
       if (href.includes("/pages")) {
-        return new Response(JSON.stringify([]), {
+        return new Response(JSON.stringify([
+          {
+            id: 20,
+            slug: "about-us",
+            title: { rendered: "About <strong>Us</strong>" },
+            content: {
+              rendered:
+                '<script>window.secret = "remove me"</script><p>Meet our publishing team.</p>[gallery id="7"]',
+            },
+          },
+          {
+            id: 21,
+            slug: "contact-us",
+            title: { rendered: "Contact Us" },
+            content: { rendered: "<p>Office: 10 Newsroom Lane.</p>" },
+          },
+          {
+            id: 22,
+            slug: "advertise-with-us",
+            title: { rendered: "Advertise With Us" },
+            content: { rendered: "<p>Reach incarcerated readers and families.</p>" },
+          },
+        ]), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -126,6 +148,22 @@ describe("WordPressApiClient", () => {
     expect(ok).toBe(true);
     expect(client.getMemIndex().articles[0]?.title).toBe("City Council Votes");
     expect(client.getMemIndex().articles[0]?.spokenSummary).not.toContain("https://");
+    expect(client.getMemIndex().pages).toHaveLength(3);
+    expect(client.getMemIndex().corporatePages["about-us"]?.content).toBe(
+      "Meet our publishing team.",
+    );
+    expect(client.getMemIndex().corporatePages["contact-us"]?.content).toContain(
+      "10 Newsroom Lane",
+    );
+    expect(client.getMemIndex().corporatePages["advertise-with-us"]?.content).toContain(
+      "incarcerated readers",
+    );
+    expect(
+      fetchImpl.mock.calls.filter((c) => String(c[0]).includes("/pages")),
+    ).toHaveLength(1);
+    expect(
+      String(fetchImpl.mock.calls.find((c) => String(c[0]).includes("/pages"))?.[0]),
+    ).toContain("per_page=20");
     expect(fetchImpl.mock.calls.some((c) => String(c[0]).includes(`per_page=${MEM_INDEX_POST_LIMIT}`))).toBe(
       true,
     );
@@ -211,5 +249,55 @@ describe("WordPressApiClient", () => {
     const vision = await client.retrieveForLiveTurn("what is your vision");
     expect(vision.usedBrandProfile).toBe(true);
     expect(vision.brandSpeech?.toLowerCase()).toContain("vision");
+  });
+
+  it("routes corporate intents directly through the structural slug map", () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const client = new WordPressApiClient(testConfig(), fetchImpl);
+    client.hydrateMemIndex({
+      warmedAt: Date.now(),
+      pages: [
+        {
+          id: 30,
+          title: "Contact Us",
+          excerpt: "",
+          content: "Our office is at 10 Newsroom Lane.",
+          spokenSummary: "Our office is at 10 Newsroom Lane.",
+          categoryIds: [],
+          customFields: {},
+          slug: "contact-us",
+        },
+        {
+          id: 31,
+          title: "Advertise With Us",
+          excerpt: "",
+          content: "Advertising opportunities are available.",
+          spokenSummary: "Advertising opportunities are available.",
+          categoryIds: [],
+          customFields: {},
+          slug: "advertise-with-us",
+        },
+      ],
+    });
+
+    const office = client.retrieveCorporatePageContext("What is your office address?");
+    expect(office?.articles[0]?.slug).toBe("contact-us");
+    expect(office?.usedBrandProfile).toBe(false);
+
+    const advertise = client.retrieveCorporatePageContext("How can I advertise?");
+    expect(advertise?.articles[0]?.slug).toBe("advertise-with-us");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("falls back to hardcoded office coordinates when structural page is missing", () => {
+    const client = new WordPressApiClient(
+      testConfig(),
+      vi.fn() as unknown as typeof fetch,
+    );
+    client.hydrateMemIndex({ warmedAt: Date.now(), pages: [] });
+    const hit = client.retrieveCorporatePageContext("Where is your office address?");
+    expect(hit?.usedBrandProfile).toBe(true);
+    expect(hit?.brandSpeech).toMatch(/Abbottabad, Pakistan/i);
+    expect(hit?.brandSpeech).not.toMatch(/do not have|don't have|no address/i);
   });
 });

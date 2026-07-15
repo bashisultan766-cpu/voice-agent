@@ -5,6 +5,8 @@
  */
 
 const HTML_TAG_RE = /<\/?[^>]+>/g;
+const SCRIPT_STYLE_RE = /<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 const SHORTCODE_RE = /\[[^\]]+\]/g;
 const MD_LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
 const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;
@@ -83,6 +85,9 @@ export function cleanseForSpeech(input: string | null | undefined): string {
   if (!input) return "";
 
   let text = String(input);
+  // Remove executable/visual blocks with their contents before stripping tags.
+  text = text.replace(SCRIPT_STYLE_RE, " ");
+  text = text.replace(HTML_COMMENT_RE, " ");
   text = text.replace(MD_IMAGE_RE, "$1");
   text = text.replace(MD_LINK_RE, "$1");
   text = text.replace(HTML_TAG_RE, " ");

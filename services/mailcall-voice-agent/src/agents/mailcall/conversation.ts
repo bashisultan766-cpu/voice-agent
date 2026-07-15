@@ -70,6 +70,10 @@ const DELAY_RE =
 
 const UPSET_RE = /\b(angry|furious|ridiculous|unacceptable|scam|lawsuit|attorney)\b/i;
 
+/** Structural WordPress page intents bypass regular article retrieval. */
+const CORPORATE_IDENTITY_RE =
+  /\b(address|location|office|ceo|owner|meet|contact|advertis(?:e|ing))\b/i;
+
 const PURCHASE_INTENT_RE =
   /\b(buy|purchase|subscribe|subscription setup|sign me up|sign up|set up|start)\b.*\b(plan|subscription|newspaper|mailcall|edition)\b|\b(i want|i'd like|i would like|ready)\b.*\b(subscribe|subscription|buy|purchase|plan|edition)\b/i;
 
@@ -419,8 +423,11 @@ export async function processConversationTurn(
     };
   }
 
-  // Live RAG before LLM: extract search terms, max 2 articles, hard 1000ms timeout.
-  const knowledge = await wp.retrieveForLiveTurn(utterance);
+  // Corporate identity queries bypass article search and use the structural page map.
+  const corporateKnowledge = CORPORATE_IDENTITY_RE.test(utterance)
+    ? wp.retrieveCorporatePageContext(utterance)
+    : null;
+  const knowledge = corporateKnowledge ?? (await wp.retrieveForLiveTurn(utterance));
   const history = input.history ?? session.history.slice(-8);
   const messages = buildTurnMessages({
     userUtterance: utterance,

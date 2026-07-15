@@ -23,6 +23,16 @@ describe("cleanseForSpeech", () => {
       "See for more.",
     );
   });
+
+  it("removes scripts, styles, comments, and visual shortcode markers", () => {
+    const raw =
+      '<script>window.secret = "never speak this"</script>' +
+      "<style>.hero { display:none }</style>" +
+      "<!-- private note --><p>Visible office details.</p>[gallery id=\"9\"]";
+    const cleaned = cleanseForSpeech(raw);
+    expect(cleaned).toBe("Visible office details.");
+    expect(cleaned).not.toMatch(/window|secret|display|gallery|private note/i);
+  });
 });
 
 describe("truncateToSentences", () => {

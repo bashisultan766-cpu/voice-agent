@@ -219,6 +219,46 @@ describe("conversation + prompts", () => {
     expect(result.speech.split(/[.!?]+/).filter(Boolean).length).toBeLessThanOrEqual(4);
   });
 
+  it("bypasses article search for corporate identity page intents", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+    wp.hydrateMemIndex({
+      warmedAt: Date.now(),
+      articles: [
+        {
+          id: 40,
+          title: "Unrelated News",
+          excerpt: "An unrelated story.",
+          content: "General reporting.",
+          spokenSummary: "An unrelated story.",
+          categoryIds: [],
+          customFields: {},
+          slug: "unrelated-news",
+        },
+      ],
+      pages: [
+        {
+          id: 41,
+          title: "About Us",
+          excerpt: "",
+          content: "Our publishing team is led by chief executive Jane Example.",
+          spokenSummary: "Our publishing team is led by chief executive Jane Example.",
+          categoryIds: [],
+          customFields: {},
+          slug: "about-us",
+        },
+      ],
+    });
+
+    const result = await processConversationTurn(
+      { callSid: "call-1", utterance: "Who is the CEO and owner?" },
+      wp,
+    );
+    expect(result.speech).toMatch(/Jane Example/i);
+    expect(result.speech).not.toMatch(/Unrelated News/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("buildSystemPrompt names Brook and requires send_support_escalation", async () => {
     const { buildSystemPrompt } = await import("../src/agents/mailcall/prompts.js");
     const prompt = buildSystemPrompt(new Date("2026-07-15T12:00:00Z"));
@@ -226,6 +266,7 @@ describe("conversation + prompts", () => {
     expect(prompt).toContain("send_support_escalation");
     expect(prompt).toMatch(/Urban.*Spanish.*Global/s);
     expect(prompt).toMatch(/all nine values/i);
+    expect(prompt).toMatch(/Under no circumstances say that MailCall does not have an address/i);
     expect(prompt).toMatch(/\$21\.66/);
     expect(prompt).toMatch(/ALL SALES ARE FINAL/i);
   });
