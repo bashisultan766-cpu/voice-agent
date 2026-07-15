@@ -15,6 +15,15 @@ const envSchema = z.object({
     .optional()
     .default("true")
     .transform((v) => v.toLowerCase() !== "false" && v !== "0"),
+  /**
+   * When false (default), a bad Twilio signature is logged but the call still
+   * receives ConversationRelay TwiML. Set true only after auth token + URL are proven.
+   */
+  MAILCALL_TWILIO_SIGNATURE_STRICT: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((v) => v.toLowerCase() === "true" || v === "1"),
   MAILCALL_WP_URL: z.string().url(),
   MAILCALL_WP_USER: z.string().min(1),
   MAILCALL_WP_APP_PASSWORD: z.string().min(1),
@@ -148,6 +157,9 @@ function buildDegradedConfig(
     MAILCALL_VALIDATE_TWILIO_SIGNATURES:
       String(env.MAILCALL_VALIDATE_TWILIO_SIGNATURES ?? "true").toLowerCase() !== "false" &&
       String(env.MAILCALL_VALIDATE_TWILIO_SIGNATURES ?? "true") !== "0",
+    MAILCALL_TWILIO_SIGNATURE_STRICT:
+      String(env.MAILCALL_TWILIO_SIGNATURE_STRICT ?? "false").toLowerCase() === "true" ||
+      String(env.MAILCALL_TWILIO_SIGNATURE_STRICT ?? "false") === "1",
     MAILCALL_WP_URL: wpBaseUrl,
     MAILCALL_WP_USER: sanitized.MAILCALL_WP_USER ?? "",
     MAILCALL_WP_APP_PASSWORD: sanitized.MAILCALL_WP_APP_PASSWORD ?? "",

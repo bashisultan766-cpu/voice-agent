@@ -131,15 +131,35 @@ export function createMailCallRouter(): Router {
       publicBaseUrl,
       wsUrl,
       degraded: isConfigDegraded(),
+      signatureStrict: cfg.MAILCALL_TWILIO_SIGNATURE_STRICT,
+      hasRawBody: Boolean(req.rawBody?.length),
     });
 
     try {
-      validateTwilioSignature(
-        req,
-        cfg.MAILCALL_TWILIO_AUTH_TOKEN,
-        shouldValidateTwilioSignature(cfg),
-        publicBaseUrl,
-      );
+      // Signature mismatch must NOT drop live calls by default (proxy/token drift).
+      // Set MAILCALL_TWILIO_SIGNATURE_STRICT=true only after validation is proven.
+      if (shouldValidateTwilioSignature(cfg)) {
+        try {
+          validateTwilioSignature(
+            req,
+            cfg.MAILCALL_TWILIO_AUTH_TOKEN,
+            true,
+            publicBaseUrl,
+          );
+          logger.info("mailcall_signature_ok", { callSid: req.body?.CallSid });
+        } catch (sigErr) {
+          const message = sigErr instanceof Error ? sigErr.message : String(sigErr);
+          if (cfg.MAILCALL_TWILIO_SIGNATURE_STRICT) {
+            throw sigErr;
+          }
+          logger.warn("mailcall_signature_soft_fail", {
+            callSid: req.body?.CallSid,
+            error: message,
+            publicBaseUrl,
+            hint: "Call continues with ConversationRelay. Fix MAILCALL_TWILIO_AUTH_TOKEN or set MAILCALL_VALIDATE_TWILIO_SIGNATURES=false. Enable STRICT only when signatures pass.",
+          });
+        }
+      }
 
       const to = String(req.body?.To ?? "");
       if (
@@ -155,7 +175,7 @@ export function createMailCallRouter(): Router {
 
       const twiml = conversationRelayTwiml(greetingSpeech(), req);
       logger.info("mailcall_inbound_twiml_ok", { callSid: req.body?.CallSid, wsUrl });
-      res.type("application/xml").send(twiml);
+      res.type("text/xml").send(twiml);
     } catch (err) {
       logger.error("mailcall_inbound_failed", {
         error: err instanceof Error ? err.message : String(err),
@@ -165,7 +185,7 @@ export function createMailCallRouter(): Router {
         validateSignatures: shouldValidateTwilioSignature(cfg),
         hasAuthToken: Boolean(cfg.MAILCALL_TWILIO_AUTH_TOKEN?.trim()),
       });
-      res.type("application/xml").status(200).send(fallbackTwiml());
+      res.type("text/xml").status(200).send(fallbackTwiml());
     }
   });
 

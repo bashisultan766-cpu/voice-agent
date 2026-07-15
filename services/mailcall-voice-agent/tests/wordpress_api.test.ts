@@ -9,6 +9,7 @@ function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
     MAILCALL_TWILIO_PHONE_NUMBER: "+15551234567",
     MAILCALL_TWILIO_AUTH_TOKEN: "token",
     MAILCALL_VALIDATE_TWILIO_SIGNATURES: false,
+    MAILCALL_TWILIO_SIGNATURE_STRICT: false,
     MAILCALL_WP_URL: "https://wp.example",
     MAILCALL_WP_USER: "editor",
     MAILCALL_WP_APP_PASSWORD: "abcd efgh ijkl mnop qrst uvwx",
