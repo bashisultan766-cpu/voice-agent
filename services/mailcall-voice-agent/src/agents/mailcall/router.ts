@@ -6,6 +6,7 @@
 import { Router, type Request, type Response } from "express";
 import type { WebSocket, WebSocketServer } from "ws";
 import {
+  DEFAULT_MAILCALL_PUBLIC_BASE_URL,
   getConfig,
   getDegradeReasons,
   isConfigDegraded,
@@ -22,7 +23,7 @@ import {
 import { WordPressApiClient } from "./wordpress_api.js";
 
 /** Known production host for this deployment (used when env is unset). */
-const DEFAULT_PUBLIC_BASE_URL = "https://agent.mailcallcommunication.com";
+const DEFAULT_PUBLIC_BASE_URL = DEFAULT_MAILCALL_PUBLIC_BASE_URL;
 
 function escapeXml(value: string): string {
   return value

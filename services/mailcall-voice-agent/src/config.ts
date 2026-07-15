@@ -3,6 +3,12 @@ import { envLoadReport, REPO_ROOT, SERVICE_ROOT } from "./bootstrapEnv.js";
 
 export const DEFAULT_MAILCALL_PORT = 8010;
 
+/** Production WordPress origin (GoDaddy) — no trailing slash. */
+export const DEFAULT_MAILCALL_WP_URL = "https://mailcallnewspaper.com";
+
+/** Production voice public origin (VPS / Twilio) — no trailing slash. */
+export const DEFAULT_MAILCALL_PUBLIC_BASE_URL = "https://agent.mailcallcommunication.com";
+
 /** EX_CONFIG — reserved for truly fatal boots (listen bind failure). Soft config uses degraded mode. */
 export const CONFIG_EXIT_CODE = 78;
 
@@ -78,6 +84,9 @@ export function sanitizeHttpUrl(raw: unknown): string {
   if (!/^https?:\/\//i.test(s)) {
     s = `https://${s}`;
   }
+
+  // Config URLs are origins — strip trailing slashes so clients never double-slash paths.
+  s = s.replace(/\/+$/, "");
 
   return s;
 }

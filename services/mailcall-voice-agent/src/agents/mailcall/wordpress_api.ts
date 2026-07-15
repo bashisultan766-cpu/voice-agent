@@ -4,7 +4,7 @@
  * hard 2s timeout, and silent fallback to the local brand profile.
  */
 
-import { getConfig, type MailCallConfig } from "../../config.js";
+import { DEFAULT_MAILCALL_WP_URL, getConfig, type MailCallConfig } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { TtlCache } from "./ttlCache.js";
 import { cleanseForSpeech, truncateToSentences } from "./textCleaner.js";
@@ -104,7 +104,7 @@ export class WordPressApiClient {
   }
 
   private async wpFetch<T>(pathAndQuery: string): Promise<T> {
-    const base = (this.cfg.wpBaseUrl || "https://mailcallcommunication.com").replace(/\/$/, "");
+    const base = (this.cfg.wpBaseUrl || DEFAULT_MAILCALL_WP_URL).replace(/\/$/, "");
     const url = `${base}/wp-json/wp/v2${pathAndQuery}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);

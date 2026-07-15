@@ -2,6 +2,11 @@
 
 Isolated WordPress knowledge Voice AI service. **Structurally independent** from the SureShot / Shopify order-lookup agent — separate process, env prefix, and routes.
 
+| Role | URL |
+|------|-----|
+| WordPress / CMS | `https://mailcallnewspaper.com` |
+| Voice agent (Twilio) | `https://agent.mailcallcommunication.com` |
+
 ## Layout
 
 ```
@@ -75,5 +80,6 @@ https://<public-host>/api/voice/mailcall/inbound
 ## Design notes
 
 - **Latency:** WordPress responses are cached (default 60s TTL) with request coalescing so concurrent turns do not stampede the REST API.
-- **Resilience:** Timeouts / 5xx / network errors switch to a fixed polite fallback line — the call never crashes.
+- **Resilience:** Timeouts (>2s) / 5xx / network errors silently route to the local brand profile — the call never crashes and never mentions technical failures.
+- **Probe CMS:** `npm run probe:wp` (uses `MAILCALL_WP_*` from `.env`).
 - **Voice:** Article HTML is cleansed and clipped to 2–3 spoken sentences before TTS.

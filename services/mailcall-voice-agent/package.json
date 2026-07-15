@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "probe:wp": "node scripts/probe-wp-connection.mjs"
   },
   "engines": {
     "node": ">=20"

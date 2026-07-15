@@ -5,7 +5,8 @@
  */
 
 export const BRAND_NAME = "Mail Call Communication";
-export const BRAND_WEBSITE = "https://mailcallcommunication.com";
+/** Public newspaper site (WordPress / GoDaddy). */
+export const BRAND_WEBSITE = "https://mailcallnewspaper.com";
 export const BRAND_LOCATION = "Abbottabad, Pakistan";
 
 export const BRAND_PROFILE = {
@@ -19,7 +20,7 @@ export const BRAND_PROFILE = {
   locationSpoken:
     "We are based in Abbottabad, Pakistan, where our newsroom serves readers across the region and beyond.",
   contactSpoken:
-    "You can reach us through mailcallcommunication.com for newsroom inquiries and publication details.",
+    "You can reach us through mailcallnewspaper.com for newsroom inquiries and publication details.",
   officeSpoken:
     "Our editorial office operates from Abbottabad, Pakistan, and we're glad to help with questions about our newspaper and coverage.",
 } as const;
@@ -33,7 +34,7 @@ export const BRAND_SPOKEN_ANSWERS = {
   location:
     "I'd be glad to tell you about that. Our newsroom is based in Abbottabad, Pakistan.",
   contact:
-    "I'd be glad to tell you about that. You can find us at mailcallcommunication.com for newsroom and publication inquiries.",
+    "I'd be glad to tell you about that. You can find us at mailcallnewspaper.com for newsroom and publication inquiries.",
   general:
     "I'd be glad to tell you about that. Mail Call Communication is dedicated to accurate journalism from our newsroom in Abbottabad, Pakistan. How else can I help with the newspaper today?",
   offTopic:
