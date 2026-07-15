@@ -4,12 +4,12 @@ import http from "node:http";
 import express from "express";
 import { WebSocketServer } from "ws";
 import {
-  CONFIG_EXIT_CODE,
   DEFAULT_MAILCALL_PORT,
-  getConfig,
+  getDegradeReasons,
+  initRuntimeConfig,
+  isConfigDegraded,
   MAILCALL_API_PREFIX,
   resolveListenPort,
-  validateConfig,
 } from "./config.js";
 import { envLoadReport } from "./bootstrapEnv.js";
 import { logger, setLogLevel } from "./utils/logger.js";
@@ -18,18 +18,29 @@ import {
   createMailCallRouter,
 } from "./agents/mailcall/router.js";
 
+function healthPayload() {
+  const degraded = isConfigDegraded();
+  return {
+    ok: !degraded,
+    degraded,
+    service: "mailcall-voice-agent",
+    agentPrefix: MAILCALL_API_PREFIX,
+    port: resolveListenPort(),
+    reasons: degraded ? getDegradeReasons() : [],
+  };
+}
+
 export function createApp() {
   const app = express();
   app.set("trust proxy", true);
   app.use(express.urlencoded({ extended: false }));
   app.use(express.json());
 
+  // Liveness: process is up and listening (200 even when config degraded).
   app.get("/health", (_req, res) => {
-    res.json({
-      ok: true,
-      service: "mailcall-voice-agent",
-      agentPrefix: MAILCALL_API_PREFIX,
-      port: resolveListenPort(),
+    res.status(200).json({
+      ...healthPayload(),
+      liveness: true,
     });
   });
 
@@ -46,10 +57,24 @@ export function createApp() {
 export function startServer() {
   console.log("LOG: Attempting to connect/initialize modules...");
 
-  const cfg = getConfig();
-  setLogLevel(cfg.MAILCALL_LOG_LEVEL);
+  const state = initRuntimeConfig();
+  setLogLevel(state.config.MAILCALL_LOG_LEVEL);
 
-  const port = cfg.MAILCALL_PORT || DEFAULT_MAILCALL_PORT;
+  if (state.degraded) {
+    console.warn(
+      [
+        "LOG: CONFIG DEGRADED — binding Express anyway (no process.exit).",
+        ...state.degradeReasons.map((r) => `LOG:   reason: ${r}`),
+        "LOG: Readiness probe /api/voice/mailcall/health will return 503 until fixed.",
+      ].join("\n"),
+    );
+    logger.warn("mailcall_boot_degraded", {
+      reasons: state.degradeReasons,
+      envFilesLoaded: envLoadReport.loaded,
+    });
+  }
+
+  const port = state.config.MAILCALL_PORT || DEFAULT_MAILCALL_PORT;
   const bindHost = process.env.MAILCALL_BIND_HOST?.trim() || "0.0.0.0";
 
   const app = createApp();
@@ -69,6 +94,7 @@ export function startServer() {
     logger.info("mailcall_server_listening", {
       port,
       bind: bindHost,
+      degraded: state.degraded,
       inbound: `${MAILCALL_API_PREFIX}/inbound`,
       ws: `${MAILCALL_API_PREFIX}/ws`,
       envFilesLoaded: envLoadReport.loaded,
@@ -98,19 +124,8 @@ function boot(): void {
   );
   console.log(`LOG: argv1=${process.argv[1] ?? "(none)"} cwd=${process.cwd()}`);
 
-  const validation = validateConfig();
-  if (!validation.ok) {
-    console.error(validation.message);
-    logger.error("mailcall_boot_config_invalid", {
-      exitCode: CONFIG_EXIT_CODE,
-      envFilesLoaded: envLoadReport.loaded,
-      envCandidates: envLoadReport.candidates,
-    });
-    process.exit(CONFIG_EXIT_CODE);
-  }
-
   try {
-    // Synchronous path to listen() — no awaits / external API calls.
+    // Always bind — soft config issues → degraded + 503 readiness, not exit.
     startServer();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

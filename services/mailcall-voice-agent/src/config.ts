@@ -3,12 +3,8 @@ import { envLoadReport, REPO_ROOT, SERVICE_ROOT } from "./bootstrapEnv.js";
 
 export const DEFAULT_MAILCALL_PORT = 8010;
 
-const REQUIRED_KEYS = [
-  "MAILCALL_TWILIO_PHONE_NUMBER",
-  "MAILCALL_WP_URL",
-  "MAILCALL_WP_USER",
-  "MAILCALL_WP_APP_PASSWORD",
-] as const;
+/** EX_CONFIG — reserved for truly fatal boots (listen bind failure). Soft config uses degraded mode. */
+export const CONFIG_EXIT_CODE = 78;
 
 const envSchema = z.object({
   MAILCALL_PUBLIC_BASE_URL: z.string().url().optional(),
@@ -26,22 +22,26 @@ const envSchema = z.object({
   MAILCALL_OPENAI_MODEL: z.string().optional().default("gpt-4o-mini"),
   MAILCALL_CACHE_TTL_MS: z.coerce.number().int().positive().optional().default(60_000),
   MAILCALL_WP_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2_500),
-  // Parsed separately via resolveListenPort() — keep optional for zod.
   MAILCALL_PORT: z.coerce.number().int().positive().optional(),
   MAILCALL_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
 });
 
-export type MailCallConfig = Omit<z.infer<typeof envSchema>, "MAILCALL_PORT"> & {
+export type MailCallConfig = Omit<z.infer<typeof envSchema>, "MAILCALL_PORT" | "MAILCALL_PUBLIC_BASE_URL"> & {
   MAILCALL_PORT: number;
+  MAILCALL_PUBLIC_BASE_URL?: string;
   /** WordPress Application Password with spaces stripped for Basic Auth. */
   wpAppPasswordClean: string;
   wpBaseUrl: string;
 };
 
-/** EX_CONFIG — PM2 stop_exit_codes should include this to avoid restart storms. */
-export const CONFIG_EXIT_CODE = 78;
+export type MailCallRuntimeState = {
+  config: MailCallConfig;
+  /** True when WP/Twilio config is incomplete or invalid after self-heal. */
+  degraded: boolean;
+  degradeReasons: string[];
+};
 
-let cached: MailCallConfig | null = null;
+let runtimeState: MailCallRuntimeState | null = null;
 
 /**
  * Strip spaces from WordPress Application Passwords (UI often shows
@@ -49,6 +49,40 @@ let cached: MailCallConfig | null = null;
  */
 export function cleanWpAppPassword(raw: string): string {
   return raw.replace(/\s+/g, "").trim();
+}
+
+/**
+ * Self-heal URL-like env values from VPS copy/paste:
+ * 1) trim + strip CR/LF/TAB/BOM
+ * 2) if scheme missing, prepend https://
+ * Pure function — does not mutate process.env.
+ */
+export function sanitizeHttpUrl(raw: unknown): string {
+  let s = String(raw ?? "")
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .replace(/[\r\n\t]+/g, "");
+
+  if (!s) return "";
+
+  // Bare host (mailcall.example) → https://mailcall.example
+  if (!/^https?:\/\//i.test(s)) {
+    s = `https://${s}`;
+  }
+
+  return s;
+}
+
+/** Optional URL: empty after sanitize → undefined; invalid → undefined. */
+export function sanitizeOptionalHttpUrl(raw: unknown): string | undefined {
+  const s = sanitizeHttpUrl(raw);
+  if (!s) return undefined;
+  try {
+    new URL(s);
+    return s;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -64,85 +98,193 @@ export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number 
   return n;
 }
 
-export function listMissingRequiredKeys(env: NodeJS.ProcessEnv = process.env): string[] {
-  return REQUIRED_KEYS.filter((key) => !String(env[key] ?? "").trim());
+/** Build a sanitized env snapshot for Zod (no side effects on process.env). */
+export function sanitizeEnvForValidation(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string | undefined> {
+  const wpUrl = sanitizeHttpUrl(env.MAILCALL_WP_URL);
+  const publicUrl = sanitizeOptionalHttpUrl(env.MAILCALL_PUBLIC_BASE_URL);
+
+  return {
+    ...env,
+    MAILCALL_WP_URL: wpUrl || undefined,
+    MAILCALL_PUBLIC_BASE_URL: publicUrl,
+    MAILCALL_TWILIO_PHONE_NUMBER: String(env.MAILCALL_TWILIO_PHONE_NUMBER ?? "").trim() || undefined,
+    MAILCALL_TWILIO_AUTH_TOKEN: String(env.MAILCALL_TWILIO_AUTH_TOKEN ?? "").trim(),
+    MAILCALL_WP_USER: String(env.MAILCALL_WP_USER ?? "").trim() || undefined,
+    MAILCALL_WP_APP_PASSWORD: String(env.MAILCALL_WP_APP_PASSWORD ?? "").trim() || undefined,
+    MAILCALL_OPENAI_API_KEY: String(env.MAILCALL_OPENAI_API_KEY ?? "").trim(),
+    MAILCALL_OPENAI_MODEL: String(env.MAILCALL_OPENAI_MODEL ?? "").trim() || undefined,
+    MAILCALL_PORT: String(env.MAILCALL_PORT ?? env.PORT ?? DEFAULT_MAILCALL_PORT).trim(),
+    MAILCALL_LOG_LEVEL: String(env.MAILCALL_LOG_LEVEL ?? "info").trim() || "info",
+  };
 }
 
-/** Human-readable boot failure for operators (stdout + PM2 error log). */
-export function formatConfigBootError(details: string): string {
-  const missing = listMissingRequiredKeys();
-  const lines = [
-    "Mail Call voice agent refused to start: configuration invalid.",
-    details,
-    "",
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function buildDegradedConfig(
+  env: NodeJS.ProcessEnv,
+  sanitized: Record<string, string | undefined>,
+  reasons: string[],
+): MailCallConfig {
+  const wpRaw = sanitized.MAILCALL_WP_URL ?? "";
+  // Keep a syntactically valid placeholder so clients never build relative URLs.
+  const wpBaseUrl = isValidHttpUrl(wpRaw) ? wpRaw.replace(/\/$/, "") : "https://invalid.local";
+
+  return {
+    MAILCALL_PUBLIC_BASE_URL: sanitized.MAILCALL_PUBLIC_BASE_URL,
+    MAILCALL_TWILIO_PHONE_NUMBER: sanitized.MAILCALL_TWILIO_PHONE_NUMBER ?? "",
+    MAILCALL_TWILIO_AUTH_TOKEN: sanitized.MAILCALL_TWILIO_AUTH_TOKEN ?? "",
+    MAILCALL_VALIDATE_TWILIO_SIGNATURES:
+      String(env.MAILCALL_VALIDATE_TWILIO_SIGNATURES ?? "true").toLowerCase() !== "false" &&
+      String(env.MAILCALL_VALIDATE_TWILIO_SIGNATURES ?? "true") !== "0",
+    MAILCALL_WP_URL: wpBaseUrl,
+    MAILCALL_WP_USER: sanitized.MAILCALL_WP_USER ?? "",
+    MAILCALL_WP_APP_PASSWORD: sanitized.MAILCALL_WP_APP_PASSWORD ?? "",
+    MAILCALL_OPENAI_API_KEY: sanitized.MAILCALL_OPENAI_API_KEY ?? "",
+    MAILCALL_OPENAI_MODEL: sanitized.MAILCALL_OPENAI_MODEL ?? "gpt-4o-mini",
+    MAILCALL_CACHE_TTL_MS: Number(env.MAILCALL_CACHE_TTL_MS) > 0 ? Number(env.MAILCALL_CACHE_TTL_MS) : 60_000,
+    MAILCALL_WP_TIMEOUT_MS: Number(env.MAILCALL_WP_TIMEOUT_MS) > 0 ? Number(env.MAILCALL_WP_TIMEOUT_MS) : 2_500,
+    MAILCALL_PORT: resolveListenPort(env),
+    MAILCALL_LOG_LEVEL: (["debug", "info", "warn", "error"] as const).includes(
+      sanitized.MAILCALL_LOG_LEVEL as "info",
+    )
+      ? (sanitized.MAILCALL_LOG_LEVEL as MailCallConfig["MAILCALL_LOG_LEVEL"])
+      : "info",
+    wpBaseUrl,
+    wpAppPasswordClean: cleanWpAppPassword(sanitized.MAILCALL_WP_APP_PASSWORD ?? ""),
+  };
+}
+
+export function formatConfigDegradedWarning(reasons: string[]): string {
+  return [
+    "WARN: Mail Call starting in DEGRADED mode — Express will still bind so health probes stay reachable.",
+    ...reasons.map((r) => `  • ${r}`),
     `Env files loaded: ${envLoadReport.loaded.length ? envLoadReport.loaded.join(", ") : "(none)"}`,
     `Tried: ${envLoadReport.candidates.join(", ")}`,
-    "",
-    "Required variables:",
-    ...REQUIRED_KEYS.map((k) => `  - ${k}${missing.includes(k) ? "  ← MISSING" : ""}`),
-    "",
-    "Fix on the VPS (either file works):",
+    "Fix:",
     `  1) ${REPO_ROOT}/.env`,
     `  2) ${SERVICE_ROOT}/.env`,
     `  Template: ${SERVICE_ROOT}/.env.example`,
     "Then: pm2 restart mailcall-voice-agent --update-env",
-  ];
-  return lines.join("\n");
+    "Readiness: GET /api/voice/mailcall/health → 503 while degraded.",
+  ].join("\n");
 }
 
-export type ConfigValidation =
-  | { ok: true; config: MailCallConfig }
-  | { ok: false; message: string };
+/**
+ * Validate + self-heal env. Never throws for soft config issues.
+ * Always returns a runtime state the HTTP server can boot with.
+ */
+export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): MailCallRuntimeState {
+  const sanitized = sanitizeEnvForValidation(env);
+  const reasons: string[] = [];
 
-export function validateConfig(env: NodeJS.ProcessEnv = process.env): ConfigValidation {
-  const missing = listMissingRequiredKeys(env);
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      message: formatConfigBootError(`Missing required env: ${missing.join(", ")}`),
-    };
+  const rawWp = String(env.MAILCALL_WP_URL ?? "");
+  const healedWp = sanitized.MAILCALL_WP_URL ?? "";
+  if (rawWp.trim() && healedWp && !/^https?:\/\//i.test(rawWp.trim())) {
+    // Informational — self-heal applied (not a degrade reason by itself).
+  }
+  if (!healedWp || !isValidHttpUrl(healedWp)) {
+    reasons.push(
+      `MAILCALL_WP_URL invalid after sanitize (raw=${JSON.stringify(rawWp)} healed=${JSON.stringify(healedWp)})`,
+    );
+  }
+  if (!sanitized.MAILCALL_TWILIO_PHONE_NUMBER) {
+    reasons.push("MAILCALL_TWILIO_PHONE_NUMBER missing");
+  }
+  if (!sanitized.MAILCALL_WP_USER) {
+    reasons.push("MAILCALL_WP_USER missing");
+  }
+  if (!sanitized.MAILCALL_WP_APP_PASSWORD) {
+    reasons.push("MAILCALL_WP_APP_PASSWORD missing");
   }
 
-  const parsed = envSchema.safeParse(env);
+  const parsed = envSchema.safeParse(sanitized);
   if (!parsed.success) {
-    const details = parsed.error.issues
-      .map((i) => `${i.path.join(".")}: ${i.message}`)
-      .join("; ");
+    for (const issue of parsed.error.issues) {
+      reasons.push(`${issue.path.join(".")}: ${issue.message}`);
+    }
+    const unique = [...new Set(reasons)];
     return {
-      ok: false,
-      message: formatConfigBootError(details),
+      degraded: true,
+      degradeReasons: unique,
+      config: buildDegradedConfig(env, sanitized, unique),
     };
   }
 
   const data = parsed.data;
   const wpBaseUrl = data.MAILCALL_WP_URL.replace(/\/$/, "");
-  const port = resolveListenPort(env);
-  return {
-    ok: true,
-    config: {
-      ...data,
-      MAILCALL_PORT: port,
-      wpBaseUrl,
-      wpAppPasswordClean: cleanWpAppPassword(data.MAILCALL_WP_APP_PASSWORD),
-    },
+  const config: MailCallConfig = {
+    ...data,
+    MAILCALL_PUBLIC_BASE_URL: sanitized.MAILCALL_PUBLIC_BASE_URL ?? data.MAILCALL_PUBLIC_BASE_URL,
+    MAILCALL_PORT: resolveListenPort(env),
+    wpBaseUrl,
+    wpAppPasswordClean: cleanWpAppPassword(data.MAILCALL_WP_APP_PASSWORD),
   };
-}
 
-export function getConfig(env: NodeJS.ProcessEnv = process.env): MailCallConfig {
-  if (cached) return cached;
-
-  const result = validateConfig(env);
-  if (!result.ok) {
-    throw new Error(result.message);
+  if (reasons.length > 0) {
+    const unique = [...new Set(reasons)];
+    return { degraded: true, degradeReasons: unique, config };
   }
 
-  cached = result.config;
-  return cached;
+  return { degraded: false, degradeReasons: [], config };
+}
+
+/** Initialize/replace singleton runtime state (called once at boot). */
+export function initRuntimeConfig(env: NodeJS.ProcessEnv = process.env): MailCallRuntimeState {
+  runtimeState = loadRuntimeConfig(env);
+  return runtimeState;
+}
+
+export function getRuntimeState(): MailCallRuntimeState {
+  if (!runtimeState) {
+    runtimeState = loadRuntimeConfig();
+  }
+  return runtimeState;
+}
+
+export function isConfigDegraded(): boolean {
+  return getRuntimeState().degraded;
+}
+
+export function getDegradeReasons(): string[] {
+  return getRuntimeState().degradeReasons;
+}
+
+export function getConfig(env?: NodeJS.ProcessEnv): MailCallConfig {
+  if (env) {
+    return loadRuntimeConfig(env).config;
+  }
+  return getRuntimeState().config;
+}
+
+/** @deprecated Prefer loadRuntimeConfig — kept for older call sites. */
+export type ConfigValidation =
+  | { ok: true; config: MailCallConfig }
+  | { ok: false; message: string; degraded?: boolean };
+
+export function validateConfig(env: NodeJS.ProcessEnv = process.env): ConfigValidation {
+  const state = loadRuntimeConfig(env);
+  if (state.degraded) {
+    return {
+      ok: false,
+      degraded: true,
+      message: formatConfigDegradedWarning(state.degradeReasons),
+    };
+  }
+  return { ok: true, config: state.config };
 }
 
 /** Test-only: clear singleton so env can be re-parsed. */
 export function resetConfigCache(): void {
-  cached = null;
+  runtimeState = null;
 }
 
 export const MAILCALL_API_PREFIX = "/api/voice/mailcall";

@@ -5,7 +5,12 @@
 
 import { Router, type Request, type Response } from "express";
 import type { WebSocket, WebSocketServer } from "ws";
-import { getConfig, MAILCALL_API_PREFIX } from "../../config.js";
+import {
+  getConfig,
+  getDegradeReasons,
+  isConfigDegraded,
+  MAILCALL_API_PREFIX,
+} from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { validateTwilioSignature } from "../../utils/twilioSignature.js";
 import {
@@ -55,13 +60,19 @@ function fallbackTwiml(): string {
 export function createMailCallRouter(): Router {
   const router = Router();
 
-  /** Health for this agent namespace only. */
+  /** Readiness — 503 while config is degraded (liveness remains on GET /health). */
   router.get("/health", (_req, res) => {
-    res.json({
-      ok: true,
+    const degraded = isConfigDegraded();
+    res.status(degraded ? 503 : 200).json({
+      ok: !degraded,
+      degraded,
       agent: "mailcall",
       publication: "Mail Call Communication Newspaper",
       prefix: MAILCALL_API_PREFIX,
+      reasons: degraded ? getDegradeReasons() : [],
+      message: degraded
+        ? "Configuration degraded — fix MAILCALL_* env and restart"
+        : "ok",
     });
   });
 
