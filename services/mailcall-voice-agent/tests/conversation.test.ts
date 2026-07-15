@@ -25,6 +25,9 @@ function testConfig(): MailCallConfig {
     MAILCALL_WP_TIMEOUT_MS: 500,
     MAILCALL_PORT: 8010,
     MAILCALL_LOG_LEVEL: "error",
+    RESEND_API_KEY: "",
+    RESEND_FROM_EMAIL: "",
+    RESEND_FROM_NAME: "MailCall Newspaper",
     wpAppPasswordClean: "abcdefghijklmnopqrstuvwx",
     wpBaseUrl: "https://wp.example",
   };
@@ -133,9 +136,19 @@ describe("conversation + prompts", () => {
 
     expect(result.degraded).toBe(false);
     expect(result.articlesUsed).toBeGreaterThan(0);
+    expect(result.articlesUsed).toBeLessThanOrEqual(2);
     expect(result.speech.toLowerCase()).toMatch(/debris|pier|harbor/);
     expect(result.speech).not.toMatch(/https?:\/\//);
     expect(result.speech.split(/[.!?]+/).filter(Boolean).length).toBeLessThanOrEqual(4);
+  });
+
+  it("buildSystemPrompt names Brook and requires send_support_escalation", async () => {
+    const { buildSystemPrompt } = await import("../src/agents/mailcall/prompts.js");
+    const prompt = buildSystemPrompt(new Date("2026-07-15T12:00:00Z"));
+    expect(prompt).toMatch(/strictly Brook/i);
+    expect(prompt).toContain("send_support_escalation");
+    expect(prompt).toMatch(/\$21\.66/);
+    expect(prompt).toMatch(/ALL SALES ARE FINAL/i);
   });
 
   it("buildRetrievalOnlySpeech stays concise", () => {

@@ -4,6 +4,8 @@ import {
   WordPressApiClient,
   WP_BROWSER_HEADERS,
   flattenFetchError,
+  extractSearchTerms,
+  LIVE_RAG_MAX_ARTICLES,
 } from "../src/agents/mailcall/wordpress_api.js";
 
 function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
@@ -23,6 +25,9 @@ function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
     MAILCALL_WP_TIMEOUT_MS: 500,
     MAILCALL_PORT: 8010,
     MAILCALL_LOG_LEVEL: "error",
+    RESEND_API_KEY: "",
+    RESEND_FROM_EMAIL: "",
+    RESEND_FROM_NAME: "MailCall Newspaper",
     wpAppPasswordClean: "abcdefghijklmnopqrstuvwx",
     wpBaseUrl: "https://wp.example",
   };
@@ -151,5 +156,51 @@ describe("WordPressApiClient", () => {
     expect(hit.degraded).toBe(true);
     expect(hit.usedBrandProfile).toBe(true);
     expect(hit.degradeReason).toMatch(/ETIMEDOUT|timed out/i);
+  });
+
+  it("extractSearchTerms drops filler words from voice transcripts", () => {
+    expect(extractSearchTerms("um can you please tell me about the harbor cleanup")).toBe(
+      "harbor cleanup",
+    );
+  });
+
+  it("retrieveForLiveTurn caps articles at 2 and logs articlesUsed", async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(
+        JSON.stringify([
+          {
+            id: 1,
+            title: { rendered: "One" },
+            excerpt: { rendered: "<p>First</p>" },
+            content: { rendered: "<p>Body one</p>" },
+            categories: [],
+          },
+          {
+            id: 2,
+            title: { rendered: "Two" },
+            excerpt: { rendered: "<p>Second</p>" },
+            content: { rendered: "<p>Body two</p>" },
+            categories: [],
+          },
+          {
+            id: 3,
+            title: { rendered: "Three" },
+            excerpt: { rendered: "<p>Third</p>" },
+            content: { rendered: "<p>Body three</p>" },
+            categories: [],
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const client = new WordPressApiClient(testConfig(), fetchImpl);
+    const hit = await client.retrieveForLiveTurn("please tell me about the harbor news");
+
+    expect(hit.degraded).toBe(false);
+    expect(hit.articles.length).toBeLessThanOrEqual(LIVE_RAG_MAX_ARTICLES);
+    expect(hit.articles.length).toBe(2);
+    const url = String(fetchImpl.mock.calls[0]?.[0] ?? "");
+    expect(url).toContain("per_page=2");
   });
 });

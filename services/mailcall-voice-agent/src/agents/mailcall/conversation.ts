@@ -94,8 +94,12 @@ function matchPolicyFastPath(utterance: string): string | null {
   if (ADDRESS_CHANGE_RE.test(utterance)) {
     return `Not a problem. ${SCRIPTS.addressChange}`;
   }
+  // Upset + delay: when OpenAI is available, fall through so send_support_escalation can run.
   if (UPSET_RE.test(utterance) && DELAY_RE.test(utterance)) {
-    return SCRIPTS.escalation;
+    if (!getConfig().MAILCALL_OPENAI_API_KEY) {
+      return SCRIPTS.escalation;
+    }
+    return null;
   }
   if (DELAY_RE.test(utterance)) {
     return SCRIPTS.delayedDelivery;
@@ -206,7 +210,8 @@ export async function processConversationTurn(
     };
   }
 
-  const knowledge = await wp.retrieveForQuery(utterance);
+  // Live RAG before LLM: extract search terms, max 2 articles, hard 1000ms timeout.
+  const knowledge = await wp.retrieveForLiveTurn(utterance);
   const history = input.history ?? session.history.slice(-8);
   const messages = buildTurnMessages({
     userUtterance: utterance,
@@ -216,6 +221,14 @@ export async function processConversationTurn(
     usedBrandProfile: knowledge.usedBrandProfile,
     brandKnowledge: knowledge.brandKnowledge,
     history,
+  });
+
+  logger.info("mailcall_turn_rag", {
+    callSid: input.callSid,
+    articlesUsed: knowledge.articles.length,
+    degraded: knowledge.degraded,
+    usedBrandProfile: Boolean(knowledge.usedBrandProfile),
+    ragLatencyMs: knowledge.latencyMs,
   });
 
   let speech: string;

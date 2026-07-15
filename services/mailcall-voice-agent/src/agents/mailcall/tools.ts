@@ -14,13 +14,18 @@ import {
   SCRIPTS,
 } from "./businessRules.js";
 import { looksLikeEmail, normalizeSpokenEmail } from "./emailNormalize.js";
+import {
+  isResendConfigured,
+  sendSupportEscalationEmail,
+} from "../../utils/resendEmail.js";
 
 export type MailCallToolName =
   | "MailCallProduct"
   | "MailCallSku"
   | "GetOrders"
   | "PlaceOrder"
-  | "transfer_to_number";
+  | "transfer_to_number"
+  | "send_support_escalation";
 
 export interface ToolExecutionContext {
   callSid: string;
@@ -127,6 +132,41 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
         properties: {
           reason: { type: "string", description: "Brief reason for the transfer." },
         },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_support_escalation",
+      description:
+        "Email support@mailcallnewspaper.com with a formatted support escalation. Use for delivery complaints, inmate moves, or angry callers after collecting caller name/email, inmate name/ID, facility name/address, and the main concern.",
+      parameters: {
+        type: "object",
+        properties: {
+          caller_name: { type: "string", description: "Caller's full name." },
+          caller_email: { type: "string", description: "Caller's email address." },
+          inmate_name: { type: "string", description: "Inmate's full name." },
+          inmate_number: { type: "string", description: "Inmate ID or number." },
+          facility_name: { type: "string", description: "Correctional facility name." },
+          facility_address: {
+            type: "string",
+            description: "Facility mailing address for newspaper delivery.",
+          },
+          concern: {
+            type: "string",
+            description: "Caller's main concern (delivery, move, complaint, etc.).",
+          },
+        },
+        required: [
+          "caller_name",
+          "caller_email",
+          "inmate_name",
+          "inmate_number",
+          "facility_name",
+          "facility_address",
+          "concern",
+        ],
       },
     },
   },
@@ -297,6 +337,76 @@ export async function executeMailCallTool(
         toolPayload: { ok: true, transferred: true, reason: args.reason ?? "" },
         spokenHint: gate.reasonSpoken,
         transferToNumber: transferTo,
+      };
+    }
+
+    case "send_support_escalation": {
+      const callerName = String(args.caller_name ?? "").trim();
+      const callerEmail = normalizeSpokenEmail(String(args.caller_email ?? ""));
+      const inmateName = String(args.inmate_name ?? "").trim();
+      const inmateNumber = String(args.inmate_number ?? "").trim();
+      const facilityName = String(args.facility_name ?? "").trim();
+      const facilityAddress = String(args.facility_address ?? "").trim();
+      const concern = String(args.concern ?? "").trim();
+
+      if (
+        !callerName ||
+        !looksLikeEmail(callerEmail) ||
+        !inmateName ||
+        !inmateNumber ||
+        !facilityName ||
+        !facilityAddress ||
+        !concern
+      ) {
+        return {
+          toolPayload: { ok: false, reason: "missing_fields" },
+          spokenHint:
+            "Let me walk you through this. I still need your name and email, the inmate's name and number, the facility name and mailing address, and a short description of the concern.",
+        };
+      }
+
+      if (!isResendConfigured()) {
+        logger.warn("mailcall_escalation_resend_unconfigured", { callSid: ctx.callSid });
+        return {
+          toolPayload: { ok: false, reason: "email_unavailable" },
+          spokenHint: SCRIPTS.voicemail,
+        };
+      }
+
+      const sent = await sendSupportEscalationEmail({
+        callerName,
+        callerEmail,
+        inmateName,
+        inmateNumber,
+        facilityName,
+        facilityAddress,
+        concern,
+        callSid: ctx.callSid,
+      });
+
+      if (!sent.ok) {
+        logger.warn("mailcall_escalation_failed", {
+          callSid: ctx.callSid,
+          error: sent.error,
+        });
+        return {
+          toolPayload: { ok: false, reason: "send_failed" },
+          spokenHint: SCRIPTS.voicemail,
+        };
+      }
+
+      logger.info("mailcall_escalation_sent", {
+        callSid: ctx.callSid,
+        messageId: sent.messageId,
+      });
+
+      return {
+        toolPayload: {
+          ok: true,
+          messageId: sent.messageId,
+          to: "support@mailcallnewspaper.com",
+        },
+        spokenHint: SCRIPTS.escalationSent,
       };
     }
 

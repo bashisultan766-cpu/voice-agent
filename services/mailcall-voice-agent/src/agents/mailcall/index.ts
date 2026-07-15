@@ -1,4 +1,4 @@
-export { WordPressApiClient, getWordPressApiClient, resetWordPressApiClient } from "./wordpress_api.js";
+export { WordPressApiClient, getWordPressApiClient, resetWordPressApiClient, extractSearchTerms } from "./wordpress_api.js";
 export { createMailCallRouter, attachMailCallRelayHandler, MAILCALL_API_PREFIX } from "./router.js";
 export {
   SYSTEM_PROMPT,

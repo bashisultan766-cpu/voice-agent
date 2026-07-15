@@ -25,8 +25,108 @@ import type {
 /** Voice budget: never wait longer than this for CMS. */
 export const WP_REQUEST_TIMEOUT_MS = 2000;
 
+/** Live call RAG: hard outer deadline before LLM turn. */
+export const LIVE_RAG_TIMEOUT_MS = 1000;
+
+/** Live call RAG: inject at most this many articles into the turn prompt. */
+export const LIVE_RAG_MAX_ARTICLES = 2;
+
 /** One silent retry on transient socket failures before brand-profile fallback. */
 const WP_TRANSIENT_RETRIES = 1;
+
+const SEARCH_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "is",
+  "are",
+  "was",
+  "were",
+  "i",
+  "me",
+  "my",
+  "you",
+  "your",
+  "we",
+  "our",
+  "to",
+  "of",
+  "in",
+  "on",
+  "for",
+  "and",
+  "or",
+  "but",
+  "with",
+  "about",
+  "what",
+  "who",
+  "how",
+  "when",
+  "where",
+  "why",
+  "can",
+  "could",
+  "would",
+  "should",
+  "please",
+  "tell",
+  "do",
+  "does",
+  "did",
+  "have",
+  "has",
+  "had",
+  "this",
+  "that",
+  "these",
+  "those",
+  "it",
+  "from",
+  "at",
+  "be",
+  "been",
+  "being",
+  "so",
+  "just",
+  "like",
+  "want",
+  "need",
+  "get",
+  "got",
+  "know",
+  "hello",
+  "hi",
+  "hey",
+  "thanks",
+  "thank",
+  "um",
+  "uh",
+  "yeah",
+  "yes",
+  "no",
+  "okay",
+  "ok",
+]);
+
+/**
+ * Extract compact search terms from a raw voice transcript for WP `search=`.
+ * Drops filler/stop words so live RAG hits relevant posts instead of noise.
+ */
+export function extractSearchTerms(utterance: string): string {
+  const raw = utterance.trim();
+  if (!raw) return "";
+
+  const tokens = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9\s'-]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 2 && !SEARCH_STOP_WORDS.has(t));
+
+  const unique = [...new Set(tokens)];
+  const joined = unique.slice(0, 8).join(" ").trim();
+  return joined || raw.slice(0, 80);
+}
 
 /** Browser-like headers — GoDaddy / ModSecurity often block bare Node UA strings. */
 export const WP_BROWSER_HEADERS = {
@@ -274,6 +374,25 @@ export class WordPressApiClient {
     });
   }
 
+  private brandFallbackHit(
+    query: string,
+    started: number,
+    opts?: { degraded?: boolean; degradeReason?: string; brandSpeech?: string },
+  ): KnowledgeHit {
+    const brandSpeech = opts?.brandSpeech ?? brandOfflineFallbackSpeech(query);
+    return {
+      articles: [],
+      categories: [],
+      degraded: Boolean(opts?.degraded),
+      usedBrandProfile: true,
+      brandSpeech,
+      brandKnowledge: buildBrandProfileKnowledgeBlock(),
+      degradeReason: opts?.degradeReason,
+      cacheHit: !opts?.degraded,
+      latencyMs: Date.now() - started,
+    };
+  }
+
   /**
    * Knowledge retrieval for a caller utterance.
    * Never throws — on CMS failure returns brand-profile fallback (caller-safe).
@@ -284,16 +403,7 @@ export class WordPressApiClient {
     // Identity / about questions → static brand profile (no CMS round-trip).
     const brandHit = matchBrandProfileQuery(query);
     if (brandHit) {
-      return {
-        articles: [],
-        categories: [],
-        degraded: false,
-        usedBrandProfile: true,
-        brandSpeech: brandHit,
-        brandKnowledge: buildBrandProfileKnowledgeBlock(),
-        cacheHit: true,
-        latencyMs: Date.now() - started,
-      };
+      return this.brandFallbackHit(query, started, { brandSpeech: brandHit });
     }
 
     const q = query.trim().slice(0, 120);
@@ -325,17 +435,102 @@ export class WordPressApiClient {
         timeoutMs: this.timeoutMs,
       });
 
+      return this.brandFallbackHit(query, started, {
+        degraded: true,
+        degradeReason: reason,
+      });
+    }
+  }
+
+  /**
+   * Live voice-turn RAG: extract search terms → parallel WP search (max 2 articles)
+   * under a hard 1000ms deadline. Never throws.
+   */
+  async retrieveForLiveTurn(rawUtterance: string): Promise<KnowledgeHit> {
+    const started = Date.now();
+    const brandHit = matchBrandProfileQuery(rawUtterance);
+    if (brandHit) {
+      return this.brandFallbackHit(rawUtterance, started, { brandSpeech: brandHit });
+    }
+
+    const searchTerms = extractSearchTerms(rawUtterance);
+    if (!searchTerms) {
       return {
         articles: [],
         categories: [],
-        degraded: true,
-        usedBrandProfile: true,
-        brandSpeech: brandOfflineFallbackSpeech(query),
-        brandKnowledge: buildBrandProfileKnowledgeBlock(),
-        degradeReason: reason,
+        degraded: false,
+        usedBrandProfile: false,
         cacheHit: false,
         latencyMs: Date.now() - started,
       };
+    }
+
+    const searchKey = `posts:search:${searchTerms.toLowerCase()}:${LIVE_RAG_MAX_ARTICLES}`;
+    const cacheHit = this.searchCache.get(searchKey) !== undefined;
+
+    const timedSearch = async (): Promise<MailCallArticle[]> => {
+      // Parallel: primary term search + optional raw-transcript search, merge by id.
+      const rawSlice = rawUtterance.trim().slice(0, 120);
+      const secondary =
+        rawSlice && rawSlice.toLowerCase() !== searchTerms.toLowerCase()
+          ? this.searchPosts(rawSlice, LIVE_RAG_MAX_ARTICLES).catch(() => [] as MailCallArticle[])
+          : Promise.resolve([] as MailCallArticle[]);
+
+      const [primary, alt] = await Promise.all([
+        this.searchPosts(searchTerms, LIVE_RAG_MAX_ARTICLES),
+        secondary,
+      ]);
+
+      const seen = new Set<number>();
+      const merged: MailCallArticle[] = [];
+      for (const article of [...primary, ...alt]) {
+        if (seen.has(article.id)) continue;
+        seen.add(article.id);
+        merged.push(article);
+        if (merged.length >= LIVE_RAG_MAX_ARTICLES) break;
+      }
+      return merged;
+    };
+
+    try {
+      const articles = await Promise.race([
+        timedSearch(),
+        new Promise<MailCallArticle[]>((_, reject) => {
+          setTimeout(
+            () => reject(new WordPressApiError("ETIMEDOUT")),
+            LIVE_RAG_TIMEOUT_MS,
+          );
+        }),
+      ]);
+
+      logger.info("mailcall_live_rag", {
+        searchTerms,
+        articlesUsed: articles.length,
+        latencyMs: Date.now() - started,
+        cacheHit,
+      });
+
+      return {
+        articles,
+        categories: [],
+        degraded: false,
+        usedBrandProfile: false,
+        cacheHit,
+        latencyMs: Date.now() - started,
+      };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logger.warn("[WP_CLIENT_OFFLINE] Live RAG timed out or failed; brand profile fallback.", {
+        reason,
+        searchTerms,
+        queryPreview: rawUtterance.slice(0, 80),
+        timeoutMs: LIVE_RAG_TIMEOUT_MS,
+      });
+
+      return this.brandFallbackHit(rawUtterance, started, {
+        degraded: true,
+        degradeReason: reason,
+      });
     }
   }
 

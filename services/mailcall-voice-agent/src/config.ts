@@ -41,6 +41,10 @@ const envSchema = z.object({
   MAILCALL_WP_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2_000),
   MAILCALL_PORT: z.coerce.number().int().positive().optional(),
   MAILCALL_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
+  /** Shared Resend credentials (repo-root or service .env). Optional — escalation falls back to voicemail guidance. */
+  RESEND_API_KEY: z.string().optional().default(""),
+  RESEND_FROM_EMAIL: z.string().optional().default(""),
+  RESEND_FROM_NAME: z.string().optional().default("MailCall Newspaper"),
 });
 
 export type MailCallConfig = Omit<z.infer<typeof envSchema>, "MAILCALL_PORT" | "MAILCALL_PUBLIC_BASE_URL"> & {
@@ -143,6 +147,9 @@ export function sanitizeEnvForValidation(
       .trim(),
     MAILCALL_PORT: String(env.MAILCALL_PORT ?? env.PORT ?? DEFAULT_MAILCALL_PORT).trim(),
     MAILCALL_LOG_LEVEL: String(env.MAILCALL_LOG_LEVEL ?? "info").trim() || "info",
+    RESEND_API_KEY: String(env.RESEND_API_KEY ?? "").trim(),
+    RESEND_FROM_EMAIL: String(env.RESEND_FROM_EMAIL ?? "").trim(),
+    RESEND_FROM_NAME: String(env.RESEND_FROM_NAME ?? "MailCall Newspaper").trim() || "MailCall Newspaper",
   };
 }
 
@@ -188,6 +195,9 @@ function buildDegradedConfig(
     )
       ? (sanitized.MAILCALL_LOG_LEVEL as MailCallConfig["MAILCALL_LOG_LEVEL"])
       : "info",
+    RESEND_API_KEY: sanitized.RESEND_API_KEY ?? "",
+    RESEND_FROM_EMAIL: sanitized.RESEND_FROM_EMAIL ?? "",
+    RESEND_FROM_NAME: sanitized.RESEND_FROM_NAME || "MailCall Newspaper",
     wpBaseUrl,
     wpAppPasswordClean: cleanWpAppPassword(sanitized.MAILCALL_WP_APP_PASSWORD ?? ""),
   };

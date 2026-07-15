@@ -68,4 +68,14 @@ describe("MailCall tools", () => {
     expect(bad.toolPayload.email).toBe("mary.smith@gmail.com");
     expect(bad.spokenHint).not.toMatch(/api|json|database/i);
   });
+
+  it("send_support_escalation requires fields then confirms after Resend success", async () => {
+    const incomplete = await executeMailCallTool(
+      "send_support_escalation",
+      JSON.stringify({ caller_name: "Mary" }),
+      { callSid: "esc-1", callStartedAtMs: Date.now() },
+    );
+    expect(incomplete.toolPayload.ok).toBe(false);
+    expect(incomplete.spokenHint?.toLowerCase()).toMatch(/name|email|inmate|facility/);
+  });
 });
