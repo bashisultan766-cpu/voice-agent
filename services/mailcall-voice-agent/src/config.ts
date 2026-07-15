@@ -110,7 +110,10 @@ export function sanitizeEnvForValidation(
     MAILCALL_WP_URL: wpUrl || undefined,
     MAILCALL_PUBLIC_BASE_URL: publicUrl,
     MAILCALL_TWILIO_PHONE_NUMBER: String(env.MAILCALL_TWILIO_PHONE_NUMBER ?? "").trim() || undefined,
-    MAILCALL_TWILIO_AUTH_TOKEN: String(env.MAILCALL_TWILIO_AUTH_TOKEN ?? "").trim(),
+    // Twilio auth tokens must not contain whitespace from .env paste artifacts.
+    MAILCALL_TWILIO_AUTH_TOKEN: String(env.MAILCALL_TWILIO_AUTH_TOKEN ?? "")
+      .replace(/\s+/g, "")
+      .trim(),
     MAILCALL_WP_USER: String(env.MAILCALL_WP_USER ?? "").trim() || undefined,
     MAILCALL_WP_APP_PASSWORD: String(env.MAILCALL_WP_APP_PASSWORD ?? "").trim() || undefined,
     MAILCALL_OPENAI_API_KEY: String(env.MAILCALL_OPENAI_API_KEY ?? "").trim(),

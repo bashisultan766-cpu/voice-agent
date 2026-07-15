@@ -32,9 +32,29 @@ function healthPayload() {
 
 export function createApp() {
   const app = express();
+
+  // Required behind Nginx TLS termination so req.protocol / Host reflect HTTPS.
   app.set("trust proxy", true);
-  app.use(express.urlencoded({ extended: false }));
-  app.use(express.json());
+
+  /**
+   * Preserve exact request bytes for Twilio X-Twilio-Signature checks.
+   * Body-parsers otherwise mutate the payload before validation.
+   */
+  const captureRawBody = (req: express.Request, _res: express.Response, buf: Buffer) => {
+    req.rawBody = Buffer.from(buf);
+  };
+
+  app.use(
+    express.urlencoded({
+      extended: false,
+      verify: captureRawBody,
+    }),
+  );
+  app.use(
+    express.json({
+      verify: captureRawBody,
+    }),
+  );
 
   // Liveness: process is up and listening (200 even when config degraded).
   app.get("/health", (_req, res) => {
