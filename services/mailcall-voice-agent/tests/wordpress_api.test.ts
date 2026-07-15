@@ -1,6 +1,10 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { cleanWpAppPassword, resetConfigCache, type MailCallConfig } from "../src/config.js";
-import { WordPressApiClient } from "../src/agents/mailcall/wordpress_api.js";
+import {
+  WordPressApiClient,
+  WP_BROWSER_HEADERS,
+  flattenFetchError,
+} from "../src/agents/mailcall/wordpress_api.js";
 
 function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
   const base: MailCallConfig = {
@@ -37,14 +41,18 @@ describe("WordPressApiClient", () => {
     resetConfigCache();
   });
 
-  it("uses Basic Auth with cleaned password and caches posts", async () => {
+  it("uses Basic Auth, browser headers, and caches posts", async () => {
     const calls: string[] = [];
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
       calls.push(String(url));
-      const auth = String((init?.headers as Record<string, string>)?.Authorization ?? "");
+      const headers = init?.headers as Record<string, string>;
+      const auth = String(headers?.Authorization ?? "");
       expect(auth.startsWith("Basic ")).toBe(true);
       const decoded = Buffer.from(auth.slice(6), "base64").toString("utf8");
       expect(decoded).toBe("editor:abcdefghijklmnopqrstuvwx");
+      expect(headers["User-Agent"]).toBe(WP_BROWSER_HEADERS["User-Agent"]);
+      expect(headers.Accept).toBe(WP_BROWSER_HEADERS.Accept);
+      expect(headers["Accept-Language"]).toBe(WP_BROWSER_HEADERS["Accept-Language"]);
 
       return new Response(
         JSON.stringify([
@@ -70,6 +78,47 @@ describe("WordPressApiClient", () => {
     expect(first[0]?.spokenSummary).not.toContain("https://");
     expect(second[0]?.id).toBe(1);
     expect(calls.length).toBe(1);
+  });
+
+  it("URL-encodes search terms via URLSearchParams", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      const parsed = new URL(String(url));
+      expect(parsed.searchParams.get("search")).toBe("city & budget?");
+      expect(String(url)).not.toContain("search=city & budget?");
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const client = new WordPressApiClient(testConfig(), fetchImpl);
+    await client.searchPosts("city & budget?");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    const built = new URL(client.buildWpUrl("/posts", { search: "a/b c", per_page: 1 }));
+    expect(built.searchParams.get("search")).toBe("a/b c");
+  });
+
+  it("retries once on fetch failed then falls back to brand profile", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("fetch failed");
+    }) as unknown as typeof fetch;
+
+    const client = new WordPressApiClient(testConfig(), fetchImpl);
+    const hit = await client.retrieveForQuery("top story");
+
+    // searchPosts + listCategories each retry once → 4 attempts max
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(hit.degraded).toBe(true);
+    expect(hit.usedBrandProfile).toBe(true);
+    expect(hit.degradeReason).toMatch(/fetch failed/i);
+  });
+
+  it("flattenFetchError surfaces nested undici causes", () => {
+    const inner = Object.assign(new Error("connect ECONNRESET"), { code: "ECONNRESET" });
+    const outer = new Error("fetch failed", { cause: inner });
+    expect(flattenFetchError(outer)).toMatch(/fetch failed/);
+    expect(flattenFetchError(outer)).toMatch(/ECONNRESET/);
   });
 
   it("routes to brand profile on 5xx without throwing", async () => {

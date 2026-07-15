@@ -1,7 +1,8 @@
 /**
  * Decoupled WordPress REST data layer for Mail Call Voice AI.
  * Fetches /wp-json/wp/v2/posts (+ categories) with Basic Auth,
- * hard 2s timeout, and silent fallback to the local brand profile.
+ * GoDaddy-compatible browser headers, hard 2s timeout, and silent
+ * fallback to the local brand profile.
  */
 
 import { DEFAULT_MAILCALL_WP_URL, getConfig, type MailCallConfig } from "../../config.js";
@@ -23,6 +24,20 @@ import type {
 
 /** Voice budget: never wait longer than this for CMS. */
 export const WP_REQUEST_TIMEOUT_MS = 2000;
+
+/** One silent retry on transient socket failures before brand-profile fallback. */
+const WP_TRANSIENT_RETRIES = 1;
+
+/** Browser-like headers — GoDaddy / ModSecurity often block bare Node UA strings. */
+export const WP_BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+} as const;
+
+const POST_FIELDS = "id,date,modified,slug,link,title,excerpt,content,categories,tags,meta";
+const CATEGORY_FIELDS = "id,name,slug,count,description";
 
 export class WordPressApiError extends Error {
   constructor(
@@ -78,6 +93,35 @@ function resolveTimeoutMs(cfg: MailCallConfig): number {
   return Math.min(configured, WP_REQUEST_TIMEOUT_MS);
 }
 
+/** Flatten Node/undici nested causes into a single diagnostic string. */
+export function flattenFetchError(err: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = err;
+  let depth = 0;
+  while (current && depth < 6) {
+    if (current instanceof Error) {
+      if (current.message) parts.push(current.message);
+      const code = (current as NodeJS.ErrnoException).code;
+      if (code) parts.push(String(code));
+      current = current.cause;
+    } else if (typeof current === "object" && current !== null && "code" in current) {
+      parts.push(String((current as { code: unknown }).code));
+      break;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+    depth += 1;
+  }
+  return [...new Set(parts.filter(Boolean))].join(" | ") || "CMS request failed";
+}
+
+function isTransientNetworkFailure(message: string): boolean {
+  return /fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|EPIPE|UND_ERR|socket|network/i.test(
+    message,
+  );
+}
+
 export class WordPressApiClient {
   private readonly postsCache: TtlCache<MailCallArticle[]>;
   private readonly categoriesCache: TtlCache<MailCallCategory[]>;
@@ -94,6 +138,10 @@ export class WordPressApiClient {
     this.searchCache = new TtlCache(Math.min(cfg.MAILCALL_CACHE_TTL_MS, 30_000));
   }
 
+  private baseUrl(): string {
+    return (this.cfg.wpBaseUrl || DEFAULT_MAILCALL_WP_URL).replace(/\/+$/, "");
+  }
+
   /** Basic Auth header; Application Password spaces already stripped in config. */
   private authHeader(): string {
     const token = Buffer.from(
@@ -103,54 +151,98 @@ export class WordPressApiClient {
     return `Basic ${token}`;
   }
 
-  private async wpFetch<T>(pathAndQuery: string): Promise<T> {
-    const base = (this.cfg.wpBaseUrl || DEFAULT_MAILCALL_WP_URL).replace(/\/$/, "");
-    const url = `${base}/wp-json/wp/v2${pathAndQuery}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+  private requestHeaders(): Record<string, string> {
+    return {
+      ...WP_BROWSER_HEADERS,
+      Authorization: this.authHeader(),
+    };
+  }
 
-    try {
-      const res = await this.fetchImpl(url, {
-        method: "GET",
-        headers: {
-          Authorization: this.authHeader(),
-          Accept: "application/json",
-          "User-Agent": "MailCall-Voice-Agent/1.0",
-        },
-        signal: controller.signal,
-      });
-
-      // Auth / upstream failures → silent offline path (no throw to caller of retrieveForQuery).
-      if (res.status === 401 || res.status === 403 || res.status === 503 || res.status >= 500) {
-        throw new WordPressApiError(`CMS HTTP ${res.status}`, res.status);
-      }
-      if (!res.ok) {
-        throw new WordPressApiError(`CMS HTTP ${res.status}`, res.status);
-      }
-
-      return (await res.json()) as T;
-    } catch (err) {
-      if (err instanceof WordPressApiError) throw err;
-      const name = err instanceof Error ? err.name : "Error";
-      const message = err instanceof Error ? err.message : String(err);
-      if (name === "AbortError" || /timed?\s*out/i.test(message)) {
-        throw new WordPressApiError("ETIMEDOUT", undefined, err);
-      }
-      if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|fetch failed/i.test(message)) {
-        throw new WordPressApiError(message, undefined, err);
-      }
-      throw new WordPressApiError(message || "CMS request failed", undefined, err);
-    } finally {
-      clearTimeout(timer);
+  /**
+   * Build a fully encoded WP REST URL.
+   * Query values go through URLSearchParams (encodeURIComponent-equivalent).
+   */
+  buildWpUrl(resourcePath: string, params: Record<string, string | number>): string {
+    const path = resourcePath.startsWith("/") ? resourcePath : `/${resourcePath}`;
+    const url = new URL(`${this.baseUrl()}/wp-json/wp/v2${path}`);
+    for (const [key, value] of Object.entries(params)) {
+      // Explicit encodeURIComponent then set via searchParams would double-encode;
+      // URLSearchParams.set encodes once — correct for WP `search=` terms.
+      url.searchParams.set(key, String(value));
     }
+    return url.toString();
+  }
+
+  private async wpFetchOnce<T>(url: string, signal: AbortSignal): Promise<T> {
+    const res = await this.fetchImpl(url, {
+      method: "GET",
+      headers: this.requestHeaders(),
+      signal,
+      redirect: "follow",
+    });
+
+    // Auth / upstream failures → silent offline path (no throw to caller of retrieveForQuery).
+    if (res.status === 401 || res.status === 403 || res.status === 503 || res.status >= 500) {
+      throw new WordPressApiError(`CMS HTTP ${res.status}`, res.status);
+    }
+    if (!res.ok) {
+      throw new WordPressApiError(`CMS HTTP ${res.status}`, res.status);
+    }
+
+    return (await res.json()) as T;
+  }
+
+  private async wpFetch<T>(
+    resourcePath: string,
+    params: Record<string, string | number>,
+  ): Promise<T> {
+    const url = this.buildWpUrl(resourcePath, params);
+    let lastErr: unknown;
+
+    for (let attempt = 0; attempt <= WP_TRANSIENT_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        return await this.wpFetchOnce<T>(url, controller.signal);
+      } catch (err) {
+        if (err instanceof WordPressApiError) throw err;
+
+        const name = err instanceof Error ? err.name : "Error";
+        const message = flattenFetchError(err);
+
+        if (name === "AbortError" || /timed?\s*out|aborted/i.test(message)) {
+          throw new WordPressApiError("ETIMEDOUT", undefined, err);
+        }
+
+        lastErr = err;
+        const canRetry =
+          attempt < WP_TRANSIENT_RETRIES && isTransientNetworkFailure(message);
+        if (canRetry) {
+          logger.warn("[WP_CLIENT_RETRY] Transient CMS socket failure; retrying once.", {
+            reason: message.slice(0, 160),
+            attempt: attempt + 1,
+          });
+          continue;
+        }
+
+        throw new WordPressApiError(message, undefined, err);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    throw new WordPressApiError(flattenFetchError(lastErr), undefined, lastErr);
   }
 
   async listRecentPosts(perPage = 10): Promise<MailCallArticle[]> {
     const key = `posts:recent:${perPage}`;
     return this.postsCache.getOrLoad(key, async () => {
-      const raw = await this.wpFetch<WpPostRaw[]>(
-        `/posts?per_page=${perPage}&_fields=id,date,modified,slug,link,title,excerpt,content,categories,tags,meta&orderby=date&order=desc`,
-      );
+      const raw = await this.wpFetch<WpPostRaw[]>("/posts", {
+        per_page: perPage,
+        _fields: POST_FIELDS,
+        orderby: "date",
+        order: "desc",
+      });
       return raw.map(normalizeArticle);
     });
   }
@@ -161,19 +253,23 @@ export class WordPressApiClient {
 
     const key = `posts:search:${q.toLowerCase()}:${perPage}`;
     return this.searchCache.getOrLoad(key, async () => {
-      const encoded = encodeURIComponent(q);
-      const raw = await this.wpFetch<WpPostRaw[]>(
-        `/posts?search=${encoded}&per_page=${perPage}&_fields=id,date,modified,slug,link,title,excerpt,content,categories,tags,meta&orderby=relevance`,
-      );
+      // `search` is passed as a raw string; buildWpUrl / URLSearchParams encodes it.
+      const raw = await this.wpFetch<WpPostRaw[]>("/posts", {
+        search: q,
+        per_page: perPage,
+        _fields: POST_FIELDS,
+        orderby: "relevance",
+      });
       return raw.map(normalizeArticle);
     });
   }
 
   async listCategories(): Promise<MailCallCategory[]> {
     return this.categoriesCache.getOrLoad("categories:all", async () => {
-      const raw = await this.wpFetch<WpCategoryRaw[]>(
-        `/categories?per_page=100&_fields=id,name,slug,count,description`,
-      );
+      const raw = await this.wpFetch<WpCategoryRaw[]>("/categories", {
+        per_page: 100,
+        _fields: CATEGORY_FIELDS,
+      });
       return raw.map(normalizeCategory);
     });
   }
