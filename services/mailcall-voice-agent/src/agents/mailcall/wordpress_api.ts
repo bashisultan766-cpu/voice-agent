@@ -145,6 +145,15 @@ export const CORPORATE_PAGE_SLUGS = [
 
 export type CorporatePageSlug = (typeof CORPORATE_PAGE_SLUGS)[number];
 
+const CORPORATE_SLUG_PATTERNS: ReadonlyArray<{
+  canonicalSlug: "contact" | "about" | "advertise";
+  pattern: RegExp;
+}> = [
+  { canonicalSlug: "contact", pattern: /(contact|touch|write|reach|support)/i },
+  { canonicalSlug: "about", pattern: /(about|story|mission|vision|purpose|identity)/i },
+  { canonicalSlug: "advertise", pattern: /(advertise|promo|partner|business)/i },
+];
+
 /**
  * Extract compact search terms from a raw voice transcript for local index match.
  * Applies phonetic STT repair first.
@@ -199,9 +208,19 @@ export function buildCorporatePageMap(
 ): Partial<Record<CorporatePageSlug, MailCallArticle>> {
   const map: Partial<Record<CorporatePageSlug, MailCallArticle>> = {};
   for (const page of pages) {
-    const slug = (page.slug ?? "").toLowerCase();
+    const slug = (page.slug ?? "").trim().toLowerCase();
+    if (!slug) continue;
+
+    // Preserve exact aliases when WordPress happens to use a known slug.
     if ((CORPORATE_PAGE_SLUGS as readonly string[]).includes(slug)) {
       map[slug as CorporatePageSlug] = page;
+    }
+
+    // Also classify custom WordPress slugs such as "get-in-touch" or "our-story".
+    for (const { canonicalSlug, pattern } of CORPORATE_SLUG_PATTERNS) {
+      if (pattern.test(slug) && !map[canonicalSlug]) {
+        map[canonicalSlug] = page;
+      }
     }
   }
   return map;
@@ -535,6 +554,13 @@ export class WordPressApiClient {
       const categories = categoriesRaw.map(normalizeCategory);
       const pages = pagesRaw.map(normalizeArticle);
       const corporatePages = buildCorporatePageMap(pages);
+      const corporatePageMatches = [
+        ...new Map(
+          Object.values(corporatePages)
+            .filter((page): page is MailCallArticle => Boolean(page))
+            .map((page) => [page.id, page]),
+        ).values(),
+      ];
       this.memIndex = {
         articles,
         categories,
@@ -553,7 +579,9 @@ export class WordPressApiClient {
         articles: articles.length,
         categories: categories.length,
         pages: pages.length,
-        corporatePages: Object.keys(corporatePages).length,
+        corporatePages: corporatePageMatches.length,
+        corporatePageTitles: corporatePageMatches.map((page) => page.title),
+        corporatePageSlugs: corporatePageMatches.map((page) => page.slug),
         latencyMs: Date.now() - started,
         version: this.memIndex.version,
       });
@@ -638,6 +666,14 @@ export class WordPressApiClient {
       return null;
     }
 
+    // Headquarters is immutable business data. Never derive it from CMS text,
+    // caller country codes, network location, or any environment-local signal.
+    if (/\b(address|location|office|headquarters|located|based)\b/i.test(q)) {
+      return this.brandFallbackHit(normalized, started, {
+        brandSpeech: BRAND_SPOKEN_ANSWERS.officeAddress,
+      });
+    }
+
     let preferred: CorporatePageSlug[];
     let fallbackSpeech: string;
     if (/\badvertis(?:e|ing)\b/i.test(q)) {
@@ -648,9 +684,7 @@ export class WordPressApiClient {
       fallbackSpeech = BRAND_SPOKEN_ANSWERS.leadership;
     } else {
       preferred = ["contact-us", "contact", "about-us", "about"];
-      fallbackSpeech = /\b(address|location|office)\b/i.test(q)
-        ? BRAND_SPOKEN_ANSWERS.officeAddress
-        : BRAND_SPOKEN_ANSWERS.contact;
+      fallbackSpeech = BRAND_SPOKEN_ANSWERS.contact;
     }
 
     const page = preferred

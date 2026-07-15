@@ -259,6 +259,44 @@ describe("conversation + prompts", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("never derives headquarters from caller country or network geolocation", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+    wp.hydrateMemIndex({
+      warmedAt: Date.now(),
+      pages: [
+        {
+          id: 42,
+          title: "Contact",
+          excerpt: "",
+          content: "A localized environment supplied a different office.",
+          spokenSummary: "A localized environment supplied a different office.",
+          categoryIds: [],
+          customFields: {},
+          slug: "reach-support-team",
+        },
+      ],
+    });
+
+    const result = await processConversationTurn(
+      {
+        callSid: "geo-isolation",
+        utterance: "What is your corporate office address?",
+        callerPhone: "+92 300 0000000",
+        callerCountryCode: "PK",
+        networkGeolocation: "South Asia",
+      },
+      wp,
+    );
+
+    expect(result.speech).toContain(
+      "650 East Palisade Ave #429, Englewood Cliffs, New Jersey 07632",
+    );
+    expect(result.speech).not.toContain("localized environment");
+    expect(result.usedBrandProfile).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("buildSystemPrompt names Brook and requires send_support_escalation", async () => {
     const { buildSystemPrompt } = await import("../src/agents/mailcall/prompts.js");
     const prompt = buildSystemPrompt(new Date("2026-07-15T12:00:00Z"));
@@ -267,6 +305,10 @@ describe("conversation + prompts", () => {
     expect(prompt).toMatch(/Urban.*Spanish.*Global/s);
     expect(prompt).toMatch(/all nine values/i);
     expect(prompt).toMatch(/Under no circumstances say that MailCall does not have an address/i);
+    expect(prompt).toMatch(/phone-number country code and network geolocation must NEVER/i);
+    expect(prompt).toContain(
+      "650 East Palisade Ave #429, Englewood Cliffs, New Jersey 07632",
+    );
     expect(prompt).toMatch(/\$21\.66/);
     expect(prompt).toMatch(/ALL SALES ARE FINAL/i);
   });

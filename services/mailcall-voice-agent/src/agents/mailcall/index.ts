@@ -23,6 +23,7 @@ export {
   setSessionStartedAt,
 } from "./conversation.js";
 export {
+  brandProfile,
   BRAND_PROFILE,
   BRAND_SPOKEN_ANSWERS,
   matchBrandProfileQuery,

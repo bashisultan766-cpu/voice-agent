@@ -7,7 +7,11 @@ import OpenAI from "openai";
 import { getConfig } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { getWordPressApiClient, type WordPressApiClient } from "./wordpress_api.js";
-import { brandOfflineFallbackSpeech, offTopicRedirectSpeech } from "./brandProfile.js";
+import {
+  brandOfflineFallbackSpeech,
+  brandProfile,
+  offTopicRedirectSpeech,
+} from "./brandProfile.js";
 import {
   buildProductCatalogSpeech,
   findPlanByUtterance,
@@ -34,6 +38,10 @@ export interface ConversationTurnInput {
   callSid: string;
   utterance: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
+  /** Telephony metadata is accepted for observability only, never corporate geolocation. */
+  callerPhone?: string;
+  callerCountryCode?: string;
+  networkGeolocation?: string;
 }
 
 interface SessionMemory {
@@ -73,6 +81,9 @@ const UPSET_RE = /\b(angry|furious|ridiculous|unacceptable|scam|lawsuit|attorney
 /** Structural WordPress page intents bypass regular article retrieval. */
 const CORPORATE_IDENTITY_RE =
   /\b(address|location|office|ceo|owner|meet|contact|advertis(?:e|ing))\b/i;
+
+const CORPORATE_HEADQUARTERS_RE =
+  /\b(your|mailcall|newspaper|corporate|headquarters|office|editorial)\b.*\b(address|location|located|based)\b|\bwhere (is|are)\b.*\b(mailcall|newspaper|headquarters|office|editorial)\b/i;
 
 const PURCHASE_INTENT_RE =
   /\b(buy|purchase|subscribe|subscription setup|sign me up|sign up|set up|start)\b.*\b(plan|subscription|newspaper|mailcall|edition)\b|\b(i want|i'd like|i would like|ready)\b.*\b(subscribe|subscription|buy|purchase|plan|edition)\b/i;
@@ -419,6 +430,22 @@ export async function processConversationTurn(
       speech,
       degraded: false,
       articlesUsed: 0,
+      latencyMs: Date.now() - started,
+    };
+  }
+
+  // Caller country code and network geolocation are intentionally ignored here.
+  // Corporate location is immutable and comes only from the local brand profile.
+  if (CORPORATE_HEADQUARTERS_RE.test(utterance)) {
+    const speech = finalizeSpeech(
+      `The physical headquarters, administrative offices, and editorial staff of MailCall Newspaper are strictly located at ${brandProfile.address}.`,
+    );
+    remember(session, utterance, speech);
+    return {
+      speech,
+      degraded: false,
+      articlesUsed: 0,
+      usedBrandProfile: true,
       latencyMs: Date.now() - started,
     };
   }

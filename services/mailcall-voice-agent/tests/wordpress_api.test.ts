@@ -259,33 +259,57 @@ describe("WordPressApiClient", () => {
       pages: [
         {
           id: 30,
-          title: "Contact Us",
+          title: "Get in Touch",
           excerpt: "",
           content: "Our office is at 10 Newsroom Lane.",
           spokenSummary: "Our office is at 10 Newsroom Lane.",
           categoryIds: [],
           customFields: {},
-          slug: "contact-us",
+          slug: "get-in-touch-with-editorial",
         },
         {
           id: 31,
-          title: "Advertise With Us",
+          title: "Business Partnerships",
           excerpt: "",
           content: "Advertising opportunities are available.",
           spokenSummary: "Advertising opportunities are available.",
           categoryIds: [],
           customFields: {},
-          slug: "advertise-with-us",
+          slug: "business-partnership-opportunities",
+        },
+        {
+          id: 32,
+          title: "Our Story",
+          excerpt: "",
+          content: "Meet the MailCall publishing team.",
+          spokenSummary: "Meet the MailCall publishing team.",
+          categoryIds: [],
+          customFields: {},
+          slug: "our-story-and-purpose",
         },
       ],
     });
 
-    const office = client.retrieveCorporatePageContext("What is your office address?");
-    expect(office?.articles[0]?.slug).toBe("contact-us");
-    expect(office?.usedBrandProfile).toBe(false);
+    expect(client.getMemIndex().corporatePages.contact?.title).toBe("Get in Touch");
+    expect(client.getMemIndex().corporatePages.advertise?.title).toBe(
+      "Business Partnerships",
+    );
+    expect(client.getMemIndex().corporatePages.about?.title).toBe("Our Story");
+
+    const contact = client.retrieveCorporatePageContext("How can I contact support?");
+    expect(contact?.articles[0]?.slug).toBe("get-in-touch-with-editorial");
+    expect(contact?.usedBrandProfile).toBe(false);
 
     const advertise = client.retrieveCorporatePageContext("How can I advertise?");
-    expect(advertise?.articles[0]?.slug).toBe("advertise-with-us");
+    expect(advertise?.articles[0]?.slug).toBe("business-partnership-opportunities");
+
+    const leadership = client.retrieveCorporatePageContext("Can I meet the owner?");
+    expect(leadership?.articles[0]?.slug).toBe("our-story-and-purpose");
+
+    const office = client.retrieveCorporatePageContext("What is your office address?");
+    expect(office?.usedBrandProfile).toBe(true);
+    expect(office?.brandSpeech).toContain("650 East Palisade Ave #429");
+    expect(office?.brandSpeech).not.toContain("10 Newsroom Lane");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -297,7 +321,9 @@ describe("WordPressApiClient", () => {
     client.hydrateMemIndex({ warmedAt: Date.now(), pages: [] });
     const hit = client.retrieveCorporatePageContext("Where is your office address?");
     expect(hit?.usedBrandProfile).toBe(true);
-    expect(hit?.brandSpeech).toMatch(/Abbottabad, Pakistan/i);
+    expect(hit?.brandSpeech).toMatch(
+      /650 East Palisade Ave #429, Englewood Cliffs, New Jersey 07632/i,
+    );
     expect(hit?.brandSpeech).not.toMatch(/do not have|don't have|no address/i);
   });
 });
