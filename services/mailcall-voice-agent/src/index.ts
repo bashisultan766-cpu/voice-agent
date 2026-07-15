@@ -1,17 +1,17 @@
 import "./bootstrapEnv.js";
 
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import http from "node:http";
 import express from "express";
 import { WebSocketServer } from "ws";
 import {
   CONFIG_EXIT_CODE,
+  DEFAULT_MAILCALL_PORT,
   getConfig,
   MAILCALL_API_PREFIX,
+  resolveListenPort,
   validateConfig,
 } from "./config.js";
-import { envLoadReport, SERVICE_ROOT } from "./bootstrapEnv.js";
+import { envLoadReport } from "./bootstrapEnv.js";
 import { logger, setLogLevel } from "./utils/logger.js";
 import {
   attachMailCallRelayHandler,
@@ -29,6 +29,7 @@ export function createApp() {
       ok: true,
       service: "mailcall-voice-agent",
       agentPrefix: MAILCALL_API_PREFIX,
+      port: resolveListenPort(),
     });
   });
 
@@ -38,20 +39,36 @@ export function createApp() {
   return app;
 }
 
+/**
+ * Bind HTTP immediately. No WordPress / OpenAI / cache I/O before listen —
+ * those run only on inbound call turns.
+ */
 export function startServer() {
+  console.log("LOG: Attempting to connect/initialize modules...");
+
   const cfg = getConfig();
   setLogLevel(cfg.MAILCALL_LOG_LEVEL);
+
+  const port = cfg.MAILCALL_PORT || DEFAULT_MAILCALL_PORT;
+  const bindHost = process.env.MAILCALL_BIND_HOST?.trim() || "0.0.0.0";
 
   const app = createApp();
   const server = http.createServer(app);
 
+  // Attach WS to the same HTTP server (does not delay listen).
   const wss = new WebSocketServer({ server, path: `${MAILCALL_API_PREFIX}/ws` });
   attachMailCallRelayHandler(wss);
 
-  server.listen(cfg.MAILCALL_PORT, "127.0.0.1", () => {
+  console.log(`LOG: Explicitly invoking server.listen() on port ${port} (host ${bindHost})...`);
+
+  server.listen(port, bindHost, () => {
+    const addr = server.address();
+    console.log(
+      `LOG: server.listen() SUCCESS — bound ${typeof addr === "object" && addr ? `${addr.address}:${addr.port}` : port}`,
+    );
     logger.info("mailcall_server_listening", {
-      port: cfg.MAILCALL_PORT,
-      bind: "127.0.0.1",
+      port,
+      bind: bindHost,
       inbound: `${MAILCALL_API_PREFIX}/inbound`,
       ws: `${MAILCALL_API_PREFIX}/ws`,
       envFilesLoaded: envLoadReport.loaded,
@@ -59,9 +76,11 @@ export function startServer() {
   });
 
   server.on("error", (err) => {
+    console.error(`LOG: server.listen() FAILED on port ${port}:`, err);
     logger.error("mailcall_server_listen_failed", {
       error: err instanceof Error ? err.message : String(err),
-      port: cfg.MAILCALL_PORT,
+      port,
+      bind: bindHost,
     });
     process.exit(1);
   });
@@ -69,22 +88,18 @@ export function startServer() {
   return server;
 }
 
-function isMainModule(): boolean {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  const normalized = entry.replace(/\\/g, "/");
-  return normalized.endsWith("/index.js") || normalized.endsWith("/index.ts");
-}
-
 function boot(): void {
-  const distEntry = resolve(SERVICE_ROOT, "dist/index.js");
-  if (!existsSync(distEntry) && isMainModule() && process.argv[1]?.endsWith("index.js")) {
-    // Running via node but somehow not from dist — still attempt boot.
-  }
+  console.log("LOG: Environment variables loaded successfully.");
+  console.log(
+    `LOG: env files loaded=${envLoadReport.loaded.length ? envLoadReport.loaded.join(" | ") : "(none)"}`,
+  );
+  console.log(
+    `LOG: resolved listen port=${resolveListenPort()} (MAILCALL_PORT=${process.env.MAILCALL_PORT ?? ""} PORT=${process.env.PORT ?? ""})`,
+  );
+  console.log(`LOG: argv1=${process.argv[1] ?? "(none)"} cwd=${process.cwd()}`);
 
   const validation = validateConfig();
   if (!validation.ok) {
-    // Use stderr so PM2 error.log always captures the operator message.
     console.error(validation.message);
     logger.error("mailcall_boot_config_invalid", {
       exitCode: CONFIG_EXIT_CODE,
@@ -95,15 +110,24 @@ function boot(): void {
   }
 
   try {
+    // Synchronous path to listen() — no awaits / external API calls.
     startServer();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(message);
+    console.error("LOG: boot exception before listen:", message);
     logger.error("mailcall_boot_failed", { error: message });
     process.exit(1);
   }
 }
 
-if (isMainModule()) {
+/**
+ * Always boot as the PM2/node entrypoint.
+ *
+ * Do NOT gate on process.argv[1] ending in index.js — under PM2 fork mode
+ * argv[1] is often ProcessContainerFork.js, which previously skipped listen()
+ * while leaving the process "online" with memory allocated and no port bind.
+ */
+const runningUnderVitest = Boolean(process.env.VITEST);
+if (!runningUnderVitest) {
   boot();
 }

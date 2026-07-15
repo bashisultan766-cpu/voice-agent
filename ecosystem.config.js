@@ -84,8 +84,9 @@ module.exports = {
     {
       name: "order-lookup-voice-agent",
       cwd: orderLookupDir,
-      script: "dist/index.js",
-      interpreter: "node",
+      script: "node",
+      args: "dist/index.js",
+      interpreter: "none",
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
@@ -100,8 +101,9 @@ module.exports = {
       name: "mailcall-voice-agent",
       cwd: mailcallDir,
       // Compiled entry (tsc → dist/). Do NOT point at src/*.ts.
-      script: "dist/index.js",
-      interpreter: "node",
+      script: "node",
+      args: "dist/index.js",
+      interpreter: "none",
       exec_mode: "fork",
       instances: 1,
       autorestart: true,

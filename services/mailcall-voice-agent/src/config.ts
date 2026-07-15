@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { envLoadReport, REPO_ROOT, SERVICE_ROOT } from "./bootstrapEnv.js";
 
+export const DEFAULT_MAILCALL_PORT = 8010;
+
 const REQUIRED_KEYS = [
   "MAILCALL_TWILIO_PHONE_NUMBER",
   "MAILCALL_WP_URL",
@@ -24,11 +26,13 @@ const envSchema = z.object({
   MAILCALL_OPENAI_MODEL: z.string().optional().default("gpt-4o-mini"),
   MAILCALL_CACHE_TTL_MS: z.coerce.number().int().positive().optional().default(60_000),
   MAILCALL_WP_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2_500),
-  MAILCALL_PORT: z.coerce.number().int().positive().optional().default(8010),
+  // Parsed separately via resolveListenPort() — keep optional for zod.
+  MAILCALL_PORT: z.coerce.number().int().positive().optional(),
   MAILCALL_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
 });
 
-export type MailCallConfig = z.infer<typeof envSchema> & {
+export type MailCallConfig = Omit<z.infer<typeof envSchema>, "MAILCALL_PORT"> & {
+  MAILCALL_PORT: number;
   /** WordPress Application Password with spaces stripped for Basic Auth. */
   wpAppPasswordClean: string;
   wpBaseUrl: string;
@@ -45,6 +49,19 @@ let cached: MailCallConfig | null = null;
  */
 export function cleanWpAppPassword(raw: string): string {
   return raw.replace(/\s+/g, "").trim();
+}
+
+/**
+ * Resolve listen port with hard fallback to 8010.
+ * Accepts MAILCALL_PORT or PORT; rejects NaN / 0 / out-of-range.
+ */
+export function resolveListenPort(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MAILCALL_PORT ?? env.PORT ?? String(DEFAULT_MAILCALL_PORT);
+  const n = Number.parseInt(String(raw).trim(), 10);
+  if (!Number.isFinite(n) || n <= 0 || n > 65535) {
+    return DEFAULT_MAILCALL_PORT;
+  }
+  return n;
 }
 
 export function listMissingRequiredKeys(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -99,10 +116,12 @@ export function validateConfig(env: NodeJS.ProcessEnv = process.env): ConfigVali
 
   const data = parsed.data;
   const wpBaseUrl = data.MAILCALL_WP_URL.replace(/\/$/, "");
+  const port = resolveListenPort(env);
   return {
     ok: true,
     config: {
       ...data,
+      MAILCALL_PORT: port,
       wpBaseUrl,
       wpAppPasswordClean: cleanWpAppPassword(data.MAILCALL_WP_APP_PASSWORD),
     },
