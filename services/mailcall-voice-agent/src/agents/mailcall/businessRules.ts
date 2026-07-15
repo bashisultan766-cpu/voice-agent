@@ -61,6 +61,8 @@ export const PRODUCT_INCLUSIONS_SPOKEN =
   "Each month we send a twenty-four-page newspaper designed exclusively for inmates across the U.S. It includes celebrity gossip and real news, inmate and sentencing updates, education and skill building, financial literacy, books and movies, music, comics, LGBTQ+ culture, health, fitness, Spanish content, travel, horoscopes, how-to guides, technology, sports, and pop culture.";
 
 export const SCRIPTS = {
+  goodbye:
+    "You're very welcome. Thanks for calling MailCall Newspaper. Goodbye.",
   refundFinal:
     "Because our newspaper prints and submits directly to publishers immediately after ordering, our publisher does not permit returns or cancellations once processed. All sales are final.",
   delayedDelivery:

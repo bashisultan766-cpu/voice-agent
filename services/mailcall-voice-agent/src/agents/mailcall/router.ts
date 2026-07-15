@@ -232,6 +232,7 @@ interface RelayPromptMessage {
 export function attachMailCallRelayHandler(wss: WebSocketServer): void {
   wss.on("connection", (socket: WebSocket) => {
     let callSid = "unknown";
+    let ending = false;
     logger.info("mailcall_ws_connected");
 
     socket.on("message", async (raw) => {
@@ -251,6 +252,7 @@ export function attachMailCallRelayHandler(wss: WebSocketServer): void {
       }
 
       if (msg.type === "prompt" && msg.voicePrompt) {
+        if (ending) return;
         try {
           const result = await processConversationTurn({
             callSid,
@@ -263,7 +265,13 @@ export function attachMailCallRelayHandler(wss: WebSocketServer): void {
               last: true,
             }),
           );
-          if (result.transferToNumber) {
+          if (result.endCall) {
+            ending = true;
+            // ConversationRelay plays the final text token, then ends the call.
+            socket.send(JSON.stringify({ type: "end" }));
+            clearSession(callSid);
+            logger.info("mailcall_ws_end_call", { callSid });
+          } else if (result.transferToNumber) {
             // ConversationRelay handoff — inbound TwiML action may Dial this number.
             socket.send(
               JSON.stringify({
@@ -285,6 +293,7 @@ export function attachMailCallRelayHandler(wss: WebSocketServer): void {
             degraded: result.degraded,
             articlesUsed: result.articlesUsed,
             latencyMs: result.latencyMs,
+            endCall: Boolean(result.endCall),
             transfer: Boolean(result.transferToNumber),
           });
         } catch (err) {

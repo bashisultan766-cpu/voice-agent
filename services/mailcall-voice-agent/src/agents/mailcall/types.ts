@@ -70,6 +70,8 @@ export interface CallTurnResult {
   articlesUsed: number;
   latencyMs: number;
   usedBrandProfile?: boolean;
+  /** End ConversationRelay after the final speech token is sent. */
+  endCall?: boolean;
   /** When set, ConversationRelay should hand off to this live-agent number. */
   transferToNumber?: string;
 }

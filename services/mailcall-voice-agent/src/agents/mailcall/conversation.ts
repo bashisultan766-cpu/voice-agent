@@ -85,6 +85,9 @@ const CORPORATE_IDENTITY_RE =
 const CORPORATE_HEADQUARTERS_RE =
   /\b(your|mailcall|newspaper|corporate|headquarters|office|editorial)\b.*\b(address|location|located|based)\b|\bwhere (is|are)\b.*\b(mailcall|newspaper|headquarters|office|editorial)\b/i;
 
+const END_CALL_INTENT_RE =
+  /\b(goodbye|good bye|bye bye|bye|see you|talk to you later|that'?s all|that is all|nothing else|no thanks|no thank you|i(?:'m| am) good|no more (help|questions|information)|i(?:'m| am) done|i don'?t need anything else|end the call|hang up|you can hang up)\b/i;
+
 const PURCHASE_INTENT_RE =
   /\b(buy|purchase|subscribe|subscription setup|sign me up|sign up|set up|start)\b.*\b(plan|subscription|newspaper|mailcall|edition)\b|\b(i want|i'd like|i would like|ready)\b.*\b(subscribe|subscription|buy|purchase|plan|edition)\b/i;
 
@@ -389,6 +392,18 @@ export async function processConversationTurn(
       speech: "Sorry, I didn't catch that. Could you say that again?",
       degraded: false,
       articlesUsed: 0,
+      latencyMs: Date.now() - started,
+    };
+  }
+
+  if (END_CALL_INTENT_RE.test(utterance)) {
+    const speech = finalizeSpeech(SCRIPTS.goodbye);
+    remember(session, utterance, speech);
+    return {
+      speech,
+      degraded: false,
+      articlesUsed: 0,
+      endCall: true,
       latencyMs: Date.now() - started,
     };
   }

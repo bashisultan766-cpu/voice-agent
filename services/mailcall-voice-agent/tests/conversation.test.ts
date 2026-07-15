@@ -52,6 +52,27 @@ describe("conversation + prompts", () => {
     );
   });
 
+  it("ends the call after a final goodbye, even during intake", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+
+    await processConversationTurn(
+      { callSid: "ending-call", utterance: "I want to subscribe to the newspaper" },
+      wp,
+    );
+    const result = await processConversationTurn(
+      { callSid: "ending-call", utterance: "No thanks, that's all. Goodbye." },
+      wp,
+    );
+
+    expect(result.endCall).toBe(true);
+    expect(result.speech).toBe(
+      "You're very welcome. Thanks for calling MailCall Newspaper. Goodbye.",
+    );
+    expect(result.speech).not.toMatch(/anything else|how can i help/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("falls back to natural brand speech when mem index is cold", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     const wp = new WordPressApiClient(testConfig(), fetchImpl);
@@ -319,6 +340,7 @@ describe("conversation + prompts", () => {
     expect(prompt).toContain("twenty-four-page all-in-one publication");
     expect(prompt).toContain("educate, entertain, and empower");
     expect(prompt).toContain("Periódico para Prisioneros");
+    expect(prompt).toMatch(/give one brief goodbye and end the call/i);
     expect(prompt).toMatch(/\$21\.66/);
     expect(prompt).toMatch(/ALL SALES ARE FINAL/i);
   });
