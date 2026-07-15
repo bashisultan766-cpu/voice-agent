@@ -9,7 +9,8 @@
  *   POST /api/voice/mailcall/inbound  → :8010
  *   WS   /api/voice/mailcall/ws       → :8010
  *
- * Env: loads MAILCALL_* from the repo-root VPS `.env` into the Mail Call process only.
+ * Env: merges repo-root `.env` + `services/mailcall-voice-agent/.env`
+ * (MAILCALL_* only). Exit code 78 = bad config → do not restart-loop.
  */
 const fs = require("fs");
 const path = require("path");
@@ -17,7 +18,9 @@ const path = require("path");
 const root = __dirname;
 const orderLookupDir = path.join(root, "services", "order-lookup-voice-agent");
 const mailcallDir = path.join(root, "services", "mailcall-voice-agent");
+const mailcallDistEntry = path.join(mailcallDir, "dist", "index.js");
 const rootEnvPath = path.join(root, ".env");
+const mailcallEnvPath = path.join(mailcallDir, ".env");
 const mailcallLogDir = "/logs/mailcall";
 
 function loadEnvFile(filePath) {
@@ -42,23 +45,47 @@ function loadEnvFile(filePath) {
 }
 
 function pickMailCallEnv(all) {
-  const picked = { NODE_ENV: "production", MAILCALL_PORT: "8010" };
+  const picked = {
+    NODE_ENV: "production",
+    MAILCALL_PORT: all.MAILCALL_PORT || "8010",
+  };
   for (const [key, value] of Object.entries(all)) {
     if (key.startsWith("MAILCALL_")) picked[key] = value;
+  }
+  // Prefer an explicit file if present so runtime dotenv can re-read it.
+  if (fs.existsSync(rootEnvPath)) {
+    picked.MAILCALL_ENV_FILE = rootEnvPath;
+  } else if (fs.existsSync(mailcallEnvPath)) {
+    picked.MAILCALL_ENV_FILE = mailcallEnvPath;
   }
   return picked;
 }
 
-const rootEnv = loadEnvFile(rootEnvPath);
+const mergedEnv = {
+  ...loadEnvFile(mailcallEnvPath),
+  ...loadEnvFile(rootEnvPath),
+};
+
+if (!fs.existsSync(mailcallDistEntry)) {
+  console.warn(
+    `[ecosystem] WARN: missing ${mailcallDistEntry} — run: cd services/mailcall-voice-agent && npm ci && npm run build`,
+  );
+}
+
+if (!fs.existsSync(rootEnvPath) && !fs.existsSync(mailcallEnvPath)) {
+  console.warn(
+    `[ecosystem] WARN: no .env at ${rootEnvPath} or ${mailcallEnvPath}. ` +
+      "mailcall-voice-agent will exit with code 78 until MAILCALL_* is configured.",
+  );
+}
 
 module.exports = {
   apps: [
     {
       name: "order-lookup-voice-agent",
       cwd: orderLookupDir,
-      script: "node",
-      args: "dist/index.js",
-      interpreter: "none",
+      script: "dist/index.js",
+      interpreter: "node",
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
@@ -72,21 +99,23 @@ module.exports = {
     {
       name: "mailcall-voice-agent",
       cwd: mailcallDir,
-      script: "node",
-      args: "dist/index.js",
-      interpreter: "none",
+      // Compiled entry (tsc → dist/). Do NOT point at src/*.ts.
+      script: "dist/index.js",
+      interpreter: "node",
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
+      // 78 = CONFIG_EXIT_CODE — missing/invalid MAILCALL_* (stop restart storm)
+      stop_exit_codes: [78],
       max_restarts: 15,
       min_uptime: "10s",
-      exp_backoff_restart_delay: 100,
+      exp_backoff_restart_delay: 200,
       max_memory_restart: "300M",
       out_file: path.join(mailcallLogDir, "combined.log"),
       error_file: path.join(mailcallLogDir, "error.log"),
       log_date_format: "YYYY-MM-DD HH:mm:ss Z",
       merge_logs: true,
-      env: pickMailCallEnv(rootEnv),
+      env: pickMailCallEnv(mergedEnv),
     },
   ],
 };
