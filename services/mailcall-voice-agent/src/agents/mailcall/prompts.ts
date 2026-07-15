@@ -1,32 +1,35 @@
 /**
- * Master system prompt framework — Mail Call Communication Newspaper
- * Editorial Assistant persona for low-latency voice turns.
+ * Master system prompt — Mail Call Communication Senior Editorial Representative.
+ * Voice-safe, domain-bounded, and shielded from technical failure language.
  */
 
 import type { MailCallArticle, MailCallCategory } from "./types.js";
+import { buildBrandProfileKnowledgeBlock, offTopicRedirectSpeech } from "./brandProfile.js";
 
-export const AGENT_NAME = "Mail Call Editorial Assistant";
-export const PUBLICATION_NAME = "Mail Call Communication Newspaper";
+export const AGENT_NAME = "Mail Call Communication Senior Editorial Representative";
+export const PUBLICATION_NAME = "Mail Call Communication";
 
 export const SYSTEM_PROMPT = `You are the ${AGENT_NAME} for ${PUBLICATION_NAME}.
 
 Persona:
-- Professional, knowledgeable, articulate, and warm — like a seasoned newspaper desk editor answering the phone.
-- You help callers find and understand articles, sections, and recent coverage from our WordPress knowledge base.
-- You never invent headlines, quotes, or facts that are not present in the provided knowledge context.
+- You are a senior editorial representative of the newspaper — professional, knowledgeable, articulate, and warm.
+- You speak as a human newsroom colleague on the phone, never as software or infrastructure.
+- You help callers with the newspaper's identity, mission, location, contacts, and published coverage when knowledge is provided.
 
 Voice constraints (critical):
-- Speak in short, conversational turns: maximum 2–3 sentences per reply.
-- Prefer plain spoken language; no bullet lists, markdown, or numbered menus unless the caller asks.
-- Never read URLs, HTML, shortcodes, or raw field names aloud.
-- If knowledge context is empty or marked degraded, acknowledge the outage politely and offer general help — do not guess article content.
-- Ask one clarifying question when the caller's request is ambiguous.
-- Keep answers suitable for Text-to-Speech: avoid dense clauses and parenthetical asides.
+- Maximum 2–3 short sentences per turn. No paragraphs, lists, or markdown.
+- Never read URLs aloud character-by-character; you may say "mailcallcommunication.com" once if asked for the website.
+- Never say or imply technical words such as: API, database, fetching, error, server, website (as a system), system, WordPress, timeout, offline, or "pulling articles".
+- If live coverage is unavailable, speak only from the brand profile context and sound completely natural — the caller must not notice any technical issue.
+- Prefer openings like "I'd be glad to tell you about that..." when sharing brand information.
+- Ask one clarifying question only when the request is ambiguous.
 
-Scope:
-- You answer questions about ${PUBLICATION_NAME} articles, categories, and editorial topics.
-- For account billing, subscriptions, or technical website issues you cannot resolve from articles, briefly explain the limit and suggest contacting the newsroom through normal channels.
-- Stay on-brand; do not discuss other publications or competing products.`;
+Domain guardrails (strict):
+- Stay inside Mail Call Communication: the newspaper, its journalism, coverage topics, newsroom identity, location, and how to reach the publication.
+- If the caller asks about programming, cooking, sports betting, personal advice, or any topic unrelated to the newspaper, politely redirect:
+  "${offTopicRedirectSpeech()}"
+- Do not invent headlines, quotes, or facts missing from the provided knowledge context.
+- Do not discuss other publications or competing products.`;
 
 export const GREETING_PROMPT =
   `Greet the caller briefly as the ${AGENT_NAME} for ${PUBLICATION_NAME} and ask how you can help. One or two sentences only.`;
@@ -34,20 +37,22 @@ export const GREETING_PROMPT =
 export function buildKnowledgeContextBlock(
   articles: MailCallArticle[],
   categories: MailCallCategory[],
-  degraded: boolean,
-  degradeReason?: string,
+  options?: {
+    degraded?: boolean;
+    usedBrandProfile?: boolean;
+    brandKnowledge?: string;
+  },
 ): string {
-  if (degraded) {
-    return [
-      "KNOWLEDGE STATUS: DEGRADED",
-      `Reason: ${degradeReason ?? "WordPress API unavailable"}`,
-      "Do not invent article content. Use the polite outage acknowledgment and offer general help.",
-    ].join("\n");
+  if (options?.usedBrandProfile || options?.degraded) {
+    return (
+      options.brandKnowledge ??
+      buildBrandProfileKnowledgeBlock()
+    );
   }
 
   const articleLines =
     articles.length === 0
-      ? ["No matching articles found for this query."]
+      ? ["No matching coverage found for this request. Offer a clarifying question about topic or section."]
       : articles.slice(0, 6).map((a, i) => {
           const bits = [
             `${i + 1}. Title: ${a.title}`,
@@ -61,7 +66,7 @@ export function buildKnowledgeContextBlock(
     categories.length === 0
       ? []
       : [
-          "Available sections/categories:",
+          "Available sections:",
           ...categories.slice(0, 20).map((c) => `- ${c.name}${c.count ? ` (${c.count})` : ""}`),
         ];
 
@@ -72,16 +77,16 @@ export function buildTurnMessages(input: {
   userUtterance: string;
   articles: MailCallArticle[];
   categories: MailCallCategory[];
-  degraded: boolean;
-  degradeReason?: string;
+  degraded?: boolean;
+  usedBrandProfile?: boolean;
+  brandKnowledge?: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
 }): Array<{ role: "system" | "user" | "assistant"; content: string }> {
-  const knowledge = buildKnowledgeContextBlock(
-    input.articles,
-    input.categories,
-    input.degraded,
-    input.degradeReason,
-  );
+  const knowledge = buildKnowledgeContextBlock(input.articles, input.categories, {
+    degraded: input.degraded,
+    usedBrandProfile: input.usedBrandProfile,
+    brandKnowledge: input.brandKnowledge,
+  });
 
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -99,11 +104,12 @@ export function buildTurnMessages(input: {
 /** Deterministic retrieval-only speech when OpenAI is unavailable. */
 export function buildRetrievalOnlySpeech(
   articles: MailCallArticle[],
-  degraded: boolean,
+  options?: { degraded?: boolean; brandSpeech?: string },
 ): string | null {
-  if (degraded) return null;
+  if (options?.brandSpeech) return options.brandSpeech;
+  if (options?.degraded) return null;
   if (articles.length === 0) {
-    return "I couldn't find an article that matches that request. Could you share a topic, headline, or section name?";
+    return "I don't have a matching story on that just yet. Could you share a topic or section you're interested in?";
   }
   const top = articles[0]!;
   const body = top.spokenSummary || top.excerpt || top.title;
@@ -113,7 +119,7 @@ export function buildRetrievalOnlySpeech(
       : body;
   const follow =
     articles.length > 1
-      ? ` I also see related coverage on ${articles[1]!.title}. Would you like that summary next?`
-      : " Would you like more detail on that piece?";
+      ? ` I also have related coverage on ${articles[1]!.title}. Would you like that next?`
+      : " Would you like a bit more on that piece?";
   return `${lead}.${follow}`.replace(/\.\./g, ".");
 }

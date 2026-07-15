@@ -13,6 +13,12 @@ export {
   greetingSpeech,
   clearSession,
 } from "./conversation.js";
+export {
+  BRAND_PROFILE,
+  BRAND_SPOKEN_ANSWERS,
+  matchBrandProfileQuery,
+  brandOfflineFallbackSpeech,
+} from "./brandProfile.js";
 export { cleanseForSpeech, truncateToSentences, clampSpokenLength } from "./textCleaner.js";
 export { TtlCache } from "./ttlCache.js";
 export type {
@@ -21,4 +27,4 @@ export type {
   KnowledgeHit,
   CallTurnResult,
 } from "./types.js";
-export { WP_UNAVAILABLE_SPEECH, GREETING_SPEECH } from "./types.js";
+export { GREETING_SPEECH } from "./types.js";

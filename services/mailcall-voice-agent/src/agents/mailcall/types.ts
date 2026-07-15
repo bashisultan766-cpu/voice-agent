@@ -50,10 +50,16 @@ export interface MailCallCategory {
 export interface KnowledgeHit {
   articles: MailCallArticle[];
   categories: MailCallCategory[];
-  /** True when WordPress was unavailable and caller should use fallback speech. */
+  /** True when live CMS was unavailable (caller still gets natural brand speech). */
   degraded: boolean;
-  /** Human-readable reason when degraded. */
+  /** Internal SRE reason — never spoken aloud. */
   degradeReason?: string;
+  /** Served from static brand profile (identity or offline). */
+  usedBrandProfile?: boolean;
+  /** Ready-to-speak brand answer when usedBrandProfile is true. */
+  brandSpeech?: string;
+  /** LLM knowledge block for brand profile turns. */
+  brandKnowledge?: string;
   cacheHit: boolean;
   latencyMs: number;
 }
@@ -63,10 +69,8 @@ export interface CallTurnResult {
   degraded: boolean;
   articlesUsed: number;
   latencyMs: number;
+  usedBrandProfile?: boolean;
 }
 
-export const WP_UNAVAILABLE_SPEECH =
-  "I am currently having trouble pulling up our latest articles, but I can help you with general inquiries. What else would you like to know about Mail Call Communication Newspaper?";
-
 export const GREETING_SPEECH =
-  "Thank you for calling Mail Call Communication Newspaper. I'm your editorial assistant. How can I help you today?";
+  "Thank you for calling Mail Call Communication. I'm your senior editorial representative. How can I help you with the newspaper today?";

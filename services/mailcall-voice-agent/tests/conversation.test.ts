@@ -7,7 +7,6 @@ import {
   processConversationTurn,
 } from "../src/agents/mailcall/conversation.js";
 import { buildRetrievalOnlySpeech } from "../src/agents/mailcall/prompts.js";
-import { WP_UNAVAILABLE_SPEECH } from "../src/agents/mailcall/types.js";
 
 function testConfig(): MailCallConfig {
   return {
@@ -42,7 +41,7 @@ describe("conversation + prompts", () => {
     vi.stubEnv("MAILCALL_VALIDATE_TWILIO_SIGNATURES", "false");
   });
 
-  it("returns polite fallback when WordPress is down", async () => {
+  it("falls back to natural brand speech when WordPress is down", async () => {
     const fetchImpl = vi.fn(async () =>
       new Response("down", { status: 500 }),
     ) as unknown as typeof fetch;
@@ -54,7 +53,23 @@ describe("conversation + prompts", () => {
     );
 
     expect(result.degraded).toBe(true);
-    expect(result.speech).toBe(WP_UNAVAILABLE_SPEECH);
+    expect(result.usedBrandProfile).toBe(true);
+    expect(result.speech.toLowerCase()).toContain("mail call");
+    expect(result.speech).not.toMatch(/api|wordpress|error|server|database/i);
+  });
+
+  it("answers identity from brand profile without CMS", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+
+    const result = await processConversationTurn(
+      { callSid: "call-1", utterance: "What is Mail Call Communication?" },
+      wp,
+    );
+
+    expect(result.usedBrandProfile).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result.speech.toLowerCase()).toMatch(/news|journalism|publication/);
   });
 
   it("summarizes articles in short spoken turns without OpenAI", async () => {
@@ -109,7 +124,7 @@ describe("conversation + prompts", () => {
           customFields: {},
         },
       ],
-      false,
+      {},
     );
     expect(speech).toContain("High winds");
     expect(speech!.length).toBeLessThan(220);

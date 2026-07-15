@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { cleanWpAppPassword, resetConfigCache, type MailCallConfig } from "../src/config.js";
 import { WordPressApiClient } from "../src/agents/mailcall/wordpress_api.js";
-import { WP_UNAVAILABLE_SPEECH } from "../src/agents/mailcall/types.js";
 
 function testConfig(overrides: Partial<MailCallConfig> = {}): MailCallConfig {
   const base: MailCallConfig = {
@@ -73,7 +72,7 @@ describe("WordPressApiClient", () => {
     expect(calls.length).toBe(1);
   });
 
-  it("degrades gracefully on 5xx without throwing", async () => {
+  it("routes to brand profile on 5xx without throwing", async () => {
     const fetchImpl = vi.fn(async () =>
       new Response("boom", { status: 503 }),
     ) as unknown as typeof fetch;
@@ -82,11 +81,12 @@ describe("WordPressApiClient", () => {
     const hit = await client.retrieveForQuery("budget");
 
     expect(hit.degraded).toBe(true);
+    expect(hit.usedBrandProfile).toBe(true);
+    expect(hit.brandSpeech?.toLowerCase()).toContain("mail call");
     expect(hit.articles).toEqual([]);
-    expect(WordPressApiClient.unavailableSpeech()).toBe(WP_UNAVAILABLE_SPEECH);
   });
 
-  it("degrades on timeout/abort", async () => {
+  it("routes to brand profile on timeout/abort", async () => {
     const fetchImpl = vi.fn(async () => {
       const err = new Error("aborted");
       err.name = "AbortError";
@@ -99,6 +99,7 @@ describe("WordPressApiClient", () => {
     );
     const hit = await client.retrieveForQuery("news");
     expect(hit.degraded).toBe(true);
-    expect(hit.degradeReason).toMatch(/timed out/i);
+    expect(hit.usedBrandProfile).toBe(true);
+    expect(hit.degradeReason).toMatch(/ETIMEDOUT|timed out/i);
   });
 });

@@ -30,7 +30,7 @@ const envSchema = z.object({
   MAILCALL_OPENAI_API_KEY: z.string().optional().default(""),
   MAILCALL_OPENAI_MODEL: z.string().optional().default("gpt-4o-mini"),
   MAILCALL_CACHE_TTL_MS: z.coerce.number().int().positive().optional().default(60_000),
-  MAILCALL_WP_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2_500),
+  MAILCALL_WP_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2_000),
   MAILCALL_PORT: z.coerce.number().int().positive().optional(),
   MAILCALL_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
 });
@@ -166,7 +166,7 @@ function buildDegradedConfig(
     MAILCALL_OPENAI_API_KEY: sanitized.MAILCALL_OPENAI_API_KEY ?? "",
     MAILCALL_OPENAI_MODEL: sanitized.MAILCALL_OPENAI_MODEL ?? "gpt-4o-mini",
     MAILCALL_CACHE_TTL_MS: Number(env.MAILCALL_CACHE_TTL_MS) > 0 ? Number(env.MAILCALL_CACHE_TTL_MS) : 60_000,
-    MAILCALL_WP_TIMEOUT_MS: Number(env.MAILCALL_WP_TIMEOUT_MS) > 0 ? Number(env.MAILCALL_WP_TIMEOUT_MS) : 2_500,
+    MAILCALL_WP_TIMEOUT_MS: Number(env.MAILCALL_WP_TIMEOUT_MS) > 0 ? Number(env.MAILCALL_WP_TIMEOUT_MS) : 2_000,
     MAILCALL_PORT: resolveListenPort(env),
     MAILCALL_LOG_LEVEL: (["debug", "info", "warn", "error"] as const).includes(
       sanitized.MAILCALL_LOG_LEVEL as "info",

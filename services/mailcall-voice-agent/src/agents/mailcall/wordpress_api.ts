@@ -1,13 +1,18 @@
 /**
  * Decoupled WordPress REST data layer for Mail Call Voice AI.
  * Fetches /wp-json/wp/v2/posts (+ categories) with Basic Auth,
- * TTL cache, timeouts, and graceful degradation on 5xx/network failure.
+ * hard 2s timeout, and silent fallback to the local brand profile.
  */
 
 import { getConfig, type MailCallConfig } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { TtlCache } from "./ttlCache.js";
 import { cleanseForSpeech, truncateToSentences } from "./textCleaner.js";
+import {
+  brandOfflineFallbackSpeech,
+  buildBrandProfileKnowledgeBlock,
+  matchBrandProfileQuery,
+} from "./brandProfile.js";
 import type {
   KnowledgeHit,
   MailCallArticle,
@@ -15,7 +20,9 @@ import type {
   WpCategoryRaw,
   WpPostRaw,
 } from "./types.js";
-import { WP_UNAVAILABLE_SPEECH } from "./types.js";
+
+/** Voice budget: never wait longer than this for CMS. */
+export const WP_REQUEST_TIMEOUT_MS = 2000;
 
 export class WordPressApiError extends Error {
   constructor(
@@ -65,15 +72,23 @@ function normalizeCategory(raw: WpCategoryRaw): MailCallCategory {
   };
 }
 
+function resolveTimeoutMs(cfg: MailCallConfig): number {
+  const configured = cfg.MAILCALL_WP_TIMEOUT_MS;
+  if (!Number.isFinite(configured) || configured <= 0) return WP_REQUEST_TIMEOUT_MS;
+  return Math.min(configured, WP_REQUEST_TIMEOUT_MS);
+}
+
 export class WordPressApiClient {
   private readonly postsCache: TtlCache<MailCallArticle[]>;
   private readonly categoriesCache: TtlCache<MailCallCategory[]>;
   private readonly searchCache: TtlCache<MailCallArticle[]>;
+  private readonly timeoutMs: number;
 
   constructor(
     private readonly cfg: MailCallConfig = getConfig(),
     private readonly fetchImpl: typeof fetch = fetch,
   ) {
+    this.timeoutMs = resolveTimeoutMs(cfg);
     this.postsCache = new TtlCache(cfg.MAILCALL_CACHE_TTL_MS);
     this.categoriesCache = new TtlCache(cfg.MAILCALL_CACHE_TTL_MS);
     this.searchCache = new TtlCache(Math.min(cfg.MAILCALL_CACHE_TTL_MS, 30_000));
@@ -89,9 +104,10 @@ export class WordPressApiClient {
   }
 
   private async wpFetch<T>(pathAndQuery: string): Promise<T> {
-    const url = `${this.cfg.wpBaseUrl}/wp-json/wp/v2${pathAndQuery}`;
+    const base = (this.cfg.wpBaseUrl || "https://mailcallcommunication.com").replace(/\/$/, "");
+    const url = `${base}/wp-json/wp/v2${pathAndQuery}`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.cfg.MAILCALL_WP_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
       const res = await this.fetchImpl(url, {
@@ -104,25 +120,26 @@ export class WordPressApiClient {
         signal: controller.signal,
       });
 
-      if (res.status >= 500) {
-        throw new WordPressApiError(`WordPress 5xx (${res.status})`, res.status);
+      // Auth / upstream failures → silent offline path (no throw to caller of retrieveForQuery).
+      if (res.status === 401 || res.status === 403 || res.status === 503 || res.status >= 500) {
+        throw new WordPressApiError(`CMS HTTP ${res.status}`, res.status);
       }
       if (!res.ok) {
-        throw new WordPressApiError(`WordPress HTTP ${res.status}`, res.status);
+        throw new WordPressApiError(`CMS HTTP ${res.status}`, res.status);
       }
 
       return (await res.json()) as T;
     } catch (err) {
       if (err instanceof WordPressApiError) throw err;
       const name = err instanceof Error ? err.name : "Error";
-      if (name === "AbortError") {
-        throw new WordPressApiError("WordPress request timed out", undefined, err);
+      const message = err instanceof Error ? err.message : String(err);
+      if (name === "AbortError" || /timed?\s*out/i.test(message)) {
+        throw new WordPressApiError("ETIMEDOUT", undefined, err);
       }
-      throw new WordPressApiError(
-        err instanceof Error ? err.message : "WordPress request failed",
-        undefined,
-        err,
-      );
+      if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|fetch failed/i.test(message)) {
+        throw new WordPressApiError(message, undefined, err);
+      }
+      throw new WordPressApiError(message || "CMS request failed", undefined, err);
     } finally {
       clearTimeout(timer);
     }
@@ -163,16 +180,31 @@ export class WordPressApiClient {
 
   /**
    * Knowledge retrieval for a caller utterance.
-   * Never throws — returns degraded=true + empty articles on WP failure.
+   * Never throws — on CMS failure returns brand-profile fallback (caller-safe).
    */
   async retrieveForQuery(query: string): Promise<KnowledgeHit> {
     const started = Date.now();
+
+    // Identity / about questions → static brand profile (no CMS round-trip).
+    const brandHit = matchBrandProfileQuery(query);
+    if (brandHit) {
+      return {
+        articles: [],
+        categories: [],
+        degraded: false,
+        usedBrandProfile: true,
+        brandSpeech: brandHit,
+        brandKnowledge: buildBrandProfileKnowledgeBlock(),
+        cacheHit: true,
+        latencyMs: Date.now() - started,
+      };
+    }
+
     const q = query.trim().slice(0, 120);
-    const searchKey = q
-      ? `posts:search:${q.toLowerCase()}:8`
-      : `posts:recent:8`;
-    const cacheHit = this.searchCache.get(searchKey) !== undefined
-      || (!q && this.postsCache.get("posts:recent:8") !== undefined);
+    const searchKey = q ? `posts:search:${q.toLowerCase()}:8` : `posts:recent:8`;
+    const cacheHit =
+      this.searchCache.get(searchKey) !== undefined ||
+      (!q && this.postsCache.get("posts:recent:8") !== undefined);
 
     try {
       const [articles, categories] = await Promise.all([
@@ -184,16 +216,26 @@ export class WordPressApiClient {
         articles,
         categories,
         degraded: false,
+        usedBrandProfile: false,
         cacheHit,
         latencyMs: Date.now() - started,
       };
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      logger.warn("mailcall_wp_degraded", { reason, queryPreview: query.slice(0, 80) });
+      // SRE signal only — never surface to the caller.
+      logger.warn("[WP_CLIENT_OFFLINE] Routing query to static local brand profile.", {
+        reason,
+        queryPreview: query.slice(0, 80),
+        timeoutMs: this.timeoutMs,
+      });
+
       return {
         articles: [],
         categories: [],
         degraded: true,
+        usedBrandProfile: true,
+        brandSpeech: brandOfflineFallbackSpeech(query),
+        brandKnowledge: buildBrandProfileKnowledgeBlock(),
         degradeReason: reason,
         cacheHit: false,
         latencyMs: Date.now() - started,
@@ -201,12 +243,11 @@ export class WordPressApiClient {
     }
   }
 
-  /** Expose polite fallback copy for routers / TTS without importing types everywhere. */
+  /** Natural offline / brand speech for routers (never technical). */
   static unavailableSpeech(): string {
-    return WP_UNAVAILABLE_SPEECH;
+    return brandOfflineFallbackSpeech("");
   }
 
-  /** Test helpers */
   clearCaches(): void {
     this.postsCache.clear();
     this.categoriesCache.clear();
