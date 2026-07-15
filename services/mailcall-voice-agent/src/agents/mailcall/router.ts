@@ -10,6 +10,7 @@ import {
   getDegradeReasons,
   isConfigDegraded,
   MAILCALL_API_PREFIX,
+  type MailCallConfig,
 } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 import { validateTwilioSignature } from "../../utils/twilioSignature.js";
@@ -20,6 +21,9 @@ import {
 } from "./conversation.js";
 import { WordPressApiClient } from "./wordpress_api.js";
 
+/** Known production host for this deployment (used when env is unset). */
+const DEFAULT_PUBLIC_BASE_URL = "https://agent.mailcallcommunication.com";
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -29,18 +33,38 @@ function escapeXml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function publicWsUrl(): string {
-  const cfg = getConfig();
-  const base = (cfg.MAILCALL_PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
-  if (!base) {
-    throw new Error("MAILCALL_PUBLIC_BASE_URL is required for inbound TwiML");
+/**
+ * Resolve the HTTPS origin Twilio should use for ConversationRelay + signature URL.
+ * Order: env → request forwarded headers → hard-coded production host.
+ */
+export function resolvePublicBaseUrl(req?: Request, cfg: MailCallConfig = getConfig()): string {
+  const fromEnv = (cfg.MAILCALL_PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
+  if (fromEnv) return fromEnv;
+
+  if (req) {
+    const proto = String(req.header("x-forwarded-proto") ?? req.protocol ?? "https")
+      .split(",")[0]!
+      .trim();
+    const host = String(req.header("x-forwarded-host") ?? req.get("host") ?? "")
+      .split(",")[0]!
+      .trim();
+    if (host) {
+      const scheme = proto === "http" ? "http" : "https";
+      return `${scheme}://${host}`.replace(/\/$/, "");
+    }
   }
+
+  return DEFAULT_PUBLIC_BASE_URL;
+}
+
+function publicWsUrl(req?: Request): string {
+  const base = resolvePublicBaseUrl(req);
   const wsBase = base.replace(/^https:/i, "wss:").replace(/^http:/i, "ws:");
   return `${wsBase}${MAILCALL_API_PREFIX}/ws`;
 }
 
-function conversationRelayTwiml(welcome: string): string {
-  const ws = escapeXml(publicWsUrl());
+function conversationRelayTwiml(welcome: string, req?: Request): string {
+  const ws = escapeXml(publicWsUrl(req));
   const greeting = escapeXml(welcome);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -55,6 +79,21 @@ function fallbackTwiml(): string {
 <Response>
   <Say voice="Polly.Matthew">We are experiencing technical difficulties. Please try again later.</Say>
 </Response>`;
+}
+
+/**
+ * Signature checks need the Twilio auth token. If validation is on but the token
+ * is empty, skip validation (log loudly) instead of killing the call with fallback Say.
+ */
+function shouldValidateTwilioSignature(cfg: MailCallConfig): boolean {
+  if (!cfg.MAILCALL_VALIDATE_TWILIO_SIGNATURES) return false;
+  if (!cfg.MAILCALL_TWILIO_AUTH_TOKEN?.trim()) {
+    logger.warn("mailcall_signature_skipped_missing_auth_token", {
+      hint: "Set MAILCALL_TWILIO_AUTH_TOKEN or MAILCALL_VALIDATE_TWILIO_SIGNATURES=false",
+    });
+    return false;
+  }
+  return true;
 }
 
 export function createMailCallRouter(): Router {
@@ -82,18 +121,24 @@ export function createMailCallRouter(): Router {
    */
   router.post("/inbound", async (req: Request, res: Response) => {
     const cfg = getConfig();
+    const publicBaseUrl = resolvePublicBaseUrl(req, cfg);
+    const wsUrl = publicWsUrl(req);
+
     logger.info("mailcall_inbound_received", {
       callSid: req.body?.CallSid,
       from: req.body?.From,
       to: req.body?.To,
+      publicBaseUrl,
+      wsUrl,
+      degraded: isConfigDegraded(),
     });
 
     try {
       validateTwilioSignature(
         req,
         cfg.MAILCALL_TWILIO_AUTH_TOKEN,
-        cfg.MAILCALL_VALIDATE_TWILIO_SIGNATURES,
-        cfg.MAILCALL_PUBLIC_BASE_URL,
+        shouldValidateTwilioSignature(cfg),
+        publicBaseUrl,
       );
 
       const to = String(req.body?.To ?? "");
@@ -108,10 +153,17 @@ export function createMailCallRouter(): Router {
         });
       }
 
-      res.type("application/xml").send(conversationRelayTwiml(greetingSpeech()));
+      const twiml = conversationRelayTwiml(greetingSpeech(), req);
+      logger.info("mailcall_inbound_twiml_ok", { callSid: req.body?.CallSid, wsUrl });
+      res.type("application/xml").send(twiml);
     } catch (err) {
       logger.error("mailcall_inbound_failed", {
         error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        publicBaseUrl,
+        wsUrl,
+        validateSignatures: shouldValidateTwilioSignature(cfg),
+        hasAuthToken: Boolean(cfg.MAILCALL_TWILIO_AUTH_TOKEN?.trim()),
       });
       res.type("application/xml").status(200).send(fallbackTwiml());
     }
