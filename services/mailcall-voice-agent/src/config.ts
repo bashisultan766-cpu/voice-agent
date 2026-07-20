@@ -41,7 +41,9 @@ const envSchema = z.object({
   MAILCALL_WP_TIMEOUT_MS: z.coerce.number().int().positive().optional().default(2_000),
   MAILCALL_PORT: z.coerce.number().int().positive().optional(),
   MAILCALL_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional().default("info"),
-  /** Shared Resend credentials (repo-root or service .env). Optional — escalation falls back to voicemail guidance. */
+  /** Send Newspaper / register checkout page emailed to callers. */
+  MAILCALL_CHECKOUT_URL: z.string().url().optional(),
+  /** Shared Resend credentials (repo-root or service .env). Optional — checkout/escalation falls back to voicemail guidance. */
   RESEND_API_KEY: z.string().optional().default(""),
   RESEND_FROM_EMAIL: z.string().optional().default(""),
   RESEND_FROM_NAME: z.string().optional().default("MailCall Newspaper"),
@@ -147,6 +149,7 @@ export function sanitizeEnvForValidation(
       .trim(),
     MAILCALL_PORT: String(env.MAILCALL_PORT ?? env.PORT ?? DEFAULT_MAILCALL_PORT).trim(),
     MAILCALL_LOG_LEVEL: String(env.MAILCALL_LOG_LEVEL ?? "info").trim() || "info",
+    MAILCALL_CHECKOUT_URL: sanitizeOptionalHttpUrl(env.MAILCALL_CHECKOUT_URL),
     RESEND_API_KEY: String(env.RESEND_API_KEY ?? "").trim(),
     RESEND_FROM_EMAIL: String(env.RESEND_FROM_EMAIL ?? "").trim(),
     RESEND_FROM_NAME: String(env.RESEND_FROM_NAME ?? "MailCall Newspaper").trim() || "MailCall Newspaper",
@@ -195,6 +198,7 @@ function buildDegradedConfig(
     )
       ? (sanitized.MAILCALL_LOG_LEVEL as MailCallConfig["MAILCALL_LOG_LEVEL"])
       : "info",
+    MAILCALL_CHECKOUT_URL: sanitized.MAILCALL_CHECKOUT_URL,
     RESEND_API_KEY: sanitized.RESEND_API_KEY ?? "",
     RESEND_FROM_EMAIL: sanitized.RESEND_FROM_EMAIL ?? "",
     RESEND_FROM_NAME: sanitized.RESEND_FROM_NAME || "MailCall Newspaper",

@@ -17,17 +17,19 @@ import {
   findPlanByUtterance,
   SCRIPTS,
 } from "./businessRules.js";
+import { buildCatalog, catalogKnowledgeBlock } from "./catalog.js";
 import {
   buildRetrievalOnlySpeech,
   buildTurnMessages,
 } from "./prompts.js";
 import {
   executeMailCallTool,
+  isEmailConfirmation,
   MAILCALL_TOOL_DEFINITIONS,
   normalizeNewspaperSelection,
-  normalizePhoneNumber,
+  normalizePackageType,
   normalizePlanDuration,
-  type PrintPlanIntake,
+  type CheckoutLinkIntake,
 } from "./tools.js";
 import { looksLikeEmail, normalizeSpokenEmail } from "./emailNormalize.js";
 import { clampSpokenLength, truncateToSentences } from "./textCleaner.js";
@@ -47,14 +49,19 @@ export interface ConversationTurnInput {
 interface SessionMemory {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   startedAtMs: number;
-  printIntake?: PrintIntakeState;
+  checkoutIntake?: CheckoutIntakeState;
 }
 
-type IntakeSlot = keyof PrintPlanIntake;
+type IntakeSlot =
+  | "newspaper_selection"
+  | "plan_duration"
+  | "package_type"
+  | "contact_email"
+  | "email_confirm";
 
-interface PrintIntakeState {
+interface CheckoutIntakeState {
   active: boolean;
-  slots: Partial<PrintPlanIntake>;
+  slots: Partial<CheckoutLinkIntake>;
   awaiting?: IntakeSlot;
 }
 
@@ -66,7 +73,7 @@ const OFF_TOPIC_RE =
   /\b(python|javascript|code|program(ming)?|cook(ing)?|recipe|bitcoin|crypto|weather forecast|homework|math problem)\b/i;
 
 const PRICING_RE =
-  /\b(price|pricing|plan|plans|cost|how much|subscription|what('s| is) included|sections?)\b/i;
+  /\b(price|pricing|plan|plans|cost|how much|subscription|what('s| is) included|sections?|packages?)\b/i;
 
 const REFUND_RE = /\b(refund|cancel(lation|ling)?|return(s)?|money back|credit)\b/i;
 
@@ -89,84 +96,59 @@ const END_CALL_INTENT_RE =
   /\b(goodbye|good bye|bye bye|bye|see you|talk to you later|that'?s all|that is all|nothing else|no thanks|no thank you|i(?:'m| am) good|no more (help|questions|information)|i(?:'m| am) done|i don'?t need anything else|end the call|hang up|you can hang up)\b/i;
 
 const PURCHASE_INTENT_RE =
-  /\b(buy|purchase|subscribe|subscription setup|sign me up|sign up|set up|start)\b.*\b(plan|subscription|newspaper|mailcall|edition)\b|\b(i want|i'd like|i would like|ready)\b.*\b(subscribe|subscription|buy|purchase|plan|edition)\b/i;
+  /\b(buy|purchase|subscribe|subscription setup|sign me up|sign up|set up|start|checkout|send (me )?(a )?link)\b.*\b(plan|subscription|newspaper|mailcall|edition|checkout)?\b|\b(i want|i'd like|i would like|ready)\b.*\b(subscribe|subscription|buy|purchase|plan|edition)\b/i;
+
+const INMATE_PII_PROBE_RE =
+  /\b(inmate (name|number|id)|booking number|facility (name|address)|prison (name|address)|correctional (facility|center) address)\b/i;
 
 const INTAKE_SLOT_ORDER: IntakeSlot[] = [
-  "sender_name",
-  "sender_email",
-  "sender_phone",
-  "inmate_name",
-  "inmate_number",
-  "facility_name",
-  "facility_address",
   "newspaper_selection",
   "plan_duration",
+  "package_type",
+  "contact_email",
+  "email_confirm",
 ];
 
 const INTAKE_PROMPTS: Record<IntakeSlot, string> = {
-  sender_name: "I can help with that. What is your full name?",
-  sender_email:
-    "Got it. What is your email address? You can say “at” for the at sign and “dot” for each period.",
-  sender_phone:
-    "Got it. Before I submit this to our fulfillment team, what is your preferred contact phone number?",
-  inmate_name: "Thank you. What is the inmate's full legal name?",
-  inmate_number: "Got it. What is the inmate's booking or identification number?",
-  facility_name: "Thank you. What is the official name of the correctional facility?",
-  facility_address:
-    "Got it. What is the complete physical shipping address for that facility?",
   newspaper_selection:
-    "Which print edition would you like: Urban, Spanish, or Global?",
+    "I can help with that. Which publication would you like: Urban, Spanish, or Global?",
   plan_duration:
     "Which plan duration would you like: one, three, six, or twelve months?",
+  package_type:
+    "Which package type would you like: Single Edition, Bundle of Two, or Bundle of Three?",
+  contact_email:
+    "Great. What email address should I send the secure checkout link to? You can say “at” for the at sign and “dot” for each period.",
+  email_confirm: "Please confirm that email is correct — yes or no?",
 };
+
+function emailConfirmPrompt(email: string): string {
+  const spoken = email.replace("@", " at ").replace(/\./g, " dot ");
+  return `I have ${spoken}. Is that correct?`;
+}
 
 function cleanSpokenValue(raw: string): string {
   return raw
     .trim()
     .replace(
-      /^(?:it(?:'s| is)|this is|my (?:full )?name is|the (?:inmate|facility)(?:'s)? (?:name|number|address) is)\s+/i,
+      /^(?:it(?:'s| is)|this is|my (?:email|address) is)\s+/i,
       "",
     )
     .trim();
 }
 
 function captureIntakeSlot(
-  intake: PrintIntakeState,
+  intake: CheckoutIntakeState,
   slot: IntakeSlot,
   utterance: string,
 ): { accepted: boolean; retrySpeech?: string } {
   const value = cleanSpokenValue(utterance);
   switch (slot) {
-    case "sender_email": {
-      const email = normalizeSpokenEmail(value);
-      if (!looksLikeEmail(email)) {
-        return {
-          accepted: false,
-          retrySpeech:
-            "I want to make sure I have that correctly. Please say your email slowly, using “at” for the at sign and “dot” for each period.",
-        };
-      }
-      intake.slots.sender_email = email;
-      break;
-    }
-    case "sender_phone": {
-      const phone = normalizePhoneNumber(value);
-      if (!phone) {
-        return {
-          accepted: false,
-          retrySpeech:
-            "I didn't get a complete phone number. Please repeat your preferred contact number, including the area code.",
-        };
-      }
-      intake.slots.sender_phone = phone;
-      break;
-    }
     case "newspaper_selection": {
       const selection = normalizeNewspaperSelection(value);
       if (!selection) {
         return {
           accepted: false,
-          retrySpeech: "Please choose one edition: Urban, Spanish, or Global.",
+          retrySpeech: "Please choose one publication: Urban, Spanish, or Global.",
         };
       }
       intake.slots.newspaper_selection = selection;
@@ -183,80 +165,161 @@ function captureIntakeSlot(
       intake.slots.plan_duration = duration;
       break;
     }
-    default:
-      if (value.length < 2) {
-        return { accepted: false, retrySpeech: INTAKE_PROMPTS[slot] };
+    case "package_type": {
+      const packageType = normalizePackageType(value);
+      if (!packageType) {
+        return {
+          accepted: false,
+          retrySpeech:
+            "Please choose Single Edition, Bundle of Two, or Bundle of Three.",
+        };
       }
-      intake.slots[slot] = value;
+      intake.slots.package_type = packageType;
+      break;
+    }
+    case "contact_email": {
+      const email = normalizeSpokenEmail(value);
+      if (!looksLikeEmail(email)) {
+        return {
+          accepted: false,
+          retrySpeech:
+            "I want to make sure I have that correctly. Please say your email slowly, using “at” for the at sign and “dot” for each period.",
+        };
+      }
+      intake.slots.contact_email = email;
+      intake.slots.email_confirmed = false;
+      break;
+    }
+    case "email_confirm": {
+      const confirmed = isEmailConfirmation(value);
+      if (confirmed === true) {
+        intake.slots.email_confirmed = true;
+        break;
+      }
+      if (confirmed === false) {
+        intake.slots.contact_email = undefined;
+        intake.slots.email_confirmed = false;
+        intake.awaiting = "contact_email";
+        return {
+          accepted: false,
+          retrySpeech:
+            "No problem. Please say the email again slowly, using “at” for the at sign and “dot” for each period.",
+        };
+      }
+      // Caller may re-speak the email to correct it.
+      const email = normalizeSpokenEmail(value);
+      if (looksLikeEmail(email)) {
+        intake.slots.contact_email = email;
+        intake.slots.email_confirmed = false;
+        intake.awaiting = "email_confirm";
+        return {
+          accepted: false,
+          retrySpeech: emailConfirmPrompt(email),
+        };
+      }
+      return {
+        accepted: false,
+        retrySpeech: intake.slots.contact_email
+          ? emailConfirmPrompt(intake.slots.contact_email)
+          : INTAKE_PROMPTS.contact_email,
+      };
+    }
   }
   intake.awaiting = undefined;
   return { accepted: true };
 }
 
-function nextMissingIntakeSlot(intake: PrintIntakeState): IntakeSlot | undefined {
-  return INTAKE_SLOT_ORDER.find((slot) => {
-    const value = intake.slots[slot];
-    return value === undefined || value === "";
-  });
+function nextMissingIntakeSlot(intake: CheckoutIntakeState): IntakeSlot | undefined {
+  for (const slot of INTAKE_SLOT_ORDER) {
+    if (slot === "email_confirm") {
+      if (!intake.slots.email_confirmed) return "email_confirm";
+      continue;
+    }
+    const value = intake.slots[slot as keyof CheckoutLinkIntake];
+    if (value === undefined || value === "" || value === false) return slot;
+  }
+  return undefined;
 }
 
-function prefillIntakeSelections(intake: PrintIntakeState, utterance: string): void {
+function prefillIntakeSelections(intake: CheckoutIntakeState, utterance: string): void {
   const selection = normalizeNewspaperSelection(utterance);
   const duration = normalizePlanDuration(utterance);
+  const packageType = normalizePackageType(utterance);
   if (selection) intake.slots.newspaper_selection = selection;
   if (duration) intake.slots.plan_duration = duration;
+  if (packageType) intake.slots.package_type = packageType;
 }
 
-function isCompletePrintPlanIntake(
-  slots: Partial<PrintPlanIntake>,
-): slots is PrintPlanIntake {
-  return INTAKE_SLOT_ORDER.every((slot) => slots[slot] !== undefined && slots[slot] !== "");
+function isCompleteCheckoutIntake(
+  slots: Partial<CheckoutLinkIntake>,
+): slots is CheckoutLinkIntake {
+  return Boolean(
+    slots.newspaper_selection &&
+      slots.plan_duration &&
+      slots.package_type &&
+      slots.contact_email &&
+      slots.email_confirmed === true,
+  );
 }
 
-async function processPrintIntake(
+async function processCheckoutIntake(
   session: SessionMemory,
   callSid: string,
   utterance: string,
   toolExecutor: MailCallToolExecutor,
 ): Promise<string | null> {
-  const beginsNow = !session.printIntake?.active && PURCHASE_INTENT_RE.test(utterance);
+  const beginsNow = !session.checkoutIntake?.active && PURCHASE_INTENT_RE.test(utterance);
   if (beginsNow) {
-    session.printIntake = { active: true, slots: {} };
-    prefillIntakeSelections(session.printIntake, utterance);
+    session.checkoutIntake = { active: true, slots: {} };
+    prefillIntakeSelections(session.checkoutIntake, utterance);
   }
 
-  const intake = session.printIntake;
+  const intake = session.checkoutIntake;
   if (!intake?.active) return null;
+
+  if (INMATE_PII_PROBE_RE.test(utterance) && !intake.awaiting) {
+    return SCRIPTS.privacyBoundary;
+  }
 
   if (!beginsNow && intake.awaiting) {
     const captured = captureIntakeSlot(intake, intake.awaiting, utterance);
-    if (!captured.accepted) return captured.retrySpeech ?? INTAKE_PROMPTS[intake.awaiting];
+    if (!captured.accepted) {
+      return captured.retrySpeech ?? INTAKE_PROMPTS[intake.awaiting];
+    }
   }
 
   const missing = nextMissingIntakeSlot(intake);
   if (missing) {
     intake.awaiting = missing;
+    if (missing === "email_confirm" && intake.slots.contact_email) {
+      return emailConfirmPrompt(intake.slots.contact_email);
+    }
     return INTAKE_PROMPTS[missing];
   }
 
-  if (!isCompletePrintPlanIntake(intake.slots)) {
-    return "Let me check those details once more before I submit them.";
+  if (!isCompleteCheckoutIntake(intake.slots)) {
+    return "Let me check those details once more before I send the link.";
   }
 
   const result = await toolExecutor(
-    "send_support_escalation",
-    JSON.stringify(intake.slots),
+    "send_checkout_link",
+    JSON.stringify({
+      contact_email: intake.slots.contact_email,
+      newspaper_selection: intake.slots.newspaper_selection,
+      plan_duration: intake.slots.plan_duration,
+      package_type: intake.slots.package_type,
+    }),
     { callSid, callStartedAtMs: session.startedAtMs },
   );
 
   if (result.toolPayload.ok === true) {
     intake.active = false;
-    return SCRIPTS.escalationSent;
+    return SCRIPTS.checkoutLinkSent;
   }
 
   return (
     result.spokenHint ??
-    "I couldn't submit that just yet. Your details are still here, and our support team can help on the next business day."
+    "I couldn't send that link just yet. You're welcome to leave a message at support at mailcallnewspaper dot com."
   );
 }
 
@@ -297,13 +360,15 @@ function remember(session: SessionMemory, user: string, assistant: string): void
 
 /** Deterministic policy / product answers when OpenAI is unavailable or for crisp voice UX. */
 function matchPolicyFastPath(utterance: string): string | null {
+  if (INMATE_PII_PROBE_RE.test(utterance)) {
+    return SCRIPTS.privacyBoundary;
+  }
   if (REFUND_RE.test(utterance)) {
     return `I understand. ${SCRIPTS.refundFinal}`;
   }
   if (ADDRESS_CHANGE_RE.test(utterance)) {
     return `Not a problem. ${SCRIPTS.addressChange}`;
   }
-  // Upset + delay: when OpenAI is available, fall through so send_support_escalation can run.
   if (UPSET_RE.test(utterance) && DELAY_RE.test(utterance)) {
     if (!getConfig().MAILCALL_OPENAI_API_KEY) {
       return SCRIPTS.escalation;
@@ -408,7 +473,7 @@ export async function processConversationTurn(
     };
   }
 
-  const intakeSpeech = await processPrintIntake(
+  const intakeSpeech = await processCheckoutIntake(
     session,
     input.callSid,
     utterance,
@@ -470,6 +535,12 @@ export async function processConversationTurn(
     ? wp.retrieveCorporatePageContext(utterance)
     : null;
   const knowledge = corporateKnowledge ?? (await wp.retrieveForLiveTurn(utterance));
+  const catalog = buildCatalog({
+    wpCategories: knowledge.categories,
+    cmsPricingText: knowledge.articles
+      .map((a) => `${a.title} ${a.content || a.excerpt || ""}`)
+      .join("\n"),
+  });
   const history = input.history ?? session.history.slice(-8);
   const messages = buildTurnMessages({
     userUtterance: utterance,
@@ -478,6 +549,7 @@ export async function processConversationTurn(
     degraded: knowledge.degraded,
     usedBrandProfile: knowledge.usedBrandProfile,
     brandKnowledge: knowledge.brandKnowledge,
+    catalogBlock: catalogKnowledgeBlock(catalog),
     history,
   });
 
@@ -486,6 +558,7 @@ export async function processConversationTurn(
     articlesUsed: knowledge.articles.length,
     degraded: knowledge.degraded,
     usedBrandProfile: Boolean(knowledge.usedBrandProfile),
+    catalogSource: catalog.sourceLabel,
     ragLatencyMs: knowledge.latencyMs,
   });
 

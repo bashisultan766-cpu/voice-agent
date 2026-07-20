@@ -22,6 +22,7 @@ function testConfig(): MailCallConfig {
     MAILCALL_OPENAI_API_KEY: "",
     MAILCALL_OPENAI_MODEL: "gpt-4o-mini",
     MAILCALL_TRANSFER_NUMBER: "",
+    MAILCALL_CHECKOUT_URL: "https://mailcallnewspaper.com/register",
     MAILCALL_CACHE_TTL_MS: 60_000,
     MAILCALL_WP_TIMEOUT_MS: 500,
     MAILCALL_PORT: 8010,
@@ -113,7 +114,7 @@ describe("conversation + prompts", () => {
     );
 
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(result.speech.toLowerCase()).toMatch(/fifty-nine|three month|3-month/);
+    expect(result.speech.toLowerCase()).toMatch(/fifty-three|three month|3-month/);
     expect(result.speech).not.toMatch(/api|wordpress|json/i);
   });
 
@@ -129,7 +130,20 @@ describe("conversation + prompts", () => {
     expect(result.speech.toLowerCase()).toMatch(/final|does not permit|returns/);
   });
 
-  it("locks purchase intent into deterministic nine-slot intake before submission", async () => {
+  it("refuses to collect inmate or facility details over the phone", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const wp = new WordPressApiClient(testConfig(), fetchImpl);
+
+    const result = await processConversationTurn(
+      { callSid: "privacy-1", utterance: "Do you need the inmate name and facility address?" },
+      wp,
+    );
+
+    expect(result.speech.toLowerCase()).toMatch(/privacy|do not collect|checkout/i);
+    expect(result.speech.toLowerCase()).not.toMatch(/what is the inmate/);
+  });
+
+  it("locks purchase intent into privacy-safe checkout-link intake", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     const wp = new WordPressApiClient(testConfig(), fetchImpl);
     let submitted: Record<string, unknown> | undefined;
@@ -150,37 +164,26 @@ describe("conversation + prompts", () => {
         toolExecutor,
       );
 
+    // Prefills Urban + 3 months from purchase utterance
     expect((await turn("I want to buy the Urban edition for 3 months")).speech).toMatch(
-      /full name/i,
+      /Single Edition|Bundle of Two|Bundle of Three/i,
     );
-    expect((await turn("Mary Smith")).speech).toMatch(/email address/i);
-    expect((await turn("mary dot smith at gmail dot com")).speech).toBe(
-      "Got it. Before I submit this to our fulfillment team, what is your preferred contact phone number?",
+    expect((await turn("Single Edition")).speech).toMatch(/email/i);
+    expect((await turn("mary dot smith at gmail dot com")).speech).toMatch(
+      /mary at gmail|is that correct/i,
     );
-    expect((await turn("two one two five five five zero one nine eight")).speech).toMatch(
-      /inmate's full legal name/i,
-    );
-    expect((await turn("John Robert Smith")).speech).toMatch(/booking|identification/i);
-    expect((await turn("A 12345")).speech).toMatch(/official name/i);
-    expect((await turn("Albany Correctional Center")).speech).toMatch(
-      /shipping address/i,
-    );
-    const final = await turn("1 Main Street, Albany, New York 12207");
+    const final = await turn("yes");
 
     expect(toolExecutor).toHaveBeenCalledTimes(1);
+    expect(toolExecutor.mock.calls[0]?.[0]).toBe("send_checkout_link");
     expect(submitted).toEqual({
-      sender_name: "Mary Smith",
-      sender_email: "mary.smith@gmail.com",
-      sender_phone: "2125550198",
-      inmate_name: "John Robert Smith",
-      inmate_number: "A 12345",
-      facility_name: "Albany Correctional Center",
-      facility_address: "1 Main Street, Albany, New York 12207",
+      contact_email: "mary.smith@gmail.com",
       newspaper_selection: "Urban",
       plan_duration: 3,
+      package_type: "Single Edition",
     });
-    expect(final.speech).toContain("compiled all your details");
-    expect(final.speech).toContain("next business day");
+    expect(final.speech).toContain("secure direct checkout link");
+    expect(final.speech.toLowerCase()).toMatch(/inmate's name|facility information/);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -199,7 +202,17 @@ describe("conversation + prompts", () => {
       toolExecutor,
     );
     await processConversationTurn(
-      { callSid: "intake-2", utterance: "Mary Smith" },
+      { callSid: "intake-2", utterance: "Urban" },
+      wp,
+      toolExecutor,
+    );
+    await processConversationTurn(
+      { callSid: "intake-2", utterance: "three months" },
+      wp,
+      toolExecutor,
+    );
+    await processConversationTurn(
+      { callSid: "intake-2", utterance: "Single Edition" },
       wp,
       toolExecutor,
     );
@@ -325,13 +338,13 @@ describe("conversation + prompts", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("buildSystemPrompt names Brook and requires send_support_escalation", async () => {
+  it("buildSystemPrompt names Brook and requires send_checkout_link", async () => {
     const { buildSystemPrompt } = await import("../src/agents/mailcall/prompts.js");
     const prompt = buildSystemPrompt(new Date("2026-07-15T12:00:00Z"));
     expect(prompt).toMatch(/strictly Brook/i);
-    expect(prompt).toContain("send_support_escalation");
+    expect(prompt).toContain("send_checkout_link");
     expect(prompt).toMatch(/Urban.*Spanish.*Global/s);
-    expect(prompt).toMatch(/all nine values/i);
+    expect(prompt).toMatch(/NEVER ask for or collect inmate name/i);
     expect(prompt).toMatch(/Under no circumstances say that MailCall does not have an address/i);
     expect(prompt).toMatch(/phone-number country code and network geolocation must NEVER/i);
     expect(prompt).toContain(
@@ -341,7 +354,8 @@ describe("conversation + prompts", () => {
     expect(prompt).toContain("educate, entertain, and empower");
     expect(prompt).toContain("Periódico para Prisioneros");
     expect(prompt).toMatch(/give one brief goodbye and end the call/i);
-    expect(prompt).toMatch(/\$21\.66/);
+    expect(prompt).toMatch(/\$19\.99/);
+    expect(prompt).toMatch(/Bundle of Three/);
     expect(prompt).toMatch(/ALL SALES ARE FINAL/i);
   });
 

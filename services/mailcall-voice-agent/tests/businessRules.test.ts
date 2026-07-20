@@ -5,13 +5,21 @@ import {
   findPlanBySku,
   OFFICE_HOURS,
 } from "../src/agents/mailcall/businessRules.js";
+import {
+  buildCatalog,
+  parsePlansFromCmsText,
+} from "../src/agents/mailcall/catalog.js";
 import { looksLikeEmail, normalizeSpokenEmail } from "../src/agents/mailcall/emailNormalize.js";
 import {
   executeMailCallTool,
   MAILCALL_TOOL_DEFINITIONS,
+  normalizePackageType,
   normalizePhoneNumber,
 } from "../src/agents/mailcall/tools.js";
-import { buildSupportEscalationHtml } from "../src/utils/resendEmail.js";
+import {
+  buildCheckoutLinkHtml,
+  buildSupportEscalationHtml,
+} from "../src/utils/resendEmail.js";
 
 describe("emailNormalize", () => {
   it("converts spoken email to a normalized address", () => {
@@ -29,8 +37,9 @@ describe("emailNormalize", () => {
 
 describe("businessRules", () => {
   it("resolves SKUs and speaks plan pricing", () => {
-    expect(findPlanBySku("mc-3m")?.priceUsd).toBe(59.99);
-    expect(buildProductCatalogSpeech().toLowerCase()).toContain("twenty-one");
+    expect(findPlanBySku("mc-3m")?.priceUsd).toBe(53.97);
+    expect(buildProductCatalogSpeech().toLowerCase()).toContain("nineteen");
+    expect(buildProductCatalogSpeech().toLowerCase()).toMatch(/urban|spanish|global/);
   });
 
   it("gates live transfer on office hours and call duration", () => {
@@ -42,12 +51,32 @@ describe("businessRules", () => {
 
     const ready = canTransferToLiveAgent({
       callStartedAtMs: Date.now() - OFFICE_HOURS.minCallDurationMsForTransfer - 1_000,
-      // Force "open" path by only checking duration when hours happen to be open;
-      // when closed, allowed stays false — assert structured response either way.
       transferNumberConfigured: true,
     });
     expect(typeof ready.allowed).toBe("boolean");
     expect(ready.reasonSpoken.length).toBeGreaterThan(10);
+  });
+});
+
+describe("catalog", () => {
+  it("falls back to baseline when WordPress has no matching categories", () => {
+    const catalog = buildCatalog({ wpCategories: [{ id: 1, name: "Sports", count: 3 }] });
+    expect(catalog.categories).toEqual(["Urban", "Spanish", "Global"]);
+    expect(catalog.plans[0]?.priceUsd).toBe(19.99);
+  });
+
+  it("parses live plan prices from CMS text when present", () => {
+    const plans = parsePlansFromCmsText(
+      "1 Month plan $19.99 · 3 Months $53.97 · 6 Months $95.94 · 12 Months $179.88",
+    );
+    expect(plans?.[0]?.priceUsd).toBe(19.99);
+    expect(plans?.[3]?.priceUsd).toBe(179.88);
+  });
+
+  it("normalizes package types from speech", () => {
+    expect(normalizePackageType("bundle of two")).toBe("Bundle of Two");
+    expect(normalizePackageType("single")).toBe("Single Edition");
+    expect(normalizePackageType("three")).toBe("Bundle of Three");
   });
 });
 
@@ -61,71 +90,70 @@ describe("MailCall tools", () => {
     expect(result.spokenHint).not.toMatch(/api|json|wordpress/i);
   });
 
-  it("PlaceOrder normalizes email and requires a valid SKU", async () => {
-    const bad = await executeMailCallTool(
+  it("PlaceOrder redirects to the checkout-link flow without inmate fields", async () => {
+    const result = await executeMailCallTool(
       "PlaceOrder",
-      JSON.stringify({
-        sku: "MC-1M",
-        email: "mary dot smith at gmail dot com",
-        first_name: "Mary",
-        last_name: "Smith",
-        inmate_name: "John Smith",
-        inmate_number: "12345",
-        facility: "State Facility",
-        address1: "1 Main Street",
-      }),
+      JSON.stringify({ note: "caller wants to order" }),
       { callSid: "t2", callStartedAtMs: Date.now() },
     );
-    expect(bad.toolPayload.ok).toBe(true);
-    expect(bad.toolPayload.email).toBe("mary.smith@gmail.com");
-    expect(bad.spokenHint).not.toMatch(/api|json|database/i);
+    expect(result.toolPayload.ok).toBe(false);
+    expect(result.toolPayload.reason).toBe("use_checkout_link");
+    expect(result.spokenHint?.toLowerCase()).toMatch(/checkout link|urban|spanish|global/);
+    expect(result.spokenHint).not.toMatch(/inmate name|facility address/i);
   });
 
-  it("send_support_escalation requires fields then confirms after Resend success", async () => {
+  it("send_checkout_link requires fields then confirms after Resend success", async () => {
     const incomplete = await executeMailCallTool(
-      "send_support_escalation",
-      JSON.stringify({ sender_name: "Mary" }),
+      "send_checkout_link",
+      JSON.stringify({ contact_email: "mary@example.com" }),
       { callSid: "esc-1", callStartedAtMs: Date.now() },
     );
     expect(incomplete.toolPayload.ok).toBe(false);
-    expect(incomplete.spokenHint?.toLowerCase()).toMatch(/name|email|phone|inmate|facility/);
+    expect(incomplete.spokenHint?.toLowerCase()).toMatch(/urban|plan|package|email/);
   });
 
-  it("requires the complete nine-field intake schema", () => {
+  it("requires the privacy-safe checkout-link schema", () => {
     const definition = MAILCALL_TOOL_DEFINITIONS.find(
-      (tool) => tool.type === "function" && tool.function.name === "send_support_escalation",
+      (tool) => tool.type === "function" && tool.function.name === "send_checkout_link",
     );
     const required = (definition?.function.parameters as { required?: string[] })?.required;
     expect(required).toEqual([
-      "sender_name",
-      "sender_email",
-      "sender_phone",
-      "inmate_name",
-      "inmate_number",
-      "facility_name",
-      "facility_address",
+      "contact_email",
       "newspaper_selection",
       "plan_duration",
+      "package_type",
     ]);
+    expect(required).not.toContain("inmate_name");
+    expect(required).not.toContain("facility_address");
   });
 
-  it("builds an escaped executive HTML intake table", () => {
+  it("builds an escaped checkout-link HTML email", () => {
+    const html = buildCheckoutLinkHtml({
+      contactEmail: "mary@example.com",
+      newspaperSelection: "Urban",
+      planDuration: 3,
+      packageType: "Single Edition",
+      checkoutUrl: "https://mailcallnewspaper.com/register",
+      callSid: "CA123",
+    });
+    expect(html).toContain("Your MailCall Checkout Link");
+    expect(html).toContain("Urban edition");
+    expect(html).toContain("Single Edition");
+    expect(html).toContain("https://mailcallnewspaper.com/register");
+    expect(html).toContain("Open Secure Checkout");
+  });
+
+  it("builds a privacy-safe support note HTML table", () => {
     const html = buildSupportEscalationHtml({
       senderName: "Mary <Smith>",
       senderEmail: "mary@example.com",
       senderPhone: "2125550198",
-      inmateName: "John Smith",
-      inmateNumber: "A12345",
-      facilityName: "State Center",
-      facilityAddress: "1 Main Street, Albany, NY 12207",
-      newspaperSelection: "Urban",
-      planDuration: 3,
+      issueSummary: "Delivery delay",
       callSid: "CA123",
     });
-    expect(html).toContain("MailCall Print Plan Intake");
+    expect(html).toContain("MailCall Support Note");
     expect(html).toContain("Mary &lt;Smith&gt;");
-    expect(html).toContain("Urban edition");
-    expect(html).toContain("3 months");
     expect(html).not.toContain("Mary <Smith>");
+    expect(html).not.toMatch(/inmate/i);
   });
 });

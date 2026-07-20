@@ -32,13 +32,22 @@ export {
 } from "./brandProfile.js";
 export {
   MAILCALL_PLANS,
+  PACKAGE_TYPES,
+  PUBLICATION_CATEGORIES,
   buildProductCatalogSpeech,
   isWithinOfficeHours,
   canTransferToLiveAgent,
   SCRIPTS,
 } from "./businessRules.js";
+export { buildCatalog, catalogKnowledgeBlock } from "./catalog.js";
 export { normalizeSpokenEmail, looksLikeEmail } from "./emailNormalize.js";
-export { executeMailCallTool, MAILCALL_TOOL_DEFINITIONS } from "./tools.js";
+export {
+  executeMailCallTool,
+  MAILCALL_TOOL_DEFINITIONS,
+  normalizePackageType,
+  normalizeNewspaperSelection,
+  normalizePlanDuration,
+} from "./tools.js";
 export {
   cleanseForSpeech,
   truncateToSentences,

@@ -9,6 +9,9 @@ export const PUBLICATION_NAME = "MailCall Newspaper";
 export const SUPPORT_EMAIL_SPOKEN = "support at mailcallnewspaper dot com";
 export const SUPPORT_EMAIL = "support@mailcallnewspaper.com";
 
+/** Default Send Newspaper / register checkout page (overridable via env). */
+export const DEFAULT_CHECKOUT_URL = "https://mailcallnewspaper.com/register";
+
 /** Eastern Time office hours: Mon–Fri 10:00–17:00. */
 export const OFFICE_HOURS = {
   timeZone: "America/New_York",
@@ -26,36 +29,47 @@ export interface MailCallPlan {
   priceSpoken: string;
 }
 
+/** Authoritative baseline — used when live WordPress pricing is unavailable. */
 export const MAILCALL_PLANS: MailCallPlan[] = [
   {
     sku: "MC-1M",
     label: "1-Month Plan",
     months: 1,
-    priceUsd: 21.66,
-    priceSpoken: "twenty-one dollars and sixty-six cents",
+    priceUsd: 19.99,
+    priceSpoken: "nineteen dollars and ninety-nine cents",
   },
   {
     sku: "MC-3M",
     label: "3-Month Plan",
     months: 3,
-    priceUsd: 59.99,
-    priceSpoken: "fifty-nine dollars and ninety-nine cents",
+    priceUsd: 53.97,
+    priceSpoken: "fifty-three dollars and ninety-seven cents",
   },
   {
     sku: "MC-6M",
     label: "6-Month Plan",
     months: 6,
-    priceUsd: 119.0,
-    priceSpoken: "one hundred nineteen dollars",
+    priceUsd: 95.94,
+    priceSpoken: "ninety-five dollars and ninety-four cents",
   },
   {
     sku: "MC-12M",
     label: "12-Month Plan",
     months: 12,
-    priceUsd: 229.0,
-    priceSpoken: "two hundred twenty-nine dollars",
+    priceUsd: 179.88,
+    priceSpoken: "one hundred seventy-nine dollars and eighty-eight cents",
   },
 ];
+
+export const PUBLICATION_CATEGORIES = ["Urban", "Spanish", "Global"] as const;
+export type PublicationCategory = (typeof PUBLICATION_CATEGORIES)[number];
+
+export const PACKAGE_TYPES = [
+  "Single Edition",
+  "Bundle of Two",
+  "Bundle of Three",
+] as const;
+export type PackageType = (typeof PACKAGE_TYPES)[number];
 
 export const PRODUCT_INCLUSIONS_SPOKEN =
   "Each month we send a twenty-four-page newspaper designed exclusively for inmates across the U.S. It includes celebrity gossip and real news, inmate and sentencing updates, education and skill building, financial literacy, books and movies, music, comics, LGBTQ+ culture, health, fitness, Spanish content, travel, horoscopes, how-to guides, technology, sports, and pop culture.";
@@ -69,8 +83,10 @@ export const SCRIPTS = {
     "I completely understand your concern. Because MailCall is a print newspaper, delivery depends on both U.S.P.S. and the facility's mailroom. While we aim to have each issue arrive on time, delays can happen due to holidays, mailroom lockdowns, or processing times.",
   escalation:
     "I really hear your frustration, and I want to help. While our refund policy is strict due to printing costs, I can escalate this to our support manager or look into a delivery issue personally. Would you like me to do that?",
-  escalationSent:
-    "Perfect. I have compiled all your details and sent them directly to our processing queue. Our administrative staff will review this manually and execute your print run on the next business day. Thank you for supporting MailCall — if you need anything else, just give us a call.",
+  checkoutLinkSent:
+    "I am sending a secure direct checkout link to your email. You can open that link to securely enter your details, the inmate's name, facility information, and complete your purchase.",
+  privacyBoundary:
+    "For privacy and facility security, I do not collect inmate names, inmate numbers, facility names, or facility addresses over the phone. Those details are entered securely on our checkout page.",
   addressChange:
     `Address changes are free. Please email the updated details to ${SUPPORT_EMAIL_SPOKEN}. The facility mailroom usually forwards mail for up to thirty days, and you should confirm the new facility accepts printed newspapers.`,
   firstIssueTimeline:
@@ -80,7 +96,7 @@ export const SCRIPTS = {
   transferNotReady:
     "I'd be glad to connect you with a live teammate once we've had a few more minutes together, and only during weekday office hours. How else can I help you in the meantime?",
   voicemail:
-    "You're welcome to leave a detailed message for our team at support at mailcallnewspaper dot com, including your name, the inmate's name and number, and the best callback number. We'll return your call on the next business day.",
+    "You're welcome to leave a detailed message for our team at support at mailcallnewspaper dot com, including your name and the best callback number. We'll return your call on the next business day.",
   offTopic:
     "I'm here to help with MailCall Newspaper — subscriptions, deliveries, and support for loved ones. How can I assist you with MailCall today?",
 } as const;
@@ -173,12 +189,17 @@ export function findPlanByUtterance(utterance: string): MailCallPlan | undefined
 export function buildProductCatalogSpeech(focusSku?: string): string {
   const focused = focusSku ? findPlanBySku(focusSku) : undefined;
   if (focused) {
-    return `I can help with that. The ${focused.label} is ${focused.priceSpoken}. ${PRODUCT_INCLUSIONS_SPOKEN}`;
+    return (
+      `I can help with that. The ${focused.label} is ${focused.priceSpoken}. ` +
+      `We offer Urban, Spanish, and Global publications, plus Single Edition, Bundle of Two, or Bundle of Three packages. ` +
+      PRODUCT_INCLUSIONS_SPOKEN
+    );
   }
   return (
-    "I can help with that. Our plans are one month for twenty-one sixty-six, " +
-    "three months for fifty-nine ninety-nine, six months for one hundred nineteen, " +
-    "and twelve months for two hundred twenty-nine. " +
+    "I can help with that. Our plans are one month for nineteen ninety-nine, " +
+    "three months for fifty-three ninety-seven, six months for ninety-five ninety-four, " +
+    "and twelve months for one hundred seventy-nine eighty-eight. " +
+    "Publications are Urban, Spanish, and Global. Packages are Single Edition, Bundle of Two, or Bundle of Three. " +
     PRODUCT_INCLUSIONS_SPOKEN
   );
 }
@@ -196,6 +217,10 @@ export function buildBusinessKnowledgeBlock(now: Date = new Date()): string {
     SCRIPTS.refundFinal,
     `Address changes: free — email ${SUPPORT_EMAIL}.`,
     SCRIPTS.firstIssueTimeline,
+    "PRIVACY: Never collect inmate name, inmate number, facility name, or facility address over the phone.",
+    "Conversion: collect publication, plan, package, and contact email only; then dispatch the secure checkout link by email.",
+    "Publication categories: Urban, Spanish, Global.",
+    "Package types: Single Edition, Bundle of Two, Bundle of Three.",
     "Plans:",
     ...MAILCALL_PLANS.map((p) => `- ${p.sku}: ${p.label} = $${p.priceUsd.toFixed(2)}`),
     PRODUCT_INCLUSIONS_SPOKEN,

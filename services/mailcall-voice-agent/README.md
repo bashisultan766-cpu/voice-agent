@@ -42,6 +42,10 @@ Copy `.env.example` → `.env`. Required:
 - `MAILCALL_PUBLIC_BASE_URL` (for inbound TwiML WebSocket URL)
 
 Optional: `MAILCALL_OPENAI_API_KEY` (retrieval-only speech if unset).
+Optional: `MAILCALL_CHECKOUT_URL` (defaults to `https://mailcallnewspaper.com/register`) — emailed to callers after privacy-safe plan selection.
+Optional: `RESEND_API_KEY` / `RESEND_FROM_EMAIL` — required to dispatch checkout links.
+
+Purchase flow (phone): collect publication (Urban / Spanish / Global), plan duration, package type, and contact email only — **never** inmate or facility PII. Inmate details are entered on the website checkout page.
 
 ## Run (local)
 

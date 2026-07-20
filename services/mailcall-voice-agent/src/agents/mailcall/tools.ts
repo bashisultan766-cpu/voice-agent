@@ -11,11 +11,15 @@ import {
   canTransferToLiveAgent,
   findPlanBySku,
   MAILCALL_PLANS,
+  PACKAGE_TYPES,
   SCRIPTS,
+  type PackageType,
 } from "./businessRules.js";
 import { looksLikeEmail, normalizeSpokenEmail } from "./emailNormalize.js";
 import {
   isResendConfigured,
+  resolveCheckoutUrl,
+  sendCheckoutLinkEmail,
   sendSupportEscalationEmail,
 } from "../../utils/resendEmail.js";
 
@@ -25,6 +29,7 @@ export type MailCallToolName =
   | "GetOrders"
   | "PlaceOrder"
   | "transfer_to_number"
+  | "send_checkout_link"
   | "send_support_escalation";
 
 export interface ToolExecutionContext {
@@ -47,16 +52,13 @@ export const PLAN_DURATIONS = [1, 3, 6, 12] as const;
 export type NewspaperSelection = (typeof NEWSPAPER_SELECTIONS)[number];
 export type PlanDuration = (typeof PLAN_DURATIONS)[number];
 
-export interface PrintPlanIntake {
-  sender_name: string;
-  sender_email: string;
-  sender_phone: string;
-  inmate_name: string;
-  inmate_number: string;
-  facility_name: string;
-  facility_address: string;
+/** Privacy-safe checkout intake — no inmate or facility fields. */
+export interface CheckoutLinkIntake {
   newspaper_selection: NewspaperSelection;
   plan_duration: PlanDuration;
+  package_type: PackageType;
+  contact_email: string;
+  email_confirmed: boolean;
 }
 
 export function normalizePhoneNumber(raw: string): string {
@@ -94,12 +96,47 @@ export function normalizeNewspaperSelection(raw: string): NewspaperSelection | n
 }
 
 export function normalizePlanDuration(raw: unknown): PlanDuration | null {
-  const match = String(raw ?? "").match(/\b(1|3|6|12)\b/);
-  if (!match) return null;
-  const months = Number(match[1]);
-  return (PLAN_DURATIONS as readonly number[]).includes(months)
-    ? (months as PlanDuration)
-    : null;
+  const value = String(raw ?? "").toLowerCase();
+  if (/\b(12|twelve|one year|yearly|annual)\b/.test(value)) return 12;
+  if (/\b(6|six)\b/.test(value)) return 6;
+  if (/\b(3|three|quarterly)\b/.test(value)) return 3;
+  if (/\b(1|one|monthly)\b/.test(value)) return 1;
+  return null;
+}
+
+export function normalizePackageType(raw: string): PackageType | null {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (
+    /\bbundle of three|three[- ]edition|triple\b/.test(value) ||
+    (/\bthree\b/.test(value) && /\bbundle\b/.test(value))
+  ) {
+    return "Bundle of Three";
+  }
+  if (
+    /\bbundle of two|two[- ]edition|double\b/.test(value) ||
+    (/\btwo\b/.test(value) && /\bbundle\b/.test(value))
+  ) {
+    return "Bundle of Two";
+  }
+  if (/\bsingle\b/.test(value) || /\bone edition\b/.test(value)) {
+    return "Single Edition";
+  }
+  // Bare answers during intake.
+  if (/^(single|one)$/i.test(value.trim())) return "Single Edition";
+  if (/^(two|2)$/i.test(value.trim())) return "Bundle of Two";
+  if (/^(three|3)$/i.test(value.trim())) return "Bundle of Three";
+  return null;
+}
+
+export function isEmailConfirmation(utterance: string): boolean | null {
+  const u = utterance.trim().toLowerCase();
+  if (/\b(yes|correct|that's right|that is right|yep|yeah|affirmative|confirmed?)\b/.test(u)) {
+    return true;
+  }
+  if (/\b(no|incorrect|wrong|not right|nope)\b/.test(u)) {
+    return false;
+  }
+  return null;
 }
 
 export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
@@ -108,7 +145,7 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "MailCallProduct",
       description:
-        "Return MailCall Newspaper plan pricing and what the monthly print newspaper includes. Use when the caller asks about plans, sections, pricing, or product details.",
+        "Return MailCall Newspaper plan pricing, publication categories (Urban, Spanish, Global), and package types. Use when the caller asks about plans, sections, pricing, or product details.",
       parameters: {
         type: "object",
         properties: {
@@ -124,7 +161,7 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "MailCallSku",
-      description: "Verify a plan code or subscription SKU before placing an order.",
+      description: "Verify a plan code or subscription SKU before sending a checkout link.",
       parameters: {
         type: "object",
         properties: {
@@ -139,12 +176,11 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "GetOrders",
       description:
-        "Look up an order or shipment by order number, inmate number, or customer email/name.",
+        "Look up an order or shipment by order number, customer email, or customer name. Do not ask for inmate or facility details.",
       parameters: {
         type: "object",
         properties: {
           order_number: { type: "string" },
-          inmate_number: { type: "string" },
           email: { type: "string" },
           customer_name: { type: "string" },
         },
@@ -156,29 +192,12 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "PlaceOrder",
       description:
-        "Place a MailCall Newspaper subscription after collecting customer, inmate, facility, and verified SKU details.",
+        "Do not place orders over the phone. Guide the caller to the privacy-safe checkout-link flow instead (publication, plan, package, email).",
       parameters: {
         type: "object",
         properties: {
-          sku: { type: "string" },
-          email: { type: "string" },
-          first_name: { type: "string" },
-          last_name: { type: "string" },
-          inmate_name: { type: "string" },
-          inmate_number: { type: "string" },
-          facility: { type: "string" },
-          address1: { type: "string" },
+          note: { type: "string" },
         },
-        required: [
-          "sku",
-          "email",
-          "first_name",
-          "last_name",
-          "inmate_name",
-          "inmate_number",
-          "facility",
-          "address1",
-        ],
       },
     },
   },
@@ -199,9 +218,48 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "send_checkout_link",
+      description:
+        "Email a secure Send Newspaper checkout link to the caller's verified contact email. Never collect inmate name, inmate number, facility name, or facility address. Only call after publication, plan duration, package type, and email are confirmed.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          contact_email: {
+            type: "string",
+            description: "Normalized lowercase contact email of the caller.",
+          },
+          newspaper_selection: {
+            type: "string",
+            enum: ["Urban", "Spanish", "Global"],
+            description: "Requested MailCall publication category.",
+          },
+          plan_duration: {
+            type: "integer",
+            enum: [1, 3, 6, 12],
+            description: "Subscription duration in months.",
+          },
+          package_type: {
+            type: "string",
+            enum: [...PACKAGE_TYPES],
+            description: "Package type selected by the caller.",
+          },
+        },
+        required: [
+          "contact_email",
+          "newspaper_selection",
+          "plan_duration",
+          "package_type",
+        ],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "send_support_escalation",
       description:
-        "Submit a complete MailCall print-plan intake to support@mailcallnewspaper.com. Never call until every required field was explicitly spoken by the caller.",
+        "Send a privacy-safe support note to the MailCall team. Include only caller contact details and a brief issue summary — never inmate or facility PII.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -211,39 +269,13 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
             type: "string",
             description: "Normalized lowercase contact email of the caller.",
           },
-          sender_phone: { type: "string", description: "Contact phone number of the caller." },
-          inmate_name: {
+          sender_phone: { type: "string", description: "Optional contact phone number." },
+          issue_summary: {
             type: "string",
-            description: "Full legal name of the incarcerated recipient.",
-          },
-          inmate_number: { type: "string", description: "Inmate booking or ID number." },
-          facility_name: { type: "string", description: "Official correctional center name." },
-          facility_address: {
-            type: "string",
-            description: "Complete physical shipping address of the facility.",
-          },
-          newspaper_selection: {
-            type: "string",
-            enum: ["Urban", "Spanish", "Global"],
-            description: "Requested MailCall print edition.",
-          },
-          plan_duration: {
-            type: "integer",
-            enum: [1, 3, 6, 12],
-            description: "Subscription duration in months.",
+            description: "Brief summary of the support issue (no inmate/facility PII).",
           },
         },
-        required: [
-          "sender_name",
-          "sender_email",
-          "sender_phone",
-          "inmate_name",
-          "inmate_number",
-          "facility_name",
-          "facility_address",
-          "newspaper_selection",
-          "plan_duration",
-        ],
+        required: ["sender_name", "sender_email", "issue_summary"],
       },
     },
   },
@@ -277,6 +309,8 @@ export async function executeMailCallTool(
             label: p.label,
             price_usd: p.priceUsd,
           })),
+          categories: [...NEWSPAPER_SELECTIONS],
+          packages: [...PACKAGE_TYPES],
         },
         spokenHint: speech,
       };
@@ -305,30 +339,27 @@ export async function executeMailCallTool(
 
     case "GetOrders": {
       const orderNumber = String(args.order_number ?? "").trim();
-      const inmateNumber = String(args.inmate_number ?? "").trim();
       const email = normalizeSpokenEmail(String(args.email ?? ""));
       const customerName = String(args.customer_name ?? "").trim();
 
-      if (!orderNumber && !inmateNumber && !email && !customerName) {
+      if (!orderNumber && !email && !customerName) {
         return {
           toolPayload: { ok: false, needs_identifier: true },
           spokenHint:
-            "Not a problem. Can I have your order number, or the inmate number, or the customer name or email on the account?",
+            "Not a problem. Can I have your order number, or the customer name or email on the account?",
         };
       }
 
-      // Commerce backend hook — until Shopify is wired, return a calm status placeholder.
       logger.info("mailcall_get_orders", {
         callSid: ctx.callSid,
         hasOrder: Boolean(orderNumber),
-        hasInmate: Boolean(inmateNumber),
         hasEmail: Boolean(email),
       });
 
       return {
         toolPayload: {
           ok: true,
-          lookup: { orderNumber, inmateNumber, email, customerName },
+          lookup: { orderNumber, email, customerName },
           status: "received",
           note: "Order lookup accepted; fulfillment details confirmed for spoken summary.",
         },
@@ -339,61 +370,14 @@ export async function executeMailCallTool(
     }
 
     case "PlaceOrder": {
-      const sku = String(args.sku ?? "");
-      const plan = findPlanBySku(sku);
-      const email = normalizeSpokenEmail(String(args.email ?? ""));
-      const first = String(args.first_name ?? "").trim();
-      const last = String(args.last_name ?? "").trim();
-      const inmateName = String(args.inmate_name ?? "").trim();
-      const inmateNumber = String(args.inmate_number ?? "").trim();
-      const facility = String(args.facility ?? "").trim();
-      const address1 = String(args.address1 ?? "").trim();
-
-      if (!plan) {
-        return {
-          toolPayload: { ok: false, reason: "invalid_sku" },
-          spokenHint:
-            "Before we place that, I need a valid plan code. Would you like the one-month, three-month, six-month, or twelve-month plan?",
-        };
-      }
-      if (!looksLikeEmail(email)) {
-        return {
-          toolPayload: { ok: false, reason: "invalid_email" },
-          spokenHint:
-            "I want to make sure I have the email right. Please say it slowly, using at for the @ sign and dot for periods.",
-        };
-      }
-      if (!first || !last || !inmateName || !inmateNumber || !facility || !address1) {
-        return {
-          toolPayload: { ok: false, reason: "missing_fields" },
-          spokenHint:
-            "Let me walk you through this. I still need the customer name, email, inmate name and number, facility name, and mailing address.",
-        };
-      }
-
-      logger.info("mailcall_place_order", {
-        callSid: ctx.callSid,
-        sku: plan.sku,
-        emailDomain: email.split("@")[1] ?? "",
-        facilityPreview: facility.slice(0, 40),
-      });
-
-      // Placeholder confirmation until Shopify checkout is connected.
-      const confirmation = `MC${Date.now().toString().slice(-8)}`;
       return {
         toolPayload: {
-          ok: true,
-          confirmation,
-          sku: plan.sku,
-          email,
-          first_name: first,
-          last_name: last,
-          inmate_name: inmateName,
-          inmate_number: inmateNumber,
-          facility,
-          address1,
+          ok: false,
+          reason: "use_checkout_link",
+          checkout_url: resolveCheckoutUrl(),
         },
-        spokenHint: `You're very welcome. I've submitted the ${plan.label} for ${inmateName} at ${facility}. Your reference is ${confirmation.split("").join(" ")}. The first issue usually arrives within two to four weeks.`,
+        spokenHint:
+          "For privacy, we complete purchases online. Tell me which publication you want — Urban, Spanish, or Global — and I'll email you a secure checkout link.",
       };
     }
 
@@ -417,34 +401,79 @@ export async function executeMailCallTool(
       };
     }
 
-    case "send_support_escalation": {
-      const senderName = String(args.sender_name ?? "").trim();
-      const senderEmail = normalizeSpokenEmail(String(args.sender_email ?? ""));
-      const senderPhone = normalizePhoneNumber(String(args.sender_phone ?? ""));
-      const inmateName = String(args.inmate_name ?? "").trim();
-      const inmateNumber = String(args.inmate_number ?? "").trim();
-      const facilityName = String(args.facility_name ?? "").trim();
-      const facilityAddress = String(args.facility_address ?? "").trim();
+    case "send_checkout_link": {
+      const contactEmail = normalizeSpokenEmail(String(args.contact_email ?? ""));
       const newspaperSelection = normalizeNewspaperSelection(
         String(args.newspaper_selection ?? ""),
       );
       const planDuration = normalizePlanDuration(args.plan_duration);
+      const packageType = normalizePackageType(String(args.package_type ?? ""));
 
-      if (
-        !senderName ||
-        !looksLikeEmail(senderEmail) ||
-        !senderPhone ||
-        !inmateName ||
-        !inmateNumber ||
-        !facilityName ||
-        !facilityAddress ||
-        !newspaperSelection ||
-        !planDuration
-      ) {
+      if (!looksLikeEmail(contactEmail) || !newspaperSelection || !planDuration || !packageType) {
         return {
           toolPayload: { ok: false, reason: "missing_or_invalid_fields" },
           spokenHint:
-            "Let me walk you through this. I still need your name, email, phone number, the inmate and facility details, the Urban, Spanish, or Global edition, and a one, three, six, or twelve month plan.",
+            "Let me walk you through this. I still need the Urban, Spanish, or Global publication, a one, three, six, or twelve month plan, a package type, and your contact email.",
+        };
+      }
+
+      if (!isResendConfigured()) {
+        logger.warn("mailcall_checkout_resend_unconfigured", { callSid: ctx.callSid });
+        return {
+          toolPayload: { ok: false, reason: "email_unavailable" },
+          spokenHint: SCRIPTS.voicemail,
+        };
+      }
+
+      const checkoutUrl = resolveCheckoutUrl();
+      const sent = await sendCheckoutLinkEmail({
+        contactEmail,
+        newspaperSelection,
+        planDuration,
+        packageType,
+        checkoutUrl,
+        callSid: ctx.callSid,
+      });
+
+      if (!sent.ok) {
+        logger.warn("mailcall_checkout_link_failed", {
+          callSid: ctx.callSid,
+          error: sent.error,
+        });
+        return {
+          toolPayload: { ok: false, reason: "send_failed" },
+          spokenHint: SCRIPTS.voicemail,
+        };
+      }
+
+      logger.info("mailcall_checkout_link_sent", {
+        callSid: ctx.callSid,
+        messageId: sent.messageId,
+        emailDomain: contactEmail.split("@")[1] ?? "",
+      });
+
+      return {
+        toolPayload: {
+          ok: true,
+          messageId: sent.messageId,
+          to: contactEmail,
+          checkout_url: checkoutUrl,
+        },
+        spokenHint: SCRIPTS.checkoutLinkSent,
+      };
+    }
+
+    case "send_support_escalation": {
+      const senderName = String(args.sender_name ?? "").trim();
+      const senderEmail = normalizeSpokenEmail(String(args.sender_email ?? ""));
+      const senderPhone = normalizePhoneNumber(String(args.sender_phone ?? ""));
+      const issueSummary = String(args.issue_summary ?? "").trim();
+
+      if (!senderName || !looksLikeEmail(senderEmail) || !issueSummary) {
+        return {
+          toolPayload: { ok: false, reason: "missing_or_invalid_fields" },
+          spokenHint:
+            "I can escalate this for you. I just need your name, email, and a short summary of the issue — without inmate or facility details over the phone.",
         };
       }
 
@@ -459,13 +488,8 @@ export async function executeMailCallTool(
       const sent = await sendSupportEscalationEmail({
         senderName,
         senderEmail,
-        senderPhone,
-        inmateName,
-        inmateNumber,
-        facilityName,
-        facilityAddress,
-        newspaperSelection,
-        planDuration,
+        senderPhone: senderPhone || undefined,
+        issueSummary,
         callSid: ctx.callSid,
       });
 
@@ -491,7 +515,8 @@ export async function executeMailCallTool(
           messageId: sent.messageId,
           to: "support@mailcallnewspaper.com",
         },
-        spokenHint: SCRIPTS.escalationSent,
+        spokenHint:
+          "I've passed your note to our support team. They will follow up using the email you provided.",
       };
     }
 
