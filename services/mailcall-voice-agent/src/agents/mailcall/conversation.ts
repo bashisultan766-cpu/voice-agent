@@ -109,13 +109,13 @@ const INMATE_PII_PROBE_RE =
 const INTAKE_SLOT_ORDER: IntakeSlot[] = ["contact_email", "email_confirm"];
 
 const INTAKE_PROMPTS: Record<IntakeSlot, string> = {
-  contact_email:
-    "I can help with that. What email address should I send the order link to? You can say “at” for the at sign and “dot” for each period.",
-  email_confirm: "Please confirm that email is correct — yes or no?",
+  contact_email: SCRIPTS.emailAsk,
+  email_confirm: "Is that correct?",
 };
 
 function emailConfirmPrompt(email: string): string {
-  return `I have ${speakEmailForConfirm(email)}. Is that correct?`;
+  // No period before the question — keeps domain spell-back intact through sentence clampers
+  return `I have your email as ${speakEmailForConfirm(email)} — is that correct?`;
 }
 
 function cleanSpokenValue(raw: string): string {
@@ -140,13 +140,17 @@ function captureIntakeSlot(
       if (!looksLikeEmail(email)) {
         return {
           accepted: false,
-          retrySpeech:
-            "I want to make sure I have that correctly. Please say your email slowly, using “at” for the at sign and “dot” for each period.",
+          retrySpeech: SCRIPTS.emailRetry,
         };
       }
       intake.slots.contact_email = email;
       intake.slots.email_confirmed = false;
-      break;
+      // Immediately move to phonetic confirm — do not re-ask with robotic parsing tips.
+      intake.awaiting = "email_confirm";
+      return {
+        accepted: false,
+        retrySpeech: emailConfirmPrompt(email),
+      };
     }
     case "email_confirm": {
       const confirmed = isEmailConfirmation(value);
@@ -155,17 +159,14 @@ function captureIntakeSlot(
         break;
       }
       if (confirmed === false) {
-        // Keep buffered email so a follow-up token can surgically patch it.
         intake.slots.email_confirmed = false;
         intake.awaiting = "email_confirm";
         return {
           accepted: false,
-          retrySpeech:
-            "No problem. Tell me which part to correct — for example spell the letters — and I will update only that part.",
+          retrySpeech: SCRIPTS.emailCorrectionAsk,
         };
       }
 
-      // Surgical token / spelling correction against the buffered address
       if (intake.slots.contact_email) {
         const patched = applyEmailTokenCorrection(intake.slots.contact_email, value);
         if (patched) {
@@ -179,7 +180,6 @@ function captureIntakeSlot(
         }
       }
 
-      // Full re-speak of the email
       const email = normalizeSpokenEmail(value);
       if (looksLikeEmail(email)) {
         intake.slots.contact_email = email;
@@ -194,7 +194,7 @@ function captureIntakeSlot(
         accepted: false,
         retrySpeech: intake.slots.contact_email
           ? emailConfirmPrompt(intake.slots.contact_email)
-          : INTAKE_PROMPTS.contact_email,
+          : SCRIPTS.emailRetry,
       };
     }
   }

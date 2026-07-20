@@ -406,7 +406,7 @@ export async function executeMailCallTool(
         return {
           toolPayload: { ok: false, reason: "missing_or_invalid_fields" },
           spokenHint:
-            "I want to make sure I have your email right. Please say it slowly, using at for the at sign and dot for periods.",
+            "I didn't quite catch that email. Could you say it one more time?",
         };
       }
 

@@ -11,6 +11,7 @@ import { clearCheckoutSendLock } from "../src/agents/mailcall/tools.js";
 import { buildRetrievalOnlySpeech } from "../src/agents/mailcall/prompts.js";
 import {
   applyEmailTokenCorrection,
+  normalizeSpokenEmail,
   speakEmailForConfirm,
 } from "../src/agents/mailcall/emailNormalize.js";
 
@@ -166,20 +167,43 @@ describe("conversation + prompts", () => {
 
     const first = await turn("I want to send a newspaper");
     expect(first.speech).toMatch(/email/i);
-    expect(first.speech).not.toMatch(/Urban|Bundle of Two|twelve month/i);
+    expect(first.speech).not.toMatch(/Urban|Bundle of Two|twelve month|at sign|dot for/i);
 
-    expect((await turn("bashi saab 64 at gmail dot com")).speech).toMatch(
-      /is that correct/i,
-    );
+    const spelled = await turn("bashi sultan 766 at gmail.com");
+    expect(spelled.speech).toMatch(/B-A-S-H-I/i);
+    expect(spelled.speech).toMatch(/S-U-L-T-A-N/i);
+    expect(spelled.speech).toMatch(/7-6-6/);
+    expect(spelled.speech).toMatch(/gmail(\s+dot\s+com|\.com)/i);
+    expect(spelled.speech).toMatch(/is that correct/i);
+
     const final = await turn("yes");
 
     expect(toolExecutor).toHaveBeenCalledTimes(1);
     expect(toolExecutor.mock.calls[0]?.[0]).toBe("send_checkout_link");
     expect(submitted).toEqual({
-      contact_email: "bashisaab64@gmail.com",
+      contact_email: "bashisultan766@gmail.com",
     });
     expect(final.speech.toLowerCase()).toMatch(/order link|email/);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("accepts natural email with an extra spoken at before digits", async () => {
+    const wp = new WordPressApiClient(testConfig(), vi.fn() as unknown as typeof fetch);
+    const toolExecutor = vi.fn(async () => ({ toolPayload: { ok: true } }));
+
+    await processConversationTurn(
+      { callSid: "nat-1", utterance: "I want to buy a newspaper" },
+      wp,
+      toolExecutor,
+    );
+    const spelled = await processConversationTurn(
+      { callSid: "nat-1", utterance: "Bhashi Sultan at 766 at gmail.com" },
+      wp,
+      toolExecutor,
+    );
+    expect(spelled.speech).toMatch(/7-6-6/);
+    expect(spelled.speech).toMatch(/gmail(\s+dot\s+com|\.com)/i);
+    expect(toolExecutor).not.toHaveBeenCalled();
   });
 
   it("surgically patches an email token without wiping the address", async () => {
@@ -192,7 +216,7 @@ describe("conversation + prompts", () => {
       toolExecutor,
     );
     await processConversationTurn(
-      { callSid: "patch-1", utterance: "bashi saub 64 at gmail dot com" },
+      { callSid: "patch-1", utterance: "bashi saub 64 at gmail.com" },
       wp,
       toolExecutor,
     );
@@ -202,10 +226,32 @@ describe("conversation + prompts", () => {
       toolExecutor,
     );
 
-    expect(corrected.speech.toLowerCase()).toMatch(/saab/);
-    expect(corrected.speech.toLowerCase()).toMatch(/bashi/);
-    expect(corrected.speech.toLowerCase()).toMatch(/gmail/);
+    expect(corrected.speech).toMatch(/S-A-A-B|B-A-S-H-I/i);
+    expect(corrected.speech.toLowerCase()).toMatch(/gmail(\s+dot\s+com|\.com)/);
     expect(toolExecutor).not.toHaveBeenCalled();
+  });
+
+  it("collapses a double letter after phonetic confirm", async () => {
+    const wp = new WordPressApiClient(testConfig(), vi.fn() as unknown as typeof fetch);
+    const toolExecutor = vi.fn(async () => ({ toolPayload: { ok: true } }));
+
+    await processConversationTurn(
+      { callSid: "dbl-1", utterance: "I want to subscribe" },
+      wp,
+      toolExecutor,
+    );
+    await processConversationTurn(
+      { callSid: "dbl-1", utterance: "bashi sultann 766 at gmail.com" },
+      wp,
+      toolExecutor,
+    );
+    const fixed = await processConversationTurn(
+      { callSid: "dbl-1", utterance: "single n not double n" },
+      wp,
+      toolExecutor,
+    );
+    expect(fixed.speech).toMatch(/S-U-L-T-A-N/);
+    expect(fixed.speech).not.toMatch(/N-N/);
   });
 
   it("locks duplicate checkout sends until explicit resend confirmation", async () => {
@@ -252,7 +298,7 @@ describe("conversation + prompts", () => {
       toolExecutor,
     );
 
-    expect(invalidEmail.speech).toMatch(/email slowly/i);
+    expect(invalidEmail.speech).toMatch(/one more time|didn't quite catch|email/i);
     expect(toolExecutor).not.toHaveBeenCalled();
   });
 
@@ -381,6 +427,22 @@ describe("email token correction", () => {
     expect(applyEmailTokenCorrection("bashisaub64@gmail.com", "change saub to saab")).toBe(
       "bashisaab64@gmail.com",
     );
-    expect(speakEmailForConfirm("bashisaab64@gmail.com").toLowerCase()).toContain("at gmail");
+  });
+
+  it("collapses double letters from natural speech", () => {
+    expect(
+      applyEmailTokenCorrection("bashisultann766@gmail.com", "single n not double n"),
+    ).toBe("bashisultan766@gmail.com");
+  });
+
+  it("normalizes natural spoken emails and phonetically spells them back", () => {
+    expect(normalizeSpokenEmail("Bhashi Sultan 766 at gmail.com")).toBe(
+      "bhashisultan766@gmail.com",
+    );
+    expect(normalizeSpokenEmail("Bhashi Sultan at 766 at gmail.com")).toBe(
+      "bhashisultan766@gmail.com",
+    );
+    expect(speakEmailForConfirm("bashisultan766@gmail.com")).toMatch(/B-A-S-H-I/);
+    expect(speakEmailForConfirm("bashisultan766@gmail.com")).toMatch(/7-6-6 at gmail dot com/);
   });
 });

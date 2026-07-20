@@ -86,9 +86,15 @@ export const SCRIPTS = {
   checkoutLinkSent:
     "I just sent the order link to your email. Open that link to enter your details, the inmate's name, facility information, and complete your purchase on our Send Newspaper page.",
   checkoutAlreadySent:
-    "I've already sent the checkout link to your email inbox. Please check it. Would you like me to resend it?",
+    "I've already sent the checkout link to your inbox. Please check it. Would you like me to resend it?",
   checkoutResent:
-    "I've resent the order link to your email. Please check your inbox, and if needed your spam folder.",
+    "I've resent the order link to your email. Please check your inbox.",
+  emailAsk:
+    "I can help with that. What email should I send the order link to?",
+  emailRetry:
+    "I didn't quite catch that email. Could you say it one more time?",
+  emailCorrectionAsk:
+    "No problem — which part should I fix?",
   privacyBoundary:
     "For privacy and facility security, I do not collect inmate names, inmate numbers, facility names, or facility addresses over the phone. Those details are entered on our Send Newspaper page.",
   addressChange:
