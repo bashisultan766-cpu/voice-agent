@@ -84,9 +84,13 @@ export const SCRIPTS = {
   escalation:
     "I really hear your frustration, and I want to help. While our refund policy is strict due to printing costs, I can escalate this to our support manager or look into a delivery issue personally. Would you like me to do that?",
   checkoutLinkSent:
-    "I am sending a secure direct checkout link to your email. You can open that link to securely enter your details, the inmate's name, facility information, and complete your purchase.",
+    "I just sent the order link to your email. Open that link to enter your details, the inmate's name, facility information, and complete your purchase on our Send Newspaper page.",
+  checkoutAlreadySent:
+    "I've already sent the checkout link to your email inbox. Please check it. Would you like me to resend it?",
+  checkoutResent:
+    "I've resent the order link to your email. Please check your inbox, and if needed your spam folder.",
   privacyBoundary:
-    "For privacy and facility security, I do not collect inmate names, inmate numbers, facility names, or facility addresses over the phone. Those details are entered securely on our checkout page.",
+    "For privacy and facility security, I do not collect inmate names, inmate numbers, facility names, or facility addresses over the phone. Those details are entered on our Send Newspaper page.",
   addressChange:
     `Address changes are free. Please email the updated details to ${SUPPORT_EMAIL_SPOKEN}. The facility mailroom usually forwards mail for up to thirty days, and you should confirm the new facility accepts printed newspapers.`,
   firstIssueTimeline:
@@ -218,7 +222,8 @@ export function buildBusinessKnowledgeBlock(now: Date = new Date()): string {
     `Address changes: free — email ${SUPPORT_EMAIL}.`,
     SCRIPTS.firstIssueTimeline,
     "PRIVACY: Never collect inmate name, inmate number, facility name, or facility address over the phone.",
-    "Conversion: collect publication, plan, package, and contact email only; then dispatch the secure checkout link by email.",
+    "Conversion: on purchase intent, ask only for contact email, confirm it, then email the Send Newspaper order link. Do not interrogate about plans or packages before sending the link.",
+    "Duplicate sends: after a successful send, do not email again unless the caller explicitly confirms a resend.",
     "Publication categories: Urban, Spanish, Global.",
     "Package types: Single Edition, Bundle of Two, Bundle of Three.",
     "Plans:",

@@ -40,13 +40,14 @@ export {
   SCRIPTS,
 } from "./businessRules.js";
 export { buildCatalog, catalogKnowledgeBlock } from "./catalog.js";
-export { normalizeSpokenEmail, looksLikeEmail } from "./emailNormalize.js";
+export { normalizeSpokenEmail, looksLikeEmail, applyEmailTokenCorrection, speakEmailForConfirm } from "./emailNormalize.js";
 export {
   executeMailCallTool,
   MAILCALL_TOOL_DEFINITIONS,
   normalizePackageType,
   normalizeNewspaperSelection,
   normalizePlanDuration,
+  clearCheckoutSendLock,
 } from "./tools.js";
 export {
   cleanseForSpeech,

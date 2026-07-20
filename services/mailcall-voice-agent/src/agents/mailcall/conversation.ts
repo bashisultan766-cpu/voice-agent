@@ -24,14 +24,18 @@ import {
 } from "./prompts.js";
 import {
   executeMailCallTool,
+  clearCheckoutSendLock,
+  getCheckoutSendLock,
   isEmailConfirmation,
   MAILCALL_TOOL_DEFINITIONS,
-  normalizeNewspaperSelection,
-  normalizePackageType,
-  normalizePlanDuration,
   type CheckoutLinkIntake,
 } from "./tools.js";
-import { looksLikeEmail, normalizeSpokenEmail } from "./emailNormalize.js";
+import {
+  applyEmailTokenCorrection,
+  looksLikeEmail,
+  normalizeSpokenEmail,
+  speakEmailForConfirm,
+} from "./emailNormalize.js";
 import { clampSpokenLength, truncateToSentences } from "./textCleaner.js";
 import type { CallTurnResult } from "./types.js";
 import { GREETING_SPEECH } from "./types.js";
@@ -50,14 +54,12 @@ interface SessionMemory {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   startedAtMs: number;
   checkoutIntake?: CheckoutIntakeState;
+  hasCheckoutLinkBeenSent?: boolean;
+  checkoutLinkEmail?: string;
+  awaitingResendConfirm?: boolean;
 }
 
-type IntakeSlot =
-  | "newspaper_selection"
-  | "plan_duration"
-  | "package_type"
-  | "contact_email"
-  | "email_confirm";
+type IntakeSlot = "contact_email" | "email_confirm";
 
 interface CheckoutIntakeState {
   active: boolean;
@@ -73,7 +75,7 @@ const OFF_TOPIC_RE =
   /\b(python|javascript|code|program(ming)?|cook(ing)?|recipe|bitcoin|crypto|weather forecast|homework|math problem)\b/i;
 
 const PRICING_RE =
-  /\b(price|pricing|plan|plans|cost|how much|subscription|what('s| is) included|sections?|packages?)\b/i;
+  /\b(price|pricing|plan|plans|cost|how much|subscription|what('s| is) included|sections?|packages?|categories|urban|spanish|global|bundle)\b/i;
 
 const REFUND_RE = /\b(refund|cancel(lation|ling)?|return(s)?|money back|credit)\b/i;
 
@@ -96,34 +98,24 @@ const END_CALL_INTENT_RE =
   /\b(goodbye|good bye|bye bye|bye|see you|talk to you later|that'?s all|that is all|nothing else|no thanks|no thank you|i(?:'m| am) good|no more (help|questions|information)|i(?:'m| am) done|i don'?t need anything else|end the call|hang up|you can hang up)\b/i;
 
 const PURCHASE_INTENT_RE =
-  /\b(buy|purchase|subscribe|subscription setup|sign me up|sign up|set up|start|checkout|send (me )?(a )?link)\b.*\b(plan|subscription|newspaper|mailcall|edition|checkout)?\b|\b(i want|i'd like|i would like|ready)\b.*\b(subscribe|subscription|buy|purchase|plan|edition)\b/i;
+  /\b(buy|purchase|subscribe|sign me up|sign up|set up|start|checkout|order|send (me )?(a )?(link|newspaper)|get (me )?(a )?link)\b|\b(i want|i'd like|i would like|ready|please)\b.*\b(subscribe|subscription|buy|purchase|plan|edition|newspaper|link|order)\b/i;
+
+const RESEND_INTENT_RE =
+  /\b(resend|send (it |the link )?again|send another|didn't (get|receive)|did not (get|receive)|haven't (got|received)|check(ing)? (my )?spam)\b/i;
 
 const INMATE_PII_PROBE_RE =
   /\b(inmate (name|number|id)|booking number|facility (name|address)|prison (name|address)|correctional (facility|center) address)\b/i;
 
-const INTAKE_SLOT_ORDER: IntakeSlot[] = [
-  "newspaper_selection",
-  "plan_duration",
-  "package_type",
-  "contact_email",
-  "email_confirm",
-];
+const INTAKE_SLOT_ORDER: IntakeSlot[] = ["contact_email", "email_confirm"];
 
 const INTAKE_PROMPTS: Record<IntakeSlot, string> = {
-  newspaper_selection:
-    "I can help with that. Which publication would you like: Urban, Spanish, or Global?",
-  plan_duration:
-    "Which plan duration would you like: one, three, six, or twelve months?",
-  package_type:
-    "Which package type would you like: Single Edition, Bundle of Two, or Bundle of Three?",
   contact_email:
-    "Great. What email address should I send the secure checkout link to? You can say “at” for the at sign and “dot” for each period.",
+    "I can help with that. What email address should I send the order link to? You can say “at” for the at sign and “dot” for each period.",
   email_confirm: "Please confirm that email is correct — yes or no?",
 };
 
 function emailConfirmPrompt(email: string): string {
-  const spoken = email.replace("@", " at ").replace(/\./g, " dot ");
-  return `I have ${spoken}. Is that correct?`;
+  return `I have ${speakEmailForConfirm(email)}. Is that correct?`;
 }
 
 function cleanSpokenValue(raw: string): string {
@@ -143,40 +135,6 @@ function captureIntakeSlot(
 ): { accepted: boolean; retrySpeech?: string } {
   const value = cleanSpokenValue(utterance);
   switch (slot) {
-    case "newspaper_selection": {
-      const selection = normalizeNewspaperSelection(value);
-      if (!selection) {
-        return {
-          accepted: false,
-          retrySpeech: "Please choose one publication: Urban, Spanish, or Global.",
-        };
-      }
-      intake.slots.newspaper_selection = selection;
-      break;
-    }
-    case "plan_duration": {
-      const duration = normalizePlanDuration(value);
-      if (!duration) {
-        return {
-          accepted: false,
-          retrySpeech: "Please choose a one, three, six, or twelve month plan.",
-        };
-      }
-      intake.slots.plan_duration = duration;
-      break;
-    }
-    case "package_type": {
-      const packageType = normalizePackageType(value);
-      if (!packageType) {
-        return {
-          accepted: false,
-          retrySpeech:
-            "Please choose Single Edition, Bundle of Two, or Bundle of Three.",
-        };
-      }
-      intake.slots.package_type = packageType;
-      break;
-    }
     case "contact_email": {
       const email = normalizeSpokenEmail(value);
       if (!looksLikeEmail(email)) {
@@ -197,16 +155,31 @@ function captureIntakeSlot(
         break;
       }
       if (confirmed === false) {
-        intake.slots.contact_email = undefined;
+        // Keep buffered email so a follow-up token can surgically patch it.
         intake.slots.email_confirmed = false;
-        intake.awaiting = "contact_email";
+        intake.awaiting = "email_confirm";
         return {
           accepted: false,
           retrySpeech:
-            "No problem. Please say the email again slowly, using “at” for the at sign and “dot” for each period.",
+            "No problem. Tell me which part to correct — for example spell the letters — and I will update only that part.",
         };
       }
-      // Caller may re-speak the email to correct it.
+
+      // Surgical token / spelling correction against the buffered address
+      if (intake.slots.contact_email) {
+        const patched = applyEmailTokenCorrection(intake.slots.contact_email, value);
+        if (patched) {
+          intake.slots.contact_email = patched;
+          intake.slots.email_confirmed = false;
+          intake.awaiting = "email_confirm";
+          return {
+            accepted: false,
+            retrySpeech: emailConfirmPrompt(patched),
+          };
+        }
+      }
+
+      // Full re-speak of the email
       const email = normalizeSpokenEmail(value);
       if (looksLikeEmail(email)) {
         intake.slots.contact_email = email;
@@ -235,31 +208,16 @@ function nextMissingIntakeSlot(intake: CheckoutIntakeState): IntakeSlot | undefi
       if (!intake.slots.email_confirmed) return "email_confirm";
       continue;
     }
-    const value = intake.slots[slot as keyof CheckoutLinkIntake];
-    if (value === undefined || value === "" || value === false) return slot;
+    const value = intake.slots[slot];
+    if (value === undefined || value === "") return slot;
   }
   return undefined;
-}
-
-function prefillIntakeSelections(intake: CheckoutIntakeState, utterance: string): void {
-  const selection = normalizeNewspaperSelection(utterance);
-  const duration = normalizePlanDuration(utterance);
-  const packageType = normalizePackageType(utterance);
-  if (selection) intake.slots.newspaper_selection = selection;
-  if (duration) intake.slots.plan_duration = duration;
-  if (packageType) intake.slots.package_type = packageType;
 }
 
 function isCompleteCheckoutIntake(
   slots: Partial<CheckoutLinkIntake>,
 ): slots is CheckoutLinkIntake {
-  return Boolean(
-    slots.newspaper_selection &&
-      slots.plan_duration &&
-      slots.package_type &&
-      slots.contact_email &&
-      slots.email_confirmed === true,
-  );
+  return Boolean(slots.contact_email && slots.email_confirmed === true);
 }
 
 async function processCheckoutIntake(
@@ -268,10 +226,54 @@ async function processCheckoutIntake(
   utterance: string,
   toolExecutor: MailCallToolExecutor,
 ): Promise<string | null> {
+  // Already sent — offer resend only after explicit confirmation
+  if (session.hasCheckoutLinkBeenSent || getCheckoutSendLock(callSid)) {
+    session.hasCheckoutLinkBeenSent = true;
+
+    if (session.awaitingResendConfirm) {
+      const confirmed = isEmailConfirmation(utterance);
+      if (confirmed === true || RESEND_INTENT_RE.test(utterance)) {
+        session.awaitingResendConfirm = false;
+        const email =
+          session.checkoutLinkEmail ||
+          getCheckoutSendLock(callSid)?.email ||
+          session.checkoutIntake?.slots.contact_email;
+        if (!email) {
+          session.checkoutIntake = { active: true, slots: {} };
+          session.checkoutIntake.awaiting = "contact_email";
+          return INTAKE_PROMPTS.contact_email;
+        }
+        const result = await toolExecutor(
+          "send_checkout_link",
+          JSON.stringify({ contact_email: email, force_resend: true }),
+          { callSid, callStartedAtMs: session.startedAtMs, forceResend: true },
+        );
+        if (result.toolPayload.ok === true) {
+          return SCRIPTS.checkoutResent;
+        }
+        return result.spokenHint ?? SCRIPTS.voicemail;
+      }
+      if (confirmed === false) {
+        session.awaitingResendConfirm = false;
+        return "No problem. Please check the email I already sent. How else can I help?";
+      }
+      session.awaitingResendConfirm = true;
+      return SCRIPTS.checkoutAlreadySent;
+    }
+
+    if (
+      RESEND_INTENT_RE.test(utterance) ||
+      PURCHASE_INTENT_RE.test(utterance) ||
+      /\b(link|email|send)\b/i.test(utterance)
+    ) {
+      session.awaitingResendConfirm = true;
+      return SCRIPTS.checkoutAlreadySent;
+    }
+  }
+
   const beginsNow = !session.checkoutIntake?.active && PURCHASE_INTENT_RE.test(utterance);
   if (beginsNow) {
     session.checkoutIntake = { active: true, slots: {} };
-    prefillIntakeSelections(session.checkoutIntake, utterance);
   }
 
   const intake = session.checkoutIntake;
@@ -298,23 +300,28 @@ async function processCheckoutIntake(
   }
 
   if (!isCompleteCheckoutIntake(intake.slots)) {
-    return "Let me check those details once more before I send the link.";
+    return "Let me check that email once more before I send the link.";
   }
 
   const result = await toolExecutor(
     "send_checkout_link",
     JSON.stringify({
       contact_email: intake.slots.contact_email,
-      newspaper_selection: intake.slots.newspaper_selection,
-      plan_duration: intake.slots.plan_duration,
-      package_type: intake.slots.package_type,
     }),
     { callSid, callStartedAtMs: session.startedAtMs },
   );
 
   if (result.toolPayload.ok === true) {
     intake.active = false;
+    session.hasCheckoutLinkBeenSent = true;
+    session.checkoutLinkEmail = intake.slots.contact_email;
     return SCRIPTS.checkoutLinkSent;
+  }
+
+  if (result.toolPayload.reason === "already_sent") {
+    session.hasCheckoutLinkBeenSent = true;
+    session.awaitingResendConfirm = true;
+    return SCRIPTS.checkoutAlreadySent;
   }
 
   return (
@@ -334,6 +341,7 @@ function getSession(callSid: string): SessionMemory {
 
 export function clearSession(callSid: string): void {
   sessions.delete(callSid);
+  clearCheckoutSendLock(callSid);
 }
 
 /** Test helper — backdate session start for transfer gating. */

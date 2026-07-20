@@ -35,6 +35,8 @@ export type MailCallToolName =
 export interface ToolExecutionContext {
   callSid: string;
   callStartedAtMs: number;
+  /** When true, allow another checkout email after an explicit resend confirmation. */
+  forceResend?: boolean;
 }
 
 export interface ToolExecutionResult {
@@ -52,13 +54,22 @@ export const PLAN_DURATIONS = [1, 3, 6, 12] as const;
 export type NewspaperSelection = (typeof NEWSPAPER_SELECTIONS)[number];
 export type PlanDuration = (typeof PLAN_DURATIONS)[number];
 
-/** Privacy-safe checkout intake — no inmate or facility fields. */
+/** Frictionless checkout intake — email only; plans/inmate details stay on the website. */
 export interface CheckoutLinkIntake {
-  newspaper_selection: NewspaperSelection;
-  plan_duration: PlanDuration;
-  package_type: PackageType;
   contact_email: string;
   email_confirmed: boolean;
+}
+
+/** Per-call lock so send_checkout_link cannot spam the same session. */
+const checkoutSendLock = new Map<string, { email: string; sentAtMs: number }>();
+
+export function clearCheckoutSendLock(callSid?: string): void {
+  if (callSid) checkoutSendLock.delete(callSid);
+  else checkoutSendLock.clear();
+}
+
+export function getCheckoutSendLock(callSid: string): { email: string; sentAtMs: number } | undefined {
+  return checkoutSendLock.get(callSid);
 }
 
 export function normalizePhoneNumber(raw: string): string {
@@ -220,7 +231,7 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
     function: {
       name: "send_checkout_link",
       description:
-        "Email a secure Send Newspaper checkout link to the caller's verified contact email. Never collect inmate name, inmate number, facility name, or facility address. Only call after publication, plan duration, package type, and email are confirmed.",
+        "Email a Send Newspaper order link to the caller's verified contact email. Do not ask for plans, packages, inmate, or facility details. Only call after the email is confirmed. Do not call again in the same call unless the caller explicitly asks to resend.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -229,28 +240,13 @@ export const MAILCALL_TOOL_DEFINITIONS: OpenAI.Chat.ChatCompletionTool[] = [
             type: "string",
             description: "Normalized lowercase contact email of the caller.",
           },
-          newspaper_selection: {
-            type: "string",
-            enum: ["Urban", "Spanish", "Global"],
-            description: "Requested MailCall publication category.",
-          },
-          plan_duration: {
-            type: "integer",
-            enum: [1, 3, 6, 12],
-            description: "Subscription duration in months.",
-          },
-          package_type: {
-            type: "string",
-            enum: [...PACKAGE_TYPES],
-            description: "Package type selected by the caller.",
+          force_resend: {
+            type: "boolean",
+            description:
+              "Set true only after the caller explicitly confirms they want the link resent.",
           },
         },
-        required: [
-          "contact_email",
-          "newspaper_selection",
-          "plan_duration",
-          "package_type",
-        ],
+        required: ["contact_email"],
       },
     },
   },
@@ -377,7 +373,7 @@ export async function executeMailCallTool(
           checkout_url: resolveCheckoutUrl(),
         },
         spokenHint:
-          "For privacy, we complete purchases online. Tell me which publication you want — Urban, Spanish, or Global — and I'll email you a secure checkout link.",
+          "For privacy, we complete purchases online. What email address should I send the order link to?",
       };
     }
 
@@ -403,17 +399,27 @@ export async function executeMailCallTool(
 
     case "send_checkout_link": {
       const contactEmail = normalizeSpokenEmail(String(args.contact_email ?? ""));
-      const newspaperSelection = normalizeNewspaperSelection(
-        String(args.newspaper_selection ?? ""),
-      );
-      const planDuration = normalizePlanDuration(args.plan_duration);
-      const packageType = normalizePackageType(String(args.package_type ?? ""));
+      const forceResend =
+        Boolean(args.force_resend) || Boolean(ctx.forceResend);
 
-      if (!looksLikeEmail(contactEmail) || !newspaperSelection || !planDuration || !packageType) {
+      if (!looksLikeEmail(contactEmail)) {
         return {
           toolPayload: { ok: false, reason: "missing_or_invalid_fields" },
           spokenHint:
-            "Let me walk you through this. I still need the Urban, Spanish, or Global publication, a one, three, six, or twelve month plan, a package type, and your contact email.",
+            "I want to make sure I have your email right. Please say it slowly, using at for the at sign and dot for periods.",
+        };
+      }
+
+      const prior = checkoutSendLock.get(ctx.callSid);
+      if (prior && !forceResend) {
+        return {
+          toolPayload: {
+            ok: false,
+            reason: "already_sent",
+            to: prior.email,
+            hasCheckoutLinkBeenSent: true,
+          },
+          spokenHint: SCRIPTS.checkoutAlreadySent,
         };
       }
 
@@ -428,9 +434,6 @@ export async function executeMailCallTool(
       const checkoutUrl = resolveCheckoutUrl();
       const sent = await sendCheckoutLinkEmail({
         contactEmail,
-        newspaperSelection,
-        planDuration,
-        packageType,
         checkoutUrl,
         callSid: ctx.callSid,
       });
@@ -446,10 +449,16 @@ export async function executeMailCallTool(
         };
       }
 
+      checkoutSendLock.set(ctx.callSid, {
+        email: contactEmail,
+        sentAtMs: Date.now(),
+      });
+
       logger.info("mailcall_checkout_link_sent", {
         callSid: ctx.callSid,
         messageId: sent.messageId,
         emailDomain: contactEmail.split("@")[1] ?? "",
+        resent: forceResend,
       });
 
       return {
@@ -458,8 +467,10 @@ export async function executeMailCallTool(
           messageId: sent.messageId,
           to: contactEmail,
           checkout_url: checkoutUrl,
+          hasCheckoutLinkBeenSent: true,
+          resent: forceResend,
         },
-        spokenHint: SCRIPTS.checkoutLinkSent,
+        spokenHint: forceResend ? SCRIPTS.checkoutResent : SCRIPTS.checkoutLinkSent,
       };
     }
 
